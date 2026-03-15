@@ -56,10 +56,11 @@ Each entry at `[$92:D91E/D938 + table*2] + entry*7`:
 | Bytes | Field | Description |
 |-------|-------|-------------|
 | 0-2 | `source_ptr` | 24-bit SNES address to raw tile data (typically in $9B-$9F) |
-| 3-4 | `row1_size` | Byte count for first VRAM row (tiles loaded at `vram_offset * 0x200`) |
-| 5-6 | `row2_size` | Byte count for second VRAM row (loaded at `(0x10 + vram_offset) * 0x200`) |
+| 3-4 | `row1_size` | Byte count for first DMA chunk (tiles starting at tile index `vram_offset`) |
+| 5-6 | `row2_size` | Byte count for second DMA chunk (tiles starting at tile index `0x10 + vram_offset`) |
 
-**VRAM layout**: Top-half loads to rows 0x00 and 0x10. Bottom-half loads to rows 0x08 and 0x18.
+**VRAM layout**: Offsets 0x00/0x08/0x10/0x18 are **tile indices** (byte offset = tile_index × 32).
+Top-half DMA writes to tile indices 0x00 and 0x10. Bottom-half writes to tile indices 0x08 and 0x18.
 
 ### Tilemap Entry (5 bytes)
 

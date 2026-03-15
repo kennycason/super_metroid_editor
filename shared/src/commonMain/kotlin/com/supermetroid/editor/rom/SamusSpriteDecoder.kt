@@ -38,15 +38,16 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     private val DEFAULT_VRAM_SIZE = 0x2000
 
     /**
-     * VRAM total size: SNES OBJ VRAM uses 16 tiles per row, 32 rows.
-     * Each tile = 32 bytes, so total = 32 rows × 16 tiles/row × 32 bytes = 16384 bytes (512 tiles).
-     * Rows 0x00-0x07 = top body row 1, 0x08-0x0F = bottom body row 1,
-     * 0x10-0x17 = top body row 2, 0x18-0x1F = bottom body row 2.
+     * VRAM total size: 512 tiles × 32 bytes = 16384 bytes.
+     * Only tiles 0-255 are populated by default VRAM (8KB from $9A:D200).
+     * DMA writes overlay specific tile ranges:
+     *   Top half:    tiles 0x00+ and 0x10+
+     *   Bottom half: tiles 0x08+ and 0x18+
      */
-    private val VRAM_SIZE = 32 * 16 * 32  // 16384 bytes for 512 tiles
+    private val VRAM_SIZE = 512 * 32  // 16384 bytes
 
-    /** Bytes per VRAM row (16 tiles × 32 bytes) */
-    private val VRAM_ROW_STRIDE = 0x200  // 512
+    /** Bytes per 4bpp 8×8 tile */
+    private val TILE_SIZE = 32
 
     /** Suit palette addresses */
     private val POWER_SUIT_PALETTE = 0x9B9400
@@ -264,14 +265,14 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
         val srcPc = romParser.snesToPc(srcPtr)
 
-        // Row 1 → vram at vramRowOffset × VRAM_ROW_STRIDE (0x200 = 16 tiles × 32 bytes)
-        val dst1 = vramRowOffset * VRAM_ROW_STRIDE
+        // Row 1 → vram at tile index vramRowOffset × 32 bytes per tile
+        val dst1 = vramRowOffset * TILE_SIZE
         if (row1Size > 0 && dst1 + row1Size <= vram.size && srcPc + row1Size <= rom.size) {
             System.arraycopy(rom, srcPc, vram, dst1, row1Size)
         }
 
-        // Row 2 → vram at (0x10 + vramRowOffset) × VRAM_ROW_STRIDE
-        val dst2 = (0x10 + vramRowOffset) * VRAM_ROW_STRIDE
+        // Row 2 → vram at tile index (0x10 + vramRowOffset) × 32 bytes per tile
+        val dst2 = (0x10 + vramRowOffset) * TILE_SIZE
         if (row2Size > 0 && dst2 + row2Size <= vram.size && srcPc + row1Size + row2Size <= rom.size) {
             System.arraycopy(rom, srcPc + row1Size, vram, dst2, row2Size)
         }
