@@ -260,7 +260,7 @@ fun SamusSpriteViewer(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.fillMaxWidth().height(
-                            ((thumbnails.size / 6 + 1) * 64).coerceAtMost(300).dp
+                            ((thumbnails.size + 14) / 15 * 70).coerceIn(70, 600).dp
                         )
                     ) {
                         itemsIndexed(thumbnails) { idx, thumb ->

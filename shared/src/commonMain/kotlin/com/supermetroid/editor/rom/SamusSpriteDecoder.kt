@@ -49,6 +49,11 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     /** Bytes per 4bpp 8×8 tile */
     private val TILE_SIZE = 32
 
+    /** Standard weapon tiles: 8 tiles (0x100 bytes) loaded at tile index 0x30 */
+    private val WEAPON_TILES_STANDARD = 0x9AF200
+    private val WEAPON_TILES_OFFSET = 0x30  // tile index
+    private val WEAPON_TILES_SIZE = 0x100   // 8 tiles × 32 bytes
+
     /** Suit palette addresses */
     private val POWER_SUIT_PALETTE = 0x9B9400
     private val VARIA_SUIT_PALETTE = 0x9B9820
@@ -121,10 +126,17 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
         if (topTbl == 0xFF) return null // end marker
 
-        // 2. Build VRAM: start with default, overlay DMA writes
+        // 2. Build VRAM: start with default, overlay weapon tiles, then DMA writes
         val vram = ByteArray(VRAM_SIZE)
         val defaultVramPc = romParser.snesToPc(DEFAULT_VRAM)
         System.arraycopy(rom, defaultVramPc, vram, 0, DEFAULT_VRAM_SIZE.coerceAtMost(VRAM_SIZE))
+
+        // Load standard weapon tiles at tile index 0x30
+        val weaponPc = romParser.snesToPc(WEAPON_TILES_STANDARD)
+        val weaponDst = WEAPON_TILES_OFFSET * TILE_SIZE
+        if (weaponDst + WEAPON_TILES_SIZE <= vram.size && weaponPc + WEAPON_TILES_SIZE <= rom.size) {
+            System.arraycopy(rom, weaponPc, vram, weaponDst, WEAPON_TILES_SIZE)
+        }
 
         // Bottom half first (vram offset 0x08), then top half (vram offset 0x00)
         applyDma(vram, BOT_DMA_PTRS, botTbl, botEnt, 0x08)
