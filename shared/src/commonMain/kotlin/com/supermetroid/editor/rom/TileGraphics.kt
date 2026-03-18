@@ -346,6 +346,15 @@ class TileGraphics(private val romParser: RomParser) {
         if (copyLen > 0) System.arraycopy(data, 0, dst, byteOffset, copyLen)
     }
 
+    /** Extract raw 4bpp tile data for a range of tiles. */
+    fun extractRawTileData(startTileIndex: Int, tileCount: Int): ByteArray? {
+        val src = rawTileData ?: return null
+        val byteOffset = startTileIndex * BYTES_PER_TILE
+        val byteLen = tileCount * BYTES_PER_TILE
+        if (byteOffset + byteLen > src.size) return null
+        return src.copyOfRange(byteOffset, byteOffset + byteLen)
+    }
+
     /** Force tileset to re-load from ROM on next call. */
     fun invalidateCache() { cachedTilesetId = -1; rawTileData = null; metatiles = null; cachedPalette = null }
 

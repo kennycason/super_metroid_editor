@@ -29,6 +29,8 @@ class KraidSpritemap(private val romParser: RomParser) {
         const val TILE_COUNT = 128
         const val EMPTY_TILE = RomConstants.EMPTY_TILE
         const val BYTES_PER_TILE = RomConstants.BYTES_PER_4BPP_TILE
+        /** BG2 nametable stride: Kraid's room uses 64-word rows (64×32 map). */
+        const val BG2_STRIDE = 64
 
         val BODY_TILEMAPS = listOf(
             BodyTilemapDef("Body (initial)", 0xA797C8, 32, 12),
@@ -108,10 +110,11 @@ class KraidSpritemap(private val romParser: RomParser) {
 
     fun load(): Boolean {
         return try {
-            val tilePc = romParser.snesToPc(TILE_GFX_SNES)
-            tileData = romParser.decompressLZ5AtPc(tilePc)
+            val tg = setupTileGraphics() ?: return false
 
-            val tg = setupTileGraphics(tileData!!) ?: return false
+            // Extract Kraid's 128 tiles from the loaded tileset for editing/export
+            tileData = tg.extractRawTileData(TILE_INDEX_BASE, TILE_COUNT)
+
             palette = extractInGamePalette(tg)
             palette != null
         } catch (_: Exception) {
@@ -121,16 +124,18 @@ class KraidSpritemap(private val romParser: RomParser) {
 
     fun loadWithCustomTiles(customTileData: ByteArray): Boolean {
         tileData = customTileData.copyOf()
-        val tg = setupTileGraphics(customTileData) ?: return false
+        val tg = setupTileGraphics() ?: return false
+        tg.injectRawTileData(TILE_INDEX_BASE, customTileData)
         palette = extractInGamePalette(tg)
         return palette != null
     }
 
     /**
-     * Load room tileset 27, inject Kraid tiles at index 0x100,
-     * and override palette row 6 with kKraid_Palette2.
+     * Load room tileset 27 and override palette row 6 with kKraid_Palette2.
+     * Kraid's body tiles (0x100-0x17F) are already part of tileset 27 —
+     * no injection needed. ($B9:FA38 is a background TILEMAP, not tile graphics.)
      */
-    private fun setupTileGraphics(kraidTiles: ByteArray): TileGraphics? {
+    private fun setupTileGraphics(): TileGraphics? {
         val rom = romParser.getRomData()
         val stateOffsets = romParser.findAllStateDataOffsets(KRAID_ROOM_SNES)
         if (stateOffsets.isEmpty()) return null
@@ -138,8 +143,6 @@ class KraidSpritemap(private val romParser: RomParser) {
 
         val tg = TileGraphics(romParser)
         if (!tg.loadTileset(tilesetId)) return null
-
-        tg.injectRawTileData(TILE_INDEX_BASE, kraidTiles)
 
         val kraidPal2 = readKraidPalette2()
         if (kraidPal2 != null) {
@@ -195,6 +198,24 @@ class KraidSpritemap(private val romParser: RomParser) {
         val nmPc = romParser.snesToPc(NAMETABLE_SNES)
         val nmData = romParser.decompressLZ5AtPc(nmPc)
         val nmWords = nmData.size / 2
+
+        // BG2 nametable is stored as two 32×32 blocks (SNES SC size 01 = 64×32).
+        // Block 0 (words 0-1023): left 32 columns; Block 1 (words 1024-2047): right 32 columns.
+        // Deinterleave into a 64-column linear layout for rendering.
+        if (nmWords == 2048) {
+            val cols = 64
+            val rows = 32
+            val linearData = ByteArray(cols * rows * 2)
+            for (r in 0 until rows) {
+                // Left half: block 0, row r → columns 0-31
+                System.arraycopy(nmData, (r * 32) * 2, linearData, (r * cols) * 2, 32 * 2)
+                // Right half: block 1, row r → columns 32-63
+                System.arraycopy(nmData, (1024 + r * 32) * 2, linearData, (r * cols + 32) * 2, 32 * 2)
+            }
+            return renderFromTilemap(tg, linearData, cols, rows, "Full Body (nametable)")
+        }
+
+        // Fallback for unexpected sizes
         val cols = 32
         val rows = nmWords / cols
         return renderFromTilemap(tg, nmData, cols, rows, "Full Body (nametable)")
@@ -328,19 +349,36 @@ class KraidSpritemap(private val romParser: RomParser) {
         val header = readWord(rom, pc)
         if (header != 0xFFFE) return emptyList()
 
-        val entries = mutableListOf<TilemapEntry>()
+        // First pass: collect raw dest/tile data
+        data class RawRow(val dest: Int, val tiles: List<Int>)
+        val rawRows = mutableListOf<RawRow>()
         var offset = pc + 2
-        var row = 0
         while (true) {
             val dest = readWord(rom, offset)
             if (dest == 0xFFFF) break
             val count = readWord(rom, offset + 2)
             offset += 4
-            for (col in 0 until count) {
-                val tw = readWord(rom, offset)
+            val tiles = mutableListOf<Int>()
+            for (i in 0 until count) {
+                tiles.add(readWord(rom, offset))
                 offset += 2
+            }
+            rawRows.add(RawRow(dest, tiles))
+        }
+        if (rawRows.isEmpty()) return emptyList()
+
+        // Kraid's BG2 uses a 64-word stride; derive row/col from dest values
+        val baseDest = rawRows.first().dest
+        val baseRow = baseDest / BG2_STRIDE
+        val baseCol = baseDest % BG2_STRIDE
+
+        val entries = mutableListOf<TilemapEntry>()
+        for (raw in rawRows) {
+            val row = raw.dest / BG2_STRIDE - baseRow
+            val colStart = raw.dest % BG2_STRIDE - baseCol
+            for ((i, tw) in raw.tiles.withIndex()) {
                 entries.add(TilemapEntry(
-                    gridX = col,
+                    gridX = colStart + i,
                     gridY = row,
                     tileNum = tw and 0x03FF,
                     hFlip = (tw shr 14) and 1 != 0,
@@ -348,7 +386,6 @@ class KraidSpritemap(private val romParser: RomParser) {
                     paletteRow = (tw shr 10) and 7
                 ))
             }
-            row++
         }
         return entries
     }
