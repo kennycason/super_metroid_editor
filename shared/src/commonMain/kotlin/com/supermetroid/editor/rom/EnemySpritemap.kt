@@ -345,6 +345,20 @@ class EnemySpritemap(private val romParser: RomParser) {
         val result = scanForInstrListPtr(rom, initPc, aiBank)
         if (result != null) return result
 
+        // If not found, follow BRA (80 xx) at the start — boss sub-entities
+        // may branch into a sibling entity's init code
+        if (rom[initPc].toInt() and 0xFF == 0xAE && // LDX $xxxx
+            rom[initPc + 3].toInt() and 0xFF == 0x80) { // BRA rel8
+            val rel = rom[initPc + 4].toInt() // signed byte
+            val braTarget = initPc + 5 + rel
+            if (braTarget > 0 && braTarget + 10 < rom.size) {
+                val braResult = scanForInstrListPtr(rom, braTarget, aiBank)
+                if (braResult != null) return braResult
+                val braAbsResult = scanForAbsoluteInstrListStore(rom, braTarget, aiBank)
+                if (braAbsResult != null) return braAbsResult
+            }
+        }
+
         // If not found, follow JSR calls in the first 80 bytes
         val jsrLimit = minOf(80, rom.size - initPc - 2)
         for (i in 0 until jsrLimit) {
@@ -377,6 +391,36 @@ class EnemySpritemap(private val romParser: RomParser) {
             if (crossRef != null) return crossRef
         }
 
+        // Boss sub-entities: init code may use absolute STA $xxxx (opcode 8D)
+        // to a fixed enemy slot address instead of indexed STA $0F92,x.
+        // The instruction list is at offset +$1A within each 64-byte enemy slot
+        // (slots at $0F78, $0FB8, $0FF8, $1038, ...).
+        val absResult = scanForAbsoluteInstrListStore(rom, initPc, aiBank)
+        if (absResult != null) return absResult
+
+        return null
+    }
+
+    /**
+     * Scan for `LDA #imm; STA $xxxx` where $xxxx is the instruction list
+     * address in a fixed enemy slot (offset +$1A from a slot base).
+     * Used by boss sub-entities that know their slot assignment at compile time.
+     */
+    private fun scanForAbsoluteInstrListStore(rom: ByteArray, startPc: Int, aiBank: Int): Int? {
+        val scanLimit = minOf(120, rom.size - startPc - 5)
+        for (i in 0 until scanLimit) {
+            val pc = startPc + i
+            // Look for STA $xxxx (8D xx xx)
+            if (rom[pc].toInt() and 0xFF != 0x8D) continue
+            val dest = readU16(rom, pc + 1)
+            // Check if dest is at instruction list offset (+$1A) within an enemy slot
+            // Enemy slots: base $0F78 + n * $40, instruction list at base + $1A
+            if (dest < 0x0F92 || dest > 0x1200) continue
+            if ((dest - 0x0F78) % 0x40 != 0x1A) continue
+            // Found a store to an instruction list slot — trace back for the value
+            val result = traceValueSource(rom, pc, i, aiBank)
+            if (result != null) return result
+        }
         return null
     }
 
