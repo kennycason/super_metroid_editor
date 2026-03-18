@@ -84,22 +84,45 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     val animationCount: Int get() = 253
 
     /**
+     * Sorted unique frame-progression pointers, used to determine animation
+     * boundaries (many animations share overlapping data with no terminators).
+     */
+    private val sortedFramePointers: IntArray by lazy {
+        val ptrs = mutableSetOf<Int>()
+        for (id in 0 until animationCount) {
+            val off = romParser.snesToPc(FRAME_PROG_PTRS + 2 * id)
+            ptrs.add(readU16(rom, off))
+        }
+        ptrs.sorted().toIntArray()
+    }
+
+    /**
      * Get the number of frames (poses) for an animation.
-     * Scans until end marker (0xFF in top_tiles_table byte) or next animation boundary.
+     * Uses the gap to the next animation's pointer to determine the boundary,
+     * since SM's frame tables share overlapping data with no terminators.
      */
     fun getFrameCount(animationId: Int): Int {
         if (animationId < 0 || animationId >= animationCount) return 0
         val fpPtrOff = romParser.snesToPc(FRAME_PROG_PTRS + 2 * animationId)
-        val fpBase = readU16(rom, fpPtrOff)
-        val tableAddr = romParser.snesToPc(0x920000 + fpBase)
+        val currentPtr = readU16(rom, fpPtrOff)
 
+        // Binary search for current pointer, use next pointer to compute frame count
+        val idx = sortedFramePointers.binarySearch(currentPtr)
+        if (idx >= 0 && idx + 1 < sortedFramePointers.size) {
+            val nextPtr = sortedFramePointers[idx + 1]
+            val frames = (nextPtr - currentPtr) / 4
+            if (frames in 1..64) return frames
+        }
+
+        // Fallback: scan for control bytes (>= 0xE0) or end-of-data
+        val tableAddr = romParser.snesToPc(0x920000 + currentPtr)
         var count = 0
-        while (count < 64) { // safety limit
+        while (count < 64) {
             val entry0 = rom[tableAddr + count * 4].toInt() and 0xFF
-            if (entry0 == 0xFF) break
+            if (entry0 >= 0xE0) break
             count++
         }
-        return count
+        return count.coerceAtLeast(1)
     }
 
     // ─── Pose extraction ─────────────────────────────────────────────
@@ -192,25 +215,25 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
         val pixels = IntArray(width * height) // transparent black
 
         for (entry in pose.tilemaps) {
+            val bx = centerX + entry.xOffset
+            val by = centerY + entry.yOffset
             if (entry.is16x16) {
-                // 16x16 = 4 tiles: tileNum, tileNum+1, tileNum+16, tileNum+17
+                // 16x16 = 4 sub-tiles; swap positions when flipped
+                val lx = if (entry.xFlip) 8 else 0
+                val rx = if (entry.xFlip) 0 else 8
+                val ty = if (entry.yFlip) 8 else 0
+                val boty = if (entry.yFlip) 0 else 8
                 renderTile(pixels, width, height, pose.vram, entry.tileNum, palette,
-                    centerX + entry.xOffset, centerY + entry.yOffset,
-                    entry.xFlip, entry.yFlip, 0, 0)
+                    bx + lx, by + ty, entry.xFlip, entry.yFlip)
                 renderTile(pixels, width, height, pose.vram, entry.tileNum + 1, palette,
-                    centerX + entry.xOffset, centerY + entry.yOffset,
-                    entry.xFlip, entry.yFlip, 8, 0)
+                    bx + rx, by + ty, entry.xFlip, entry.yFlip)
                 renderTile(pixels, width, height, pose.vram, entry.tileNum + 16, palette,
-                    centerX + entry.xOffset, centerY + entry.yOffset,
-                    entry.xFlip, entry.yFlip, 0, 8)
+                    bx + lx, by + boty, entry.xFlip, entry.yFlip)
                 renderTile(pixels, width, height, pose.vram, entry.tileNum + 17, palette,
-                    centerX + entry.xOffset, centerY + entry.yOffset,
-                    entry.xFlip, entry.yFlip, 8, 8)
+                    bx + rx, by + boty, entry.xFlip, entry.yFlip)
             } else {
-                // 8x8 single tile
                 renderTile(pixels, width, height, pose.vram, entry.tileNum, palette,
-                    centerX + entry.xOffset, centerY + entry.yOffset,
-                    entry.xFlip, entry.yFlip, 0, 0)
+                    bx, by, entry.xFlip, entry.yFlip)
             }
         }
         return pixels
@@ -313,17 +336,17 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
     /**
      * Render a single 8x8 tile from VRAM into the pixel buffer.
-     * @param subX, subY offset within the 16x16 tile (0 or 8 for each)
+     * Flip is applied within the 8x8 tile; for 16x16 sprites the caller
+     * swaps sub-tile positions.
      */
     private fun renderTile(
         pixels: IntArray, imgW: Int, imgH: Int,
         vram: ByteArray, tileNum: Int, palette: IntArray,
         baseX: Int, baseY: Int,
-        xFlip: Boolean, yFlip: Boolean,
-        subX: Int, subY: Int
+        xFlip: Boolean, yFlip: Boolean
     ) {
         val tileOffset = tileNum * 32
-        if (tileOffset + 32 > vram.size) return
+        if (tileOffset < 0 || tileOffset + 32 > vram.size) return
 
         for (py in 0 until 8) {
             val row = tileOffset + py * 2
@@ -343,17 +366,8 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
                 if (colorIdx == 0) continue // transparent
 
-                // Apply flip
-                val fx = if (xFlip) {
-                    if (subX == 0) 8 + (7 - px) else (7 - px)
-                } else {
-                    subX + px
-                }
-                val fy = if (yFlip) {
-                    if (subY == 0) 8 + (7 - py) else (7 - py)
-                } else {
-                    subY + py
-                }
+                val fx = if (xFlip) 7 - px else px
+                val fy = if (yFlip) 7 - py else py
 
                 val sx = baseX + fx
                 val sy = baseY + fy

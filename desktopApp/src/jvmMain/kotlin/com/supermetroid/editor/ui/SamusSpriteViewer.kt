@@ -255,12 +255,15 @@ fun SamusSpriteViewer(
                         }
                     }
 
+                    // Height estimate: ~10 columns at 56dp adaptive, 68dp per row
+                    val estimatedCols = 10
+                    val estimatedRows = (thumbnails.size + estimatedCols - 1) / estimatedCols
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(56.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.fillMaxWidth().height(
-                            ((thumbnails.size + 14) / 15 * 70).coerceIn(70, 600).dp
+                            (estimatedRows * 68).coerceIn(68, 800).dp
                         )
                     ) {
                         itemsIndexed(thumbnails) { idx, thumb ->

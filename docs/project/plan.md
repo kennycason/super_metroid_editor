@@ -94,10 +94,16 @@ SMILE has dedicated spawn X/Y/screen configuration per save station.
 4. **Tileset/Metatile Composer** — Enables truly custom tilesets
 5. **Validation Suite** — PLM scanner, door validator, GFX limit warnings
 
+### Longer Term: Expansion
+6. **Door Expansion** — Free space tracking in bank $83 to support adding new door connections
+7. **New Room Creation** — Allocate room headers in $8F, extend room pointer table, allocate all associated data (PLMs, enemies, level data, scrolls)
+8. **ROM Expansion** — Extend ROM beyond 3MB (HiROM) to eliminate free space constraints
+9. **Free Space Map** — Track all allocated/free regions across the ROM, reclaim space from relocated data
+
 ### Polish
-6. **Door Cloning Tool** — Auto-calculate from screen edge click
-7. **Layer 2/BG Editor** — Parallax modes + BG pointer
-8. **Save Station Spawn Editor** — Fine-tune spawn coordinates
+10. **Door Cloning Tool** — Auto-calculate from screen edge click
+11. **Layer 2/BG Editor** — Parallax modes + BG pointer
+12. **Save Station Spawn Editor** — Fine-tune spawn coordinates
 
 ---
 

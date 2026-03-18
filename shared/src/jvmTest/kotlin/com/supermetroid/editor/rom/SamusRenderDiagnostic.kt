@@ -29,10 +29,6 @@ class SamusRenderDiagnostic {
         val img = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
         img.setRGB(0, 0, size, size, pixels, 0, size)
         ImageIO.write(img, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_test_pose.png"))
-        println("Wrote samus_test_pose.png")
-
-        val nonTransparent = pixels.count { it != 0 }
-        println("Non-transparent pixels: $nonTransparent / ${size * size}")
     }
 
     @Test
@@ -60,6 +56,51 @@ class SamusRenderDiagnostic {
         }
 
         ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_poses_sheet.png"))
-        println("Wrote samus_poses_sheet.png with ${groups.size} groups")
+    }
+
+    @Test
+    fun `render standing variants to verify flip correctness`() {
+        val rp = loadTestRom() ?: return
+        val decoder = SamusSpriteDecoder(rp)
+        val palette = decoder.readPalette()
+
+        // Render all 9 standing variants (anim 0-8) frame 0 as a strip
+        val tileSize = 64
+        val standAnims = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8)
+        val sheetW = standAnims.size * tileSize
+        val sheet = BufferedImage(sheetW, tileSize, BufferedImage.TYPE_INT_ARGB)
+
+        for ((idx, animId) in standAnims.withIndex()) {
+            val pose = decoder.getPose(animId, 0) ?: continue
+            val pixels = decoder.renderPose(pose, palette, tileSize, tileSize)
+            sheet.setRGB(idx * tileSize, 0, tileSize, tileSize, pixels, 0, tileSize)
+        }
+
+        ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_stand_variants.png"))
+    }
+
+    @Test
+    fun `render run animation frames`() {
+        val rp = loadTestRom() ?: return
+        val decoder = SamusSpriteDecoder(rp)
+        val palette = decoder.readPalette()
+
+        // Render all frames of run animation 9 (first run variant)
+        val animId = 9
+        val frameCount = decoder.getFrameCount(animId)
+        val tileSize = 48
+        val cols = frameCount.coerceAtMost(10)
+        val rows = (frameCount + cols - 1) / cols
+        val sheet = BufferedImage(cols * tileSize, rows * tileSize, BufferedImage.TYPE_INT_ARGB)
+
+        for (frame in 0 until frameCount) {
+            val pose = decoder.getPose(animId, frame) ?: continue
+            val pixels = decoder.renderPose(pose, palette, tileSize, tileSize)
+            val col = frame % cols
+            val row = frame / cols
+            sheet.setRGB(col * tileSize, row * tileSize, tileSize, tileSize, pixels, 0, tileSize)
+        }
+
+        ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_run_frames.png"))
     }
 }

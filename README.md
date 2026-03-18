@@ -130,18 +130,28 @@ The `cli` module provides headless export of structured JSON data from a ROM wit
 ./gradlew -q :cli:runCli -Pargs="--rom rom.smc export -o /tmp/sm_export"
 ```
 
+## Editing Approach
+
+SMEDIT uses **binary ROM patching with smart data relocation** — the same fundamental approach as SMILE, but with a cleaner architecture. Edits are stored as non-destructive deltas in a project file (`.smedit` JSON) against an immutable ROM, and applied at export time.
+
+When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
+
+This approach supports the vast majority of ROM hacking use cases. The main constraints are finite free space in each ROM bank (solvable via ROM expansion) and the inability to change the engine's data structure formats (which would require a disassembly-based workflow). For context, SMILE used the same binary patching model and powered 15+ years of community hacks.
+
+See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including planned support for new room creation and ROM expansion.
+
 ## Roadmap
 
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
 - Room creation, resizing, and state management
+- Door expansion and new door connections
+- ROM expansion beyond 3MB to eliminate free space limits
 - Custom tileset importing and tile swapping
 - FX / scrolling / background layer editing
-- Palette editor
 - Sound Editing / Synth
 - ASM support
-- Free space management and bank expansion
 
 ## Contributing
 
