@@ -680,17 +680,11 @@ fun main() = application {
                                                 romParser = romParser,
                                                 modifier = Modifier.fillMaxSize()
                                             )
-                                        } else if (selected.name == "Kraid (New)") {
-                                            KraidSpriteEditor(
-                                                editorState = editorState,
-                                                romParser = romParser,
-                                                showOamComponents = true,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
                                         } else if (selected.speciesId == 0xE2BF) {
                                             KraidSpriteEditor(
                                                 editorState = editorState,
                                                 romParser = romParser,
+                                                showOamComponents = true,
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         } else {

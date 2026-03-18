@@ -105,7 +105,6 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             EnemySpriteEntry(0xE4FF, "Phantoon Flame (Small)", "Boss"),
             EnemySpriteEntry(0xE53F, "Phantoon Flame (Medium)", "Boss"),
             EnemySpriteEntry(0xE57F, "Phantoon Flame (Large)", "Boss"),
-            EnemySpriteEntry(0xE2BF, "Kraid (New)", "Boss"),
             EnemySpriteEntry(0xE2BF, "Kraid", "Boss"),
             EnemySpriteEntry(0xDDBF, "Crocomire", "Boss"),
             EnemySpriteEntry(0xDE3F, "Draygon", "Boss"),
