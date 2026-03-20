@@ -283,20 +283,14 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
         val palette = readPalette(suit)
         val frames = mutableListOf<SpriteAnimationFrame>()
-        val seenDmaKeys = mutableSetOf<Long>()
 
         for (f in 0 until count) {
-            val pose = getPose(animationId, f) ?: break // null = end marker hit
-
-            // Detect duplicate DMA entries (animation data looping into next anim's data).
-            // Build a key from the frame progression entry bytes.
-            val dmaKey = getFrameProgressionKey(animationId, f)
-            if (dmaKey != null && f > 0 && dmaKey in seenDmaKeys) break // looped
-            if (dmaKey != null) seenDmaKeys.add(dmaKey)
+            val pose = getPose(animationId, f) ?: break // null = end marker (0xFF in DMA table)
 
             val pixels = renderPose(pose, palette, renderSize, renderSize)
 
-            // Filter empty frames (0 visible pixels = overcounted garbage from getFrameCount)
+            // Skip empty frames — these are overcounted garbage from getFrameCount().
+            // Valid animation frames always have visible pixels.
             val nonTransparent = pixels.count { (it ushr 24) > 0 }
             if (nonTransparent == 0) continue
 
@@ -315,23 +309,6 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
         val name = "$groupName 0x${animationId.toString(16).uppercase()}"
 
         return SpriteAnimation(name = name, frames = frames, loop = true)
-    }
-
-    /**
-     * Get a unique key for a frame's DMA progression entry (4 bytes: topTbl, topEnt, botTbl, botEnt).
-     * Used to detect when getFrameCount() overcounts and we start reading the next animation's data.
-     */
-    private fun getFrameProgressionKey(animationId: Int, poseIndex: Int): Long? {
-        val fpPtrOff = romParser.snesToPc(FRAME_PROG_PTRS + 2 * animationId)
-        val fpBase = readU16(rom, fpPtrOff)
-        val entryAddr = romParser.snesToPc(0x920000 + fpBase + 4 * poseIndex)
-        if (entryAddr + 4 > rom.size) return null
-
-        val b0 = rom[entryAddr].toLong() and 0xFF
-        val b1 = rom[entryAddr + 1].toLong() and 0xFF
-        val b2 = rom[entryAddr + 2].toLong() and 0xFF
-        val b3 = rom[entryAddr + 3].toLong() and 0xFF
-        return (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
     }
 
     /**
