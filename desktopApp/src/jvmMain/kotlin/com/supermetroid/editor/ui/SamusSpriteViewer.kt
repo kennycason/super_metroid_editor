@@ -1,6 +1,5 @@
 package com.supermetroid.editor.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,11 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -29,23 +24,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SamusSpriteDecoder
+import com.supermetroid.editor.rom.SpriteAnimation
+import com.supermetroid.editor.rom.SpriteAnimationFrame
+import com.supermetroid.editor.rom.renderMultiAnimationSheet
+import com.supermetroid.editor.rom.renderSpriteSheet
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
+import java.io.File
+import javax.imageio.ImageIO
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -63,16 +64,24 @@ fun SamusSpriteViewer(
     val decoder = remember(rp) { SamusSpriteDecoder(rp) }
     var selectedSuit by remember { mutableStateOf(SamusSpriteDecoder.SuitType.POWER) }
     var selectedGroupIdx by remember { mutableStateOf(0) }
-    var selectedAnimIdx by remember { mutableStateOf(0) }  // index within group's animationIds
-    var selectedFrame by remember { mutableStateOf(0) }
+    var selectedAnimIdx by remember { mutableStateOf(0) }
+    var exportStatus by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    // Global playback state — persists across group/variant toggles
+    var isPlaying by remember { mutableStateOf(false) }
+    var animFrame by remember { mutableStateOf(0) }
 
     val groups = SamusSpriteDecoder.ANIMATION_GROUPS
     val currentGroup = groups.getOrNull(selectedGroupIdx) ?: groups.first()
     val currentAnimId = currentGroup.animationIds.getOrNull(selectedAnimIdx) ?: currentGroup.animationIds.first()
-    val frameCount = remember(currentAnimId) { decoder.getFrameCount(currentAnimId) }
-    val safeFrame = selectedFrame.coerceIn(0, (frameCount - 1).coerceAtLeast(0))
 
-    val palette = remember(selectedSuit) { decoder.readPalette(selectedSuit) }
+    // Build animation for the current selection
+    val animation = remember(currentAnimId, selectedSuit) {
+        // Reset frame to 0 when animation changes, but keep playing state
+        animFrame = 0
+        decoder.buildAnimation(currentAnimId, selectedSuit, renderSize = 96)
+    }
 
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF1A1A2E))) {
         // ── Header ──
@@ -99,7 +108,32 @@ fun SamusSpriteViewer(
                         modifier = Modifier.height(28.dp)
                     )
                 }
+
+                Spacer(Modifier.weight(1f))
+
+                // Export All Samus Sprites button
+                Surface(
+                    modifier = Modifier.clickable {
+                        scope.launch(Dispatchers.IO) {
+                            exportStatus = "Building all sprites..."
+                            exportAllSamusSprites(decoder, selectedSuit)
+                            exportStatus = ""
+                        }
+                    },
+                    color = Color(0xFF2A3A2A),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text("Export All Sprites", fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        color = Color(0xFF90D090))
+                }
             }
+        }
+
+        // Status bar
+        if (exportStatus.isNotEmpty()) {
+            Text(exportStatus, fontSize = 9.sp, color = Color(0xFFFFD54F),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
         }
 
         Row(modifier = Modifier.fillMaxSize()) {
@@ -115,12 +149,12 @@ fun SamusSpriteViewer(
                 Spacer(Modifier.height(4.dp))
 
                 for ((gIdx, group) in groups.withIndex()) {
+                    val frameCountPreview = decoder.getFrameCount(group.animationIds.first())
                     Surface(
                         modifier = Modifier.fillMaxWidth()
                             .clickable {
                                 selectedGroupIdx = gIdx
                                 selectedAnimIdx = 0
-                                selectedFrame = 0
                             },
                         color = if (gIdx == selectedGroupIdx) MaterialTheme.colorScheme.primaryContainer
                         else Color.Transparent,
@@ -131,8 +165,8 @@ fun SamusSpriteViewer(
                                 fontWeight = if (gIdx == selectedGroupIdx) FontWeight.Bold else FontWeight.Normal,
                                 color = if (gIdx == selectedGroupIdx) MaterialTheme.colorScheme.onPrimaryContainer
                                 else Color(0xFFB0B8D1))
-                            Text("${group.animationIds.size} anims — ${group.description}", fontSize = 8.sp,
-                                color = Color(0xFF6A6F88))
+                            Text("${group.animationIds.size} variants, $frameCountPreview frames — ${group.description}",
+                                fontSize = 8.sp, color = Color(0xFF6A6F88))
                         }
                     }
                 }
@@ -141,14 +175,14 @@ fun SamusSpriteViewer(
             // ── Divider ──
             Box(Modifier.width(1.dp).fillMaxSize().background(Color(0xFF2A2D45)))
 
-            // ── Right: Sprite preview ──
+            // ── Right: Animation player + details ──
             Column(
                 modifier = Modifier.weight(1f).fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Animation direction selector (if group has multiple anims)
+                // Direction selector (if group has multiple anims)
                 if (currentGroup.animationIds.size > 1) {
                     Text("Direction / Variant", fontSize = 10.sp, color = Color(0xFFB0B8D1),
                         fontWeight = FontWeight.SemiBold)
@@ -161,13 +195,12 @@ fun SamusSpriteViewer(
                             Surface(
                                 modifier = Modifier.clickable {
                                     selectedAnimIdx = aIdx
-                                    selectedFrame = 0
                                 },
                                 color = if (aIdx == selectedAnimIdx) MaterialTheme.colorScheme.primaryContainer
                                 else Color(0xFF2A2D45),
                                 shape = RoundedCornerShape(4.dp)
                             ) {
-                                Text("${aIdx}", fontSize = 9.sp,
+                                Text("$aIdx", fontSize = 9.sp,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     color = if (aIdx == selectedAnimIdx) MaterialTheme.colorScheme.onPrimaryContainer
                                     else Color(0xFFB0B8D1),
@@ -178,130 +211,45 @@ fun SamusSpriteViewer(
                     Spacer(Modifier.height(12.dp))
                 }
 
-                // Frame info
+                // Animation name
                 Text(
-                    "Anim 0x${currentAnimId.toString(16).uppercase()} — Frame $safeFrame/$frameCount",
+                    "Anim 0x${currentAnimId.toString(16).uppercase()} — ${currentGroup.name}",
                     fontSize = 10.sp, color = Color(0xFFB0B8D1)
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // Rendered pose
-                val pose = remember(currentAnimId, safeFrame) { decoder.getPose(currentAnimId, safeFrame) }
-                if (pose != null) {
-                    val imgSize = 96
-                    val pixels = remember(pose, palette) {
-                        decoder.renderPose(pose, palette, imgSize, imgSize)
-                    }
-                    val img = remember(pixels) {
-                        val bi = BufferedImage(imgSize, imgSize, BufferedImage.TYPE_INT_ARGB)
-                        bi.setRGB(0, 0, imgSize, imgSize, pixels, 0, imgSize)
-                        bi
-                    }
-
-                    Box(
-                        modifier = Modifier.size(288.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(1.dp, Color(0xFF3A3F5C), RoundedCornerShape(8.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Checkerboard background
-                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                            val cellSize = 12f
-                            val cols = (size.width / cellSize).toInt() + 1
-                            val rows = (size.height / cellSize).toInt() + 1
-                            for (r in 0 until rows) {
-                                for (c in 0 until cols) {
-                                    val color = if ((r + c) % 2 == 0) Color(0xFF2A2A3A) else Color(0xFF333348)
-                                    drawRect(color, Offset(c * cellSize, r * cellSize), Size(cellSize, cellSize))
-                                }
-                            }
+                // ── Animation Player (state hoisted for persistence across toggles) ──
+                AnimationPlayer(
+                    animation = animation,
+                    previewSize = 288,
+                    playing = isPlaying,
+                    onPlayingChanged = { isPlaying = it },
+                    currentFrame = animFrame,
+                    onFrameChanged = { animFrame = it },
+                    onExportPng = { frame, idx ->
+                        scope.launch(Dispatchers.IO) {
+                            exportFramePng(frame, "samus_${currentGroup.name.lowercase()}_${currentAnimId}_frame$idx")
                         }
-
-                        Image(
-                            bitmap = img.toComposeImageBitmap(),
-                            contentDescription = "Samus pose",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                            filterQuality = FilterQuality.None
-                        )
-                    }
-
-                    // Tilemap info
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "${pose.tilemaps.size} tilemap entries",
-                        fontSize = 9.sp, color = Color(0xFF6A6F88)
-                    )
-                } else {
-                    Text("Could not decode pose", fontSize = 10.sp, color = Color(0xFFFF6B6B))
-                }
-
-                // Frame selector
-                if (frameCount > 1) {
-                    Spacer(Modifier.height(12.dp))
-                    Text("Frames", fontSize = 10.sp, color = Color(0xFFB0B8D1),
-                        fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-
-                    // Render thumbnails for all frames
-                    val thumbnailSize = 48
-                    val thumbnails = remember(currentAnimId, palette) {
-                        (0 until frameCount).map { frame ->
-                            val p = decoder.getPose(currentAnimId, frame) ?: return@map null
-                            val px = decoder.renderPose(p, palette, thumbnailSize, thumbnailSize)
-                            val bi = BufferedImage(thumbnailSize, thumbnailSize, BufferedImage.TYPE_INT_ARGB)
-                            bi.setRGB(0, 0, thumbnailSize, thumbnailSize, px, 0, thumbnailSize)
-                            bi
+                    },
+                    onExportGif = { anim ->
+                        scope.launch(Dispatchers.IO) {
+                            exportAnimationGif(anim, "samus_${currentGroup.name.lowercase()}_${currentAnimId}")
+                        }
+                    },
+                    onExportSheet = { anim ->
+                        scope.launch(Dispatchers.IO) {
+                            exportAnimationSheet(anim, "samus_${currentGroup.name.lowercase()}_${currentAnimId}_sheet")
                         }
                     }
-
-                    // Height estimate: ~10 columns at 56dp adaptive, 68dp per row
-                    val estimatedCols = 10
-                    val estimatedRows = (thumbnails.size + estimatedCols - 1) / estimatedCols
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(56.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.fillMaxWidth().height(
-                            (estimatedRows * 68).coerceIn(68, 800).dp
-                        )
-                    ) {
-                        itemsIndexed(thumbnails) { idx, thumb ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .clickable { selectedFrame = idx }
-                                    .border(
-                                        if (idx == safeFrame) 2.dp else 1.dp,
-                                        if (idx == safeFrame) Color(0xFFFFD54F) else Color(0xFF3A3F5C),
-                                        RoundedCornerShape(4.dp)
-                                    )
-                                    .background(Color(0xFF2A2A3A), RoundedCornerShape(4.dp))
-                                    .padding(2.dp)
-                            ) {
-                                if (thumb != null) {
-                                    Image(
-                                        bitmap = thumb.toComposeImageBitmap(),
-                                        contentDescription = "Frame $idx",
-                                        modifier = Modifier.size(48.dp),
-                                        filterQuality = FilterQuality.None
-                                    )
-                                } else {
-                                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                                        Text("?", color = Color(0xFFFF6B6B), fontSize = 10.sp)
-                                    }
-                                }
-                                Text("$idx", fontSize = 7.sp, color = Color(0xFF6A6F88))
-                            }
-                        }
-                    }
-                }
+                )
 
                 // Palette display
                 Spacer(Modifier.height(16.dp))
                 Text("Palette (${selectedSuit.name})", fontSize = 10.sp, color = Color(0xFFB0B8D1),
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
+
+                val palette = remember(selectedSuit) { decoder.readPalette(selectedSuit) }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -327,6 +275,80 @@ fun SamusSpriteViewer(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+// ─── Export helpers ──────────────────────────────────────────────────
+
+private fun exportFramePng(frame: SpriteAnimationFrame, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Frame as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+        ImageIO.write(bi, "png", file)
+    }
+}
+
+private fun exportAnimationGif(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Animation as GIF"
+        selectedFile = File("$defaultName.gif")
+        fileFilter = FileNameExtensionFilter("GIF Images", "gif")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".gif")) File(it.parentFile, "${it.name}.gif") else it
+        }
+        val gifBytes = GifEncoder.encode(animation.frames)
+        file.writeBytes(gifBytes)
+    }
+}
+
+private fun exportAnimationSheet(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Sprite Sheet as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
+        if (w > 0 && h > 0) {
+            val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+            bi.setRGB(0, 0, w, h, pixels, 0, w)
+            ImageIO.write(bi, "png", file)
+        }
+    }
+}
+
+private fun exportAllSamusSprites(decoder: SamusSpriteDecoder, suit: SamusSpriteDecoder.SuitType) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save All Samus Sprites as Sprite Sheet"
+        selectedFile = File("samus_all_sprites_${suit.name.lowercase()}.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val allAnimations = decoder.buildAllAnimations(suit, renderSize = 64)
+        if (allAnimations.isNotEmpty()) {
+            val (pixels, w, h) = renderMultiAnimationSheet(allAnimations)
+            if (w > 0 && h > 0) {
+                val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+                bi.setRGB(0, 0, w, h, pixels, 0, w)
+                ImageIO.write(bi, "png", file)
             }
         }
     }

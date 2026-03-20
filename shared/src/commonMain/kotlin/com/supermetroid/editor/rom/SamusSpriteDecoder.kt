@@ -260,6 +260,112 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
     enum class SuitType { POWER, VARIA, GRAVITY }
 
+    // ─── Animation building ───────────────────────────────────────────
+
+    /**
+     * Build a [SpriteAnimation] for a specific animation ID.
+     * Extracts all frames, renders each at the given size, and assigns default timing.
+     *
+     * @param animationId Animation index (0-252)
+     * @param suit        Suit palette to use
+     * @param defaultTicks Default frame duration if ROM has no timing (4 ticks ~ 67ms)
+     * @param renderSize  Width/height of each rendered frame
+     * @return SpriteAnimation with rendered frames, or null if no valid frames
+     */
+    fun buildAnimation(
+        animationId: Int,
+        suit: SuitType = SuitType.POWER,
+        defaultTicks: Int = 4,
+        renderSize: Int = 64
+    ): SpriteAnimation? {
+        val count = getFrameCount(animationId)
+        if (count <= 0) return null
+
+        val palette = readPalette(suit)
+        val frames = mutableListOf<SpriteAnimationFrame>()
+        val seenDmaKeys = mutableSetOf<Long>()
+
+        for (f in 0 until count) {
+            val pose = getPose(animationId, f) ?: break // null = end marker hit
+
+            // Detect duplicate DMA entries (animation data looping into next anim's data).
+            // Build a key from the frame progression entry bytes.
+            val dmaKey = getFrameProgressionKey(animationId, f)
+            if (dmaKey != null && f > 0 && dmaKey in seenDmaKeys) break // looped
+            if (dmaKey != null) seenDmaKeys.add(dmaKey)
+
+            val pixels = renderPose(pose, palette, renderSize, renderSize)
+
+            // Filter empty frames (0 visible pixels = overcounted garbage from getFrameCount)
+            val nonTransparent = pixels.count { (it ushr 24) > 0 }
+            if (nonTransparent == 0) continue
+
+            frames.add(SpriteAnimationFrame(
+                pixels = pixels,
+                width = renderSize,
+                height = renderSize,
+                durationTicks = defaultTicks,
+                label = "Frame ${frames.size}"
+            ))
+        }
+
+        if (frames.isEmpty()) return null
+
+        val groupName = ANIMATION_GROUPS.find { animationId in it.animationIds }?.name ?: "Anim"
+        val name = "$groupName 0x${animationId.toString(16).uppercase()}"
+
+        return SpriteAnimation(name = name, frames = frames, loop = true)
+    }
+
+    /**
+     * Get a unique key for a frame's DMA progression entry (4 bytes: topTbl, topEnt, botTbl, botEnt).
+     * Used to detect when getFrameCount() overcounts and we start reading the next animation's data.
+     */
+    private fun getFrameProgressionKey(animationId: Int, poseIndex: Int): Long? {
+        val fpPtrOff = romParser.snesToPc(FRAME_PROG_PTRS + 2 * animationId)
+        val fpBase = readU16(rom, fpPtrOff)
+        val entryAddr = romParser.snesToPc(0x920000 + fpBase + 4 * poseIndex)
+        if (entryAddr + 4 > rom.size) return null
+
+        val b0 = rom[entryAddr].toLong() and 0xFF
+        val b1 = rom[entryAddr + 1].toLong() and 0xFF
+        val b2 = rom[entryAddr + 2].toLong() and 0xFF
+        val b3 = rom[entryAddr + 3].toLong() and 0xFF
+        return (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
+    }
+
+    /**
+     * Build [SpriteAnimation]s for all animations in a group (e.g., all Run directions).
+     */
+    fun buildGroupAnimations(
+        groupIdx: Int,
+        suit: SuitType = SuitType.POWER,
+        defaultTicks: Int = 4,
+        renderSize: Int = 64
+    ): List<SpriteAnimation> {
+        val group = ANIMATION_GROUPS.getOrNull(groupIdx) ?: return emptyList()
+        return group.animationIds.mapNotNull { animId ->
+            buildAnimation(animId, suit, defaultTicks, renderSize)
+        }
+    }
+
+    /**
+     * Build animations for ALL Samus animation groups.
+     * Returns one SpriteAnimation per animation ID.
+     * Useful for mega sprite sheet export.
+     */
+    fun buildAllAnimations(
+        suit: SuitType = SuitType.POWER,
+        defaultTicks: Int = 4,
+        renderSize: Int = 64
+    ): List<SpriteAnimation> {
+        return ANIMATION_GROUPS.flatMap { group ->
+            group.animationIds.mapNotNull { animId ->
+                buildAnimation(animId, suit, defaultTicks, renderSize)
+            }
+        }
+    }
+
     // ─── Animation names ─────────────────────────────────────────────
 
     companion object {

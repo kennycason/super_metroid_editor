@@ -656,6 +656,44 @@ class EnemySpritemap(private val romParser: RomParser) {
         return true
     }
 
+    /**
+     * Build a [SpriteAnimation] from an enemy's instruction list frames.
+     * Renders each frame's spritemap using the provided tile data and palette.
+     *
+     * @param speciesId  Enemy species ID (hex offset in bank $A0)
+     * @param tileData   Raw 4bpp tile bytes for this enemy
+     * @param palette    16-color ARGB palette (index 0 = transparent)
+     * @param enemyName  Human-readable name for the animation
+     * @return SpriteAnimation with rendered frames, or null if no frames found
+     */
+    fun buildAnimation(
+        speciesId: Int,
+        tileData: ByteArray,
+        palette: IntArray,
+        enemyName: String = "Enemy 0x${speciesId.toString(16).uppercase()}"
+    ): SpriteAnimation? {
+        val rawFrames = findAnimationFrames(speciesId)
+        if (rawFrames.isEmpty()) return null
+
+        val animFrames = rawFrames.mapNotNull { frame ->
+            val assembled = renderSpritemap(frame.spritemap, tileData, palette) ?: return@mapNotNull null
+            SpriteAnimationFrame(
+                pixels = assembled.pixels,
+                width = assembled.width,
+                height = assembled.height,
+                durationTicks = frame.duration,
+                label = "$enemyName Frame"
+            )
+        }
+        if (animFrames.isEmpty()) return null
+
+        return SpriteAnimation(
+            name = enemyName,
+            frames = animFrames,
+            loop = true
+        )
+    }
+
     private fun parseAnimationFrames(
         rom: ByteArray, instrListPtr: Int, aiBank: Int, maxFrames: Int
     ): List<AnimationFrame> {

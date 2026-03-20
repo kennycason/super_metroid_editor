@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,8 +44,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
+import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpriteAnimation
+import com.supermetroid.editor.rom.SpriteAnimationFrame
+import com.supermetroid.editor.rom.renderSpriteSheet
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
+import java.io.File
+import javax.imageio.ImageIO
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 
 @Composable
 fun EnemySpriteViewer(
@@ -207,6 +218,49 @@ fun EnemySpriteViewer(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        // Enemy animation (OAM instruction list frames)
+        val scope = rememberCoroutineScope()
+        val enemyAnimation = remember(entry.speciesId, refreshKey) {
+            val pal = palette ?: return@remember null
+            val td = tileData ?: return@remember null
+            val smap = EnemySpritemap(rp)
+            smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+        }
+
+        if (enemyAnimation != null && enemyAnimation.frames.size > 1) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Animation (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Divider(modifier = Modifier.padding(vertical = 2.dp))
+
+                    AnimationPlayer(
+                        animation = enemyAnimation,
+                        previewSize = 192,
+                        onExportPng = { frame, idx ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportFramePng(frame, "${entry.name.lowercase().replace(' ', '_')}_frame$idx")
+                            }
+                        },
+                        onExportGif = { anim ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportAnimationGif(anim, entry.name.lowercase().replace(' ', '_'))
+                            }
+                        },
+                        onExportSheet = { anim ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportSheet(anim, "${entry.name.lowercase().replace(' ', '_')}_sheet")
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -384,6 +438,58 @@ fun EnemySpriteViewer(
                         lineHeight = 14.sp)
                 }
             }
+        }
+    }
+}
+
+// ─── Enemy export helpers ────────────────────────────────────────────
+
+private fun enemyExportFramePng(frame: SpriteAnimationFrame, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Frame as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+        ImageIO.write(bi, "png", file)
+    }
+}
+
+private fun enemyExportAnimationGif(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Animation as GIF"
+        selectedFile = File("$defaultName.gif")
+        fileFilter = FileNameExtensionFilter("GIF Images", "gif")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".gif")) File(it.parentFile, "${it.name}.gif") else it
+        }
+        val gifBytes = GifEncoder.encode(animation.frames)
+        file.writeBytes(gifBytes)
+    }
+}
+
+private fun enemyExportSheet(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Sprite Sheet as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
+        if (w > 0 && h > 0) {
+            val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+            bi.setRGB(0, 0, w, h, pixels, 0, w)
+            ImageIO.write(bi, "png", file)
         }
     }
 }
