@@ -40,23 +40,48 @@ class BossPoseScanner(private val romParser: RomParser) {
             // Mother Brain brain (P1) — custom drawing via MotherBrain_DrawBrain
             // Bank $A9, instruction lists set via MotherBrain_SetBrainInstrs
             0xEC3F to listOf(
+                // Brain idle/hit/damage states (Phase 1)
                 KnownInstrList(0xA9, 0x9C21, "Brain Idle"),
                 KnownInstrList(0xA9, 0x9C29, "Brain Hit"),
                 KnownInstrList(0xA9, 0x9C39, "Brain Damaged"),
-                KnownInstrList(0xA9, 0x9B7F, "Brain Phase2"),
-                KnownInstrList(0xA9, 0x9C87, "Brain Death"),
-                KnownInstrList(0xA9, 0x9D25, "Brain Rainbow"),
-                KnownInstrList(0xA9, 0x9D3D, "Brain Revive"),
-                KnownInstrList(0xA9, 0x9ECC, "Brain Walk 1"),
-                KnownInstrList(0xA9, 0x9F00, "Brain Walk 2"),
-                KnownInstrList(0xA9, 0x9F34, "Brain Walk 3"),
+                // Brain Phase 2 states (after body rises)
+                KnownInstrList(0xA9, 0x9B7F, "Brain P2 Shake"),
+                KnownInstrList(0xA9, 0x9BB3, "Brain Revive"),
+                KnownInstrList(0xA9, 0x9BE7, "Brain Disrupt"),
+                KnownInstrList(0xA9, 0x9D7F, "Brain P3 Idle"),
+                KnownInstrList(0xA9, 0x9DB1, "Brain Shitroid"),
+                KnownInstrList(0xA9, 0x9DBB, "Brain Neck"),
+                // Brain attack states
+                KnownInstrList(0xA9, 0x9C77, "Brain Rainbow Charge"),
+                KnownInstrList(0xA9, 0x9C87, "Brain Death Beam"),
+                KnownInstrList(0xA9, 0x9ECC, "Brain Attack 1"),
+                KnownInstrList(0xA9, 0x9F00, "Brain Attack 2"),
+                KnownInstrList(0xA9, 0x9F34, "Brain Laser"),
+                // Brain death/end states
+                KnownInstrList(0xA9, 0x9D25, "Brain Death"),
+                KnownInstrList(0xA9, 0x9D3D, "Brain Decide"),
             ),
-            // Mother Brain body (P2) — body instruction lists
+            // Mother Brain body (P2) — walking mech body instruction lists
             0xEC7F to listOf(
                 KnownInstrList(0xA9, 0x9C13, "Body Init"),
-                KnownInstrList(0xA9, 0x9A02, "Body Ascent"),
                 KnownInstrList(0xA9, 0x99AA, "Body Stand"),
-                KnownInstrList(0xA9, 0x9A42, "Body Death"),
+                KnownInstrList(0xA9, 0x99C6, "Body Stand Up"),
+                KnownInstrList(0xA9, 0x99F2, "Body Crouch"),
+                KnownInstrList(0xA9, 0x9A02, "Body Ascent"),
+                KnownInstrList(0xA9, 0x9A0A, "Body Rise"),
+                KnownInstrList(0xA9, 0x9A26, "Body Drained"),
+                KnownInstrList(0xA9, 0x9A42, "Body Death Beam"),
+                // Walking cycle instruction lists (forward stride variants)
+                KnownInstrList(0xA9, 0x9730, "Walk Fwd 1"),
+                KnownInstrList(0xA9, 0x976A, "Walk Fwd 2"),
+                KnownInstrList(0xA9, 0x97A4, "Walk Fwd 3"),
+                KnownInstrList(0xA9, 0x97DE, "Walk Fwd 4"),
+                KnownInstrList(0xA9, 0x9818, "Walk Fwd 5"),
+                KnownInstrList(0xA9, 0x9852, "Walk Bwd 1"),
+                KnownInstrList(0xA9, 0x988C, "Walk Bwd 2"),
+                KnownInstrList(0xA9, 0x98C6, "Walk Bwd 3"),
+                KnownInstrList(0xA9, 0x9900, "Walk Bwd 4"),
+                KnownInstrList(0xA9, 0x993A, "Walk Bwd 5"),
             ),
         )
     }
