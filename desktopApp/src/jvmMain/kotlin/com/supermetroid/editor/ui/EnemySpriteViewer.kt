@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,8 +44,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
+import com.supermetroid.editor.rom.GifEncoder
+import com.supermetroid.editor.rom.BossPoseScanner
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpriteAnimation
+import com.supermetroid.editor.rom.SpriteAnimationFrame
+import com.supermetroid.editor.rom.renderSpriteSheet
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
+import java.io.File
+import javax.imageio.ImageIO
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileNameExtensionFilter
 
 @Composable
 fun EnemySpriteViewer(
@@ -206,6 +218,157 @@ fun EnemySpriteViewer(
                                     )
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // Enemy animation (OAM instruction list frames)
+        val scope = rememberCoroutineScope()
+        val enemyAnimation = remember(entry.speciesId, refreshKey) {
+            val pal = palette ?: return@remember null
+            val td = tileData ?: return@remember null
+            val smap = EnemySpritemap(rp)
+            smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+        }
+
+        if (enemyAnimation != null && enemyAnimation.frames.size > 1) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Animation (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    Divider(modifier = Modifier.padding(vertical = 2.dp))
+
+                    AnimationPlayer(
+                        animation = enemyAnimation,
+                        previewSize = 192,
+                        onExportPng = { frame, idx ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportFramePng(frame, "${entry.name.lowercase().replace(' ', '_')}_frame$idx")
+                            }
+                        },
+                        onExportGif = { anim ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportAnimationGif(anim, entry.name.lowercase().replace(' ', '_'))
+                            }
+                        },
+                        onExportSheet = { anim ->
+                            scope.launch(Dispatchers.IO) {
+                                enemyExportSheet(anim, "${entry.name.lowercase().replace(' ', '_')}_sheet")
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // Boss body poses (scan AI bank for large OAM spritemaps)
+        // Show for species with known instruction lists OR enough tiles to be a boss
+        val isBoss = BossPoseScanner.hasKnownPoses(entry.speciesId) ||
+            (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true)
+        if (isBoss) {
+            val bossPoses = remember(entry.speciesId, refreshKey) {
+                val pal = palette ?: return@remember emptyList()
+                val td = tileData ?: return@remember emptyList()
+                val scanner = BossPoseScanner(rp)
+                val poses = scanner.scanPoses(entry.speciesId, minEntries = 3)
+                poses.mapNotNull { pose ->
+                    val rendered = scanner.renderPose(pose, td, pal) ?: return@mapNotNull null
+                    pose to rendered
+                }
+            }
+
+            if (bossPoses.isNotEmpty()) {
+                var selectedPoseIdx by remember { mutableStateOf(0) }
+                val safePoseIdx = selectedPoseIdx.coerceIn(0, bossPoses.size - 1)
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Body Poses (${bossPoses.size} found)", fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                        Divider(modifier = Modifier.padding(vertical = 2.dp))
+
+                        // Pose selector thumbnails
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            for ((pIdx, poseData) in bossPoses.withIndex()) {
+                                val (pose, assembled) = poseData
+                                val thumbBitmap = remember(assembled) {
+                                    val img = BufferedImage(assembled.width, assembled.height, BufferedImage.TYPE_INT_ARGB)
+                                    img.setRGB(0, 0, assembled.width, assembled.height, assembled.pixels, 0, assembled.width)
+                                    img.toComposeImageBitmap()
+                                }
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clickable { selectedPoseIdx = pIdx }
+                                        .border(
+                                            if (pIdx == safePoseIdx) 2.dp else 1.dp,
+                                            if (pIdx == safePoseIdx) Color(0xFFFFD54F) else Color(0xFF3A3F5C),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .background(Color(0xFF2A2A3A), RoundedCornerShape(4.dp))
+                                        .padding(2.dp)
+                                ) {
+                                    Image(
+                                        bitmap = thumbBitmap,
+                                        contentDescription = pose.name,
+                                        modifier = Modifier.size(48.dp),
+                                        filterQuality = FilterQuality.None
+                                    )
+                                    Text(pose.name, fontSize = 6.sp, color = Color(0xFF6A6F88),
+                                        maxLines = 1)
+                                }
+                                if (pIdx >= 11) break // Show max 12 thumbnails
+                            }
+                        }
+
+                        Spacer(Modifier.height(4.dp))
+
+                        // Selected pose preview
+                        val (selectedPose, selectedAssembled) = bossPoses[safePoseIdx]
+                        val scale = maxOf(2, minOf(6, 256 / maxOf(selectedAssembled.width, selectedAssembled.height)))
+                        val dispW = selectedAssembled.width * scale
+                        val dispH = selectedAssembled.height * scale
+                        val poseBitmap = remember(selectedAssembled) {
+                            val img = BufferedImage(selectedAssembled.width, selectedAssembled.height, BufferedImage.TYPE_INT_ARGB)
+                            img.setRGB(0, 0, selectedAssembled.width, selectedAssembled.height, selectedAssembled.pixels, 0, selectedAssembled.width)
+                            img.toComposeImageBitmap()
+                        }
+
+                        Box(modifier = Modifier.clip(RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+                            val checkerSize = 4
+                            Canvas(modifier = Modifier.size(dispW.dp, dispH.dp)) {
+                                for (cy in 0 until dispH step checkerSize) {
+                                    for (cx in 0 until dispW step checkerSize) {
+                                        val isLight = ((cx / checkerSize) + (cy / checkerSize)) % 2 == 0
+                                        drawRect(
+                                            color = if (isLight) Color(0xFF3A3A4A) else Color(0xFF2A2A3A),
+                                            topLeft = Offset(cx.toFloat(), cy.toFloat()),
+                                            size = Size(checkerSize.toFloat(), checkerSize.toFloat())
+                                        )
+                                    }
+                                }
+                            }
+                            Image(
+                                bitmap = poseBitmap,
+                                contentDescription = selectedPose.name,
+                                modifier = Modifier.size(dispW.dp, dispH.dp),
+                                filterQuality = FilterQuality.None
+                            )
+                        }
+                        Text("${selectedPose.name} — ${selectedPose.entryCount} OAM entries, ${selectedAssembled.width}x${selectedAssembled.height}px",
+                            fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -384,6 +547,58 @@ fun EnemySpriteViewer(
                         lineHeight = 14.sp)
                 }
             }
+        }
+    }
+}
+
+// ─── Enemy export helpers ────────────────────────────────────────────
+
+private fun enemyExportFramePng(frame: SpriteAnimationFrame, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Frame as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+        ImageIO.write(bi, "png", file)
+    }
+}
+
+private fun enemyExportAnimationGif(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Animation as GIF"
+        selectedFile = File("$defaultName.gif")
+        fileFilter = FileNameExtensionFilter("GIF Images", "gif")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".gif")) File(it.parentFile, "${it.name}.gif") else it
+        }
+        val gifBytes = GifEncoder.encode(animation.frames)
+        file.writeBytes(gifBytes)
+    }
+}
+
+private fun enemyExportSheet(animation: SpriteAnimation, defaultName: String) {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Save Sprite Sheet as PNG"
+        selectedFile = File("$defaultName.png")
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
+        val file = chooser.selectedFile.let {
+            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
+        }
+        val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
+        if (w > 0 && h > 0) {
+            val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+            bi.setRGB(0, 0, w, h, pixels, 0, w)
+            ImageIO.write(bi, "png", file)
         }
     }
 }
