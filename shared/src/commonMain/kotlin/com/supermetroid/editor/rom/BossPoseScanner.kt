@@ -25,6 +25,9 @@ class BossPoseScanner(private val romParser: RomParser) {
     private val rom = romParser.getRomData()
 
     companion object {
+        /** Check if a species has known instruction lists from the decompilation. */
+        fun hasKnownPoses(speciesId: Int): Boolean = KNOWN_INSTR_LISTS.containsKey(speciesId)
+
         /**
          * Known instruction list addresses from the SM decompilation.
          *
@@ -146,8 +149,11 @@ class BossPoseScanner(private val romParser: RomParser) {
                 val parsed = smap.parseSpritemap(smapSnes) ?: continue
                 if (parsed.entries.size < minEntries) continue
 
-                // Validate tile indices within range
-                val hasOutOfRange = parsed.entries.any { (it.tileNum and 0xFF) >= tileCount }
+                // For known instruction lists, use relaxed tile validation (256 max)
+                // since multi-entity bosses share VRAM space (e.g., MB body uses tiles 128+
+                // because brain tiles occupy 0-127)
+                val maxTile = 256
+                val hasOutOfRange = parsed.entries.any { (it.tileNum and 0xFF) >= maxTile }
                 if (hasOutOfRange) continue
 
                 allSpritemaps.add(instrList.label to parsed)

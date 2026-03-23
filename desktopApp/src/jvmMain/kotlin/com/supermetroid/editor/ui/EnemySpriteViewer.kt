@@ -267,8 +267,9 @@ fun EnemySpriteViewer(
         }
 
         // Boss body poses (scan AI bank for large OAM spritemaps)
-        // Only show for species with enough tiles to be a boss (> 64 tiles = 2048 bytes)
-        val isBoss = (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true)
+        // Show for species with known instruction lists OR enough tiles to be a boss
+        val isBoss = BossPoseScanner.hasKnownPoses(entry.speciesId) ||
+            (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true)
         if (isBoss) {
             val bossPoses = remember(entry.speciesId, refreshKey) {
                 val pal = palette ?: return@remember emptyList()
