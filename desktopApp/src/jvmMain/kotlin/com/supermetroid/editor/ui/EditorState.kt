@@ -1602,6 +1602,14 @@ class EditorState {
         workingLevelData = null
         originalLevelData = null
 
+        // Clear cached sprite editor state so it reloads from the new ROM/project
+        spriteSheetGfx = null
+        spriteSheetPalette = null
+        phantoonSpritemap = null
+        kraidSpritemap = null
+        kraidSheetGfx = null
+        kraidSheetPalette = null
+
         _roomEditOrder.clear()
         _editCounter = 0L
         for ((key, edits) in project.rooms) {
