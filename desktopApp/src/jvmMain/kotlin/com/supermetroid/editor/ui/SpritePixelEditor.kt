@@ -68,6 +68,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -406,6 +407,7 @@ fun SpritePixelEditor(
                 Canvas(
                     modifier = Modifier
                         .size((canvasW / density).dp, (canvasH / density).dp)
+                        .pointerHoverIcon(PixelEditorCursors.forPixelTool(activeTool))
                         .onPointerEvent(PointerEventType.Move) { e ->
                             val pos = e.changes.first().position
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)

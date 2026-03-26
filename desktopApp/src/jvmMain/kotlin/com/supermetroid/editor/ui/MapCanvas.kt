@@ -90,6 +90,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
 import androidx.compose.ui.layout.ContentScale
@@ -971,6 +972,11 @@ fun MapCanvas(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .then(
+                                        if (editorState != null)
+                                            Modifier.pointerHoverIcon(PixelEditorCursors.forEditorTool(editorState.activeTool))
+                                        else Modifier
+                                    )
                                     .onPointerEvent(PointerEventType.Scroll) { event ->
                                         val ne = event.nativeEvent as? MouseEvent
                                         val isZoom = ne?.let { it.isControlDown || it.isMetaDown } ?: false
@@ -2584,6 +2590,36 @@ private fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (ove
 }
 
 /**
+ * Draw a speed booster arrow overlay — a right-pointing chevron/arrow
+ * resembling the in-game speed booster visual.
+ */
+private fun drawSpeedBoosterOverlay(g2: java.awt.Graphics2D, x: Int, y: Int, size: Int, color: java.awt.Color) {
+    // Background
+    g2.color = java.awt.Color(0, 0, 0, 200)
+    g2.fillRect(x, y, size, size)
+
+    // Arrow: right-pointing chevron like the speed booster icon
+    val m = size / 8f  // unit
+    val cx = x + size / 2f
+    val cy = y + size / 2f
+
+    // Double chevron arrow (two >>)
+    val arrowXs1 = floatArrayOf(cx - 2 * m, cx, cx - 2 * m)
+    val arrowYs1 = floatArrayOf(cy - 3 * m, cy, cy + 3 * m)
+    val arrowXs2 = floatArrayOf(cx + 0.5f * m, cx + 2.5f * m, cx + 0.5f * m)
+    val arrowYs2 = floatArrayOf(cy - 3 * m, cy, cy + 3 * m)
+
+    g2.stroke = java.awt.BasicStroke(1.5f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND)
+    g2.color = color
+    g2.drawPolyline(arrowXs1.map { it.toInt() }.toIntArray(), arrowYs1.map { it.toInt() }.toIntArray(), 3)
+    g2.drawPolyline(arrowXs2.map { it.toInt() }.toIntArray(), arrowYs2.map { it.toInt() }.toIntArray(), 3)
+
+    // Colored border
+    g2.stroke = java.awt.BasicStroke(1f)
+    g2.drawRect(x, y, size - 1, size - 1)
+}
+
+/**
  * Draw the actual collision profile for a slope tile, matching SMILE's overlay style.
  *
  * Uses the ROM height table to draw the exact solid area polygon per tile.
@@ -2781,13 +2817,14 @@ private fun buildCompositeImage(
             if (activeOverlays.contains(TileOverlay.TREADMILL) && blockType == 0x3) matchingOverlays.add(TileOverlay.TREADMILL)
             if (activeOverlays.contains(TileOverlay.ITEMS) && itemBlocks.contains(idx)) matchingOverlays.add(TileOverlay.ITEMS)
             
-            val iconSize = 12
+            // Overlay icons: 1/4 tile size (8×8 in a 16×16 tile), bottom-right quadrant
+            val iconSize = 8
             var iconX = px + 16 - iconSize
             val iconY = py + 16 - iconSize
-            
+
             val g2 = g as java.awt.Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g2.font = java.awt.Font("SansSerif", java.awt.Font.BOLD, 9)
+            g2.font = java.awt.Font("SansSerif", java.awt.Font.BOLD, 7)
 
             for (overlay in matchingOverlays) {
                 val color = java.awt.Color(
@@ -2799,19 +2836,22 @@ private fun buildCompositeImage(
 
                 if (overlay == TileOverlay.SLOPE) {
                     drawSlopeOverlay(g2, px, py, bts, color)
+                } else if (overlay == TileOverlay.SPEED) {
+                    drawSpeedBoosterOverlay(g2, iconX, iconY, iconSize, color)
+                    iconX -= (iconSize + 1)
                 } else {
                     val label = richOverlayLabel(overlay, bts)
-                    val labelW = g2.fontMetrics.stringWidth(label)
-                    val cellW = maxOf(iconSize, labelW + 4)
+                    val fm = g2.fontMetrics
+                    val labelW = fm.stringWidth(label)
+                    val cellW = maxOf(iconSize, labelW + 2)
 
                     g2.color = java.awt.Color(0, 0, 0, 200)
                     g2.fillRect(iconX + iconSize - cellW, iconY, cellW, iconSize)
                     g2.color = color
-                    g2.stroke = java.awt.BasicStroke(2f)
-                    g2.drawRect(iconX + iconSize - cellW + 1, iconY + 1, cellW - 3, iconSize - 3)
+                    g2.stroke = java.awt.BasicStroke(1.5f)
+                    g2.drawRect(iconX + iconSize - cellW + 1, iconY + 1, cellW - 2, iconSize - 2)
                     g2.stroke = java.awt.BasicStroke(1f)
                     g2.color = java.awt.Color.WHITE
-                    val fm = g2.fontMetrics
                     g2.drawString(label, iconX + iconSize - cellW + (cellW - labelW) / 2,
                         iconY + (iconSize + fm.ascent - fm.descent) / 2)
                     iconX -= (cellW + 1)

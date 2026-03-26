@@ -57,6 +57,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,8 +68,6 @@ import com.supermetroid.editor.rom.TileGraphics
 import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
 import java.util.LinkedList
-
-enum class PixelTool { PENCIL, ERASER, FILL, EYEDROPPER, SELECT }
 
 private data class PixelEdit(val tileNum: Int, val x: Int, val y: Int, val oldIdx: Int, val newIdx: Int)
 
@@ -363,6 +362,7 @@ fun TilePixelEditor(
                     Canvas(
                         modifier = Modifier
                             .fillMaxSize()
+                            .pointerHoverIcon(PixelEditorCursors.forPixelTool(activeTool))
                             .onPointerEvent(PointerEventType.Press) { event ->
                                 val pos = event.changes.first().position
                                 val px = (pos.x / density / zoomLevel).toInt().coerceIn(0, 15)
