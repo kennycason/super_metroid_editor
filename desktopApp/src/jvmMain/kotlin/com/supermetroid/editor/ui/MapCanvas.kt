@@ -2572,7 +2572,7 @@ private val SLOPE_HEIGHTS = arrayOf(
     intArrayOf(16,13,10, 7, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // 0x1F steep tile 3/3
 )
 
-private fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (overlay) {
+internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (overlay) {
     TileOverlay.DOOR -> "D$bts"
     TileOverlay.SHOT_BEAM -> when {
         bts in 0x04..0x07 -> "X?"

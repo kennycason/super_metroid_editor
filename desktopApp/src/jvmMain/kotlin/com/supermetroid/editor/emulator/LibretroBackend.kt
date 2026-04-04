@@ -18,6 +18,7 @@ import java.util.concurrent.Executors
  */
 class LibretroBackend(
     private val audioEnabledOverride: Boolean? = null,
+    stateDirOverride: File? = null,
 ) : EmulatorBackend {
 
     override val name: String = "libretro"
@@ -49,7 +50,13 @@ class LibretroBackend(
     private var currentRomPath: String? = null
     private var frameImage: BufferedImage? = null
 
-    private val stateDir = File(System.getProperty("user.home"), ".smedit/states/libretro").apply { mkdirs() }
+    private var stateDir: File = (stateDirOverride
+        ?: File(System.getProperty("user.home"), ".smedit/states/libretro")).apply { mkdirs() }
+
+    /** Update the save state directory (e.g. when switching projects). */
+    fun setStateDir(dir: File) {
+        stateDir = dir.apply { mkdirs() }
+    }
 
     // ── EmulatorBackend interface ──────────────────────────────────────────
 

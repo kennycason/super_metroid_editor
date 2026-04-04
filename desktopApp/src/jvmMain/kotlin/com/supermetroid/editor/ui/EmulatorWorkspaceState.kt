@@ -264,6 +264,7 @@ class EmulatorWorkspaceState(
             val caps = b.connect()
             capabilities = caps
             configureBridge()
+            updateStateDirForProject()
             isConnected = true
             gamepadManager.init()
             setStatus("Connected to ${caps.backendName}")
@@ -305,7 +306,7 @@ class EmulatorWorkspaceState(
             saveStates = states.sortedBy { it.name.lowercase() }
             // Load metadata for all states
             val metaMap = mutableMapOf<String, SaveSlotMeta>()
-            val metaDir = File(System.getProperty("user.home"), ".smedit/states/libretro")
+            val metaDir = projectStateDir()
             withContext(Dispatchers.IO) {
                 for (state in states) {
                     val metaFile = File(metaDir, "${state.name}.meta.json")
@@ -478,8 +479,7 @@ class EmulatorWorkspaceState(
                 timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Date()),
             )
             withContext(Dispatchers.IO) {
-                val metaDir = File(System.getProperty("user.home"), ".smedit/states/libretro")
-                metaDir.mkdirs()
+                val metaDir = projectStateDir().apply { mkdirs() }
                 File(metaDir, "$name.meta.json").writeText(json.encodeToString(SaveSlotMeta.serializer(), meta))
             }
             slotMetadata = slotMetadata + (name to meta)
@@ -783,6 +783,21 @@ class EmulatorWorkspaceState(
 
     fun updateRomPath(value: String?) {
         currentRomPath = value?.trim()?.takeIf { it.isNotEmpty() }
+        updateStateDirForProject()
+    }
+
+    /** Compute a project-specific state directory from the current ROM path. */
+    internal fun projectStateDir(): File {
+        val projectSlug = currentRomPath?.let { File(it).nameWithoutExtension }
+            ?.replace(Regex("[^a-zA-Z0-9_\\-.]"), "_")
+            ?: "default"
+        return File(System.getProperty("user.home"), ".smedit/states/libretro/$projectSlug")
+    }
+
+    /** Point save states at a project-specific subdirectory derived from the ROM filename. */
+    private fun updateStateDirForProject() {
+        val b = backend as? LibretroBackend ?: return
+        b.setStateDir(projectStateDir())
     }
 
     fun clearPlannedRoute() {

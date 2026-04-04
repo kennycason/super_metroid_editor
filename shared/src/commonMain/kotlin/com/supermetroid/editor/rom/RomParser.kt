@@ -1095,6 +1095,99 @@ class RomParser(internal val romData: ByteArray) {
      *   $C872/$C878 = Yellow (power bomb)
      * Returns ARGB color or null if not a door cap PLM.
      */
+
+    // ─── Minimap / Pause Screen Map ──────────────────────────────────
+
+    /**
+     * Read the minimap tile data for a given area (0-6).
+     *
+     * ROM layout: each area has 0x1000 bytes stored as two 32×32 halves.
+     * Left half (x=0..31) at offset base, right half (x=32..63) at base+0x800.
+     * Each tile is a 16-bit LE word at: halfBase + ((y+1) * 32 + (x % 32)) * 2
+     */
+    fun readMinimapTiles(area: Int): MinimapData {
+        require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[area])
+        val tiles = IntArray(MinimapData.TILE_COUNT)
+
+        for (y in 0 until MinimapData.MAP_HEIGHT) {
+            for (x in 0 until MinimapData.MAP_WIDTH) {
+                val halfBase = if (x < 32) basePc else basePc + 0x800
+                val localX = x % 32
+                // Row 0 in the ROM is a header row; room mapY=0 maps to ROM row 1
+                val offset = halfBase + ((y + 1) * 32 + localX) * 2
+                if (offset + 1 < romData.size) {
+                    tiles[y * MinimapData.MAP_WIDTH + x] = readU16(romData, offset)
+                }
+            }
+        }
+        return MinimapData(area, tiles)
+    }
+
+    /**
+     * Read the map station reveal data for a given area.
+     * 256 bytes, each byte = 8 tiles' reveal flags (LSB first).
+     */
+    fun readMapStationData(area: Int): MapStationData {
+        require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        val basePc = snesToPc(MinimapData.MAP_STATION_ADDRESSES[area])
+        val revealed = BooleanArray(MinimapData.TILE_COUNT)
+
+        for (i in 0 until MinimapData.MAP_STATION_DATA_SIZE) {
+            val offset = basePc + i
+            if (offset >= romData.size) break
+            val byte = romData[offset].toInt() and 0xFF
+            for (bit in 0 until 8) {
+                val tileIdx = i * 8 + bit
+                if (tileIdx < MinimapData.TILE_COUNT) {
+                    revealed[tileIdx] = (byte and (1 shl bit)) != 0
+                }
+            }
+        }
+        return MapStationData(area, revealed)
+    }
+
+    /**
+     * Write minimap tile data back into ROM bytes.
+     * Returns a list of (pcOffset, byte) pairs for the changed bytes.
+     */
+    fun writeMinimapTiles(data: MinimapData): List<Pair<Int, Byte>> {
+        val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[data.area])
+        val patches = mutableListOf<Pair<Int, Byte>>()
+
+        for (y in 0 until MinimapData.MAP_HEIGHT) {
+            for (x in 0 until MinimapData.MAP_WIDTH) {
+                val halfBase = if (x < 32) basePc else basePc + 0x800
+                val localX = x % 32
+                val offset = halfBase + ((y + 1) * 32 + localX) * 2
+                val word = data.getTile(x, y)
+                patches.add(offset to (word and 0xFF).toByte())
+                patches.add((offset + 1) to ((word shr 8) and 0xFF).toByte())
+            }
+        }
+        return patches
+    }
+
+    /**
+     * Write map station reveal data back into ROM bytes.
+     */
+    fun writeMapStationData(data: MapStationData): List<Pair<Int, Byte>> {
+        val basePc = snesToPc(MinimapData.MAP_STATION_ADDRESSES[data.area])
+        val patches = mutableListOf<Pair<Int, Byte>>()
+
+        for (i in 0 until MinimapData.MAP_STATION_DATA_SIZE) {
+            var byte = 0
+            for (bit in 0 until 8) {
+                val tileIdx = i * 8 + bit
+                if (tileIdx < MinimapData.TILE_COUNT && data.revealed[tileIdx]) {
+                    byte = byte or (1 shl bit)
+                }
+            }
+            patches.add((basePc + i) to byte.toByte())
+        }
+        return patches
+    }
+
     companion object {
         // ─── Item PLM catalog ──────────────────────────────────────
         data class ItemDef(val name: String, val shortLabel: String, val chozoId: Int, val visibleId: Int, val hiddenId: Int)

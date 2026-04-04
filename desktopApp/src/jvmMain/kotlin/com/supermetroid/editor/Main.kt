@@ -85,6 +85,9 @@ import com.supermetroid.editor.ui.PhantoonSpriteEditor
 import com.supermetroid.editor.ui.RoomListView
 import com.supermetroid.editor.ui.SamusSpriteViewer
 import com.supermetroid.editor.ui.RoomPropertiesPanel
+import com.supermetroid.editor.ui.MinimapCanvas
+import com.supermetroid.editor.ui.MinimapEditorState
+import com.supermetroid.editor.ui.MinimapSidebar
 import com.supermetroid.editor.ui.SoundEditorCanvas
 import com.supermetroid.editor.ui.PaletteEditor
 import com.supermetroid.editor.ui.SoundEditorState
@@ -332,6 +335,7 @@ fun main() = application {
                 var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
                 val tilesetEditorState = remember { TilesetEditorState() }
                 val soundEditorState = remember { SoundEditorState() }
+                val minimapEditorState = remember { MinimapEditorState() }
                 var bottomPaneTab by remember { mutableStateOf(0) } // 0 = Tileset, 1 = Patterns (in Rooms bottom pane)
                 var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
                 // Auto-switch to Palette tab when user samples a tile
@@ -377,6 +381,10 @@ fun main() = application {
                                 Tab(selected = leftTab == 4, onClick = { leftTab = 4 },
                                     modifier = Modifier.height(32.dp)) {
                                     Text("Sprites", fontSize = fs.tabLabel)
+                                }
+                                Tab(selected = leftTab == 5, onClick = { leftTab = 5 },
+                                    modifier = Modifier.height(32.dp)) {
+                                    Text("Map", fontSize = fs.tabLabel)
                                 }
                             }
 
@@ -615,6 +623,12 @@ fun main() = application {
                                         }
                                     }
                                 }
+                                5 -> MinimapSidebar(
+                                    state = minimapEditorState,
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                             }
                         }
@@ -697,6 +711,11 @@ fun main() = application {
                                         }
                                         } // else (enemy sprites)
                                     }
+                                    5 -> MinimapCanvas(
+                                        state = minimapEditorState,
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
                                 }
                                 }
                             }

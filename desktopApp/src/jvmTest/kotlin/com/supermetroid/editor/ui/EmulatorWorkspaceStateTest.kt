@@ -245,6 +245,34 @@ class EmulatorWorkspaceStateTest {
         assertEquals(1144f, currentPosition.y, 0.001f)
     }
 
+    @Test
+    fun `projectStateDir derives slug from ROM filename`() {
+        val state = EmulatorWorkspaceState()
+        state.updateRomPath("/Users/kenny/roms/Super Metroid (JU) [!].smc")
+        val dir = state.projectStateDir()
+        assertTrue(dir.path.endsWith("Super_Metroid__JU_____.smc".replace(".smc", "")))
+        assertTrue(dir.path.contains(".smedit/states/libretro/"))
+    }
+
+    @Test
+    fun `projectStateDir defaults when no ROM set`() {
+        val state = EmulatorWorkspaceState()
+        val dir = state.projectStateDir()
+        assertTrue(dir.path.endsWith("/default"))
+    }
+
+    @Test
+    fun `projectStateDir changes when ROM path changes`() {
+        val state = EmulatorWorkspaceState()
+        state.updateRomPath("/roms/GameA.smc")
+        val dirA = state.projectStateDir()
+        state.updateRomPath("/roms/GameB.sfc")
+        val dirB = state.projectStateDir()
+        assertFalse(dirA.path == dirB.path, "different ROMs should produce different state dirs")
+        assertTrue(dirA.path.contains("GameA"))
+        assertTrue(dirB.path.contains("GameB"))
+    }
+
     private fun sampleGraph(): LoadedNavGraph {
         return LoadedNavGraph(
             EditorNavGraph(

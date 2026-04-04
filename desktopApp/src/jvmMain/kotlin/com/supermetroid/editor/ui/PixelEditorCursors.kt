@@ -4,7 +4,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Colorize
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathNode
@@ -17,7 +16,6 @@ import java.awt.Cursor
 import java.awt.Point
 import java.awt.RenderingHints
 import java.awt.Toolkit
-import java.awt.geom.Arc2D
 import java.awt.geom.Path2D
 import java.awt.image.BufferedImage
 
@@ -292,6 +290,7 @@ object PixelEditorCursors {
      * Approximate SVG arc command by converting endpoint parameterization
      * to center parameterization and using AWT Arc2D.
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun appendArc(
         path: Path2D.Float,
         x0: Float, y0: Float,

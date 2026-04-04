@@ -264,6 +264,16 @@ data class TilePattern(
 }
 
 /**
+ * A single minimap tile edit: position + tile word value.
+ */
+@Serializable
+data class MinimapTileEdit(
+    val x: Int,
+    val y: Int,
+    val tileWord: Int,
+)
+
+/**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
  */
@@ -275,6 +285,7 @@ data class SmEditProject(
     val patches: MutableList<SmPatch> = mutableListOf(),
     val customGfx: TilesetGfxData = TilesetGfxData(),
     val patterns: MutableList<TilePattern> = mutableListOf(),
+    val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",
