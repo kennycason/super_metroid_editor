@@ -140,12 +140,16 @@ data class StateDataChange(
  */
 @Serializable
 data class RoomHeaderChange(
-    val area: Int? = null,           // 0-6 (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres)
-    val mapX: Int? = null,           // 0-255 minimap X position
-    val mapY: Int? = null,           // 0-255 minimap Y position
-    val upScroller: Int? = null,     // screen-edge up scroller threshold (0x70 default, 0x90 grapple)
-    val downScroller: Int? = null,   // screen-edge down scroller threshold (0xA0 default)
-    val creBitflag: Int? = null      // 0x00=no CRE, 0x01=CRE used, 0x02=has BG, 0x05=CRE+BG
+    val index: Int? = null,          // Byte 0: room index (0-255)
+    val area: Int? = null,           // Byte 1: 0-6 (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres)
+    val mapX: Int? = null,           // Byte 2: 0-63 minimap X position
+    val mapY: Int? = null,           // Byte 3: 0-31 minimap Y position
+    val width: Int? = null,          // Byte 4: room width in screens (1-15)
+    val height: Int? = null,         // Byte 5: room height in screens (1-15)
+    val upScroller: Int? = null,     // Byte 6: screen-edge up scroller threshold (0x70 default, 0x90 grapple)
+    val downScroller: Int? = null,   // Byte 7: screen-edge down scroller threshold (0xA0 default)
+    val creBitflag: Int? = null,     // Byte 8: 0x00=no CRE, 0x01=CRE used, 0x02=has BG, 0x05=CRE+BG
+    val doorOut: Int? = null,        // Bytes 9-10: door out pointer (16-bit, within bank $8F)
 )
 
 /**

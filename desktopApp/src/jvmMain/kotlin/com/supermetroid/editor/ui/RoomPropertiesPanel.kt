@@ -166,23 +166,31 @@ fun RoomPropertiesPanel(
         }
     }
 
-    // Room header edit state
+    // Room header edit state — all 11 bytes
     val savedHeader = roomEdits?.roomHeaderChange
+    var editIndex by remember(room.roomId) { mutableStateOf(savedHeader?.index ?: room.index) }
     var editArea by remember(room.roomId) { mutableStateOf(savedHeader?.area ?: room.area) }
     var editMapX by remember(room.roomId) { mutableStateOf(savedHeader?.mapX ?: room.mapX) }
     var editMapY by remember(room.roomId) { mutableStateOf(savedHeader?.mapY ?: room.mapY) }
+    var editWidth by remember(room.roomId) { mutableStateOf(savedHeader?.width ?: room.width) }
+    var editHeight by remember(room.roomId) { mutableStateOf(savedHeader?.height ?: room.height) }
     var editUpScroller by remember(room.roomId) { mutableStateOf(savedHeader?.upScroller ?: room.upScroller) }
     var editDownScroller by remember(room.roomId) { mutableStateOf(savedHeader?.downScroller ?: room.downScroller) }
     var editCreBitflag by remember(room.roomId) { mutableStateOf(savedHeader?.creBitflag ?: room.creBitflag) }
+    var editDoorOut by remember(room.roomId) { mutableStateOf(savedHeader?.doorOut ?: room.doorOut) }
 
     fun syncHeaderToState() {
         val change = RoomHeaderChange(
+            index = editIndex.takeIf { it != room.index },
             area = editArea.takeIf { it != room.area },
             mapX = editMapX.takeIf { it != room.mapX },
             mapY = editMapY.takeIf { it != room.mapY },
+            width = editWidth.takeIf { it != room.width },
+            height = editHeight.takeIf { it != room.height },
             upScroller = editUpScroller.takeIf { it != room.upScroller },
             downScroller = editDownScroller.takeIf { it != room.downScroller },
             creBitflag = editCreBitflag.takeIf { it != room.creBitflag },
+            doorOut = editDoorOut.takeIf { it != room.doorOut },
         )
         if (change == RoomHeaderChange()) {
             editorState.project.getOrCreateRoom(room.roomId).roomHeaderChange = null
@@ -198,15 +206,20 @@ fun RoomPropertiesPanel(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // ── Room Header ──
+        // ── Room Header (all 11 bytes editable) ──
         SectionHeader("Room Header")
         PropertyRow("Room ID", "0x${room.roomId.toString(16).uppercase().padStart(4, '0')}")
+        EditableHexRow("Room Index", editIndex, 1) { editIndex = it; syncHeaderToState() }
         EditableIntRow("Area", editArea, 0, 6) { editArea = it; syncHeaderToState() }
         PropertyRow("Area Name", AREA_NAMES.getOrElse(editArea) { "Unknown" })
-        EditableIntRow("Map X", editMapX, 0, 255) { editMapX = it; syncHeaderToState() }
-        EditableIntRow("Map Y", editMapY, 0, 255) { editMapY = it; syncHeaderToState() }
-        PropertyRow("Dimensions", "${room.width} x ${room.height} screens")
-        PropertyRow("Room Index", "0x${room.index.toString(16).uppercase().padStart(2, '0')}")
+        EditableIntRow("Map X", editMapX, 0, 63) { editMapX = it; syncHeaderToState() }
+        EditableIntRow("Map Y", editMapY, 0, 31) { editMapY = it; syncHeaderToState() }
+        EditableIntRow("Width", editWidth, 1, 15,
+            suffix = " screen${if (editWidth != 1) "s" else ""}"
+        ) { editWidth = it; syncHeaderToState() }
+        EditableIntRow("Height", editHeight, 1, 15,
+            suffix = " screen${if (editHeight != 1) "s" else ""}"
+        ) { editHeight = it; syncHeaderToState() }
         EditableHexRow("Up Scroller", editUpScroller, 1,
             suffix = when (editUpScroller) { 0x70 -> " (default)"; 0x90 -> " (grapple)"; 0x99 -> " (ascent)"; else -> "" }
         ) { editUpScroller = it; syncHeaderToState() }
@@ -216,7 +229,9 @@ fun RoomPropertiesPanel(
         EditableHexRow("CRE Bitflag", editCreBitflag, 1,
             suffix = " — ${CRE_BITFLAG_NAMES[editCreBitflag] ?: "Custom"}"
         ) { editCreBitflag = it; syncHeaderToState() }
-        PropertyRow("Door Out Ptr", "\$8F:${room.doorOut.toString(16).uppercase().padStart(4, '0')}")
+        EditableHexRow("Door Out Ptr", editDoorOut, 2,
+            suffix = " (\$8F)"
+        ) { editDoorOut = it; syncHeaderToState() }
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -587,7 +602,8 @@ private fun EditableIntRow(
     value: Int,
     min: Int,
     max: Int,
-    onValueChange: (Int) -> Unit
+    suffix: String = "",
+    onValueChange: (Int) -> Unit,
 ) {
     var text by remember(value) { mutableStateOf(value.toString()) }
     var isEditing by remember { mutableStateOf(false) }
@@ -621,7 +637,7 @@ private fun EditableIntRow(
             ) { Text("OK", fontSize = 9.sp) }
         } else {
             Text(
-                "$value",
+                "$value$suffix",
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f).clickable { isEditing = true }

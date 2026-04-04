@@ -3264,12 +3264,19 @@ class EditorState {
             if (hasHeaderEdits) {
                 val hc = roomEdits.roomHeaderChange!!
                 val headerPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
+                hc.index?.let { romData[headerPc] = it.toByte() }
                 hc.area?.let { romData[headerPc + 1] = it.toByte() }
                 hc.mapX?.let { romData[headerPc + 2] = it.toByte() }
                 hc.mapY?.let { romData[headerPc + 3] = it.toByte() }
+                hc.width?.let { romData[headerPc + 4] = it.toByte() }
+                hc.height?.let { romData[headerPc + 5] = it.toByte() }
                 hc.upScroller?.let { romData[headerPc + 6] = it.toByte() }
                 hc.downScroller?.let { romData[headerPc + 7] = it.toByte() }
                 hc.creBitflag?.let { romData[headerPc + 8] = it.toByte() }
+                hc.doorOut?.let {
+                    romData[headerPc + 9] = (it and 0xFF).toByte()
+                    romData[headerPc + 10] = ((it shr 8) and 0xFF).toByte()
+                }
                 println("Room 0x$roomKey: patched room header")
             }
 
@@ -3419,7 +3426,24 @@ class EditorState {
             }
         }
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0) {
+        // Apply minimap tile edits
+        var minimapPatched = 0
+        for ((areaKey, edits) in project.minimapEdits) {
+            val area = areaKey.toIntOrNull() ?: continue
+            if (area !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) continue
+            val baseline = romParser.readMinimapTiles(area)
+            var patched = baseline
+            for (edit in edits) {
+                patched = patched.withTile(edit.x, edit.y, edit.tileWord)
+            }
+            for ((offset, byte) in romParser.writeMinimapTiles(patched)) {
+                romData[offset] = byte
+            }
+            minimapPatched += edits.size
+            println("Minimap area $area: patched ${edits.size} tiles")
+        }
+
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             out.writeBytes(romData)

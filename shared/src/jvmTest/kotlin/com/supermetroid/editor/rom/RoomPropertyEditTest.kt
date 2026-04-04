@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.FxChange
+import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.ScrollChange
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.data.RoomEdits
@@ -417,5 +418,78 @@ class RoomPropertyEditTest {
         assertTrue(roomsWithRedScrolls > 0,
             "Should find at least one room with hidden (Red) scroll screens")
         println("Rooms with Red (hidden) scroll screens: $roomsWithRedScrolls")
+    }
+
+    // ─── Room header change ──────────────────────────────────────────
+
+    @Test
+    fun `RoomHeaderChange with all fields null equals default`() {
+        assertEquals(RoomHeaderChange(), RoomHeaderChange())
+    }
+
+    @Test
+    fun `RoomHeaderChange with some fields set is not default`() {
+        val change = RoomHeaderChange(area = 2, width = 3)
+        assertNotEquals(RoomHeaderChange(), change)
+        assertEquals(2, change.area)
+        assertEquals(3, change.width)
+        assertNull(change.index)
+        assertNull(change.mapX)
+        assertNull(change.height)
+        assertNull(change.doorOut)
+    }
+
+    @Test
+    fun `RoomHeaderChange covers all 11 header bytes`() {
+        val change = RoomHeaderChange(
+            index = 5,          // byte 0
+            area = 1,           // byte 1
+            mapX = 10,          // byte 2
+            mapY = 20,          // byte 3
+            width = 3,          // byte 4
+            height = 4,         // byte 5
+            upScroller = 0x70,  // byte 6
+            downScroller = 0xA0,// byte 7
+            creBitflag = 0x02,  // byte 8
+            doorOut = 0x8F00,   // bytes 9-10
+        )
+        assertEquals(5, change.index)
+        assertEquals(1, change.area)
+        assertEquals(10, change.mapX)
+        assertEquals(20, change.mapY)
+        assertEquals(3, change.width)
+        assertEquals(4, change.height)
+        assertEquals(0x70, change.upScroller)
+        assertEquals(0xA0, change.downScroller)
+        assertEquals(0x02, change.creBitflag)
+        assertEquals(0x8F00, change.doorOut)
+    }
+
+    @Test
+    fun `room header round-trip preserves all fields`() {
+        val parser = loadTestRom() ?: return
+        // Landing Site
+        val room = parser.readRoomHeader(0x91F8) ?: fail("Landing Site not found")
+        assertEquals(0, room.area)
+        assertEquals(23, room.mapX)  // known Landing Site mapX
+        assertEquals(0, room.mapY)
+        assertEquals(9, room.width)
+        assertEquals(5, room.height)
+
+        // Apply header change to ROM copy
+        val romCopy = parser.getRomData().copyOf()
+        val headerPc = parser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x91F8)
+        romCopy[headerPc] = 0x42.toByte()        // index
+        romCopy[headerPc + 4] = 0x03.toByte()    // width = 3
+        romCopy[headerPc + 5] = 0x02.toByte()    // height = 2
+        romCopy[headerPc + 9] = 0xAA.toByte()    // doorOut low
+        romCopy[headerPc + 10] = 0xBB.toByte()   // doorOut high
+
+        val modified = RomParser(romCopy)
+        val room2 = modified.readRoomHeader(0x91F8) ?: fail("Modified room not found")
+        assertEquals(0x42, room2.index)
+        assertEquals(3, room2.width)
+        assertEquals(2, room2.height)
+        assertEquals(0xBBAA, room2.doorOut)
     }
 }
