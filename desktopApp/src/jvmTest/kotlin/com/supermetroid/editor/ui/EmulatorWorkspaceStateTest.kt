@@ -250,15 +250,16 @@ class EmulatorWorkspaceStateTest {
         val state = EmulatorWorkspaceState()
         state.updateRomPath("/Users/kenny/roms/Super Metroid (JU) [!].smc")
         val dir = state.projectStateDir()
-        assertTrue(dir.path.endsWith("Super_Metroid__JU_____.smc".replace(".smc", "")))
-        assertTrue(dir.path.contains(".smedit/states/libretro/"))
+        val normalizedPath = dir.path.replace('\\', '/')
+        assertTrue(normalizedPath.endsWith("Super_Metroid__JU_____.smc".replace(".smc", "")))
+        assertTrue(normalizedPath.contains(".smedit/states/libretro/"))
     }
 
     @Test
     fun `projectStateDir defaults when no ROM set`() {
         val state = EmulatorWorkspaceState()
         val dir = state.projectStateDir()
-        assertTrue(dir.path.endsWith("/default"))
+        assertTrue(dir.name == "default")
     }
 
     @Test

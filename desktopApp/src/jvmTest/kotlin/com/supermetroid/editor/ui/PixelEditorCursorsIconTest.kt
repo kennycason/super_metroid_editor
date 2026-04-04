@@ -2,13 +2,21 @@ package com.supermetroid.editor.ui
 
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.awt.GraphicsEnvironment
 
 /**
  * Tests that Material Icon-based cursors render without errors
  * and produce valid, distinct cursor objects for each tool.
  */
 class PixelEditorCursorsIconTest {
+
+    @BeforeEach
+    fun skipIfHeadless() {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Cursor tests require a display")
+    }
 
     @Test
     fun `pencil cursor renders from Brush icon without error`() {
