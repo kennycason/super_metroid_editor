@@ -86,6 +86,7 @@ import com.supermetroid.editor.ui.RoomListView
 import com.supermetroid.editor.ui.SamusSpriteViewer
 import com.supermetroid.editor.ui.RoomPropertiesPanel
 import com.supermetroid.editor.ui.MinimapCanvas
+import com.supermetroid.editor.ui.ValidationPanel
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
 import com.supermetroid.editor.ui.SoundEditorCanvas
@@ -667,11 +668,22 @@ fun main() = application {
                                             )
                                         }
                                     }
-                                    2 -> PatchEditorCanvas(
-                                        editorState = editorState,
-                                        romParser = romParser,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    2 -> Column(Modifier.fillMaxSize()) {
+                                        PatchEditorCanvas(
+                                            editorState = editorState,
+                                            romParser = romParser,
+                                            modifier = Modifier.weight(1f).fillMaxWidth()
+                                        )
+                                        DraggableDividerHorizontal(
+                                            onDelta = { dy ->
+                                                // reuse tilesetHeightDp for divider state
+                                            }
+                                        )
+                                        ValidationPanel(
+                                            romParser = romParser,
+                                            modifier = Modifier.fillMaxWidth().height(300.dp)
+                                        )
+                                    }
                                     3 -> SoundEditorCanvas(
                                         romParser = romParser,
                                         editorState = editorState,
