@@ -492,4 +492,54 @@ class RoomPropertyEditTest {
         assertEquals(2, room2.height)
         assertEquals(0xBBAA, room2.doorOut)
     }
+
+    // ─── FX data parsing ─────────────────────────────────────────────
+
+    @Test
+    fun `FxChange includes all 16-byte entry fields`() {
+        val change = FxChange(
+            fxType = 0x04,
+            liquidSurfaceStart = 0x0100,
+            liquidSurfaceNew = 0x0080,
+            liquidSpeed = 0x0001,
+            liquidDelay = 0x10,
+            fxBitA = 0x02,
+            fxBitB = 0x1C,
+            fxBitC = 0x05,
+            paletteFxBitflags = 0x0F,
+            tileAnimBitflags = 0x03,
+            paletteBlend = 0x08,
+        )
+        assertEquals(0x04, change.fxType)
+        assertEquals(0x05, change.fxBitC)
+        assertEquals(0x0F, change.paletteFxBitflags)
+        assertEquals(0x03, change.tileAnimBitflags)
+        assertNotEquals(FxChange(), change)
+    }
+
+    @Test
+    fun `FxChange with only bitC set is not default`() {
+        val change = FxChange(fxBitC = 0x01)
+        assertNotEquals(FxChange(), change)
+    }
+
+    @Test
+    fun `FX entries parse for rooms with liquid`() {
+        val parser = loadTestRom() ?: return
+        // Maridia Aqueduct room (0xD5A7) has water FX
+        val room = parser.readRoomHeader(0xD5A7)
+        if (room == null) {
+            println("Room 0xD5A7 not found, skipping")
+            return
+        }
+        val fxEntries = parser.parseFxEntries(room.fxPtr)
+        assertTrue(fxEntries.isNotEmpty(), "Maridia room should have FX entries")
+        val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
+        if (defaultFx != null) {
+            println("FX type: 0x${defaultFx.fxType.toString(16)}, " +
+                "bitC: 0x${defaultFx.fxBitC.toString(16)}, " +
+                "palFx: 0x${defaultFx.paletteFxBitflags.toString(16)}, " +
+                "tileAnim: 0x${defaultFx.tileAnimBitflags.toString(16)}")
+        }
+    }
 }

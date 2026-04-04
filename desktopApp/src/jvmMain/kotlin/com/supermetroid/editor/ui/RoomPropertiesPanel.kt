@@ -3,6 +3,8 @@ package com.supermetroid.editor.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -122,6 +125,9 @@ fun RoomPropertiesPanel(
     var editLiquidDelay by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.liquidDelay ?: defaultFx?.liquidDelay ?: 0) }
     var editFxBitA by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitA ?: defaultFx?.fxBitA ?: 0x02) }
     var editFxBitB by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitB ?: defaultFx?.fxBitB ?: 0x02) }
+    var editFxBitC by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitC ?: defaultFx?.fxBitC ?: 0) }
+    var editPaletteFxBits by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.paletteFxBitflags ?: defaultFx?.paletteFxBitflags ?: 0) }
+    var editTileAnimBits by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.tileAnimBitflags ?: defaultFx?.tileAnimBitflags ?: 0) }
     var editPaletteBlend by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.paletteBlend ?: defaultFx?.paletteBlend ?: 0) }
 
     // State data edit state — keyed by (roomId, stateIdx) so fields reset on state switch
@@ -143,6 +149,9 @@ fun RoomPropertiesPanel(
             liquidDelay = editLiquidDelay.takeIf { it != (defaultFx?.liquidDelay ?: 0) },
             fxBitA = editFxBitA.takeIf { it != (defaultFx?.fxBitA ?: 0x02) },
             fxBitB = editFxBitB.takeIf { it != (defaultFx?.fxBitB ?: 0x02) },
+            fxBitC = editFxBitC.takeIf { it != (defaultFx?.fxBitC ?: 0) },
+            paletteFxBitflags = editPaletteFxBits.takeIf { it != (defaultFx?.paletteFxBitflags ?: 0) },
+            tileAnimBitflags = editTileAnimBits.takeIf { it != (defaultFx?.tileAnimBitflags ?: 0) },
             paletteBlend = editPaletteBlend.takeIf { it != (defaultFx?.paletteBlend ?: 0) },
         )
         if (change == FxChange()) {
@@ -309,10 +318,13 @@ fun RoomPropertiesPanel(
         // Read-only pointers
         PropertyRow("Level Data", snesAddr24(levelDataPtr))
 
-        // Editable: BG Scrolling
-        EditableHexRow("BG Scrolling", editBgScrolling, 2) { editBgScrolling = it; syncStateDataToState() }
+        // Editable: BG/Layer 2 Scrolling — dropdown with named modes
+        BgScrollDropdown(editBgScrolling) { editBgScrolling = it; syncStateDataToState() }
 
-        PropertyRow("BG Data Ptr", if (bgDataPtr == 0) "None (layer 2 in level data)" else "\$8F:${bgDataPtr.toString(16).uppercase().padStart(4, '0')}")
+        PropertyRow("BG Data Ptr", when (bgDataPtr) {
+            0x0000 -> "None (layer 2 in level data)"
+            else -> "\$8F:${bgDataPtr.toString(16).uppercase().padStart(4, '0')}"
+        })
         val enemyCount = remember(enemySetPtr) { romParser.parseEnemyPopulation(enemySetPtr).size }
         val plmCount = remember(plmSetPtr) { romParser.parsePlmSet(plmSetPtr).size }
         PropertyRow("PLM Set", "\$8F:${plmSetPtr.toString(16).uppercase().padStart(4, '0')} ($plmCount PLMs)")
@@ -379,25 +391,30 @@ fun RoomPropertiesPanel(
                 EditableHexRow("FX Trans. A", editFxBitA, 1) { editFxBitA = it; syncFxToState() }
                 EditableHexRow("FX Trans. B", editFxBitB, 1) { editFxBitB = it; syncFxToState() }
 
+                // Liquid options (fxBitC) — bitfield checkboxes
+                BitfieldRow("Liquid Options", editFxBitC, listOf(
+                    0x01 to "Flow Left",
+                    0x02 to "BG Heat",
+                    0x04 to "BG Liquid",
+                    0x08 to "Large Tide",
+                    0x10 to "Small Tide",
+                )) { editFxBitC = it; syncFxToState() }
+
+                // Animated tiles — bitfield checkboxes
+                BitfieldRow("Tile Anim", editTileAnimBits, listOf(
+                    0x01 to "Spikes (H)",
+                    0x02 to "Spikes (V)",
+                    0x04 to "Ocean/Sand",
+                    0x08 to "Lava/Sandfall",
+                )) { editTileAnimBits = it; syncFxToState() }
+
+                // Palette FX — which palettes glow
+                BitfieldRow("Palette FX", editPaletteFxBits,
+                    (0..7).map { (1 shl it) to "Pal ${it + 1}" }
+                ) { editPaletteFxBits = it; syncFxToState() }
+
                 // Palette blend
                 EditableHexRow("Palette Blend", editPaletteBlend, 1) { editPaletteBlend = it; syncFxToState() }
-
-                // Read-only complex fields
-                val animBits = defaultFx.tileAnimBitflags
-                val animList = buildList {
-                    if (animBits and 0x01 != 0) add("Spikes (H)")
-                    if (animBits and 0x02 != 0) add("Spikes (V)")
-                    if (animBits and 0x04 != 0) add("Ocean/Sand")
-                    if (animBits and 0x08 != 0) add("Lava/Sandfall")
-                }
-                if (animList.isNotEmpty()) {
-                    PropertyRow("Animated Tiles", animList.joinToString(", "))
-                }
-                val palBits = defaultFx.paletteFxBitflags
-                if (palBits != 0) {
-                    val palList = (0..7).filter { palBits and (1 shl it) != 0 }.map { "Pal ${it + 1}" }
-                    PropertyRow("Palette FX", palList.joinToString(", "))
-                }
             }
         }
 
@@ -509,6 +526,71 @@ private fun MusicDropdown(
                         },
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── BG Scroll Mode Dropdown ───────────────────────────────────────
+
+private val BG_SCROLL_MODES = listOf(
+    0x0000 to "No Layer 2",
+    0x0001 to "Fixed (no scroll)",
+    0x0002 to "Scroll with Layer 1",
+    0x0004 to "Slow horizontal parallax",
+    0x0006 to "Slow vertical parallax",
+    0x0008 to "Slow H+V parallax",
+    0x000A to "Fast horizontal parallax",
+    0x000C to "Fast vertical parallax",
+    0x000E to "Fast H+V parallax",
+    0x0010 to "Very slow H parallax",
+    0x0014 to "Inverse horizontal parallax",
+    0x0016 to "Inverse H + slow V parallax",
+    0x0024 to "Slow H parallax (alt)",
+    0x002E to "No scroll (used w/ BG data)",
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BgScrollDropdown(selectedValue: Int, onSelect: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val modeName = BG_SCROLL_MODES.firstOrNull { it.first == selectedValue }?.second
+    val displayText = if (modeName != null) "$modeName (${hex16(selectedValue)})" else "Custom (${hex16(selectedValue)})"
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("BG Scroll", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp))
+        Box(modifier = Modifier.weight(1f)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(24.dp).clickable { expanded = true },
+                shape = MaterialTheme.shapes.extraSmall,
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(displayText, fontSize = 10.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                    Text("▾", fontSize = 9.sp)
+                }
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                for ((code, name) in BG_SCROLL_MODES) {
+                    val isSelected = code == selectedValue
+                    DropdownMenuItem(
+                        text = {
+                            Text("${hex16(code)} — $name", fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = { expanded = false; onSelect(code) },
+                        modifier = Modifier.height(24.dp)
                     )
                 }
             }
@@ -728,6 +810,43 @@ private fun EditableScrollGrid(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(SCROLL_COLORS[code]!!, MaterialTheme.shapes.extraSmall))
                     Text(lbl, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun BitfieldRow(
+    label: String,
+    value: Int,
+    bits: List<Pair<Int, String>>,
+    onValueChange: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            for ((mask, name) in bits) {
+                val checked = (value and mask) != 0
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable {
+                        onValueChange(if (checked) value and mask.inv() else value or mask)
+                    }
+                ) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = {
+                            onValueChange(if (it) value or mask else value and mask.inv())
+                        },
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(name, fontSize = 9.sp, modifier = Modifier.padding(start = 6.dp, end = 2.dp))
                 }
             }
         }
