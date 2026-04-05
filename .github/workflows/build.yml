@@ -47,6 +47,8 @@ jobs:
       - name: Run tests
         run: ./gradlew :shared:jvmTest :desktopApp:jvmTest
         shell: bash
+        env:
+          JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Build application
         run: ./gradlew :desktopApp:packageDistributionForCurrentOS

@@ -51,7 +51,7 @@ class LibretroBackend(
     private var frameImage: BufferedImage? = null
 
     private var stateDir: File = (stateDirOverride
-        ?: File(System.getProperty("user.home"), ".smedit/states/libretro")).apply { mkdirs() }
+        ?: File(File(File(System.getProperty("user.home"), ".smedit"), "states"), "libretro")).apply { mkdirs() }
 
     /** Update the save state directory (e.g. when switching projects). */
     fun setStateDir(dir: File) {

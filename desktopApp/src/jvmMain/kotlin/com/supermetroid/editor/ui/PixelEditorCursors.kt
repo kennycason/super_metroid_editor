@@ -13,6 +13,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Cursor
+import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.RenderingHints
 import java.awt.Toolkit
@@ -327,6 +328,9 @@ object PixelEditorCursors {
     }
 
     private fun createPointerIcon(img: BufferedImage, hotspot: Point, name: String): PointerIcon {
+        if (GraphicsEnvironment.isHeadless()) {
+            return PointerIcon(Cursor.getDefaultCursor())
+        }
         val toolkit = Toolkit.getDefaultToolkit()
         val bestSize = toolkit.getBestCursorSize(img.width, img.height)
         val finalImg = if (bestSize.width > img.width || bestSize.height > img.height) {

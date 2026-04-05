@@ -791,7 +791,8 @@ class EmulatorWorkspaceState(
         val projectSlug = currentRomPath?.let { File(it).nameWithoutExtension }
             ?.replace(Regex("[^a-zA-Z0-9_\\-.]"), "_")
             ?: "default"
-        return File(System.getProperty("user.home"), ".smedit/states/libretro/$projectSlug")
+        val base = File(System.getProperty("user.home"), ".smedit")
+        return File(File(File(base, "states"), "libretro"), projectSlug)
     }
 
     /** Point save states at a project-specific subdirectory derived from the ROM filename. */
