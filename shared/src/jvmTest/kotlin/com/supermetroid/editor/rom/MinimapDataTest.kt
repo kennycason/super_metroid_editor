@@ -164,8 +164,7 @@ class MinimapDataTest {
         @Test
         fun `wall tiles are distinct from item tiles`() {
             val walls = setOf(
-                MinimapTiles.WALL_TOP, MinimapTiles.WALL_BOTTOM,
-                MinimapTiles.WALL_LEFT, MinimapTiles.WALL_RIGHT
+                MinimapTiles.WALL_TOP, MinimapTiles.WALL_RIGHT, MinimapTiles.WALL_BOTTOM
             )
             val items = setOf(
                 MinimapTiles.ITEM_WALL_TOP, MinimapTiles.ITEM_WALL_BOTTOM,

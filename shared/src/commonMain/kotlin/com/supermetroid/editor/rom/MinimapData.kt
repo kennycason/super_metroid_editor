@@ -161,26 +161,45 @@ object MinimapTiles {
     // Passable room tiles (no walls)
     const val ROOM_OPEN = 0x1B
 
-    // Wall configuration tiles (single walls)
-    const val WALL_TOP = 0x21
-    const val WALL_BOTTOM = 0x23
-    const val WALL_LEFT = 0x25
-    const val WALL_RIGHT = 0x27
+    // Wall assignments verified from actual 2bpp pixel data at ROM PC $D3200.
+    // Names reflect TRUE wall configuration, not assumed positions.
 
-    // Corner tiles (two walls)
-    const val CORNER_TL = 0x20
-    const val CORNER_TR = 0x22
-    const val CORNER_BL = 0x24
-    const val CORNER_BR = 0x26
+    // Four walls (fully enclosed)
+    const val WALLS_TBLR = 0x20     // All 4 walls
+    const val WALLS_TBLR_B = 0x4D   // All 4 walls (variant B, zigzag inner)
+    const val WALLS_TBLR_C = 0x6F   // All 4 walls (variant C, center dot)
 
-    // Three-wall tiles
-    const val WALLS_TLB = 0x28
-    const val WALLS_TRB = 0x29
-    const val WALLS_TLR = 0x2A
-    const val WALLS_BLR = 0x2B
+    // Three walls
+    const val WALLS_TBL = 0x21      // Top+bottom+left (open right)
+    const val WALLS_TLR = 0x24      // Top+left+right (open bottom)
+    const val WALLS_TBL_B = 0x8F    // Top+bottom+left (variant B, center dot)
+    const val WALLS_TLR_B = 0x4F    // Top+left+right (variant B, shaft cap style)
+    const val WALLS_TLR_C = 0x6E    // Top+left+right (variant C, center dot)
 
-    // Four walls (enclosed cell)
-    const val WALLS_ALL = 0x2C
+    // Two walls (corridors and corners)
+    const val WALLS_TB = 0x22       // Top+bottom (horizontal corridor)
+    const val WALLS_LR = 0x23       // Left+right (vertical shaft)
+    const val WALLS_LR_B = 0x10     // Left+right (variant B, wider bottom)
+    const val WALLS_TL = 0x25       // Top+left (corner)
+    const val WALLS_TB_B = 0x5E     // Top+bottom (variant B, center dot)
+    const val WALLS_TL_B = 0x8E     // Top+left (variant B, center dot)
+
+    // Single wall
+    const val WALL_TOP = 0x26       // Top only
+    const val WALL_RIGHT = 0x27     // Right only
+    const val WALL_BOTTOM = 0x5F    // Bottom only (rare transition tile)
+
+    // Diagonal transition tiles (no walls, smooth area transitions)
+    const val DIAG_BL = 0x28        // Diagonal: bottom-left fill
+    const val DIAG_TL = 0x29        // Diagonal: top-left fill
+    const val DIAG_BR = 0x2A        // Diagonal: bottom-right fill
+    const val DIAG_TR = 0x2B        // Diagonal: top-right fill
+
+    // Background/empty tile
+    const val BG_PATTERN = 0x6D     // Background checker pattern (no walls)
+
+    // Elevator symbol (no walls, just arrow glyph)
+    const val ELEVATOR_SHAFT = 0x11 // Shaft cap arrow (no walls in pixel data)
 
     // Door tiles (arrows indicating passage direction)
     const val DOOR_RIGHT = 0x04
@@ -217,23 +236,22 @@ object MinimapTiles {
 
     /** All tiles in a logical order for the palette/picker. */
     val PALETTE_TILES = intArrayOf(
-        // Row 1: Empty and basic room
-        EMPTY, ROOM_OPEN,
-        // Row 2: Walls
-        WALL_TOP, WALL_BOTTOM, WALL_LEFT, WALL_RIGHT,
-        // Row 3: Corners
-        CORNER_TL, CORNER_TR, CORNER_BL, CORNER_BR,
-        // Row 4: Three walls
-        WALLS_TLB, WALLS_TRB, WALLS_TLR, WALLS_BLR, WALLS_ALL,
+        // Row 1: Empty, basic room, single walls
+        EMPTY, ROOM_OPEN, WALL_TOP, WALL_RIGHT, WALL_BOTTOM,
+        // Row 2: Two walls (corners + corridors)
+        WALLS_TL, WALLS_TB, WALLS_LR,
+        // Row 3: Three walls
+        WALLS_TBL, WALLS_TLR,
+        // Row 4: Four walls + diagonal transitions
+        WALLS_TBLR, DIAG_BL, DIAG_TL, DIAG_BR, DIAG_TR,
         // Row 5: Doors
-        DOOR_UP, DOOR_DOWN, DOOR_LEFT, DOOR_RIGHT,
+        DOOR_LEFT, DOOR_RIGHT, DOOR_UP, DOOR_DOWN,
         // Row 6: Items
         ITEM_OPEN, ITEM_WALL_TOP, ITEM_WALL_BOTTOM,
         ITEM_WALL_LEFT, ITEM_WALL_RIGHT,
-        ITEM_CORNER_TL, ITEM_CORNER_TR, ITEM_CORNER_BL, ITEM_CORNER_BR,
-        ITEM_WALLS_ALL,
-        // Row 7: Stations
-        SAVE_STATION, MAP_STATION, ENERGY_STATION, MISSILE_STATION, ELEVATOR,
+        // Row 7: Stations + elevator
+        SAVE_STATION, MAP_STATION, ENERGY_STATION, MISSILE_STATION,
+        ELEVATOR_SHAFT, ELEVATOR,
     )
 
     /** Human-readable names for well-known tiles. */
@@ -241,18 +259,28 @@ object MinimapTiles {
         EMPTY to "Empty",
         ROOM_OPEN to "Room (open)",
         WALL_TOP to "Wall: top",
-        WALL_BOTTOM to "Wall: bottom",
-        WALL_LEFT to "Wall: left",
         WALL_RIGHT to "Wall: right",
-        CORNER_TL to "Corner: top-left",
-        CORNER_TR to "Corner: top-right",
-        CORNER_BL to "Corner: bottom-left",
-        CORNER_BR to "Corner: bottom-right",
-        WALLS_TLB to "Walls: T/L/B",
-        WALLS_TRB to "Walls: T/R/B",
-        WALLS_TLR to "Walls: T/L/R",
-        WALLS_BLR to "Walls: B/L/R",
-        WALLS_ALL to "Walls: all",
+        WALL_BOTTOM to "Wall: bottom",
+        WALLS_TL to "Walls: T+L",
+        WALLS_TB to "Walls: T+B (corridor)",
+        WALLS_TB_B to "Walls: T+B (var B)",
+        WALLS_LR to "Walls: L+R (shaft)",
+        WALLS_LR_B to "Walls: L+R (var B)",
+        WALLS_TL_B to "Walls: T+L (var B)",
+        WALLS_TBL to "Walls: T+B+L",
+        WALLS_TBL_B to "Walls: T+B+L (var B)",
+        WALLS_TLR to "Walls: T+L+R",
+        WALLS_TLR_B to "Walls: T+L+R (var B)",
+        WALLS_TLR_C to "Walls: T+L+R (var C)",
+        WALLS_TBLR to "Walls: all 4",
+        WALLS_TBLR_B to "Walls: all 4 (var B)",
+        WALLS_TBLR_C to "Walls: all 4 (var C)",
+        DIAG_BL to "Diagonal: BL",
+        DIAG_TL to "Diagonal: TL",
+        DIAG_BR to "Diagonal: BR",
+        DIAG_TR to "Diagonal: TR",
+        BG_PATTERN to "Background pattern",
+        ELEVATOR_SHAFT to "Shaft cap arrow",
         DOOR_UP to "Door: up",
         DOOR_DOWN to "Door: down",
         DOOR_LEFT to "Door: left",

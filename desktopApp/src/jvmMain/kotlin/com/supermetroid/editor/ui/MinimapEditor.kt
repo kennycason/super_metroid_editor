@@ -55,7 +55,7 @@ import com.supermetroid.editor.rom.MinimapTiles
 import com.supermetroid.editor.rom.MapStationData
 import com.supermetroid.editor.rom.RomParser
 
-/** Tile indices that are known to be empty/background. */
+/** Tile indices that are background/empty in the SNES tilemap. */
 private val EMPTY_TILES = setOf(0x00, 0x1F)
 
 /** Left sidebar for the minimap editor. */
@@ -112,8 +112,12 @@ fun MinimapSidebar(
             Text("Grid", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(state.showRoomOverlay, onCheckedChange = { state.showRoomOverlay = it }, modifier = Modifier.size(16.dp))
+            Checkbox(state.showRoomOutlines, onCheckedChange = { state.showRoomOutlines = it }, modifier = Modifier.size(16.dp))
             Text("Room outlines", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(state.showRoomTiles, onCheckedChange = { state.showRoomTiles = it }, modifier = Modifier.size(16.dp))
+            Text("Room tiles", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showStationOverlay, onCheckedChange = { state.showStationOverlay = it }, modifier = Modifier.size(16.dp))
@@ -135,12 +139,12 @@ fun MinimapSidebar(
                 val label = when (pal) { 0 -> "Blk"; 1 -> "Blu"; 2 -> "Wht"; else -> "Red" }
                 val sel = pal == state.selectedPalette
                 Surface(
-                    modifier = Modifier.height(24.dp).weight(1f).padding(vertical = 1.dp)
+                    modifier = Modifier.height(44.dp).weight(1f).padding(top = 2.dp, bottom = 6.dp)
                         .clickable { state.selectedPalette = pal }
                         .border(if (sel) 2.dp else 1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(3.dp)),
                     color = if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                     shape = RoundedCornerShape(3.dp),
-                ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 9.sp) } }
+                ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 11.sp) } }
             }
         }
 
@@ -209,8 +213,8 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                     }
                 }
         ) {
-            drawMinimapGrid(state.displayData, state.cellSize, state.showGrid, state.showRoomOverlay,
-                state.showStationOverlay, state.stationData, state.areaRooms, state.hoverX, state.hoverY)
+            drawMinimapGrid(state.displayData, state.cellSize, state.showGrid, state.showRoomOutlines,
+                state.showRoomTiles, state.showStationOverlay, state.stationData, state.areaRooms, state.hoverX, state.hoverY)
         }
     }
 }
@@ -218,40 +222,55 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
 // ─── Canvas drawing ───
 
 private fun DrawScope.drawMinimapGrid(
-    data: MinimapData, cs: Float, showGrid: Boolean, showRooms: Boolean,
-    showStation: Boolean, stationData: MapStationData, rooms: List<Room>, hx: Int, hy: Int,
+    data: MinimapData, cs: Float, showGrid: Boolean, showOutlines: Boolean,
+    showTiles: Boolean, showStation: Boolean, stationData: MapStationData,
+    rooms: List<Room>, hx: Int, hy: Int,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
-    for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
+    // 1. Room tiles — render directly from minimap tile data grid
+    if (showTiles) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
         val w = data.getTile(x, y); val idx = MinimapData.tileIndex(w); val p = MinimapData.tilePalette(w)
         if (w == 0 || idx in EMPTY_TILES) continue
         val px = x * cs; val py = y * cs
         drawRect(pal[p.coerceIn(0, 3)], Offset(px, py), Size(cs, cs))
-        drawTileDetails(idx, px, py, cs)
+        val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
+        drawTileDetails(idx, px, py, cs, hFlip, vFlip)
     }
-    if (showGrid) {
-        val g = Color.White.copy(alpha = 0.06f)
-        for (x in 0..MinimapData.MAP_WIDTH) drawLine(g, Offset(x * cs, 0f), Offset(x * cs, MinimapData.MAP_HEIGHT * cs))
-        for (y in 0..MinimapData.MAP_HEIGHT) drawLine(g, Offset(0f, y * cs), Offset(MinimapData.MAP_WIDTH * cs, y * cs))
-    }
-    if (showStation) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH)
-        if (stationData.isRevealed(x, y)) drawRect(Color(0x40FF69B4), Offset(x * cs, y * cs), Size(cs, cs))
-    if (showRooms) for (room in rooms) {
+    // 2. Room outlines (green stroke)
+    if (showOutlines) for (room in rooms) {
         val rx = room.mapX * cs; val ry = room.mapY * cs
         val rw = room.width * cs; val rh = room.height * cs
         drawRect(Color(0x3000FF88), Offset(rx, ry), Size(rw, rh))
         drawRect(Color(0xAA00FF88), Offset(rx, ry), Size(rw, rh), style = Stroke(1f))
     }
+    // 3. Grid
+    if (showGrid) {
+        val g = Color.White.copy(alpha = 0.06f)
+        for (x in 0..MinimapData.MAP_WIDTH) drawLine(g, Offset(x * cs, 0f), Offset(x * cs, MinimapData.MAP_HEIGHT * cs))
+        for (y in 0..MinimapData.MAP_HEIGHT) drawLine(g, Offset(0f, y * cs), Offset(MinimapData.MAP_WIDTH * cs, y * cs))
+    }
+    // 4. Station reveal overlay
+    if (showStation) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH)
+        if (stationData.isRevealed(x, y)) drawRect(Color(0x40FF69B4), Offset(x * cs, y * cs), Size(cs, cs))
+    // 5. Hover cursor
     if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT)
         drawRect(Color.White.copy(alpha = 0.3f), Offset(hx * cs, hy * cs), Size(cs, cs), style = Stroke(2f))
 }
 
-private fun DrawScope.drawTileDetails(t: Int, px: Float, py: Float, cs: Float) {
+private fun DrawScope.drawTileDetails(t: Int, px: Float, py: Float, cs: Float, hFlip: Boolean = false, vFlip: Boolean = false) {
     val wc = Color.White.copy(alpha = 0.8f); val w = (cs / 6f).coerceAtLeast(1f)
-    if (t in setOf(0x20,0x21,0x22,0x28,0x29,0x2A,0x2C,0x77,0x7B,0x7C)) drawLine(wc, Offset(px,py+.5f), Offset(px+cs,py+.5f), w)
-    if (t in setOf(0x23,0x24,0x26,0x28,0x29,0x2B,0x2C,0x78,0x7D,0x7E)) drawLine(wc, Offset(px,py+cs-.5f), Offset(px+cs,py+cs-.5f), w)
-    if (t in setOf(0x20,0x24,0x25,0x28,0x2A,0x2B,0x2C,0x79,0x7B,0x7D)) drawLine(wc, Offset(px+.5f,py), Offset(px+.5f,py+cs), w)
-    if (t in setOf(0x22,0x26,0x27,0x29,0x2A,0x2B,0x2C,0x7A,0x7C,0x7E)) drawLine(wc, Offset(px+cs-.5f,py), Offset(px+cs-.5f,py+cs), w)
+    // Wall sets derived from actual 2bpp pixel data at ROM $D3200 (border = pixel value 2 on full edge)
+    var top = t in setOf(0x20,0x21,0x22,0x24,0x25,0x26, 0x4D,0x4F,0x5E,0x6E,0x6F, 0x76,0x8E,0x8F)
+    var bot = t in setOf(0x20,0x21,0x22, 0x4D,0x5E,0x5F,0x6F, 0x8F)
+    var left = t in setOf(0x10,0x20,0x21,0x23,0x24,0x25, 0x4D,0x4F,0x6E,0x6F, 0x77,0x8E,0x8F)
+    var right = t in setOf(0x10,0x20,0x23,0x24,0x27, 0x4D,0x4F,0x6E,0x6F)
+    // Apply flip bits — swap walls to opposite sides
+    if (hFlip) { val tmp = left; left = right; right = tmp }
+    if (vFlip) { val tmp = top; top = bot; bot = tmp }
+    if (top) drawLine(wc, Offset(px,py+.5f), Offset(px+cs,py+.5f), w)
+    if (bot) drawLine(wc, Offset(px,py+cs-.5f), Offset(px+cs,py+cs-.5f), w)
+    if (left) drawLine(wc, Offset(px+.5f,py), Offset(px+.5f,py+cs), w)
+    if (right) drawLine(wc, Offset(px+cs-.5f,py), Offset(px+cs-.5f,py+cs), w)
     if (t in 0x76..0x80) drawCircle(Color(0xFFFFCC00), cs/5f, Offset(px+cs/2f,py+cs/2f))
     when (t) {
         0x04 -> drawArr(px,py,cs,w,0); 0x05 -> drawArr(px,py,cs,w,2)
@@ -286,12 +305,12 @@ private fun DrawScope.drawArr(px: Float, py: Float, cs: Float, w: Float, d: Int)
 @Composable
 private fun MmToolBtn(icon: ImageVector, label: String, sel: Boolean, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.size(22.dp).clickable(onClick = onClick)
+        modifier = Modifier.size(44.dp).clickable(onClick = onClick)
             .border(if (sel) 1.5.dp else 0.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(3.dp)),
         color = Color.Transparent, shape = RoundedCornerShape(3.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(icon, label, modifier = Modifier.size(14.dp),
+            Icon(icon, label, modifier = Modifier.size(32.dp),
                 tint = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
         }
     }
@@ -299,8 +318,8 @@ private fun MmToolBtn(icon: ImageVector, label: String, sel: Boolean, onClick: (
 
 @Composable
 private fun MmIconBtn(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(22.dp)) {
-        Icon(icon, label, modifier = Modifier.size(12.dp))
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
+        Icon(icon, label, modifier = Modifier.size(28.dp))
     }
 }
 
@@ -308,7 +327,7 @@ private fun MmIconBtn(icon: ImageVector, label: String, enabled: Boolean, onClic
 private fun MinimapTilePalette(selectedTile: Int, onSelect: (Int) -> Unit) {
     val tiles = MinimapTiles.PALETTE_TILES
     val cols = 7
-    val cellDp = 20.dp
+    val cellDp = 24.dp
     Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
         for (row in tiles.indices step cols) {
             Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
