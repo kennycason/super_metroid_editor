@@ -175,6 +175,35 @@ class MinimapDataTest {
     }
 
     @Nested
+    inner class FlipBitWallSwapping {
+        @Test
+        fun `hFlip swaps left and right walls`() {
+            // Tile 0x25 has top+left walls. With hFlip it should become top+right.
+            val word = MinimapData.makeTileWord(0x25, 3, hFlip = true)
+            assertTrue(MinimapData.tileHFlip(word))
+            assertFalse(MinimapData.tileVFlip(word))
+            assertEquals(0x25, MinimapData.tileIndex(word))
+        }
+
+        @Test
+        fun `vFlip swaps top and bottom walls`() {
+            val word = MinimapData.makeTileWord(0x21, 3, vFlip = true)
+            assertTrue(MinimapData.tileVFlip(word))
+            assertFalse(MinimapData.tileHFlip(word))
+            assertEquals(0x21, MinimapData.tileIndex(word))
+        }
+
+        @Test
+        fun `both flips can be set simultaneously`() {
+            val word = MinimapData.makeTileWord(0x20, 1, hFlip = true, vFlip = true)
+            assertTrue(MinimapData.tileHFlip(word))
+            assertTrue(MinimapData.tileVFlip(word))
+            assertEquals(0x20, MinimapData.tileIndex(word))
+            assertEquals(1, MinimapData.tilePalette(word))
+        }
+    }
+
+    @Nested
     @TestInstance(TestInstance.Lifecycle.PER_CLASS)
     inner class RomParsing {
         private var romParser: RomParser? = null
@@ -250,6 +279,52 @@ class MinimapDataTest {
             val revealedCount = data.revealed.count { it }
             assertTrue(revealedCount > 0,
                 "Crateria map station should reveal some tiles (found $revealedCount)")
+        }
+
+        @Test
+        fun `readMinimapTileGraphics returns 256 tiles of 64 pixels each`() {
+            val parser = romParser ?: return
+            val gfx = parser.readMinimapTileGraphics()
+            assertEquals(256, gfx.size, "Should have 256 tiles")
+            for (i in gfx.indices) {
+                assertEquals(64, gfx[i].size, "Tile $i should have 64 pixels (8x8)")
+            }
+        }
+
+        @Test
+        fun `tile graphics pixel values are in range 0-3`() {
+            val parser = romParser ?: return
+            val gfx = parser.readMinimapTileGraphics()
+            for (i in gfx.indices) for (p in gfx[i]) {
+                assertTrue(p in 0..3, "Tile $i pixel value $p should be 0-3")
+            }
+        }
+
+        @Test
+        fun `tile 0x1F (empty) is not all-zero`() {
+            // 0x1F is the "empty" background tile but has actual pixel data
+            val parser = romParser ?: return
+            val gfx = parser.readMinimapTileGraphics()
+            val empty = gfx[0x1F]
+            // It should have SOME non-zero pixels (it's a solid fill or pattern)
+            val nonZero = empty.count { it != 0 }
+            assertTrue(nonZero > 0, "Tile 0x1F should have non-zero pixels (it's a background pattern)")
+        }
+
+        @Test
+        fun `tile 0x1B (room open) differs from tile 0x20 (corner)`() {
+            val parser = romParser ?: return
+            val gfx = parser.readMinimapTileGraphics()
+            assertFalse(gfx[0x1B].contentEquals(gfx[0x20]),
+                "Room open and corner tiles should have different graphics")
+        }
+
+        @Test
+        fun `tile 0x00 has valid pixel data`() {
+            val parser = romParser ?: return
+            val gfx = parser.readMinimapTileGraphics()
+            assertEquals(64, gfx[0].size)
+            for (p in gfx[0]) assertTrue(p in 0..3)
         }
 
         @Test

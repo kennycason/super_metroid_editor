@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -44,6 +45,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -189,7 +200,26 @@ fun MinimapSidebar(
 /** Main canvas for the minimap editor. */
 @Composable
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
+    val focusRequester = remember { FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))
+        .focusRequester(focusRequester)
+        .focusable()
+        .onKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+            val ctrl = event.isCtrlPressed || event.isMetaPressed
+            when (event.key) {
+                Key.D -> { state.tool = MinimapTool.PAINT; true }
+                Key.G -> if (!ctrl) { state.tool = MinimapTool.FILL; true } else false
+                Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
+                Key.Z -> if (ctrl) { state.undo(editorState); true } else false
+                Key.Y -> if (ctrl) { state.redo(editorState); true } else false
+                Key.Equals -> { state.cellSize = (state.cellSize + 2).coerceAtMost(32f); true }
+                Key.Minus -> { state.cellSize = (state.cellSize - 2).coerceAtLeast(4f); true }
+                else -> false
+            }
+        }
+    ) {
         Canvas(
             modifier = Modifier.fillMaxSize()
                 .pointerInput(state.tool, state.selectedTile, state.selectedPalette, state.cellSize) {
