@@ -258,7 +258,7 @@ private fun DrawScope.drawMinimapGrid(
     // 1b. Pixel view — actual 2bpp tile graphics from ROM
     if (showPixelView && tileGfx != null) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
         val w = data.getTile(x, y); val idx = MinimapData.tileIndex(w); val p = MinimapData.tilePalette(w)
-        if (w == 0) continue
+        if (w == 0 || idx in EMPTY_TILES) continue
         val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
         val pixels = tileGfx[idx.coerceIn(0, 255)]
         val palColors = MINIMAP_PALETTES[p.coerceIn(0, 3)]
