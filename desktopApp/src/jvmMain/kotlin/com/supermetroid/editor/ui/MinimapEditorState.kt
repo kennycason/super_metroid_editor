@@ -28,12 +28,12 @@ class MinimapEditorState {
     var selectedTile by mutableStateOf(0x1B)
     var selectedPalette by mutableStateOf(0)
     var tool by mutableStateOf(MinimapTool.PAINT)
-    var cellSize by mutableStateOf(20f)
+    var cellSize by mutableStateOf(48f)
     var showGrid by mutableStateOf(true)
-    var showRoomOutlines by mutableStateOf(true)
-    var showRoomTiles by mutableStateOf(true)
+    var showRoomOutlines by mutableStateOf(false)
+    var showRoomTiles by mutableStateOf(false)
     var showStationOverlay by mutableStateOf(false)
-    var showPixelView by mutableStateOf(false)
+    var showPixelView by mutableStateOf(true)
     var hoverX by mutableStateOf(-1)
     var hoverY by mutableStateOf(-1)
     var areaRooms by mutableStateOf<List<Room>>(emptyList())
@@ -135,6 +135,7 @@ class MinimapEditorState {
         } else {
             editorState.project.minimapEdits[key] = edits.toMutableList()
         }
+        editorState.markDirty()
     }
 
     /** Apply project edits on top of ROM baseline data. */

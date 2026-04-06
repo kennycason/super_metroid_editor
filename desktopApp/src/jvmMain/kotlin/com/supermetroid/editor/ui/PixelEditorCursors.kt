@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.graphics.vector.VectorGroup
 import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.input.pointer.PointerIcon
+import com.supermetroid.editor.ui.MinimapTool
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Cursor
@@ -79,6 +80,13 @@ object PixelEditorCursors {
         PixelTool.FILL -> fill
         PixelTool.EYEDROPPER -> eyedropper
         PixelTool.SELECT -> select
+    }
+
+    /** Returns the appropriate cursor for the given MinimapTool. */
+    fun forMinimapTool(tool: MinimapTool): PointerIcon = when (tool) {
+        MinimapTool.PAINT -> pencil
+        MinimapTool.FILL -> fill
+        MinimapTool.EYEDROPPER -> eyedropper
     }
 
     /** Returns the appropriate cursor for the given EditorTool. */

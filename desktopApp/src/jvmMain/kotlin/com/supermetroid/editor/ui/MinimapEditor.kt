@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -53,8 +54,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -124,8 +127,8 @@ fun MinimapSidebar(
             Spacer(Modifier.width(4.dp))
             MmIconBtn(Icons.Default.Undo, "Undo", state.undoStack.isNotEmpty()) { state.undo(editorState) }
             MmIconBtn(Icons.Default.Redo, "Redo", state.redoStack.isNotEmpty()) { state.redo(editorState) }
-            MmIconBtn(Icons.Default.ZoomIn, "+", true) { state.cellSize = (state.cellSize + 2).coerceAtMost(32f) }
-            MmIconBtn(Icons.Default.ZoomOut, "-", true) { state.cellSize = (state.cellSize - 2).coerceAtLeast(4f) }
+            MmIconBtn(Icons.Default.ZoomIn, "+", true) { state.cellSize = (state.cellSize + 4).coerceAtMost(64f) }
+            MmIconBtn(Icons.Default.ZoomOut, "-", true) { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f) }
         }
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
@@ -140,12 +143,8 @@ fun MinimapSidebar(
             Text("Room outlines", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(state.showRoomTiles, onCheckedChange = { state.showRoomTiles = it }, modifier = Modifier.size(16.dp))
-            Text("Room tiles", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showPixelView, onCheckedChange = { state.showPixelView = it }, modifier = Modifier.size(16.dp))
-            Text("Pixel view", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+            Text("Tiles", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showStationOverlay, onCheckedChange = { state.showStationOverlay = it }, modifier = Modifier.size(16.dp))
@@ -202,28 +201,36 @@ fun MinimapSidebar(
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
     val focusRequester = remember { FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))
-        .focusRequester(focusRequester)
-        .focusable()
-        .onKeyEvent { event ->
-            if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-            val ctrl = event.isCtrlPressed || event.isMetaPressed
-            when (event.key) {
-                Key.D -> { state.tool = MinimapTool.PAINT; true }
-                Key.G -> if (!ctrl) { state.tool = MinimapTool.FILL; true } else false
-                Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
-                Key.Z -> if (ctrl) { state.undo(editorState); true } else false
-                Key.Y -> if (ctrl) { state.redo(editorState); true } else false
-                Key.Equals -> { state.cellSize = (state.cellSize + 2).coerceAtMost(32f); true }
-                Key.Minus -> { state.cellSize = (state.cellSize - 2).coerceAtLeast(4f); true }
-                else -> false
-            }
-        }
-    ) {
+    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
+        val hScroll = rememberScrollState()
+        val vScroll = rememberScrollState()
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val canvasW = with(density) { (state.cellSize * MinimapData.MAP_WIDTH).toDp() }
+        val canvasH = with(density) { (state.cellSize * MinimapData.MAP_HEIGHT).toDp() }
+        Box(Modifier.fillMaxSize().horizontalScroll(hScroll).verticalScroll(vScroll)) {
         Canvas(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .size(canvasW, canvasH)
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val ctrl = event.isCtrlPressed || event.isMetaPressed
+                    when (event.key) {
+                        Key.P -> { state.tool = MinimapTool.PAINT; true }
+                        Key.F -> { state.tool = MinimapTool.FILL; true }
+                        Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
+                        Key.Z -> if (ctrl) { state.undo(editorState); true } else false
+                        Key.Y -> if (ctrl) { state.redo(editorState); true } else false
+                        Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(64f); true }
+                        Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f); true }
+                        else -> false
+                    }
+                }
+                .pointerHoverIcon(PixelEditorCursors.forMinimapTool(state.tool))
                 .pointerInput(state.tool, state.selectedTile, state.selectedPalette, state.cellSize) {
                     detectTapGestures { offset ->
+                        focusRequester.requestFocus()
                         val x = (offset.x / state.cellSize).toInt(); val y = (offset.y / state.cellSize).toInt()
                         when (state.tool) {
                             MinimapTool.PAINT -> state.paintTile(x, y, editorState)
@@ -263,6 +270,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
             drawMinimapGrid(state.displayData, state.cellSize, state.showGrid, state.showRoomOutlines,
                 state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
                 state.stationData, state.areaRooms, state.hoverX, state.hoverY)
+        }
         }
     }
 }
@@ -317,9 +325,10 @@ private fun DrawScope.drawMinimapGrid(
     // 4. Station reveal overlay
     if (showStation) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH)
         if (stationData.isRevealed(x, y)) drawRect(Color(0x40FF69B4), Offset(x * cs, y * cs), Size(cs, cs))
-    // 5. Hover cursor
-    if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT)
+    // 5. Hover cursor — show on the single hovered tile
+    if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT) {
         drawRect(Color.White.copy(alpha = 0.3f), Offset(hx * cs, hy * cs), Size(cs, cs), style = Stroke(2f))
+    }
 }
 
 private fun DrawScope.drawTileDetails(t: Int, px: Float, py: Float, cs: Float, hFlip: Boolean = false, vFlip: Boolean = false) {
