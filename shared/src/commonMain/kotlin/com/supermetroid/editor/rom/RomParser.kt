@@ -1125,6 +1125,28 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     /**
+     * Read the 256 minimap 2bpp tile graphics from ROM PC $D3200.
+     * Returns a 256-element array where each element is an IntArray of 64 pixel values (0-3).
+     * Pixel layout is row-major: pixels[row * 8 + col].
+     */
+    fun readMinimapTileGraphics(): Array<IntArray> {
+        val base = 0xD3200
+        return Array(256) { tileIdx ->
+            val offset = base + tileIdx * 16
+            val pixels = IntArray(64)
+            for (row in 0 until 8) {
+                val bp0 = if (offset + row * 2 < romData.size) romData[offset + row * 2].toInt() and 0xFF else 0
+                val bp1 = if (offset + row * 2 + 1 < romData.size) romData[offset + row * 2 + 1].toInt() and 0xFF else 0
+                for (col in 0 until 8) {
+                    val bit = 7 - col
+                    pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
+                }
+            }
+            pixels
+        }
+    }
+
+    /**
      * Read the map station reveal data for a given area.
      * 256 bytes, each byte = 8 tiles' reveal flags (LSB first).
      */

@@ -58,6 +58,19 @@ import com.supermetroid.editor.rom.RomParser
 /** Tile indices that are background/empty in the SNES tilemap. */
 private val EMPTY_TILES = setOf(0x00, 0x1F)
 
+/** 2bpp pixel value → Color for each of the 4 minimap palettes.
+ *  pixel 0 = background, 1 = room fill, 2 = border, 3 = bg accent. */
+private val MINIMAP_PALETTES = arrayOf(
+    // Palette 0: black/dark
+    arrayOf(Color(0xFF000008), Color(0xFF101020), Color(0xFF383850), Color(0xFF0C0C18)),
+    // Palette 1: blue
+    arrayOf(Color(0xFF000830), Color(0xFF2850A0), Color(0xFF80B0E8), Color(0xFF102858)),
+    // Palette 2: white/gray
+    arrayOf(Color(0xFF181820), Color(0xFF808898), Color(0xFFD0D0E8), Color(0xFF404050)),
+    // Palette 3: red (explored)
+    arrayOf(Color(0xFF180008), Color(0xFFA03030), Color(0xFFE08888), Color(0xFF481018)),
+)
+
 /** Left sidebar for the minimap editor. */
 @Composable
 fun MinimapSidebar(
@@ -118,6 +131,10 @@ fun MinimapSidebar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showRoomTiles, onCheckedChange = { state.showRoomTiles = it }, modifier = Modifier.size(16.dp))
             Text("Room tiles", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(state.showPixelView, onCheckedChange = { state.showPixelView = it }, modifier = Modifier.size(16.dp))
+            Text("Pixel view", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showStationOverlay, onCheckedChange = { state.showStationOverlay = it }, modifier = Modifier.size(16.dp))
@@ -214,7 +231,8 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                 }
         ) {
             drawMinimapGrid(state.displayData, state.cellSize, state.showGrid, state.showRoomOutlines,
-                state.showRoomTiles, state.showStationOverlay, state.stationData, state.areaRooms, state.hoverX, state.hoverY)
+                state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
+                state.stationData, state.areaRooms, state.hoverX, state.hoverY)
         }
     }
 }
@@ -223,7 +241,8 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
 
 private fun DrawScope.drawMinimapGrid(
     data: MinimapData, cs: Float, showGrid: Boolean, showOutlines: Boolean,
-    showTiles: Boolean, showStation: Boolean, stationData: MapStationData,
+    showTiles: Boolean, showPixelView: Boolean, tileGfx: Array<IntArray>?,
+    showStation: Boolean, stationData: MapStationData,
     rooms: List<Room>, hx: Int, hy: Int,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
@@ -235,6 +254,22 @@ private fun DrawScope.drawMinimapGrid(
         drawRect(pal[p.coerceIn(0, 3)], Offset(px, py), Size(cs, cs))
         val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
         drawTileDetails(idx, px, py, cs, hFlip, vFlip)
+    }
+    // 1b. Pixel view — actual 2bpp tile graphics from ROM
+    if (showPixelView && tileGfx != null) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
+        val w = data.getTile(x, y); val idx = MinimapData.tileIndex(w); val p = MinimapData.tilePalette(w)
+        if (w == 0) continue
+        val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
+        val pixels = tileGfx[idx.coerceIn(0, 255)]
+        val palColors = MINIMAP_PALETTES[p.coerceIn(0, 3)]
+        val px = x * cs; val py = y * cs; val ps = cs / 8f
+        for (pr in 0 until 8) for (pc in 0 until 8) {
+            val sr = if (vFlip) 7 - pr else pr
+            val sc = if (hFlip) 7 - pc else pc
+            val pv = pixels[sr * 8 + sc]
+            val color = palColors[pv]
+            drawRect(color, Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
+        }
     }
     // 2. Room outlines (green stroke)
     if (showOutlines) for (room in rooms) {

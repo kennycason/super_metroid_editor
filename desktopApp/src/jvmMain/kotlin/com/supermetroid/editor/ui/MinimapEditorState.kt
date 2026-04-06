@@ -33,9 +33,13 @@ class MinimapEditorState {
     var showRoomOutlines by mutableStateOf(true)
     var showRoomTiles by mutableStateOf(true)
     var showStationOverlay by mutableStateOf(false)
+    var showPixelView by mutableStateOf(false)
     var hoverX by mutableStateOf(-1)
     var hoverY by mutableStateOf(-1)
     var areaRooms by mutableStateOf<List<Room>>(emptyList())
+
+    /** Cached 2bpp tile graphics: 256 tiles, each IntArray(64) of pixel values 0-3. */
+    var tileGraphics by mutableStateOf<Array<IntArray>?>(null)
 
     val undoStack = mutableStateListOf<MinimapData>()
     val redoStack = mutableStateListOf<MinimapData>()
@@ -60,6 +64,7 @@ class MinimapEditorState {
 
     fun initIfNeeded(parser: RomParser, editorState: EditorState) {
         if (loadedParser !== parser) {
+            tileGraphics = parser.readMinimapTileGraphics()
             loadArea(parser, 0, editorState)
         }
     }
