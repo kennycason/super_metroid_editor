@@ -196,7 +196,7 @@ fun MinimapSidebar(
                 color = Color.Transparent, shape = RoundedCornerShape(3.dp),
             ) {
                 Text(
-                    selRoom?.name ?: "Select room...",
+                    selRoom?.let { "0x${it.roomId.toString(16).uppercase()} ${it.name}" } ?: "Select room...",
                     fontSize = 10.sp,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                     color = if (selRoom != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -205,10 +205,11 @@ fun MinimapSidebar(
             androidx.compose.material3.DropdownMenu(
                 expanded = roomDropdownExpanded,
                 onDismissRequest = { roomDropdownExpanded = false },
+                modifier = Modifier.height(300.dp),
             ) {
                 for ((i, room) in rooms.withIndex()) {
                     androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(room.name, fontSize = 10.sp) },
+                        text = { Text("0x${room.roomId.toString(16).uppercase()} ${room.name}", fontSize = 10.sp) },
                         onClick = { state.selectedRoomIndex = i; roomDropdownExpanded = false },
                     )
                 }
@@ -372,7 +373,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
             drawMinimapGrid(state.displayData, csPixels, state.showGrid, state.showRoomOutlines,
                 state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
                 state.stationData, state.areaRooms, state.hoverX, state.hoverY,
-                state.tool, state.selectedTile, state.selectedPalette)
+                state.tool, state.selectedTile, state.selectedPalette, state.selectedRoom)
         }
         }
     }
@@ -386,6 +387,7 @@ private fun DrawScope.drawMinimapGrid(
     showStation: Boolean, stationData: MapStationData,
     rooms: List<Room>, hx: Int, hy: Int,
     tool: MinimapTool = MinimapTool.PAINT, selectedTile: Int = 0, selectedPalette: Int = 0,
+    selectedRoom: Room? = null,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
     // 1. Room tiles — render directly from minimap tile data grid
@@ -419,6 +421,13 @@ private fun DrawScope.drawMinimapGrid(
         val rw = room.width * cs; val rh = room.height * cs
         drawRect(Color(0x3000FF88), Offset(rx, ry), Size(rw, rh))
         drawRect(Color(0xAA00FF88), Offset(rx, ry), Size(rw, rh), style = Stroke(1f))
+    }
+    // 2b. Selected room highlight (always visible when a room is selected)
+    if (selectedRoom != null) {
+        val rx = selectedRoom.mapX * cs; val ry = selectedRoom.mapY * cs
+        val rw = selectedRoom.width * cs; val rh = selectedRoom.height * cs
+        drawRect(Color(0x2000FF88), Offset(rx, ry), Size(rw, rh))
+        drawRect(Color(0xFF00FF88), Offset(rx, ry), Size(rw, rh), style = Stroke(2f))
     }
     // 3. Grid
     if (showGrid) {

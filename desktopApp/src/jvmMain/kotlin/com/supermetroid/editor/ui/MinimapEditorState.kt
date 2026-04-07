@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomHeaderChange
+import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.MapStationData
@@ -29,7 +30,7 @@ class MinimapEditorState {
     var selectedTile by mutableStateOf(0x1B)
     var selectedPalette by mutableStateOf(0)
     var tool by mutableStateOf(MinimapTool.PAINT)
-    var cellSize by mutableStateOf(48f)
+    var cellSize by mutableStateOf(28f)
     var showGrid by mutableStateOf(true)
     var showRoomOutlines by mutableStateOf(false)
     var showRoomTiles by mutableStateOf(false)
@@ -70,31 +71,40 @@ class MinimapEditorState {
         areaRooms = RoomRepository().getAllRooms().mapNotNull { info ->
             val roomId = info.getRoomIdAsInt()
             val room = parser.readRoomHeader(roomId) ?: return@mapNotNull null
+            // Apply pretty name from repository
+            val named = RoomInfo.fromRoomInfo(info, room)
             // Apply header edits if present
             val roomKey = roomId.toString(16).uppercase().padStart(4, '0')
             val roomEdits = editorState.project.rooms[roomKey]
             val hc = roomEdits?.roomHeaderChange
             if (hc != null) {
-                room.copy(
-                    mapX = hc.mapX ?: room.mapX,
-                    mapY = hc.mapY ?: room.mapY,
-                    width = hc.width ?: room.width,
-                    height = hc.height ?: room.height,
-                    area = hc.area ?: room.area,
+                named.copy(
+                    mapX = hc.mapX ?: named.mapX,
+                    mapY = hc.mapY ?: named.mapY,
+                    width = hc.width ?: named.width,
+                    height = hc.height ?: named.height,
+                    area = hc.area ?: named.area,
                 )
-            } else room
+            } else named
         }.filter { it.area == area }
     }
 
     private fun roomHexKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
-    /** Update mapX/mapY for the selected room, persisting the change. */
+    /** Update mapX/mapY for the selected room, persisting the change.
+     *  Also shifts the minimap tile data so the room's tiles follow. */
     fun moveRoom(dx: Int, dy: Int, editorState: EditorState) {
         val room = selectedRoom ?: return
         val parser = loadedParser ?: return
         val newX = (room.mapX + dx).coerceIn(0, MinimapData.MAP_WIDTH - room.width)
         val newY = (room.mapY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - room.height)
-        if (newX == room.mapX && newY == room.mapY) return
+        val actualDx = newX - room.mapX; val actualDy = newY - room.mapY
+        if (actualDx == 0 && actualDy == 0) return
+        // Shift minimap tile data for the room's bounds
+        undoStack.add(mapData); redoStack.clear()
+        mapData = shiftRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height, actualDx, actualDy)
+        saveEditsToProject(editorState)
+        // Update room header position
         val key = roomHexKey(room.roomId)
         val existing = editorState.project.rooms[key]?.roomHeaderChange
         val change = (existing ?: RoomHeaderChange()).copy(mapX = newX, mapY = newY)
@@ -200,6 +210,30 @@ class MinimapEditorState {
         }
         return result
     }
+}
+
+/** Shift tiles within a room's bounds by (dx, dy). Clears old positions, writes to new. */
+internal fun shiftRoomTiles(data: MinimapData, roomX: Int, roomY: Int, roomW: Int, roomH: Int, dx: Int, dy: Int): MinimapData {
+    val tiles = data.tiles.copyOf()
+    // 1. Collect tiles from old positions
+    val saved = Array(roomH) { ry -> IntArray(roomW) { rx ->
+        val x = roomX + rx; val y = roomY + ry
+        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
+            tiles[y * MinimapData.MAP_WIDTH + x] else 0
+    }}
+    // 2. Clear old positions
+    for (ry in 0 until roomH) for (rx in 0 until roomW) {
+        val x = roomX + rx; val y = roomY + ry
+        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
+            tiles[y * MinimapData.MAP_WIDTH + x] = 0
+    }
+    // 3. Write to new positions
+    for (ry in 0 until roomH) for (rx in 0 until roomW) {
+        val x = roomX + rx + dx; val y = roomY + ry + dy
+        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
+            tiles[y * MinimapData.MAP_WIDTH + x] = saved[ry][rx]
+    }
+    return data.copy(tiles = tiles)
 }
 
 internal fun floodFillMinimap(data: MinimapData, startX: Int, startY: Int, target: Int, replacement: Int): MinimapData {

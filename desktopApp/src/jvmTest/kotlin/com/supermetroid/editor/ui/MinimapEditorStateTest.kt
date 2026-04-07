@@ -91,4 +91,40 @@ class MinimapEditorStateTest {
             assertEquals(0, data.getTile(0, MinimapData.MAP_HEIGHT))
         }
     }
+
+    @Nested
+    inner class ShiftRoomTiles {
+        @Test
+        fun `shifts tiles right and down`() {
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            // Place a 2x2 room at (5,5)
+            tiles[5 * MinimapData.MAP_WIDTH + 5] = 0xAA
+            tiles[5 * MinimapData.MAP_WIDTH + 6] = 0xBB
+            tiles[6 * MinimapData.MAP_WIDTH + 5] = 0xCC
+            tiles[6 * MinimapData.MAP_WIDTH + 6] = 0xDD
+            val data = MinimapData(0, tiles)
+            val result = shiftRoomTiles(data, 5, 5, 2, 2, 1, 1)
+            // Old positions cleared (getTile is x, y)
+            assertEquals(0, result.getTile(5, 5), "old (5,5) should be cleared")
+            assertEquals(0, result.getTile(6, 5), "old (6,5) should be cleared")
+            assertEquals(0, result.getTile(5, 6), "old (5,6) should be cleared")
+            // New positions have the tiles (shifted by +1,+1)
+            assertEquals(0xAA, result.getTile(6, 6), "tile from (5,5) should be at (6,6)")
+            assertEquals(0xBB, result.getTile(7, 6), "tile from (6,5) should be at (7,6)")
+            assertEquals(0xCC, result.getTile(6, 7), "tile from (5,6) should be at (6,7)")
+            assertEquals(0xDD, result.getTile(7, 7), "tile from (6,6) should be at (7,7)")
+        }
+
+        @Test
+        fun `does not corrupt tiles outside room bounds`() {
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            tiles[3 * MinimapData.MAP_WIDTH + 3] = 0xFF // outside room
+            tiles[5 * MinimapData.MAP_WIDTH + 5] = 0xAA // inside room
+            val data = MinimapData(0, tiles)
+            val result = shiftRoomTiles(data, 5, 5, 1, 1, -1, 0)
+            assertEquals(0xFF, result.getTile(3, 3)) // untouched
+            assertEquals(0xAA, result.getTile(4, 5)) // shifted left
+            assertEquals(0, result.getTile(5, 5)) // old position cleared
+        }
+    }
 }
