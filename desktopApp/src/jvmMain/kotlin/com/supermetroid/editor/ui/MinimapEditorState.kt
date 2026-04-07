@@ -51,6 +51,10 @@ class MinimapEditorState {
     val redoStack = mutableStateListOf<MinimapData>()
     var pendingStroke by mutableStateOf<MinimapData?>(null)
 
+    /** Buffered room move state. */
+    var moveBuffer by mutableStateOf<RoomMoveBuffer?>(null)
+    val isMovingRoom: Boolean get() = moveBuffer != null
+
     /** The original ROM data for the current area (before edits). */
     private var romBaseline: MinimapData = MinimapData.empty(0)
     private var loadedParser: RomParser? = null
@@ -91,38 +95,57 @@ class MinimapEditorState {
 
     private fun roomHexKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
-    /** Update mapX/mapY for the selected room, persisting the change.
-     *  Also shifts the minimap tile data so the room's tiles follow. */
+    /** Start or continue a buffered room move. First call lifts tiles, subsequent calls reposition. */
     fun moveRoom(dx: Int, dy: Int, editorState: EditorState) {
         val room = selectedRoom ?: return
         val parser = loadedParser ?: return
-        val newX = (room.mapX + dx).coerceIn(0, MinimapData.MAP_WIDTH - room.width)
-        val newY = (room.mapY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - room.height)
-        val actualDx = newX - room.mapX; val actualDy = newY - room.mapY
-        if (actualDx == 0 && actualDy == 0) return
-        // Shift minimap tile data for the room's bounds
-        undoStack.add(mapData); redoStack.clear()
-        mapData = shiftRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height, actualDx, actualDy)
-        saveEditsToProject(editorState)
-        // Update room header position
-        val key = roomHexKey(room.roomId)
+        val buf = moveBuffer
+        if (buf == null) {
+            // First move: save undo state, lift tiles from map, start buffer
+            undoStack.add(mapData); redoStack.clear()
+            val saved = extractRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height)
+            mapData = clearRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height)
+            val newX = (room.mapX + dx).coerceIn(0, MinimapData.MAP_WIDTH - room.width)
+            val newY = (room.mapY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - room.height)
+            moveBuffer = RoomMoveBuffer(room.roomId, room.mapX, room.mapY, room.width, room.height, saved, newX, newY)
+        } else {
+            // Subsequent move: just update target position
+            val newX = (buf.currentX + dx).coerceIn(0, MinimapData.MAP_WIDTH - buf.width)
+            val newY = (buf.currentY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - buf.height)
+            moveBuffer = buf.copy(currentX = newX, currentY = newY)
+        }
+        // Update room header for live preview
+        val b = moveBuffer!!
+        val key = roomHexKey(b.roomId)
         val existing = editorState.project.rooms[key]?.roomHeaderChange
-        val change = (existing ?: RoomHeaderChange()).copy(mapX = newX, mapY = newY)
-        editorState.setRoomHeaderChangeForId(room.roomId, change)
+        val change = (existing ?: RoomHeaderChange()).copy(mapX = b.currentX, mapY = b.currentY)
+        editorState.setRoomHeaderChangeForId(b.roomId, change)
         refreshAreaRooms(parser, selectedArea, editorState)
     }
 
-    /** Set mapX/mapY for the selected room to absolute values. */
-    fun setRoomPosition(x: Int, y: Int, editorState: EditorState) {
-        val room = selectedRoom ?: return
+    /** Apply the buffered move: write tiles to final position. */
+    fun applyMove(editorState: EditorState) {
+        val buf = moveBuffer ?: return
+        mapData = placeRoomTiles(mapData, buf.currentX, buf.currentY, buf.width, buf.height, buf.tiles)
+        saveEditsToProject(editorState)
+        moveBuffer = null
+    }
+
+    /** Cancel the buffered move: restore tiles to original position, revert header. */
+    fun cancelMove(editorState: EditorState) {
+        val buf = moveBuffer ?: return
         val parser = loadedParser ?: return
-        val clampedX = x.coerceIn(0, MinimapData.MAP_WIDTH - 1)
-        val clampedY = y.coerceIn(0, MinimapData.MAP_HEIGHT - 1)
-        val key = roomHexKey(room.roomId)
+        // Restore tiles to original position
+        mapData = undoStack.removeLastOrNull() ?: mapData
+        // Revert header change
+        val key = roomHexKey(buf.roomId)
         val existing = editorState.project.rooms[key]?.roomHeaderChange
-        val change = (existing ?: RoomHeaderChange()).copy(mapX = clampedX, mapY = clampedY)
-        editorState.setRoomHeaderChangeForId(room.roomId, change)
+        if (existing != null) {
+            val reverted = existing.copy(mapX = buf.origX, mapY = buf.origY)
+            editorState.setRoomHeaderChangeForId(buf.roomId, reverted)
+        }
         refreshAreaRooms(parser, selectedArea, editorState)
+        moveBuffer = null
     }
 
     fun initIfNeeded(parser: RomParser, editorState: EditorState) {
@@ -212,28 +235,57 @@ class MinimapEditorState {
     }
 }
 
-/** Shift tiles within a room's bounds by (dx, dy). Clears old positions, writes to new. */
-internal fun shiftRoomTiles(data: MinimapData, roomX: Int, roomY: Int, roomW: Int, roomH: Int, dx: Int, dy: Int): MinimapData {
-    val tiles = data.tiles.copyOf()
-    // 1. Collect tiles from old positions
-    val saved = Array(roomH) { ry -> IntArray(roomW) { rx ->
-        val x = roomX + rx; val y = roomY + ry
-        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
-            tiles[y * MinimapData.MAP_WIDTH + x] else 0
-    }}
-    // 2. Clear old positions
-    for (ry in 0 until roomH) for (rx in 0 until roomW) {
-        val x = roomX + rx; val y = roomY + ry
-        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
-            tiles[y * MinimapData.MAP_WIDTH + x] = 0
+/** Room move buffer: holds lifted tiles while the user repositions a room. */
+data class RoomMoveBuffer(
+    val roomId: Int,
+    val origX: Int, val origY: Int,
+    val width: Int, val height: Int,
+    val tiles: Array<IntArray>,  // [row][col] of saved tile words
+    val currentX: Int, val currentY: Int,
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is RoomMoveBuffer) return false
+        return roomId == other.roomId && origX == other.origX && origY == other.origY &&
+            width == other.width && height == other.height && currentX == other.currentX && currentY == other.currentY
     }
-    // 3. Write to new positions
-    for (ry in 0 until roomH) for (rx in 0 until roomW) {
-        val x = roomX + rx + dx; val y = roomY + ry + dy
-        if (x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
-            tiles[y * MinimapData.MAP_WIDTH + x] = saved[ry][rx]
+    override fun hashCode(): Int = roomId * 31 + currentX * 17 + currentY
+}
+
+/** Extract room tiles into a 2D array. */
+internal fun extractRoomTiles(data: MinimapData, x: Int, y: Int, w: Int, h: Int): Array<IntArray> =
+    Array(h) { ry -> IntArray(w) { rx ->
+        val mx = x + rx; val my = y + ry
+        if (mx in 0 until MinimapData.MAP_WIDTH && my in 0 until MinimapData.MAP_HEIGHT) data.getTile(mx, my) else 0
+    }}
+
+/** Clear tiles within a room's bounds. */
+internal fun clearRoomTiles(data: MinimapData, x: Int, y: Int, w: Int, h: Int): MinimapData {
+    val tiles = data.tiles.copyOf()
+    for (ry in 0 until h) for (rx in 0 until w) {
+        val mx = x + rx; val my = y + ry
+        if (mx in 0 until MinimapData.MAP_WIDTH && my in 0 until MinimapData.MAP_HEIGHT)
+            tiles[my * MinimapData.MAP_WIDTH + mx] = 0
     }
     return data.copy(tiles = tiles)
+}
+
+/** Place saved tiles at a new position. */
+internal fun placeRoomTiles(data: MinimapData, x: Int, y: Int, w: Int, h: Int, saved: Array<IntArray>): MinimapData {
+    val tiles = data.tiles.copyOf()
+    for (ry in 0 until h) for (rx in 0 until w) {
+        val mx = x + rx; val my = y + ry
+        if (mx in 0 until MinimapData.MAP_WIDTH && my in 0 until MinimapData.MAP_HEIGHT)
+            tiles[my * MinimapData.MAP_WIDTH + mx] = saved[ry][rx]
+    }
+    return data.copy(tiles = tiles)
+}
+
+/** Shift tiles within a room's bounds by (dx, dy). Clears old positions, writes to new. */
+internal fun shiftRoomTiles(data: MinimapData, roomX: Int, roomY: Int, roomW: Int, roomH: Int, dx: Int, dy: Int): MinimapData {
+    val saved = extractRoomTiles(data, roomX, roomY, roomW, roomH)
+    val cleared = clearRoomTiles(data, roomX, roomY, roomW, roomH)
+    return placeRoomTiles(cleared, roomX + dx, roomY + dy, roomW, roomH, saved)
 }
 
 internal fun floodFillMinimap(data: MinimapData, startX: Int, startY: Int, target: Int, replacement: Int): MinimapData {

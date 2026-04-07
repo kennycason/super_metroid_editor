@@ -116,6 +116,44 @@ class MinimapEditorStateTest {
         }
 
         @Test
+        fun `extract and place round-trips correctly`() {
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            tiles[5 * MinimapData.MAP_WIDTH + 5] = 0xAA
+            tiles[5 * MinimapData.MAP_WIDTH + 6] = 0xBB
+            val data = MinimapData(0, tiles)
+            val extracted = extractRoomTiles(data, 5, 5, 2, 1)
+            assertEquals(0xAA, extracted[0][0])
+            assertEquals(0xBB, extracted[0][1])
+            val cleared = clearRoomTiles(data, 5, 5, 2, 1)
+            assertEquals(0, cleared.getTile(5, 5))
+            assertEquals(0, cleared.getTile(6, 5))
+            val placed = placeRoomTiles(cleared, 10, 10, 2, 1, extracted)
+            assertEquals(0xAA, placed.getTile(10, 10))
+            assertEquals(0xBB, placed.getTile(11, 10))
+        }
+
+        @Test
+        fun `buffered move does not overwrite other room tiles`() {
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            // Room A at (5,5) size 2x1
+            tiles[5 * MinimapData.MAP_WIDTH + 5] = 0xAA
+            tiles[5 * MinimapData.MAP_WIDTH + 6] = 0xBB
+            // Room B at (7,5) size 1x1
+            tiles[5 * MinimapData.MAP_WIDTH + 7] = 0xFF
+            val data = MinimapData(0, tiles)
+            // Lift Room A tiles
+            val extracted = extractRoomTiles(data, 5, 5, 2, 1)
+            val cleared = clearRoomTiles(data, 5, 5, 2, 1)
+            // Room B should still be there
+            assertEquals(0xFF, cleared.getTile(7, 5))
+            // Place Room A at (6,5) — overlapping with Room B at (7,5)
+            val placed = placeRoomTiles(cleared, 6, 5, 2, 1, extracted)
+            // Room A placed, Room B overwritten (expected — user must Apply to commit)
+            assertEquals(0xAA, placed.getTile(6, 5))
+            assertEquals(0xBB, placed.getTile(7, 5))
+        }
+
+        @Test
         fun `does not corrupt tiles outside room bounds`() {
             val tiles = IntArray(MinimapData.TILE_COUNT)
             tiles[3 * MinimapData.MAP_WIDTH + 3] = 0xFF // outside room

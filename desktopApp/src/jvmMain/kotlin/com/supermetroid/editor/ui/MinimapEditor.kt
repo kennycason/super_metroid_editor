@@ -246,6 +246,24 @@ fun MinimapSidebar(
                     }
                 }
             }
+            // Apply / Cancel buttons when moving
+            if (state.isMovingRoom) {
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                    Surface(
+                        modifier = Modifier.weight(1f).height(28.dp)
+                            .clickable { state.applyMove(editorState) }
+                            .border(1.dp, Color(0xFF00CC66), RoundedCornerShape(4.dp)),
+                        color = Color(0xFF00CC66).copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp),
+                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Apply", fontSize = 10.sp, fontWeight = FontWeight.Bold) } }
+                    Surface(
+                        modifier = Modifier.weight(1f).height(28.dp)
+                            .clickable { state.cancelMove(editorState) }
+                            .border(1.dp, Color(0xFFCC3333), RoundedCornerShape(4.dp)),
+                        color = Color(0xFFCC3333).copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp),
+                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Cancel", fontSize = 10.sp, fontWeight = FontWeight.Bold) } }
+                }
+            }
         }
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
@@ -325,6 +343,8 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         Key.Y -> if (ctrl) { state.redo(editorState); true } else false
                         Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(64f); true }
                         Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f); true }
+                        Key.Escape -> if (state.isMovingRoom) { state.cancelMove(editorState); true } else false
+                        Key.Enter -> if (state.isMovingRoom) { state.applyMove(editorState); true } else false
                         else -> false
                     }
                 }
@@ -373,7 +393,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
             drawMinimapGrid(state.displayData, csPixels, state.showGrid, state.showRoomOutlines,
                 state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
                 state.stationData, state.areaRooms, state.hoverX, state.hoverY,
-                state.tool, state.selectedTile, state.selectedPalette, state.selectedRoom)
+                state.tool, state.selectedTile, state.selectedPalette, state.selectedRoom, state.moveBuffer)
         }
         }
     }
@@ -387,7 +407,7 @@ private fun DrawScope.drawMinimapGrid(
     showStation: Boolean, stationData: MapStationData,
     rooms: List<Room>, hx: Int, hy: Int,
     tool: MinimapTool = MinimapTool.PAINT, selectedTile: Int = 0, selectedPalette: Int = 0,
-    selectedRoom: Room? = null,
+    selectedRoom: Room? = null, moveBuf: RoomMoveBuffer? = null,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
     // 1. Room tiles — render directly from minimap tile data grid
@@ -422,7 +442,28 @@ private fun DrawScope.drawMinimapGrid(
         drawRect(Color(0x3000FF88), Offset(rx, ry), Size(rw, rh))
         drawRect(Color(0xAA00FF88), Offset(rx, ry), Size(rw, rh), style = Stroke(1f))
     }
-    // 2b. Selected room highlight (always visible when a room is selected)
+    // 2b. Move buffer preview — render lifted tiles at current position
+    if (moveBuf != null && tileGfx != null) {
+        for (ry in 0 until moveBuf.height) for (rx in 0 until moveBuf.width) {
+            val w = moveBuf.tiles[ry][rx]
+            if (w == 0) continue
+            val idx = MinimapData.tileIndex(w); val p = MinimapData.tilePalette(w)
+            if (idx in EMPTY_TILES) continue
+            val mx = moveBuf.currentX + rx; val my = moveBuf.currentY + ry
+            if (mx !in 0 until MinimapData.MAP_WIDTH || my !in 0 until MinimapData.MAP_HEIGHT) continue
+            val px = mx * cs; val py = my * cs
+            val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
+            val pixels = tileGfx[idx.coerceIn(0, 255)]
+            val palColors = MINIMAP_PALETTES[p.coerceIn(0, 3)]
+            val ps = cs / 8f
+            for (pr in 0 until 8) for (pc in 0 until 8) {
+                val sr = if (vFlip) 7 - pr else pr; val sc = if (hFlip) 7 - pc else pc
+                val color = palColors[pixels[sr * 8 + sc]]
+                drawRect(color.copy(alpha = 0.7f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
+            }
+        }
+    }
+    // 2c. Selected room highlight (always visible when a room is selected)
     if (selectedRoom != null) {
         val rx = selectedRoom.mapX * cs; val ry = selectedRoom.mapY * cs
         val rw = selectedRoom.width * cs; val rh = selectedRoom.height * cs
