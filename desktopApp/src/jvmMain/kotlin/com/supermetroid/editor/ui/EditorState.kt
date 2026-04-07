@@ -2162,6 +2162,13 @@ class EditorState {
         editVersion++
     }
 
+    fun setRoomHeaderChangeForId(roomAddress: Int, change: RoomHeaderChange) {
+        val roomEdits = project.getOrCreateRoom(roomAddress)
+        roomEdits.roomHeaderChange = change
+        dirty = true
+        editVersion++
+    }
+
     // ─── State data editing (tileset, music, BG scrolling) ──────
 
     fun setStateDataChange(change: StateDataChange) {

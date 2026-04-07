@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.MapStationData
@@ -37,6 +38,10 @@ class MinimapEditorState {
     var hoverX by mutableStateOf(-1)
     var hoverY by mutableStateOf(-1)
     var areaRooms by mutableStateOf<List<Room>>(emptyList())
+    var selectedRoomIndex by mutableStateOf(-1)
+
+    /** The currently selected room (null if none selected). */
+    val selectedRoom: Room? get() = areaRooms.getOrNull(selectedRoomIndex)
 
     /** Cached 2bpp tile graphics: 256 tiles, each IntArray(64) of pixel values 0-3. */
     var tileGraphics by mutableStateOf<Array<IntArray>?>(null)
@@ -52,14 +57,62 @@ class MinimapEditorState {
     fun loadArea(parser: RomParser, area: Int, editorState: EditorState) {
         selectedArea = area
         romBaseline = parser.readMinimapTiles(area)
-        // Apply any existing project edits on top of ROM data
         mapData = applyProjectEdits(romBaseline, editorState, area)
         stationData = parser.readMapStationData(area)
         undoStack.clear(); redoStack.clear(); pendingStroke = null
         loadedParser = parser
+        refreshAreaRooms(parser, area, editorState)
+        selectedRoomIndex = -1
+    }
+
+    /** Rebuild areaRooms applying any header edits from the project. */
+    fun refreshAreaRooms(parser: RomParser, area: Int, editorState: EditorState) {
         areaRooms = RoomRepository().getAllRooms().mapNotNull { info ->
-            parser.readRoomHeader(info.getRoomIdAsInt())
+            val roomId = info.getRoomIdAsInt()
+            val room = parser.readRoomHeader(roomId) ?: return@mapNotNull null
+            // Apply header edits if present
+            val roomKey = roomId.toString(16).uppercase().padStart(4, '0')
+            val roomEdits = editorState.project.rooms[roomKey]
+            val hc = roomEdits?.roomHeaderChange
+            if (hc != null) {
+                room.copy(
+                    mapX = hc.mapX ?: room.mapX,
+                    mapY = hc.mapY ?: room.mapY,
+                    width = hc.width ?: room.width,
+                    height = hc.height ?: room.height,
+                    area = hc.area ?: room.area,
+                )
+            } else room
         }.filter { it.area == area }
+    }
+
+    private fun roomHexKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
+
+    /** Update mapX/mapY for the selected room, persisting the change. */
+    fun moveRoom(dx: Int, dy: Int, editorState: EditorState) {
+        val room = selectedRoom ?: return
+        val parser = loadedParser ?: return
+        val newX = (room.mapX + dx).coerceIn(0, MinimapData.MAP_WIDTH - room.width)
+        val newY = (room.mapY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - room.height)
+        if (newX == room.mapX && newY == room.mapY) return
+        val key = roomHexKey(room.roomId)
+        val existing = editorState.project.rooms[key]?.roomHeaderChange
+        val change = (existing ?: RoomHeaderChange()).copy(mapX = newX, mapY = newY)
+        editorState.setRoomHeaderChangeForId(room.roomId, change)
+        refreshAreaRooms(parser, selectedArea, editorState)
+    }
+
+    /** Set mapX/mapY for the selected room to absolute values. */
+    fun setRoomPosition(x: Int, y: Int, editorState: EditorState) {
+        val room = selectedRoom ?: return
+        val parser = loadedParser ?: return
+        val clampedX = x.coerceIn(0, MinimapData.MAP_WIDTH - 1)
+        val clampedY = y.coerceIn(0, MinimapData.MAP_HEIGHT - 1)
+        val key = roomHexKey(room.roomId)
+        val existing = editorState.project.rooms[key]?.roomHeaderChange
+        val change = (existing ?: RoomHeaderChange()).copy(mapX = clampedX, mapY = clampedY)
+        editorState.setRoomHeaderChangeForId(room.roomId, change)
+        refreshAreaRooms(parser, selectedArea, editorState)
     }
 
     fun initIfNeeded(parser: RomParser, editorState: EditorState) {

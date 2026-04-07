@@ -784,6 +784,29 @@ fun main() = application {
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1
                                             )
+                                        } else if (leftTab == 5) {
+                                            val ms = minimapEditorState
+                                            val mhx = ms.hoverX; val mhy = ms.hoverY
+                                            if (mhx in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
+                                                mhy in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT) {
+                                                val w = ms.displayData.getTile(mhx, mhy)
+                                                val idx = com.supermetroid.editor.rom.MinimapData.tileIndex(w)
+                                                val pal = com.supermetroid.editor.rom.MinimapData.tilePalette(w)
+                                                val tileName = com.supermetroid.editor.rom.MinimapTiles.TILE_NAMES[idx] ?: "0x${idx.toString(16).uppercase()}"
+                                                val room = ms.areaRooms.firstOrNull { r ->
+                                                    mhx in r.mapX until (r.mapX + r.width) && mhy in r.mapY until (r.mapY + r.height)
+                                                }
+                                                val roomLabel = if (room != null) "  ${room.name}" else ""
+                                                Text(
+                                                    "($mhx,$mhy) $tileName  Idx:0x${idx.toString(16).uppercase()} Pal:$pal$roomLabel",
+                                                    fontSize = fs.statusBar,
+                                                    fontFamily = monoFont,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1
+                                                )
+                                            } else {
+                                                Spacer(Modifier.width(1.dp))
+                                            }
                                         } else if (leftTab == 0 && es.hoverBlockX >= 0) {
                                             val hx = es.hoverBlockX
                                             val hy = es.hoverBlockY

@@ -37,7 +37,12 @@ import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import java.awt.event.MouseEvent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -56,7 +61,9 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
@@ -155,7 +162,7 @@ fun MinimapSidebar(
 
         // Tile palette — fills available width
         Text("Tile", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-        MinimapTilePalette(selectedTile = state.selectedTile, onSelect = { state.selectedTile = it })
+        MinimapTilePalette(selectedTile = state.selectedTile, tileGfx = state.tileGraphics, onSelect = { state.selectedTile = it })
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
@@ -172,6 +179,71 @@ fun MinimapSidebar(
                     color = if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                     shape = RoundedCornerShape(3.dp),
                 ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 11.sp) } }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
+
+        // Room selector (dropdown)
+        Text("Room", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        val rooms = state.areaRooms
+        val selRoom = state.selectedRoom
+        var roomDropdownExpanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+        Box {
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { roomDropdownExpanded = true }
+                    .border(1.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(3.dp)),
+                color = Color.Transparent, shape = RoundedCornerShape(3.dp),
+            ) {
+                Text(
+                    selRoom?.name ?: "Select room...",
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    color = if (selRoom != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = roomDropdownExpanded,
+                onDismissRequest = { roomDropdownExpanded = false },
+            ) {
+                for ((i, room) in rooms.withIndex()) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(room.name, fontSize = 10.sp) },
+                        onClick = { state.selectedRoomIndex = i; roomDropdownExpanded = false },
+                    )
+                }
+            }
+        }
+        // D-pad + position inputs for selected room
+        if (selRoom != null) {
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("X:", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text("${selRoom.mapX}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text("Y:", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text("${selRoom.mapY}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text("${selRoom.width}x${selRoom.height}", fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // D-pad: 3x3 grid of arrow buttons
+            Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row {
+                        DpadBtn("\u2196") { state.moveRoom(-1, -1, editorState) }
+                        DpadBtn("\u2191") { state.moveRoom(0, -1, editorState) }
+                        DpadBtn("\u2197") { state.moveRoom(1, -1, editorState) }
+                    }
+                    Row {
+                        DpadBtn("\u2190") { state.moveRoom(-1, 0, editorState) }
+                        Box(Modifier.size(28.dp)) // center spacer
+                        DpadBtn("\u2192") { state.moveRoom(1, 0, editorState) }
+                    }
+                    Row {
+                        DpadBtn("\u2199") { state.moveRoom(-1, 1, editorState) }
+                        DpadBtn("\u2193") { state.moveRoom(0, 1, editorState) }
+                        DpadBtn("\u2198") { state.moveRoom(1, 1, editorState) }
+                    }
+                }
             }
         }
 
@@ -197,6 +269,7 @@ fun MinimapSidebar(
 }
 
 /** Main canvas for the minimap editor. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
     val focusRequester = remember { FocusRequester() }
@@ -204,10 +277,37 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
         val hScroll = rememberScrollState()
         val vScroll = rememberScrollState()
+        val coroutineScope = rememberCoroutineScope()
         val density = androidx.compose.ui.platform.LocalDensity.current
-        val canvasW = with(density) { (state.cellSize * MinimapData.MAP_WIDTH).toDp() }
-        val canvasH = with(density) { (state.cellSize * MinimapData.MAP_HEIGHT).toDp() }
-        Box(Modifier.fillMaxSize().horizontalScroll(hScroll).verticalScroll(vScroll)) {
+        val canvasW = (state.cellSize * MinimapData.MAP_WIDTH).dp
+        val canvasH = (state.cellSize * MinimapData.MAP_HEIGHT).dp
+        // Pixel cell size for pointer coordinate conversion (dp cellSize * density)
+        val csPx = with(density) { state.cellSize.dp.toPx() }
+        Box(Modifier.fillMaxSize()
+            .onPointerEvent(PointerEventType.Scroll) { event ->
+                val ne = event.nativeEvent as? MouseEvent
+                val isZoom = ne?.let { it.isControlDown || it.isMetaDown } ?: false
+                val sd = event.changes.first().scrollDelta
+                if (isZoom) {
+                    val mousePos = event.changes.first().position
+                    val oldCs = csPx
+                    val factor = if (sd.y < 0) 1.15f else 1f / 1.15f
+                    val newCsDp = (state.cellSize * factor).coerceIn(4f, 64f)
+                    val newCsPx = newCsDp * density.density
+                    val contentXBefore = (hScroll.value + mousePos.x) / oldCs
+                    val contentYBefore = (vScroll.value + mousePos.y) / oldCs
+                    state.cellSize = newCsDp
+                    coroutineScope.launch {
+                        hScroll.scrollTo(((contentXBefore * newCsPx) - mousePos.x).toInt().coerceAtLeast(0))
+                        vScroll.scrollTo(((contentYBefore * newCsPx) - mousePos.y).toInt().coerceAtLeast(0))
+                    }
+                } else coroutineScope.launch {
+                    vScroll.scrollTo((vScroll.value + sd.y * 40).toInt().coerceIn(0, vScroll.maxValue))
+                    hScroll.scrollTo((hScroll.value + sd.x * 40).toInt().coerceIn(0, hScroll.maxValue))
+                }
+            }
+            .horizontalScroll(hScroll).verticalScroll(vScroll)
+        ) {
         Canvas(
             modifier = Modifier
                 .size(canvasW, canvasH)
@@ -228,10 +328,10 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                     }
                 }
                 .pointerHoverIcon(PixelEditorCursors.forMinimapTool(state.tool))
-                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, state.cellSize) {
+                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, csPx) {
                     detectTapGestures { offset ->
                         focusRequester.requestFocus()
-                        val x = (offset.x / state.cellSize).toInt(); val y = (offset.y / state.cellSize).toInt()
+                        val x = (offset.x / csPx).toInt(); val y = (offset.y / csPx).toInt()
                         when (state.tool) {
                             MinimapTool.PAINT -> state.paintTile(x, y, editorState)
                             MinimapTool.EYEDROPPER -> state.sampleTile(x, y)
@@ -239,16 +339,16 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         }
                     }
                 }
-                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, state.cellSize) {
+                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, csPx) {
                     detectDragGestures(
                         onDragStart = { offset ->
-                            val x = (offset.x / state.cellSize).toInt(); val y = (offset.y / state.cellSize).toInt()
+                            val x = (offset.x / csPx).toInt(); val y = (offset.y / csPx).toInt()
                             if (state.tool == MinimapTool.PAINT && x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
                                 state.pendingStroke = state.mapData.withTile(x, y, MinimapData.makeTileWord(state.selectedTile, state.selectedPalette))
                         },
                         onDrag = { change, _ ->
                             change.consume()
-                            val x = (change.position.x / state.cellSize).toInt(); val y = (change.position.y / state.cellSize).toInt()
+                            val x = (change.position.x / csPx).toInt(); val y = (change.position.y / csPx).toInt()
                             if (state.tool == MinimapTool.PAINT && x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
                                 state.pendingStroke = (state.pendingStroke ?: state.mapData).withTile(x, y, MinimapData.makeTileWord(state.selectedTile, state.selectedPalette))
                             state.hoverX = x; state.hoverY = y
@@ -257,19 +357,22 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         onDragCancel = { state.pendingStroke = null },
                     )
                 }
-                .pointerInput(state.cellSize) {
+                .pointerInput(csPx) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
                             val pos = event.changes.firstOrNull()?.position
-                            if (pos != null) { state.hoverX = (pos.x / state.cellSize).toInt(); state.hoverY = (pos.y / state.cellSize).toInt() }
+                            if (pos != null) { state.hoverX = (pos.x / csPx).toInt(); state.hoverY = (pos.y / csPx).toInt() }
                         }
                     }
                 }
         ) {
-            drawMinimapGrid(state.displayData, state.cellSize, state.showGrid, state.showRoomOutlines,
+            // Compute pixel cell size from actual canvas pixel dimensions (density-correct)
+            val csPixels = size.width / MinimapData.MAP_WIDTH
+            drawMinimapGrid(state.displayData, csPixels, state.showGrid, state.showRoomOutlines,
                 state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
-                state.stationData, state.areaRooms, state.hoverX, state.hoverY)
+                state.stationData, state.areaRooms, state.hoverX, state.hoverY,
+                state.tool, state.selectedTile, state.selectedPalette)
         }
         }
     }
@@ -282,6 +385,7 @@ private fun DrawScope.drawMinimapGrid(
     showTiles: Boolean, showPixelView: Boolean, tileGfx: Array<IntArray>?,
     showStation: Boolean, stationData: MapStationData,
     rooms: List<Room>, hx: Int, hy: Int,
+    tool: MinimapTool = MinimapTool.PAINT, selectedTile: Int = 0, selectedPalette: Int = 0,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
     // 1. Room tiles — render directly from minimap tile data grid
@@ -325,9 +429,20 @@ private fun DrawScope.drawMinimapGrid(
     // 4. Station reveal overlay
     if (showStation) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH)
         if (stationData.isRevealed(x, y)) drawRect(Color(0x40FF69B4), Offset(x * cs, y * cs), Size(cs, cs))
-    // 5. Hover cursor — show on the single hovered tile
+    // 5. Hover cursor + paint preview
     if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT) {
-        drawRect(Color.White.copy(alpha = 0.3f), Offset(hx * cs, hy * cs), Size(cs, cs), style = Stroke(2f))
+        val px = hx * cs; val py = hy * cs
+        // Paint preview: show faded version of the tile that will be painted
+        if (tool == MinimapTool.PAINT && tileGfx != null && selectedTile in 0..255) {
+            val previewPixels = tileGfx[selectedTile]
+            val palColors = MINIMAP_PALETTES[selectedPalette.coerceIn(0, 3)]
+            val ps = cs / 8f
+            for (pr in 0 until 8) for (pc in 0 until 8) {
+                val color = palColors[previewPixels[pr * 8 + pc]]
+                drawRect(color.copy(alpha = 0.5f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
+            }
+        }
+        drawRect(Color.White.copy(alpha = 0.3f), Offset(px, py), Size(cs, cs), style = Stroke(2f))
     }
 }
 
@@ -391,6 +506,19 @@ private fun MmToolBtn(icon: ImageVector, label: String, sel: Boolean, onClick: (
 }
 
 @Composable
+private fun DpadBtn(label: String, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.size(28.dp).clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(4.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(label, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
 private fun MmIconBtn(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
         Icon(icon, label, modifier = Modifier.size(28.dp))
@@ -398,7 +526,7 @@ private fun MmIconBtn(icon: ImageVector, label: String, enabled: Boolean, onClic
 }
 
 @Composable
-private fun MinimapTilePalette(selectedTile: Int, onSelect: (Int) -> Unit) {
+private fun MinimapTilePalette(selectedTile: Int, tileGfx: Array<IntArray>?, onSelect: (Int) -> Unit) {
     val tiles = MinimapTiles.PALETTE_TILES
     val cols = 7
     val cellDp = 24.dp
@@ -418,8 +546,20 @@ private fun MinimapTilePalette(selectedTile: Int, onSelect: (Int) -> Unit) {
                             contentAlignment = Alignment.Center,
                         ) {
                             Canvas(Modifier.size(cellDp - 4.dp)) {
-                                drawRect(Color(0xFF3060A0), Offset.Zero, Size(size.width, size.height))
-                                drawTileDetails(tile, 0f, 0f, size.width)
+                                val cs = size.width
+                                val pixels = tileGfx?.getOrNull(tile)
+                                if (pixels != null) {
+                                    // Render actual 2bpp tile graphics (palette 1 = blue for preview)
+                                    val palColors = MINIMAP_PALETTES[1]
+                                    val ps = cs / 8f
+                                    for (pr in 0 until 8) for (pc in 0 until 8) {
+                                        drawRect(palColors[pixels[pr * 8 + pc]], Offset(pc * ps, pr * ps), Size(ps + 0.5f, ps + 0.5f))
+                                    }
+                                } else {
+                                    // Fallback: simplified icon
+                                    drawRect(Color(0xFF3060A0), Offset.Zero, Size(cs, cs))
+                                    drawTileDetails(tile, 0f, 0f, cs)
+                                }
                             }
                         }
                     }
