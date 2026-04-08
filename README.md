@@ -74,11 +74,13 @@ Sound
 - **Tileset Browser** — Browse all 29 tilesets with palette visualization and per-tile defaults.
 - **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
 - **Patch Manager** — Apply, create, and manage IPS patches. Built-in patches for common hacks (beam damage, jump height, Ceres escape time).
+- **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
 - **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
+- **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
 - **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
-- **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs.
+- **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
 - **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
 
 ## Download
@@ -164,13 +166,15 @@ See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including 
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
+- Room header editing (multi-state rooms, per-state enemies/PLMs/FX)
 - Room creation, resizing, and state management
 - Door expansion and new door connections
+- Layer 3/FX editor (water, lava, acid, rain)
+- Layer 2/BG editor (parallax modes)
 - ROM expansion beyond 3MB to eliminate free space limits
 - Custom tileset importing and tile swapping
-- FX / scrolling / background layer editing
-- Sound Editing / Synth
-- ASM support
+- Sound editing / synth
+- Validation suite (PLM dupes, door consistency, GFX limits)
 
 ## Contributing
 
