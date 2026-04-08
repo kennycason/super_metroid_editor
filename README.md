@@ -24,7 +24,6 @@ Tile Editor
 
 <p>
   <img src="screenshots/smedit_slopes.png" width="54%" alt="Slopes" />
-  <img src="screenshots/smedit_sound.png" width="44%" alt="Sound" />
 </p>
 
 Sprite Editor
@@ -49,22 +48,22 @@ Patches
 
 <p>
   <img src="screenshots/smedit_patches_samus_physics.png" width="49%" alt="Samus Physics" />
-  <img src="screenshots/smedit_patches_beams.png" width="49%" alt="Beam Damage Override" />
-</p>
-<p>
-  <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss Stats Override" />
   <img src="screenshots/smedit_patches_enemy_drop_rate.png" width="49%" alt="Enemy Drop Rates" />
 </p>
 <p>
   <img src="screenshots/smedit_patches_enemy_vulnerabilities.png" width="49%" alt="Enemy Vulnerabilities" />
+  <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss Stats Override" />
+</p>
+<p>
+  <img src="screenshots/smedit_patches_beams.png" width="49%" alt="Beam Damage Override" />
 </p>
 
-Misc
+Sound
 
 <p>
-  <img src="screenshots/smedit_slopes.png" width="54%" alt="Slopes" />
-  <img src="screenshots/smedit_sound.png" width="44%" alt="Sound" />
+  <img src="screenshots/smedit_sound.png" width="50%" alt="Sound" />
 </p>
+
 
 
 ## Features
