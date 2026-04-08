@@ -38,7 +38,26 @@ Sprite Editor
   <img src="screenshots/smedit_phantoon_edited_03.png" width="48%" alt="Sprite Editor" />
 </p>
 
+Minimap Editor
 
+<p>
+  <img src="screenshots/smedit_minimap.png" width="49%" alt="Minimap Editor" />
+  <img src="screenshots/smedit_minimap_kentroid.png" width="49%" alt="Minimap Editor - Kentroid" />
+</p>
+
+Patches
+
+<p>
+  <img src="screenshots/smedit_patches_samus_physics.png" width="49%" alt="Samus Physics" />
+  <img src="screenshots/smedit_patches_beams.png" width="49%" alt="Beam Damage Override" />
+</p>
+<p>
+  <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss Stats Override" />
+  <img src="screenshots/smedit_patches_enemy_drop_rate.png" width="49%" alt="Enemy Drop Rates" />
+</p>
+<p>
+  <img src="screenshots/smedit_patches_enemy_vulnerabilities.png" width="49%" alt="Enemy Vulnerabilities" />
+</p>
 
 Misc
 
@@ -57,6 +76,7 @@ Misc
 - **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
 - **Patch Manager** — Apply, create, and manage IPS patches. Built-in patches for common hacks (beam damage, jump height, Ceres escape time).
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
+- **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
 - **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs.
