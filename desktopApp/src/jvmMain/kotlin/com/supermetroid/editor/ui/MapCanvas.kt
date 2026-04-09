@@ -2718,22 +2718,29 @@ private fun drawSlopeOverlay(g2: java.awt.Graphics2D, px: Int, py: Int, bts: Int
     val xPts = mutableListOf<Int>()
     val yPts = mutableListOf<Int>()
 
+    // Build the height profile for each pixel column
+    val profile = IntArray(s) { screenX ->
+        val col = if (xFlip) screenX else (s - 1 - screenX)
+        heights[col].coerceIn(0, s)
+    }
+
     if (!isCeiling) {
-        xPts.add(px); yPts.add(py + s)
-        for (screenX in 0 until s) {
-            val col = if (xFlip) screenX else (s - 1 - screenX)
-            val h = heights[col].coerceIn(0, s)
-            xPts.add(px + screenX); yPts.add(py + s - h)
+        // Find first and last column with height > 0 to avoid baseline overshoot
+        val first = profile.indexOfFirst { it > 0 }.takeIf { it >= 0 } ?: 0
+        val last = profile.indexOfLast { it > 0 }.takeIf { it >= 0 } ?: (s - 1)
+        xPts.add(px + first); yPts.add(py + s)
+        for (screenX in first..last) {
+            xPts.add(px + screenX); yPts.add(py + s - profile[screenX])
         }
-        xPts.add(px + s); yPts.add(py + s)
+        xPts.add(px + last); yPts.add(py + s)
     } else {
-        xPts.add(px); yPts.add(py)
-        for (screenX in 0 until s) {
-            val col = if (xFlip) screenX else (s - 1 - screenX)
-            val h = heights[col].coerceIn(0, s)
-            xPts.add(px + screenX); yPts.add(py + h)
+        val first = profile.indexOfFirst { it > 0 }.takeIf { it >= 0 } ?: 0
+        val last = profile.indexOfLast { it > 0 }.takeIf { it >= 0 } ?: (s - 1)
+        xPts.add(px + first); yPts.add(py)
+        for (screenX in first..last) {
+            xPts.add(px + screenX); yPts.add(py + profile[screenX])
         }
-        xPts.add(px + s); yPts.add(py)
+        xPts.add(px + last); yPts.add(py)
     }
 
     g2.color = bg
