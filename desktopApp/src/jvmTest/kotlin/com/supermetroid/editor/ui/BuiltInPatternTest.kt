@@ -34,16 +34,12 @@ class BuiltInPatternTest {
     @Test
     fun `seedBuiltInPatterns creates all expected patterns`() {
         val parser = loadTestRom() ?: return
-        val state = EditorState()
+        val state = EditorState().also { it.testMode = true }
         state.seedBuiltInPatterns(parser)
 
         val patternIds = state.project.patterns.map { it.id }.toSet()
 
         val expectedIds = listOf(
-            "builtin_gate_blue_left", "builtin_gate_blue_right",
-            "builtin_gate_pink_left", "builtin_gate_pink_right",
-            "builtin_gate_green_left", "builtin_gate_green_right",
-            "builtin_gate_yellow_left", "builtin_gate_yellow_right",
             "builtin_door_blue_left", "builtin_door_blue_right",
             "builtin_door_red_left", "builtin_door_red_right",
             "builtin_door_green_left", "builtin_door_green_right",
@@ -66,7 +62,7 @@ class BuiltInPatternTest {
     @Test
     fun `door pattern PLM IDs all point to valid PLM headers in ROM`() {
         val parser = loadTestRom() ?: return
-        val state = EditorState()
+        val state = EditorState().also { it.testMode = true }
         state.seedBuiltInPatterns(parser)
 
         val romData = parser.getRomData()
@@ -93,28 +89,9 @@ class BuiltInPatternTest {
     }
 
     @Test
-    fun `gate pattern PLM IDs all use C836`() {
-        val parser = loadTestRom() ?: return
-        val state = EditorState()
-        state.seedBuiltInPatterns(parser)
-
-        val gatePatterns = state.project.patterns.filter { it.id.startsWith("builtin_gate_") }
-        assertTrue(gatePatterns.size >= 8, "Should have at least 8 gate patterns")
-
-        for (pattern in gatePatterns) {
-            val plmCells = pattern.cells.filterNotNull().filter { it.plmId != 0 }
-            assertTrue(plmCells.isNotEmpty(), "${pattern.id} should have a PLM cell")
-            for (cell in plmCells) {
-                assertEquals(0xC836, cell.plmId,
-                    "${pattern.id}: gate PLM should be 0xC836, got 0x${cell.plmId.toString(16)}")
-            }
-        }
-    }
-
-    @Test
     fun `door patterns have correct block types and dimensions`() {
         val parser = loadTestRom() ?: return
-        val state = EditorState()
+        val state = EditorState().also { it.testMode = true }
         state.seedBuiltInPatterns(parser)
 
         val doorPatterns = state.project.patterns.filter { it.id.startsWith("builtin_door_") }
@@ -133,32 +110,9 @@ class BuiltInPatternTest {
     }
 
     @Test
-    fun `gate patterns have correct block types and dimensions`() {
-        val parser = loadTestRom() ?: return
-        val state = EditorState()
-        state.seedBuiltInPatterns(parser)
-
-        val gatePatterns = state.project.patterns.filter {
-            it.id.startsWith("builtin_gate_") && !it.id.contains("left_gate") && !it.id.contains("right_gate")
-        }
-
-        for (pattern in gatePatterns) {
-            assertEquals(1, pattern.cols, "${pattern.id} should be 1 column wide")
-            assertEquals(4, pattern.rows, "${pattern.id} should be 4 rows tall")
-
-            for (cell in pattern.cells.filterNotNull()) {
-                assertEquals(0x8, cell.blockType,
-                    "${pattern.id}: all cells should be block type 0x8 (solid)")
-            }
-
-            assertTrue(pattern.noFlip, "${pattern.id} should have noFlip=true")
-        }
-    }
-
-    @Test
     fun `migration re-seeds station patterns with tile templates`() {
         val parser = loadTestRom() ?: return
-        val state = EditorState()
+        val state = EditorState().also { it.testMode = true }
 
         // Simulate old project with old-style station patterns (different dimensions)
         val oldSave = com.supermetroid.editor.data.TilePattern(
@@ -190,7 +144,7 @@ class BuiltInPatternTest {
     @Test
     fun `migration removes patterns with wrong door PLM IDs`() {
         val parser = loadTestRom() ?: return
-        val state = EditorState()
+        val state = EditorState().also { it.testMode = true }
 
         // Simulate a project with old wrong PLM IDs
         val wrongBlueRight = com.supermetroid.editor.data.TilePattern(

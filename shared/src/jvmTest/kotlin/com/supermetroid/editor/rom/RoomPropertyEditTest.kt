@@ -542,4 +542,68 @@ class RoomPropertyEditTest {
                 "tileAnim: 0x${defaultFx.tileAnimBitflags.toString(16)}")
         }
     }
+
+    // ── Liquid physics type tests (SM engine formula) ────────────────
+
+    /**
+     * SM engine determines liquid physics via kSamusFxHandlers[(fxType & 0xF) >> 1]:
+     *   index 1 = Lava (fxType 0x02), index 2 = Acid (fxType 0x04), index 3 = Water (fxType 0x06)
+     * See sm_90.c SetLiquidPhysicsType / Samus_Animate
+     */
+    private fun liquidPhysicsIndex(fxType: Int) = (fxType and 0xF) shr 1
+
+    @Test
+    fun `liquid physics formula maps fxType 0x02 to lava`() {
+        assertEquals(1, liquidPhysicsIndex(0x02), "fxType 0x02 (Fog) = lava")
+    }
+
+    @Test
+    fun `liquid physics formula maps fxType 0x04 to acid`() {
+        assertEquals(2, liquidPhysicsIndex(0x04), "fxType 0x04 (Water label) = acid")
+    }
+
+    @Test
+    fun `liquid physics formula maps fxType 0x06 to water`() {
+        assertEquals(3, liquidPhysicsIndex(0x06), "fxType 0x06 (Lava label) = water")
+    }
+
+    @Test
+    fun `liquid physics formula maps fxType 0x00 and 0x08+ to no liquid`() {
+        assertEquals(0, liquidPhysicsIndex(0x00), "fxType 0x00 = no liquid")
+        assertEquals(4, liquidPhysicsIndex(0x08), "fxType 0x08 = no liquid physics")
+        assertEquals(5, liquidPhysicsIndex(0x0A), "fxType 0x0A = no liquid physics")
+    }
+
+    @Test
+    fun `vanilla Norfair lava rooms have fxType that maps to lava physics`() {
+        val parser = loadTestRom() ?: return
+        // Lava Dive Room
+        val room = parser.readRoomHeader(0xAF14) ?: run { println("Room not found"); return }
+        val fx = parser.parseFxEntries(room.fxPtr).lastOrNull { it.doorSelect == 0 }
+        assertNotNull(fx, "Should have default FX")
+        assertEquals(1, liquidPhysicsIndex(fx!!.fxType),
+            "Lava Dive fxType=0x${fx.fxType.toString(16)} should map to lava (index 1)")
+    }
+
+    @Test
+    fun `vanilla Maridia water rooms have fxType that maps to water physics`() {
+        val parser = loadTestRom() ?: return
+        // Aqueduct
+        val room = parser.readRoomHeader(0xD5A7) ?: run { println("Room not found"); return }
+        val fx = parser.parseFxEntries(room.fxPtr).lastOrNull { it.doorSelect == 0 }
+        assertNotNull(fx, "Should have default FX")
+        assertEquals(3, liquidPhysicsIndex(fx!!.fxType),
+            "Aqueduct fxType=0x${fx.fxType.toString(16)} should map to water (index 3)")
+    }
+
+    @Test
+    fun `vanilla Tourian acid rooms have fxType that maps to acid physics`() {
+        val parser = loadTestRom() ?: return
+        // Mother Brain room
+        val room = parser.readRoomHeader(0xDD58) ?: run { println("Room not found"); return }
+        val fx = parser.parseFxEntries(room.fxPtr).lastOrNull { it.doorSelect == 0 }
+        assertNotNull(fx, "Should have default FX")
+        assertEquals(2, liquidPhysicsIndex(fx!!.fxType),
+            "Mother Brain fxType=0x${fx.fxType.toString(16)} should map to acid (index 2)")
+    }
 }

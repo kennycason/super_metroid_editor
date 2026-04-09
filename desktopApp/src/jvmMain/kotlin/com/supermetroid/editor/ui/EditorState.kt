@@ -32,6 +32,8 @@ import java.io.File
 // ─── Editor State ───────────────────────────────────────────────
 
 class EditorState {
+    internal var testMode = false
+
     var brush by mutableStateOf<TileBrush?>(null)
         internal set
 
@@ -61,6 +63,8 @@ class EditorState {
 
     private val pendingEdits = mutableListOf<TileEdit>()
     private val pendingPositions = mutableSetOf<Long>()
+    private val pendingPlmAdds = mutableListOf<PlmChange>()
+    private val pendingPlmRemoves = mutableListOf<PlmChange>()
 
     var project by mutableStateOf(SmEditProject(romPath = ""))
         private set
@@ -778,7 +782,7 @@ class EditorState {
         val pattern = TilePattern(id, name, cols, rows, tilesetId, cells)
         project.patterns.add(pattern)
         dirty = true; patternVersion++
-        PatternLibrary.saveAll(project.patterns)
+        if (!testMode) PatternLibrary.saveAll(project.patterns)
         return pattern
     }
 
@@ -786,7 +790,7 @@ class EditorState {
         project.patterns.removeAll { it.id == id }
         if (selectedPatternId == id) selectPattern(null)
         dirty = true; patternVersion++
-        PatternLibrary.saveAll(project.patterns)
+        if (!testMode) PatternLibrary.saveAll(project.patterns)
     }
 
     fun updatePatternCell(patternId: String, r: Int, c: Int, cell: PatternCell) {
@@ -1126,11 +1130,6 @@ class EditorState {
      */
     fun seedBuiltInPatterns(romParser: RomParser?) {
         val builtInIds = listOf(
-            "builtin_left_gate", "builtin_right_gate",
-            "builtin_gate_blue_left", "builtin_gate_blue_right",
-            "builtin_gate_pink_left", "builtin_gate_pink_right",
-            "builtin_gate_green_left", "builtin_gate_green_right",
-            "builtin_gate_yellow_left", "builtin_gate_yellow_right",
             "builtin_door_blue_left", "builtin_door_blue_right",
             "builtin_door_red_left", "builtin_door_red_right",
             "builtin_door_green_left", "builtin_door_green_right",
@@ -1139,18 +1138,25 @@ class EditorState {
             "builtin_missile_refill", "builtin_chozo_statue"
         )
 
-        // Migrate old incorrect gate/door patterns so they get re-seeded correctly.
-        val brokenPatternIds = setOf("builtin_left_gate", "builtin_right_gate")
+        // Remove all gate patterns — gates are better placed via BTS directly
+        val gatePatternIds = setOf(
+            "builtin_left_gate", "builtin_right_gate",
+            "builtin_gate_blue_left", "builtin_gate_blue_right",
+            "builtin_gate_pink_left", "builtin_gate_pink_right",
+            "builtin_gate_green_left", "builtin_gate_green_right",
+            "builtin_gate_yellow_left", "builtin_gate_yellow_right"
+        )
+        project.patterns.removeAll { it.id in gatePatternIds && it.builtIn }
+
+        // Migrate old incorrect door patterns so they get re-seeded correctly.
         val wrongDoorRightIds = setOf(
             "builtin_door_blue_right", "builtin_door_red_right",
             "builtin_door_green_right", "builtin_door_yellow_right"
         )
         val wrongPlmIds = setOf(0xC8A6, 0xC88E, 0xC876, 0xC85E)
         project.patterns.removeAll { pat ->
-            (pat.id in brokenPatternIds && pat.builtIn &&
-                pat.cells.any { it != null && it.blockType == 0x9 && it.bts == 0x40 }) ||
-            (pat.id in wrongDoorRightIds && pat.builtIn &&
-                pat.cells.any { it != null && it.plmId in wrongPlmIds })
+            pat.id in wrongDoorRightIds && pat.builtIn &&
+                pat.cells.any { it != null && it.plmId in wrongPlmIds }
         }
 
         // Migrate old placeholder station/chozo patterns (wrong dimensions or generic tiles)
@@ -1189,17 +1195,6 @@ class EditorState {
             project.patterns.add(pat)
         }
 
-        // Gate helper: 1x4 gate cap with PLM on top cell.
-        // The gate PLM (0xC836) extends 4 tiles down from placement and
-        // handles all visuals/interaction. Tiles are solid CRE gate caps
-        // so the gate blocks passage in the editor preview.
-        fun gatePatternCells(plmParam: Int, hFlip: Boolean): List<PatternCell> = listOf(
-            PatternCell(0x342, blockType = 0x8, hFlip = hFlip, plmId = 0xC836, plmParam = plmParam),
-            PatternCell(0x343, blockType = 0x8, hFlip = hFlip),
-            PatternCell(0x343, blockType = 0x8, hFlip = hFlip),
-            PatternCell(0x342, blockType = 0x8, hFlip = hFlip, vFlip = true)
-        )
-
         // Door helper: 1x4 door transition tiles with door cap PLM on top cell.
         // CRE tiles 0x040 (top/bottom) and 0x060 (middle), block type 0x9,
         // BTS defaults to 0x00 (user must set correct door index per room).
@@ -1212,20 +1207,6 @@ class EditorState {
         )
 
         try {
-            // ── Gates: all colors, left and right facing (noFlip: directional PLMs) ──
-            addBuiltIn("builtin_gate_blue_left",   "Gate: Blue (Left)",   1, 4, gatePatternCells(0x00, false), noFlip = true)
-            addBuiltIn("builtin_gate_blue_right",  "Gate: Blue (Right)",  1, 4, gatePatternCells(0x02, true), noFlip = true)
-            addBuiltIn("builtin_gate_pink_left",   "Gate: Pink (Left)",   1, 4, gatePatternCells(0x04, false), noFlip = true)
-            addBuiltIn("builtin_gate_pink_right",  "Gate: Pink (Right)",  1, 4, gatePatternCells(0x06, true), noFlip = true)
-            addBuiltIn("builtin_gate_green_left",  "Gate: Green (Left)",  1, 4, gatePatternCells(0x08, false), noFlip = true)
-            addBuiltIn("builtin_gate_green_right", "Gate: Green (Right)", 1, 4, gatePatternCells(0x0A, true), noFlip = true)
-            addBuiltIn("builtin_gate_yellow_left", "Gate: Yellow (Left)", 1, 4, gatePatternCells(0x0C, false), noFlip = true)
-            addBuiltIn("builtin_gate_yellow_right","Gate: Yellow (Right)", 1, 4, gatePatternCells(0x0E, true), noFlip = true)
-
-            // Legacy generic gate patterns (kept for backward compat)
-            addBuiltIn("builtin_left_gate", "Left Gate (Blue)", 1, 4, gatePatternCells(0x00, false), noFlip = true)
-            addBuiltIn("builtin_right_gate", "Right Gate (Blue)", 1, 4, gatePatternCells(0x02, true), noFlip = true)
-
             // ── Doors: all colors, left and right facing ──
             // Door PLM headers are 6 bytes (3 pointers: setup, open, close),
             // so Left→Right offset is +6, NOT +4.
@@ -1846,6 +1827,8 @@ class EditorState {
     fun beginStroke() {
         pendingEdits.clear()
         pendingPositions.clear()
+        pendingPlmAdds.clear()
+        pendingPlmRemoves.clear()
     }
 
     /** Paint the full brush at map position (bx, by). Returns true if anything changed. */
@@ -1871,10 +1854,24 @@ class EditorState {
                 pendingEdits.add(TileEdit(tx, ty, oldWord, newWord, oldBts, newBts))
                 pendingPositions.add(key)
                 changed = true
-                // Apply pattern PLMs if present
+                // Collect pattern PLMs for grouped undo (applied in endStroke)
                 val plm = b.plmAt(r, c)
                 if (plm != null && plm.first != 0) {
-                    addPlm(plm.first, tx, ty, plm.second)
+                    val plmId = plm.first
+                    val param = plm.second
+                    // Remove existing PLMs at same position with same ID
+                    val existing = _workingPlms.filter { it.x == tx && it.y == ty && it.id == plmId }
+                    for (old in existing) {
+                        _workingPlms.remove(old)
+                        val rc = PlmChange("remove", old.id, old.x, old.y, old.param)
+                        project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
+                        pendingPlmRemoves.add(rc)
+                    }
+                    val actualParam = autoAssignParam(plmId, param)
+                    _workingPlms.add(RomParser.PlmEntry(plmId, tx, ty, actualParam))
+                    val addChange = PlmChange("add", plmId, tx, ty, actualParam)
+                    project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
+                    pendingPlmAdds.add(addChange)
                 }
             }
         }
@@ -2213,7 +2210,7 @@ class EditorState {
     }
 
     fun endStroke() {
-        if (pendingEdits.isEmpty()) return
+        if (pendingEdits.isEmpty() && pendingPlmAdds.isEmpty()) return
         val desc = when (activeTool) {
             EditorTool.PAINT -> "Paint ${pendingEdits.size} tile(s)"
             EditorTool.FILL -> "Fill ${pendingEdits.size} tile(s)"
@@ -2221,7 +2218,11 @@ class EditorState {
             EditorTool.SAMPLE -> "Sample"
             EditorTool.SELECT -> "Select"
         }
-        val op = EditOperation(desc, pendingEdits.toList())
+        val op = EditOperation(
+            desc, pendingEdits.toList(),
+            plmAdds = pendingPlmAdds.toList(),
+            plmRemoves = pendingPlmRemoves.toList()
+        )
         undoStack.add(op)
         redoStack.clear()
         undoVersion++
@@ -2230,6 +2231,8 @@ class EditorState {
         editVersion++
         pendingEdits.clear()
         pendingPositions.clear()
+        pendingPlmAdds.clear()
+        pendingPlmRemoves.clear()
     }
 
     // ─── Undo / Redo ────────────────────────────────────────────
@@ -2397,7 +2400,7 @@ class EditorState {
             println("Project saved: $projectFilePath")
             postStatus("Project saved: $projectFilePath")
             romParser?.let { exportCustomGfxPngs(it) }
-            PatternLibrary.saveAll(project.patterns)
+            if (!testMode) PatternLibrary.saveAll(project.patterns)
             true
         } catch (e: Exception) { println("Save failed: ${e.message}"); postStatus("Save failed: ${e.message}"); false }
     }

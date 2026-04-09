@@ -485,6 +485,8 @@ enum class TileOverlay(val label: String, val shortLabel: String, val color: Lon
     SCROLL_PLMS("Scroll Triggers", "St", 0xCCFF8040),  // orange
     // Per-screen scroll colors (Red/Blue/Green)
     SCROLLS("Scroll Colors", "Sc", 0x60FFFFFF),
+    // Liquid level (water/lava/acid from FX data)
+    LIQUID("Liquid Level", "~", 0x443388FF),
     // Lighten: brighten dark rooms (Fireflea, etc.)
     LIGHTEN("Lighten", "L", 0x00FFFFFF),
 }
@@ -522,6 +524,7 @@ fun MapCanvas(
     editorState: EditorState? = null,
     rooms: List<RoomInfo> = emptyList(),
     samusPosition: Pair<Float, Float>? = null,
+    onRoomSelected: ((RoomInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val zoomState = remember { mutableStateOf(1f) }
@@ -552,6 +555,22 @@ fun MapCanvas(
                         Key.H -> { editorState.flipOrCaptureH(); true }
                         Key.V -> { if (!keyEvent.isCtrlPressed && !keyEvent.isMetaPressed) { editorState.flipOrCaptureV(); true } else false }
                         Key.R -> { editorState.rotateOrCapture(); true }
+                        Key.DirectionUp -> {
+                            if (onRoomSelected != null && rooms.isNotEmpty()) {
+                                val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
+                                val newIdx = if (currentIdx > 0) currentIdx - 1 else rooms.lastIndex
+                                if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
+                                true
+                            } else false
+                        }
+                        Key.DirectionDown -> {
+                            if (onRoomSelected != null && rooms.isNotEmpty()) {
+                                val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
+                                val newIdx = if (currentIdx < rooms.lastIndex) currentIdx + 1 else 0
+                                if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
+                                true
+                            } else false
+                        }
                         Key.Z -> {
                             if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
                                 if (keyEvent.isShiftPressed) editorState.redo() else editorState.undo()
@@ -1111,6 +1130,51 @@ fun MapCanvas(
                                             .requiredHeight((data.height * zoomLevel).dp),
                                         contentScale = ContentScale.FillBounds
                                     )
+                                    // Liquid level overlay (water/lava/acid)
+                                    if (roomHeader != null && overlayToggles[TileOverlay.LIQUID] == true) {
+                                        val fxEntries = remember(roomHeader.fxPtr) { romParser.parseFxEntries(roomHeader.fxPtr) }
+                                        val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
+                                        // Apply editor FX override if present
+                                        val editorFxChange = editorState?.project?.rooms?.get(
+                                            editorState.project.roomKey(roomHeader.roomId)
+                                        )?.fxChange
+                                        val effectiveFxType = editorFxChange?.fxType ?: defaultFx?.fxType ?: 0
+                                        val effectiveLiquidStart = editorFxChange?.liquidSurfaceStart ?: defaultFx?.liquidSurfaceStart ?: 0xFFFF
+                                        if (effectiveLiquidStart != 0xFFFF) {
+                                            val liquidY = effectiveLiquidStart
+                                            // SM engine dispatch: kSamusFxHandlers[(fxType & 0xF) >> 1]
+                                            // Index 1 = Lava (0x02), 2 = Acid (0x04), 3 = Water (0x06)
+                                            // Names in FX_TYPE_NAMES are layer 3 visual names, NOT physics types.
+                                            // See sm_90.c SetLiquidPhysicsType / Samus_Animate
+                                            val liquidColor = when ((effectiveFxType and 0xF) shr 1) {
+                                                1 -> Color(0x44FF4400)     // lava (orange-red) — Varia protects
+                                                2 -> Color(0x44CCCC00)    // acid (yellow) — ignores suits
+                                                3 -> Color(0x443388FF)     // water (blue) — no damage
+                                                else -> Color(0x443388FF)  // unknown — default blue
+                                            }
+                                            Canvas(
+                                                modifier = Modifier
+                                                    .requiredWidth((data.width * zoomLevel).dp)
+                                                    .requiredHeight((data.height * zoomLevel).dp)
+                                            ) {
+                                                val scaleY = size.height / data.height
+                                                val surfacePixelY = liquidY.toFloat() * scaleY
+                                                if (surfacePixelY < size.height) {
+                                                    drawRect(
+                                                        color = liquidColor,
+                                                        topLeft = androidx.compose.ui.geometry.Offset(0f, surfacePixelY),
+                                                        size = androidx.compose.ui.geometry.Size(size.width, size.height - surfacePixelY)
+                                                    )
+                                                    drawLine(
+                                                        color = liquidColor.copy(alpha = 0.8f),
+                                                        start = androidx.compose.ui.geometry.Offset(0f, surfacePixelY),
+                                                        end = androidx.compose.ui.geometry.Offset(size.width, surfacePixelY),
+                                                        strokeWidth = 2f
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                     // Ghost cursor preview: render actual tile graphics
                                     if (editorState != null && editorState.hoverBlockX >= 0 && editorState.brush != null &&
                                         editorState.activeTool == EditorTool.PAINT) {
@@ -2558,18 +2622,18 @@ private val SLOPE_HEIGHTS = arrayOf(
     intArrayOf(20,20,20,20,20,20,20,20,20,20,20,20,20,16,16,16), // 0x11 plateau (overshoot)
     intArrayOf(16,15,14,13,12,11,10, 9, 8, 7, 6, 5, 4, 3, 2, 1), // 0x12 steep 1-tile
     intArrayOf( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // 0x13 unused
-    intArrayOf(16,16,16,16,16,16,16,16,16,15,14,13,12,11,10, 9), // 0x14 45° tile 1/2
-    intArrayOf( 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0), // 0x15 45° tile 2/2
-    intArrayOf(16,16,15,15,14,14,13,13,12,12,11,11,10,10, 9, 9), // 0x16 45° smooth tile 1/2
-    intArrayOf( 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1), // 0x17 45° smooth tile 2/2
-    intArrayOf(16,16,16,15,15,15,14,14,14,13,13,13,12,12,12,11), // 0x18 gentle tile 1/3
+    intArrayOf( 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0), // 0x14 45° tile 1/2
+    intArrayOf(16,16,16,16,16,16,16,16,16,15,14,13,12,11,10, 9), // 0x15 45° tile 2/2
+    intArrayOf( 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1), // 0x16 45° smooth tile 1/2
+    intArrayOf(16,16,15,15,14,14,13,13,12,12,11,11,10,10, 9, 9), // 0x17 45° smooth tile 2/2
+    intArrayOf( 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1), // 0x18 gentle tile 1/3
     intArrayOf(11,11,10,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6), // 0x19 gentle tile 2/3
-    intArrayOf( 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1), // 0x1A gentle tile 3/3
-    intArrayOf(20,20,20,20,20,20,20,20,16,14,12,10, 8, 6, 4, 2), // 0x1B steep tile 1/2
-    intArrayOf(16,14,12,10, 8, 6, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0), // 0x1C steep tile 2/2
-    intArrayOf(20,20,20,20,20,20,20,20,20,20,20,15,12, 9, 6, 3), // 0x1D steep tile 1/3
+    intArrayOf(16,16,16,15,15,15,14,14,14,13,13,13,12,12,12,11), // 0x1A gentle tile 3/3
+    intArrayOf(16,14,12,10, 8, 6, 4, 2, 0, 0, 0, 0, 0, 0, 0, 0), // 0x1B steep tile 1/2
+    intArrayOf(20,20,20,20,20,20,20,20,16,14,12,10, 8, 6, 4, 2), // 0x1C steep tile 2/2
+    intArrayOf(16,13,10, 7, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // 0x1D steep tile 1/3
     intArrayOf(20,20,20,20,20,20,14,11, 8, 5, 2, 0, 0, 0, 0, 0), // 0x1E steep tile 2/3
-    intArrayOf(16,13,10, 7, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), // 0x1F steep tile 3/3
+    intArrayOf(20,20,20,20,20,20,20,20,20,20,20,15,12, 9, 6, 3), // 0x1F steep tile 3/3
 )
 
 internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (overlay) {

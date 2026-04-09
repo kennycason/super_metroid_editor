@@ -23,7 +23,8 @@ Tile Editor
 </p>
 
 <p>
-  <img src="screenshots/smedit_slopes.png" width="54%" alt="Slopes" />
+  <img src="screenshots/smedit_slopes_01.png" width="49%" alt="Slopes" />
+ <img src="screenshots/smedit_slopes_02.png" width="49%" alt="Slopes" />
 </p>
 
 Sprite Editor
@@ -166,11 +167,11 @@ See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including 
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
+- Visual liquid level preview on map canvas (water/lava/acid height overlay)
+- Layer 3 visual preview (fog, rain, heat shimmer rendering)
 - Multi-state room editing (per-state enemies/PLMs/FX)
 - Room creation, resizing, and state management
 - Door expansion and new door connections
-- Layer 3/FX editor (water, lava, acid, rain)
-- Layer 2/BG editor (parallax modes)
 - ROM expansion beyond 3MB to eliminate free space limits
 - Custom tileset importing and tile swapping
 - Sound editing / synth

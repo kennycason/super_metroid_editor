@@ -62,6 +62,7 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.ui.EditorTheme
 import com.supermetroid.editor.ui.EditorThemeState
 import com.supermetroid.editor.ui.FontSize
@@ -86,7 +87,6 @@ import com.supermetroid.editor.ui.RoomListView
 import com.supermetroid.editor.ui.SamusSpriteViewer
 import com.supermetroid.editor.ui.RoomPropertiesPanel
 import com.supermetroid.editor.ui.MinimapCanvas
-import com.supermetroid.editor.ui.ValidationPanel
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
 import com.supermetroid.editor.ui.SoundEditorCanvas
@@ -97,6 +97,7 @@ import com.supermetroid.editor.ui.TilesetCanvas
 import com.supermetroid.editor.ui.TilesetEditorState
 import com.supermetroid.editor.ui.TilesetListPanel
 import com.supermetroid.editor.ui.TilesetPreview
+import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
 import java.awt.FileDialog
 import java.awt.Frame
@@ -210,6 +211,9 @@ fun main() = application {
             var emulatorEnabled by remember { mutableStateOf(false) }
             val emulatorWorkspaceState = remember { EmulatorWorkspaceState() }
             var settingsOpen by remember { mutableStateOf(false) }
+            var validationOpen by remember { mutableStateOf(false) }
+            var validationIssues by remember { mutableStateOf<List<RomValidator.Issue>?>(null) }
+            var validationTimeMs by remember { mutableStateOf(0L) }
             val fs = editorThemeState.fontSize.value
             Surface(
                 modifier = Modifier.fillMaxSize(),
@@ -284,6 +288,29 @@ fun main() = application {
                             Spacer(Modifier.width(4.dp))
                             Text("EMU", fontSize = fs.detail)
                         }
+                        Box {
+                            Button(
+                                onClick = {
+                                    val parser = romParser
+                                    if (parser != null) {
+                                        val start = System.currentTimeMillis()
+                                        val roomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+                                        validationIssues = RomValidator.validate(parser, roomIds)
+                                        validationTimeMs = System.currentTimeMillis() - start
+                                        validationOpen = true
+                                    }
+                                },
+                                enabled = romParser != null,
+                                shape = RoundedCornerShape(6.dp),
+                            ) { Text("Validate", fontSize = fs.body) }
+                            if (validationOpen && validationIssues != null) {
+                                ValidationPopup(
+                                    issues = validationIssues!!,
+                                    scanTimeMs = validationTimeMs,
+                                    onDismiss = { validationOpen = false }
+                                )
+                            }
+                        }
                         Button(
                             onClick = { editorState.saveProject(romParser) },
                             enabled = romParser != null,
@@ -331,6 +358,7 @@ fun main() = application {
                 
                 // Main content: resizable left column + right canvas
                 var leftColumnWidthDp by remember { mutableStateOf(330f) }
+                var tilesetHeightInitialized by remember { mutableStateOf(false) }
                 var tilesetHeightDp by remember { mutableStateOf(400f) }
                 var leftTab by remember { mutableStateOf(0) }
                 var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
@@ -345,6 +373,10 @@ fun main() = application {
                     tilesetSubTab = 2
                 }
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    if (!tilesetHeightInitialized) {
+                        tilesetHeightDp = (maxHeight.value * 0.65f).coerceIn(120f, 700f)
+                        tilesetHeightInitialized = true
+                    }
                     val maxLeftWidth = maxWidth.value - 100f
                     Row(
                         modifier = Modifier.fillMaxSize(),
@@ -650,6 +682,11 @@ fun main() = application {
                                         romParser = romParser,
                                         editorState = editorState,
                                         rooms = rooms,
+                                        onRoomSelected = { r ->
+                                            selectedRoom = r
+                                            val romPath = RomPreferences.getLastRomPath()
+                                            if (romPath != null) saveLastRoom(romPath, r)
+                                        },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     1 -> {
@@ -668,22 +705,11 @@ fun main() = application {
                                             )
                                         }
                                     }
-                                    2 -> Column(Modifier.fillMaxSize()) {
-                                        PatchEditorCanvas(
-                                            editorState = editorState,
-                                            romParser = romParser,
-                                            modifier = Modifier.weight(1f).fillMaxWidth()
-                                        )
-                                        DraggableDividerHorizontal(
-                                            onDelta = { dy ->
-                                                // reuse tilesetHeightDp for divider state
-                                            }
-                                        )
-                                        ValidationPanel(
-                                            romParser = romParser,
-                                            modifier = Modifier.fillMaxWidth().height(300.dp)
-                                        )
-                                    }
+                                    2 -> PatchEditorCanvas(
+                                        editorState = editorState,
+                                        romParser = romParser,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
                                     3 -> SoundEditorCanvas(
                                         romParser = romParser,
                                         editorState = editorState,

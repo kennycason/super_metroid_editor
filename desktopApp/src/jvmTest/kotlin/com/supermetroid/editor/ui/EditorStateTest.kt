@@ -15,6 +15,7 @@ class EditorStateTest {
     @BeforeEach
     fun setUp() {
         state = EditorState()
+        state.testMode = true
         state.initTestLevel(blocksWide = 4, blocksTall = 4)
     }
 
@@ -966,6 +967,160 @@ class EditorStateTest {
             state.mapSelEnd = Pair(0, 0)
             val pat = state.saveSelectionAsPattern("cre", isCre = true)
             assertNull(pat?.tilesetId)
+        }
+    }
+
+    // ── PLM grouping in paint strokes ─────────────────────────────
+
+    @Nested
+    inner class PlmGrouping {
+        @Test
+        fun `painting pattern with PLM creates single undo entry`() {
+            val plmKey = 0L // row=0, col=0
+            val brush = TileBrush(
+                tiles = listOf(listOf(0x40)),
+                blockType = 0x9,
+                plmOverrides = mapOf(plmKey to Pair(0xC8A2, 0x0000)),
+                btsOverrides = mapOf(plmKey to 0x00)
+            )
+            state.setBrushForTest(brush)
+            state.setRoomIdForTest(0x91F8) // use a valid room key
+
+            val undoBefore = state.undoStack.size
+            state.beginStroke()
+            state.paintAt(0, 0)
+            state.endStroke()
+
+            // Should create exactly ONE undo entry (tiles + PLMs grouped)
+            assertEquals(undoBefore + 1, state.undoStack.size,
+                "Pattern with PLM should produce a single undo entry")
+
+            val op = state.undoStack.last()
+            assertTrue(op.edits.isNotEmpty(), "Should have tile edits")
+            assertTrue(op.plmAdds.isNotEmpty(), "Should have PLM adds in the same operation")
+            assertEquals(0xC8A2, op.plmAdds.first().plmId, "PLM ID should match brush")
+        }
+
+        @Test
+        fun `undo of pattern with PLM removes both tiles and PLMs`() {
+            val plmKey = 0L
+            val brush = TileBrush(
+                tiles = listOf(listOf(0x40)),
+                blockType = 0x9,
+                plmOverrides = mapOf(plmKey to Pair(0xC8A2, 0x0000)),
+                btsOverrides = mapOf(plmKey to 0x00)
+            )
+            state.setBrushForTest(brush)
+            state.setRoomIdForTest(0x91F8)
+
+            val origWord = state.readBlockWord(0, 0)
+            state.beginStroke()
+            state.paintAt(0, 0)
+            state.endStroke()
+
+            // PLM should be present
+            assertTrue(state.workingPlms.any { it.id == 0xC8A2 && it.x == 0 && it.y == 0 },
+                "PLM should exist after painting")
+
+            // Undo
+            state.undo()
+            assertEquals(origWord, state.readBlockWord(0, 0), "Tile should be restored")
+            assertFalse(state.workingPlms.any { it.id == 0xC8A2 && it.x == 0 && it.y == 0 },
+                "PLM should be removed after undo")
+        }
+
+        @Test
+        fun `painting multi-tile pattern collects all PLMs in one stroke`() {
+            val plmKey00 = 0L // row=0, col=0
+            val brush = TileBrush(
+                tiles = listOf(
+                    listOf(0x40),
+                    listOf(0x60),
+                ),
+                blockType = 0x9,
+                plmOverrides = mapOf(plmKey00 to Pair(0xC8A2, 0x0000)),
+                btsOverrides = mapOf(plmKey00 to 0x00)
+            )
+            state.setBrushForTest(brush)
+            state.setRoomIdForTest(0x91F8)
+
+            state.beginStroke()
+            state.paintAt(0, 0)
+            state.endStroke()
+
+            val op = state.undoStack.last()
+            assertEquals(2, op.edits.size, "Should have 2 tile edits")
+            assertEquals(1, op.plmAdds.size, "Should have 1 PLM add")
+        }
+
+        @Test
+        fun `painting unchanged tile with PLM skips both tile and PLM`() {
+            // Pre-write the exact tile value the brush would paint
+            writeWord(0, 0, 0x40 or (0x9 shl 12))
+            writeBts(0, 0, 0x00)
+
+            val plmKey = 0L
+            val brush = TileBrush(
+                tiles = listOf(listOf(0x40)),
+                blockType = 0x9,
+                plmOverrides = mapOf(plmKey to Pair(0xB76F, 0x8000)),
+                btsOverrides = mapOf(plmKey to 0x00)
+            )
+            state.setBrushForTest(brush)
+            state.setRoomIdForTest(0x91F8)
+
+            val undoBefore = state.undoStack.size
+            state.beginStroke()
+            state.paintAt(0, 0)
+            state.endStroke()
+
+            // Tile is unchanged, so no edit or PLM should be recorded
+            assertEquals(undoBefore, state.undoStack.size,
+                "No undo entry when tile is unchanged")
+        }
+    }
+
+    // ── Gate pattern removal ──────────────────────────────────────
+
+    @Nested
+    inner class GatePatternRemoval {
+        @Test
+        fun `seedBuiltInPatterns removes existing gate patterns`() {
+            // Add a fake gate pattern
+            val gatePattern = TilePattern(
+                id = "builtin_gate_blue_left",
+                name = "Gate: Blue (Left)",
+                cols = 1, rows = 4, builtIn = true,
+                cells = mutableListOf(
+                    PatternCell(0x342, blockType = 0x8),
+                    PatternCell(0x343, blockType = 0x8),
+                    PatternCell(0x343, blockType = 0x8),
+                    PatternCell(0x342, blockType = 0x8)
+                )
+            )
+            state.project.patterns.add(gatePattern)
+            assertTrue(state.project.patterns.any { it.id == "builtin_gate_blue_left" })
+
+            // seedBuiltInPatterns requires a RomParser, pass null to just run migration
+            state.seedBuiltInPatterns(null)
+
+            assertFalse(state.project.patterns.any { it.id == "builtin_gate_blue_left" },
+                "Gate pattern should be removed after seeding")
+        }
+    }
+
+    // ── testMode prevents disk I/O ───────────────────────────────
+
+    @Nested
+    inner class TestMode {
+        @Test
+        fun `testMode true prevents pattern save to disk`() {
+            assertTrue(state.testMode, "testMode should be set in setUp")
+            // addPattern should not throw or write to disk
+            val pat = state.addPattern("ephemeral", cols = 1, rows = 1)
+            assertNotNull(pat)
+            // Remove it to clean up
+            state.removePattern(pat.id)
         }
     }
 }
