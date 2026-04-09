@@ -167,7 +167,6 @@ See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including 
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
-- Visual liquid level preview on map canvas (water/lava/acid height overlay)
 - Layer 3 visual preview (fog, rain, heat shimmer rendering)
 - Multi-state room editing (per-state enemies/PLMs/FX)
 - Room creation, resizing, and state management

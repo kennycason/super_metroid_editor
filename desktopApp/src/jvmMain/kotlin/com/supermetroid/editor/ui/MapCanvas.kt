@@ -1142,11 +1142,7 @@ fun MapCanvas(
                                         val effectiveLiquidStart = editorFxChange?.liquidSurfaceStart ?: defaultFx?.liquidSurfaceStart ?: 0xFFFF
                                         if (effectiveLiquidStart != 0xFFFF) {
                                             val liquidY = effectiveLiquidStart
-                                            // SM engine dispatch: kSamusFxHandlers[(fxType & 0xF) >> 1]
-                                            // Index 1 = Lava (0x02), 2 = Acid (0x04), 3 = Water (0x06)
-                                            // Names in FX_TYPE_NAMES are layer 3 visual names, NOT physics types.
-                                            // See sm_90.c SetLiquidPhysicsType / Samus_Animate
-                                            val liquidColor = when ((effectiveFxType and 0xF) shr 1) {
+                                            val liquidColor = when (liquidPhysicsIndex(effectiveFxType)) {
                                                 1 -> Color(0x44FF4400)     // lava (orange-red) — Varia protects
                                                 2 -> Color(0x44CCCC00)    // acid (yellow) — ignores suits
                                                 3 -> Color(0x443388FF)     // water (blue) — no damage
@@ -2601,7 +2597,7 @@ fun MapCanvas(
  * approximations (shape 4 = fully solid but ROM table has zeros).
  * Values >16 indicate overshoot into adjacent tiles; drawing code clamps to 0-16.
  */
-private val SLOPE_HEIGHTS = arrayOf(
+internal val SLOPE_HEIGHTS = arrayOf(
     intArrayOf( 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8), // 0x00 half solid bottom
     intArrayOf(16,16,16,16,16,16,16,16, 0, 0, 0, 0, 0, 0, 0, 0), // 0x01 half solid side
     intArrayOf(16,16,16,16,16,16,16,16, 8, 8, 8, 8, 8, 8, 8, 8), // 0x02 three-quarter
@@ -2635,6 +2631,12 @@ private val SLOPE_HEIGHTS = arrayOf(
     intArrayOf(20,20,20,20,20,20,14,11, 8, 5, 2, 0, 0, 0, 0, 0), // 0x1E steep tile 2/3
     intArrayOf(20,20,20,20,20,20,20,20,20,20,20,15,12, 9, 6, 3), // 0x1F steep tile 3/3
 )
+
+/**
+ * SM engine liquid physics index: kSamusFxHandlers[(fxType & 0xF) >> 1]
+ * 0 = none, 1 = lava, 2 = acid, 3 = water
+ */
+internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
 
 internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (overlay) {
     TileOverlay.DOOR -> "D$bts"

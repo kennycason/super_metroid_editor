@@ -7,6 +7,114 @@ import org.junit.jupiter.api.Test
 
 class TileOverlayTest {
 
+    // ── Slope height table ────────────────────────────────────────
+
+    @Nested
+    inner class SlopeHeights {
+        @Test
+        fun `table has 32 entries covering shapes 0x00-0x1F`() {
+            assertEquals(32, SLOPE_HEIGHTS.size)
+        }
+
+        @Test
+        fun `each entry has 16 columns`() {
+            for (i in SLOPE_HEIGHTS.indices) {
+                assertEquals(16, SLOPE_HEIGHTS[i].size, "Shape 0x${i.toString(16)} should have 16 columns")
+            }
+        }
+
+        @Test
+        fun `45-degree pair - tile 1 ends at 0 and tile 2 starts at 16`() {
+            // 0x14 (1/2) should descend to 0, 0x15 (2/2) should start near 16
+            val tile1 = SLOPE_HEIGHTS[0x14]
+            val tile2 = SLOPE_HEIGHTS[0x15]
+            assertEquals(0, tile1.last(), "45° tile 1/2 should end at 0")
+            assertEquals(16, tile2[0], "45° tile 2/2 should start at 16")
+            assertTrue(tile1[0] < tile2[0], "Tile 1/2 max should be less than tile 2/2 max")
+        }
+
+        @Test
+        fun `45-degree smooth pair - tile 1 ends at 1 and tile 2 starts at 16`() {
+            val tile1 = SLOPE_HEIGHTS[0x16]
+            val tile2 = SLOPE_HEIGHTS[0x17]
+            assertEquals(1, tile1.last(), "45° smooth tile 1/2 should end at 1")
+            assertEquals(16, tile2[0], "45° smooth tile 2/2 should start at 16")
+        }
+
+        @Test
+        fun `gentle 3-tile set - heights decrease from tile 3 to tile 1`() {
+            val tile1 = SLOPE_HEIGHTS[0x18] // lowest
+            val tile2 = SLOPE_HEIGHTS[0x19] // middle
+            val tile3 = SLOPE_HEIGHTS[0x1A] // highest
+            assertTrue(tile1.max() < tile2.max(), "Gentle tile 1/3 should be lower than 2/3")
+            assertTrue(tile2.max() < tile3.max(), "Gentle tile 2/3 should be lower than 3/3")
+            assertEquals(1, tile1.last(), "Gentle tile 1/3 should end near 0")
+            assertEquals(16, tile3[0], "Gentle tile 3/3 should start at 16")
+        }
+
+        @Test
+        fun `steep 2-tile pair - tile 1 ends at 0 and tile 2 has overshoot`() {
+            val tile1 = SLOPE_HEIGHTS[0x1B]
+            val tile2 = SLOPE_HEIGHTS[0x1C]
+            assertEquals(0, tile1.last(), "Steep tile 1/2 should end at 0")
+            assertTrue(tile2[0] >= 16, "Steep tile 2/2 should start at or above 16 (overshoot)")
+        }
+
+        @Test
+        fun `steep 3-tile set - heights decrease from tile 3 to tile 1`() {
+            val tile1 = SLOPE_HEIGHTS[0x1D] // lowest
+            val tile2 = SLOPE_HEIGHTS[0x1E] // middle
+            val tile3 = SLOPE_HEIGHTS[0x1F] // highest
+            assertTrue(tile1.max() < tile2.max(), "Steep tile 1/3 should be lower than 2/3")
+            assertTrue(tile2.max() <= tile3.max(), "Steep tile 2/3 should be <= 3/3")
+            assertEquals(0, tile1.min(), "Steep tile 1/3 should reach 0")
+        }
+
+        @Test
+        fun `fully solid shape 0x04 has all 16s`() {
+            assertTrue(SLOPE_HEIGHTS[0x04].all { it == 16 })
+        }
+
+        @Test
+        fun `steep 1-tile 0x12 descends from 16 to 1`() {
+            assertEquals(16, SLOPE_HEIGHTS[0x12][0])
+            assertEquals(1, SLOPE_HEIGHTS[0x12][15])
+        }
+    }
+
+    // ── Liquid physics index ──────────────────────────────────────
+
+    @Nested
+    inner class LiquidPhysics {
+        @Test
+        fun `fxType 0x02 maps to lava (index 1)`() {
+            assertEquals(1, liquidPhysicsIndex(0x02))
+        }
+
+        @Test
+        fun `fxType 0x04 maps to acid (index 2)`() {
+            assertEquals(2, liquidPhysicsIndex(0x04))
+        }
+
+        @Test
+        fun `fxType 0x06 maps to water (index 3)`() {
+            assertEquals(3, liquidPhysicsIndex(0x06))
+        }
+
+        @Test
+        fun `fxType 0x00 maps to none (index 0)`() {
+            assertEquals(0, liquidPhysicsIndex(0x00))
+        }
+
+        @Test
+        fun `fxType with upper nibble set still extracts lower nibble correctly`() {
+            // fxType 0x24 = upper nibble 2, lower 4 → (4 >> 1) = 2 = acid
+            assertEquals(2, liquidPhysicsIndex(0x24))
+            // fxType 0x16 → lower nibble 6 → (6 >> 1) = 3 = water
+            assertEquals(3, liquidPhysicsIndex(0x16))
+        }
+    }
+
     @Nested
     inner class ShotBlockCategory {
         @Test
@@ -216,6 +324,14 @@ class TileOverlayTest {
 
     @Nested
     inner class TileOverlayEnum {
+        @Test
+        fun `LIQUID overlay exists with correct properties`() {
+            val liquid = TileOverlay.LIQUID
+            assertEquals("Liquid Level", liquid.label)
+            assertEquals("~", liquid.shortLabel)
+            assertTrue(liquid.color != 0L)
+        }
+
         @Test
         fun `all overlays have non-empty labels`() {
             for (overlay in TileOverlay.entries) {
