@@ -59,6 +59,27 @@ object RomConstants {
     /** Default dark background color (ARGB) used for tile/map rendering */
     const val ROM_BG_COLOR = 0xFF0C0C18.toInt()
 
+    // ─── Layer 3 ────────────────────────────────────────────────────
+
+    /** ROM PC offset of the Layer 3 setup pointer table (indexed by fxType) */
+    const val L3_POINTER_TABLE_PC = 0x1ABF0
+
+    /** ROM PC offset of the base 2bpp Layer 3 tile graphics (256 tiles × 16 bytes) */
+    const val L3_BASE_GFX_PC = 0xD3200
+
+    /** Layer 3 tilemap entries: 32 columns × 33 rows */
+    const val L3_TILEMAP_COLS = 32
+    const val L3_TILEMAP_ROWS = 33
+    const val L3_TILEMAP_SIZE = L3_TILEMAP_COLS * L3_TILEMAP_ROWS  // 1056
+
+    /** Per-fxType replacement GFX addresses (ROM PC) — first 4 tiles replaced */
+    val L3_REPLACEMENT_GFX: Map<Int, Int> = mapOf(
+        0x02 to 0x3A564,  // Fog
+        0x04 to 0x3A6A4,  // Water
+        0x08 to 0x3A7E4,  // Acid
+        0x0A to 0x3A974,  // Rain
+    )
+
     // ─── SPC Audio ───────────────────────────────────────────────────
 
     /** SPC700 RAM size (64 KB) */

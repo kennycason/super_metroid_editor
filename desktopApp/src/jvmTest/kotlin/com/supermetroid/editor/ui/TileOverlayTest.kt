@@ -108,9 +108,7 @@ class TileOverlayTest {
 
         @Test
         fun `fxType with upper nibble set still extracts lower nibble correctly`() {
-            // fxType 0x24 = upper nibble 2, lower 4 → (4 >> 1) = 2 = acid
             assertEquals(2, liquidPhysicsIndex(0x24))
-            // fxType 0x16 → lower nibble 6 → (6 >> 1) = 3 = water
             assertEquals(3, liquidPhysicsIndex(0x16))
         }
     }
@@ -330,6 +328,14 @@ class TileOverlayTest {
             assertEquals("Liquid Level", liquid.label)
             assertEquals("~", liquid.shortLabel)
             assertTrue(liquid.color != 0L)
+        }
+
+        @Test
+        fun `LAYER3 overlay exists with correct properties`() {
+            val l3 = TileOverlay.LAYER3
+            assertEquals("Layer 3", l3.label)
+            assertEquals("L3", l3.shortLabel)
+            assertTrue(l3.color != 0L)
         }
 
         @Test

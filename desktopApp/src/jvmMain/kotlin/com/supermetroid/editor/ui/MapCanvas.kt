@@ -487,6 +487,8 @@ enum class TileOverlay(val label: String, val shortLabel: String, val color: Lon
     SCROLLS("Scroll Colors", "Sc", 0x60FFFFFF),
     // Liquid level (water/lava/acid from FX data)
     LIQUID("Liquid Level", "~", 0x443388FF),
+    // Layer 3 visual (fog, rain, spores, heat shimmer)
+    LAYER3("Layer 3", "L3", 0x60AACCFF),
     // Lighten: brighten dark rooms (Fireflea, etc.)
     LIGHTEN("Lighten", "L", 0x00FFFFFF),
 }
@@ -936,8 +938,21 @@ fun MapCanvas(
                             val rWidthScreens = roomHeader?.width ?: 0
                             val rHeightScreens = roomHeader?.height ?: 0
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode()) {
-                                buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens)
+                            // Layer 3 FX overlay data
+                            val layer3Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER3)) {
+                                if (!activeOverlays.contains(TileOverlay.LAYER3) || roomHeader == null) null
+                                else {
+                                    val fxEntries = romParser.parseFxEntries(roomHeader.fxPtr)
+                                    val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
+                                    val fxType = defaultFx?.fxType ?: 0
+                                    if (fxType == 0) null
+                                    else romParser.renderLayer3Image(fxType, layer3Palette(fxType))
+                                }
+                            }
+
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer3Data?.contentHashCode()) {
+                                buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
+                                    layer3Pixels = layer3Data)
                             }
                             
                             val hScrollState = rememberScrollState()
@@ -974,13 +989,13 @@ fun MapCanvas(
                             }
                             
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer3Data?.contentHashCode()) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens)
+                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer3Pixels = layer3Data)
                                     }
                                 }
                                 compositeImage
@@ -2638,6 +2653,44 @@ internal val SLOPE_HEIGHTS = arrayOf(
  */
 internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
 
+/**
+ * Return a 4-color ARGB palette for Layer 3 rendering based on fxType.
+ * Color 0 = transparent, colors 1-3 = increasing intensity.
+ */
+/**
+ * Layer 3 palette for static preview. L3 tiles in SM are mostly pixel value 3
+ * (background fill) with scattered 1s and 2s (features like rain drops, fog wisps).
+ * Color 3 = base tint, Colors 1-2 = brighter feature highlights.
+ */
+internal fun layer3Palette(fxType: Int): IntArray = when (fxType) {
+    0x02, 0x0E, 0x10 -> // Fog / Haze (Norfair heat haze) — warm orange tint
+        intArrayOf(0x00000000, 0xD0FF8020.toInt(), 0xA0FF6010.toInt(), 0x50FF4000.toInt())
+    0x04, 0x12, 0x14 -> // Water surface — cool blue tint
+        intArrayOf(0x00000000, 0xC0A0D0FF.toInt(), 0x906080C0.toInt(), 0x40304080)
+    0x06 -> // Lava surface — fiery orange
+        intArrayOf(0x00000000, 0xC0FFB000.toInt(), 0x90FF7000.toInt(), 0x40802000)
+    0x08 -> // Acid surface — toxic green
+        intArrayOf(0x00000000, 0xC0B0FF00.toInt(), 0x9070B000.toInt(), 0x40406000)
+    0x0A -> // Rain — blue-white drops on dark tint
+        intArrayOf(0x00000000, 0xD0C0D8FF.toInt(), 0xA08090C0.toInt(), 0x30102030)
+    0x0C -> // Spores — green particles
+        intArrayOf(0x00000000, 0xD0A0FFA0.toInt(), 0xA060C060.toInt(), 0x30103010)
+    0x16 -> // Firefleas — yellow glows
+        intArrayOf(0x00000000, 0xD0FFFF60.toInt(), 0xA0C0C040.toInt(), 0x30101000)
+    0x1C -> // Heat shimmer — orange shift
+        intArrayOf(0x00000000, 0xA0FF8040.toInt(), 0x80C06030.toInt(), 0x40804020.toInt())
+    0x24 -> // BG3 transparent (fireflea rooms — darken)
+        intArrayOf(0x00000000, 0x50000000, 0x70000000, 0x90000000.toInt())
+    0x26 -> // Sandstorm — brown haze
+        intArrayOf(0x00000000, 0xB0E0C080.toInt(), 0x90B09060.toInt(), 0x50604020)
+    0x28, 0x2A -> // Dark visor
+        intArrayOf(0x00000000, 0x50000000, 0x70000000, 0xA0000000.toInt())
+    0x2C -> // Black
+        intArrayOf(0x00000000, 0x80000000.toInt(), 0xC0000000.toInt(), 0xF0000000.toInt())
+    else -> // Default: subtle white tint
+        intArrayOf(0x00000000, 0x80FFFFFF.toInt(), 0x60FFFFFF, 0x30FFFFFF)
+}
+
 internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (overlay) {
     TileOverlay.DOOR -> "D$bts"
     TileOverlay.SHOT_BEAM -> when {
@@ -2770,7 +2823,10 @@ private fun buildCompositeImage(
     showGrid: Boolean,
     scrollData: IntArray? = null,
     roomWidthScreens: Int = 0,
-    roomHeightScreens: Int = 0
+    roomHeightScreens: Int = 0,
+    layer3Pixels: IntArray? = null,
+    layer3Width: Int = 256,
+    layer3Height: Int = 264
 ): BufferedImage {
     val img = BufferedImage(data.width, data.height, BufferedImage.TYPE_INT_ARGB)
     val pixels = if (activeOverlays.contains(TileOverlay.LIGHTEN)) {
@@ -2790,7 +2846,21 @@ private fun buildCompositeImage(
 
     val g = img.createGraphics()
     g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF)
-    
+
+    // Layer 3 overlay: tile the L3 image across the room
+    if (activeOverlays.contains(TileOverlay.LAYER3) && layer3Pixels != null && layer3Width > 0 && layer3Height > 0) {
+        val l3Img = BufferedImage(layer3Width, layer3Height, BufferedImage.TYPE_INT_ARGB)
+        l3Img.setRGB(0, 0, layer3Width, layer3Height, layer3Pixels, 0, layer3Width)
+        val oldComposite = g.composite
+        g.composite = java.awt.AlphaComposite.SrcOver
+        for (ty in 0 until data.height step layer3Height) {
+            for (tx in 0 until data.width step layer3Width) {
+                g.drawImage(l3Img, tx, ty, null)
+            }
+        }
+        g.composite = oldComposite
+    }
+
     // Draw per-screen scroll color overlay
     if (activeOverlays.contains(TileOverlay.SCROLLS) && scrollData != null && roomWidthScreens > 0) {
         val scrollColors = arrayOf(

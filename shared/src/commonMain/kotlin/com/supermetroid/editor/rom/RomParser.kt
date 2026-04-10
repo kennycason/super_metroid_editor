@@ -1146,6 +1146,113 @@ class RomParser(internal val romData: ByteArray) {
         }
     }
 
+    // ─── Layer 3 FX ──────────────────────────────────────────────────
+
+    /**
+     * Layer 3 tilemap entry: tile index (0-255) + draw method (flip/palette).
+     */
+    data class L3TilemapEntry(val tile: Int, val hFlip: Boolean, val vFlip: Boolean, val palette: Int)
+
+    /**
+     * Read the Layer 3 tilemap for a given fxType.
+     * The pointer table at ROM PC 0x1ABF0, indexed by fxType, gives a 16-bit
+     * pointer in bank $8A to the tilemap data. Each entry is 2 bytes:
+     * [tile_index, draw_method] where draw_method bit 6=hFlip, bit 7=vFlip,
+     * bits 2-4=palette.
+     */
+    fun readLayer3Tilemap(fxType: Int): List<L3TilemapEntry>? {
+        if (fxType < 0 || fxType >= 0x30) return null
+        val tableBase = RomConstants.L3_POINTER_TABLE_PC
+        if (tableBase + fxType + 1 >= romData.size) return null
+        val lo = romData[romStartOffset + tableBase + fxType].toInt() and 0xFF
+        val hi = romData[romStartOffset + tableBase + fxType + 1].toInt() and 0xFF
+        val snesAddr = 0x8A0000 or (hi shl 8) or lo
+        val pc = snesToPc(snesAddr)
+        val dataSize = RomConstants.L3_TILEMAP_SIZE * 2
+        if (pc + dataSize > romData.size) return null
+
+        return List(RomConstants.L3_TILEMAP_SIZE) { i ->
+            val tile = romData[pc + i * 2].toInt() and 0xFF
+            val dm = romData[pc + i * 2 + 1].toInt() and 0xFF
+            L3TilemapEntry(
+                tile = tile,
+                hFlip = (dm and 0x40) != 0,
+                vFlip = (dm and 0x80) != 0,
+                palette = (dm shr 2) and 0x07
+            )
+        }
+    }
+
+    /**
+     * Decode a single 2bpp tile from ROM. Returns 64 pixel values (0-3), row-major.
+     */
+    private fun decode2bppTile(pc: Int): IntArray {
+        val pixels = IntArray(64)
+        for (row in 0 until 8) {
+            val off = pc + row * 2
+            if (off + 1 >= romData.size) break
+            val bp0 = romData[off].toInt() and 0xFF
+            val bp1 = romData[off + 1].toInt() and 0xFF
+            for (col in 0 until 8) {
+                val bit = 7 - col
+                pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
+            }
+        }
+        return pixels
+    }
+
+    /**
+     * Render a Layer 3 image for a given fxType.
+     * Returns an ARGB pixel array (width × height) where width=256, height=264
+     * (32 tiles × 8px = 256, 33 tiles × 8px = 264).
+     * Color 0 is transparent; colors 1-3 use the provided 3-color palette.
+     * If palette is null, a default white gradient is used.
+     */
+    fun renderLayer3Image(fxType: Int, palette: IntArray? = null): IntArray? {
+        val tilemap = readLayer3Tilemap(fxType) ?: return null
+        val width = RomConstants.L3_TILEMAP_COLS * 8   // 256
+        val height = RomConstants.L3_TILEMAP_ROWS * 8  // 264
+
+        // Load base 2bpp tiles (256 tiles at D3200)
+        val baseTiles = Array(256) { decode2bppTile(romStartOffset + RomConstants.L3_BASE_GFX_PC + it * 16) }
+
+        // Apply fxType-specific replacement tiles (overwrite first 4)
+        val replacementAddr = RomConstants.L3_REPLACEMENT_GFX[fxType]
+        if (replacementAddr != null) {
+            for (t in 0 until 4) {
+                baseTiles[t] = decode2bppTile(romStartOffset + replacementAddr + t * 16)
+            }
+        }
+
+        // Default palette: transparent + 3 levels of white
+        val pal = palette ?: intArrayOf(0x00000000, 0x40FFFFFF.toInt(), 0x60FFFFFF, 0x80FFFFFF.toInt())
+
+        val pixels = IntArray(width * height)
+        for (i in tilemap.indices) {
+            val entry = tilemap[i]
+            val tileX = (i % RomConstants.L3_TILEMAP_COLS) * 8
+            val tileY = (i / RomConstants.L3_TILEMAP_COLS) * 8
+            val tilePixels = baseTiles[entry.tile]
+
+            for (py in 0 until 8) {
+                for (px in 0 until 8) {
+                    val srcX = if (entry.hFlip) 7 - px else px
+                    val srcY = if (entry.vFlip) 7 - py else py
+                    val colorIdx = tilePixels[srcY * 8 + srcX]
+                    val color = pal[colorIdx]
+                    if (color != 0) {
+                        val destX = tileX + px
+                        val destY = tileY + py
+                        if (destX < width && destY < height) {
+                            pixels[destY * width + destX] = color
+                        }
+                    }
+                }
+            }
+        }
+        return pixels
+    }
+
     /**
      * Read the map station reveal data for a given area.
      * 256 bytes, each byte = 8 tiles' reveal flags (LSB first).

@@ -606,4 +606,58 @@ class RoomPropertyEditTest {
         assertEquals(2, liquidPhysicsIndex(fx!!.fxType),
             "Mother Brain fxType=0x${fx.fxType.toString(16)} should map to acid (index 2)")
     }
+
+    // ─── Layer 3 tilemap parsing ─────────────────────────────────────
+
+    @Test
+    fun `Layer 3 tilemap for water fxType returns 1056 entries`() {
+        val parser = loadTestRom() ?: return
+        val tilemap = parser.readLayer3Tilemap(0x04)
+        assertNotNull(tilemap, "Water L3 tilemap should not be null")
+        assertEquals(1056, tilemap!!.size, "L3 tilemap should be 32×33 = 1056 entries")
+    }
+
+    @Test
+    fun `Layer 3 tilemap for fog uses tiles 0x50-0x52`() {
+        val parser = loadTestRom() ?: return
+        val tilemap = parser.readLayer3Tilemap(0x02) ?: run { println("No tilemap"); return }
+        val tileIndices = tilemap.map { it.tile }.toSet()
+        assertTrue(0x50 in tileIndices, "Fog tilemap should use tile 0x50")
+        assertTrue(0x51 in tileIndices, "Fog tilemap should use tile 0x51")
+        assertTrue(0x52 in tileIndices, "Fog tilemap should use tile 0x52")
+    }
+
+    @Test
+    fun `Layer 3 tilemap for lava uses uniform tile 0x4E`() {
+        val parser = loadTestRom() ?: return
+        val tilemap = parser.readLayer3Tilemap(0x06) ?: run { println("No tilemap"); return }
+        val firstTiles = tilemap.take(32)
+        assertTrue(firstTiles.all { it.tile == 0x4E },
+            "Lava L3 first row should all be tile 0x4E, got ${firstTiles.map { it.tile }.toSet()}")
+    }
+
+    @Test
+    fun `renderLayer3Image returns correct dimensions`() {
+        val parser = loadTestRom() ?: return
+        val pixels = parser.renderLayer3Image(0x04)
+        assertNotNull(pixels, "Water L3 image should render")
+        assertEquals(256 * 264, pixels!!.size, "L3 image should be 256×264 pixels")
+    }
+
+    @Test
+    fun `renderLayer3Image with fxType 0 returns null`() {
+        val parser = loadTestRom() ?: return
+        val tilemap = parser.readLayer3Tilemap(0x00)
+        assertNotNull(tilemap, "fxType 0 should still have a tilemap (the default)")
+    }
+
+    @Test
+    fun `Layer 3 tilemap entries have valid flip flags`() {
+        val parser = loadTestRom() ?: return
+        val tilemap = parser.readLayer3Tilemap(0x04) ?: return
+        for (entry in tilemap) {
+            assertTrue(entry.tile in 0..255, "Tile index should be 0-255")
+            assertTrue(entry.palette in 0..7, "Palette should be 0-7")
+        }
+    }
 }
