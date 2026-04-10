@@ -2358,7 +2358,15 @@ fun MapCanvas(
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
                                                     Column(modifier = Modifier.weight(1f)) {
-                                                        Text(eName, fontSize = 10.sp)
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                            Text(eName, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                            Text(
+                                                                "0x${enemy.id.toString(16).uppercase().padStart(4, '0')}",
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = MaterialTheme.colorScheme.onSurface
+                                                            )
+                                                        }
                                                         Text(
                                                             "pos: (${enemy.x}, ${enemy.y})  prop: 0x${enemy.properties.toString(16).uppercase().padStart(4, '0')}",
                                                             fontSize = 8.sp,

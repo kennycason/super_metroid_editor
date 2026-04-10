@@ -74,7 +74,7 @@ class Layer3DiagnosticTest {
         assertEquals("Dragon", RomParser.enemyName(0xD4BF), "0xD4BF ROM:DRAGON")
         assertEquals("Multiviola", RomParser.enemyName(0xD1BF), "0xD1BF ROM:MULTI")
         assertEquals("Oum (baby)", RomParser.enemyName(0xD37F), "0xD37F ROM:OUM")
-        assertEquals("Dessgeega (small)", RomParser.enemyName(0xDA3F), "0xDA3F ROM:DESSGEEGA")
+        assertEquals("Dessgeega", RomParser.enemyName(0xDA3F), "0xDA3F ROM:DESSGEEGA")
         assertEquals("Zoa", RomParser.enemyName(0xDA7F), "0xDA7F ROM:ZOA")
         assertEquals("Metroid", RomParser.enemyName(0xDD7F), "0xDD7F ROM:METROID")
         // Round 2: verified via SMILE GIF sprites
@@ -84,8 +84,23 @@ class Layer3DiagnosticTest {
         assertEquals("Dessgeega", RomParser.enemyName(0xD97F), "0xD97F ROM:SDEATH large dessgeega")
         assertEquals("Zero", RomParser.enemyName(0xE67F), "0xE67F small green eye")
         assertEquals("Alcoon", RomParser.enemyName(0xE9BF), "0xE9BF ROM:NDRA green dragon")
-        assertEquals("Puyo", RomParser.enemyName(0xE8BF), "0xE8BF ROM:PUU green puffball")
+        assertEquals("Puu", RomParser.enemyName(0xE8BF), "0xE8BF ROM:PUU grapple puffball")
         assertEquals("Work Robot", RomParser.enemyName(0xE8FF), "0xE8FF ROM:ROBO green pillar")
+        // Round 3: SMILE cross-reference corrections (April 2026)
+        assertEquals("Dachora", RomParser.enemyName(0xE5FF), "0xE5FF was Ebi, confirmed Dachora from possessor data")
+        assertEquals("Evir", RomParser.enemyName(0xE63F), "0xE63F SMILE:EBI, community:Evir")
+        assertEquals("Eye", RomParser.enemyName(0xE6BF), "0xE6BF SMILE:EYE wall-mounted eye")
+        assertEquals("Kihunter (green)", RomParser.enemyName(0xEABF), "0xEABF SMILE:HACHI1")
+        assertEquals("Kihunter (red)", RomParser.enemyName(0xEB3F), "0xEB3F SMILE:HACHI2")
+        assertEquals("Kihunter (gold)", RomParser.enemyName(0xEBBF), "0xEBBF SMILE:HACHI3")
+        assertEquals("Shaktool", RomParser.enemyName(0xF07F), "0xF07F SMILE:DORI, 7-piece digger")
+        assertEquals("Sidehopper (big)", RomParser.enemyName(0xD9BF), "0xD9BF SMILE:SIDE")
+        assertEquals("Sova", RomParser.enemyName(0xDCBF), "0xDCBF SMILE:NOVA orange Norfair crawler")
+        assertEquals("Choot", RomParser.enemyName(0xD3BF), "0xD3BF SMILE:HIRU leech")
+        assertEquals("Yapping Maw", RomParser.enemyName(0xE7BF), "0xE7BF SMILE:HAND snapping skull")
+        assertEquals("Beetom", RomParser.enemyName(0xE87F), "0xE87F green hopping bug")
+        assertEquals("Mellow", RomParser.enemyName(0xD0FF), "0xD0FF purple flying bat")
+        assertEquals("Tripper", RomParser.enemyName(0xD7FF), "0xD7FF SMILE:KAMER")
     }
 
     @Test

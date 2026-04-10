@@ -44,13 +44,13 @@ the game if it's the wrong type.
 | Dachora | $E5FF | 5 (main + 4 shinespark echoes) | B | Pieces 2-5 not required if last enemy index |
 | Bang | $DB3F | 4 | D | Piece 1=possessed enemy (optional), 2=orange core, 3=respawn bubble (optional), 4=initial bubble |
 | Lavaman | $E83F | 3, all required | C | 1=floating head, 2=rising body, 3=body throwing lavaballs |
-| Evir/Ebi | $E63F, $E67F | 3 | B | 1=falling body, 2=animated legs (optional), 3=spiny projectile (optional, separate type) |
+| Evir | $E63F, $E67F | 3 | B | 1=falling body, 2=animated legs (optional), 3=spiny projectile (optional, separate type) |
 | Samus's Ship | $D07F, $D0BF | 3, all required | B | 1=main (enter/hover/top GFX/thrusters), 2=bottom GFX, 3=unknown but required |
 | Dragon | $D4BF | 2, both required | A | 1=main enemy, 2=animated wings |
 | Hibashi | $E07F | 2, both required | D | 1=graphics and sound, 2=hitbox movement |
-| Puyo (Puu) | $E8BF | 2, both required | A | 1=grapplable bottom, 2=main rising body |
+| Puu | $E8BF | 2, both required | A | 1=grapplable bottom, 2=main rising body |
 | Kzan | $DFFF, $E0BF | 2 | B | 1=fully functioning enemy, 2=separate type (unused?) |
-| Kihunter (Hachi) | $EABF/$EB3F/$EBBF + $EAFF/$EB7F/$EBFF | 2 | B/D | 1=main, 2=wings (separate type, not in room list). Wings can attach to non-Kihunter enemies. |
+| Kihunter | $EABF/$EB3F/$EBBF + $EAFF/$EB7F/$EBFF | 2 | B/D | 1=main, 2=wings (separate type, not in room list). Wings can attach to non-Kihunter enemies. |
 
 ### Multi-Piece Enemies (Non-Possessor)
 
@@ -61,7 +61,7 @@ These don't require all pieces; missing pieces just remove some visual element:
 | Geruta | $D2FF | 2 | 1=main, 2=flame animation |
 | Squeept | $D2BF | 2 | 1=main, 2=flame animation |
 | Holtz | $D33F | 2 | 1=main, 2=flame animation |
-| Eye (Viola) | $E6BF | 2 | 1=neck (wall mount, yellow light, sound), 2=eye following Samus |
+| Eye | $E6BF | 2 | 1=neck (wall mount, yellow light, sound), 2=eye following Samus |
 
 Excluding Holtz/Geruta/Squeept flame pieces can create variants (e.g., blue Squeept
 from water instead of lava) when combined with shared palette values.
@@ -83,23 +83,41 @@ Our name mapping is verified against:
 
 Key corrections from vanilla SM analysis (April 2026):
 
-| ID | ROM Name | Our Name | Visual |
-|----|----------|----------|--------|
-| $DFBF | RSTONE | Boulder | Rolling stone in Blue Brinstar |
-| $D4BF | DRAGON | Dragon | Fire-breathing Norfair enemy |
-| $D1BF | MULTI | Multiviola | Multi-segmented worm |
-| $D0FF | MERO | Mellow | Purple flying bat |
-| $D27F | RIO | Reo | Green flying creature |
+| ID | SMILE Dev Name | Community Name | Visual |
+|----|----------------|----------------|--------|
+| $CFFF | SABOTEN | Cacatac | Cactus with spines |
+| $D03F | TOGE | Owtch | Thorn enemy |
+| $D0FF | — | Mellow | Purple flying bat |
+| $D27F | — | Reo | Green flying creature |
+| $D3BF | HIRU | Choot | Leech enemy |
+| $D6BF | HOTARY | Fireflea | Brinstar firefly |
+| $D6FF | FISH | Skultera | Maridia fish |
+| $D77F | KANI | Sciser | Crab enemy |
 | $D7FF | KAMER | Tripper | Falling enemy |
-| $D97F | SDEATH | Dessgeega | Large 4-legged hopper |
-| $DA3F | DESSGEEGA | Dessgeega (small) | Small variant |
-| $DA7F | ZOA | Zoa | Small blue circle |
-| $DABF | VIOLA | Viola | Blue sphere |
-| $DD7F | METROID | Metroid | Standard Metroid |
-| $E67F | — | Zero | Small green eye |
+| $D87F | SBUG | Reo | Reo variant |
+| $D93F | SSIDE | Sidehopper | Small green hopper |
+| $D97F | SDEATH | Dessgeega | Blue 4-legged hopper |
+| $D9BF | SIDE | Sidehopper (big) | Large green hopper |
+| $DA3F | DESGEEGA | Dessgeega | Large variant |
+| $DABF | — | Viola | Blue/turquoise sphere |
+| $DCBF | NOVA | Sova | Orange Norfair wall crawler |
+| $DD3F | MZOOMER | Sova (grey) | Grey invincible wall crawler |
+| $DFBF | — | Boulder | Rolling stone in Blue Brinstar |
+| $E03F | — | Kihunter | Pink/purple winged insect |
+| $E5FF | — | Dachora | Ostrich-like friendly creature |
+| $E63F | EBI | Evir | Falling body enemy, 3 pieces |
+| $E6BF | EYE | Eye | Eye enemy attached to wall |
 | $E7BF | HAND | Yapping Maw | Skull-faced snapping creature |
-| $E8BF | PUU | Puyo | Green puffball |
-| $E8FF | ROBO | Work Robot | Green pillar robot |
-| $E93F | ROBO2 | Work Robot (broken) | Green cylinder robot |
-| $E9BF | NDRA | Alcoon | Green dragon creature |
-| $CF7F | — | Tatori | Rideable turtle, goes into shell |
+| $E87F | — | Beetom | Green hopping bug |
+| $E8BF | PUU | Puu | Grapple point puffball |
+| $EABF | HACHI1 | Kihunter (green) | Green body, pink wings |
+| $EB3F | HACHI2 | Kihunter (red) | Red/Norfair variant |
+| $EBBF | HACHI3 | Kihunter (gold) | Gold/Tourian variant |
+| $F07F | DORI | Shaktool | 7-piece digging robot |
+| $F193 | ZEB | Zeb | Small spawner fly |
+| $F1D3 | ZEBBO | Zebbo | Spawner fly variant |
+| $F353 | BATTA1 | Space Pirate | Crateria pirate |
+
+Note: SMILE dev names are Japanese abbreviations found in bank $B4 of the ROM.
+HACHI = "bee" (Kihunter), SSIDE = "small side(hopper)", SDEATH = "small death(geega)",
+NOVA = "nova" (community: Sova), HOTARY = "hotaru" = firefly.

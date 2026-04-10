@@ -1641,9 +1641,9 @@ class RomParser(internal val romData: ByteArray) {
             // ── Wall-crawlers ──
             0xDC3F to "Geemer (horizontal)",
             0xDC7F to "Zeela",
-            0xDCBF to "Beetom",
+            0xDCBF to "Sova",
             0xDCFF to "Zoomer",
-            0xDD3F to "Sova",
+            0xDD3F to "Sova (grey)",
             0xDD7F to "Metroid",
             // ── Bosses ──
             0xDDBF to "Crocomire",
@@ -1680,10 +1680,10 @@ class RomParser(internal val romData: ByteArray) {
             0xE57F to "Phantoon (piece 3)",
             // ── Friendly / Misc ──
             0xE5BF to "Etecoon",
-            0xE5FF to "Ebi",
-            0xE63F to "Ebi",
+            0xE5FF to "Dachora",
+            0xE63F to "Evir",
             0xE67F to "Zero",
-            0xE6BF to "Viola (eye)",
+            0xE6BF to "Eye",
             0xE6FF to "Fune",
             0xE73F to "Namihe",
             0xE7BF to "Yapping Maw",
@@ -1691,7 +1691,7 @@ class RomParser(internal val romData: ByteArray) {
             // ── Norfair / Maridia ──
             0xE83F to "Lavaman",
             0xE87F to "Beetom",
-            0xE8BF to "Puyo",
+            0xE8BF to "Puu",
             0xE8FF to "Work Robot",
             0xE93F to "Work Robot (broken)",
             0xE97F to "Zeb Spawner (pipe)",
@@ -1699,13 +1699,13 @@ class RomParser(internal val romData: ByteArray) {
             0xE9FF to "Atomic",
             0xEA3F to "Spa (variant)",
             0xEA7F to "Koma",
-            // ── Hachi (bees) ──
-            0xEABF to "Hachi 1",
-            0xEAFF to "Hachi 1 (wings)",
-            0xEB3F to "Hachi 2",
-            0xEB7F to "Hachi 2 (wings)",
-            0xEBBF to "Hachi 3",
-            0xEBFF to "Hachi 3 (wings)",
+            // ── Kihunter variants (SMILE: HACHI = bee) ──
+            0xEABF to "Kihunter (green)",
+            0xEAFF to "Kihunter (green, wings)",
+            0xEB3F to "Kihunter (red)",
+            0xEB7F to "Kihunter (red, wings)",
+            0xEBBF to "Kihunter (gold)",
+            0xEBFF to "Kihunter (gold, wings)",
             // ── Mother Brain ──
             0xEC3F to "Mother Brain (phase 1)",
             0xEC7F to "Mother Brain (phase 2)",
@@ -1718,7 +1718,7 @@ class RomParser(internal val romData: ByteArray) {
             0xEF7F to "Torizo (gold)",
             0xEFBF to "Torizo (gold orbs)",
             // ── Spawners / Misc ──
-            0xF07F to "Dori",
+            0xF07F to "Shaktool",
             0xF0BF to "Shattered Glass",
             0xF193 to "Zeb",
             0xF1D3 to "Zebbo",
