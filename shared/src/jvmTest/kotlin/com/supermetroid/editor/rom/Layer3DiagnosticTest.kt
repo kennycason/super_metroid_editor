@@ -68,15 +68,24 @@ class Layer3DiagnosticTest {
     }
 
     @Test
-    fun `enemy names match ROM data`() {
-        // Key enemy name corrections verified against ROM name pointers
-        assertEquals("Boulder", RomParser.enemyName(0xDFBF), "0xDFBF ROM name is RSTONE (Boulder)")
-        assertEquals("Dragon", RomParser.enemyName(0xD4BF), "0xD4BF ROM name is DRAGON")
-        assertEquals("Multiviola", RomParser.enemyName(0xD1BF), "0xD1BF ROM name is MULTI")
-        assertEquals("Oum (baby)", RomParser.enemyName(0xD37F), "0xD37F ROM name is OUM")
-        assertEquals("Dessgeega (small)", RomParser.enemyName(0xDA3F), "0xDA3F ROM name is DESSGEEGA")
-        assertEquals("Zoa", RomParser.enemyName(0xDA7F), "0xDA7F ROM name is ZOA")
-        assertEquals("Metroid", RomParser.enemyName(0xDD7F), "0xDD7F ROM name is METROID")
+    fun `enemy names match ROM data and SMILE GIF visual identification`() {
+        // Verified against ROM name pointers and SMILE GIF sprites
+        assertEquals("Boulder", RomParser.enemyName(0xDFBF), "0xDFBF ROM:RSTONE")
+        assertEquals("Dragon", RomParser.enemyName(0xD4BF), "0xD4BF ROM:DRAGON")
+        assertEquals("Multiviola", RomParser.enemyName(0xD1BF), "0xD1BF ROM:MULTI")
+        assertEquals("Oum (baby)", RomParser.enemyName(0xD37F), "0xD37F ROM:OUM")
+        assertEquals("Dessgeega (small)", RomParser.enemyName(0xDA3F), "0xDA3F ROM:DESSGEEGA")
+        assertEquals("Zoa", RomParser.enemyName(0xDA7F), "0xDA7F ROM:ZOA")
+        assertEquals("Metroid", RomParser.enemyName(0xDD7F), "0xDD7F ROM:METROID")
+        // Round 2: verified via SMILE GIF sprites
+        assertEquals("Mella", RomParser.enemyName(0xD13F), "0xD13F ROM:MELLA red bouncing ball")
+        assertEquals("Menu", RomParser.enemyName(0xD17F), "0xD17F ROM:MEMU flying purple")
+        assertEquals("Reo", RomParser.enemyName(0xD27F), "0xD27F ROM:RIO")
+        assertEquals("Dessgeega", RomParser.enemyName(0xD97F), "0xD97F ROM:SDEATH large dessgeega")
+        assertEquals("Zero", RomParser.enemyName(0xE67F), "0xE67F small green eye")
+        assertEquals("Alcoon", RomParser.enemyName(0xE9BF), "0xE9BF ROM:NDRA green dragon")
+        assertEquals("Puyo", RomParser.enemyName(0xE8BF), "0xE8BF ROM:PUU green puffball")
+        assertEquals("Work Robot", RomParser.enemyName(0xE8FF), "0xE8FF ROM:ROBO green pillar")
     }
 
     @Test

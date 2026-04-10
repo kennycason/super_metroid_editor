@@ -88,158 +88,84 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         )
 
         /**
-         * Defined enemy entries that appear in the sprite editor.
-         * @param speciesId Species pointer in bank $A0
-         * @param name Display name
-         * @param category "Boss" or "Enemy"
+         * Enemy entries for the sprite editor. Names are derived from the
+         * central ENEMY_NAMES map in RomParser to avoid duplication.
+         * Only speciesId and category are specified here; name comes from
+         * RomParser.enemyName(speciesId) at access time.
          */
         data class EnemySpriteEntry(
             val speciesId: Int,
-            val name: String,
             val category: String = "Enemy"
+        ) {
+            val name: String get() = RomParser.enemyName(speciesId)
+        }
+
+        /** Category assignments for the sprite editor list. */
+        private val EDITOR_ENEMY_CATEGORIES = mapOf(
+            // Bosses
+            0xE4BF to "Boss", 0xE4FF to "Boss", 0xE53F to "Boss", 0xE57F to "Boss",
+            0xE2BF to "Boss", 0xDDBF to "Boss", 0xDE3F to "Boss", 0xDE7F to "Boss",
+            0xDEBF to "Boss", 0xDEFF to "Boss", 0xE13F to "Boss", 0xE17F to "Boss",
+            0xEC3F to "Boss", 0xEC7F to "Boss", 0xEEBF to "Boss", 0xE27F to "Boss",
+            // Mini-Bosses
+            0xDF3F to "Mini-Boss", 0xF293 to "Mini-Boss", 0xE0FF to "Mini-Boss",
+            0xEEFF to "Mini-Boss", 0xEF3F to "Mini-Boss", 0xEF7F to "Mini-Boss",
+            0xEFBF to "Mini-Boss", 0xED3F to "Mini-Boss",
+            // Space Pirates
+            0xF353 to "Space Pirate", 0xF413 to "Space Pirate", 0xF453 to "Space Pirate",
+            0xF493 to "Space Pirate", 0xF593 to "Space Pirate", 0xF613 to "Space Pirate",
+            0xF653 to "Space Pirate", 0xF693 to "Space Pirate", 0xF6D3 to "Space Pirate",
+            0xF713 to "Space Pirate", 0xF753 to "Space Pirate", 0xF793 to "Space Pirate",
+            // Mechanisms
+            0xD4FF to "Mechanism", 0xD53F to "Mechanism", 0xD57F to "Mechanism",
+            0xD5BF to "Mechanism", 0xD5FF to "Mechanism", 0xF0BF to "Mechanism",
         )
 
-        val EDITOR_ENEMIES = listOf(
-            // ── Bosses ──
-            EnemySpriteEntry(0xE4BF, "Phantoon", "Boss"),
-            EnemySpriteEntry(0xE4FF, "Phantoon Flame (Small)", "Boss"),
-            EnemySpriteEntry(0xE53F, "Phantoon Flame (Medium)", "Boss"),
-            EnemySpriteEntry(0xE57F, "Phantoon Flame (Large)", "Boss"),
-            EnemySpriteEntry(0xE2BF, "Kraid", "Boss"),
-            EnemySpriteEntry(0xDDBF, "Crocomire", "Boss"),
-            EnemySpriteEntry(0xDE3F, "Draygon", "Boss"),
-            EnemySpriteEntry(0xDE7F, "Draygon (Eye)", "Boss"),
-            EnemySpriteEntry(0xDEBF, "Draygon (Tail)", "Boss"),
-            EnemySpriteEntry(0xDEFF, "Draygon (Arms)", "Boss"),
-            EnemySpriteEntry(0xE13F, "Ceres Ridley", "Boss"),
-            EnemySpriteEntry(0xE17F, "Ridley", "Boss"),
-            EnemySpriteEntry(0xEC3F, "Mother Brain (Phase 1)", "Boss"),
-            EnemySpriteEntry(0xEC7F, "Mother Brain (Phase 2)", "Boss"),
-            EnemySpriteEntry(0xEEBF, "Big Metroid", "Boss"),
-            EnemySpriteEntry(0xE27F, "Zebetite", "Boss"),
-            // ── Mini-Bosses ──
-            EnemySpriteEntry(0xDF3F, "Spore Spawn", "Mini-Boss"),
-            EnemySpriteEntry(0xF293, "Botwoon", "Mini-Boss"),
-            EnemySpriteEntry(0xE0FF, "Mini Kraid", "Mini-Boss"),
-            EnemySpriteEntry(0xEEFF, "Torizo", "Mini-Boss"),
-            EnemySpriteEntry(0xEF3F, "Torizo (Orbs)", "Mini-Boss"),
-            EnemySpriteEntry(0xEF7F, "Torizo (Gold)", "Mini-Boss"),
-            EnemySpriteEntry(0xEFBF, "Torizo Gold (Orbs)", "Mini-Boss"),
-            EnemySpriteEntry(0xED3F, "Torizo Corpse", "Mini-Boss"),
-            // ── Wall Crawlers ──
-            EnemySpriteEntry(0xDCFF, "Zoomer"),
-            EnemySpriteEntry(0xDC7F, "Zeela"),
-            EnemySpriteEntry(0xDC3F, "Geemer"),
-            EnemySpriteEntry(0xDCBF, "Beetom"),
-            EnemySpriteEntry(0xDD3F, "Sova"),
-            // ── Hoppers ──
-            EnemySpriteEntry(0xD93F, "Sidehopper"),
-            EnemySpriteEntry(0xD97F, "Sidehopper (Large)"),
-            EnemySpriteEntry(0xD9BF, "Dessgeega"),
-            EnemySpriteEntry(0xD9FF, "Dessgeega (Variant)"),
-            EnemySpriteEntry(0xDABF, "Dessgeega (Large)"),
-            EnemySpriteEntry(0xDA3F, "Bull"),
-            EnemySpriteEntry(0xDD7F, "Hopper (Remains)"),
-            // ── Flyers ──
-            EnemySpriteEntry(0xD7FF, "Skree"),
-            EnemySpriteEntry(0xD83F, "Skree (Variant)"),
-            EnemySpriteEntry(0xDB7F, "Skree (Norfair)"),
-            EnemySpriteEntry(0xD87F, "Reo"),
-            EnemySpriteEntry(0xD8BF, "Reo (Variant)"),
-            EnemySpriteEntry(0xD63F, "Waver"),
-            EnemySpriteEntry(0xDA7F, "Alcoon"),
-            EnemySpriteEntry(0xDB3F, "Bang"),
-            EnemySpriteEntry(0xD6BF, "Fireflea"),
-            EnemySpriteEntry(0xE9FF, "Atomic"),
-            EnemySpriteEntry(0xE8FF, "Mella"),
-            // ── Kihunters ──
-            EnemySpriteEntry(0xDFBF, "Kihunter"),
-            EnemySpriteEntry(0xDFFF, "Kzan"),
-            EnemySpriteEntry(0xE03F, "Kihunter (Green)"),
-            // ── Rippers ──
-            EnemySpriteEntry(0xD3FF, "Ripper II"),
-            EnemySpriteEntry(0xD43F, "Ripper II (Variant)"),
-            EnemySpriteEntry(0xD47F, "Ripper"),
-            // ── Stationary / Plants ──
-            EnemySpriteEntry(0xCFFF, "Cacatac"),
-            EnemySpriteEntry(0xCEBF, "Boyon"),
-            EnemySpriteEntry(0xCEFF, "Stoke"),
-            EnemySpriteEntry(0xCF3F, "Kame"),
-            EnemySpriteEntry(0xCF7F, "Yapping Maw"),
-            EnemySpriteEntry(0xCFBF, "Puyo"),
-            EnemySpriteEntry(0xD03F, "Owtch"),
-            EnemySpriteEntry(0xD3BF, "Hiru"),
-            EnemySpriteEntry(0xD4BF, "Magdollite"),
-            EnemySpriteEntry(0xDBBF, "Yard"),
-            EnemySpriteEntry(0xDBFF, "Reflec"),
-            EnemySpriteEntry(0xE6BF, "Viola"),
-            EnemySpriteEntry(0xE6FF, "Fune"),
-            EnemySpriteEntry(0xE73F, "Namihe"),
-            EnemySpriteEntry(0xE7BF, "Powamp"),
-            EnemySpriteEntry(0xE7FF, "Kago"),
-            EnemySpriteEntry(0xEA7F, "Koma"),
-            // ── Aquatic / Maridia ──
-            EnemySpriteEntry(0xD77F, "Sciser"),
-            EnemySpriteEntry(0xD7BF, "Oum"),
-            EnemySpriteEntry(0xD6FF, "Skultera"),
-            EnemySpriteEntry(0xD67F, "Metaree"),
-            EnemySpriteEntry(0xE5FF, "Ebi"),
-            EnemySpriteEntry(0xE63F, "Ebi (Variant)"),
-            EnemySpriteEntry(0xE93F, "Spa"),
-            EnemySpriteEntry(0xEA3F, "Spa (Variant)"),
-            EnemySpriteEntry(0xE9BF, "Zebbo"),
-            // ── Norfair ──
-            EnemySpriteEntry(0xD33F, "Holtz"),
-            EnemySpriteEntry(0xD37F, "Holtz (Variant)"),
-            EnemySpriteEntry(0xD23F, "Rinka"),
-            EnemySpriteEntry(0xD2BF, "Squeept"),
-            EnemySpriteEntry(0xD2FF, "Geruta"),
-            EnemySpriteEntry(0xE07F, "Hibashi"),
-            EnemySpriteEntry(0xE0BF, "Puromi"),
-            EnemySpriteEntry(0xE83F, "Lavaman"),
-            // ── Spawners ──
-            EnemySpriteEntry(0xE97F, "Zeb Spawner"),
-            EnemySpriteEntry(0xF193, "Zeb"),
-            EnemySpriteEntry(0xF1D3, "Zebbo"),
-            EnemySpriteEntry(0xF213, "Gamet"),
-            EnemySpriteEntry(0xF253, "Geega"),
-            EnemySpriteEntry(0xF07F, "Dori"),
-            // ── Space Pirates ──
-            EnemySpriteEntry(0xF353, "Space Pirate", "Space Pirate"),
-            EnemySpriteEntry(0xF413, "Space Pirate (Norfair)", "Space Pirate"),
-            EnemySpriteEntry(0xF453, "Space Pirate (Maridia)", "Space Pirate"),
-            EnemySpriteEntry(0xF493, "Space Pirate (Tourian)", "Space Pirate"),
-            EnemySpriteEntry(0xF593, "Space Pirate Mk.II (Norfair)", "Space Pirate"),
-            EnemySpriteEntry(0xF613, "Space Pirate Mk.II (Tourian)", "Space Pirate"),
-            EnemySpriteEntry(0xF653, "Space Pirate Mk.III", "Space Pirate"),
-            EnemySpriteEntry(0xF693, "Space Pirate Mk.III (Brinstar)", "Space Pirate"),
-            EnemySpriteEntry(0xF6D3, "Space Pirate Mk.III (Norfair)", "Space Pirate"),
-            EnemySpriteEntry(0xF713, "Space Pirate Mk.III (Norfair Alt)", "Space Pirate"),
-            EnemySpriteEntry(0xF753, "Space Pirate Mk.III (Maridia)", "Space Pirate"),
-            EnemySpriteEntry(0xF793, "Space Pirate Mk.III (Tourian)", "Space Pirate"),
-            // ── Hachi (Bees) ──
-            EnemySpriteEntry(0xEABF, "Hachi 1"),
-            EnemySpriteEntry(0xEAFF, "Hachi 1 (Wings)"),
-            EnemySpriteEntry(0xEB3F, "Hachi 2"),
-            EnemySpriteEntry(0xEB7F, "Hachi 2 (Wings)"),
-            EnemySpriteEntry(0xEBBF, "Hachi 3"),
-            EnemySpriteEntry(0xEBFF, "Hachi 3 (Wings)"),
-            // ── Friendly / Misc ──
-            EnemySpriteEntry(0xE5BF, "Etecoon"),
-            EnemySpriteEntry(0xD07F, "Samus' Ship"),
-            EnemySpriteEntry(0xD0BF, "Samus' Ship (Firing)"),
-            EnemySpriteEntry(0xD13F, "Chozo Ball"),
-            EnemySpriteEntry(0xD17F, "Chozo Statue"),
-            EnemySpriteEntry(0xD1BF, "Chozo Statue (Golden)"),
-            EnemySpriteEntry(0xE1BF, "Puyo (Variant)"),
-            // ── Door Shutters ──
-            EnemySpriteEntry(0xD4FF, "Door Shutter", "Mechanism"),
-            EnemySpriteEntry(0xD53F, "Door Shutter (V)", "Mechanism"),
-            EnemySpriteEntry(0xD57F, "Door Shutter (H)", "Mechanism"),
-            EnemySpriteEntry(0xD5BF, "Door Shutter (Variant)", "Mechanism"),
-            EnemySpriteEntry(0xD5FF, "Door Shutter (Variant 2)", "Mechanism"),
-            EnemySpriteEntry(0xF0BF, "Shattered Glass", "Mechanism"),
+        /** Ordered list of species IDs for the sprite editor. */
+        private val EDITOR_ENEMY_IDS = listOf(
+            // Bosses
+            0xE4BF, 0xE4FF, 0xE53F, 0xE57F, 0xE2BF, 0xDDBF,
+            0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF, 0xE13F, 0xE17F,
+            0xEC3F, 0xEC7F, 0xEEBF, 0xE27F,
+            // Mini-Bosses
+            0xDF3F, 0xF293, 0xE0FF, 0xEEFF, 0xEF3F, 0xEF7F, 0xEFBF, 0xED3F,
+            // Wall Crawlers
+            0xDCFF, 0xDC7F, 0xDC3F, 0xDCBF, 0xDD3F,
+            // Hoppers
+            0xD93F, 0xD97F, 0xD9BF, 0xD9FF, 0xDABF, 0xDA3F, 0xDD7F,
+            // Flyers
+            0xD7FF, 0xD83F, 0xDB7F, 0xD87F, 0xD8BF, 0xD63F, 0xDA7F, 0xDB3F,
+            0xD6BF, 0xE9FF, 0xE8FF, 0xD0FF,
+            // Kihunters / Boulder
+            0xDFBF, 0xDFFF, 0xE03F,
+            // Rippers
+            0xD3FF, 0xD43F, 0xD47F,
+            // Stationary / Plants
+            0xCFFF, 0xCEBF, 0xCEFF, 0xCF3F, 0xCF7F, 0xCFBF, 0xD03F,
+            0xD3BF, 0xD4BF, 0xDBBF, 0xDBFF, 0xE6BF, 0xE6FF, 0xE73F,
+            0xE7BF, 0xE7FF, 0xEA7F, 0xE87F,
+            // Aquatic / Maridia
+            0xD77F, 0xD7BF, 0xD6FF, 0xD67F, 0xE5FF, 0xE63F,
+            0xE93F, 0xEA3F, 0xE9BF,
+            // Norfair
+            0xD33F, 0xD37F, 0xD23F, 0xD27F, 0xD2BF, 0xD2FF,
+            0xE07F, 0xE0BF, 0xE83F, 0xE8BF,
+            // Spawners
+            0xE97F, 0xF193, 0xF1D3, 0xF213, 0xF253, 0xF07F,
+            // Space Pirates
+            0xF353, 0xF413, 0xF453, 0xF493, 0xF593, 0xF613,
+            0xF653, 0xF693, 0xF6D3, 0xF713, 0xF753, 0xF793,
+            // Hachi (Kihunter bees)
+            0xEABF, 0xEAFF, 0xEB3F, 0xEB7F, 0xEBBF, 0xEBFF,
+            // Friendly / Misc
+            0xE5BF, 0xD07F, 0xD0BF, 0xD13F, 0xD17F, 0xD1BF, 0xE1BF,
+            // Mechanisms
+            0xD4FF, 0xD53F, 0xD57F, 0xD5BF, 0xD5FF, 0xF0BF,
         )
+
+        val EDITOR_ENEMIES: List<EnemySpriteEntry> = EDITOR_ENEMY_IDS.map { id ->
+            EnemySpriteEntry(id, EDITOR_ENEMY_CATEGORIES[id] ?: "Enemy")
+        }
 
         /**
          * Read a 16-color ARGB palette from a species header.

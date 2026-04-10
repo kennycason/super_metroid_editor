@@ -62,29 +62,67 @@ The 2-byte value at state data offset +12 controls layer 2 behavior:
 | `0x0001` | Layer 2 follows layer 1 |
 | `0x00xx` / `0xYYxx` | Y/X scroll rates — varies per room |
 
-## FX Types
+## FX Types (Layer3Type byte — from SMILE FX1_1.frx)
 
-| Byte | Type |
-|------|------|
-| `0x00` | None |
-| `0x02` | Fog |
-| `0x04` | Water |
-| `0x06` | Lava |
-| `0x08` | Acid |
-| `0x0A` | Rain |
-| `0x0C` | Spores |
-| `0x0E` | Haze |
-| `0x10` | Dense fog |
-| `0x12` | Ceres water |
-| `0x16` | Firefleas |
-| `0x18` | Lightning |
-| `0x1A` | Smoke |
-| `0x1C` | Heat shimmer |
-| `0x24` | BG3 transparent |
-| `0x26` | Sandstorm |
-| `0x28` | Dark visor |
-| `0x2A` | Darker visor |
-| `0x2C` | Black |
+| Byte | Type | Liquid Physics |
+|------|------|---------------|
+| `0x00` | None | — |
+| `0x02` | Lava | Damage (Varia protects) |
+| `0x04` | Acid | Damage (ignores suits) |
+| `0x06` | Water | No damage |
+| `0x08` | Spores | — |
+| `0x0A` | Rain | — |
+| `0x0C` | Fog | — |
+| `0x0E` | Haze | — |
+| `0x10` | Dense Fog | — |
+| `0x16` | Firefleas | — |
+| `0x18` | Lightning | — |
+| `0x1A` | Smoke | — |
+| `0x1C` | Heat Shimmer | — |
+| `0x20` | Sky Scrolling | — |
+| `0x24` | Fireflea FX | — |
+| `0x26` | 4 Statues | — |
+| `0x28` | Ceres Elevator | — |
+| `0x2A` | Ceres Ridley | — |
+| `0x2C` | Haze | — |
+
+Liquid physics index: `(fxType & 0xF) >> 1` → 1=Lava, 2=Acid, 3=Water.
+
+### FX Data Structure (16 bytes per entry, from SMILE SmileMod1.bas)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| +0 | 2 | doorSelect | 0=default, else door ID that triggers this FX |
+| +2 | 2 | liquidSurfaceStart | Initial liquid height (0xFFFF = no liquid) |
+| +4 | 2 | liquidSurfaceNew | Target liquid height |
+| +6 | 2 | liquidSpeed | Speed of surface movement |
+| +8 | 1 | liquidDelay | Delay before liquid moves |
+| +9 | 1 | fxType (Layer3Type) | See table above |
+| +10 | 1 | fxBitA | Layer rendering control |
+| +11 | 1 | fxBitB | Additional layer rendering |
+| +12 | 1 | fxBitC | Liquid options bitfield |
+| +13 | 1 | paletteFxBitflags | Palette glow toggles |
+| +14 | 1 | tileAnimBitflags | Animated tile toggles |
+| +15 | 1 | paletteBlend | Palette blend index |
+
+### Liquid Options (fxBitC bitfield)
+
+| Bit | Mask | Name |
+|-----|------|------|
+| 0 | `0x01` | Small Tide |
+| 1 | `0x02` | Large Tide |
+| 5 | `0x20` | BG Warp-Line Shift |
+| 6 | `0x40` | BG Warp-Cascade Heat |
+| 7 | `0x80` | Flow Left |
+
+### Layer 3 Replacement GFX (from SMILE Layer3Editor.frm)
+
+| fxType | ROM PC | Effect |
+|--------|--------|--------|
+| `0x02` (Lava) | `$3A564` | Replaces tiles 0-3 with lava surface |
+| `0x04` (Acid) | `$3A6A4` | Replaces tiles 0-3 with acid surface |
+| `0x08` (Spores) | `$3A7E4` | Replaces tiles 0-3 with spore particles |
+| `0x0A` (Rain) | `$3A974` | Replaces tiles 0-3 with rain streaks |
 
 ## Sources
 

@@ -213,18 +213,19 @@ rendering, OAM spritemap assembly, and pixel editing for all of them.
 | Boss | Phantoon, Kraid, Crocomire, Draygon, Ridley, Mother Brain, Big Metroid | 9 |
 | Mini-Boss | Spore Spawn, Botwoon, Mini Kraid, Torizo, Golden Torizo | 5 |
 | Wall Crawlers | Zoomer, Zeela, Geemer, Beetom, Sova | 5 |
-| Hoppers | Sidehopper, Dessgeega, Bull | 6 |
-| Flyers | Skree, Reo, Waver, Alcoon, Fireflea, Atomic, Mella | 11 |
-| Kihunters | Kihunter, Kzan, Kihunter (Green) | 3 |
+| Hoppers | Sidehopper, Dessgeega | 6 |
+| Flyers | Skree, Reo, Waver, Alcoon, Fireflea, Atomic, Mella, Mellow | 12 |
+| Kihunters | Kihunter (Hachi 1-3), Kzan | 4 |
 | Rippers | Ripper, Ripper II variants | 3 |
 | Stationary/Plants | Cacatac, Boyon, Yapping Maw, Viola, Powamp, etc. | 17 |
-| Aquatic/Maridia | Sciser, Oum, Skultera, Ebi, Zebbo | 7 |
-| Norfair | Holtz, Rinka, Squeept, Geruta, Hibashi, Lavaman | 8 |
+| Aquatic/Maridia | Sciser, Oum, Skultera, Ebi, Alcoon, Yard, Zoa | 9 |
+| Norfair | Holtz, Rinka, Squeept, Geruta, Hibashi, Lavaman, Dragon | 9 |
 | Spawners | Zeb, Zebbo, Gamet, Geega, Dori | 6 |
 | Space Pirates | 12 variants (Norfair, Maridia, Tourian, Mk.II, Mk.III) | 12 |
 | Hachi (Bees) | Hachi 1-3 | 3 |
-| Friendly/Misc | Etecoon, Samus' Ship, Chozo Statues | 5 |
-| Mechanisms | Door Shutters, Shattered Glass | 4 |
+| Friendly/Misc | Etecoon, Samus' Ship, Mella, Menu | 5 |
+| Mechanisms | Door Shutters, Shattered Glass, Work Robot | 5 |
+| Other | Boulder (RSTONE), Multiviola, Polyp, Zero, Metroid, Puyo | 6 |
 
 ### Rendering Modes
 
