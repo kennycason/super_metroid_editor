@@ -2663,29 +2663,29 @@ internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
  * Color 3 = base tint, Colors 1-2 = brighter feature highlights.
  */
 internal fun layer3Palette(fxType: Int): IntArray = when (fxType) {
-    0x02, 0x0E, 0x10 -> // Fog / Haze (Norfair heat haze) — warm orange tint
+    0x02 -> // Lava — fiery orange surface
         intArrayOf(0x00000000, 0xD0FF8020.toInt(), 0xA0FF6010.toInt(), 0x50FF4000.toInt())
-    0x04, 0x12, 0x14 -> // Water surface — cool blue tint
-        intArrayOf(0x00000000, 0xC0A0D0FF.toInt(), 0x906080C0.toInt(), 0x40304080)
-    0x06 -> // Lava surface — fiery orange
-        intArrayOf(0x00000000, 0xC0FFB000.toInt(), 0x90FF7000.toInt(), 0x40802000)
-    0x08 -> // Acid surface — toxic green
+    0x04 -> // Acid — toxic yellow-green surface
         intArrayOf(0x00000000, 0xC0B0FF00.toInt(), 0x9070B000.toInt(), 0x40406000)
-    0x0A -> // Rain — blue-white drops on dark tint
-        intArrayOf(0x00000000, 0xD0C0D8FF.toInt(), 0xA08090C0.toInt(), 0x30102030)
-    0x0C -> // Spores — green particles
+    0x06 -> // Water — cool blue surface
+        intArrayOf(0x00000000, 0xC0A0D0FF.toInt(), 0x906080C0.toInt(), 0x40304080)
+    0x08 -> // Spores — green particles
         intArrayOf(0x00000000, 0xD0A0FFA0.toInt(), 0xA060C060.toInt(), 0x30103010)
+    0x0A -> // Rain — blue-white drops
+        intArrayOf(0x00000000, 0xD0C0D8FF.toInt(), 0xA08090C0.toInt(), 0x30102030)
+    0x0C, 0x0E, 0x10 -> // Fog / Haze / Dense Fog — warm haze tint
+        intArrayOf(0x00000000, 0xA0FF8040.toInt(), 0x80C06030.toInt(), 0x40804020.toInt())
     0x16 -> // Firefleas — yellow glows
         intArrayOf(0x00000000, 0xD0FFFF60.toInt(), 0xA0C0C040.toInt(), 0x30101000)
-    0x1C -> // Heat shimmer — orange shift
+    0x1C -> // Heat Shimmer — orange shift
         intArrayOf(0x00000000, 0xA0FF8040.toInt(), 0x80C06030.toInt(), 0x40804020.toInt())
-    0x24 -> // BG3 transparent (fireflea rooms — darken)
+    0x24 -> // Fireflea FX (darken)
         intArrayOf(0x00000000, 0x50000000, 0x70000000, 0x90000000.toInt())
-    0x26 -> // Sandstorm — brown haze
+    0x26 -> // 4 Statues
         intArrayOf(0x00000000, 0xB0E0C080.toInt(), 0x90B09060.toInt(), 0x50604020)
-    0x28, 0x2A -> // Dark visor
+    0x28, 0x2A -> // Ceres Elevator / Ceres Ridley
         intArrayOf(0x00000000, 0x50000000, 0x70000000, 0xA0000000.toInt())
-    0x2C -> // Black
+    0x2C -> // Haze (dark)
         intArrayOf(0x00000000, 0x80000000.toInt(), 0xC0000000.toInt(), 0xF0000000.toInt())
     else -> // Default: subtle white tint
         intArrayOf(0x00000000, 0x80FFFFFF.toInt(), 0x60FFFFFF, 0x30FFFFFF)

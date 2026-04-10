@@ -74,9 +74,9 @@ object RomConstants {
 
     /** Per-fxType replacement GFX addresses (ROM PC) — first 4 tiles replaced */
     val L3_REPLACEMENT_GFX: Map<Int, Int> = mapOf(
-        0x02 to 0x3A564,  // Fog
-        0x04 to 0x3A6A4,  // Water
-        0x08 to 0x3A7E4,  // Acid
+        0x02 to 0x3A564,  // Lava
+        0x04 to 0x3A6A4,  // Acid
+        0x08 to 0x3A7E4,  // Spores
         0x0A to 0x3A974,  // Rain
     )
 

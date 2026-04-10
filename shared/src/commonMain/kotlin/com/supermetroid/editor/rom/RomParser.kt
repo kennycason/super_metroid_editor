@@ -402,38 +402,36 @@ class RomParser(internal val romData: ByteArray) {
         val hasLiquid: Boolean get() = liquidSurfaceStart != 0xFFFF
 
         companion object {
+            // Names from SMILE source (FX1_1.frx Layer3Type dropdown)
             val FX_TYPE_NAMES = mapOf(
                 0x00 to "None",
-                0x02 to "Fog",
-                0x04 to "Water (normal)",
-                0x06 to "Lava",
-                0x08 to "Acid",
+                0x02 to "Lava",
+                0x04 to "Acid",
+                0x06 to "Water",
+                0x08 to "Spores",
                 0x0A to "Rain",
-                0x0C to "Spores",
+                0x0C to "Fog",
                 0x0E to "Haze",
-                0x10 to "Fog (dense)",
-                0x12 to "Water (Ceres)",
-                0x14 to "Water (Ceres, flowing)",
+                0x10 to "Dense Fog",
                 0x16 to "Firefleas",
                 0x18 to "Lightning",
                 0x1A to "Smoke",
-                0x1C to "Heat shimmer",
-                0x1E to "Tourian escape",
-                0x20 to "Ceres escape",
-                0x22 to "Intro / special",
-                0x24 to "BG3 transparent",
-                0x26 to "Sandstorm",
-                0x28 to "Dark visor",
-                0x2A to "Darker visor",
-                0x2C to "Black",
+                0x1C to "Heat Shimmer",
+                0x20 to "Sky Scrolling",
+                0x24 to "Fireflea FX",
+                0x26 to "4 Statues",
+                0x28 to "Ceres Elevator",
+                0x2A to "Ceres Ridley",
+                0x2C to "Haze",
             )
 
+            // C byte bitfield (from SMILE SmileMod1.bas)
             val LIQUID_OPTION_NAMES = mapOf(
-                0x01 to "Flowing Left",
-                0x02 to "BG Heat FX",
-                0x04 to "BG Liquid",
-                0x08 to "Large Tide",
-                0x10 to "Small Tide",
+                0x01 to "Small Tide",
+                0x02 to "Large Tide",
+                0x20 to "BG Warp-Line Shift",
+                0x40 to "BG Warp-Cascade Heat",
+                0x80 to "Flow Left",
             )
         }
     }
@@ -1585,20 +1583,20 @@ class RomParser(internal val romData: ByteArray) {
             // ── Chozo / Statues ──
             0xD13F to "Chozo Ball",
             0xD17F to "Chozo Statue",
-            0xD1BF to "Chozo Statue (Golden)",
+            0xD1BF to "Multiviola",
             // ── Rinka / Norfair fire enemies ──
             0xD23F to "Rinka",
             0xD2BF to "Squeept",
             0xD2FF to "Geruta",
             0xD33F to "Holtz",
-            0xD37F to "Holtz (variant)",
+            0xD37F to "Oum (baby)",
             0xD3BF to "Hiru",
             // ── Rippers ──
             0xD3FF to "Ripper II",
             0xD43F to "Ripper II (variant)",
             0xD47F to "Ripper",
             // ── Dragons / Shutters ──
-            0xD4BF to "Magdollite",
+            0xD4BF to "Dragon",
             0xD4FF to "Door Shutter",
             0xD53F to "Door Shutter 2",
             0xD57F to "Door Shutter 2 (variant)",
@@ -1627,9 +1625,9 @@ class RomParser(internal val romData: ByteArray) {
             0xD9DF to "Dessgeega (big)",
             0xD9FF to "Dessgeega (variant)",
             // ── Flyers / Misc ──
-            0xDA3F to "Bull",
-            0xDA7F to "Alcoon",
-            0xDABF to "Dessgeega (large)",
+            0xDA3F to "Dessgeega (small)",
+            0xDA7F to "Zoa",
+            0xDABF to "Viola",
             0xDB3F to "Bang",
             0xDB4F to "Ship",
             0xDB7F to "Skree (Norfair)",
@@ -1642,7 +1640,7 @@ class RomParser(internal val romData: ByteArray) {
             0xDCBF to "Beetom",
             0xDCFF to "Zoomer",
             0xDD3F to "Sova",
-            0xDD7F to "Hopper (remains)",
+            0xDD7F to "Metroid",
             // ── Bosses ──
             0xDDBF to "Crocomire",
             0xDE3F to "Draygon (body)",
@@ -1650,10 +1648,10 @@ class RomParser(internal val romData: ByteArray) {
             0xDEBF to "Draygon (tail)",
             0xDEFF to "Draygon (arms)",
             0xDF3F to "Spore Spawn",
-            // ── Kihunters ──
-            0xDFBF to "Kihunter",
+            // ── Boulder / Kzan ──
+            0xDFBF to "Boulder",
             0xDFFF to "Kzan",
-            0xE03F to "Kihunter (green)",
+            0xE03F to "Kihunter",
             0xE07F to "Hibashi",
             0xE0BF to "Puromi",
             0xE0FF to "Mini Kraid (belly spike)",

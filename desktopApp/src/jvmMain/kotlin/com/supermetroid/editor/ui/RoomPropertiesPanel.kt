@@ -62,25 +62,27 @@ private val CRE_BITFLAG_NAMES = mapOf(
 )
 
 
+// Names from SMILE source (FX1_1.frx Layer3Type dropdown)
 private val FX_TYPE_OPTIONS = listOf(
     0x00 to "None",
-    0x02 to "Fog",
-    0x04 to "Water",
-    0x06 to "Lava",
-    0x08 to "Acid",
+    0x02 to "Lava",
+    0x04 to "Acid",
+    0x06 to "Water",
+    0x08 to "Spores",
     0x0A to "Rain",
-    0x0C to "Spores",
+    0x0C to "Fog",
     0x0E to "Haze",
     0x10 to "Dense Fog",
     0x16 to "Firefleas",
     0x18 to "Lightning",
     0x1A to "Smoke",
     0x1C to "Heat Shimmer",
-    0x24 to "BG3 Transparent",
-    0x26 to "Sandstorm",
-    0x28 to "Dark Visor",
-    0x2A to "Darker Visor",
-    0x2C to "Black",
+    0x20 to "Sky Scrolling",
+    0x24 to "Fireflea FX",
+    0x26 to "4 Statues",
+    0x28 to "Ceres Elevator",
+    0x2A to "Ceres Ridley",
+    0x2C to "Haze",
 )
 
 private val SCROLL_COLORS = mapOf(
@@ -379,7 +381,7 @@ fun RoomPropertiesPanel(
                 FxTypeDropdown(editFxType) { editFxType = it; syncFxToState() }
 
                 // Liquid properties
-                val isLiquid = editFxType in listOf(0x04, 0x06, 0x08, 0x12, 0x14)
+                val isLiquid = editFxType in listOf(0x02, 0x04, 0x06)
                 if (isLiquid) {
                     EditableHexRow("Liquid Start", editLiquidStart, 2) { editLiquidStart = it; syncFxToState() }
                     EditableHexRow("Liquid Target", editLiquidNew, 2) { editLiquidNew = it; syncFxToState() }
@@ -391,13 +393,13 @@ fun RoomPropertiesPanel(
                 EditableHexRow("FX Trans. A", editFxBitA, 1) { editFxBitA = it; syncFxToState() }
                 EditableHexRow("FX Trans. B", editFxBitB, 1) { editFxBitB = it; syncFxToState() }
 
-                // Liquid options (fxBitC) — bitfield checkboxes
+                // Liquid options (fxBitC) — bitfield checkboxes (from SMILE SmileMod1.bas)
                 BitfieldRow("Liquid Options", editFxBitC, listOf(
-                    0x01 to "Flow Left",
-                    0x02 to "BG Heat",
-                    0x04 to "BG Liquid",
-                    0x08 to "Large Tide",
-                    0x10 to "Small Tide",
+                    0x01 to "Small Tide",
+                    0x02 to "Large Tide",
+                    0x20 to "BG Warp-Line Shift",
+                    0x40 to "BG Warp-Cascade Heat",
+                    0x80 to "Flow Left",
                 )) { editFxBitC = it; syncFxToState() }
 
                 // Animated tiles — bitfield checkboxes

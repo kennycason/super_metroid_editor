@@ -27,6 +27,13 @@ Tile Editor
  <img src="screenshots/smedit_slopes_02.png" width="49%" alt="Slopes" />
 </p>
 
+Layer 3 FX
+
+<p>
+  <img src="screenshots/smedit_layer3_fx_fog.png" width="49%" alt="Layer 3 FX Fog" />
+  <img src="screenshots/smedit_layer3_fx_water.png" width="49%" alt="Layer 3 FX Water" />
+</p>
+
 Sprite Editor
 
 <p>

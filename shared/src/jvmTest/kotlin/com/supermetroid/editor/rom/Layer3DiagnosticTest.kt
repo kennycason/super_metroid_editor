@@ -1,5 +1,6 @@
 package com.supermetroid.editor.rom
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.io.File
 
@@ -64,6 +65,28 @@ class Layer3DiagnosticTest {
             }
             println()
         }
+    }
+
+    @Test
+    fun `enemy names match ROM data`() {
+        // Key enemy name corrections verified against ROM name pointers
+        assertEquals("Boulder", RomParser.enemyName(0xDFBF), "0xDFBF ROM name is RSTONE (Boulder)")
+        assertEquals("Dragon", RomParser.enemyName(0xD4BF), "0xD4BF ROM name is DRAGON")
+        assertEquals("Multiviola", RomParser.enemyName(0xD1BF), "0xD1BF ROM name is MULTI")
+        assertEquals("Oum (baby)", RomParser.enemyName(0xD37F), "0xD37F ROM name is OUM")
+        assertEquals("Dessgeega (small)", RomParser.enemyName(0xDA3F), "0xDA3F ROM name is DESSGEEGA")
+        assertEquals("Zoa", RomParser.enemyName(0xDA7F), "0xDA7F ROM name is ZOA")
+        assertEquals("Metroid", RomParser.enemyName(0xDD7F), "0xDD7F ROM name is METROID")
+    }
+
+    @Test
+    fun `FX type names match SMILE definitions`() {
+        assertEquals("Lava", RomParser.FxEntry.FX_TYPE_NAMES[0x02])
+        assertEquals("Acid", RomParser.FxEntry.FX_TYPE_NAMES[0x04])
+        assertEquals("Water", RomParser.FxEntry.FX_TYPE_NAMES[0x06])
+        assertEquals("Spores", RomParser.FxEntry.FX_TYPE_NAMES[0x08])
+        assertEquals("Rain", RomParser.FxEntry.FX_TYPE_NAMES[0x0A])
+        assertEquals("Fog", RomParser.FxEntry.FX_TYPE_NAMES[0x0C])
     }
 
     @Test

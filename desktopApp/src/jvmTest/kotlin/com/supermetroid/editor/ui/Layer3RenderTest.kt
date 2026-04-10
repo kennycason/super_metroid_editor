@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.RomParser
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -24,14 +25,14 @@ class Layer3RenderTest {
     }
 
     @Test
-    fun `Cathedral L3 fog produces visible pixels`() {
+    fun `Cathedral L3 lava haze produces visible pixels`() {
         val parser = loadTestRom() ?: return
         val room = parser.readRoomHeader(0xA788)
         assertNotNull(room)
         val fxEntries = parser.parseFxEntries(room!!.fxPtr)
         val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
         assertNotNull(defaultFx, "Cathedral should have a default FX entry")
-        assertTrue(defaultFx!!.fxType == 0x02, "Cathedral fxType should be 0x02 (fog), got 0x${defaultFx.fxType.toString(16)}")
+        assertTrue(defaultFx!!.fxType == 0x02, "Cathedral fxType should be 0x02 (Lava), got 0x${defaultFx.fxType.toString(16)}")
 
         val palette = layer3Palette(0x02)
         val pixels = parser.renderLayer3Image(0x02, palette)
@@ -117,5 +118,42 @@ class Layer3RenderTest {
             assertTrue(palette.size == 4, "fxType 0x${fxType.toString(16)} palette should have 4 entries")
             assertTrue(palette[0] == 0, "fxType 0x${fxType.toString(16)} color 0 should be transparent")
         }
+    }
+
+    @Test
+    fun `FX type names match SMILE source`() {
+        // From SMILE FX1_1.frx Layer3Type dropdown
+        assertEquals("Lava", RomParser.FxEntry.FX_TYPE_NAMES[0x02])
+        assertEquals("Acid", RomParser.FxEntry.FX_TYPE_NAMES[0x04])
+        assertEquals("Water", RomParser.FxEntry.FX_TYPE_NAMES[0x06])
+        assertEquals("Spores", RomParser.FxEntry.FX_TYPE_NAMES[0x08])
+        assertEquals("Rain", RomParser.FxEntry.FX_TYPE_NAMES[0x0A])
+        assertEquals("Fog", RomParser.FxEntry.FX_TYPE_NAMES[0x0C])
+    }
+
+    @Test
+    fun `liquid physics index maps fxType correctly`() {
+        // liquidPhysicsIndex: (fxType & 0xF) >> 1
+        // 0x02=Lava→1, 0x04=Acid→2, 0x06=Water→3
+        assertEquals(1, liquidPhysicsIndex(0x02), "Lava (0x02) → physics 1")
+        assertEquals(2, liquidPhysicsIndex(0x04), "Acid (0x04) → physics 2")
+        assertEquals(3, liquidPhysicsIndex(0x06), "Water (0x06) → physics 3")
+        assertEquals(0, liquidPhysicsIndex(0x00), "None (0x00) → physics 0")
+    }
+
+    @Test
+    fun `known rooms have correct FX types`() {
+        val parser = loadTestRom() ?: return
+        // Boulder Room (Blue Brinstar) has water
+        val boulderRoom = parser.readRoomHeader(0xA1AD)!!
+        val boulderFx = parser.parseFxEntries(boulderRoom.fxPtr).lastOrNull { it.doorSelect == 0 }
+        assertNotNull(boulderFx)
+        assertEquals("Water", boulderFx!!.fxTypeName, "Boulder Room should have Water FX")
+
+        // Big Pink has Spores
+        val bigPink = parser.readRoomHeader(0x9D19)!!
+        val bigPinkFx = parser.parseFxEntries(bigPink.fxPtr).lastOrNull { it.doorSelect == 0 }
+        assertNotNull(bigPinkFx)
+        assertEquals("Spores", bigPinkFx!!.fxTypeName, "Big Pink should have Spores FX")
     }
 }
