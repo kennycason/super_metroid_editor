@@ -870,7 +870,7 @@ private fun EmulatorViewport(workspaceState: EmulatorWorkspaceState) {
                         .align(Alignment.BottomStart)
                         .padding(8.dp),
                 )
-            }
+}
         }
     }
 }

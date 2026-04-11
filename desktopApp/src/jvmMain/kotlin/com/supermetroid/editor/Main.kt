@@ -877,6 +877,7 @@ fun main() = application {
                             workspaceState = emulatorWorkspaceState,
                             editorState = editorState,
                             romParser = romParser,
+                            rooms = rooms,
                             onClose = { emulatorEnabled = false },
                         )
                     }

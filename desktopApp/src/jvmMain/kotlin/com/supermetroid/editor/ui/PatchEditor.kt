@@ -382,9 +382,6 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
 
 // ─── Config patch: Ceres escape time ────────────────────────────────────
 
-private val CERES_ESCAPE_OPTIONS = listOf(15, 16, 20, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 420, 480, 540, 600)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CeresEscapeTimeConfig(
     patch: SmPatch,
@@ -392,7 +389,7 @@ private fun CeresEscapeTimeConfig(
     romParser: RomParser?,
     modifier: Modifier
 ) {
-    val currentValue = (patch.configValue ?: 60).coerceIn(15, 600)
+    val currentValue = (patch.configValue ?: 60).coerceIn(1, 600)
     val romValue = remember(romParser) {
         romParser?.let {
             val off = it.snesToPc(CERES_TIMER_OPERAND_SNES)
@@ -407,6 +404,8 @@ private fun CeresEscapeTimeConfig(
         } ?: 60
     }
 
+    var inputText by remember(currentValue) { mutableStateOf(currentValue.toString()) }
+
     Column(modifier = modifier.padding(16.dp)) {
         Text(
             "Set Ceres station escape timer (seconds). Override applies when patch is enabled.",
@@ -420,15 +419,76 @@ private fun CeresEscapeTimeConfig(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            for (secs in CERES_ESCAPE_OPTIONS) {
-                FilterChip(
-                    selected = currentValue == secs,
-                    onClick = { editorState.setPatchConfigValue(patch.id, secs) },
-                    label = { Text("${secs}s") }
+
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            BasicTextField(
+                value = inputText,
+                onValueChange = { newText ->
+                    val digits = newText.filter { it.isDigit() }
+                    if (digits.length <= 3) {
+                        inputText = digits
+                        val parsed = digits.toIntOrNull()
+                        if (parsed != null && parsed in 1..600) {
+                            editorState.setPatchConfigValue(patch.id, parsed)
+                        }
+                    }
+                },
+                textStyle = TextStyle(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Monospace
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    Box(
+                        Modifier
+                            .width(72.dp)
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        innerTextField()
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("seconds (1–600)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        // Contextual info/warnings
+        val parsed = inputText.toIntOrNull()
+        if (parsed != null) {
+            Spacer(Modifier.height(6.dp))
+            when {
+                parsed < 15 -> Text(
+                    "Warning: this timer may be impossible to escape in time",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
+                parsed == 15 -> Text(
+                    "Kaizo Super Metroid timer (original)",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                parsed == 16 -> Text(
+                    "Kaizo-possible — tightest feasible escape",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                parsed == 60 -> Text(
+                    "Vanilla Super Metroid default",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (parsed > 600) {
+                Text(
+                    "Maximum is 600 seconds",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
                 )
             }
         }

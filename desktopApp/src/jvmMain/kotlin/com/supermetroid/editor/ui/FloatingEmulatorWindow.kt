@@ -5,18 +5,23 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.data.RoomInfo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -28,6 +33,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -115,6 +122,7 @@ fun FloatingEmulatorWindow(
     workspaceState: EmulatorWorkspaceState,
     editorState: EditorState,
     romParser: RomParser?,
+    rooms: List<RoomInfo> = emptyList(),
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -134,6 +142,9 @@ fun FloatingEmulatorWindow(
 
     // Save/load slot dropdown state
     var showSaveMenu by remember { mutableStateOf(false) }
+
+    // Dev tools panel state
+    var showDevTools by remember { mutableStateOf(false) }
 
     // Derived height: title bar + video (proportional) + control bar
     val videoHeight = windowWidth / SNES_ASPECT
@@ -692,19 +703,56 @@ fun FloatingEmulatorWindow(
                                 inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
                             ),
                         )
+
+                        Spacer(Modifier.width(2.dp))
+
+                        Text(
+                            "|",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        )
+
+                        Spacer(Modifier.width(2.dp))
+
+                        // Dev tools toggle + popup
+                        Box {
+                            IconButton(
+                                onClick = { showDevTools = !showDevTools },
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(btnShape)
+                                    .background(
+                                        if (showDevTools) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                        else Color.Transparent
+                                    ),
+                            ) {
+                                Text(
+                                    "⚙",
+                                    fontSize = 18.sp,
+                                    color = if (showDevTools) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showDevTools,
+                                onDismissRequest = { showDevTools = false },
+                                modifier = Modifier.widthIn(min = windowWidth.coerceAtMost(500f).dp),
+                            ) {
+                                FloatingDevToolsPanel(
+                                    workspaceState = workspaceState,
+                                    rooms = rooms,
+                                    romParser = romParser,
+                                )
+                            }
+                        }
                     }
                 }
             }
 
             // ── Resize handle (bottom-right corner) ──
-            Text(
-                "\u2921", // diagonal resize arrow
-                fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(2.dp)
-                    .size(22.dp)
+                    .size(32.dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDrag = { change, dragAmount ->
@@ -716,7 +764,14 @@ fun FloatingEmulatorWindow(
                             },
                         )
                     },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "\u2921",
+                    fontSize = 24.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                )
+            }
         }
     }
 }
@@ -908,5 +963,157 @@ private fun MiniSpriteIcon(bitmap: ImageBitmap, sprite: MiniSpriteCoord, sizeDp:
             dstOffset = IntOffset(0, 0),
             dstSize = IntSize(size.width.toInt(), size.height.toInt()),
         )
+    }
+}
+
+// ── Dev Tools Panel ─────────────────────────────────────────────────────────
+
+@Composable
+private fun FloatingDevToolsPanel(
+    workspaceState: EmulatorWorkspaceState,
+    rooms: List<RoomInfo>,
+    romParser: RomParser?,
+) {
+    val scope = rememberCoroutineScope()
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedRoom by remember { mutableStateOf<RoomInfo?>(null) }
+    var selectedDoorIndex by remember { mutableStateOf(0) }
+    var doorExpanded by remember { mutableStateOf(false) }
+
+    val filteredRooms = remember(searchQuery, rooms) {
+        if (searchQuery.isBlank()) rooms
+        else rooms.filter {
+            it.name.contains(searchQuery, ignoreCase = true) ||
+                it.id.contains(searchQuery, ignoreCase = true)
+        }.take(50)
+    }
+
+    val doors = remember(selectedRoom, romParser) {
+        val rp = romParser ?: return@remember emptyList()
+        val room = selectedRoom ?: return@remember emptyList()
+        val header = rp.readRoomHeader(room.getRoomIdAsInt()) ?: return@remember emptyList()
+        rp.parseDoorList(header.doorOut)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(260.dp)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Room Warp", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+
+        // Room search
+        AppTextInput(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = "Search rooms...",
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        // Room list
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)),
+        ) {
+            filteredRooms.forEach { room ->
+                val isSelected = selectedRoom?.id == room.id
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                            else Color.Transparent
+                        )
+                        .clickable {
+                            selectedRoom = room
+                            selectedDoorIndex = 0
+                        }
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        room.name.ifBlank { room.id },
+                        fontSize = 10.sp,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        room.id,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        // Door selection + warp
+        if (doors.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { doorExpanded = true },
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        val door = doors.getOrNull(selectedDoorIndex)
+                        val destName = if (door != null) {
+                            val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
+                            "#$selectedDoorIndex ${door.directionName} → ${destRoom?.name ?: "0x${door.destRoomPtr.toString(16)}"}"
+                        } else "Select door"
+                        Text(
+                            destName,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = doorExpanded,
+                        onDismissRequest = { doorExpanded = false },
+                    ) {
+                        doors.forEachIndexed { index, door ->
+                            val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "#$index ${door.directionName} → ${destRoom?.name ?: "0x${door.destRoomPtr.toString(16).uppercase()}"}",
+                                        fontSize = 10.sp,
+                                    )
+                                },
+                                onClick = {
+                                    selectedDoorIndex = index
+                                    doorExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val dp = doors.getOrNull(selectedDoorIndex)?.doorDefPtr ?: return@Button
+                        scope.launch { workspaceState.warpToDoor(dp) }
+                    },
+                    enabled = workspaceState.session.active && doors.getOrNull(selectedDoorIndex) != null,
+                ) {
+                    Text("Warp", fontSize = 11.sp)
+                }
+            }
+        }
     }
 }

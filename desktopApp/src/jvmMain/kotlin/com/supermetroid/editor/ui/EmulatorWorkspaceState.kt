@@ -546,6 +546,27 @@ class EmulatorWorkspaceState(
         loadSlot(preferred)
     }
 
+    /**
+     * Warp to a room by simulating a door transition.
+     * Writes the DoorDef pointer into WRAM 0x078D and sets game_state to 0x06
+     * (door transition), causing the SM engine to load the target room.
+     */
+    suspend fun warpToDoor(doorDefPtr: Int) {
+        val b = backend ?: return
+        if (!session.active) {
+            setStatus("No active session — start the emulator first")
+            return
+        }
+        // Write door_def_ptr (WRAM 0x078D) — 16-bit LE pointer into bank $83
+        b.writeMemory(0x078D, byteArrayOf(
+            (doorDefPtr and 0xFF).toByte(),
+            ((doorDefPtr shr 8) and 0xFF).toByte()
+        ))
+        // Set game_state (WRAM 0x0998) to 0x06 = door transition
+        b.writeMemory(0x0998, byteArrayOf(0x06, 0x00))
+        setStatus("Warping to door 0x${doorDefPtr.toString(16).uppercase()}")
+    }
+
     fun hasSavedSlot(slot: EmulatorSaveSlot): Boolean {
         return saveStates.any { it.name == slot.stateName }
     }

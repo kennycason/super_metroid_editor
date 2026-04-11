@@ -878,7 +878,9 @@ class RomParser(internal val romData: ByteArray) {
         val screenX: Int,
         val screenY: Int,
         val distFromDoor: Int,
-        val entryCode: Int
+        val entryCode: Int,
+        /** Raw 16-bit pointer into bank $83 — this is the DoorDef address for WRAM 0x078D. */
+        val doorDefPtr: Int = 0
     ) {
         val direction: Int get() = (bitflag shr 8) and 0xFF
         val directionName: String get() = when (direction and 0x03) {
@@ -913,7 +915,8 @@ class RomParser(internal val romData: ByteArray) {
             screenX = romData[entryPc + 6].toInt() and 0xFF,
             screenY = romData[entryPc + 7].toInt() and 0xFF,
             distFromDoor = readUInt16At(entryPc + 8),
-            entryCode = readUInt16At(entryPc + 10)
+            entryCode = readUInt16At(entryPc + 10),
+            doorDefPtr = entryPtr
         )
     }
 
