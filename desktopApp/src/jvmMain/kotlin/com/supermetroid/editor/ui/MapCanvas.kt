@@ -92,7 +92,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.event.MouseEvent
-import java.awt.event.MouseWheelEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -1028,8 +1027,13 @@ fun MapCanvas(
                                                 vScrollState.scrollTo(newScrollY)
                                             }
                                         } else coroutineScope.launch {
-                                            hScrollState.scrollTo((hScrollState.value + sd.x).toInt().coerceIn(0, hScrollState.maxValue))
-                                            vScrollState.scrollTo((vScrollState.value + sd.y).toInt().coerceIn(0, vScrollState.maxValue))
+                                            val pan = resolvePanScrollDelta(
+                                                rawX = sd.x,
+                                                rawY = sd.y,
+                                                shiftPressed = ne?.isShiftDown == true
+                                            )
+                                            hScrollState.scrollTo((hScrollState.value + pan.x).toInt().coerceIn(0, hScrollState.maxValue))
+                                            vScrollState.scrollTo((vScrollState.value + pan.y).toInt().coerceIn(0, vScrollState.maxValue))
                                         }
                                     }
                                     .onPointerEvent(PointerEventType.Press) { event ->
