@@ -1060,6 +1060,24 @@ fun MapCanvas(
                                             }
                                         } else if (ne != null && ne.button == MouseEvent.BUTTON1 && editorState != null) {
                                             val (bx, by) = pointerToBlock(event.changes.first().position.x, event.changes.first().position.y)
+                                            // Cmd/Ctrl+click on a door block → navigate to connected room
+                                            if ((ne.isMetaDown || ne.isControlDown) && onRoomSelected != null &&
+                                                bx in 0 until data.blocksWide && by in 0 until data.blocksTall) {
+                                                val word = editorState.readBlockWord(bx, by)
+                                                val blockType = (word shr 12) and 0xF
+                                                if (blockType == 0x9) {
+                                                    val bts = editorState.readBts(bx, by)
+                                                    val door = editorState.doorEntries.getOrNull(bts)
+                                                    if (door != null) {
+                                                        val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
+                                                        if (destRoom != null) {
+                                                            onRoomSelected(destRoom)
+                                                            return@onPointerEvent
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if (ne.isMetaDown || ne.isControlDown) return@onPointerEvent
                                             when (editorState.activeTool) {
                                                 EditorTool.SELECT -> {
                                                     editorState.mapSelStart = Pair(bx, by)
