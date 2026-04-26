@@ -321,8 +321,13 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         vScroll.scrollTo(((contentYBefore * newCsPx) - mousePos.y).toInt().coerceAtLeast(0))
                     }
                 } else coroutineScope.launch {
-                    vScroll.scrollTo((vScroll.value + sd.y * 40).toInt().coerceIn(0, vScroll.maxValue))
-                    hScroll.scrollTo((hScroll.value + sd.x * 40).toInt().coerceIn(0, hScroll.maxValue))
+                    val pan = resolvePanScrollDelta(
+                        rawX = sd.x,
+                        rawY = sd.y,
+                        shiftPressed = ne?.isShiftDown == true
+                    )
+                    vScroll.scrollTo((vScroll.value + pan.y * 40).toInt().coerceIn(0, vScroll.maxValue))
+                    hScroll.scrollTo((hScroll.value + pan.x * 40).toInt().coerceIn(0, hScroll.maxValue))
                 }
             }
             .horizontalScroll(hScroll).verticalScroll(vScroll)
