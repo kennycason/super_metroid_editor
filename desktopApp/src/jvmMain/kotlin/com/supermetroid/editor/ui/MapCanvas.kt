@@ -105,6 +105,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.rom.MapRenderer
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomRenderData
 import java.awt.image.BufferedImage
@@ -486,6 +487,8 @@ enum class TileOverlay(val label: String, val shortLabel: String, val color: Lon
     SCROLLS("Scroll Colors", "Sc", 0x60FFFFFF),
     // Liquid level (water/lava/acid from FX data)
     LIQUID("Liquid Level", "~", 0x443388FF),
+    // Layer 2 background (BG data tilemap or embedded L2)
+    LAYER2("Layer 2", "L2", 0x6088AACC),
     // Layer 3 visual (fog, rain, spores, heat shimmer)
     LAYER3("Layer 3", "L3", 0x60AACCFF),
     // Lighten: brighten dark rooms (Fireflea, etc.)
@@ -538,6 +541,8 @@ fun MapCanvas(
     val overlayToggles = remember { mutableStateMapOf<TileOverlay, Boolean>(
         TileOverlay.ITEMS to true,
         TileOverlay.ENEMIES to true,
+        TileOverlay.LAYER2 to true,
+        TileOverlay.LIQUID to true,
     ) }
     val overlayCount = overlayToggles.values.count { it }
     
@@ -949,9 +954,18 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer3Data?.contentHashCode()) {
+                            // Layer 2 BG overlay data
+                            val layer2Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER2)) {
+                                if (!activeOverlays.contains(TileOverlay.LAYER2) || roomHeader == null || romParser == null) null
+                                else {
+                                    val renderer = MapRenderer(romParser, editorState?.tileGraphics)
+                                    renderer.renderLayer2(roomHeader, editorState?.workingLevelData)
+                                }
+                            }
+
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer3Data?.contentHashCode(), layer2Data?.contentHashCode()) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer3Pixels = layer3Data)
+                                    layer3Pixels = layer3Data, layer2Pixels = layer2Data)
                             }
                             
                             val hScrollState = rememberScrollState()
@@ -988,13 +1002,13 @@ fun MapCanvas(
                             }
                             
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer3Data?.contentHashCode()) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer3Data?.contentHashCode(), layer2Data?.contentHashCode()) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer3Pixels = layer3Data)
+                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer3Pixels = layer3Data, layer2Pixels = layer2Data)
                                     }
                                 }
                                 compositeImage
@@ -2856,11 +2870,32 @@ private fun buildCompositeImage(
     roomHeightScreens: Int = 0,
     layer3Pixels: IntArray? = null,
     layer3Width: Int = 256,
-    layer3Height: Int = 264
+    layer3Height: Int = 264,
+    layer2Pixels: IntArray? = null
 ): BufferedImage {
     val img = BufferedImage(data.width, data.height, BufferedImage.TYPE_INT_ARGB)
-    val pixels = if (activeOverlays.contains(TileOverlay.LIGHTEN)) {
-        // Brighten dark rooms by scaling RGB values (3x, clamped to 255)
+
+    // Layer 2 background: draw behind Layer 1 (composite L2 then L1 on top)
+    val pixels = if (activeOverlays.contains(TileOverlay.LAYER2) && layer2Pixels != null && layer2Pixels.size == data.pixels.size) {
+        // Compose: L2 as base, then L1 pixels on top (L1 pixel 0 = transparent → show L2)
+        val l1 = if (activeOverlays.contains(TileOverlay.LIGHTEN)) {
+            IntArray(data.pixels.size) { i ->
+                val argb = data.pixels[i]
+                val a = argb ushr 24
+                val r = minOf(((argb shr 16) and 0xFF) * 3, 255)
+                val g = minOf(((argb shr 8) and 0xFF) * 3, 255)
+                val b = minOf((argb and 0xFF) * 3, 255)
+                (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        } else data.pixels
+        IntArray(data.pixels.size) { i ->
+            val l1px = l1[i]
+            val l2px = layer2Pixels[i]
+            // Show L2 where L1 is bgColor AND L2 has visible content (non-transparent)
+            if (l1px == RomConstants.ROM_BG_COLOR && l2px != 0) l2px
+            else l1px
+        }
+    } else if (activeOverlays.contains(TileOverlay.LIGHTEN)) {
         IntArray(data.pixels.size) { i ->
             val argb = data.pixels[i]
             val a = argb ushr 24

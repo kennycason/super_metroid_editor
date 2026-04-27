@@ -274,6 +274,46 @@ class TileGraphics(private val romParser: RomParser) {
     }
 
     /**
+     * Render a SNES BG nametable (array of 16-bit tilemap words) to an ARGB pixel image.
+     * Standard layout: 32 columns × 32 rows of 8×8 tiles = 256×256 pixels.
+     * Each word: bits 0-9 = tile number, bits 10-12 = palette, bit 13 = priority,
+     * bit 14 = H-flip, bit 15 = V-flip.
+     * Returns (pixels, width=256, height=256) or null if tileset not loaded.
+     */
+    fun renderBgTilemap(tilemapWords: IntArray): Triple<IntArray, Int, Int>? {
+        val pal = cachedPalette ?: return null
+        if (rawTileData == null) return null
+        val cols = 32
+        val rows = 32
+        val w = cols * 8  // 256
+        val h = rows * 8  // 256
+        val pixels = IntArray(w * h)
+        for (i in tilemapWords.indices) {
+            if (i >= cols * rows) break
+            val word = tilemapWords[i]
+            val tileNum = word and 0x03FF
+            val paletteIdx = (word shr 10) and 7
+            val hFlip = (word shr 14) and 1
+            val vFlip = (word shr 15) and 1
+            if (tileNum >= TOTAL_TILES) continue
+            val tilePixels = decode4bppTileWithPalette(tileNum, pal, paletteIdx)
+            val cx = (i % cols) * 8
+            val cy = (i / cols) * 8
+            for (py in 0 until 8) {
+                for (px in 0 until 8) {
+                    val sx = if (hFlip != 0) 7 - px else px
+                    val sy = if (vFlip != 0) 7 - py else py
+                    val argb = tilePixels[sy * 8 + sx]
+                    if (argb != 0) {
+                        pixels[(cy + py) * w + (cx + px)] = argb
+                    }
+                }
+            }
+        }
+        return Triple(pixels, w, h)
+    }
+
+    /**
      * Convert an ARGB pixel grid back to raw 4bpp tile data.
      * For each 8x8 tile, finds the best matching palette row and encodes indices.
      */

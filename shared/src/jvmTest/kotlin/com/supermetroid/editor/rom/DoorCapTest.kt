@@ -89,6 +89,30 @@ class DoorCapTest {
     }
 
     @Test
+    fun `doorCapColor only matches exact PLM IDs not in-between values`() {
+        // Exact door cap IDs (4 per color, stride 6: left/right/up/down)
+        val expectedGrey   = listOf(0xC842, 0xC848, 0xC84E, 0xC854)
+        val expectedYellow = listOf(0xC85A, 0xC860, 0xC866, 0xC86C)
+        val expectedGreen  = listOf(0xC872, 0xC878, 0xC87E, 0xC884)
+        val expectedRed    = listOf(0xC88A, 0xC890, 0xC896, 0xC89C)
+        val expectedBlue   = listOf(0xC8A2, 0xC8A8, 0xC8AE, 0xC8B4)
+
+        for (id in expectedGrey)   assertEquals(RomParser.DOOR_CAP_GREY,   RomParser.doorCapColor(id), "0x${id.toString(16)} should be GREY")
+        for (id in expectedYellow) assertEquals(RomParser.DOOR_CAP_YELLOW, RomParser.doorCapColor(id), "0x${id.toString(16)} should be YELLOW")
+        for (id in expectedGreen)  assertEquals(RomParser.DOOR_CAP_GREEN,  RomParser.doorCapColor(id), "0x${id.toString(16)} should be GREEN")
+        for (id in expectedRed)    assertEquals(RomParser.DOOR_CAP_RED,    RomParser.doorCapColor(id), "0x${id.toString(16)} should be RED")
+        for (id in expectedBlue)   assertEquals(RomParser.DOOR_CAP_BLUE,   RomParser.doorCapColor(id), "0x${id.toString(16)} should be BLUE")
+
+        // In-between IDs should NOT match (these are scroll PLMs, event PLMs, etc.)
+        val inBetween = listOf(0xC843, 0xC845, 0xC84A, 0xC856, 0xC85B, 0xC863, 0xC870, 0xC875, 0xC886, 0xC89E, 0xC8A5, 0xC8B0)
+        for (id in inBetween) assertNull(RomParser.doorCapColor(id), "0x${id.toString(16)} should NOT be a door cap")
+
+        // Far outside range
+        assertNull(RomParser.doorCapColor(0xB600), "0xB600 should not be a door cap")
+        assertNull(RomParser.doorCapColor(0xC900), "0xC900 should not be a door cap")
+    }
+
+    @Test
     fun `dump all Landing Site PLMs for analysis`() {
         val parser = loadTestRom() ?: return
         val room = parser.readRoomHeader(0x91F8)!!

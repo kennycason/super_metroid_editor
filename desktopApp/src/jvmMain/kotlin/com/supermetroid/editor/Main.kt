@@ -841,8 +841,16 @@ fun main() = application {
                                             val hType = (hw shr 12) and 0xF
                                             val chunkX = hx / 16
                                             val chunkY = hy / 16
+                                            val doorHint = if (hType == 0x9) {
+                                                val bts = es.readBts(hx, hy)
+                                                val door = es.doorEntries.getOrNull(bts)
+                                                val destName = if (door != null) rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name ?: "" else ""
+                                                val modKey = if (System.getProperty("os.name", "").lowercase().contains("mac")) "Cmd" else "Ctrl"
+                                                val dest = if (destName.isNotEmpty()) " → $destName" else ""
+                                                "  Door[$bts]${door?.directionName?.let { " $it" } ?: ""}$dest  ($modKey+click to follow)"
+                                            } else ""
                                             Text(
-                                                "chunk($chunkX,$chunkY)  tile($hx,$hy)  #$hIdx 0x${hType.toString(16).uppercase()} ${blockTypeName(hType)}",
+                                                "chunk($chunkX,$chunkY)  tile($hx,$hy)  #$hIdx 0x${hType.toString(16).uppercase()} ${blockTypeName(hType)}$doorHint",
                                                 fontSize = fs.statusBar,
                                                 fontFamily = monoFont,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

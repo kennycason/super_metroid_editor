@@ -37,7 +37,7 @@ class EditorState {
     var brush by mutableStateOf<TileBrush?>(null)
         internal set
 
-    var activeTool by mutableStateOf(EditorTool.PAINT)
+    var activeTool by mutableStateOf(EditorTool.SELECT)
 
     /** Map selection rectangle in block coordinates (inclusive). */
     var mapSelStart by mutableStateOf<Pair<Int, Int>?>(null)
