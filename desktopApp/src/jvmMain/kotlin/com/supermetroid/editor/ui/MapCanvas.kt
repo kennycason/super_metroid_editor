@@ -2891,8 +2891,8 @@ private fun buildCompositeImage(
         IntArray(data.pixels.size) { i ->
             val l1px = l1[i]
             val l2px = layer2Pixels[i]
-            // Only show L2 where L1 is the background fill (palette index 0 / empty space)
-            if (l1px == RomConstants.ROM_BG_COLOR) l2px
+            // Show L2 where L1 is bgColor AND L2 has visible content (non-transparent)
+            if (l1px == RomConstants.ROM_BG_COLOR && l2px != 0) l2px
             else l1px
         }
     } else if (activeOverlays.contains(TileOverlay.LIGHTEN)) {

@@ -1203,11 +1203,11 @@ class RomParser(internal val romData: ByteArray) {
         if (levelData.size < 2) return null
         val layer1Size = (levelData[0].toInt() and 0xFF) or ((levelData[1].toInt() and 0xFF) shl 8)
         val totalBlocks = blocksWide * blocksTall
-        val layer2Start = 2 + layer1Size
+        // Layout: [2-byte header][L1 data][BTS data][L2 data]
+        val btsStart = 2 + layer1Size
+        val layer2Start = btsStart + totalBlocks
         val layer2End = layer2Start + totalBlocks * 2
-        val btsExpected = layer2End + totalBlocks
-        // Only valid if the data is large enough to contain L1 + L2 + BTS
-        if (levelData.size < btsExpected) return null
+        if (levelData.size < layer2End) return null
 
         val words = IntArray(totalBlocks)
         for (i in 0 until totalBlocks) {
