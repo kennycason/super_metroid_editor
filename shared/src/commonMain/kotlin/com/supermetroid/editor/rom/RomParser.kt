@@ -1586,12 +1586,20 @@ class RomParser(internal val romData: ByteArray) {
          *   $C8A2-$C8B5 = Blue (beam) opening  facing L/R/U/D
          *   $C8BA-$C8CD = Blue (beam) closing   facing L/R/U/D
          */
+        // Only the 4 actual PLM IDs per color (left/right/up/down at stride 6) are door caps.
+        // Previous broad ranges incorrectly matched unrelated PLMs in between.
+        private val GREY_CAP_IDS   = setOf(0xC842, 0xC848, 0xC84E, 0xC854)
+        private val YELLOW_CAP_IDS = setOf(0xC85A, 0xC860, 0xC866, 0xC86C)
+        private val GREEN_CAP_IDS  = setOf(0xC872, 0xC878, 0xC87E, 0xC884)
+        private val RED_CAP_IDS    = setOf(0xC88A, 0xC890, 0xC896, 0xC89C)
+        private val BLUE_CAP_IDS   = setOf(0xC8A2, 0xC8A8, 0xC8AE, 0xC8B4)
+
         fun doorCapColor(plmId: Int): Int? = when (plmId) {
-            in 0xC842..0xC859 -> DOOR_CAP_GREY      // Grey door caps (boss/event)
-            in 0xC85A..0xC871 -> DOOR_CAP_YELLOW     // Orange/Yellow (power bomb)
-            in 0xC872..0xC889 -> DOOR_CAP_GREEN      // Green (super missile)
-            in 0xC88A..0xC8A1 -> DOOR_CAP_RED        // Red (5 missiles)
-            in 0xC8A2..0xC8B9 -> DOOR_CAP_BLUE       // Blue (beam/anything)
+            in GREY_CAP_IDS   -> DOOR_CAP_GREY
+            in YELLOW_CAP_IDS -> DOOR_CAP_YELLOW
+            in GREEN_CAP_IDS  -> DOOR_CAP_GREEN
+            in RED_CAP_IDS    -> DOOR_CAP_RED
+            in BLUE_CAP_IDS   -> DOOR_CAP_BLUE
             else -> null
         }
 

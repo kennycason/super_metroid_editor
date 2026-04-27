@@ -541,6 +541,8 @@ fun MapCanvas(
     val overlayToggles = remember { mutableStateMapOf<TileOverlay, Boolean>(
         TileOverlay.ITEMS to true,
         TileOverlay.ENEMIES to true,
+        TileOverlay.LAYER2 to true,
+        TileOverlay.LIQUID to true,
     ) }
     val overlayCount = overlayToggles.values.count { it }
     
@@ -2889,8 +2891,8 @@ private fun buildCompositeImage(
         IntArray(data.pixels.size) { i ->
             val l1px = l1[i]
             val l2px = layer2Pixels[i]
-            // If L1 pixel is the dark background color or black/near-black, show L2 instead
-            if (l1px == RomConstants.ROM_BG_COLOR || (l1px and 0x00FFFFFF) == 0) l2px
+            // Only show L2 where L1 is the background fill (palette index 0 / empty space)
+            if (l1px == RomConstants.ROM_BG_COLOR) l2px
             else l1px
         }
     } else if (activeOverlays.contains(TileOverlay.LIGHTEN)) {
