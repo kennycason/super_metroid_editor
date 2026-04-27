@@ -1147,6 +1147,78 @@ class RomParser(internal val romData: ByteArray) {
         }
     }
 
+    // ─── Layer 2 / BG Data ─────────────────────────────────────────────
+
+    /**
+     * Read BG data (Layer 2 background tilemap) for a room.
+     *
+     * BG data pointer (in bank $8F) points to a structure with a 2-byte header:
+     *   0x0004 = real data — next 3 bytes are pointer to compressed nametable
+     *   Other  = unsupported format
+     *
+     * The decompressed nametable is 32×32 SNES BG tilemap words (1024 words).
+     * Each word: bits 0-9 = 8x8 tile number, bits 10-12 = palette,
+     * bit 13 = priority, bit 14 = H-flip, bit 15 = V-flip.
+     *
+     * For rooms with bgScrolling == 0x0000 (embedded Layer 2), the level data
+     * itself contains a second layer after Layer 1, in the same metatile format.
+     *
+     * Returns an IntArray of tilemap words (1024 entries for scrolling BG),
+     * or null if the format is unrecognized or the pointer is invalid.
+     */
+    fun readBgTilemap(bgDataPtr: Int): IntArray? {
+        if (bgDataPtr == 0) return null
+        val headerPc = snesToPc(BANK_ROOM_DATA or bgDataPtr)
+        if (headerPc < 0 || headerPc + 4 >= romData.size) return null
+
+        val header = readUInt16At(headerPc)
+        // Header 0x0004 = real data: next 3 bytes are SNES pointer to compressed tilemap
+        val dataAddr: Int = when (header) {
+            0x0004 -> readUInt24At(headerPc + 2)
+            else -> return null // unsupported format (boss BG, RAM-loaded, etc.)
+        }
+        if (dataAddr == 0) return null
+
+        val decompressed = try { decompressLZ2(dataAddr) } catch (_: Exception) { return null }
+        // Expect at least 1024 words = 2048 bytes (32×32 nametable)
+        val wordCount = minOf(decompressed.size / 2, 1024)
+        if (wordCount == 0) return null
+
+        val words = IntArray(wordCount)
+        for (i in 0 until wordCount) {
+            val lo = decompressed[i * 2].toInt() and 0xFF
+            val hi = decompressed[i * 2 + 1].toInt() and 0xFF
+            words[i] = (hi shl 8) or lo
+        }
+        return words
+    }
+
+    /**
+     * Read embedded Layer 2 tile data from decompressed level data.
+     * For rooms with bgScrolling == 0x0000, Layer 2 data is stored after Layer 1
+     * in the same metatile word format. Returns an IntArray of tile words covering
+     * the full room, or null if no embedded Layer 2 data is present.
+     */
+    fun readEmbeddedLayer2(levelData: ByteArray, blocksWide: Int, blocksTall: Int): IntArray? {
+        if (levelData.size < 2) return null
+        val layer1Size = (levelData[0].toInt() and 0xFF) or ((levelData[1].toInt() and 0xFF) shl 8)
+        val totalBlocks = blocksWide * blocksTall
+        val layer2Start = 2 + layer1Size
+        val layer2End = layer2Start + totalBlocks * 2
+        val btsExpected = layer2End + totalBlocks
+        // Only valid if the data is large enough to contain L1 + L2 + BTS
+        if (levelData.size < btsExpected) return null
+
+        val words = IntArray(totalBlocks)
+        for (i in 0 until totalBlocks) {
+            val offset = layer2Start + i * 2
+            val lo = levelData[offset].toInt() and 0xFF
+            val hi = levelData[offset + 1].toInt() and 0xFF
+            words[i] = (hi shl 8) or lo
+        }
+        return words
+    }
+
     // ─── Layer 3 FX ──────────────────────────────────────────────────
 
     /**

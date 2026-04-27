@@ -263,6 +263,63 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
         return RoomRenderData(pw, ph, pixels)
     }
     
+    /**
+     * Render the Layer 2 background for a room.
+     * For scrolling BG rooms (bgScrolling != 0), reads and tiles the bgDataPtr nametable.
+     * For embedded L2 rooms (bgScrolling == 0), renders the full-room L2 metatile data.
+     * Returns a pixel array the same size as the room (pixelWidth × pixelHeight), or null.
+     */
+    fun renderLayer2(room: Room, levelData: ByteArray? = null): IntArray? {
+        val pixelWidth = room.width * BLOCKS_PER_SCREEN * BLOCK_SIZE
+        val pixelHeight = room.height * BLOCKS_PER_SCREEN * BLOCK_SIZE
+
+        if (room.bgScrolling != 0 && room.bgDataPtr != 0) {
+            // Scrolling BG: read the 32×32 8x8 nametable and tile it across the room
+            val tilemap = romParser.readBgTilemap(room.bgDataPtr) ?: return null
+            val (screenPixels, sw, sh) = tileGraphics.renderBgTilemap(tilemap) ?: return null
+            // Tile the 256×256 BG screen across the full room area
+            val pixels = IntArray(pixelWidth * pixelHeight)
+            for (y in 0 until pixelHeight) {
+                val srcY = y % sh
+                for (x in 0 until pixelWidth) {
+                    val srcX = x % sw
+                    pixels[y * pixelWidth + x] = screenPixels[srcY * sw + srcX]
+                }
+            }
+            return pixels
+        } else if (room.bgScrolling == 0) {
+            // Embedded Layer 2: metatile data in level data
+            val data = levelData ?: try { romParser.decompressLZ2(room.levelDataPtr) } catch (_: Exception) { null } ?: return null
+            val blocksWide = room.width * BLOCKS_PER_SCREEN
+            val blocksTall = room.height * BLOCKS_PER_SCREEN
+            val l2Words = romParser.readEmbeddedLayer2(data, blocksWide, blocksTall) ?: return null
+            val pixels = IntArray(pixelWidth * pixelHeight)
+            for (idx in l2Words.indices) {
+                val word = l2Words[idx]
+                val metatileIndex = word and 0x03FF
+                val hFlip = (word shr 10) and 1
+                val vFlip = (word shr 11) and 1
+                val metatilePixels = tileGraphics.renderMetatile(metatileIndex) ?: continue
+                val bx = idx % blocksWide
+                val by = idx / blocksWide
+                val px = bx * BLOCK_SIZE
+                val py = by * BLOCK_SIZE
+                for (ty in 0 until 16) {
+                    for (tx in 0 until 16) {
+                        val sx = if (hFlip != 0) 15 - tx else tx
+                        val sy = if (vFlip != 0) 15 - ty else ty
+                        val argb = metatilePixels[sy * 16 + sx]
+                        if (argb != 0) {
+                            pixels[(py + ty) * pixelWidth + (px + tx)] = argb
+                        }
+                    }
+                }
+            }
+            return pixels
+        }
+        return null
+    }
+
     private fun blendColor(base: Int, overlay: Int): Int {
         val alpha = (overlay ushr 24) and 0xFF
         if (alpha == 0) return base
