@@ -1200,6 +1200,19 @@ fun MapCanvas(
                                             img.setRGB(0, 0, l3SrcW, l3SrcH, l3Pixels, 0, l3SrcW)
                                             img.toComposeImageBitmap()
                                         }
+                                        // V-flipped bitmap for water tiling (alternating rows tessellate better)
+                                        val l3BitmapFlipped = remember(l3Pixels, l3FxType) {
+                                            if (l3FxType != 0x06) null
+                                            else {
+                                                val img = java.awt.image.BufferedImage(l3SrcW, l3SrcH, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                                                img.setRGB(0, 0, l3SrcW, l3SrcH, l3Pixels, 0, l3SrcW)
+                                                val flipped = java.awt.image.BufferedImage(l3SrcW, l3SrcH, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                                                val g2 = flipped.createGraphics()
+                                                g2.drawImage(img, 0, l3SrcH, l3SrcW, 0, 0, 0, l3SrcW, l3SrcH, null)
+                                                g2.dispose()
+                                                flipped.toComposeImageBitmap()
+                                            }
+                                        }
                                         val l3Scroll = remember(l3FxType) { layer3ScrollSpeed(l3FxType) }
                                         var l3OffsetX by remember { mutableStateOf(0f) }
                                         var l3OffsetY by remember { mutableStateOf(0f) }
@@ -1209,11 +1222,16 @@ fun MapCanvas(
                                                 while (true) {
                                                     kotlinx.coroutines.delay(16L)
                                                     frame += 1f
-                                                    val dx = if (l3FxType == 0x08) {
-                                                        kotlin.math.sin(frame * 0.02f) * 0.8f
-                                                    } else l3Scroll.first
+                                                    val dx = when (l3FxType) {
+                                                        0x08 -> kotlin.math.sin(frame * 0.02f) * 0.8f // Spores: sinusoidal sway
+                                                        else -> l3Scroll.first
+                                                    }
+                                                    val dy = when (l3FxType) {
+                                                        0x06 -> kotlin.math.sin(frame * 0.008f) * 0.15f // Water: very gentle vertical bob
+                                                        else -> l3Scroll.second
+                                                    }
                                                     l3OffsetX = (l3OffsetX + dx + l3TileW) % l3TileW
-                                                    l3OffsetY = (l3OffsetY + l3Scroll.second + l3TileH) % l3TileH
+                                                    l3OffsetY = (l3OffsetY + dy + l3TileH) % l3TileH
                                                 }
                                             }
                                         }
@@ -1233,8 +1251,11 @@ fun MapCanvas(
                                                 val startX = ox - scaledW
                                                 val startY = oy - scaledH
                                                 var ty = startY
+                                                var rowIdx = 0
                                                 while (ty < size.height) {
                                                     var tx = startX
+                                                    // For water: alternate V-flipped rows for seamless tessellation
+                                                    val bmp = if (l3BitmapFlipped != null && rowIdx % 2 == 1) l3BitmapFlipped else l3Bitmap
                                                     while (tx < size.width) {
                                                         val dstW = kotlin.math.ceil(scaledW).toInt()
                                                         val dstH = kotlin.math.ceil(scaledH).toInt()
@@ -1243,7 +1264,7 @@ fun MapCanvas(
                                                         if (ix + dstW > 0 && iy + dstH > 0 &&
                                                             ix < size.width.toInt() && iy < size.height.toInt()) {
                                                             drawImage(
-                                                                image = l3Bitmap,
+                                                                image = bmp,
                                                                 dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
                                                                 dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH),
                                                                 filterQuality = androidx.compose.ui.graphics.FilterQuality.None
@@ -1252,6 +1273,7 @@ fun MapCanvas(
                                                         tx += scaledW
                                                     }
                                                     ty += scaledH
+                                                    rowIdx++
                                                 }
                                             }
                                         // TODO: Heat shimmer (fxBitC 0x20/0x40) = per-scanline HDMA warp of base image
@@ -2784,6 +2806,9 @@ internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
  */
 /** Per-frame scroll speed (dx, dy) in pixels for L3 overlay animation by fxType. */
 internal fun layer3ScrollSpeed(fxType: Int): Pair<Float, Float> = when (fxType) {
+    0x02 -> Pair(0.0f, 0.0f)      // Lava — static (surface at liquid level)
+    0x04 -> Pair(0.0f, 0.0f)      // Acid — static
+    0x06 -> Pair(-0.4f, 0.0f)     // Water — slow leftward drift (Y oscillation added in loop)
     0x08 -> Pair(0.1f, 0.5f)      // Spores — slow downward drift
     0x0A -> Pair(1.0f, 4.0f)      // Rain — diagonal downward-right
     0x0C -> Pair(0.5f, 0.1f)      // Fog — rightward drift
@@ -2795,12 +2820,12 @@ internal fun layer3ScrollSpeed(fxType: Int): Pair<Float, Float> = when (fxType) 
 }
 
 internal fun layer3Palette(fxType: Int): IntArray = when (fxType) {
-    0x02 -> // Lava — fiery orange surface
-        intArrayOf(0x00000000, 0xD0FF8020.toInt(), 0xA0FF6010.toInt(), 0x50FF4000.toInt())
-    0x04 -> // Acid — toxic yellow-green surface
-        intArrayOf(0x00000000, 0xC0B0FF00.toInt(), 0x9070B000.toInt(), 0x40406000)
-    0x06 -> // Water — cool blue surface
-        intArrayOf(0x00000000, 0xC0A0D0FF.toInt(), 0x906080C0.toInt(), 0x40304080)
+    0x02 -> // Lava — fiery orange surface (subtractive in-game, use moderate alpha)
+        intArrayOf(0x00000000, 0x60FF8020, 0x40FF6010, 0x20FF4000)
+    0x04 -> // Acid — toxic yellow-green surface (subtractive in-game)
+        intArrayOf(0x00000000, 0x60B0FF00, 0x4070B000, 0x20406000)
+    0x06 -> // Water — extremely subtle, only faint bubble outlines (subtractive in-game)
+        intArrayOf(0x00000000, 0x206888B0, 0x14405870, 0x08182838)
     0x08 -> // Spores — green particles
         intArrayOf(0x00000000, 0xD0A0FFA0.toInt(), 0xA060C060.toInt(), 0x30103010)
     0x0A -> // Rain — subtle translucent drops (reduced alpha to avoid dense grid look)
