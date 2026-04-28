@@ -296,7 +296,6 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
             val pixels = IntArray(pixelWidth * pixelHeight)
             for (idx in l2Words.indices) {
                 val word = l2Words[idx]
-                if (word == 0) continue // 0x0000 = no L2 tile (metatile 0 is a CRE tile, not a BG tile)
                 val metatileIndex = word and 0x03FF
                 val hFlip = (word shr 10) and 1
                 val vFlip = (word shr 11) and 1
