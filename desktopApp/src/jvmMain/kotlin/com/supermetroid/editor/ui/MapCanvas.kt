@@ -63,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -942,17 +943,21 @@ fun MapCanvas(
                             val rWidthScreens = roomHeader?.width ?: 0
                             val rHeightScreens = roomHeader?.height ?: 0
 
-                            // Layer 3 FX overlay data
-                            val layer3Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER3)) {
+                            // Layer 3 FX overlay data + fxType for animation
+                            val layer3Info = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER3)) {
                                 if (!activeOverlays.contains(TileOverlay.LAYER3) || roomHeader == null) null
                                 else {
                                     val fxEntries = romParser.parseFxEntries(roomHeader.fxPtr)
                                     val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
                                     val fxType = defaultFx?.fxType ?: 0
                                     if (fxType == 0) null
-                                    else romParser.renderLayer3Image(fxType, layer3Palette(fxType))
+                                    else {
+                                        val pixels = romParser.renderLayer3Image(fxType, layer3Palette(fxType))
+                                        if (pixels != null) Triple(pixels, fxType, defaultFx) else null
+                                    }
                                 }
                             }
+                            val layer3Data = layer3Info?.first
 
                             // Layer 2 BG overlay data
                             val layer2Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER2)) {
@@ -963,9 +968,9 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer3Data?.contentHashCode(), layer2Data?.contentHashCode()) {
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode()) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer3Pixels = layer3Data, layer2Pixels = layer2Data)
+                                    layer2Pixels = layer2Data)
                             }
                             
                             val hScrollState = rememberScrollState()
@@ -1002,13 +1007,13 @@ fun MapCanvas(
                             }
                             
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer3Data?.contentHashCode(), layer2Data?.contentHashCode()) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode()) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer3Pixels = layer3Data, layer2Pixels = layer2Data)
+                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer2Pixels = layer2Data)
                                     }
                                 }
                                 compositeImage
@@ -1181,6 +1186,58 @@ fun MapCanvas(
                                             .requiredHeight((data.height * zoomLevel).dp),
                                         contentScale = ContentScale.FillBounds
                                     )
+                                    // Animated Layer 3 overlay (fog, rain, spores, etc.)
+                                    if (layer3Info != null) {
+                                        val l3Pixels = layer3Info.first
+                                        val l3FxType = layer3Info.second
+                                        val l3W = 256
+                                        val l3H = 264
+                                        val l3Bitmap = remember(l3Pixels) {
+                                            val img = java.awt.image.BufferedImage(l3W, l3H, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                                            img.setRGB(0, 0, l3W, l3H, l3Pixels, 0, l3W)
+                                            img.toComposeImageBitmap()
+                                        }
+                                        val l3Scroll = remember(l3FxType) { layer3ScrollSpeed(l3FxType) }
+                                        var l3OffsetX by remember { mutableStateOf(0f) }
+                                        var l3OffsetY by remember { mutableStateOf(0f) }
+                                        if (l3Scroll.first != 0f || l3Scroll.second != 0f) {
+                                            LaunchedEffect(l3FxType) {
+                                                while (true) {
+                                                    withFrameNanos { }
+                                                    l3OffsetX = (l3OffsetX + l3Scroll.first) % l3W
+                                                    l3OffsetY = (l3OffsetY + l3Scroll.second) % l3H
+                                                }
+                                            }
+                                        }
+                                        Canvas(
+                                            modifier = Modifier
+                                                .requiredWidth((data.width * zoomLevel).dp)
+                                                .requiredHeight((data.height * zoomLevel).dp)
+                                        ) {
+                                            val scaleX = size.width / data.width
+                                            val scaleY = size.height / data.height
+                                            val scaledL3W = l3W * scaleX
+                                            val scaledL3H = l3H * scaleY
+                                            val ox = -(l3OffsetX * scaleX)
+                                            val oy = -(l3OffsetY * scaleY)
+                                            // Tile the L3 image with scroll offset
+                                            val startX = ox - scaledL3W
+                                            val startY = oy - scaledL3H
+                                            var ty = startY
+                                            while (ty < size.height) {
+                                                var tx = startX
+                                                while (tx < size.width) {
+                                                    drawImage(
+                                                        image = l3Bitmap,
+                                                        dstOffset = androidx.compose.ui.unit.IntOffset(tx.toInt(), ty.toInt()),
+                                                        dstSize = androidx.compose.ui.unit.IntSize(scaledL3W.toInt() + 1, scaledL3H.toInt() + 1)
+                                                    )
+                                                    tx += scaledL3W
+                                                }
+                                                ty += scaledL3H
+                                            }
+                                        }
+                                    }
                                     // Liquid level overlay (water/lava/acid)
                                     if (roomHeader != null && overlayToggles[TileOverlay.LIQUID] == true) {
                                         val fxEntries = remember(roomHeader.fxPtr) { romParser.parseFxEntries(roomHeader.fxPtr) }
@@ -2706,6 +2763,18 @@ internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
  * (background fill) with scattered 1s and 2s (features like rain drops, fog wisps).
  * Color 3 = base tint, Colors 1-2 = brighter feature highlights.
  */
+/** Per-frame scroll speed (dx, dy) in pixels for L3 overlay animation by fxType. */
+internal fun layer3ScrollSpeed(fxType: Int): Pair<Float, Float> = when (fxType) {
+    0x08 -> Pair(0.1f, 0.5f)      // Spores — slow downward drift
+    0x0A -> Pair(0.3f, 2.5f)      // Rain — fast downward
+    0x0C -> Pair(0.5f, 0.1f)      // Fog — rightward drift
+    0x0E -> Pair(0.3f, 0.15f)     // Haze — slow rightward + down
+    0x10 -> Pair(0.4f, 0.1f)      // Dense Fog — rightward drift
+    0x20 -> Pair(1.0f, 0.0f)      // Sky Scrolling — rightward
+    0x2C -> Pair(0.2f, 0.1f)      // Haze (dark) — slow drift
+    else -> Pair(0f, 0f)           // No scroll animation
+}
+
 internal fun layer3Palette(fxType: Int): IntArray = when (fxType) {
     0x02 -> // Lava — fiery orange surface
         intArrayOf(0x00000000, 0xD0FF8020.toInt(), 0xA0FF6010.toInt(), 0x50FF4000.toInt())

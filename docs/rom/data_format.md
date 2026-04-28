@@ -358,11 +358,20 @@ LZ2/LZ5 format.
 
 ### Decompressed Layout
 
-For a room of width W screens and height H screens:
+For a room of width W screens and height H screens, with `totalBlocks = W × H × 256`:
 
-- **Layer 1**: `W × H × 256` 16-bit words (16×16 tiles per screen)
-- **Layer 2**: same size, or absent if layer 2 is a scrolling background
-- **BTS**: `W × H × 256` bytes (one byte per tile, same order as Layer 1)
+```
+Offset              Size              Content
+0-1                 2 bytes           Layer 1 size in bytes (= totalBlocks × 2)
+2                   layer1Size bytes  Layer 1 metatile words (16-bit, little-endian)
+2 + layer1Size      totalBlocks bytes BTS data (1 byte per block)
+2 + layer1Size      totalBlocks × 2   Layer 2 metatile words (optional, only if
+  + totalBlocks     bytes             bgScrolling == 0 in room state — embedded L2)
+```
+
+**Important**: The order is `[L1][BTS][L2]`, NOT `[L1][L2][BTS]`.
+Layer 2 is only present when `bgScrolling == 0` (embedded L2). When `bgScrolling != 0`,
+the background uses a separate scrolling tilemap pointed to by `bgDataPtr`.
 
 ### 16-bit Tile Word Format
 
