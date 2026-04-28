@@ -1202,9 +1202,15 @@ fun MapCanvas(
                                         var l3OffsetY by remember { mutableStateOf(0f) }
                                         if (l3Scroll.first != 0f || l3Scroll.second != 0f) {
                                             LaunchedEffect(l3FxType) {
+                                                var frame = 0f
                                                 while (true) {
-                                                    withFrameNanos { }
-                                                    l3OffsetX = (l3OffsetX + l3Scroll.first) % l3W
+                                                    kotlinx.coroutines.delay(16L)
+                                                    frame += 1f
+                                                    val dx = if (l3FxType == 0x08) {
+                                                        // Spores: sinusoidal left-right sway
+                                                        kotlin.math.sin(frame * 0.02f) * 0.8f
+                                                    } else l3Scroll.first
+                                                    l3OffsetX = (l3OffsetX + dx + l3W) % l3W
                                                     l3OffsetY = (l3OffsetY + l3Scroll.second) % l3H
                                                 }
                                             }
@@ -1213,25 +1219,33 @@ fun MapCanvas(
                                             modifier = Modifier
                                                 .requiredWidth((data.width * zoomLevel).dp)
                                                 .requiredHeight((data.height * zoomLevel).dp)
+                                                .graphicsLayer { clip = true }
                                         ) {
                                             val scaleX = size.width / data.width
                                             val scaleY = size.height / data.height
                                             val scaledL3W = l3W * scaleX
                                             val scaledL3H = l3H * scaleY
-                                            val ox = -(l3OffsetX * scaleX)
-                                            val oy = -(l3OffsetY * scaleY)
-                                            // Tile the L3 image with scroll offset
+                                            // Positive scroll = content falls down / drifts right
+                                            val ox = (l3OffsetX % l3W) * scaleX
+                                            val oy = (l3OffsetY % l3H) * scaleY
                                             val startX = ox - scaledL3W
                                             val startY = oy - scaledL3H
                                             var ty = startY
                                             while (ty < size.height) {
                                                 var tx = startX
                                                 while (tx < size.width) {
-                                                    drawImage(
-                                                        image = l3Bitmap,
-                                                        dstOffset = androidx.compose.ui.unit.IntOffset(tx.toInt(), ty.toInt()),
-                                                        dstSize = androidx.compose.ui.unit.IntSize(scaledL3W.toInt() + 1, scaledL3H.toInt() + 1)
-                                                    )
+                                                    val dstW = scaledL3W.toInt() + 1
+                                                    val dstH = scaledL3H.toInt() + 1
+                                                    val ix = tx.toInt()
+                                                    val iy = ty.toInt()
+                                                    if (ix + dstW > 0 && iy + dstH > 0 &&
+                                                        ix < size.width.toInt() && iy < size.height.toInt()) {
+                                                        drawImage(
+                                                            image = l3Bitmap,
+                                                            dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
+                                                            dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH)
+                                                        )
+                                                    }
                                                     tx += scaledL3W
                                                 }
                                                 ty += scaledL3H
@@ -2766,7 +2780,7 @@ internal fun liquidPhysicsIndex(fxType: Int): Int = (fxType and 0xF) shr 1
 /** Per-frame scroll speed (dx, dy) in pixels for L3 overlay animation by fxType. */
 internal fun layer3ScrollSpeed(fxType: Int): Pair<Float, Float> = when (fxType) {
     0x08 -> Pair(0.1f, 0.5f)      // Spores — slow downward drift
-    0x0A -> Pair(0.3f, 2.5f)      // Rain — fast downward
+    0x0A -> Pair(1.0f, 4.0f)      // Rain — diagonal downward-right
     0x0C -> Pair(0.5f, 0.1f)      // Fog — rightward drift
     0x0E -> Pair(0.3f, 0.15f)     // Haze — slow rightward + down
     0x10 -> Pair(0.4f, 0.1f)      // Dense Fog — rightward drift
