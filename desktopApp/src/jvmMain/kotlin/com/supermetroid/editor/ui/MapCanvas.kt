@@ -1186,15 +1186,18 @@ fun MapCanvas(
                                             .requiredHeight((data.height * zoomLevel).dp),
                                         contentScale = ContentScale.FillBounds
                                     )
-                                    // Animated Layer 3 overlay (fog, rain, spores, etc.)
+                                    // Animated Layer 3 overlay (fog, rain, spores, heat shimmer)
                                     if (layer3Info != null) {
                                         val l3Pixels = layer3Info.first
                                         val l3FxType = layer3Info.second
-                                        val l3W = 256
-                                        val l3H = 264
+                                        val l3SrcW = 256
+                                        val l3SrcH = 264
+                                        // Use full 256x264 tile — BG3 nametable is 32x33 rows
+                                        val l3TileW = 256
+                                        val l3TileH = l3SrcH
                                         val l3Bitmap = remember(l3Pixels) {
-                                            val img = java.awt.image.BufferedImage(l3W, l3H, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                                            img.setRGB(0, 0, l3W, l3H, l3Pixels, 0, l3W)
+                                            val img = java.awt.image.BufferedImage(l3SrcW, l3SrcH, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+                                            img.setRGB(0, 0, l3SrcW, l3SrcH, l3Pixels, 0, l3SrcW)
                                             img.toComposeImageBitmap()
                                         }
                                         val l3Scroll = remember(l3FxType) { layer3ScrollSpeed(l3FxType) }
@@ -1207,50 +1210,52 @@ fun MapCanvas(
                                                     kotlinx.coroutines.delay(16L)
                                                     frame += 1f
                                                     val dx = if (l3FxType == 0x08) {
-                                                        // Spores: sinusoidal left-right sway
                                                         kotlin.math.sin(frame * 0.02f) * 0.8f
                                                     } else l3Scroll.first
-                                                    l3OffsetX = (l3OffsetX + dx + l3W) % l3W
-                                                    l3OffsetY = (l3OffsetY + l3Scroll.second) % l3H
+                                                    l3OffsetX = (l3OffsetX + dx + l3TileW) % l3TileW
+                                                    l3OffsetY = (l3OffsetY + l3Scroll.second + l3TileH) % l3TileH
                                                 }
                                             }
                                         }
+                                        // Standard L3 tiled overlay (rain, fog, spores, lava surface, etc.)
                                         Canvas(
-                                            modifier = Modifier
-                                                .requiredWidth((data.width * zoomLevel).dp)
-                                                .requiredHeight((data.height * zoomLevel).dp)
-                                                .graphicsLayer { clip = true }
-                                        ) {
-                                            val scaleX = size.width / data.width
-                                            val scaleY = size.height / data.height
-                                            val scaledL3W = l3W * scaleX
-                                            val scaledL3H = l3H * scaleY
-                                            // Positive scroll = content falls down / drifts right
-                                            val ox = (l3OffsetX % l3W) * scaleX
-                                            val oy = (l3OffsetY % l3H) * scaleY
-                                            val startX = ox - scaledL3W
-                                            val startY = oy - scaledL3H
-                                            var ty = startY
-                                            while (ty < size.height) {
-                                                var tx = startX
-                                                while (tx < size.width) {
-                                                    val dstW = scaledL3W.toInt() + 1
-                                                    val dstH = scaledL3H.toInt() + 1
-                                                    val ix = tx.toInt()
-                                                    val iy = ty.toInt()
-                                                    if (ix + dstW > 0 && iy + dstH > 0 &&
-                                                        ix < size.width.toInt() && iy < size.height.toInt()) {
-                                                        drawImage(
-                                                            image = l3Bitmap,
-                                                            dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
-                                                            dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH)
-                                                        )
+                                                modifier = Modifier
+                                                    .requiredWidth((data.width * zoomLevel).dp)
+                                                    .requiredHeight((data.height * zoomLevel).dp)
+                                                    .graphicsLayer { clip = true }
+                                            ) {
+                                                val scaleX = size.width / data.width
+                                                val scaleY = size.height / data.height
+                                                val scaledW = l3TileW * scaleX
+                                                val scaledH = l3TileH * scaleY
+                                                val ox = (l3OffsetX % l3TileW) * scaleX
+                                                val oy = (l3OffsetY % l3TileH) * scaleY
+                                                val startX = ox - scaledW
+                                                val startY = oy - scaledH
+                                                var ty = startY
+                                                while (ty < size.height) {
+                                                    var tx = startX
+                                                    while (tx < size.width) {
+                                                        val dstW = kotlin.math.ceil(scaledW).toInt()
+                                                        val dstH = kotlin.math.ceil(scaledH).toInt()
+                                                        val ix = tx.toInt()
+                                                        val iy = ty.toInt()
+                                                        if (ix + dstW > 0 && iy + dstH > 0 &&
+                                                            ix < size.width.toInt() && iy < size.height.toInt()) {
+                                                            drawImage(
+                                                                image = l3Bitmap,
+                                                                dstOffset = androidx.compose.ui.unit.IntOffset(ix, iy),
+                                                                dstSize = androidx.compose.ui.unit.IntSize(dstW, dstH),
+                                                                filterQuality = androidx.compose.ui.graphics.FilterQuality.None
+                                                            )
+                                                        }
+                                                        tx += scaledW
                                                     }
-                                                    tx += scaledL3W
+                                                    ty += scaledH
                                                 }
-                                                ty += scaledL3H
                                             }
-                                        }
+                                        // TODO: Heat shimmer (fxBitC 0x20/0x40) = per-scanline HDMA warp of base image
+                                        // This is a BG warp effect on L1/L2, not an L3 overlay — requires pixel-level displacement
                                     }
                                     // Liquid level overlay (water/lava/acid)
                                     if (roomHeader != null && overlayToggles[TileOverlay.LIQUID] == true) {
@@ -2798,8 +2803,8 @@ internal fun layer3Palette(fxType: Int): IntArray = when (fxType) {
         intArrayOf(0x00000000, 0xC0A0D0FF.toInt(), 0x906080C0.toInt(), 0x40304080)
     0x08 -> // Spores — green particles
         intArrayOf(0x00000000, 0xD0A0FFA0.toInt(), 0xA060C060.toInt(), 0x30103010)
-    0x0A -> // Rain — blue-white drops
-        intArrayOf(0x00000000, 0xD0C0D8FF.toInt(), 0xA08090C0.toInt(), 0x30102030)
+    0x0A -> // Rain — subtle translucent drops (reduced alpha to avoid dense grid look)
+        intArrayOf(0x00000000, 0x60C0D8FF, 0x408090C0, 0x18102030)
     0x0C, 0x0E, 0x10 -> // Fog / Haze / Dense Fog — warm haze tint
         intArrayOf(0x00000000, 0xA0FF8040.toInt(), 0x80C06030.toInt(), 0x40804020.toInt())
     0x16 -> // Firefleas — yellow glows
