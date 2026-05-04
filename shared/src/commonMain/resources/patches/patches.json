@@ -112,7 +112,7 @@
   {
     "file": "fast_reload.ips",
     "name": "Fast Reload (Instant Respawn)",
-    "description": "Instant respawn on death — skips the death animation and reloads immediately. Also adds L+R+Select+Start quick reload during gameplay. Includes save-slot loadback when facing forward in save room."
+    "description": "Fast reload on death — skips death animation and instantly reloads last save point. Also adds L+R+Select+Start manual quick reload during gameplay. Face forward in a save room to load back to previous save slot."
   },
   {
     "file": "etank_refill_full.ips",

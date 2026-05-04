@@ -1338,6 +1338,12 @@ class EditorState {
             for (patch in PatchRepository.loadBundledPatches()) {
                 if (patch.id !in existingIds) {
                     ordered.add(patch)
+                } else {
+                    // Update name/description from canonical source for existing patches
+                    project.patches.find { it.id == patch.id }?.let {
+                        it.name = patch.name
+                        it.description = patch.description
+                    }
                 }
             }
         } catch (e: Exception) {
