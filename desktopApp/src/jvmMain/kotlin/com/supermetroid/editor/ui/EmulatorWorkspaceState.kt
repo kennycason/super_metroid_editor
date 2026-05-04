@@ -205,6 +205,7 @@ class EmulatorWorkspaceState(
         private set
     var lastStepRepeat by mutableStateOf(0)
         private set
+    private var lastStepWallClockNanos = 0L
     var sessionBootStateName by mutableStateOf<String?>(null)
         private set
     var lastCheckpointSlotName by mutableStateOf<String?>(null)
@@ -346,6 +347,7 @@ class EmulatorWorkspaceState(
             emulatedFps = 0f
             viewportFps = 0f
             lastStepRepeat = 0
+            lastStepWallClockNanos = 0L
             setStatus(result.message ?: "Session started: $stateName")
         } catch (e: Exception) {
             setStatus("Failed to start session: ${e.message}")
@@ -1012,16 +1014,23 @@ class EmulatorWorkspaceState(
         frameIncluded: Boolean,
     ) {
         if (elapsedNanos <= 0L) return
-        val elapsedSeconds = elapsedNanos / 1_000_000_000f
-        if (elapsedSeconds <= 0f) return
         lastStepRepeat = repeat
         bridgeRoundTripMs = smoothMetric(bridgeRoundTripMs, elapsedNanos / 1_000_000f)
+
+        // Use wall-clock time between steps for FPS (not step execution time,
+        // which would report the burst rate of the CPU rather than actual throughput)
+        val now = System.nanoTime()
+        val wallClockNanos = now - lastStepWallClockNanos
+        lastStepWallClockNanos = now
+        if (wallClockNanos <= 0L || wallClockNanos > 1_000_000_000L) return // skip first sample / outliers
+        val wallClockSeconds = wallClockNanos / 1_000_000_000f
+
         val frameDelta = maxOf(0, currentFrameCounter - previousFrameCounter)
         if (frameDelta > 0) {
-            emulatedFps = smoothMetric(emulatedFps, frameDelta / elapsedSeconds)
+            emulatedFps = smoothMetric(emulatedFps, frameDelta / wallClockSeconds)
         }
         if (frameIncluded) {
-            viewportFps = smoothMetric(viewportFps, 1f / elapsedSeconds)
+            viewportFps = smoothMetric(viewportFps, 1f / wallClockSeconds)
         }
     }
 

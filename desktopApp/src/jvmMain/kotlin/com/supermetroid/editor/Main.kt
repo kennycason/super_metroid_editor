@@ -888,6 +888,15 @@ fun main() = application {
                             rooms = rooms,
                             onClose = { emulatorEnabled = false },
                         )
+
+                        // Sync map editor to emulator room when followLiveRoom is on
+                        LaunchedEffect(emulatorWorkspaceState.snapshot?.roomId, emulatorWorkspaceState.followLiveRoom) {
+                            emulatorWorkspaceState.roomToFollow(rooms)?.let { room ->
+                                selectedRoom = room
+                                val romPath = RomPreferences.getLastRomPath()
+                                if (romPath != null) saveLastRoom(romPath, room)
+                            }
+                        }
                     }
                 }
             }

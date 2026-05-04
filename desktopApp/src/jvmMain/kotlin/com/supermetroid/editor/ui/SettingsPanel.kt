@@ -342,7 +342,10 @@ private fun EmulatorSettingsTab(
         EmulatorRegistry.availableBackends().forEach { backend ->
             val selected = backend == workspaceState.selectedBackendName
             Surface(
-                modifier = Modifier.clickable(enabled = !workspaceState.isConnected) {
+                modifier = Modifier.clickable {
+                    if (workspaceState.isConnected) {
+                        workspaceState.disconnectBridge()
+                    }
                     workspaceState.selectedBackendName = backend
                 },
                 shape = RoundedCornerShape(6.dp),

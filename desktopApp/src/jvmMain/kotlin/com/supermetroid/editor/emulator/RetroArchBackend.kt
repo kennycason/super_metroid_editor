@@ -140,6 +140,31 @@ class RetroArchBackend : EmulatorBackend {
         isConnected = false
     }
 
+    /**
+     * Kill any existing RetroArch processes so the NWA port is free for our new instance.
+     * Without this, stale RetroArch processes from previous sessions receive our NWA
+     * reads and return old game data.
+     */
+    private suspend fun killExistingRetroArch() = withContext(Dispatchers.IO) {
+        val os = System.getProperty("os.name", "").lowercase()
+        val cmd = when {
+            os.contains("mac") || os.contains("linux") -> arrayOf("pkill", "-f", "RetroArch")
+            os.contains("win") -> arrayOf("taskkill", "/F", "/IM", "retroarch.exe")
+            else -> return@withContext
+        }
+        try {
+            val proc = Runtime.getRuntime().exec(cmd)
+            proc.waitFor()
+            if (proc.exitValue() == 0) {
+                println("[RetroArch] Killed existing RetroArch process(es)")
+                // Give OS time to release the UDP port
+                kotlinx.coroutines.delay(500)
+            }
+        } catch (e: Exception) {
+            // pkill returns non-zero if no processes matched — that's fine
+        }
+    }
+
     private fun killRetroArch() {
         retroArchProcess?.let { proc ->
             if (proc.isAlive) {
@@ -228,6 +253,9 @@ class RetroArchBackend : EmulatorBackend {
         retroArchProcess?.let { proc ->
             if (proc.isAlive) return
         }
+
+        // Kill any existing RetroArch processes that may be holding the NWA port
+        killExistingRetroArch()
 
         withContext(Dispatchers.IO) {
             val execFile = File(execPath)

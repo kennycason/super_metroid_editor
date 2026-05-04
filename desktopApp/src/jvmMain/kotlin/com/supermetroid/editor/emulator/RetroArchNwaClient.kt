@@ -10,10 +10,11 @@ import java.net.InetAddress
 
 /**
  * UDP client for RetroArch's Network Command interface.
- * Uses READ_CORE_RAM / WRITE_CORE_RAM commands over UDP port 55355 (default).
+ * Uses READ_CORE_MEMORY / WRITE_CORE_MEMORY commands over UDP port 55355 (default).
  *
- * Important: READ_CORE_RAM uses WRAM-relative addresses (0x0998, not 0x7E0998).
- * Callers pass full SNES bus addresses (0x7Exxxx); this client strips the bank.
+ * These are the newer, cross-core-compatible commands that accept full SNES bus
+ * addresses (e.g. 0x7E0998) prefixed with "0x". Unlike the older READ_CORE_RAM
+ * command, these work correctly with all libretro cores (bsnes, snes9x, etc.).
  */
 class RetroArchNwaClient(
     private val host: String = "localhost",
@@ -46,14 +47,13 @@ class RetroArchNwaClient(
     }
 
     /**
-     * Read [size] bytes from SNES core RAM at [address].
-     * [address] is a full SNES bus address (e.g. 0x7E0998); the 0x7E bank is stripped
-     * automatically to produce the WRAM-relative offset that READ_CORE_RAM expects.
+     * Read [size] bytes from SNES core memory at [address].
+     * [address] is a full SNES bus address (e.g. 0x7E0998).
+     * Uses READ_CORE_MEMORY which works across all libretro cores.
      */
     suspend fun readMemory(address: Int, size: Int): ByteArray = withContext(Dispatchers.IO) {
         val sock = socket ?: throw IllegalStateException("Not connected")
-        val wramAddr = toWramOffset(address)
-        val command = "READ_CORE_RAM ${wramAddr.toString(16).uppercase()} $size"
+        val command = "READ_CORE_MEMORY 0x${address.toString(16).uppercase()} $size"
 
         udpMutex.withLock {
             val sendData = command.toByteArray()
@@ -69,14 +69,14 @@ class RetroArchNwaClient(
     }
 
     /**
-     * Write [data] bytes to SNES core RAM at [address].
-     * [address] is a full SNES bus address; the 0x7E bank is stripped automatically.
+     * Write [data] bytes to SNES core memory at [address].
+     * [address] is a full SNES bus address (e.g. 0x7E0998).
+     * Uses WRITE_CORE_MEMORY which works across all libretro cores.
      */
     suspend fun writeMemory(address: Int, data: ByteArray): Boolean = withContext(Dispatchers.IO) {
         val sock = socket ?: throw IllegalStateException("Not connected")
-        val wramAddr = toWramOffset(address)
-        val hexData = data.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
-        val command = "WRITE_CORE_RAM ${wramAddr.toString(16).uppercase()} $hexData"
+        val hexData = data.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        val command = "WRITE_CORE_MEMORY 0x${address.toString(16).uppercase()} $hexData"
 
         udpMutex.withLock {
             val sendData = command.toByteArray()
@@ -87,7 +87,7 @@ class RetroArchNwaClient(
             sock.receive(packet)
 
             val response = String(packet.data, 0, packet.length).trim()
-            response.startsWith("WRITE_CORE_RAM")
+            response.startsWith("WRITE_CORE_MEMORY")
         }
     }
 
@@ -104,17 +104,19 @@ class RetroArchNwaClient(
     }
 
     private fun parseReadResponse(response: String, expectedSize: Int): ByteArray {
-        val parts = response.split(" ")
-        if (parts.size < 3 || parts[0] != "READ_CORE_RAM") {
-            if (parts[0] == "WRITE_CORE_RAM") {
+        val parts = response.trim().split(" ")
+        if (parts.size < 3 || parts[0] != "READ_CORE_MEMORY") {
+            if (parts[0] == "WRITE_CORE_MEMORY") {
                 return ByteArray(expectedSize)
             }
             throw IllegalArgumentException("Unexpected response: $response")
         }
-        if (parts.size >= 3 && parts[2] == "-1") {
+        if (parts[2] == "-1") {
             throw IllegalStateException("NWA: memory not ready (response: $response)")
         }
-        val bytes = parts.drop(2).map { it.toInt(16).toByte() }.toByteArray()
+        // READ_CORE_MEMORY returns hex as continuous string(s) — join then chunk by 2
+        val hexData = parts.drop(2).joinToString("")
+        val bytes = hexData.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         if (bytes.size != expectedSize) {
             System.err.println("[NWA] Expected $expectedSize bytes, got ${bytes.size}")
         }
@@ -125,19 +127,5 @@ class RetroArchNwaClient(
         const val DEFAULT_PORT = 55355
         /** SNES WRAM address for Super Metroid game state. */
         private const val GAME_STATE_ADDR = 0x7E0998
-
-        /**
-         * Convert a full SNES bus address (0x7Exxxx or 0x7Fxxxx) to WRAM offset.
-         * READ_CORE_RAM expects offsets into the core's RAM, not full bus addresses.
-         * WRAM bank 0x7E maps to offset 0x0000–0xFFFF, bank 0x7F to 0x10000–0x1FFFF.
-         */
-        fun toWramOffset(address: Int): Int {
-            val bank = (address shr 16) and 0xFF
-            return when (bank) {
-                0x7E -> address and 0xFFFF
-                0x7F -> 0x10000 + (address and 0xFFFF)
-                else -> address  // pass through non-WRAM addresses as-is
-            }
-        }
     }
 }
