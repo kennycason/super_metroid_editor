@@ -62,6 +62,30 @@ tasks.named("jvmMainClasses") {
     dependsOn(rootProject.tasks.named("buildLibretroCore"))
 }
 
+// Wire the copy into packaging tasks so the core is bundled in the app
+afterEvaluate {
+    tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach {
+        dependsOn(copyLibretroToAppResources)
+    }
+}
+
+// ── Copy libretro core into app resources for packaging ───────────────
+val copyLibretroToAppResources by tasks.registering(Copy::class) {
+    dependsOn(rootProject.tasks.named("buildLibretroCore"))
+
+    val os = System.getProperty("os.name").lowercase()
+    val ext = when {
+        os.contains("mac") -> ".dylib"
+        os.contains("win") -> ".dll"
+        else -> ".so"
+    }
+    val coreFile = rootProject.file("tools/snes9x/libretro/snes9x_libretro$ext")
+
+    from(coreFile)
+    into(project.layout.buildDirectory.dir("appResources"))
+    onlyIf { coreFile.exists() }
+}
+
 compose.desktop {
     application {
         mainClass = "com.supermetroid.editor.MainKt"
@@ -72,6 +96,7 @@ compose.desktop {
         )
         nativeDistributions {
             includeAllModules = true
+            // appResourcesDir.set(project.layout.buildDirectory.dir("appResources")) // TODO: requires Compose plugin update
 
             targetFormats(
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg,

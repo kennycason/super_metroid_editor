@@ -14,6 +14,9 @@ object LibretroCoreDiscovery {
         val home = System.getProperty("user.home")
         val cwd = System.getProperty("user.dir")
 
+        // Packaged app resources (Compose Desktop sets this in distributed builds)
+        System.getProperty("compose.application.resources.dir")?.let { add(it) }
+
         // Project-local: submodule build output (highest priority)
         add("$cwd/tools/snes9x/libretro")
         // When run from a submodule dir (e.g. desktopApp/), check parent

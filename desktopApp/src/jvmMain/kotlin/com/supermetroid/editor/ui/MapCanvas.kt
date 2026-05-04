@@ -1865,8 +1865,8 @@ fun MapCanvas(
                                                 // Destination room dropdown
                                                 var destDropExpanded by remember { mutableStateOf(false) }
                                                 var destRoomSearch by remember { mutableStateOf("") }
-                                                val destName = roomIdToName[currentDoor.destRoomPtr]
-                                                    ?: "0x${currentDoor.destRoomPtr.toString(16).uppercase()}"
+                                                val destHex = "0x${currentDoor.destRoomPtr.toString(16).uppercase()}"
+                                                val destName = roomIdToName[currentDoor.destRoomPtr]?.let { "$destHex $it" } ?: destHex
                                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                                     Text("Destination:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
                                                     Box(modifier = Modifier.weight(1f)) {
@@ -1885,7 +1885,7 @@ fun MapCanvas(
                                                         DropdownMenu(
                                                             expanded = destDropExpanded,
                                                             onDismissRequest = { destDropExpanded = false; destRoomSearch = "" },
-                                                            modifier = Modifier.width(220.dp).requiredSizeIn(maxHeight = 400.dp)
+                                                            modifier = Modifier.width(300.dp).requiredSizeIn(maxHeight = 400.dp)
                                                         ) {
                                             AppTextInput(
                                                 value = destRoomSearch,
@@ -1901,7 +1901,7 @@ fun MapCanvas(
                                                             for (r in filteredRooms) {
                                                                 val rid = r.getRoomIdAsInt()
                                                                 DropdownMenuItem(
-                                                                    text = { Text(r.name, fontSize = 10.sp,
+                                                                    text = { Text("${r.id} ${r.name}", fontSize = 10.sp,
                                                                         fontWeight = if (rid == currentDoor.destRoomPtr) FontWeight.Bold else FontWeight.Normal) },
                                                                     onClick = {
                                                                         destDropExpanded = false
@@ -1915,9 +1915,15 @@ fun MapCanvas(
                                                                                 rid, currentDoor.direction,
                                                                                 currentDoor.screenX, currentDoor.screenY
                                                                             )
+                                                                            // Auto-set cross-area flag when dest is in a different area
+                                                                            val srcArea = room?.let { romParser?.readRoomHeader(it.getRoomIdAsInt())?.area }
+                                                                            val destArea = romParser?.readRoomHeader(rid)?.area
+                                                                            val crossAreaBit = if (srcArea != null && destArea != null && srcArea != destArea) 0x40 else 0
+                                                                            val newBitflag = (currentDoor.bitflag and 0x40.inv()) or crossAreaBit
                                                                             editorState.updateDoor(propsBts,
                                                                                 currentDoor.copy(
                                                                                     destRoomPtr = rid,
+                                                                                    bitflag = newBitflag,
                                                                                     entryCode = match?.entryCode ?: 0,
                                                                                     doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
                                                                                 ))
@@ -2080,7 +2086,7 @@ fun MapCanvas(
                                                     if (autoCap != null) {
                                                         Spacer(modifier = Modifier.width(4.dp))
                                                         Surface(
-                                                            modifier = Modifier.height(24.dp)
+                                                            modifier = Modifier.height(20.dp)
                                                                 .clickable {
                                                                     editorState.updateDoor(propsBts, currentDoor.copy(doorCapCode = autoCap))
                                                                 },
@@ -2088,11 +2094,9 @@ fun MapCanvas(
                                                             color = if (currentDoor.doorCapCode == autoCap) MaterialTheme.colorScheme.primaryContainer
                                                                     else MaterialTheme.colorScheme.tertiaryContainer
                                                         ) {
-                                                            Text(
-                                                                "Auto",
-                                                                fontSize = 8.sp,
-                                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                                                            )
+                                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                Text("Auto", fontSize = 8.sp)
+                                                            }
                                                         }
                                                     }
                                                 }

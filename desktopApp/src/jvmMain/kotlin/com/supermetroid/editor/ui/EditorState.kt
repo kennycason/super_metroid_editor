@@ -3002,26 +3002,62 @@ class EditorState {
                     val capStr = if (orientation and 0x04 != 0) " +cap" else ""
                     val capX = dc.doorCapCode and 0xFF
                     val capY = (dc.doorCapCode shr 8) and 0xFF
-                    println("Room 0x$roomKey door $doorIndex: orient=$orientation($dirName$capStr) cap=($capX,$capY) entry=0x${dc.entryCode.toString(16)}")
+                    // Read vanilla door for comparison (from original ROM, not patched copy)
+                    val vanillaDestPtr = romParser.readUInt16At(entryPc)
+                    val vanillaOrient = romParser.readByteAt(entryPc + 3)
+                    val vanillaCapX = romParser.readByteAt(entryPc + 4)
+                    val vanillaCapY = romParser.readByteAt(entryPc + 5)
+                    val crossArea = if (dc.bitflag and 0x40 != 0) " CROSS-AREA" else ""
+                    println("Room 0x$roomKey door $doorIndex: orient=$orientation($dirName$capStr) cap=($capX,$capY) dest=0x${dc.destRoomPtr.toString(16)} entry=0x${dc.entryCode.toString(16)} bitflag=0x${dc.bitflag.toString(16)}$crossArea")
+                    println("  vanilla: dest=0x${vanillaDestPtr.toString(16)} orient=$vanillaOrient cap=($vanillaCapX,$vanillaCapY) bitflag=0x${romParser.readUInt16At(entryPc + 2).toString(16)}")
 
+                    var finalCapCode = dc.doorCapCode
+                    var finalOrientation = orientation
                     val destRoom = romParser.readRoomHeader(dc.destRoomPtr)
                     if (destRoom != null) {
                         val maxX = destRoom.width * 16
                         val maxY = destRoom.height * 16
                         if (capX >= maxX || capY >= maxY) {
+                            // Cap position is out of bounds — try to auto-derive a valid one
                             println("WARN: Room 0x$roomKey door $doorIndex cap position ($capX,$capY) " +
-                                "is out of bounds for destination room 0x${dc.destRoomPtr.toString(16)} " +
+                                "is OUT OF BOUNDS for dest room 0x${dc.destRoomPtr.toString(16)} " +
                                 "(${destRoom.width}x${destRoom.height} screens = ${maxX}x${maxY} blocks). " +
-                                "This will spawn a corrupt closing door PLM!")
+                                "screenX=${dc.screenX} screenY=${dc.screenY} orient=$orientation bitflag=0x${dc.bitflag.toString(16)}")
+                            val derived = romParser.deriveDoorCapPosition(
+                                dc.destRoomPtr, orientation and 3, dc.screenX, dc.screenY
+                            )
+                            if (derived != null) {
+                                finalCapCode = derived
+                                val newCapX = derived and 0xFF
+                                val newCapY = (derived shr 8) and 0xFF
+                                println("  FIX: auto-derived valid cap → ($newCapX,$newCapY)")
+                            } else {
+                                // Cannot derive — clear cap flag (bit 2) to prevent corrupt PLM
+                                finalOrientation = orientation and 0xFB.toInt()
+                                println("  FIX: could not derive cap, cleared cap flag (orient $orientation → $finalOrientation)")
+                            }
+                        }
+                    } else {
+                        println("WARN: Room 0x$roomKey door $doorIndex dest 0x${dc.destRoomPtr.toString(16)} — could not read dest room header!")
+                    }
+
+                    // Auto-fix cross-area flag if source and dest are in different areas
+                    var finalBitflag = dc.bitflag
+                    if (destRoom != null) {
+                        if (room.area != destRoom.area) {
+                            if (finalBitflag and 0x40 == 0) {
+                                finalBitflag = finalBitflag or 0x40
+                                println("  FIX: auto-set cross-area flag (area ${room.area} → ${destRoom.area})")
+                            }
                         }
                     }
 
                     romData[entryPc] = (dc.destRoomPtr and 0xFF).toByte()
                     romData[entryPc + 1] = ((dc.destRoomPtr shr 8) and 0xFF).toByte()
-                    romData[entryPc + 2] = (dc.bitflag and 0xFF).toByte()
-                    romData[entryPc + 3] = orientation.toByte()
-                    romData[entryPc + 4] = (dc.doorCapCode and 0xFF).toByte()
-                    romData[entryPc + 5] = ((dc.doorCapCode shr 8) and 0xFF).toByte()
+                    romData[entryPc + 2] = (finalBitflag and 0xFF).toByte()
+                    romData[entryPc + 3] = finalOrientation.toByte()
+                    romData[entryPc + 4] = (finalCapCode and 0xFF).toByte()
+                    romData[entryPc + 5] = ((finalCapCode shr 8) and 0xFF).toByte()
                     romData[entryPc + 6] = (dc.screenX and 0xFF).toByte()
                     romData[entryPc + 7] = (dc.screenY and 0xFF).toByte()
                     romData[entryPc + 8] = (dc.distFromDoor and 0xFF).toByte()
@@ -3231,17 +3267,21 @@ class EditorState {
                 roomsPatched.add(roomKey)
             }
 
-            // Patch FX data
-            if (hasFxEdits && room.fxPtr != 0 && room.fxPtr != 0xFFFF) {
+            // Patch FX data — apply to ALL states' FX pointers, not just default
+            if (hasFxEdits) {
                 val fx = roomEdits.fxChange!!
-                val fxEntries = romParser.parseFxEntries(room.fxPtr)
-                if (fxEntries.isNotEmpty()) {
-                    val fxSnesAddr = RomConstants.BANK_FX or room.fxPtr
+                val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+                val patchedFxPtrs = mutableSetOf<Int>()
+                for (stateOffset in allStateOffsets) {
+                    val stateFxPtr = romParser.readUInt16At(stateOffset + 6)
+                    if (stateFxPtr == 0 || stateFxPtr == 0xFFFF || stateFxPtr in patchedFxPtrs) continue
+                    patchedFxPtrs.add(stateFxPtr)
+                    val fxEntries = romParser.parseFxEntries(stateFxPtr)
+                    if (fxEntries.isEmpty()) continue
+                    val fxSnesAddr = RomConstants.BANK_FX or stateFxPtr
                     var fxPc = romParser.snesToPc(fxSnesAddr)
-                    // Find the default FX entry (doorSelect == 0) — it's always the last one
                     for (entry in fxEntries) {
                         if (entry.doorSelect == 0) {
-                            // fxPc points to this entry
                             fx.liquidSurfaceStart?.let { v ->
                                 romData[fxPc + 2] = (v and 0xFF).toByte()
                                 romData[fxPc + 3] = ((v shr 8) and 0xFF).toByte()
@@ -3266,6 +3306,9 @@ class EditorState {
                         }
                         fxPc += 16
                     }
+                }
+                if (patchedFxPtrs.isNotEmpty()) {
+                    println("Room 0x$roomKey: patched FX for ${patchedFxPtrs.size} state(s)")
                     roomsPatched.add(roomKey)
                 }
             }

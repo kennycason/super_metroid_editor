@@ -628,7 +628,8 @@ class RomParser(internal val romData: ByteArray) {
 
     // ─── Utility ──────────────────────────────────────────────────────
 
-    private fun readUInt16At(offset: Int): Int = readU16(romData, offset)
+    fun readUInt16At(offset: Int): Int = readU16(romData, offset)
+    fun readByteAt(offset: Int): Int = romData[offset].toInt() and 0xFF
 
     private fun readUInt24At(offset: Int): Int = readU24(romData, offset)
     
@@ -1062,13 +1063,17 @@ class RomParser(internal val romData: ByteArray) {
         data class Candidate(val door: DoorEntry, val srcRoom: Int)
         val candidates = mutableListOf<Candidate>()
 
-        for (roomId in 0x91F8..0x9FFF) {
-            val room = readRoomHeader(roomId) ?: continue
-            if (room.width !in 1..16 || room.height !in 1..16) continue
-            val doors = parseDoorList(room.doorOut)
-            for (door in doors) {
-                if (door.destRoomPtr == destRoomId && (door.direction and 0x03) == (direction and 0x03)) {
-                    candidates.add(Candidate(door, roomId))
+        // Scan all SM room banks: $8F (Crateria/Brinstar), $A1 (Norfair/WS/Maridia), $CE (Tourian/Ceres)
+        val roomRanges = listOf(0x91F8..0x9FFF, 0xA011..0xAFFF, 0xC98E..0xCFFF, 0xD95A..0xDFFF)
+        for (range in roomRanges) {
+            for (roomId in range) {
+                val room = readRoomHeader(roomId) ?: continue
+                if (room.width !in 1..16 || room.height !in 1..16) continue
+                val doors = parseDoorList(room.doorOut)
+                for (door in doors) {
+                    if (door.destRoomPtr == destRoomId && (door.direction and 0x03) == (direction and 0x03)) {
+                        candidates.add(Candidate(door, roomId))
+                    }
                 }
             }
         }
