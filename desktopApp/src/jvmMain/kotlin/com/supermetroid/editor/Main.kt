@@ -677,18 +677,36 @@ fun main() = application {
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                 key(leftTab, tilesetSubTab, selectedSpriteIdx) {
                                 when (leftTab) {
-                                    0 -> MapCanvas(
-                                        room = selectedRoom,
-                                        romParser = romParser,
-                                        editorState = editorState,
-                                        rooms = rooms,
-                                        onRoomSelected = { r ->
-                                            selectedRoom = r
-                                            val romPath = RomPreferences.getLastRomPath()
-                                            if (romPath != null) saveLastRoom(romPath, r)
-                                        },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    0 -> {
+                                        val snap = emulatorWorkspaceState.snapshot
+                                        val samusPos = if (
+                                            emulatorEnabled
+                                            && emulatorWorkspaceState.followLiveRoom
+                                            && snap != null
+                                            && snap.samusX != null
+                                            && snap.samusY != null
+                                            && snap.roomId != null
+                                            && selectedRoom != null
+                                            && snap.roomId == selectedRoom!!.getRoomIdAsInt()
+                                            && !snap.doorTransition
+                                        ) {
+                                            Pair(snap.samusX!!.toFloat(), snap.samusY!!.toFloat())
+                                        } else null
+
+                                        MapCanvas(
+                                            room = selectedRoom,
+                                            romParser = romParser,
+                                            editorState = editorState,
+                                            rooms = rooms,
+                                            samusPosition = samusPos,
+                                            onRoomSelected = { r ->
+                                                selectedRoom = r
+                                                val romPath = RomPreferences.getLastRomPath()
+                                                if (romPath != null) saveLastRoom(romPath, r)
+                                            },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                     1 -> {
                                         if (tilesetSubTab == 1) {
                                             PatternEditorCanvas(

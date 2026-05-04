@@ -232,7 +232,7 @@ class RetroArchBackend : EmulatorBackend {
                 maxPowerBombs = readWord(maxPbBytes),
                 reserveEnergy = readWord(reserveBytes),
                 maxReserveEnergy = readWord(maxReserveBytes),
-                doorTransition = gameState in 0x06..0x0B,
+                doorTransition = gameState in 0x09..0x0B,
             )
         } catch (e: Exception) {
             consecutiveFailures++

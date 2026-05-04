@@ -286,7 +286,7 @@ class LibretroBackend(
             collectedBeams = wram?.readWord(0x09A8) ?: 0,
             samusX = wram?.readWord(0x0AF6),
             samusY = wram?.readWord(0x0AFA),
-            doorTransition = wram?.readWord(0x0998)?.let { it in 0x06..0x0B } ?: false,
+            doorTransition = wram?.readWord(0x0998)?.let { it in 0x09..0x0B } ?: false,
             frameWidth = snapshot.frameWidth,
             frameHeight = snapshot.frameHeight,
         )
