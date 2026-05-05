@@ -221,7 +221,9 @@ data class TilesetGfxData(
     var creGfx: String? = null,                                       // base64 raw 4bpp, shared
     val enemyGfx: MutableMap<String, String> = mutableMapOf(),       // key = speciesId hex, value = base64 PNG bytes
     val spriteTileBlocks: MutableMap<String, String> = mutableMapOf(), // key = "boss:N" (e.g. "phantoon:0"), value = base64 raw 4bpp
-    val palettes: MutableMap<String, String> = mutableMapOf()         // key = tilesetId, value = base64 BGR555 (256 bytes raw)
+    val palettes: MutableMap<String, String> = mutableMapOf(),        // key = tilesetId, value = base64 BGR555 (256 bytes raw)
+    val spritePalettes: MutableMap<String, String> = mutableMapOf(),  // key = regionId (e.g. "samus_power"), value = base64 BGR555
+    val paletteEffects: MutableMap<String, String> = mutableMapOf()  // key = regionId or "tileset:N", value = effectId
 )
 
 /**
