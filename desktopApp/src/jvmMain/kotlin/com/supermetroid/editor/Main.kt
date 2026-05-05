@@ -91,6 +91,8 @@ import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
 import com.supermetroid.editor.ui.SoundEditorCanvas
 import com.supermetroid.editor.ui.PaletteEditor
+import com.supermetroid.editor.ui.SpritePaletteEditor
+import com.supermetroid.editor.ui.AreaPaletteEditor
 import com.supermetroid.editor.ui.SoundEditorState
 import com.supermetroid.editor.ui.SoundListPanel
 import com.supermetroid.editor.ui.TilesetCanvas
@@ -553,40 +555,81 @@ fun main() = application {
                                             )
                                         }
                                         2 -> {
-                                            // Use observable editorTilesetId so Compose recomposes when tileset changes
-                                            val currentTilesetId = editorState.editorTilesetId.takeIf { it >= 0 }
-                                            PaletteEditor(
-                                                tileGraphics = editorState.editorTileGraphics,
-                                                tilesetId = currentTilesetId?.toString(),
-                                                hasCustomPalette = currentTilesetId != null && editorState.hasCustomPalette(currentTilesetId),
-                                                sampledPaletteRow = editorState.sampledPaletteRow,
-                                                sampledPaletteCol = editorState.sampledPaletteCol,
-                                                onPaletteSaved = {
-                                                    currentTilesetId?.let { editorState.savePaletteOverride(it) }
-                                                },
-                                                onPaletteReset = {
-                                                    if (currentTilesetId != null) {
-                                                        editorState.resetPaletteOverride(currentTilesetId)
-                                                        // Reload tileset to restore ROM palette
-                                                        editorState.editorTileGraphics?.invalidateCache()
-                                                        editorState.editorTileGraphics?.loadTileset(currentTilesetId)
-                                                        editorState.applyCustomGfxToTileGraphics(
-                                                            editorState.editorTileGraphics!!, currentTilesetId
-                                                        )
-                                                        tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+                                            // Palette tab: sub-selector for Environment vs Samus/Beams
+                                            var paletteCategory by remember { mutableStateOf(0) } // 0=Environment, 1=Samus/Beams, 2=Area
+                                            Column(modifier = Modifier.fillMaxSize()) {
+                                                Row(
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+                                                ) {
+                                                    for ((idx, label) in listOf("Environment", "Samus / Beams", "Area").withIndex()) {
+                                                        val selected = paletteCategory == idx
+                                                        Surface(
+                                                            shape = RoundedCornerShape(4.dp),
+                                                            color = if (selected) MaterialTheme.colorScheme.primary
+                                                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                                            modifier = Modifier.clickable { paletteCategory = idx }
+                                                        ) {
+                                                            Text(
+                                                                label,
+                                                                fontSize = 10.sp,
+                                                                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                                                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                            )
+                                                        }
                                                     }
-                                                },
-                                                onRefreshNeeded = {
-                                                    // Trigger tileset grid + pixel editor re-render
-                                                    tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
-                                                    editorState.paletteVersion++
-                                                },
-                                                onColorSelected = { row, col ->
-                                                    editorState.sampledPaletteRow = row
-                                                    editorState.sampledPaletteCol = col
-                                                },
-                                                modifier = Modifier.fillMaxSize()
-                                            )
+                                                }
+                                                when (paletteCategory) {
+                                                    0 -> {
+                                                        val currentTilesetId = editorState.editorTilesetId.takeIf { it >= 0 }
+                                                        PaletteEditor(
+                                                            tileGraphics = editorState.editorTileGraphics,
+                                                            tilesetId = currentTilesetId?.toString(),
+                                                            hasCustomPalette = currentTilesetId != null && editorState.hasCustomPalette(currentTilesetId),
+                                                            sampledPaletteRow = editorState.sampledPaletteRow,
+                                                            sampledPaletteCol = editorState.sampledPaletteCol,
+                                                            onPaletteSaved = {
+                                                                currentTilesetId?.let { editorState.savePaletteOverride(it) }
+                                                            },
+                                                            onPaletteReset = {
+                                                                if (currentTilesetId != null) {
+                                                                    editorState.resetPaletteOverride(currentTilesetId)
+                                                                    editorState.editorTileGraphics?.invalidateCache()
+                                                                    editorState.editorTileGraphics?.loadTileset(currentTilesetId)
+                                                                    editorState.applyCustomGfxToTileGraphics(
+                                                                        editorState.editorTileGraphics!!, currentTilesetId
+                                                                    )
+                                                                    tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+                                                                }
+                                                            },
+                                                            onRefreshNeeded = {
+                                                                tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+                                                                editorState.paletteVersion++
+                                                            },
+                                                            onColorSelected = { row, col ->
+                                                                editorState.sampledPaletteRow = row
+                                                                editorState.sampledPaletteCol = col
+                                                            },
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+                                                    1 -> {
+                                                        SpritePaletteEditor(
+                                                            romParser = romParser,
+                                                            editorState = editorState,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+                                                    2 -> {
+                                                        AreaPaletteEditor(
+                                                            romParser = romParser,
+                                                            editorState = editorState,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     }

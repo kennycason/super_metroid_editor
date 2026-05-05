@@ -237,6 +237,119 @@ class EditorState {
     fun hasCustomPalette(tilesetId: Int): Boolean =
         project.customGfx.palettes.containsKey(tilesetId.toString())
 
+    // ─── Sprite palette editing (Samus suits, beams) ───────────────
+
+    /**
+     * Read a sprite palette region from ROM, applying any project overrides.
+     * Returns BGR555 color array, or null if ROM not loaded.
+     */
+    fun readSpritePalette(regionId: String, romParser: RomParser): IntArray? {
+        val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId) ?: return null
+        val romData = romParser.getRomData()
+        // Start with ROM data
+        val colors = com.supermetroid.editor.rom.SpritePalettes.readColors(romData, region) ?: return null
+        // Apply project override if present
+        val b64 = project.customGfx.spritePalettes[regionId]
+        if (b64 != null) {
+            try {
+                val overrideBytes = java.util.Base64.getDecoder().decode(b64)
+                val overrideColors = com.supermetroid.editor.rom.SpritePalettes.bytesToColors(overrideBytes)
+                if (overrideColors.size == colors.size) return overrideColors
+            } catch (_: Exception) {}
+        }
+        return colors
+    }
+
+    /** Save a sprite palette override to the project. */
+    fun saveSpritePaletteOverride(regionId: String, colors: IntArray) {
+        val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId) ?: return
+        require(colors.size == region.colorCount)
+        val bytes = com.supermetroid.editor.rom.SpritePalettes.colorsToBytes(colors)
+        project.customGfx.spritePalettes[regionId] = java.util.Base64.getEncoder().encodeToString(bytes)
+        dirty = true
+        paletteVersion++
+    }
+
+    /** Remove sprite palette override, restoring ROM default. */
+    fun resetSpritePaletteOverride(regionId: String) {
+        project.customGfx.spritePalettes.remove(regionId)
+        dirty = true
+        paletteVersion++
+    }
+
+    /** Check if a sprite palette has a project override. */
+    fun hasSpritePaletteOverride(regionId: String): Boolean =
+        project.customGfx.spritePalettes.containsKey(regionId)
+
+    // ─── Palette effect tracking ───────────────────────────────────
+
+    /** Get the applied effect ID for a palette key, or null if none/custom. */
+    fun getPaletteEffect(key: String): String? = project.customGfx.paletteEffects[key]
+
+    /** Set the applied effect ID for a palette key. */
+    fun setPaletteEffect(key: String, effectId: String) {
+        project.customGfx.paletteEffects[key] = effectId
+        dirty = true
+    }
+
+    /** Clear the effect tracking for a palette key (e.g. on reset or manual edit). */
+    fun clearPaletteEffect(key: String) {
+        project.customGfx.paletteEffects.remove(key)
+        dirty = true
+    }
+
+    /**
+     * Read the palette for any tileset as BGR555 colors (128 = 8 rows × 16).
+     * Applies project override if present.
+     */
+    fun readTilesetPalette(tilesetId: Int, romParser: RomParser): IntArray? {
+        try {
+            val romData = romParser.getRomData()
+            val tablePC = romParser.snesToPc(0x8FE6A2)
+            val entryOffset = tablePC + tilesetId * 9
+            if (entryOffset + 9 > romData.size) return null
+            val palettePtr = (romData[entryOffset + 6].toInt() and 0xFF) or
+                    ((romData[entryOffset + 7].toInt() and 0xFF) shl 8) or
+                    ((romData[entryOffset + 8].toInt() and 0xFF) shl 16)
+            val raw = romParser.decompressLZ2(palettePtr)
+            if (raw.size < 256) return null
+            val colors = IntArray(128)
+            for (i in 0 until 128) {
+                colors[i] = (raw[i * 2].toInt() and 0xFF) or
+                        ((raw[i * 2 + 1].toInt() and 0xFF) shl 8)
+            }
+            val b64 = project.customGfx.palettes[tilesetId.toString()]
+            if (b64 != null) {
+                try {
+                    val overrideBytes = java.util.Base64.getDecoder().decode(b64)
+                    if (overrideBytes.size == 256) {
+                        for (i in 0 until 128) {
+                            colors[i] = (overrideBytes[i * 2].toInt() and 0xFF) or
+                                    ((overrideBytes[i * 2 + 1].toInt() and 0xFF) shl 8)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+            return colors
+        } catch (_: Exception) { return null }
+    }
+
+    /** Save a tileset palette from BGR555 color array (128 colors). */
+    fun saveTilesetPaletteFromColors(tilesetId: Int, colors: IntArray) {
+        if (colors.size != 128) return
+        val raw = ByteArray(256)
+        for (i in 0 until 128) {
+            raw[i * 2] = (colors[i] and 0xFF).toByte()
+            raw[i * 2 + 1] = ((colors[i] shr 8) and 0xFF).toByte()
+        }
+        project.customGfx.palettes[tilesetId.toString()] = java.util.Base64.getEncoder().encodeToString(raw)
+        dirty = true
+        paletteVersion++
+        if (tilesetId == editorTilesetId) {
+            editorTileGraphics?.let { applyCustomPaletteToTileGraphics(it, tilesetId) }
+        }
+    }
+
     // ─── Tileset graphics export / import ────────────────────────────
 
     /**
@@ -3430,6 +3543,20 @@ class EditorState {
                     println("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) — skipped")
                 }
             } catch (e: Exception) { println("WARN: Tileset $tsId palette patch failed: ${e.message}") }
+        }
+
+        // Apply sprite palette overrides (Samus suits, beams — raw BGR555, no compression)
+        for ((regionId, palB64) in gfxData.spritePalettes) {
+            val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId) ?: continue
+            try {
+                val rawBytes = java.util.Base64.getDecoder().decode(palB64)
+                val colors = com.supermetroid.editor.rom.SpritePalettes.bytesToColors(rawBytes)
+                if (colors.size == region.colorCount) {
+                    com.supermetroid.editor.rom.SpritePalettes.writeColors(romData, region, colors)
+                    gfxPatched++
+                    println("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
+                }
+            } catch (e: Exception) { println("WARN: Sprite palette '$regionId' patch failed: ${e.message}") }
         }
 
         // Apply Phantoon sprite tile patches (raw 4bpp → LZ5 compress → write to $B7)
