@@ -778,7 +778,7 @@ fun MapCanvas(
                                 }
                                 mapFocusReq.requestFocus()
                             },
-                            label = { Icon(Icons.Default.Brush, contentDescription = "Paint (D)", modifier = Modifier.size(14.dp)) },
+                            label = { Icon(Icons.Default.Brush, contentDescription = "Paint (P)", modifier = Modifier.size(14.dp)) },
                             modifier = Modifier.height(28.dp)
                         )
                         FilterChip(
