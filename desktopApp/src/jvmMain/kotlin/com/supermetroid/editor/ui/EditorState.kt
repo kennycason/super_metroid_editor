@@ -3612,6 +3612,36 @@ class EditorState {
             }
         }
 
+        // Apply generic enemy sprite tile patches (raw 4bpp, uncompressed, write in-place)
+        for ((key, b64) in gfxData.spriteTileBlocks) {
+            if (!key.startsWith("enemy:")) continue
+            val speciesHex = key.removePrefix("enemy:")
+            val speciesId = speciesHex.toIntOrNull(16) ?: continue
+            try {
+                val rawBytes = java.util.Base64.getDecoder().decode(b64)
+                val block = com.supermetroid.editor.rom.EnemySpriteGraphics.readGraphicsBlock(romParser, speciesId)
+                val stats = com.supermetroid.editor.rom.EnemySpriteGraphics.readSpeciesStats(romParser, speciesId)
+                if (block == null || stats == null) {
+                    println("[EXPORT] WARN: Enemy $speciesHex: could not resolve GRAPHADR or stats — skipped")
+                    continue
+                }
+                val tileDataSize = stats.first
+                if (rawBytes.size != tileDataSize) {
+                    println("[EXPORT] WARN: Enemy $speciesHex: raw size ${rawBytes.size} != expected tileDataSize $tileDataSize — skipped")
+                    continue
+                }
+                if (block.pcAddress + tileDataSize > romData.size) {
+                    println("[EXPORT] WARN: Enemy $speciesHex: write would exceed ROM bounds — skipped")
+                    continue
+                }
+                System.arraycopy(rawBytes, 0, romData, block.pcAddress, rawBytes.size)
+                gfxPatched++
+                println("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${block.pcAddress.toString(16)} (SNES \$${block.snesAddress.toString(16).uppercase()})")
+            } catch (e: Exception) {
+                println("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
+            }
+        }
+
         // Apply minimap tile edits
         var minimapPatched = 0
         for ((areaKey, edits) in project.minimapEdits) {
