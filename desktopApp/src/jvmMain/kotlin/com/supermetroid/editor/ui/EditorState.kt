@@ -531,6 +531,66 @@ class EditorState {
         dirty = true
     }
 
+    // ─── Enemy palette editing ──────────────────────────────────────
+
+    private fun enemyPalKey(speciesId: Int) = "enemy_pal:${speciesId.toString(16).uppercase()}"
+
+    /** Load enemy palette: project override if present, else ROM. */
+    fun loadEnemyPalette(romParser: com.supermetroid.editor.rom.RomParser, speciesId: Int): IntArray? {
+        val b64 = project.customGfx.spritePalettes[enemyPalKey(speciesId)]
+        if (b64 != null) {
+            try {
+                val raw = java.util.Base64.getDecoder().decode(b64)
+                return enemyPalBytesToArgb(raw)
+            } catch (_: Exception) { /* fall through */ }
+        }
+        return com.supermetroid.editor.rom.EnemySpriteGraphics.readEnemyPalette(romParser, speciesId)
+    }
+
+    /** Save an edited enemy palette (16 ARGB colors) to the project. */
+    fun applyEnemyPalette(speciesId: Int, palette: IntArray) {
+        val raw = enemyPalArgbToBytes(palette)
+        project.customGfx.spritePalettes[enemyPalKey(speciesId)] =
+            java.util.Base64.getEncoder().encodeToString(raw)
+        dirty = true
+    }
+
+    fun hasCustomEnemyPalette(speciesId: Int): Boolean =
+        project.customGfx.spritePalettes.containsKey(enemyPalKey(speciesId))
+
+    fun resetEnemyPalette(speciesId: Int) {
+        project.customGfx.spritePalettes.remove(enemyPalKey(speciesId))
+        dirty = true
+    }
+
+    /** Convert 32-byte BGR555 palette to 16-entry ARGB array. */
+    private fun enemyPalBytesToArgb(raw: ByteArray): IntArray {
+        val pal = IntArray(16)
+        pal[0] = 0x00000000
+        for (i in 1 until 16) {
+            val lo = raw[i * 2].toInt() and 0xFF
+            val hi = raw[i * 2 + 1].toInt() and 0xFF
+            val bgr = lo or (hi shl 8)
+            pal[i] = com.supermetroid.editor.rom.EnemySpriteGraphics.snesColorToArgb(bgr)
+        }
+        return pal
+    }
+
+    /** Convert 16-entry ARGB array to 32-byte BGR555 palette. */
+    private fun enemyPalArgbToBytes(palette: IntArray): ByteArray {
+        val raw = ByteArray(32)
+        for (i in 0 until 16) {
+            val argb = palette[i]
+            val r = (argb shr 16) and 0xFF
+            val g = (argb shr 8) and 0xFF
+            val b = argb and 0xFF
+            val bgr555 = ((b shr 3) shl 10) or ((g shr 3) shl 5) or (r shr 3)
+            raw[i * 2] = (bgr555 and 0xFF).toByte()
+            raw[i * 2 + 1] = ((bgr555 shr 8) and 0xFF).toByte()
+        }
+        return raw
+    }
+
     // ── Boss sprite tile-sheet editing ───────────────────────────────────────
 
     /**
@@ -3639,6 +3699,39 @@ class EditorState {
                 println("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${block.pcAddress.toString(16)} (SNES \$${block.snesAddress.toString(16).uppercase()})")
             } catch (e: Exception) {
                 println("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
+            }
+        }
+
+        // Apply enemy palette patches (32 bytes BGR555 at palPtr address)
+        for ((key, b64) in gfxData.spritePalettes) {
+            if (!key.startsWith("enemy_pal:")) continue
+            val speciesHex = key.removePrefix("enemy_pal:")
+            val speciesId = speciesHex.toIntOrNull(16) ?: continue
+            try {
+                val rawBytes = java.util.Base64.getDecoder().decode(b64)
+                if (rawBytes.size != 32) {
+                    println("[EXPORT] WARN: Enemy palette $speciesHex: expected 32 bytes, got ${rawBytes.size} — skipped")
+                    continue
+                }
+                val rom = romParser.getRomData()
+                val headerPc = romParser.snesToPc(com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_AI or speciesId)
+                if (headerPc < 0 || headerPc + 0x0D > rom.size) {
+                    println("[EXPORT] WARN: Enemy palette $speciesHex: invalid species header — skipped")
+                    continue
+                }
+                val palPtr = com.supermetroid.editor.rom.readU16(rom, headerPc + 2)
+                val aiBank = com.supermetroid.editor.rom.readU8(rom, headerPc + 0x0C)
+                val palSnes = (aiBank shl 16) or (palPtr and 0xFFFF)
+                val palPc = romParser.snesToPc(palSnes)
+                if (palPc < 0 || palPc + 32 > romData.size) {
+                    println("[EXPORT] WARN: Enemy palette $speciesHex: palette address out of bounds — skipped")
+                    continue
+                }
+                System.arraycopy(rawBytes, 0, romData, palPc, 32)
+                gfxPatched++
+                println("[EXPORT] Patched enemy $speciesHex palette: 32 bytes at PC=0x${palPc.toString(16)} (SNES \$${palSnes.toString(16).uppercase()})")
+            } catch (e: Exception) {
+                println("[EXPORT] WARN: Enemy palette $speciesHex patch failed: ${e.message}")
             }
         }
 
