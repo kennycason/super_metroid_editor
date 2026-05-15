@@ -74,15 +74,22 @@ val copyLibretroToAppResources by tasks.registering(Copy::class) {
     dependsOn(rootProject.tasks.named("buildLibretroCore"))
 
     val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
     val ext = when {
         os.contains("mac") -> ".dylib"
         os.contains("win") -> ".dll"
         else -> ".so"
     }
+    val platformDir = when {
+        os.contains("mac") && (arch == "aarch64" || arch == "arm64") -> "macos-arm64"
+        os.contains("mac") -> "macos-x64"
+        os.contains("win") -> "windows-x64"
+        else -> "linux-x64"
+    }
     val coreFile = rootProject.file("tools/snes9x/libretro/snes9x_libretro$ext")
 
     from(coreFile)
-    into(project.layout.buildDirectory.dir("appResources"))
+    into(project.layout.buildDirectory.dir("appResources/$platformDir"))
     onlyIf { coreFile.exists() }
 }
 
@@ -96,7 +103,7 @@ compose.desktop {
         )
         nativeDistributions {
             includeAllModules = true
-            // appResourcesDir.set(project.layout.buildDirectory.dir("appResources")) // TODO: requires Compose plugin update
+            appResourcesRootDir.set(project.layout.buildDirectory.dir("appResources"))
 
             targetFormats(
                 org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg,
