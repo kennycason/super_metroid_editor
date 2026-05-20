@@ -623,19 +623,30 @@ fun MapCanvas(
                 val rv = editorState?.romVersion ?: 0
                 var isLoading by remember(room.id, romParser, rv) { mutableStateOf(true) }
                 var errorMessage by remember(room.id, romParser, rv) { mutableStateOf<String?>(null) }
-                var renderData by remember(room.id, romParser, rv) { mutableStateOf<RoomRenderData?>(null) }
-                
-                LaunchedEffect(room.id, romParser, rv) {
+                // Include working dimensions in keys so resize triggers a full re-render
+                val dimKey = (editorState?.workingBlocksWide ?: 0) to (editorState?.workingBlocksTall ?: 0)
+                var renderData by remember(room.id, romParser, rv, dimKey) { mutableStateOf<RoomRenderData?>(null) }
+
+                LaunchedEffect(room.id, romParser, rv, dimKey) {
                     isLoading = true
                     errorMessage = null
                     renderData = null
                     try {
                         val roomId = room.getRoomIdAsInt()
-                        val roomHeader = romParser.readRoomHeader(roomId)
-                        if (roomHeader != null) {
+                        val romHeader = romParser.readRoomHeader(roomId)
+                        if (romHeader != null) {
+                            // Apply any project header changes (e.g. resize) before loading/rendering
+                            val roomHeader = editorState?.applyHeaderChanges(romHeader) ?: romHeader
                             // Load working level data for editing
-                            editorState?.loadRoom(roomId, romParser, roomHeader)
-                            renderData = MapRenderer(romParser).renderRoom(roomHeader)
+                            editorState?.loadRoom(roomId, romParser, romHeader)
+                            // Render using effective dimensions and resized level data
+                            val es = editorState
+                            renderData = if (es?.workingLevelData != null) {
+                                MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(
+                                    roomHeader, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
+                            } else {
+                                MapRenderer(romParser).renderRoom(roomHeader)
+                            }
                             if (renderData == null) errorMessage = "Failed to render"
                         } else {
                             errorMessage = "Room header not found"
@@ -880,10 +891,11 @@ fun MapCanvas(
                                             if (!file.name.endsWith(".png", ignoreCase = true)) file = java.io.File(file.path + ".png")
                                             val rd = renderData!!
                                             val es = editorState
-                                            val rh = room?.let { romParser.readRoomHeader(it.getRoomIdAsInt()) }
+                                            val romRh = room?.let { romParser.readRoomHeader(it.getRoomIdAsInt()) }
+                                            val rh = if (romRh != null && es != null) es.applyHeaderChanges(romRh) else romRh
                                             val rWidthScreens = rh?.width ?: 0
                                             val rHeightScreens = rh?.height ?: 0
-                                            val scrollDataForSave = rh?.let { romParser.parseScrollData(it.roomScrollsPtr, it.width, it.height) }
+                                            val scrollDataForSave = es?.workingScrolls ?: rh?.let { romParser.parseScrollData(it.roomScrollsPtr, it.width, it.height) }
                                             val activeOvs = overlayToggles.filter { it.value }.keys
                                             val img = if (es != null && es.workingLevelData != null && rh != null) {
                                                 val edited = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
@@ -931,9 +943,23 @@ fun MapCanvas(
                         }
                         renderData != null -> {
                             val data = renderData!!
+                            // Use effective dimensions from EditorState (updates immediately on resize)
+                            val effectiveBlocksWide = editorState?.workingBlocksWide ?: data.blocksWide
+                            val effectiveBlocksTall = editorState?.workingBlocksTall ?: data.blocksTall
                             val activeOverlays = overlayToggles.filter { it.value }.keys
 
-                            val roomHeader = remember(room) { room?.let { romParser.readRoomHeader(it.getRoomIdAsInt()) } }
+                            val roomHeader = remember(room, editVersion) {
+                                room?.let { r ->
+                                    val rh = romParser.readRoomHeader(r.getRoomIdAsInt()) ?: return@let null
+                                    val key = rh.roomId.toString(16).uppercase().padStart(4, '0')
+                                    val hc = editorState?.project?.rooms?.get(key)?.roomHeaderChange
+                                    if (hc != null) rh.copy(
+                                        width = hc.width ?: rh.width,
+                                        height = hc.height ?: rh.height,
+                                        area = hc.area ?: rh.area,
+                                    ) else rh
+                                }
+                            }
                             val scrollVer = editorState?.scrollVersion ?: 0
                             val scrollDataForOverlay = remember(scrollVer, roomHeader) {
                                 val ws = editorState?.workingScrolls
@@ -1072,7 +1098,7 @@ fun MapCanvas(
                                                 contextMenuOffset = DpOffset((pos.x / density).dp, (pos.y / density).dp)
                                                 contextMenuExpanded = true
                                             } else {
-                                                if (bx in 0 until data.blocksWide && by in 0 until data.blocksTall) {
+                                                if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
                                                     val word = editorState.readBlockWord(bx, by)
                                                     propsBlockX = bx; propsBlockY = by
                                                     propsMetatile = word and 0x3FF
@@ -1085,7 +1111,7 @@ fun MapCanvas(
                                             val (bx, by) = pointerToBlock(event.changes.first().position.x, event.changes.first().position.y)
                                             // Cmd/Ctrl+click on a door block → navigate to connected room
                                             if ((ne.isMetaDown || ne.isControlDown) && onRoomSelected != null &&
-                                                bx in 0 until data.blocksWide && by in 0 until data.blocksTall) {
+                                                bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
                                                 val word = editorState.readBlockWord(bx, by)
                                                 val blockType = (word shr 12) and 0xF
                                                 if (blockType == 0x9) {
@@ -1131,7 +1157,7 @@ fun MapCanvas(
                                             val se = editorState?.mapSelEnd
                                             if (ss != null && se != null && ss == se && editorState != null) {
                                                 val bx = ss.first; val by = ss.second
-                                                if (bx in 0 until data.blocksWide && by in 0 until data.blocksTall) {
+                                                if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
                                                     val word = editorState.readBlockWord(bx, by)
                                                     propsBlockX = bx; propsBlockY = by
                                                     propsMetatile = word and 0x3FF
@@ -2182,7 +2208,22 @@ fun MapCanvas(
                                                     Text(pName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                     if (RomParser.isScrollPlm(plm.id) && plm.id == 0xB703 && romParser != null) {
                                                         val rw = roomHeader?.width ?: 0
-                                                        if (rw > 0) {
+                                                        val isCustom = (plm.param and 0xFF00) == 0xCC00
+                                                        if (isCustom) {
+                                                            val cmdIdx = plm.param and 0xFF
+                                                            val cmdId = "cmd_$cmdIdx"
+                                                            val cmds = editorState.getScrollCommand(cmdId)
+                                                            if (cmds != null) {
+                                                                for (cmd in cmds) {
+                                                                    Text(
+                                                                        "  ${RomParser.formatScrollCommand(cmd.screenIndex, cmd.scrollValue, rw)}",
+                                                                        fontSize = 8.sp,
+                                                                        color = Color(0xFFFF8040)
+                                                                    )
+                                                                }
+                                                            }
+                                                            Text("  (custom)", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+                                                        } else if (rw > 0) {
                                                             val cmds = RomParser.decodeScrollCommands(
                                                                 romParser,
                                                                 plm.param, rw
@@ -2431,11 +2472,12 @@ fun MapCanvas(
                                                             text = {
                                                                 Column {
                                                                     for (line in cmdLines) {
-                                                                        Text(line, fontSize = 9.sp)
+                                                                        Text(line, fontSize = 9.sp,
+                                                                            color = Color.White)
                                                                     }
                                                                     Text("ptr \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
                                                                         fontSize = 7.sp,
-                                                                        color = MaterialTheme.colorScheme.outline)
+                                                                        color = Color(0xFF99AABB))
                                                                 }
                                                             },
                                                             onClick = {
@@ -2449,12 +2491,12 @@ fun MapCanvas(
                                                 }
                                                 Text("Treadmill extensions:", fontSize = 9.sp,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                    color = MaterialTheme.colorScheme.primary,
+                                                    color = Color(0xFFFF8040),
                                                     fontWeight = FontWeight.Bold)
                                                 Text("Widens an adjacent trigger's hitbox",
                                                     fontSize = 7.sp,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp),
-                                                    color = MaterialTheme.colorScheme.outline)
+                                                    color = Color(0xFF99AABB))
                                                 for ((plmId, label) in listOf(
                                                     0xB63B to "→ Extend Right",
                                                     0xB63F to "← Extend Left",
@@ -2462,7 +2504,7 @@ fun MapCanvas(
                                                     0xB643 to "↓ Extend Down"
                                                 )) {
                                                     DropdownMenuItem(
-                                                        text = { Text(label, fontSize = 10.sp) },
+                                                        text = { Text(label, fontSize = 10.sp, color = Color.White) },
                                                         onClick = {
                                                             addScrollExpanded = false
                                                             editorState.addPlm(plmId, propsBlockX, propsBlockY, 0x8000)
@@ -2471,6 +2513,41 @@ fun MapCanvas(
                                                     )
                                                 }
                                             }
+                                        }
+
+                                        // ─── New Custom Scroll Trigger (visual editor) ───
+                                        var showScrollEditor by remember { mutableStateOf(false) }
+                                        if (!showScrollEditor) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth().height(28.dp)
+                                                    .clickable { showScrollEditor = true },
+                                                shape = MaterialTheme.shapes.small,
+                                                color = Color(0xFFFF8040).copy(alpha = 0.1f)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text("+ New Custom Trigger...", fontSize = 10.sp,
+                                                        color = Color(0xFFFF8040).copy(alpha = 0.7f))
+                                                }
+                                            }
+                                        } else {
+                                            val rw = roomHeader?.width ?: 1
+                                            val rh = roomHeader?.height ?: 1
+                                            ScrollCommandEditor(
+                                                roomWidthScreens = rw,
+                                                roomHeightScreens = rh,
+                                                initialCommands = emptyList(),
+                                                onSave = { commands ->
+                                                    editorState.addScrollTriggerWithCommands(
+                                                        propsBlockX, propsBlockY, commands
+                                                    )
+                                                    showScrollEditor = false
+                                                },
+                                                onCancel = { showScrollEditor = false }
+                                            )
                                         }
 
                                         // ─── Enemies at/near this tile ───

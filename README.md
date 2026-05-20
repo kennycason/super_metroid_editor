@@ -161,7 +161,7 @@ The `cli` module provides headless export of structured JSON data from a ROM wit
 
 ## Editing Approach
 
-SMEDIT uses **binary ROM patching with smart data relocation** — the same fundamental approach as SMILE, but with a cleaner architecture. Edits are stored as non-destructive deltas in a project file (`.smedit` JSON) against an immutable ROM, and applied at export time.
+SMEDIT uses **binary ROM patching with smart data relocation** - Similar to SMILE, but edits are stored as non-destructive deltas in a project file (`.smedit` JSON) against an immutable ROM, and applied at export time.
 
 When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
 

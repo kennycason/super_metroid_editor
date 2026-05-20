@@ -180,29 +180,21 @@ fun RoomPropertiesPanel(
 
     // Room header edit state — all 11 bytes
     val savedHeader = roomEdits?.roomHeaderChange
-    var editIndex by remember(room.roomId) { mutableStateOf(savedHeader?.index ?: room.index) }
     var editArea by remember(room.roomId) { mutableStateOf(savedHeader?.area ?: room.area) }
     val displayMapX = savedHeader?.mapX ?: room.mapX
     val displayMapY = savedHeader?.mapY ?: room.mapY
-    var editWidth by remember(room.roomId) { mutableStateOf(savedHeader?.width ?: room.width) }
-    var editHeight by remember(room.roomId) { mutableStateOf(savedHeader?.height ?: room.height) }
     var editUpScroller by remember(room.roomId) { mutableStateOf(savedHeader?.upScroller ?: room.upScroller) }
     var editDownScroller by remember(room.roomId) { mutableStateOf(savedHeader?.downScroller ?: room.downScroller) }
     var editCreBitflag by remember(room.roomId) { mutableStateOf(savedHeader?.creBitflag ?: room.creBitflag) }
-    var editDoorOut by remember(room.roomId) { mutableStateOf(savedHeader?.doorOut ?: room.doorOut) }
 
     fun syncHeaderToState() {
         val change = RoomHeaderChange(
-            index = editIndex.takeIf { it != room.index },
             area = editArea.takeIf { it != room.area },
             mapX = savedHeader?.mapX,
             mapY = savedHeader?.mapY,
-            width = editWidth.takeIf { it != room.width },
-            height = editHeight.takeIf { it != room.height },
             upScroller = editUpScroller.takeIf { it != room.upScroller },
             downScroller = editDownScroller.takeIf { it != room.downScroller },
             creBitflag = editCreBitflag.takeIf { it != room.creBitflag },
-            doorOut = editDoorOut.takeIf { it != room.doorOut },
         )
         if (change == RoomHeaderChange()) {
             editorState.project.getOrCreateRoom(room.roomId).roomHeaderChange = null
@@ -221,7 +213,7 @@ fun RoomPropertiesPanel(
         // ── Room Header (all 11 bytes editable) ──
         SectionHeader("Room Header")
         PropertyRow("Room ID", "0x${room.roomId.toString(16).uppercase().padStart(4, '0')}")
-        EditableHexRow("Room Index", editIndex, 1) { editIndex = it; syncHeaderToState() }
+        PropertyRow("Room Index", "0x${room.index.toString(16).uppercase().padStart(2, '0')}")
         EditableIntRow("Area", editArea, 0, 6) { editArea = it; syncHeaderToState() }
         PropertyRow("Area Name", AREA_NAMES.getOrElse(editArea) { "Unknown" })
         Row(
@@ -241,24 +233,17 @@ fun RoomPropertiesPanel(
                 )
             }
         }
-        EditableIntRow("Width", editWidth, 1, 15,
-            suffix = " screen${if (editWidth != 1) "s" else ""}"
-        ) { editWidth = it; syncHeaderToState() }
-        EditableIntRow("Height", editHeight, 1, 15,
-            suffix = " screen${if (editHeight != 1) "s" else ""}"
-        ) { editHeight = it; syncHeaderToState() }
+        RoomResizeRow(room, romParser, editorState)
         EditableHexRow("Up Scroller", editUpScroller, 1,
-            suffix = when (editUpScroller) { 0x70 -> " (default)"; 0x90 -> " (grapple)"; 0x99 -> " (ascent)"; else -> "" }
+            suffix = when (editUpScroller) { 0x70 -> " default"; 0x90 -> " grapple block"; 0x99 -> " fast ascent"; else -> "" }
         ) { editUpScroller = it; syncHeaderToState() }
         EditableHexRow("Down Scroller", editDownScroller, 1,
-            suffix = if (editDownScroller == 0xA0) " (default)" else ""
+            suffix = when (editDownScroller) { 0xA0 -> " default"; 0xC0 -> " speed boost"; else -> "" }
         ) { editDownScroller = it; syncHeaderToState() }
         EditableHexRow("CRE Bitflag", editCreBitflag, 1,
-            suffix = " — ${CRE_BITFLAG_NAMES[editCreBitflag] ?: "Custom"}"
+            suffix = " ${CRE_BITFLAG_NAMES[editCreBitflag] ?: ""}"
         ) { editCreBitflag = it; syncHeaderToState() }
-        EditableHexRow("Door Out Ptr", editDoorOut, 2,
-            suffix = " (\$8F)"
-        ) { editDoorOut = it; syncHeaderToState() }
+        PropertyRow("Door Out Ptr", "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)")
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -448,8 +433,10 @@ fun RoomPropertiesPanel(
         })
 
         if (scrollData.isNotEmpty()) {
-            EditableScrollGrid(scrollData, room.width, room.height) { col, row, newVal ->
-                editorState.setScroll(col, row, newVal, room.width)
+            val scrollW = editorState.workingBlocksWide / 16
+            val scrollH = editorState.workingBlocksTall / 16
+            EditableScrollGrid(scrollData, scrollW, scrollH) { col, row, newVal ->
+                editorState.setScroll(col, row, newVal, scrollW)
             }
         }
 
@@ -628,6 +615,126 @@ private fun SectionHeader(title: String) {
         modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
     )
     Divider()
+}
+
+@Composable
+private fun RoomResizeRow(room: Room, romParser: RomParser, editorState: EditorState) {
+    var editingSize by remember { mutableStateOf(false) }
+    var newWidth by remember(room.roomId) { mutableStateOf(room.width) }
+    var newHeight by remember(room.roomId) { mutableStateOf(room.height) }
+    val currentWidth = editorState.project.rooms[
+        room.roomId.toString(16).uppercase().padStart(4, '0')
+    ]?.roomHeaderChange?.width ?: room.width
+    val currentHeight = editorState.project.rooms[
+        room.roomId.toString(16).uppercase().padStart(4, '0')
+    ]?.roomHeaderChange?.height ?: room.height
+
+    if (!editingSize) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Size", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp))
+            Text("${currentWidth}\u00D7${currentHeight} screens", fontSize = 10.sp, modifier = Modifier.weight(1f))
+            Text(
+                "Resize",
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable {
+                    newWidth = currentWidth
+                    newHeight = currentHeight
+                    editingSize = true
+                }.padding(horizontal = 4.dp),
+                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+            )
+        }
+    } else {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                .padding(6.dp)
+        ) {
+            Text("Resize Room", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Width", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Surface(
+                            modifier = Modifier.size(24.dp).clickable { if (newWidth > 1) newWidth-- },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                        Text("$newWidth", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Surface(
+                            modifier = Modifier.size(24.dp).clickable { if (newWidth < 15) newWidth++ },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                    }
+                }
+                Text("\u00D7", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Height", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Surface(
+                            modifier = Modifier.size(24.dp).clickable { if (newHeight > 1) newHeight-- },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                        Text("$newHeight", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        Surface(
+                            modifier = Modifier.size(24.dp).clickable { if (newHeight < 15) newHeight++ },
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                    }
+                }
+            }
+            // Delta preview
+            if (newWidth != currentWidth || newHeight != currentHeight) {
+                Spacer(Modifier.height(4.dp))
+                val dw = newWidth - currentWidth; val dh = newHeight - currentHeight
+                val dwText = if (dw > 0) "+$dw" else "$dw"
+                val dhText = if (dh > 0) "+$dh" else "$dh"
+                val tileInfo = "${newWidth * 16}\u00D7${newHeight * 16} tiles"
+                Text(
+                    "${currentWidth}\u00D7${currentHeight} \u2192 ${newWidth}\u00D7${newHeight} ($dwText, $dhText) \u2014 $tileInfo",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (newWidth < currentWidth || newHeight < currentHeight) {
+                    Text(
+                        "Tiles outside the new bounds will be removed",
+                        fontSize = 9.sp,
+                        color = Color(0xFFCC8833)
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                val changed = newWidth != currentWidth || newHeight != currentHeight
+                Surface(
+                    modifier = Modifier.weight(1f).height(26.dp)
+                        .clickable(enabled = changed) {
+                            editorState.resizeRoom(currentWidth, currentHeight, newWidth, newHeight)
+                            editingSize = false
+                        },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                    color = if (changed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                ) { Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { Text("Apply", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (changed) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant) } }
+                Surface(
+                    modifier = Modifier.weight(1f).height(26.dp)
+                        .clickable { editingSize = false },
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) { Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) { Text("Cancel", fontSize = 10.sp) } }
+            }
+        }
+    }
 }
 
 @Composable

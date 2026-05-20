@@ -52,6 +52,16 @@ data class PlmChange(
 )
 
 /**
+ * A custom scroll command: sets a screen's scroll value when a scroll trigger PLM fires.
+ * Used to build command data for new B703 PLMs.
+ */
+@Serializable
+data class ScrollCommand(
+    val screenIndex: Int,    // flat index: screenY * roomWidth + screenX
+    val scrollValue: Int     // 0=Red, 1=Blue, 2=Green
+)
+
+/**
  * A door property change: modify one field of a door entry.
  */
 @Serializable
@@ -165,12 +175,16 @@ data class RoomEdits(
     val scrollChanges: MutableList<ScrollChange> = mutableListOf(),
     var fxChange: FxChange? = null,
     var stateDataChange: StateDataChange? = null,
-    var roomHeaderChange: RoomHeaderChange? = null
+    var roomHeaderChange: RoomHeaderChange? = null,
+    /** Custom scroll command data keyed by a unique command ID (e.g. "cmd_0", "cmd_1").
+     *  Each entry is a list of (screenIndex, scrollValue) pairs.
+     *  On export, each is written to free space in $8F and the PLM param is set to the address. */
+    val customScrollCommands: MutableMap<String, MutableList<ScrollCommand>> = mutableMapOf()
 ) {
     val hasEdits: Boolean get() =
         operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
         enemyChanges.isNotEmpty() || scrollChanges.isNotEmpty() || fxChange != null ||
-        stateDataChange != null || roomHeaderChange != null
+        stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty()
 }
 
 /**
