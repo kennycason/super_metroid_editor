@@ -934,6 +934,27 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     /**
+     * Find all door entries across all rooms that lead to [targetRoomId].
+     * Scans every room's door list for entries whose destRoomPtr matches.
+     */
+    fun findDoorsLeadingTo(targetRoomId: Int): List<DoorEntry> {
+        val result = mutableListOf<DoorEntry>()
+        val allRooms = com.supermetroid.editor.data.RoomRepository().getAllRooms()
+        for (info in allRooms) {
+            val srcId = info.getRoomIdAsInt()
+            val srcRoom = readRoomHeader(srcId) ?: continue
+            if (srcRoom.doorOut == 0) continue
+            val doors = parseDoorList(srcRoom.doorOut)
+            for (door in doors) {
+                if (door.destRoomPtr == targetRoomId) {
+                    result.add(door)
+                }
+            }
+        }
+        return result
+    }
+
+    /**
      * Return the block type (0–15) at (bx, by) in decompressed level data.
      * Level data layout: bytes 0–1 = layer1 size, then 2-byte words per block (type in high nibble of word).
      * Returns null if out of bounds or level data too short.
@@ -1539,10 +1560,10 @@ class RomParser(internal val romData: ByteArray) {
 
         fun scrollPlmName(plmId: Int): String? = when (plmId) {
             0xB703 -> "Scroll trigger"
-            0xB63B -> "Scroll ext →"
-            0xB647 -> "Scroll ext ↑"
-            0xB63F -> "Scroll ext ←"
-            0xB643 -> "Scroll ext ↓"
+            0xB63B -> "Zone ext →"
+            0xB647 -> "Zone ext ↑"
+            0xB63F -> "Zone ext ←"
+            0xB643 -> "Zone ext ↓"
             else -> null
         }
 

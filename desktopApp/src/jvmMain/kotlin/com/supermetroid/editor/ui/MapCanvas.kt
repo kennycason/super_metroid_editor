@@ -2208,7 +2208,22 @@ fun MapCanvas(
                                                     Text(pName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                     if (RomParser.isScrollPlm(plm.id) && plm.id == 0xB703 && romParser != null) {
                                                         val rw = roomHeader?.width ?: 0
-                                                        if (rw > 0) {
+                                                        val isCustom = (plm.param and 0xFF00) == 0xCC00
+                                                        if (isCustom) {
+                                                            val cmdIdx = plm.param and 0xFF
+                                                            val cmdId = "cmd_$cmdIdx"
+                                                            val cmds = editorState.getScrollCommand(cmdId)
+                                                            if (cmds != null) {
+                                                                for (cmd in cmds) {
+                                                                    Text(
+                                                                        "  ${RomParser.formatScrollCommand(cmd.screenIndex, cmd.scrollValue, rw)}",
+                                                                        fontSize = 8.sp,
+                                                                        color = Color(0xFFFF8040)
+                                                                    )
+                                                                }
+                                                            }
+                                                            Text("  (custom)", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+                                                        } else if (rw > 0) {
                                                             val cmds = RomParser.decodeScrollCommands(
                                                                 romParser,
                                                                 plm.param, rw
@@ -2457,11 +2472,12 @@ fun MapCanvas(
                                                             text = {
                                                                 Column {
                                                                     for (line in cmdLines) {
-                                                                        Text(line, fontSize = 9.sp)
+                                                                        Text(line, fontSize = 9.sp,
+                                                                            color = Color.White)
                                                                     }
                                                                     Text("ptr \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
                                                                         fontSize = 7.sp,
-                                                                        color = MaterialTheme.colorScheme.outline)
+                                                                        color = Color(0xFF99AABB))
                                                                 }
                                                             },
                                                             onClick = {
@@ -2475,12 +2491,12 @@ fun MapCanvas(
                                                 }
                                                 Text("Treadmill extensions:", fontSize = 9.sp,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                                    color = MaterialTheme.colorScheme.primary,
+                                                    color = Color(0xFFFF8040),
                                                     fontWeight = FontWeight.Bold)
                                                 Text("Widens an adjacent trigger's hitbox",
                                                     fontSize = 7.sp,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp),
-                                                    color = MaterialTheme.colorScheme.outline)
+                                                    color = Color(0xFF99AABB))
                                                 for ((plmId, label) in listOf(
                                                     0xB63B to "→ Extend Right",
                                                     0xB63F to "← Extend Left",
@@ -2488,7 +2504,7 @@ fun MapCanvas(
                                                     0xB643 to "↓ Extend Down"
                                                 )) {
                                                     DropdownMenuItem(
-                                                        text = { Text(label, fontSize = 10.sp) },
+                                                        text = { Text(label, fontSize = 10.sp, color = Color.White) },
                                                         onClick = {
                                                             addScrollExpanded = false
                                                             editorState.addPlm(plmId, propsBlockX, propsBlockY, 0x8000)
@@ -2497,6 +2513,41 @@ fun MapCanvas(
                                                     )
                                                 }
                                             }
+                                        }
+
+                                        // ─── New Custom Scroll Trigger (visual editor) ───
+                                        var showScrollEditor by remember { mutableStateOf(false) }
+                                        if (!showScrollEditor) {
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth().height(28.dp)
+                                                    .clickable { showScrollEditor = true },
+                                                shape = MaterialTheme.shapes.small,
+                                                color = Color(0xFFFF8040).copy(alpha = 0.1f)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text("+ New Custom Trigger...", fontSize = 10.sp,
+                                                        color = Color(0xFFFF8040).copy(alpha = 0.7f))
+                                                }
+                                            }
+                                        } else {
+                                            val rw = roomHeader?.width ?: 1
+                                            val rh = roomHeader?.height ?: 1
+                                            ScrollCommandEditor(
+                                                roomWidthScreens = rw,
+                                                roomHeightScreens = rh,
+                                                initialCommands = emptyList(),
+                                                onSave = { commands ->
+                                                    editorState.addScrollTriggerWithCommands(
+                                                        propsBlockX, propsBlockY, commands
+                                                    )
+                                                    showScrollEditor = false
+                                                },
+                                                onCancel = { showScrollEditor = false }
+                                            )
                                         }
 
                                         // ─── Enemies at/near this tile ───

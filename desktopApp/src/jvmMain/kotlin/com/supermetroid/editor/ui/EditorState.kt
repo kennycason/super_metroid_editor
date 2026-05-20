@@ -12,6 +12,7 @@ import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.ScrollChange
+import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
@@ -2230,6 +2231,42 @@ class EditorState {
         editVersion++
     }
 
+    // ─── Custom scroll command management ─────────────────────
+
+    /** Create a new custom scroll command set, returns the command ID. */
+    fun createScrollCommand(entries: List<ScrollCommand>): String {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val id = "cmd_${roomEdits.customScrollCommands.size}"
+        roomEdits.customScrollCommands[id] = entries.toMutableList()
+        dirty = true
+        return id
+    }
+
+    /** Update an existing custom scroll command set. */
+    fun updateScrollCommand(cmdId: String, entries: List<ScrollCommand>) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.customScrollCommands[cmdId] = entries.toMutableList()
+        dirty = true
+        editVersion++
+    }
+
+    /** Get custom scroll commands for a command ID, or null if not found. */
+    fun getScrollCommand(cmdId: String): List<ScrollCommand>? {
+        val roomEdits = project.rooms[project.roomKey(currentRoomId)] ?: return null
+        return roomEdits.customScrollCommands[cmdId]
+    }
+
+    /** Add a B703 scroll trigger with a new custom command set. Returns the PLM param (command ID encoded). */
+    fun addScrollTriggerWithCommands(x: Int, y: Int, entries: List<ScrollCommand>) {
+        val cmdId = createScrollCommand(entries)
+        // Use a custom param range starting from 0x0100 for custom commands
+        // Format: 0xCC00 | cmdIndex (to distinguish from ROM pointers)
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val cmdIndex = roomEdits.customScrollCommands.keys.indexOf(cmdId)
+        val customParam = 0xCC00 or (cmdIndex and 0xFF)
+        addPlm(0xB703, x, y, customParam)
+    }
+
     fun removePlm(x: Int, y: Int, plmId: Int) {
         val removed = _workingPlms.filter { it.x == x && it.y == y && it.id == plmId }
         _workingPlms.removeAll { it.x == x && it.y == y && it.id == plmId }
@@ -3087,8 +3124,10 @@ class EditorState {
             val hasFxEdits = roomEdits.fxChange != null
             val hasStateEdits = roomEdits.stateDataChange != null
             val hasHeaderEdits = roomEdits.roomHeaderChange != null
+            val hasCustomScrollCmds = roomEdits.customScrollCommands.isNotEmpty()
             if (!hasTileEdits && !hasPlmEdits && !hasDoorEdits && !hasEnemyEdits &&
-                !hasScrollEdits && !hasFxEdits && !hasStateEdits && !hasHeaderEdits) continue
+                !hasScrollEdits && !hasFxEdits && !hasStateEdits && !hasHeaderEdits &&
+                !hasCustomScrollCmds) continue
             val roomId = roomKey.toIntOrNull(16) ?: continue
             val room = romParser.readRoomHeader(roomId) ?: continue
 
@@ -3096,6 +3135,16 @@ class EditorState {
             // non-default states (boss-dead, escape, etc.) also reflect tile changes.
             // Without this, rooms with multiple states show the original layout when
             // a non-default state is active, causing phantom door blocks/caps.
+            // ─── Room resize export ─────────────────────────────────────
+            // When a room is resized, the export handles 5 things:
+            //  1. Level data — resized (L1/BTS/L2), recompressed, auto-relocated if too large
+            //  2. Scroll data — resized array relocated to free space in $8F, all state pointers updated
+            //  3. Scroll PLM commands — screen indices remapped from old width to new width
+            //     (in-place; these are room-specific data, not shared)
+            //  4. Door entry ASM — generates brand new 65816 routines with remapped scroll writes,
+            //     written to free space. Original shared routines are never touched.
+            //     Door entry pointers updated to the new routines.
+            //  5. Room header — width/height patched
             // Determine effective dimensions (accounting for resize)
             val hc = roomEdits.roomHeaderChange
             val effectiveWidth = hc?.width ?: room.width
@@ -3264,6 +3313,54 @@ class EditorState {
                     romData[offset] = 0; romData[offset + 1] = 0
                     if (writePc == plmPc) {
                         for (i in offset + 2 until plmPc + psd.originalSize) romData[i] = 0
+                    }
+                }
+                roomsPatched.add(roomKey)
+            }
+
+            // Write custom scroll command data to free space in $8F and resolve PLM params
+            if (hasCustomScrollCmds) {
+                val cmdIdToAddr = mutableMapOf<String, Int>() // cmdId → SNES 16-bit ptr
+                for ((cmdId, commands) in roomEdits.customScrollCommands) {
+                    if (commands.isEmpty()) continue
+                    val dataSize = commands.size * 2 + 1 // pairs + terminator
+                    if (freePtr + dataSize <= bank8FEnd) {
+                        for (cmd in commands) {
+                            romData[freePtr++] = cmd.screenIndex.toByte()
+                            romData[freePtr++] = cmd.scrollValue.toByte()
+                        }
+                        romData[freePtr++] = 0x80.toByte() // terminator
+                        val snesPtr = romParser.pcToSnes(freePtr - dataSize) and 0xFFFF
+                        cmdIdToAddr[cmdId] = snesPtr
+                        println("Room 0x$roomKey: wrote custom scroll command '$cmdId' (${commands.size} entries) at \$8F:${snesPtr.toString(16).uppercase()}")
+                    }
+                }
+                // Patch PLM params: replace 0xCC00|idx with actual ROM address
+                // Scan the PLM data we just wrote to ROM for custom params
+                if (cmdIdToAddr.isNotEmpty()) {
+                    val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+                    for (stateOffset in allStateOffsets) {
+                        val plmPtr = (romData[stateOffset + 20].toInt() and 0xFF) or
+                            ((romData[stateOffset + 21].toInt() and 0xFF) shl 8)
+                        if (plmPtr == 0 || plmPtr == 0xFFFF) continue
+                        val plmPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or plmPtr)
+                        var off = plmPc
+                        while (off + 5 < romData.size) {
+                            val plmId = (romData[off].toInt() and 0xFF) or ((romData[off + 1].toInt() and 0xFF) shl 8)
+                            if (plmId == 0) break
+                            val paramOff = off + 4
+                            val param = (romData[paramOff].toInt() and 0xFF) or ((romData[paramOff + 1].toInt() and 0xFF) shl 8)
+                            if (plmId == 0xB703 && (param and 0xFF00) == 0xCC00) {
+                                val cmdIdx = param and 0xFF
+                                val cmdId = "cmd_$cmdIdx"
+                                val addr = cmdIdToAddr[cmdId]
+                                if (addr != null) {
+                                    romData[paramOff] = (addr and 0xFF).toByte()
+                                    romData[paramOff + 1] = ((addr shr 8) and 0xFF).toByte()
+                                }
+                            }
+                            off += 6
+                        }
                     }
                 }
                 roomsPatched.add(roomKey)
@@ -3598,6 +3695,125 @@ class EditorState {
                     }
                 }
                 roomsPatched.add(roomKey)
+            }
+
+            // Step 3: Remap scroll PLM command screen indices (old width → new width)
+            if (isResized && effectiveWidth != room.width) {
+                val allPlms = romParser.getAllPlmEntriesForRoom(roomId)
+                val scrollTriggerPlms = allPlms.filter { it.id == 0xB703 }
+                val remappedPtrs = mutableSetOf<Int>()
+                for (plm in scrollTriggerPlms) {
+                    val cmdPtr = plm.param and 0xFFFF
+                    if (cmdPtr == 0 || cmdPtr in remappedPtrs) continue
+                    remappedPtrs.add(cmdPtr)
+                    val snesAddr = 0x8F0000 or cmdPtr
+                    val pc = romParser.snesToPc(snesAddr)
+                    var offset = 0
+                    var remapped = 0
+                    while (offset < 256) {
+                        val screenIdx = romData[pc + offset].toInt() and 0xFF
+                        if (screenIdx >= 0x80) break // terminator
+                        // Convert: old flat index → (col, row) → new flat index
+                        val col = screenIdx % room.width
+                        val row = screenIdx / room.width
+                        if (row < effectiveHeight && col < effectiveWidth) {
+                            val newIdx = row * effectiveWidth + col
+                            romData[pc + offset] = newIdx.toByte()
+                            if (newIdx != screenIdx) remapped++
+                        }
+                        offset += 2
+                    }
+                    if (remapped > 0) {
+                        println("Room 0x$roomKey: remapped $remapped screen indices in scroll command at \$8F:${cmdPtr.toString(16).uppercase()} (width ${ room.width}→$effectiveWidth)")
+                    }
+                }
+            }
+
+            // Step 4: Generate new door entry ASM with remapped scroll indices.
+            // Door entry ASM sets initial scroll state when Samus enters through a door.
+            // These routines are often SHARED across multiple rooms, so patching in-place
+            // would corrupt other rooms. Instead we: read scroll writes from the original,
+            // generate a new routine with remapped indices, write to free space, and
+            // update the door entry pointer.
+            if (isResized && effectiveWidth != room.width) {
+                val incomingDoors = romParser.findDoorsLeadingTo(roomId)
+                val generatedAsmPtrs = mutableMapOf<Int, Int>() // old entryCode → new SNES ptr
+                for (door in incomingDoors) {
+                    if (door.entryCode == 0 || door.entryCode == 0xFFFF) continue
+                    if (door.entryCode in generatedAsmPtrs) continue
+
+                    // Read scroll writes from original ASM
+                    val origPc = romParser.snesToPc(0x8F0000 or door.entryCode)
+                    data class ScrollWrite(val scrollValue: Int, val screenIdx: Int)
+                    val writes = mutableListOf<ScrollWrite>()
+                    var i = 0
+                    while (i < 60) {
+                        val b = romParser.readByteAt(origPc + i)
+                        if (b == 0x6B) break // RTL
+                        if (b == 0xA9 && i + 5 < 60) {
+                            val imm = romParser.readByteAt(origPc + i + 1)
+                            val next = romParser.readByteAt(origPc + i + 2)
+                            if (next == 0x8F) {
+                                val lo = romParser.readByteAt(origPc + i + 3)
+                                val hi = romParser.readByteAt(origPc + i + 4)
+                                val bank = romParser.readByteAt(origPc + i + 5)
+                                if (hi == 0xCD && bank == 0x7E && lo in 0x20..0x7F) {
+                                    writes.add(ScrollWrite(imm, lo - 0x20))
+                                }
+                                i += 6; continue
+                            }
+                        }
+                        if ((b == 0xE2 || b == 0xC2) && i + 1 < 60) { i += 2; continue }
+                        i++
+                    }
+                    if (writes.isEmpty()) continue
+
+                    // Generate new ASM: SEP #$20; [LDA #val; STA $7ECD{20+newIdx}]...; RTL
+                    // Each write = 6 bytes (A9 xx 8F ll CD 7E). Header = 2 (E2 20). Footer = 1 (6B).
+                    val asmSize = 2 + writes.size * 6 + 1
+                    if (freePtr + asmSize > bank8FEnd) {
+                        println("WARN: Room 0x$roomKey: no free space for door ASM generation (${asmSize} bytes)")
+                        continue
+                    }
+                    val newPc = freePtr
+                    romData[freePtr++] = 0xE2.toByte() // SEP
+                    romData[freePtr++] = 0x20.toByte() // #$20
+                    for (w in writes) {
+                        val col = w.screenIdx % room.width
+                        val row = w.screenIdx / room.width
+                        val newIdx = if (row < effectiveHeight && col < effectiveWidth)
+                            row * effectiveWidth + col else w.screenIdx
+                        romData[freePtr++] = 0xA9.toByte() // LDA #imm8
+                        romData[freePtr++] = w.scrollValue.toByte()
+                        romData[freePtr++] = 0x8F.toByte() // STA long
+                        romData[freePtr++] = (0x20 + newIdx).toByte()
+                        romData[freePtr++] = 0xCD.toByte()
+                        romData[freePtr++] = 0x7E.toByte()
+                    }
+                    romData[freePtr++] = 0x6B.toByte() // RTL
+                    val newSnesPtr = romParser.pcToSnes(newPc) and 0xFFFF
+                    generatedAsmPtrs[door.entryCode] = newSnesPtr
+                    println("Room 0x$roomKey: generated new door ASM at \$8F:${newSnesPtr.toString(16).uppercase()} (${writes.size} scroll writes, was \$8F:${door.entryCode.toString(16).uppercase()})")
+                }
+
+                // Update door entry entryCode pointers in ROM
+                if (generatedAsmPtrs.isNotEmpty()) {
+                    val allRooms = com.supermetroid.editor.data.RoomRepository().getAllRooms()
+                    for (info in allRooms) {
+                        val srcId = info.getRoomIdAsInt()
+                        val srcRoom = romParser.readRoomHeader(srcId) ?: continue
+                        if (srcRoom.doorOut == 0) continue
+                        val doors = romParser.parseDoorList(srcRoom.doorOut)
+                        for ((di, d) in doors.withIndex()) {
+                            if (d.destRoomPtr == roomId && d.entryCode in generatedAsmPtrs) {
+                                val entryPc = romParser.doorEntryPcOffset(srcRoom.doorOut, di) ?: continue
+                                val newPtr = generatedAsmPtrs[d.entryCode]!!
+                                romData[entryPc + 10] = (newPtr and 0xFF).toByte()
+                                romData[entryPc + 11] = ((newPtr shr 8) and 0xFF).toByte()
+                            }
+                        }
+                    }
+                }
             }
 
             // Patch FX data — apply to ALL states' FX pointers, not just default

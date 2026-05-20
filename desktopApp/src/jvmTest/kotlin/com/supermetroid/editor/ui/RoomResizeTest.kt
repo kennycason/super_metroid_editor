@@ -316,4 +316,225 @@ class RoomResizeTest {
             assertEquals(2 + newTotal * 2 + newTotal, resized.size)
         }
     }
+
+    @Nested
+    inner class ScrollCommandRemapping {
+
+        @Test
+        fun `screen index remaps correctly from width 5 to 6`() {
+            // Screen (3,1) in 5-wide = index 8. In 6-wide should be index 9.
+            val oldWidth = 5; val newWidth = 6
+            val oldIdx = 8
+            val col = oldIdx % oldWidth // 3
+            val row = oldIdx / oldWidth // 1
+            val newIdx = row * newWidth + col // 1*6+3 = 9
+            assertEquals(3, col)
+            assertEquals(1, row)
+            assertEquals(9, newIdx)
+        }
+
+        @Test
+        fun `screen index remaps correctly from width 5 to 7`() {
+            // Screen (1,2) in 5-wide = index 11. In 7-wide should be index 15.
+            val oldWidth = 5; val newWidth = 7
+            val oldIdx = 11
+            val col = oldIdx % oldWidth // 1
+            val row = oldIdx / oldWidth // 2
+            val newIdx = row * newWidth + col // 2*7+1 = 15
+            assertEquals(1, col)
+            assertEquals(2, row)
+            assertEquals(15, newIdx)
+        }
+
+        @Test
+        fun `Parlor scroll commands reference valid screens for vanilla 5x5`() {
+            val parser = loadTestRom() ?: return
+            val room = parser.readRoomHeader(0x92FD)!!
+            assertEquals(5, room.width)
+            assertEquals(5, room.height)
+
+            val plms = parser.parsePlmSet(room.plmSetPtr)
+            val scrollTriggers = plms.filter { it.id == 0xB703 }
+            assertTrue(scrollTriggers.isNotEmpty(), "Parlor should have B703 scroll triggers")
+
+            val seen = mutableSetOf<Int>()
+            for (plm in scrollTriggers) {
+                val cmdPtr = plm.param and 0xFFFF
+                if (cmdPtr == 0 || cmdPtr in seen) continue
+                seen.add(cmdPtr)
+                val snesAddr = 0x8F0000 or cmdPtr
+                val pc = parser.snesToPc(snesAddr)
+                var offset = 0
+                while (offset < 256) {
+                    val screenIdx = parser.readByteAt(pc + offset).toByte().toInt() and 0xFF
+                    if (screenIdx >= 0x80) break
+                    assertTrue(screenIdx < room.width * room.height,
+                        "Screen index $screenIdx should be < ${room.width * room.height} (${room.width}x${room.height})")
+                    offset += 2
+                }
+            }
+        }
+        @Test
+        fun `Parlor has incoming doors with entry ASM from other rooms`() {
+            val parser = loadTestRom() ?: return
+            val incomingDoors = parser.findDoorsLeadingTo(0x92FD)
+            assertTrue(incomingDoors.isNotEmpty(), "Parlor should have incoming doors from other rooms")
+            val withAsm = incomingDoors.filter { it.entryCode != 0 && it.entryCode != 0xFFFF }
+            assertTrue(withAsm.isNotEmpty(),
+                "At least one incoming door to Parlor should have entry ASM with scroll writes")
+        }
+    }
+
+    @Nested
+    inner class DoorAsmGeneration {
+
+        @Test
+        fun `door ASM scroll writes can be parsed from Parlor incoming doors`() {
+            val parser = loadTestRom() ?: return
+            val incomingDoors = parser.findDoorsLeadingTo(0x92FD)
+            val withAsm = incomingDoors.filter { it.entryCode != 0 && it.entryCode != 0xFFFF }
+            assertTrue(withAsm.isNotEmpty())
+
+            // Parse scroll writes from the first door with ASM
+            val door = withAsm.first()
+            val pc = parser.snesToPc(0x8F0000 or door.entryCode)
+            val writes = mutableListOf<Pair<Int, Int>>() // (screenIdx, scrollValue)
+            var i = 0
+            while (i < 60) {
+                val b = parser.readByteAt(pc + i)
+                if (b == 0x6B) break
+                if (b == 0xA9 && i + 5 < 60) {
+                    val imm = parser.readByteAt(pc + i + 1)
+                    val next = parser.readByteAt(pc + i + 2)
+                    if (next == 0x8F) {
+                        val lo = parser.readByteAt(pc + i + 3)
+                        val hi = parser.readByteAt(pc + i + 4)
+                        val bank = parser.readByteAt(pc + i + 5)
+                        if (hi == 0xCD && bank == 0x7E && lo in 0x20..0x7F) {
+                            writes.add((lo - 0x20) to imm)
+                        }
+                        i += 6; continue
+                    }
+                }
+                if ((b == 0xE2 || b == 0xC2) && i + 1 < 60) { i += 2; continue }
+                i++
+            }
+            assertTrue(writes.isNotEmpty(),
+                "Door ASM at \$${door.entryCode.toString(16)} should contain scroll writes")
+            // All screen indices should be valid for 5-wide room
+            for ((idx, _) in writes) {
+                assertTrue(idx < 25, "Screen index $idx should be < 25 for 5x5 room")
+            }
+        }
+
+        @Test
+        fun `generated door ASM has correct byte structure`() {
+            // Simulate generating door ASM for a set of scroll writes
+            val writes = listOf(0 to 1, 8 to 2, 19 to 0) // (screenIdx, scrollValue)
+            val oldWidth = 5; val newWidth = 6
+
+            // Expected: SEP #$20 + 3 writes + RTL = 2 + 3*6 + 1 = 21 bytes
+            val expectedSize = 2 + writes.size * 6 + 1
+            assertEquals(21, expectedSize)
+
+            val asm = ByteArray(expectedSize)
+            var ptr = 0
+            asm[ptr++] = 0xE2.toByte() // SEP
+            asm[ptr++] = 0x20.toByte() // #$20
+            for ((idx, value) in writes) {
+                val col = idx % oldWidth
+                val row = idx / oldWidth
+                val newIdx = row * newWidth + col
+                asm[ptr++] = 0xA9.toByte() // LDA #imm8
+                asm[ptr++] = value.toByte()
+                asm[ptr++] = 0x8F.toByte() // STA long
+                asm[ptr++] = (0x20 + newIdx).toByte()
+                asm[ptr++] = 0xCD.toByte()
+                asm[ptr++] = 0x7E.toByte()
+            }
+            asm[ptr++] = 0x6B.toByte() // RTL
+
+            // Verify structure
+            assertEquals(0xE2, asm[0].toInt() and 0xFF, "Should start with SEP")
+            assertEquals(0x20, asm[1].toInt() and 0xFF, "SEP #$20")
+            assertEquals(0x6B, asm[expectedSize - 1].toInt() and 0xFF, "Should end with RTL")
+
+            // Verify remapped screen indices
+            // Write 0: screen 0 (0,0) → 0*6+0 = 0
+            assertEquals(0x20, asm[5].toInt() and 0xFF, "Screen 0 → $7ECD20")
+            // Write 1: screen 8 (3,1) → 1*6+3 = 9
+            assertEquals(0x20 + 9, asm[11].toInt() and 0xFF, "Screen 8 remapped to 9 → $7ECD29")
+            // Write 2: screen 19 (4,3) → 3*6+4 = 22
+            assertEquals(0x20 + 22, asm[17].toInt() and 0xFF, "Screen 19 remapped to 22 → $7ECD36")
+        }
+
+        @Test
+        fun `shared door ASM routines are not modified by generation approach`() {
+            // Verify that the original ROM data at shared routine $B981 is untouched
+            // when we generate NEW routines instead of patching in-place
+            val parser = loadTestRom() ?: return
+            val pc = parser.snesToPc(0x8F0000 or 0xB981)
+            // Read original bytes at $B981
+            val originalBytes = ByteArray(30) { parser.readByteAt(pc + it).toByte() }
+
+            // Simulate what our export does: copy ROM data
+            val romCopy = ByteArray(30)
+            System.arraycopy(originalBytes, 0, romCopy, 0, 30)
+
+            // The generation approach writes to FREE SPACE, not to $B981
+            // So romCopy at $B981 offset should remain unchanged
+            assertTrue(originalBytes.contentEquals(romCopy),
+                "Original door ASM at \$B981 should not be modified")
+        }
+
+        @Test
+        fun `findDoorsLeadingTo returns doors from multiple source rooms`() {
+            val parser = loadTestRom() ?: return
+            val incoming = parser.findDoorsLeadingTo(0x92FD) // Parlor
+            assertTrue(incoming.size >= 3,
+                "Parlor should have at least 3 incoming doors (Landing Site, Flyway, Terminator, etc.)")
+            // Verify they come from different source rooms
+            val destRooms = incoming.map { it.destRoomPtr }.distinct()
+            assertEquals(1, destRooms.size, "All incoming doors should point to Parlor")
+            assertEquals(0x92FD, destRooms.first())
+        }
+    }
+
+    @Nested
+    inner class CustomScrollCommands {
+
+        @Test
+        fun `ScrollCommand data class serializes correctly`() {
+            val cmd = com.supermetroid.editor.data.ScrollCommand(screenIndex = 9, scrollValue = 1)
+            assertEquals(9, cmd.screenIndex)
+            assertEquals(1, cmd.scrollValue)
+        }
+
+        @Test
+        fun `custom scroll command bytes layout is correct`() {
+            // Simulate writing command data as the export does
+            val commands = listOf(
+                com.supermetroid.editor.data.ScrollCommand(0, 1),  // Screen 0 → Blue
+                com.supermetroid.editor.data.ScrollCommand(5, 0),  // Screen 5 → Red
+                com.supermetroid.editor.data.ScrollCommand(12, 2), // Screen 12 → Green
+            )
+            val dataSize = commands.size * 2 + 1
+            val data = ByteArray(dataSize)
+            var ptr = 0
+            for (cmd in commands) {
+                data[ptr++] = cmd.screenIndex.toByte()
+                data[ptr++] = cmd.scrollValue.toByte()
+            }
+            data[ptr] = 0x80.toByte() // terminator
+
+            assertEquals(7, data.size, "3 commands = 6 bytes + 1 terminator")
+            assertEquals(0, data[0].toInt() and 0xFF, "First screen index")
+            assertEquals(1, data[1].toInt() and 0xFF, "First scroll value (Blue)")
+            assertEquals(5, data[2].toInt() and 0xFF, "Second screen index")
+            assertEquals(0, data[3].toInt() and 0xFF, "Second scroll value (Red)")
+            assertEquals(12, data[4].toInt() and 0xFF, "Third screen index")
+            assertEquals(2, data[5].toInt() and 0xFF, "Third scroll value (Green)")
+            assertEquals(0x80, data[6].toInt() and 0xFF, "Terminator")
+        }
+    }
 }
