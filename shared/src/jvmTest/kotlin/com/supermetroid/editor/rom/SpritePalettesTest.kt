@@ -8,10 +8,7 @@ import java.io.File
 
 class SpritePalettesTest {
 
-    private fun loadRom(): ByteArray? {
-        val f = File("../test-resources/Super Metroid (JU) [!].smc")
-        return if (f.exists()) f.readBytes() else null
-    }
+    private fun loadRom(): ByteArray? = TestRomHelper.loadRomBytes()
 
     @Test
     fun `region definitions are valid`() {

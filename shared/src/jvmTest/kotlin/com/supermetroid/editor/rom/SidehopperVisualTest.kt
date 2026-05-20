@@ -7,17 +7,7 @@ import org.junit.jupiter.api.Test
 
 class SidehopperVisualTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     private fun checkerBackground(img: BufferedImage) {
         val dark = 0xFF202020.toInt()

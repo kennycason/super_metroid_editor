@@ -26,6 +26,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -89,6 +92,8 @@ import com.supermetroid.editor.ui.RoomPropertiesPanel
 import com.supermetroid.editor.ui.MinimapCanvas
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
+import com.supermetroid.editor.ui.TextEditorPreview
+import com.supermetroid.editor.ui.TextEditorSidebar
 import com.supermetroid.editor.ui.SoundEditorCanvas
 import com.supermetroid.editor.ui.PaletteEditor
 import com.supermetroid.editor.ui.SpritePaletteEditor
@@ -391,35 +396,28 @@ fun main() = application {
                                 .fillMaxHeight(),
                             verticalArrangement = Arrangement.spacedBy(0.dp)
                         ) {
-                            TabRow(
-                                selectedTabIndex = leftTab,
-                                modifier = Modifier.fillMaxWidth().height(32.dp)
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                Tab(selected = leftTab == 0, onClick = { leftTab = 0 },
-                                    modifier = Modifier.height(32.dp)) {
-                                    Text("Rooms", fontSize = fs.tabLabel)
-                                }
-                                Tab(selected = leftTab == 1, onClick = { leftTab = 1 },
-                                    modifier = Modifier.height(32.dp)) {
-                                    Text("Tiles", fontSize = fs.tabLabel)
-                                }
-                                Tab(selected = leftTab == 2, onClick = {
-                                    leftTab = 2
-                                    editorState.seedDefaultPatches()
-                                }, modifier = Modifier.height(32.dp)) {
-                                    Text("Patches", fontSize = fs.tabLabel)
-                                }
-                                Tab(selected = leftTab == 3, onClick = { leftTab = 3 },
-                                    modifier = Modifier.height(32.dp)) {
-                                    Text("Sound", fontSize = fs.tabLabel)
-                                }
-                                Tab(selected = leftTab == 4, onClick = { leftTab = 4 },
-                                    modifier = Modifier.height(32.dp)) {
-                                    Text("Sprites", fontSize = fs.tabLabel)
-                                }
-                                Tab(selected = leftTab == 5, onClick = { leftTab = 5 },
-                                    modifier = Modifier.height(32.dp)) {
-                                    Text("Map", fontSize = fs.tabLabel)
+                                val tabNames = listOf("Rooms", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text")
+                                tabNames.forEachIndexed { idx, name ->
+                                    val selected = leftTab == idx
+                                    Text(
+                                        text = name,
+                                        fontSize = fs.tabLabel,
+                                        color = if (selected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
+                                        modifier = Modifier
+                                            .clickable {
+                                                leftTab = idx
+                                                if (idx == 2) editorState.seedDefaultPatches()
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
                                 }
                             }
 
@@ -706,6 +704,11 @@ fun main() = application {
                                     editorState = editorState,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                6 -> TextEditorSidebar(
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
                             }
                         }
@@ -813,6 +816,11 @@ fun main() = application {
                                     }
                                     5 -> MinimapCanvas(
                                         state = minimapEditorState,
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    6 -> TextEditorPreview(
+                                        romParser = romParser,
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )

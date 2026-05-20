@@ -5,17 +5,7 @@ import java.io.File
 
 class MBFullInstrListDump {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     private fun readU16(data: ByteArray, offset: Int): Int {
         return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)

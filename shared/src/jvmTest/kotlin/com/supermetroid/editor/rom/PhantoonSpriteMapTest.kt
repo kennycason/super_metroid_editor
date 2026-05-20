@@ -10,18 +10,7 @@ import java.io.File
  */
 class PhantoonSpriteMapTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        println("Test ROM not found, skipping test")
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
     fun `Phantoon tile blocks decompress to expected tile counts`() {
@@ -118,11 +107,7 @@ class PhantoonSpriteMapTest {
 
     @Test
     fun `dump Phantoon species header for spritemap analysis`() {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        val parser = paths.map { File(it) }.firstOrNull { it.exists() }?.let { RomParser.loadRom(it.absolutePath) }
+        val parser = TestRomHelper.loadRomParser()
             ?: run {
                 println("Test ROM not found, skipping")
                 assertTrue(true)

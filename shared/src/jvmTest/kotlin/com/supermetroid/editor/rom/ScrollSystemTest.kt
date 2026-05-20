@@ -7,15 +7,12 @@ import com.supermetroid.editor.rom.RomParser.PlmEntry
 class ScrollSystemTest {
 
     private fun loadRom(name: String): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/$name",
-            name
-        )
+        val paths = listOf(name, "/Users/kenny/code/super_metroid_dev/$name")
         for (p in paths) {
             val f = File(p)
             if (f.exists()) return RomParser.loadRom(f.absolutePath)
         }
-        return null
+        return TestRomHelper.loadRomParser()
     }
 
     private fun decodeScrollCommands(rp: RomParser, paramPtr: Int): List<Pair<Int, Int>> {

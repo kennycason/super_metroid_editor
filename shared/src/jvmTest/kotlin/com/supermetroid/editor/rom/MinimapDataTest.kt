@@ -210,12 +210,7 @@ class MinimapDataTest {
 
         @BeforeAll
         fun loadRom() {
-            val paths = listOf(
-                "test-resources/Super Metroid (JU) [!].smc",
-                "../test-resources/Super Metroid (JU) [!].smc",
-            )
-            val romFile = paths.map { File(it) }.firstOrNull { it.isFile }
-            romParser = romFile?.let { RomParser(it.readBytes()) }
+            romParser = TestRomHelper.loadRomParser()
         }
 
         @Test

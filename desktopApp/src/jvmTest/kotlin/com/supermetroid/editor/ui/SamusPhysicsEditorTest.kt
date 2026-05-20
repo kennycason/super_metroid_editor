@@ -1,4 +1,5 @@
 package com.supermetroid.editor.ui
+import com.supermetroid.editor.rom.TestRomHelper
 
 import com.supermetroid.editor.rom.RomParser
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -15,18 +16,7 @@ import java.io.File
  */
 class SamusPhysicsEditorTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "test-resources/Super Metroid (JU) [!].smc",
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        println("Test ROM not found, skipping")
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     private fun readByte(parser: RomParser, pc: Int): Int {
         val rom = parser.getRomData()

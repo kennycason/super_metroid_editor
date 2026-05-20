@@ -15,20 +15,8 @@ class TileGraphicsTest {
 
     @BeforeAll
     fun setUp() {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "../../../test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) {
-                romParser = RomParser.loadRom(f.absolutePath)
-                gfx = TileGraphics(romParser!!)
-                return
-            }
-        }
-        println("Test ROM not found, skipping TileGraphics tests")
+        romParser = TestRomHelper.loadRomParser()
+        romParser?.let { gfx = TileGraphics(it) }
     }
 
     // ── Tileset loading ──────────────────────────────────────────

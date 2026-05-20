@@ -8,17 +8,7 @@ import java.awt.image.BufferedImage
 
 class KraidSpriteInvestigateTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     private fun rd16(rom: ByteArray, pc: Int): Int =
         (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)

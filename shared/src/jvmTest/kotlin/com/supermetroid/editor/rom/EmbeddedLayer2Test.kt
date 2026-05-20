@@ -9,17 +9,7 @@ import java.io.File
 
 class EmbeddedLayer2Test {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "test-resources/Super Metroid (JU) [!].smc",
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
     fun `embedded L2 data layout is L1-BTS-L2`() {

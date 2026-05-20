@@ -16,20 +16,8 @@ class MapRendererTest {
 
     @BeforeAll
     fun setUp() {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "../../../test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) {
-                romParser = RomParser.loadRom(f.absolutePath)
-                renderer = MapRenderer(romParser!!)
-                return
-            }
-        }
-        println("Test ROM not found, skipping MapRenderer tests")
+        romParser = TestRomHelper.loadRomParser()
+        romParser?.let { renderer = MapRenderer(it) }
     }
 
     private fun loadRoom(roomId: Int): Room? {

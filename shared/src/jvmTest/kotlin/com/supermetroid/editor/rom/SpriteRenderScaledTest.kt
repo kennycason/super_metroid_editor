@@ -11,17 +11,7 @@ import javax.imageio.ImageIO
  */
 class SpriteRenderScaledTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
     fun `export scaled sprites for visual inspection`() {

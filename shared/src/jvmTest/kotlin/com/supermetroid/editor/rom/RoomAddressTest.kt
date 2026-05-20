@@ -15,18 +15,7 @@ import java.io.File
  */
 class RoomAddressTest {
     
-    private fun getRom(): ByteArray? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc",
-            "../../../test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return f.readBytes()
-        }
-        return null
-    }
+    private fun getRom(): ByteArray? = TestRomHelper.loadRomBytes()
     
     @Test
     fun `verify room ID is offset in bank 8F`() {

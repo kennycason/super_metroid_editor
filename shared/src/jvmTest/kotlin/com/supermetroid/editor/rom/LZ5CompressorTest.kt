@@ -11,18 +11,7 @@ import java.io.File
  */
 class LZ5CompressorTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        println("Test ROM not found, skipping test")
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     /** Compress using same algorithm as EditorState (byte fill, word fill, dict copy). */
     private fun lz5Compress(data: ByteArray): ByteArray {

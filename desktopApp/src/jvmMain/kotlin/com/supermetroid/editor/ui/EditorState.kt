@@ -24,6 +24,7 @@ import com.supermetroid.editor.data.EnemyUpdate
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -4122,7 +4123,27 @@ class EditorState {
             println("Minimap area $area: patched ${edits.size} tiles")
         }
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0) {
+        // ─── Text edits ────────────────────────────────────────────
+        var textPatched = 0
+        for ((id, newText) in project.textEdits) {
+            val allText = TextData.readAllText(romParser.getRomData())
+            val entry = allText.find { it.id == id } ?: continue
+            val patched = when (entry.category) {
+                com.supermetroid.editor.rom.TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
+                com.supermetroid.editor.rom.TextCategory.ESCAPE_TEXT -> TextData.encodeEscapeText(newText, entry.rawBytes)
+                com.supermetroid.editor.rom.TextCategory.ITEM_NAME -> continue // not yet supported
+                com.supermetroid.editor.rom.TextCategory.INTRO_STORY -> continue // read-only for now
+            }
+            for (i in patched.indices) {
+                if (entry.pcOffset + i < romData.size) {
+                    romData[entry.pcOffset + i] = patched[i]
+                }
+            }
+            textPatched++
+        }
+        if (textPatched > 0) println("[EXPORT] Patched $textPatched text entries")
+
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             out.writeBytes(romData)

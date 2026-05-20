@@ -1,4 +1,5 @@
 package com.supermetroid.editor.ui
+import com.supermetroid.editor.rom.TestRomHelper
 
 import com.supermetroid.editor.rom.RomParser
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -14,18 +15,7 @@ import java.io.File
  */
 class RoomResizeTest {
 
-    private fun loadTestRom(): RomParser? {
-        val paths = listOf(
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-            "test-resources/Super Metroid (JU) [!].smc"
-        )
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
-        }
-        println("Test ROM not found, skipping test")
-        return null
-    }
+    private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     // Helper to read a 16-bit LE word from a byte array
     private fun readWord(data: ByteArray, offset: Int): Int =
