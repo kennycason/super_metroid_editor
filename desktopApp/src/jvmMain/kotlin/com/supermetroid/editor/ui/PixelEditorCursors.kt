@@ -87,6 +87,7 @@ object PixelEditorCursors {
         MinimapTool.PAINT -> pencil
         MinimapTool.FILL -> fill
         MinimapTool.EYEDROPPER -> eyedropper
+        MinimapTool.SELECT -> select
     }
 
     /** Returns the appropriate cursor for the given EditorTool. */

@@ -127,7 +127,7 @@ class MinimapEditorStateTest {
             val cleared = clearRoomTiles(data, 5, 5, 2, 1)
             assertEquals(0, cleared.getTile(5, 5))
             assertEquals(0, cleared.getTile(6, 5))
-            val placed = placeRoomTiles(cleared, 10, 10, 2, 1, extracted)
+            val placed = placeRoomTilesNonEmpty(cleared, 10, 10, 2, 1, extracted)
             assertEquals(0xAA, placed.getTile(10, 10))
             assertEquals(0xBB, placed.getTile(11, 10))
         }
@@ -147,7 +147,7 @@ class MinimapEditorStateTest {
             // Room B should still be there
             assertEquals(0xFF, cleared.getTile(7, 5))
             // Place Room A at (6,5) — overlapping with Room B at (7,5)
-            val placed = placeRoomTiles(cleared, 6, 5, 2, 1, extracted)
+            val placed = placeRoomTilesNonEmpty(cleared, 6, 5, 2, 1, extracted)
             // Room A placed, Room B overwritten (expected — user must Apply to commit)
             assertEquals(0xAA, placed.getTile(6, 5))
             assertEquals(0xBB, placed.getTile(7, 5))

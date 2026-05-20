@@ -489,7 +489,8 @@ fun main() = application {
                                                             room = roomHeader,
                                                             romParser = rp,
                                                             editorState = editorState,
-                                                            modifier = Modifier.fillMaxSize()
+                                                            modifier = Modifier.fillMaxSize(),
+                                                            onNavigateToMap = { leftTab = 5 },
                                                         )
                                                     } else {
                                                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

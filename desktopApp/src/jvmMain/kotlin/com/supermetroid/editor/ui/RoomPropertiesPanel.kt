@@ -98,7 +98,8 @@ fun RoomPropertiesPanel(
     room: Room,
     romParser: RomParser,
     editorState: EditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToMap: (() -> Unit)? = null,
 ) {
     val states = remember(room.roomId) { romParser.parseRoomStates(room.roomId) }
     var selectedStateIdx by remember(room.roomId) { mutableStateOf(states.size - 1) }
@@ -181,8 +182,8 @@ fun RoomPropertiesPanel(
     val savedHeader = roomEdits?.roomHeaderChange
     var editIndex by remember(room.roomId) { mutableStateOf(savedHeader?.index ?: room.index) }
     var editArea by remember(room.roomId) { mutableStateOf(savedHeader?.area ?: room.area) }
-    var editMapX by remember(room.roomId) { mutableStateOf(savedHeader?.mapX ?: room.mapX) }
-    var editMapY by remember(room.roomId) { mutableStateOf(savedHeader?.mapY ?: room.mapY) }
+    val displayMapX = savedHeader?.mapX ?: room.mapX
+    val displayMapY = savedHeader?.mapY ?: room.mapY
     var editWidth by remember(room.roomId) { mutableStateOf(savedHeader?.width ?: room.width) }
     var editHeight by remember(room.roomId) { mutableStateOf(savedHeader?.height ?: room.height) }
     var editUpScroller by remember(room.roomId) { mutableStateOf(savedHeader?.upScroller ?: room.upScroller) }
@@ -194,8 +195,8 @@ fun RoomPropertiesPanel(
         val change = RoomHeaderChange(
             index = editIndex.takeIf { it != room.index },
             area = editArea.takeIf { it != room.area },
-            mapX = editMapX.takeIf { it != room.mapX },
-            mapY = editMapY.takeIf { it != room.mapY },
+            mapX = savedHeader?.mapX,
+            mapY = savedHeader?.mapY,
             width = editWidth.takeIf { it != room.width },
             height = editHeight.takeIf { it != room.height },
             upScroller = editUpScroller.takeIf { it != room.upScroller },
@@ -223,8 +224,23 @@ fun RoomPropertiesPanel(
         EditableHexRow("Room Index", editIndex, 1) { editIndex = it; syncHeaderToState() }
         EditableIntRow("Area", editArea, 0, 6) { editArea = it; syncHeaderToState() }
         PropertyRow("Area Name", AREA_NAMES.getOrElse(editArea) { "Unknown" })
-        EditableIntRow("Map X", editMapX, 0, 63) { editMapX = it; syncHeaderToState() }
-        EditableIntRow("Map Y", editMapY, 0, 31) { editMapY = it; syncHeaderToState() }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Map Position", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp))
+            Text("($displayMapX, $displayMapY)", fontSize = 10.sp, modifier = Modifier.weight(1f))
+            if (onNavigateToMap != null) {
+                Text(
+                    "Edit on Map",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { onNavigateToMap() }.padding(horizontal = 4.dp),
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                )
+            }
+        }
         EditableIntRow("Width", editWidth, 1, 15,
             suffix = " screen${if (editWidth != 1) "s" else ""}"
         ) { editWidth = it; syncHeaderToState() }

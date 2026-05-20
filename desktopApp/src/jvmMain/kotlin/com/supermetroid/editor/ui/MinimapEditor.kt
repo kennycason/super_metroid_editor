@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -128,6 +129,7 @@ fun MinimapSidebar(
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            MmToolBtn(Icons.Default.NearMe, "Select", state.tool == MinimapTool.SELECT) { state.tool = MinimapTool.SELECT }
             MmToolBtn(Icons.Default.Brush, "Paint", state.tool == MinimapTool.PAINT) { state.tool = MinimapTool.PAINT }
             MmToolBtn(Icons.Default.Colorize, "Sample", state.tool == MinimapTool.EYEDROPPER) { state.tool = MinimapTool.EYEDROPPER }
             MmToolBtn(Icons.Default.FormatColorFill, "Fill", state.tool == MinimapTool.FILL) { state.tool = MinimapTool.FILL }
@@ -341,6 +343,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val ctrl = event.isCtrlPressed || event.isMetaPressed
                     when (event.key) {
+                        Key.S -> { state.tool = MinimapTool.SELECT; true }
                         Key.P -> { state.tool = MinimapTool.PAINT; true }
                         Key.F -> { state.tool = MinimapTool.FILL; true }
                         Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
@@ -348,7 +351,13 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         Key.Y -> if (ctrl) { state.redo(editorState); true } else false
                         Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(64f); true }
                         Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f); true }
-                        Key.Escape -> if (state.isMovingRoom) { state.cancelMove(editorState); true } else false
+                        Key.DirectionLeft -> if (state.selectedRoom != null) { state.moveRoom(-1, 0, editorState); true } else false
+                        Key.DirectionRight -> if (state.selectedRoom != null) { state.moveRoom(1, 0, editorState); true } else false
+                        Key.DirectionUp -> if (state.selectedRoom != null) { state.moveRoom(0, -1, editorState); true } else false
+                        Key.DirectionDown -> if (state.selectedRoom != null) { state.moveRoom(0, 1, editorState); true } else false
+                        Key.Escape -> if (state.isMovingRoom) { state.cancelMove(editorState); true }
+                            else if (state.selectedRoomIndex >= 0) { state.selectedRoomIndex = -1; true }
+                            else false
                         Key.Enter -> if (state.isMovingRoom) { state.applyMove(editorState); true } else false
                         else -> false
                     }
@@ -362,6 +371,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                             MinimapTool.PAINT -> state.paintTile(x, y, editorState)
                             MinimapTool.EYEDROPPER -> state.sampleTile(x, y)
                             MinimapTool.FILL -> state.fillTile(x, y, editorState)
+                            MinimapTool.SELECT -> state.selectRoomAt(x, y, editorState)
                         }
                     }
                 }
@@ -447,7 +457,7 @@ private fun DrawScope.drawMinimapGrid(
         drawRect(Color(0x3000FF88), Offset(rx, ry), Size(rw, rh))
         drawRect(Color(0xAA00FF88), Offset(rx, ry), Size(rw, rh), style = Stroke(1f))
     }
-    // 2b. Move buffer preview — render lifted tiles at current position
+    // 2b. Move buffer overlay — render lifted tiles at target position (semi-transparent)
     if (moveBuf != null && tileGfx != null) {
         for (ry in 0 until moveBuf.height) for (rx in 0 until moveBuf.width) {
             val w = moveBuf.tiles[ry][rx]
@@ -467,9 +477,12 @@ private fun DrawScope.drawMinimapGrid(
                 drawRect(color.copy(alpha = 0.7f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
             }
         }
+        // Outline around buffer target position
+        drawRect(Color(0xFFFFCC00), Offset(moveBuf.currentX * cs, moveBuf.currentY * cs),
+            Size(moveBuf.width * cs, moveBuf.height * cs), style = Stroke(2f))
     }
-    // 2c. Selected room highlight (always visible when a room is selected)
-    if (selectedRoom != null) {
+    // 2c. Selected room highlight (always visible when a room is selected and not moving)
+    if (selectedRoom != null && moveBuf == null) {
         val rx = selectedRoom.mapX * cs; val ry = selectedRoom.mapY * cs
         val rw = selectedRoom.width * cs; val rh = selectedRoom.height * cs
         drawRect(Color(0x2000FF88), Offset(rx, ry), Size(rw, rh))
