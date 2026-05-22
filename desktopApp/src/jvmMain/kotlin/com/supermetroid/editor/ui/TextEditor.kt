@@ -60,7 +60,6 @@ fun TextEditorSidebar(
         )
         Spacer(Modifier.height(8.dp))
 
-        // Group entries by category
         for (category in TextCategory.entries) {
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
@@ -113,9 +112,7 @@ fun TextEditorSidebar(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Divider()
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -129,8 +126,6 @@ fun TextEditorPreview(
     val parser = romParser ?: return
     val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
 
-    // Find which entry is being edited via project state
-    // For now show all entries with editable fields
     val scrollState = rememberScrollState()
 
     Column(modifier = modifier.padding(16.dp).verticalScroll(scrollState)) {
@@ -156,119 +151,95 @@ fun TextEditorPreview(
                 Spacer(Modifier.height(4.dp))
             }
 
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // Item pickup names (editable text embedded in BG3 tilemap)
+        val itemEntries = entries.filter { it.category == TextCategory.ITEM_NAME }
+        if (itemEntries.isNotEmpty()) {
+            Text("Item Pickup Names", fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.primary)
+            Text("Displayed when Samus collects an item.",
+                fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
-            Divider()
-            Spacer(Modifier.height(8.dp))
+            for (entry in itemEntries) {
+                TextEntryEditor(entry, editorState)
+                Spacer(Modifier.height(4.dp))
+            }
         }
     }
 }
 
 @Composable
 private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
+    val editVersion = editorState.editVersion // observe edit changes for recomposition
     val editedText = editorState.project.textEdits[entry.id]
-    var currentText by remember(entry.id, editedText) {
-        mutableStateOf(editedText ?: entry.text)
-    }
-    val isModified = editedText != null
+    var currentText by remember(entry.id, editedText, editVersion) { mutableStateOf(editedText ?: entry.text) }
+    val isModified = currentText != entry.text
+    val singleLine = entry.category in listOf(TextCategory.AREA_NAME, TextCategory.ITEM_NAME, TextCategory.UI_MESSAGE)
+    val isReadOnly = false // all text categories are now editable
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        shape = RoundedCornerShape(6.dp),
-    ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(entry.label, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    if (isModified) {
-                        Spacer(Modifier.width(6.dp))
-                        Text("modified", fontSize = 9.sp, color = Color(0xFFFFCC00),
-                            fontFamily = FontFamily.Monospace)
-                    }
+    val textField = @Composable { modifier: Modifier ->
+        TextField(
+            value = currentText,
+            onValueChange = { newText ->
+                if (isReadOnly) return@TextField
+                val cleaned = when (entry.category) {
+                    TextCategory.AREA_NAME -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' }.take(entry.maxLength)
+                    TextCategory.ESCAPE_TEXT -> newText.uppercase()
+                    TextCategory.ITEM_NAME -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '-' }.take(entry.maxLength)
+                    TextCategory.UI_MESSAGE -> newText.uppercase().filter { it in 'A'..'Z' || it == ' ' || it == '.' }.take(entry.maxLength)
+                    TextCategory.INTRO_STORY -> newText.uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it in " \n.,\'!" }
                 }
-                Text(
-                    "$${entry.snesAddress.toString(16).uppercase().padStart(6, '0')}",
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                currentText = cleaned
+                if (cleaned == entry.text) editorState.project.textEdits.remove(entry.id)
+                else editorState.project.textEdits[entry.id] = cleaned
+                editorState.markDirty()
+            },
+            modifier = modifier,
+            textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
+            readOnly = isReadOnly, singleLine = singleLine, maxLines = if (singleLine) 1 else 10,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+            ),
+            shape = RoundedCornerShape(4.dp),
+        )
+    }
 
-            Spacer(Modifier.height(6.dp))
-
-            // Max length hint
-            val maxHint = when (entry.category) {
-                TextCategory.AREA_NAME -> "${entry.maxLength} chars max"
-                TextCategory.ESCAPE_TEXT -> "Preserve line breaks"
-                TextCategory.ITEM_NAME -> "${entry.maxLength} chars max"
-                TextCategory.INTRO_STORY -> "Read-only (complex encoding)"
-            }
-            Text(maxHint, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(4.dp))
-
-            val singleLine = entry.category == TextCategory.AREA_NAME || entry.category == TextCategory.ITEM_NAME
-            val isReadOnly = entry.category == TextCategory.INTRO_STORY
-
-            TextField(
-                value = currentText,
-                onValueChange = { newText ->
-                    if (isReadOnly) return@TextField
-                    val cleaned = when (entry.category) {
-                        TextCategory.AREA_NAME -> {
-                            val upper = newText.uppercase()
-                            val filtered = upper.filter { it in 'A'..'Z' || it == ' ' }
-                            filtered.take(entry.maxLength)
-                        }
-                        TextCategory.ESCAPE_TEXT -> {
-                            newText.uppercase()
-                        }
-                        TextCategory.ITEM_NAME -> {
-                            newText.uppercase().take(entry.maxLength)
-                        }
-                        TextCategory.INTRO_STORY -> currentText // no change
-                    }
-                    currentText = cleaned
-                    // Save to project (or remove if back to original)
-                    if (cleaned == entry.text) {
-                        editorState.project.textEdits.remove(entry.id)
-                    } else {
-                        editorState.project.textEdits[entry.id] = cleaned
-                    }
-                    editorState.markDirty()
-                },
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                readOnly = isReadOnly,
-                singleLine = singleLine,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                ),
-                shape = RoundedCornerShape(4.dp),
-            )
-
-            // Reset button
-            if (isModified) {
+    Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), shape = RoundedCornerShape(6.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            if (singleLine) {
+                // Compact: label + field on one row
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(entry.label, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.width(120.dp))
+                    if (isModified) Text("*", fontSize = 11.sp, color = Color(0xFFFFCC00), fontWeight = FontWeight.Bold)
+                    textField(Modifier.weight(1f))
+                }
+            } else {
+                // Multi-line: label above field
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(entry.label, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    if (isModified) { Spacer(Modifier.width(4.dp)); Text("*", fontSize = 11.sp, color = Color(0xFFFFCC00), fontWeight = FontWeight.Bold) }
+                }
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "Reset to original",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.clickable {
-                        currentText = entry.text
-                        editorState.project.textEdits.remove(entry.id)
-                        editorState.markDirty()
-                    }
-                )
+                textField(Modifier.fillMaxWidth())
+            }
+            // Footer: address + max + reset
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("\$${entry.snesAddress.toString(16).uppercase().padStart(6, '0')}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+                Text("${entry.maxLength} max", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                if (isModified) {
+                    Text("Reset", fontSize = 9.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable {
+                        currentText = entry.text; editorState.project.textEdits.remove(entry.id); editorState.markDirty()
+                    })
+                }
             }
         }
     }
 }
+

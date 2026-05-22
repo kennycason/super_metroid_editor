@@ -30,7 +30,8 @@ enum class TextCategory(val displayName: String) {
     INTRO_STORY("Intro Story"),
     AREA_NAME("Area Names"),
     ESCAPE_TEXT("Escape Messages"),
-    ITEM_NAME("Item Names"),
+    UI_MESSAGE("In-Game Messages"),
+    ITEM_NAME("Item Pickups"),
 }
 
 object TextData {
@@ -90,24 +91,114 @@ object TextData {
     const val TOURIAN_ESCAPE_SNES = 0xA6C49C
     const val TOURIAN_ESCAPE_SIZE = 58
 
-    // Item pickup names displayed in the HUD message box
-    // Tilemap format: each char is 2 bytes (tile + properties)
-    // Tile encoding: 0x30='A', same as area names
-    // Each item name: 8 chars × 2 bytes = 16 bytes, but stored inline in the HUD tilemap
-    // Located via pointer table at $85:878B — not simple contiguous text.
-    // Instead we define the known item name locations directly.
+    // ─── In-game UI messages ───────────────────────────────────
+    // Stored as 32-tile tilemap rows (64 bytes each) in bank $85.
+    // Character encoding: A=0xE0..Z=0xF9, period=0xFA, space=0x4E
+    // Each tile entry is 2 bytes: [tile_index, palette_byte (0x3C for text)]
+    // Padding/blank tiles use 0x0E with palette 0x00.
+    const val UI_MSG_TILE_COLS = 32
+    const val UI_MSG_ROW_BYTES = 64  // 32 tiles × 2 bytes
+    const val UI_MSG_TEXT_PALETTE = 0x3C
 
-    data class ItemNameDef(val label: String, val pc: Int, val snes: Int, val charCount: Int)
+    data class UiMessageDef(val id: String, val label: String, val pc: Int, val snes: Int, val maxChars: Int)
 
-    // Item pickup message locations in bank $85.
-    // These are 2-line messages: line 1 = item category, line 2 = item name.
-    // Stored as tilemap rows. Addresses from disassembly.
-    val ITEM_NAMES: List<ItemNameDef> = listOf(
-        // HUD message tilemaps in bank $85 — these are the 2×32 tilemap rows
-        // Each tilemap row is 64 bytes (32 tiles × 2 bytes).
-        // The text occupies the center tiles within each row.
-        // For simplicity, we expose area names and escape text first,
-        // and item names as a future enhancement (more complex format).
+    val UI_MESSAGES = listOf(
+        UiMessageDef("energy_recharge",   "Energy Recharge",     0x2923F, 0x85923F, 32),
+        UiMessageDef("energy_done",       "Completed (Energy)",  0x292BF, 0x8592BF, 32),
+        UiMessageDef("missile_reload",    "Missile Reload",      0x292FF, 0x8592FF, 32),
+        UiMessageDef("missile_done",      "Completed (Missile)", 0x2937F, 0x85937F, 32),
+        UiMessageDef("save_prompt_1",     "Save Prompt Line 1",  0x293BF, 0x8593BF, 32),
+        UiMessageDef("save_prompt_2",     "Save Prompt Line 2",  0x293FF, 0x8593FF, 32),
+        UiMessageDef("save_done",         "Save Completed",      0x294BF, 0x8594BF, 32),
+        UiMessageDef("reserve_label",     "Reserve Tank Label",  0x294FF, 0x8594FF, 32),
+        UiMessageDef("gravity_label",     "Gravity Suit Label",  0x2953F, 0x85953F, 32),
+    )
+
+    /** Decode a UI/item message row from ROM. Reads up to maxTiles tile entries, extracts text. */
+    fun decodeUiMessage(rom: ByteArray, pc: Int, maxTiles: Int = UI_MSG_TILE_COLS): String {
+        val sb = StringBuilder()
+        for (col in 0 until maxTiles) {
+            val off = pc + col * 2
+            if (off + 1 >= rom.size) break
+            val tile = rom[off].toInt() and 0xFF
+            sb.append(uiTileToChar(tile))
+        }
+        return sb.toString().trim()
+    }
+
+    /** Encode a UI message string back to tilemap bytes, preserving non-text tiles. */
+    fun encodeUiMessage(text: String, originalBytes: ByteArray): ByteArray {
+        val result = originalBytes.copyOf()
+        val upper = text.uppercase()
+        val tileCount = originalBytes.size / 2
+        // Find the range of text tiles in the original row (first..last non-padding tile)
+        var firstText = -1
+        var lastText = -1
+        for (col in 0 until tileCount) {
+            val tile = originalBytes[col * 2].toInt() and 0xFF
+            if (tile in 0xE0..0xFA || tile == 0x4E) {
+                if (firstText < 0) firstText = col
+                lastText = col
+            }
+        }
+        if (firstText < 0) { firstText = 6; lastText = 25 } // default centered range
+        val fieldWidth = lastText - firstText + 1
+        val padded = upper.take(fieldWidth).padEnd(fieldWidth)
+        for (i in padded.indices) {
+            val col = firstText + i
+            val off = col * 2
+            result[off] = uiCharToTile(padded[i]).toByte()
+            result[off + 1] = UI_MSG_TEXT_PALETTE.toByte()
+        }
+        return result
+    }
+
+    private fun uiTileToChar(tile: Int): Char = when {
+        tile in 0xE0..0xF9 -> ('A' + (tile - 0xE0))
+        tile == 0xFA || tile == 0xFE -> '.'
+        tile == 0xCF -> '-'  // hyphen tile (used in HI-JUMP, X-RAY)
+        tile == 0x4E -> ' '
+        tile == 0x0E || tile == 0x00 -> ' '
+        else -> ' '
+    }
+
+    private fun uiCharToTile(ch: Char): Int = when {
+        ch in 'A'..'Z' -> 0xE0 + (ch - 'A')
+        ch in 'a'..'z' -> 0xE0 + (ch - 'a')
+        ch == '.' -> 0xFA
+        ch == '-' -> 0xCF
+        ch == ' ' -> 0x4E
+        else -> 0x4E // unknown → space
+    }
+
+    // ─── Item pickup names ──────────────────────────────────────
+    // Item names are embedded as text tiles within BG3 tilemap data at $85:876B+.
+    // Same encoding as UI messages: A=0xE0..Z=0xF9, space=0x4E, period=0xFA.
+    // Each name occupies a fixed-width tile field within the larger tilemap.
+    // Addresses found by scanning the tilemap for text character tile runs.
+
+    data class ItemNameDef(val id: String, val label: String, val pc: Int, val snes: Int, val tileCount: Int)
+
+    val ITEM_NAMES = listOf(
+        ItemNameDef("item_energy_tank",   "Energy Tank",    0x28793, 0x858793, 15),
+        ItemNameDef("item_missile",       "Missile",        0x287D9, 0x8587D9, 16),
+        ItemNameDef("item_super_missile", "Super Missile",  0x288D1, 0x8588D1, 20),
+        ItemNameDef("item_power_bomb",    "Power Bomb",     0x289D5, 0x8589D5, 18),
+        ItemNameDef("item_grapple_beam",  "Grapple Beam",   0x28AD1, 0x858AD1, 20),
+        ItemNameDef("item_xray_scope",    "X-Ray Scope",    0x28BD5, 0x858BD5, 18),
+        ItemNameDef("item_varia_suit",    "Varia Suit",     0x28CD3, 0x858CD3, 15),
+        ItemNameDef("item_spring_ball",   "Spring Ball",    0x28D13, 0x858D13, 15),
+        ItemNameDef("item_morphing_ball", "Morphing Ball",  0x28D51, 0x858D51, 16),
+        ItemNameDef("item_screw_attack",  "Screw Attack",   0x28D91, 0x858D91, 16),
+        ItemNameDef("item_hijump_boots",  "Hi-Jump Boots",  0x28DD1, 0x858DD1, 16),
+        ItemNameDef("item_space_jump",    "Space Jump",     0x28E13, 0x858E13, 15),
+        ItemNameDef("item_speed_booster", "Speed Booster",  0x28E51, 0x858E51, 20),
+        ItemNameDef("item_charge_beam",   "Charge Beam",    0x28F53, 0x858F53, 15),
+        ItemNameDef("item_ice_beam",      "Ice Beam",       0x28F95, 0x858F95, 14),
+        ItemNameDef("item_wave_beam",     "Wave Beam",      0x28FD5, 0x858FD5, 14),
+        ItemNameDef("item_spazer",        "Spazer",         0x29017, 0x859017, 13),
+        ItemNameDef("item_plasma_beam",   "Plasma Beam",    0x29053, 0x859053, 15),
+        ItemNameDef("item_bomb",          "Bomb",           0x2909B, 0x85909B, 15),
     )
 
     /** Decode an area name from ROM bytes. */
@@ -289,6 +380,37 @@ object TextData {
                 snesAddress = snes,
                 maxLength = size,
                 text = decodeEscapeText(rom, pc, size),
+                rawBytes = raw,
+            ))
+        }
+
+        // In-game UI messages (save station, refill station, etc.)
+        for (def in UI_MESSAGES) {
+            val raw = rom.copyOfRange(def.pc, def.pc + UI_MSG_ROW_BYTES)
+            entries.add(TextEntry(
+                id = def.id,
+                label = def.label,
+                category = TextCategory.UI_MESSAGE,
+                pcOffset = def.pc,
+                snesAddress = def.snes,
+                maxLength = def.maxChars,
+                text = decodeUiMessage(rom, def.pc),
+                rawBytes = raw,
+            ))
+        }
+
+        // Item pickup names (embedded in BG3 tilemap, same character encoding as UI messages)
+        for (def in ITEM_NAMES) {
+            val rawSize = def.tileCount * 2
+            val raw = if (def.pc + rawSize <= rom.size) rom.copyOfRange(def.pc, def.pc + rawSize) else ByteArray(0)
+            entries.add(TextEntry(
+                id = def.id,
+                label = def.label,
+                category = TextCategory.ITEM_NAME,
+                pcOffset = def.pc,
+                snesAddress = def.snes,
+                maxLength = def.tileCount,
+                text = decodeUiMessage(rom, def.pc, def.tileCount),
                 rawBytes = raw,
             ))
         }

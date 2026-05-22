@@ -4131,7 +4131,8 @@ class EditorState {
             val patched = when (entry.category) {
                 com.supermetroid.editor.rom.TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
                 com.supermetroid.editor.rom.TextCategory.ESCAPE_TEXT -> TextData.encodeEscapeText(newText, entry.rawBytes)
-                com.supermetroid.editor.rom.TextCategory.ITEM_NAME -> continue // not yet supported
+                com.supermetroid.editor.rom.TextCategory.UI_MESSAGE -> TextData.encodeUiMessage(newText, entry.rawBytes)
+                com.supermetroid.editor.rom.TextCategory.ITEM_NAME -> continue // graphical tilemaps — pixel editor needed
                 com.supermetroid.editor.rom.TextCategory.INTRO_STORY -> continue // read-only for now
             }
             for (i in patched.indices) {

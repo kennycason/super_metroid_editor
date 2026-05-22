@@ -110,9 +110,108 @@ class TextDataTest {
         val introEntries = entries.filter { it.category == TextCategory.INTRO_STORY }
         assertEquals(6, introEntries.size, "Should have 6 intro story entries")
 
-        // All should have valid SNES addresses
         for (entry in introEntries) {
             assertTrue(entry.snesAddress > 0x8C0000, "SNES address should be in bank \$8C")
         }
+    }
+
+    @Test
+    fun `UI messages decode correctly from ROM`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val uiMsgs = entries.filter { it.category == TextCategory.UI_MESSAGE }
+        assertEquals(9, uiMsgs.size, "Should have 9 UI messages")
+
+        val energyRecharge = uiMsgs.first { it.id == "energy_recharge" }
+        assertEquals("ENERGY RECHARGE", energyRecharge.text)
+
+        val missileReload = uiMsgs.first { it.id == "missile_reload" }
+        assertEquals("MISSILE RELOAD", missileReload.text)
+
+        val savePrompt1 = uiMsgs.first { it.id == "save_prompt_1" }
+        assertEquals("WOULD YOU LIKE", savePrompt1.text)
+
+        val savePrompt2 = uiMsgs.first { it.id == "save_prompt_2" }
+        assertEquals("TO SAVE.", savePrompt2.text)
+
+        val saveDone = uiMsgs.first { it.id == "save_done" }
+        assertEquals("SAVE COMPLETED.", saveDone.text)
+
+        val reserve = uiMsgs.first { it.id == "reserve_label" }
+        assertEquals("RESERVE TANK", reserve.text)
+    }
+
+    @Test
+    fun `UI message roundtrip encode-decode preserves text`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val energy = entries.first { it.id == "energy_recharge" }
+
+        val encoded = TextData.encodeUiMessage("PLASMA CHARGE", energy.rawBytes)
+        val decoded = TextData.decodeUiMessage(encoded, 0)
+        assertTrue(decoded.contains("PLASMA CHARGE"), "Roundtrip should preserve text, got: $decoded")
+    }
+
+    @Test
+    fun `UI message encode handles shorter text with padding`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val missile = entries.first { it.id == "missile_reload" }
+
+        val encoded = TextData.encodeUiMessage("HI", missile.rawBytes)
+        val decoded = TextData.decodeUiMessage(encoded, 0)
+        assertTrue(decoded.contains("HI"), "Should contain 'HI', got: $decoded")
+    }
+
+    @Test
+    fun `item pickup names decode correctly from ROM`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val itemNames = entries.filter { it.category == TextCategory.ITEM_NAME }
+        assertEquals(19, itemNames.size, "Should have 19 item names")
+
+        assertEquals("ENERGY TANK", itemNames.first { it.id == "item_energy_tank" }.text)
+        assertEquals("MISSILE", itemNames.first { it.id == "item_missile" }.text)
+        assertEquals("SUPER MISSILE", itemNames.first { it.id == "item_super_missile" }.text)
+        assertEquals("POWER BOMB", itemNames.first { it.id == "item_power_bomb" }.text)
+        assertEquals("VARIA SUIT", itemNames.first { it.id == "item_varia_suit" }.text)
+        assertEquals("CHARGE BEAM", itemNames.first { it.id == "item_charge_beam" }.text)
+        assertEquals("SPAZER", itemNames.first { it.id == "item_spazer" }.text)
+        assertEquals("PLASMA BEAM", itemNames.first { it.id == "item_plasma_beam" }.text)
+        assertEquals("BOMB", itemNames.first { it.id == "item_bomb" }.text)
+    }
+
+    @Test
+    fun `item pickup name roundtrip encode-decode preserves text`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val missile = entries.first { it.id == "item_missile" }
+
+        val encoded = TextData.encodeUiMessage("HYPER BEAM", missile.rawBytes)
+        val decoded = TextData.decodeUiMessage(encoded, 0, missile.maxLength)
+        assertTrue(decoded.contains("HYPER BEAM"), "Roundtrip should preserve text, got: $decoded")
+    }
+
+    @Test
+    fun `UI message encode handles period character`() {
+        val rom = TestRomHelper.loadRomBytes()
+        assumeTrue(rom != null, "ROM not available")
+
+        val entries = TextData.readAllText(rom!!)
+        val saveDone = entries.first { it.id == "save_done" }
+
+        val encoded = TextData.encodeUiMessage("DONE.", saveDone.rawBytes)
+        val decoded = TextData.decodeUiMessage(encoded, 0)
+        assertTrue(decoded.contains("DONE."), "Should handle period, got: $decoded")
     }
 }
