@@ -266,6 +266,38 @@ object TextData {
         return result
     }
 
+    /**
+     * Encode edited green text back into ROM format.
+     * Replaces character pointers in existing 6-byte records while preserving
+     * delay, X, Y positions and marker records. Text is mapped character-by-character
+     * to the original records — the section must have the same number of visible
+     * characters (extra chars are ignored, missing chars become spaces).
+     */
+    fun encodeGreenText(newText: String, originalBytes: ByteArray): ByteArray {
+        val result = originalBytes.copyOf()
+        val recordCount = originalBytes.size / GREEN_TEXT_RECORD_SIZE
+        // Flatten the new text into a list of characters (skip newlines — Y positions handle line breaks)
+        val chars = newText.uppercase().replace("\n", "").toList()
+        var charIdx = 0
+
+        for (i in 0 until recordCount) {
+            val off = i * GREEN_TEXT_RECORD_SIZE
+            if (off + GREEN_TEXT_RECORD_SIZE > result.size) break
+            val charPtr = (result[off + 4].toInt() and 0xFF) or ((result[off + 5].toInt() and 0xFF) shl 8)
+
+            // Skip section markers and line break markers
+            if (charPtr in SECTION_MARKERS || charPtr == MARKER_NEW) continue
+
+            // This is a character record — replace the pointer
+            val ch = if (charIdx < chars.size) chars[charIdx] else ' '
+            charIdx++
+            val newPtr = CHAR_TO_POINTER[ch] ?: CHAR_TO_POINTER[' '] ?: 0xD67D
+            result[off + 4] = (newPtr and 0xFF).toByte()
+            result[off + 5] = ((newPtr shr 8) and 0xFF).toByte()
+        }
+        return result
+    }
+
     /** Decode green text records into story sections (split by markers). */
     fun decodeGreenText(rom: ByteArray): List<GreenTextSection> {
         val sections = mutableListOf<GreenTextSection>()

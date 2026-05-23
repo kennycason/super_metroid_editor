@@ -4125,15 +4125,15 @@ class EditorState {
 
         // ─── Text edits ────────────────────────────────────────────
         var textPatched = 0
+        val allText = if (project.textEdits.isNotEmpty()) TextData.readAllText(romParser.getRomData()) else emptyList()
         for ((id, newText) in project.textEdits) {
-            val allText = TextData.readAllText(romParser.getRomData())
             val entry = allText.find { it.id == id } ?: continue
             val patched = when (entry.category) {
                 com.supermetroid.editor.rom.TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
                 com.supermetroid.editor.rom.TextCategory.ESCAPE_TEXT -> TextData.encodeEscapeText(newText, entry.rawBytes)
                 com.supermetroid.editor.rom.TextCategory.UI_MESSAGE -> TextData.encodeUiMessage(newText, entry.rawBytes)
-                com.supermetroid.editor.rom.TextCategory.ITEM_NAME -> continue // graphical tilemaps — pixel editor needed
-                com.supermetroid.editor.rom.TextCategory.INTRO_STORY -> continue // read-only for now
+                com.supermetroid.editor.rom.TextCategory.ITEM_NAME -> TextData.encodeUiMessage(newText, entry.rawBytes)
+                com.supermetroid.editor.rom.TextCategory.INTRO_STORY -> TextData.encodeGreenText(newText, entry.rawBytes)
             }
             for (i in patched.indices) {
                 if (entry.pcOffset + i < romData.size) {
