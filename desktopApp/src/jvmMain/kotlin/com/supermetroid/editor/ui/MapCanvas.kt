@@ -2641,13 +2641,16 @@ fun MapCanvas(
 
                                                     // Property flag checkboxes (from SMILE enemy editor)
                                                     Text("Enemy Data Flags", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    // Per-room enemy population properties field (16-bit).
+                                                    // These are PER-INSTANCE flags, not species-wide.
+                                                    // From SM disassembly: stored in $7E:0F86,x at runtime.
                                                     val flagDefs = listOf(
-                                                        0x0100 to "Invisible",
-                                                        0x0200 to "Move Off-Screen",
-                                                        0x0400 to "Platform",
-                                                        0x0800 to "Non-Responsive",
-                                                        0x1000 to "Respawn",
-                                                        0x2000 to "Block Plasma",
+                                                        0x0400 to "Platform (walkable)",
+                                                        0x0001 to "Invisible (don't draw)",
+                                                        0x0200 to "Persist Off-Screen",
+                                                        0x0800 to "Non-Responsive (no dmg)",
+                                                        0x2000 to "Solid to Beams",
+                                                        0x1000 to "Extended Spritemap",
                                                     )
                                                     for ((bit, label) in flagDefs) {
                                                         Row(
@@ -2661,7 +2664,7 @@ fun MapCanvas(
                                                                 },
                                                                 modifier = Modifier.size(16.dp)
                                                             )
-                                                            Text(label, fontSize = 9.sp, modifier = Modifier.padding(start = 4.dp))
+                                                            Text(label, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
                                                         }
                                                     }
                                                     Spacer(modifier = Modifier.height(4.dp))
@@ -2674,8 +2677,8 @@ fun MapCanvas(
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             modifier = Modifier.fillMaxWidth()
                                                         ) {
-                                                            Text(label, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.width(60.dp))
+                                                            Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.width(68.dp))
                                                             AppTextInput(
                                                                 value = value, onValueChange = onValueChange,
                                                                 modifier = Modifier.weight(1f),

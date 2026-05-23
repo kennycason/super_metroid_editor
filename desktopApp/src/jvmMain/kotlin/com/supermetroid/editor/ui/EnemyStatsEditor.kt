@@ -117,12 +117,22 @@ fun EnemyStatsEditor(
     romParser: RomParser?,
     modifier: Modifier = Modifier
 ) {
+    // All enemy fields (HP, DMG, AI pointers, GFX) share this map.
+    // Keys follow the pattern: "${enemyKey}_fieldName" (e.g., "zoomer_hp", "zoomer_touchAi")
     val values = remember(patch.id, editorState.patchVersion) {
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (e in ENEMY_DEFS) {
             map["${e.key}_hp"] = stored?.get("${e.key}_hp") ?: readEnemyStat(romParser, e.speciesId, 4) ?: e.defaultHp
             map["${e.key}_dmg"] = stored?.get("${e.key}_dmg") ?: readEnemyStat(romParser, e.speciesId, 6) ?: e.defaultDamage
+            // Restore any stored AI/GFX field overrides
+            if (stored != null) {
+                for (suffix in listOf("initAi", "mainAi", "touchAi", "shotAi", "hurtAi", "frozenAi",
+                    "grappleAi", "deathAnim", "extraGfx", "pbVuln")) {
+                    val key = "${e.key}_$suffix"
+                    stored[key]?.let { map[key] = it }
+                }
+            }
         }
         map
     }
@@ -138,14 +148,12 @@ fun EnemyStatsEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("Enemy Stats Editor", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
         Text(
-            "Edit HP and contact damage for common enemies. Changes apply when patch is enabled.",
+            "Edit HP, damage, AI routines, and graphics. Click an enemy name to expand details.",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
         val grouped = ENEMY_DEFS.groupBy { it.category }
         for (cat in CATEGORY_ORDER) {
@@ -208,10 +216,13 @@ private fun EnemyCategorySection(
                 Text("HP", fontSize = 10.sp, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(72.dp), textAlign = TextAlign.Center)
-                Text("Damage", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("DMG", fontSize = 10.sp, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(72.dp), textAlign = TextAlign.Center)
             }
+            Text("Click enemy name to expand AI pointers and graphics info",
+                fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = 4.dp))
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (e in enemies) {
@@ -265,18 +276,18 @@ private fun EnemyDetailSection(
 ) {
     val detailColor = MaterialTheme.colorScheme.onSurfaceVariant
     val aiFields = listOf(
-        EnemyField("Init AI",    0x12, "${enemy.key}_initAi"),
-        EnemyField("Main AI",    0x16, "${enemy.key}_mainAi"),
-        EnemyField("Touch AI",   0x30, "${enemy.key}_touchAi"),
-        EnemyField("Shot AI",    0x32, "${enemy.key}_shotAi"),
-        EnemyField("Hurt AI",    0x1C, "${enemy.key}_hurtAi"),
-        EnemyField("Frozen AI",  0x1E, "${enemy.key}_frozenAi"),
-        EnemyField("Grapple",    0x1A, "${enemy.key}_grappleAi"),
-        EnemyField("Death Anim", 0x22, "${enemy.key}_deathAnim"),
+        EnemyField("Init AI",    0x12, "${enemy.key}_initAi",    "Runs once when enemy spawns"),
+        EnemyField("Main AI",    0x16, "${enemy.key}_mainAi",    "Runs every frame (movement, behavior)"),
+        EnemyField("Touch AI",   0x30, "${enemy.key}_touchAi",   "Runs when Samus touches enemy"),
+        EnemyField("Shot AI",    0x32, "${enemy.key}_shotAi",    "Runs when projectile hits enemy"),
+        EnemyField("Hurt AI",    0x1C, "${enemy.key}_hurtAi",    "Runs when enemy takes damage"),
+        EnemyField("Frozen AI",  0x1E, "${enemy.key}_frozenAi",  "Runs while enemy is frozen"),
+        EnemyField("Grapple",    0x1A, "${enemy.key}_grappleAi", "Reaction to Grapple Beam"),
+        EnemyField("Death Anim", 0x22, "${enemy.key}_deathAnim", "Death explosion/effect type"),
     )
     val gfxFields = listOf(
-        EnemyField("Extra GFX",  0x18, "${enemy.key}_extraGfx"),
-        EnemyField("PB Vuln",    0x28, "${enemy.key}_pbVuln"),
+        EnemyField("Extra GFX",  0x18, "${enemy.key}_extraGfx",  "Pointer to additional graphics"),
+        EnemyField("PB Vuln",    0x28, "${enemy.key}_pbVuln",    "0000=vulnerable, xx80=immune"),
     )
 
     Surface(
@@ -305,11 +316,30 @@ private fun EnemyDetailSection(
             for (row in aiFields.chunked(2)) {
                 Row(modifier = Modifier.fillMaxWidth()) {
                     for (field in row) {
-                        val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset)
-                        val curVal = values[field.key] ?: romVal ?: 0
-                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                            Text(field.label, fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
-                            EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                        val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset) ?: 0
+                        val curVal = values[field.key] ?: romVal
+                        val isModified = values.containsKey(field.key) && curVal != romVal
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(field.label, fontSize = 10.sp,
+                                    color = if (isModified) Color(0xFFFFCC00) else detailColor,
+                                    fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.width(68.dp))
+                                EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                                val routineDesc = aiRoutineLabel(curVal)
+                                if (routineDesc.isNotEmpty()) {
+                                    Text(routineDesc, fontSize = 9.sp, color = Color(0xFF80C0FF),
+                                        modifier = Modifier.padding(start = 4.dp))
+                                }
+                                if (isModified) {
+                                    Text("↩", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
+                                }
+                            }
+                            if (field.tooltip.isNotEmpty()) {
+                                Text(field.tooltip, fontSize = 9.sp, color = detailColor.copy(alpha = 0.6f),
+                                    modifier = Modifier.padding(start = 2.dp, bottom = 2.dp))
+                            }
                         }
                     }
                 }
@@ -350,11 +380,19 @@ private fun EnemyDetailSection(
             // Extra GFX + PB vulnerability
             Row(modifier = Modifier.fillMaxWidth()) {
                 for (field in gfxFields) {
-                    val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset)
-                    val curVal = values[field.key] ?: romVal ?: 0
+                    val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset) ?: 0
+                    val curVal = values[field.key] ?: romVal
+                    val isModified = values.containsKey(field.key) && curVal != romVal
                     Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text(field.label, fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                        Text(field.label, fontSize = 10.sp,
+                            color = if (isModified) Color(0xFFFFCC00) else detailColor,
+                            fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier.width(64.dp))
                         EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                        if (isModified) {
+                            Text("↩", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
+                        }
                     }
                 }
             }
@@ -362,7 +400,21 @@ private fun EnemyDetailSection(
     }
 }
 
-private data class EnemyField(val label: String, val offset: Int, val key: String)
+private data class EnemyField(val label: String, val offset: Int, val key: String, val tooltip: String = "")
+
+/** Known AI routine addresses and their descriptions (from SM disassembly). */
+private val KNOWN_AI_ROUTINES = mapOf(
+    0x0000 to "None",
+    0x0001 to "Null (no-op)",
+    0x800A to "Default grapple reaction",
+    0x8023 to "Standard touch (damage Samus)",
+    0x802D to "Standard shot (take damage, flash)",
+    0x8041 to "Standard freeze (become frozen)",
+    0x804C to "Standard hurt (flash + recoil)",
+)
+
+/** Look up a human-readable label for an AI routine pointer, or format as hex. */
+private fun aiRoutineLabel(value: Int): String = KNOWN_AI_ROUTINES[value] ?: ""
 
 @Composable
 private fun EnemyStatInput(
