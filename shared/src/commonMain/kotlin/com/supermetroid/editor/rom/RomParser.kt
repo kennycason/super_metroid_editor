@@ -925,6 +925,26 @@ class RomParser(internal val romData: ByteArray) {
      * Parse all door entries for a room. Reads the door-out list until an
      * invalid pointer is encountered, up to [maxDoors].
      */
+    /** Read a save entry for a given area and save index. */
+    fun readSaveEntry(area: Int, saveIndex: Int): SaveEntry? {
+        if (area !in 0..7) return null
+        val ptrOff = SAVE_TABLE_PTR_PC + area * 2
+        if (ptrOff + 1 >= romData.size) return null
+        val areaPtr = (romData[ptrOff].toInt() and 0xFF) or ((romData[ptrOff + 1].toInt() and 0xFF) shl 8)
+        val areaBase = snesToPc(0x800000 or areaPtr)
+        val entryOff = areaBase + saveIndex * SAVE_ENTRY_SIZE
+        if (entryOff + SAVE_ENTRY_SIZE > romData.size) return null
+        return SaveEntry(
+            roomId = readU16(romData, entryOff),
+            doorPtr = readU16(romData, entryOff + 2),
+            scrollX = readU16(romData, entryOff + 6),
+            scrollY = readU16(romData, entryOff + 8),
+            samusY = readU16(romData, entryOff + 10),
+            samusX = readU16(romData, entryOff + 12),
+            pcOffset = entryOff,
+        )
+    }
+
     fun parseDoorList(doorOutPtr: Int, maxDoors: Int = 16): List<DoorEntry> {
         val entries = mutableListOf<DoorEntry>()
         for (i in 0 until maxDoors) {
@@ -1486,6 +1506,22 @@ class RomParser(internal val romData: ByteArray) {
             StationPlmDef("Missile Refill",         "MR", 0xB6EB, 0x0000),
             StationPlmDef("Mapping Station",        "Mp", 0xB6D3, 0x0000),
             StationPlmDef("Elevator Base",          "El", 0xB70B, 0x0000),
+        )
+
+        // ─── Save station spawn data ──────────────────────────────────
+        // AreaSave table: pointer table at PC $44B5, 8 area pointers (one per area).
+        // Each area has N save entries, each 14 bytes:
+        //   +$00: Room ID (2B)     +$02: Door Ptr (2B)     +$04: Unknown (2B, always 0)
+        //   +$06: Scroll X (2B)   +$08: Scroll Y (2B)
+        //   +$0A: Samus Y (2B)   +$0C: Samus X (2B)
+        const val SAVE_TABLE_PTR_PC = 0x0044B5
+        const val SAVE_ENTRY_SIZE = 14
+
+        data class SaveEntry(
+            val roomId: Int, val doorPtr: Int,
+            val scrollX: Int, val scrollY: Int,
+            val samusY: Int, val samusX: Int,
+            val pcOffset: Int,
         )
 
         // ─── Gate PLM catalog ───────────────────────────────────────

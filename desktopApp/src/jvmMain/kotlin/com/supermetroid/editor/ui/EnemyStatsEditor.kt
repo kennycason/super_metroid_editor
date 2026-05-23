@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -214,7 +215,7 @@ private fun EnemyCategorySection(
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (e in enemies) {
-                EnemyRow(e, values, onApply)
+                EnemyRow(e, values, onApply, romParser)
             }
         }
     }
@@ -224,32 +225,144 @@ private fun EnemyCategorySection(
 private fun EnemyRow(
     enemy: EnemyDef,
     values: Map<String, Int>,
-    onApply: (String, Int) -> Unit
+    onApply: (String, Int) -> Unit,
+    romParser: RomParser? = null,
 ) {
     val hp = values["${enemy.key}_hp"] ?: enemy.defaultHp
     val dmg = values["${enemy.key}_dmg"] ?: enemy.defaultDamage
     val hpModified = hp != enemy.defaultHp
     val dmgModified = dmg != enemy.defaultDamage
+    var expanded by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            enemy.name,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f),
-            fontWeight = if (hpModified || dmgModified) FontWeight.Medium else FontWeight.Normal,
-            color = if (hpModified || dmgModified) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface
-        )
-        EnemyStatInput(hp, { onApply("${enemy.key}_hp", it) }, Modifier.width(72.dp))
-        Spacer(Modifier.width(4.dp))
-        EnemyStatInput(dmg, { onApply("${enemy.key}_dmg", it) }, Modifier.width(72.dp))
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp, horizontal = 4.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                enemy.name,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f).clickable { expanded = !expanded },
+                fontWeight = if (hpModified || dmgModified) FontWeight.Medium else FontWeight.Normal,
+                color = if (hpModified || dmgModified) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface
+            )
+            EnemyStatInput(hp, { onApply("${enemy.key}_hp", it) }, Modifier.width(72.dp))
+            Spacer(Modifier.width(4.dp))
+            EnemyStatInput(dmg, { onApply("${enemy.key}_dmg", it) }, Modifier.width(72.dp))
+        }
+        // Expandable AI/GFX detail section
+        if (expanded && romParser != null) {
+            EnemyDetailSection(enemy, values, onApply, romParser)
+        }
     }
 }
+
+/** Expandable section showing AI pointers, tile data, and layer control for an enemy species. */
+@Composable
+private fun EnemyDetailSection(
+    enemy: EnemyDef,
+    values: Map<String, Int>,
+    onApply: (String, Int) -> Unit,
+    romParser: RomParser,
+) {
+    val detailColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val aiFields = listOf(
+        EnemyField("Init AI",    0x12, "${enemy.key}_initAi"),
+        EnemyField("Main AI",    0x16, "${enemy.key}_mainAi"),
+        EnemyField("Touch AI",   0x30, "${enemy.key}_touchAi"),
+        EnemyField("Shot AI",    0x32, "${enemy.key}_shotAi"),
+        EnemyField("Hurt AI",    0x1C, "${enemy.key}_hurtAi"),
+        EnemyField("Frozen AI",  0x1E, "${enemy.key}_frozenAi"),
+        EnemyField("Grapple",    0x1A, "${enemy.key}_grappleAi"),
+        EnemyField("Death Anim", 0x22, "${enemy.key}_deathAnim"),
+    )
+    val gfxFields = listOf(
+        EnemyField("Extra GFX",  0x18, "${enemy.key}_extraGfx"),
+        EnemyField("PB Vuln",    0x28, "${enemy.key}_pbVuln"),
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            // Species ID + AI bank
+            val aiBank = readEnemyStat(romParser, enemy.speciesId, 0x10)
+            Row {
+                Text("Species", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(72.dp))
+                Text("\$${enemy.speciesId.toString(16).uppercase()}", fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.width(12.dp))
+                Text("AI Bank", fontSize = 9.sp, color = detailColor)
+                Spacer(Modifier.width(4.dp))
+                Text("\$${(aiBank ?: 0).toString(16).uppercase().padStart(4, '0')}", fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
+            }
+            Spacer(Modifier.height(4.dp))
+
+            // AI pointers (2-column layout)
+            Text("AI Routines", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+            Spacer(Modifier.height(2.dp))
+            for (row in aiFields.chunked(2)) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    for (field in row) {
+                        val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset)
+                        val curVal = values[field.key] ?: romVal ?: 0
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            Text(field.label, fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                            EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+
+            // GFX fields
+            Text("Graphics", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+            Spacer(Modifier.height(2.dp))
+
+            // Tile data pointer (3 bytes)
+            val tileSize = readEnemyStat(romParser, enemy.speciesId, 0x00)
+            val tilePtrLo = readEnemyStat(romParser, enemy.speciesId, 0x36)
+            val tilePtrBank = readEnemyStatByte(romParser, enemy.speciesId, 0x38)
+            val layerCtrl = readEnemyStatByte(romParser, enemy.speciesId, 0x39)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("Tile Size", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                Text("${tileSize ?: 0} bytes", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.width(12.dp))
+                Text("Tile Ptr", fontSize = 9.sp, color = detailColor)
+                Spacer(Modifier.width(4.dp))
+                Text("\$${(tilePtrBank ?: 0).toString(16).uppercase().padStart(2, '0')}:${(tilePtrLo ?: 0).toString(16).uppercase().padStart(4, '0')}",
+                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("Layer", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                val layerStr = when ((layerCtrl ?: 0) and 0x03) {
+                    0 -> "BG3 (behind BG)"
+                    1 -> "BG2 (behind enemies)"
+                    2 -> "Sprites (normal)"
+                    3 -> "Sprites (foreground)"
+                    else -> "Unknown"
+                }
+                Text("\$${(layerCtrl ?: 0).toString(16).uppercase().padStart(2, '0')} — $layerStr",
+                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
+
+            // Extra GFX + PB vulnerability
+            Row(modifier = Modifier.fillMaxWidth()) {
+                for (field in gfxFields) {
+                    val romVal = readEnemyStat(romParser, enemy.speciesId, field.offset)
+                    val curVal = values[field.key] ?: romVal ?: 0
+                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(field.label, fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                        EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class EnemyField(val label: String, val offset: Int, val key: String)
 
 @Composable
 private fun EnemyStatInput(
@@ -281,6 +394,35 @@ private fun EnemyStatInput(
     )
 }
 
+/** Hex input for AI pointers and other 16-bit hex values. */
+@Composable
+private fun EnemyHexInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var text by remember(value) { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
+    BasicTextField(
+        value = text,
+        onValueChange = { raw ->
+            val filtered = raw.uppercase().filter { it in '0'..'9' || it in 'A'..'F' }.take(4)
+            text = filtered
+            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(0, 0xFFFF)) }
+        },
+        singleLine = true,
+        textStyle = TextStyle(
+            fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = modifier
+            .height(22.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp))
+            .padding(horizontal = 2.dp, vertical = 2.dp)
+    )
+}
+
 // ─── ROM access ─────────────────────────────────────────────────
 
 private fun readEnemyStat(romParser: RomParser?, speciesId: Int, offset: Int): Int? {
@@ -292,5 +434,15 @@ private fun readEnemyStat(romParser: RomParser?, speciesId: Int, offset: Int): I
         if (pc + 1 < rom.size) {
             (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)
         } else null
+    } catch (_: Exception) { null }
+}
+
+private fun readEnemyStatByte(romParser: RomParser?, speciesId: Int, offset: Int): Int? {
+    if (romParser == null) return null
+    return try {
+        val snesAddr = RomConstants.BANK_ENEMY_AI or speciesId
+        val pc = romParser.snesToPc(snesAddr) + offset
+        val rom = romParser.getRomData()
+        if (pc < rom.size) rom[pc].toInt() and 0xFF else null
     } catch (_: Exception) { null }
 }
