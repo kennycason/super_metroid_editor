@@ -422,13 +422,22 @@ private fun EnemyStatInput(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    var text by remember { mutableStateOf(value.toString()) }
+    var lastExternalValue by remember { mutableStateOf(value) }
+    if (value != lastExternalValue) {
+        text = value.toString()
+        lastExternalValue = value
+    }
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it.isDigit() }.take(5)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
+            val parsed = filtered.toIntOrNull()?.coerceIn(0, 65535)
+            if (parsed != null) {
+                lastExternalValue = parsed
+                onChange(parsed)
+            }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -453,13 +462,23 @@ private fun EnemyHexInput(
     onChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var text by remember(value) { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
+    var text by remember { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
+    // Sync from external value changes (e.g., reset button) without fighting the user's typing
+    var lastExternalValue by remember { mutableStateOf(value) }
+    if (value != lastExternalValue) {
+        text = value.toString(16).uppercase().padStart(4, '0')
+        lastExternalValue = value
+    }
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.uppercase().filter { it in '0'..'9' || it in 'A'..'F' }.take(4)
             text = filtered
-            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(0, 0xFFFF)) }
+            val parsed = filtered.toIntOrNull(16)?.coerceIn(0, 0xFFFF)
+            if (parsed != null) {
+                lastExternalValue = parsed
+                onChange(parsed)
+            }
         },
         singleLine = true,
         textStyle = TextStyle(
