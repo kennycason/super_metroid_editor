@@ -2206,6 +2206,34 @@ fun MapCanvas(
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(pName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    // Save station spawn details
+                                                    if (plm.id == 0xB76F && romParser != null) {
+                                                        val saveIdx = plm.param and 0xFF
+                                                        val area = roomHeader?.area ?: 0
+                                                        val saveEntry = romParser.readSaveEntry(area, saveIdx)
+                                                        if (saveEntry != null) {
+                                                            val detailColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                                            Text("Save #$saveIdx (Area $area)", fontSize = 9.sp, color = detailColor)
+                                                            Row {
+                                                                Text("Spawn: ", fontSize = 9.sp, color = detailColor)
+                                                                Text("X=${saveEntry.samusX} Y=${saveEntry.samusY}", fontSize = 9.sp,
+                                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                                    color = MaterialTheme.colorScheme.onSurface)
+                                                            }
+                                                            Row {
+                                                                Text("Scroll: ", fontSize = 9.sp, color = detailColor)
+                                                                Text("X=${saveEntry.scrollX} Y=${saveEntry.scrollY}", fontSize = 9.sp,
+                                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                                    color = MaterialTheme.colorScheme.onSurface)
+                                                            }
+                                                            Row {
+                                                                Text("Door: ", fontSize = 9.sp, color = detailColor)
+                                                                Text("\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = 9.sp,
+                                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                                    color = MaterialTheme.colorScheme.onSurface)
+                                                            }
+                                                        }
+                                                    }
                                                     if (RomParser.isScrollPlm(plm.id) && plm.id == 0xB703 && romParser != null) {
                                                         val rw = roomHeader?.width ?: 0
                                                         val isCustom = (plm.param and 0xFF00) == 0xCC00

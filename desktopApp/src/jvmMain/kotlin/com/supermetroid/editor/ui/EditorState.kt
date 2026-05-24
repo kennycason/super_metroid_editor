@@ -2865,7 +2865,26 @@ class EditorState {
                         modCount++
                     }
                 }
-                println("[EXPORT]   Enemy stats: $modCount values modified")
+                // AI routine pointers and graphics fields
+                val aiFields = listOf(
+                    "_initAi" to 0x12, "_mainAi" to 0x16, "_touchAi" to 0x30,
+                    "_shotAi" to 0x32, "_hurtAi" to 0x1C, "_frozenAi" to 0x1E,
+                    "_grappleAi" to 0x1A, "_deathAnim" to 0x22,
+                    "_extraGfx" to 0x18, "_pbVuln" to 0x28,
+                )
+                for (e in ENEMY_DEFS) {
+                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
+                    for ((suffix, offset) in aiFields) {
+                        val value = data["${e.key}$suffix"] ?: continue
+                        val pc = romParser.snesToPc(snesAddr) + offset
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            modCount++
+                        }
+                    }
+                }
+                println("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
             } else if (patch.configType == "enemy_drops") {
                 val data = patch.configData ?: continue
                 var modCount = 0
