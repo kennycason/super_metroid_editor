@@ -294,6 +294,18 @@ data class MinimapTileEdit(
 )
 
 /**
+ * Custom ASM code to be embedded in the ROM at export time.
+ * The bytes are written to free space in the appropriate bank,
+ * and the species header pointer is updated to the new address.
+ */
+@Serializable
+data class CustomAsmEntry(
+    val hexBytes: String,
+    val sourceAsm: String = "",
+    val label: String = "",
+)
+
+/**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
  */
@@ -307,6 +319,7 @@ data class SmEditProject(
     val patterns: MutableList<TilePattern> = mutableListOf(),
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
+    val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",

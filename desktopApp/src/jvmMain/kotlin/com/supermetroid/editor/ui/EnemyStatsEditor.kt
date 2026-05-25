@@ -158,7 +158,7 @@ fun EnemyStatsEditor(
         val grouped = ENEMY_DEFS.groupBy { it.category }
         for (cat in CATEGORY_ORDER) {
             val enemies = grouped[cat] ?: continue
-            EnemyCategorySection(cat, enemies, values, ::apply, romParser)
+            EnemyCategorySection(cat, enemies, values, ::apply, romParser, editorState)
             Spacer(Modifier.height(12.dp))
         }
 
@@ -183,7 +183,8 @@ private fun EnemyCategorySection(
     enemies: List<EnemyDef>,
     values: Map<String, Int>,
     onApply: (String, Int) -> Unit,
-    romParser: RomParser?
+    romParser: RomParser?,
+    editorState: EditorState? = null,
 ) {
     val catColor = when (category) {
         "Crawler" -> Color(0xFF8BC34A)
@@ -226,7 +227,7 @@ private fun EnemyCategorySection(
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (e in enemies) {
-                EnemyRow(e, values, onApply, romParser)
+                EnemyRow(e, values, onApply, romParser, editorState)
             }
         }
     }
@@ -238,6 +239,7 @@ private fun EnemyRow(
     values: Map<String, Int>,
     onApply: (String, Int) -> Unit,
     romParser: RomParser? = null,
+    editorState: EditorState? = null,
 ) {
     val hp = values["${enemy.key}_hp"] ?: enemy.defaultHp
     val dmg = values["${enemy.key}_dmg"] ?: enemy.defaultDamage
@@ -261,7 +263,7 @@ private fun EnemyRow(
         }
         // Expandable AI/GFX detail section
         if (expanded && romParser != null) {
-            EnemyDetailSection(enemy, values, onApply, romParser)
+            EnemyDetailSection(enemy, values, onApply, romParser, editorState)
         }
     }
 }
@@ -273,6 +275,7 @@ private fun EnemyDetailSection(
     values: Map<String, Int>,
     onApply: (String, Int) -> Unit,
     romParser: RomParser,
+    editorState: EditorState? = null,
 ) {
     val detailColor = MaterialTheme.colorScheme.onSurfaceVariant
     val aiFields = listOf(
@@ -392,6 +395,99 @@ private fun EnemyDetailSection(
                         if (isModified) {
                             Text("↩", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
+                        }
+                    }
+                }
+            }
+
+            // Custom ASM embedding
+            if (editorState != null) {
+                Spacer(Modifier.height(6.dp))
+                Text("Custom Code", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+                Text("Paste assembled hex bytes. On export, code is written to free space and the pointer is auto-linked.",
+                    fontSize = 8.sp, color = detailColor.copy(alpha = 0.5f))
+                Spacer(Modifier.height(2.dp))
+
+                val speciesHex = enemy.speciesId.toString(16).uppercase()
+                val asmFieldDefs = listOf("initAi" to "Init AI", "shotAi" to "Shot AI", "touchAi" to "Touch AI",
+                    "hurtAi" to "Hurt AI", "frozenAi" to "Frozen AI", "grappleAi" to "Grapple")
+                for ((fieldName, label) in asmFieldDefs) {
+                    val asmKey = "$speciesHex:$fieldName"
+                    val existing = editorState.project.customAsm[asmKey]
+                    var showEditor by remember(asmKey) { mutableStateOf(existing != null) }
+
+                    if (!showEditor) {
+                        Text("+ $label", fontSize = 9.sp, color = Color(0xFF80C0FF),
+                            modifier = Modifier.clickable { showEditor = true }.padding(vertical = 1.dp))
+                    } else {
+                        var hexText by remember(asmKey) { mutableStateOf(existing?.hexBytes ?: "") }
+                        var labelText by remember(asmKey) { mutableStateOf(existing?.label ?: "") }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(4.dp),
+                        ) {
+                            Column(Modifier.padding(6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF80C0FF))
+                                    Spacer(Modifier.weight(1f))
+                                    Text("✕", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.clickable {
+                                            editorState.project.customAsm.remove(asmKey)
+                                            editorState.markDirty()
+                                            showEditor = false
+                                        })
+                                }
+                                BasicTextField(
+                                    value = labelText,
+                                    onValueChange = { labelText = it },
+                                    singleLine = true,
+                                    textStyle = TextStyle(fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp))
+                                        .padding(4.dp),
+                                    decorationBox = { inner ->
+                                        if (labelText.isEmpty()) Text("Description (optional)", fontSize = 9.sp, color = detailColor.copy(alpha = 0.4f))
+                                        inner()
+                                    }
+                                )
+                                BasicTextField(
+                                    value = hexText,
+                                    onValueChange = { raw ->
+                                        hexText = raw.uppercase().filter { it in '0'..'9' || it in 'A'..'F' || it == ' ' || it == '\n' }
+                                    },
+                                    singleLine = false,
+                                    maxLines = 8,
+                                    textStyle = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurface),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                        .height(64.dp)
+                                        .background(Color(0xFF1A1A2E), RoundedCornerShape(3.dp))
+                                        .padding(4.dp),
+                                    decorationBox = { inner ->
+                                        if (hexText.isEmpty()) Text("Paste assembled hex bytes, e.g.:\n22 77 A4 A0 6B\n22 97 A4 A0 6B 60",
+                                            fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = detailColor.copy(alpha = 0.3f))
+                                        inner()
+                                    }
+                                )
+                                val byteCount = hexText.trim().split("\\s+".toRegex()).count { it.length == 2 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("$byteCount bytes", fontSize = 8.sp, color = detailColor)
+                                    Spacer(Modifier.weight(1f))
+                                    Text("Save", fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                        color = if (hexText.isNotBlank()) Color(0xFF00CC66) else detailColor,
+                                        modifier = Modifier.clickable {
+                                            if (hexText.isNotBlank()) {
+                                                editorState.project.customAsm[asmKey] = com.supermetroid.editor.data.CustomAsmEntry(
+                                                    hexBytes = hexText.trim(),
+                                                    label = labelText.trim(),
+                                                )
+                                                editorState.markDirty()
+                                            }
+                                        }.padding(4.dp))
+                                }
+                            }
                         }
                     }
                 }

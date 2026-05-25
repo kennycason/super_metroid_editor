@@ -94,6 +94,10 @@ import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
 import com.supermetroid.editor.ui.TextEditorPreview
 import com.supermetroid.editor.ui.TextEditorSidebar
+import com.supermetroid.editor.ui.EnemyTabSidebar
+import com.supermetroid.editor.ui.EnemyTabCanvas
+import com.supermetroid.editor.ui.BossTabSidebar
+import com.supermetroid.editor.ui.BossTabCanvas
 import com.supermetroid.editor.ui.SoundEditorCanvas
 import com.supermetroid.editor.ui.PaletteEditor
 import com.supermetroid.editor.ui.SpritePaletteEditor
@@ -402,7 +406,7 @@ fun main() = application {
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                val tabNames = listOf("Rooms", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text")
+                                val tabNames = listOf("Rooms", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
                                 tabNames.forEachIndexed { idx, name ->
                                     val selected = leftTab == idx
                                     Text(
@@ -709,6 +713,8 @@ fun main() = application {
                                     editorState = editorState,
                                     modifier = Modifier.fillMaxSize()
                                 )
+                                7 -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
+                                8 -> BossTabSidebar(editorState = editorState, romParser = romParser)
                             }
                             }
                         }
@@ -824,6 +830,8 @@ fun main() = application {
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
+                                    7 -> EnemyTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    8 -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
                                 }
                                 }
                             }

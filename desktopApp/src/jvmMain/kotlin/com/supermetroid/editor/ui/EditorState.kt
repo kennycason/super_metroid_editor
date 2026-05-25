@@ -1467,6 +1467,22 @@ class EditorState {
 
     fun getSelectedPatch(): SmPatch? = project.patches.find { it.id == selectedPatchId }
 
+    /** Find an existing patch by configType, or create and add one. Used by Enemy/Boss tabs. */
+    fun findOrCreateConfigPatch(configType: String): SmPatch {
+        seedDefaultPatches()
+        val existing = project.patches.find { it.configType == configType }
+        if (existing != null) return existing
+        val patch = SmPatch(
+            id = configType,
+            name = configType.replace("_", " ").replaceFirstChar { it.uppercase() },
+            configType = configType,
+            enabled = true,
+        )
+        project.patches.add(patch)
+        markDirty()
+        return patch
+    }
+
     private var patchesSeeded = false
 
     /** Ensure all default patches exist; loads bundled IPS + hardcoded hex demos. Idempotent. */
@@ -4163,7 +4179,61 @@ class EditorState {
         }
         if (textPatched > 0) println("[EXPORT] Patched $textPatched text entries")
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0) {
+        // ─── Custom ASM embedding ─────────────────────────────────────
+        // Write custom code bytes to free space in bank $A0 and update
+        // the species header pointer to the new address.
+        var asmPatched = 0
+        for ((key, entry) in project.customAsm) {
+            val parts = key.split(":")
+            if (parts.size != 2) continue
+            val speciesId = parts[0].toIntOrNull(16) ?: continue
+            val fieldName = parts[1]
+
+            val headerOffset = when (fieldName) {
+                "initAi" -> 0x12; "mainAi" -> 0x16; "touchAi" -> 0x30
+                "shotAi" -> 0x32; "hurtAi" -> 0x1C; "frozenAi" -> 0x1E
+                "grappleAi" -> 0x1A; "deathAnim" -> 0x22
+                else -> continue
+            }
+
+            val codeBytes = entry.hexBytes.trim().split("\\s+".toRegex())
+                .filter { it.isNotEmpty() }
+                .mapNotNull { it.toIntOrNull(16)?.toByte() }
+                .toByteArray()
+            if (codeBytes.isEmpty()) continue
+
+            // Find free space in bank $A0 (scan backwards from end)
+            val bankStart = romParser.snesToPc(0xA08000)
+            val bankEnd = romParser.snesToPc(0xA0FFFF) + 1
+            var freePtr = bankEnd
+            while (freePtr > bankStart && romData[freePtr - 1] == 0xFF.toByte()) freePtr--
+            freePtr++ // leave 1 byte gap
+
+            if (freePtr + codeBytes.size > bankEnd) {
+                println("[EXPORT] WARN: Not enough free space in bank \$A0 for custom ASM ($key)")
+                continue
+            }
+
+            // Write code bytes
+            System.arraycopy(codeBytes, 0, romData, freePtr, codeBytes.size)
+
+            // Calculate SNES address
+            val newSnesPtr = 0x8000 + (freePtr - bankStart)
+
+            // Update species header pointer
+            val headerPc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
+            if (headerPc + headerOffset + 1 < romData.size) {
+                romData[headerPc + headerOffset] = (newSnesPtr and 0xFF).toByte()
+                romData[headerPc + headerOffset + 1] = ((newSnesPtr shr 8) and 0xFF).toByte()
+            }
+
+            asmPatched++
+            val label = entry.label.ifEmpty { fieldName }
+            println("[EXPORT] Custom ASM: $label → \$A0:${newSnesPtr.toString(16).uppercase()} (${codeBytes.size} bytes) for species \$${parts[0]}")
+        }
+        if (asmPatched > 0) println("[EXPORT] Embedded $asmPatched custom ASM routine(s)")
+
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             out.writeBytes(romData)

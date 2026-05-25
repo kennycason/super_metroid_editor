@@ -68,7 +68,9 @@ fun PatchListPanel(
     modifier: Modifier = Modifier
 ) {
     @Suppress("UNUSED_VARIABLE") val pv = editorState.patchVersion
-    val patches = editorState.project.patches
+    // Filter out enemy/boss patches — they have their own top-level tabs
+    val enemyBossTypes = setOf("enemy_stats", "enemy_drops", "enemy_vuln", "boss_stats", "boss_defeated", "phantoon")
+    val patches = editorState.project.patches.filter { it.configType !in enemyBossTypes }
     val selectedId = editorState.selectedPatchId
     var searchQuery by remember { mutableStateOf("") }
 
