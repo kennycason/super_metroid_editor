@@ -85,6 +85,9 @@ class EditorState {
         private set
     var currentTilesetId: Int = 0
         private set
+    /** Currently active room state index (0 = first conditional, last = default). */
+    var currentStateIndex: Int = -1
+        private set
     var dirty by mutableStateOf(false)
         private set
 
@@ -1280,6 +1283,88 @@ class EditorState {
     }
 
     /**
+     * Shift all tiles within the current selection by (dx, dy).
+     * Copies tile words + BTS from the selection area, clears the source,
+     * writes to the destination, and moves the selection rectangle.
+     * Each shift is one undo step.
+     */
+    fun shiftSelection(dx: Int, dy: Int) {
+        val s = mapSelStart ?: return
+        val e = mapSelEnd ?: return
+        val data = workingLevelData ?: return
+        val bw = workingBlocksWide; val bh = workingBlocksTall
+        if (bw <= 0 || bh <= 0) return
+
+        val minX = minOf(s.first, e.first).coerceIn(0, bw - 1)
+        val maxX = maxOf(s.first, e.first).coerceIn(0, bw - 1)
+        val minY = minOf(s.second, e.second).coerceIn(0, bh - 1)
+        val maxY = maxOf(s.second, e.second).coerceIn(0, bh - 1)
+        val cols = maxX - minX + 1
+        val rows = maxY - minY + 1
+
+        // Read all tiles in the selection
+        val savedWords = Array(rows) { ry -> IntArray(cols) { rx -> readBlockWord(minX + rx, minY + ry) } }
+        val savedBts = Array(rows) { ry -> IntArray(cols) { rx -> readBts(minX + rx, minY + ry) } }
+
+        // Also read destination tiles (for undo — some may overlap with source)
+        val destMinX = minX + dx; val destMinY = minY + dy
+        val destWords = Array(rows) { ry -> IntArray(cols) { rx ->
+            val tx = destMinX + rx; val ty = destMinY + ry
+            if (tx in 0 until bw && ty in 0 until bh) readBlockWord(tx, ty) else 0
+        }}
+        val destBts = Array(rows) { ry -> IntArray(cols) { rx ->
+            val tx = destMinX + rx; val ty = destMinY + ry
+            if (tx in 0 until bw && ty in 0 until bh) readBts(tx, ty) else 0
+        }}
+
+        // Collect undo edits: record all source + dest tiles before changes
+        val edits = mutableListOf<TileEdit>()
+        val touchedCells = mutableSetOf<Pair<Int, Int>>()
+        for (ry in 0 until rows) for (rx in 0 until cols) {
+            val sx = minX + rx; val sy = minY + ry
+            if (touchedCells.add(sx to sy))
+                edits.add(TileEdit(sx, sy, savedWords[ry][rx], RomConstants.AIR_TILE_WORD, savedBts[ry][rx], 0))
+        }
+        for (ry in 0 until rows) for (rx in 0 until cols) {
+            val tx = destMinX + rx; val ty = destMinY + ry
+            if (tx in 0 until bw && ty in 0 until bh && touchedCells.add(tx to ty))
+                edits.add(TileEdit(tx, ty, destWords[ry][rx], savedWords[ry][rx], destBts[ry][rx], savedBts[ry][rx]))
+        }
+
+        // Apply: clear ALL source cells first, then write ALL destination cells
+        // This handles overlapping source/dest correctly
+        for (ry in 0 until rows) for (rx in 0 until cols) {
+            writeBlockWord(minX + rx, minY + ry, RomConstants.AIR_TILE_WORD)
+            writeBts(minX + rx, minY + ry, 0)
+        }
+        for (ry in 0 until rows) for (rx in 0 until cols) {
+            val tx = destMinX + rx; val ty = destMinY + ry
+            if (tx in 0 until bw && ty in 0 until bh) {
+                writeBlockWord(tx, ty, savedWords[ry][rx])
+                writeBts(tx, ty, savedBts[ry][rx])
+            }
+        }
+
+        // Push undo
+        val op = EditOperation("Shift selection (${dx},${dy})", edits)
+        undoStack.add(op); redoStack.clear(); undoVersion++
+
+        // Move selection rectangle
+        val newMinX = (minX + dx).coerceIn(0, bw - 1)
+        val newMinY = (minY + dy).coerceIn(0, bh - 1)
+        val newMaxX = (maxX + dx).coerceIn(0, bw - 1)
+        val newMaxY = (maxY + dy).coerceIn(0, bh - 1)
+        mapSelStart = newMinX to newMinY
+        mapSelEnd = newMaxX to newMaxY
+
+        // Save edits to project
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.operations.add(op)
+
+        editVersion++; dirty = true
+    }
+
+    /**
      * Remove project tile-default overrides for tiles we've fixed in TilesetDefaults.
      * Lets the core config take effect so users don't need to manually clear overrides.
      */
@@ -1991,6 +2076,53 @@ class EditorState {
         }
         // Bump render version without marking room as user-edited
         _editVersionState.value++
+    }
+
+    /**
+     * Switch to a different room state. Reloads enemies, PLMs, and scrolls
+     * from the selected state's data pointers. Level data is NOT reloaded
+     * (states typically share level data; if they don't, a full room reload is needed).
+     */
+    fun switchRoomState(stateIndex: Int, romParser: RomParser) {
+        val states = romParser.parseRoomStatesWithData(currentRoomId)
+        val state = states.getOrNull(stateIndex) ?: return
+        currentStateIndex = stateIndex
+
+        // Reload enemies from this state's enemy set pointer
+        _workingEnemies.clear()
+        _workingEnemies.addAll(romParser.parseEnemyPopulation(state.enemySetPtr))
+
+        // Reload PLMs from this state's PLM set pointer
+        _workingPlms.clear()
+        _workingPlms.addAll(romParser.parsePlmSet(state.plmSetPtr))
+        originalPlmCount = _workingPlms.size
+
+        // Reload scroll data from this state's scroll pointer
+        val room = romParser.readRoomHeader(currentRoomId) ?: return
+        val hc = project.rooms[project.roomKey(currentRoomId)]?.roomHeaderChange
+        val w = hc?.width ?: room.width
+        val h = hc?.height ?: room.height
+        _originalScrolls = romParser.parseScrollData(state.scrollPtr, w, h)
+        _workingScrolls = _originalScrolls.copyOf()
+        scrollVersion++
+
+        // If level data pointer differs from current, reload it
+        val currentLevelPtr = room.levelDataPtr
+        if (state.levelDataPtr != currentLevelPtr && state.levelDataPtr != 0) {
+            var levelData = romParser.decompressLZ2(state.levelDataPtr)
+            val effectiveWidth = hc?.width ?: room.width
+            val effectiveHeight = hc?.height ?: room.height
+            if (effectiveWidth != room.width || effectiveHeight != room.height) {
+                levelData = resizeLevelData(levelData, room.width, room.height, effectiveWidth, effectiveHeight)
+            }
+            originalLevelData = levelData.copyOf()
+            workingLevelData = levelData.copyOf()
+            workingBlocksWide = effectiveWidth * 16
+            workingBlocksTall = effectiveHeight * 16
+        }
+
+        editVersion++
+        println("Switched to state $stateIndex: ${state.stateInfo.conditionName} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})")
     }
 
     fun readBlockWord(bx: Int, by: Int): Int {
@@ -2715,6 +2847,72 @@ class EditorState {
      * custom tileset graphics as PNGs to a project-specific folder
      * ({romBase}_smedit/) so different ROMs don't overwrite each other.
      */
+    // ─── Room JSON Export/Import ────────────────────────────────
+    fun exportRoomToJson(roomId: Int, romParser: RomParser): String {
+        val room = romParser.readRoomHeader(roomId) ?: error("Room not found")
+        val roomKey = project.roomKey(roomId)
+        val hc = project.rooms[roomKey]?.roomHeaderChange
+        val effectiveWidth = hc?.width ?: room.width
+        val effectiveHeight = hc?.height ?: room.height
+
+        var levelData = romParser.decompressLZ2(room.levelDataPtr)
+        if (effectiveWidth != room.width || effectiveHeight != room.height) {
+            levelData = resizeLevelData(levelData, room.width, room.height, effectiveWidth, effectiveHeight)
+        }
+        // Apply tile edits from project
+        val wd = workingLevelData
+        val useLive = (currentRoomId == roomId && wd != null)
+        val dataToExport = if (useLive) wd else levelData
+
+        val scrolls = if (useLive) _workingScrolls.toList()
+        else romParser.parseScrollData(room.roomScrollsPtr, effectiveWidth, effectiveHeight).toList()
+
+        val enemies = if (useLive) _workingEnemies.toList()
+        else romParser.parseEnemyPopulation(room.enemySetPtr)
+
+        val plms = romParser.getAllPlmEntriesForRoom(roomId)
+        val doors = romParser.parseDoorList(room.doorOut)
+
+        val roomName = com.supermetroid.editor.data.RoomRepository().getAllRooms()
+            .find { it.getRoomIdAsInt() == roomId }?.name ?: "Room \$${roomKey}"
+
+        val export = com.supermetroid.editor.data.RoomExportData(
+            roomId = roomKey,
+            roomName = roomName,
+            width = effectiveWidth,
+            height = effectiveHeight,
+            tileset = room.tileset,
+            area = hc?.area ?: room.area,
+            levelDataBase64 = java.util.Base64.getEncoder().encodeToString(dataToExport),
+            scrollData = scrolls,
+            enemies = enemies.map { e ->
+                com.supermetroid.editor.data.EnemyExport(
+                    species = e.id.toString(16).uppercase(),
+                    x = e.x, y = e.y, initParam = e.initParam,
+                    properties = e.properties, extra1 = e.extra1, extra2 = e.extra2, extra3 = e.extra3
+                )
+            },
+            plms = plms.map { p ->
+                com.supermetroid.editor.data.PlmExport(
+                    id = p.id.toString(16).uppercase(),
+                    x = p.x, y = p.y, param = p.param
+                )
+            },
+            doors = doors.map { d ->
+                com.supermetroid.editor.data.DoorExport(
+                    destRoom = d.destRoomPtr.toString(16).uppercase(),
+                    bitflag = d.bitflag, direction = d.direction,
+                    doorCapCode = d.doorCapCode, screenX = d.screenX, screenY = d.screenY,
+                    distFromDoor = d.distFromDoor, entryCode = d.entryCode
+                )
+            },
+            musicTrack = room.musicTrack,
+        )
+        return kotlinx.serialization.json.Json { prettyPrint = true }.encodeToString(
+            com.supermetroid.editor.data.RoomExportData.serializer(), export
+        )
+    }
+
     fun saveProject(romParser: RomParser? = null): Boolean {
         if (projectFilePath.isEmpty()) return false
         return try {
@@ -4424,7 +4622,7 @@ internal fun resizeLevelData(
 
     // L1 tiles
     for (by in 0 until newBlocksH) for (bx in 0 until newBlocksW) {
-        val word = if (bx < copyW && by < copyH) readWord(2 + (by * oldBlocksW + bx) * 2) else 0
+        val word = if (bx < copyW && by < copyH) readWord(2 + (by * oldBlocksW + bx) * 2) else RomConstants.AIR_TILE_WORD
         val off = 2 + (by * newBlocksW + bx) * 2
         out[off] = (word and 0xFF).toByte()
         out[off + 1] = ((word shr 8) and 0xFF).toByte()

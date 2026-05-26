@@ -49,6 +49,9 @@ object RomConstants {
     /** Empty/transparent tile index used by boss spritemaps */
     const val EMPTY_TILE = 0x338
 
+    /** Empty air tile word for room level data: metatile $FF (black/empty CRE tile), block type 0 (air). */
+    const val AIR_TILE_WORD = 0x00FF
+
     // ─── Room State Data ─────────────────────────────────────────────
 
     /** Size of a room state data block in bytes (bank $8F) */

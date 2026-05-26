@@ -66,11 +66,11 @@ class RoomResizeTest {
             val resizedTile55 = readWord(resized, 2 + newIdx * 2)
             assertEquals(origTile55, resizedTile55, "Tile (5,5) should be preserved after grow")
 
-            // New column tiles should be 0 (air)
+            // New column tiles should be air (metatile $FF, block type 0)
             for (by in 0 until room.height * 16) {
                 val idx = by * newBlocksW + origBlocksW // first new column tile
                 val tile = readWord(resized, 2 + idx * 2)
-                assertEquals(0, tile, "New tile at (${origBlocksW},$by) should be air")
+                assertEquals(0x00FF, tile, "New tile at (${origBlocksW},$by) should be air")
             }
         }
 
@@ -88,11 +88,11 @@ class RoomResizeTest {
             val resizedTile = readWord(resized, 2 + (10 * blocksW + 10) * 2)
             assertEquals(origTile, resizedTile, "Tile (10,10) should be preserved")
 
-            // New row tiles should be 0
+            // New row tiles should be air
             for (bx in 0 until blocksW) {
                 val idx = origBlocksH * blocksW + bx
                 val tile = readWord(resized, 2 + idx * 2)
-                assertEquals(0, tile, "New tile at ($bx,$origBlocksH) should be air")
+                assertEquals(0x00FF, tile, "New tile at ($bx,$origBlocksH) should be air")
             }
         }
 
@@ -270,7 +270,7 @@ class RoomResizeTest {
 
             // Check new area is air
             val newAreaIdx = 0 * newBlocksW + (oldBlocksW) // first tile of new column
-            assertEquals(0, readWord(resized, 2 + newAreaIdx * 2), "New column should be air")
+            assertEquals(0x00FF, readWord(resized, 2 + newAreaIdx * 2), "New column should be air")
         }
 
         @Test

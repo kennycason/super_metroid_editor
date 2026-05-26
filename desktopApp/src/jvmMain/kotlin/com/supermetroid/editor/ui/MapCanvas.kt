@@ -563,7 +563,10 @@ fun MapCanvas(
                         Key.V -> { if (!keyEvent.isCtrlPressed && !keyEvent.isMetaPressed) { editorState.flipOrCaptureV(); true } else false }
                         Key.R -> { editorState.rotateOrCapture(); true }
                         Key.DirectionUp -> {
-                            if (onRoomSelected != null && rooms.isNotEmpty()) {
+                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                editorState.shiftSelection(0, -step); true
+                            } else if (onRoomSelected != null && rooms.isNotEmpty()) {
                                 val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
                                 val newIdx = if (currentIdx > 0) currentIdx - 1 else rooms.lastIndex
                                 if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
@@ -571,11 +574,26 @@ fun MapCanvas(
                             } else false
                         }
                         Key.DirectionDown -> {
-                            if (onRoomSelected != null && rooms.isNotEmpty()) {
+                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                editorState.shiftSelection(0, step); true
+                            } else if (onRoomSelected != null && rooms.isNotEmpty()) {
                                 val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
                                 val newIdx = if (currentIdx < rooms.lastIndex) currentIdx + 1 else 0
                                 if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
                                 true
+                            } else false
+                        }
+                        Key.DirectionLeft -> {
+                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                editorState.shiftSelection(-step, 0); true
+                            } else false
+                        }
+                        Key.DirectionRight -> {
+                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                editorState.shiftSelection(step, 0); true
                             } else false
                         }
                         Key.Z -> {
@@ -877,46 +895,84 @@ fun MapCanvas(
                         if (renderData != null) {
                             Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
                             val coroutineScopeForSave = rememberCoroutineScope()
-                            IconButton(
-                                onClick = {
-                                    coroutineScopeForSave.launch {
-                                        val roomName = room?.name?.replace(Regex("[^A-Za-z0-9_-]"), "_") ?: "room"
-                                        val chooser = javax.swing.JFileChooser().apply {
-                                            dialogTitle = "Save Map as PNG"
-                                            selectedFile = java.io.File("$roomName.png")
-                                            fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PNG Image", "png")
-                                        }
-                                        if (chooser.showSaveDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
-                                            var file = chooser.selectedFile
-                                            if (!file.name.endsWith(".png", ignoreCase = true)) file = java.io.File(file.path + ".png")
-                                            val rd = renderData!!
-                                            val es = editorState
-                                            val romRh = room?.let { romParser.readRoomHeader(it.getRoomIdAsInt()) }
-                                            val rh = if (romRh != null && es != null) es.applyHeaderChanges(romRh) else romRh
-                                            val rWidthScreens = rh?.width ?: 0
-                                            val rHeightScreens = rh?.height ?: 0
-                                            val scrollDataForSave = es?.workingScrolls ?: rh?.let { romParser.parseScrollData(it.roomScrollsPtr, it.width, it.height) }
-                                            val activeOvs = overlayToggles.filter { it.value }.keys
-                                            val img = if (es != null && es.workingLevelData != null && rh != null) {
-                                                val edited = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                                if (edited != null) buildCompositeImage(edited, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
-                                                else buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
-                                            } else {
-                                                buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                            var exportMenuExpanded by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(
+                                    onClick = { exportMenuExpanded = true },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.SaveAlt,
+                                        contentDescription = "Export room",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = exportMenuExpanded,
+                                    onDismissRequest = { exportMenuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Export as PNG", fontSize = 12.sp) },
+                                        onClick = {
+                                            exportMenuExpanded = false
+                                            coroutineScopeForSave.launch {
+                                                val roomName = room?.name?.replace(Regex("[^A-Za-z0-9_-]"), "_") ?: "room"
+                                                val chooser = javax.swing.JFileChooser().apply {
+                                                    dialogTitle = "Save Map as PNG"
+                                                    selectedFile = java.io.File("$roomName.png")
+                                                    fileFilter = javax.swing.filechooser.FileNameExtensionFilter("PNG Image", "png")
+                                                }
+                                                if (chooser.showSaveDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
+                                                    var file = chooser.selectedFile
+                                                    if (!file.name.endsWith(".png", ignoreCase = true)) file = java.io.File(file.path + ".png")
+                                                    val rd = renderData!!
+                                                    val es = editorState
+                                                    val romRh = room?.let { romParser.readRoomHeader(it.getRoomIdAsInt()) }
+                                                    val rh = if (romRh != null && es != null) es.applyHeaderChanges(romRh) else romRh
+                                                    val rWidthScreens = rh?.width ?: 0
+                                                    val rHeightScreens = rh?.height ?: 0
+                                                    val scrollDataForSave = es?.workingScrolls ?: rh?.let { romParser.parseScrollData(it.roomScrollsPtr, it.width, it.height) }
+                                                    val activeOvs = overlayToggles.filter { it.value }.keys
+                                                    val img = if (es != null && es.workingLevelData != null && rh != null) {
+                                                        val edited = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
+                                                        if (edited != null) buildCompositeImage(edited, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                                                        else buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                                                    } else {
+                                                        buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                                                    }
+                                                    ImageIO.write(img, "PNG", file)
+                                                }
                                             }
-                                            ImageIO.write(img, "PNG", file)
+                                            mapFocusReq.requestFocus()
                                         }
-                                    }
-                                    mapFocusReq.requestFocus()
-                                },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.SaveAlt,
-                                    contentDescription = "Save map as PNG",
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Export as JSON", fontSize = 12.sp) },
+                                        onClick = {
+                                            exportMenuExpanded = false
+                                            if (editorState != null && romParser != null && room != null) {
+                                                try {
+                                                    val rid = room.getRoomIdAsInt()
+                                                    val json = editorState.exportRoomToJson(rid, romParser)
+                                                    val roomHex = rid.toString(16).uppercase().padStart(4, '0')
+                                                    val defaultName = "${room.name.replace(" ", "_")}_$roomHex.json"
+                                                    val dialog = java.awt.FileDialog(null as java.awt.Frame?, "Export Room JSON", java.awt.FileDialog.SAVE)
+                                                    dialog.file = defaultName
+                                                    dialog.isVisible = true
+                                                    val dir = dialog.directory; val file = dialog.file
+                                                    if (dir != null && file != null) {
+                                                        java.io.File(dir, file).writeText(json)
+                                                        println("Exported room to: $dir$file")
+                                                    }
+                                                } catch (ex: Exception) {
+                                                    println("Room export failed: ${ex.message}")
+                                                }
+                                            }
+                                            mapFocusReq.requestFocus()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -2401,6 +2457,14 @@ fun MapCanvas(
                                         }
 
                                         // Add Door Cap button + dropdown
+                                        // Auto-detect direction from screen edge position
+                                        val autoDir = when {
+                                            propsBlockX % 16 == 0 -> "Right"   // left edge of screen → door opens right
+                                            propsBlockX % 16 == 15 -> "Left"   // right edge → opens left
+                                            propsBlockY % 16 == 0 -> "Down"    // top edge → opens down
+                                            propsBlockY % 16 == 15 -> "Up"     // bottom edge → opens up
+                                            else -> null
+                                        }
                                         Spacer(modifier = Modifier.height(4.dp))
                                         var addDoorCapExpanded by remember { mutableStateOf(false) }
                                         Box {
@@ -2414,7 +2478,8 @@ fun MapCanvas(
                                                     modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                 ) {
-                                                    Text("+ Add Door Cap", fontSize = 10.sp,
+                                                    Text("+ Add Door Cap" + if (autoDir != null) " ($autoDir)" else "",
+                                                        fontSize = 10.sp,
                                                         color = MaterialTheme.colorScheme.onTertiaryContainer)
                                                 }
                                             }
@@ -2422,6 +2487,25 @@ fun MapCanvas(
                                                 expanded = addDoorCapExpanded,
                                                 onDismissRequest = { addDoorCapExpanded = false }
                                             ) {
+                                                // If on screen edge, show auto-detected direction first
+                                                if (autoDir != null) {
+                                                    Text("Auto: $autoDir", fontSize = 9.sp,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                        color = Color(0xFF00CC66),
+                                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                                    val autoCaps = RomParser.DOOR_CAP_PLMS.filter { it.direction == autoDir }
+                                                    for (cap in autoCaps) {
+                                                        DropdownMenuItem(
+                                                            text = { DoorCapLabel(cap) },
+                                                            onClick = {
+                                                                addDoorCapExpanded = false
+                                                                editorState.addPlm(cap.plmId, propsBlockX, propsBlockY, 0x0000)
+                                                            },
+                                                            modifier = Modifier.height(28.dp)
+                                                        )
+                                                    }
+                                                    Divider()
+                                                }
                                                 val doorColors = listOf("Blue", "Red", "Green", "Yellow", "Grey")
                                                 for (color in doorColors) {
                                                     val caps = RomParser.DOOR_CAP_PLMS.filter { it.color == color }
@@ -2430,20 +2514,7 @@ fun MapCanvas(
                                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                                                     for (cap in caps) {
                                                         DropdownMenuItem(
-                                                            text = {
-                                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                                    verticalAlignment = Alignment.CenterVertically) {
-                                                                    val dotColor = when (cap.color) {
-                                                                        "Blue" -> Color(0xFF3880D0)
-                                                                        "Red" -> Color(0xFFD05050)
-                                                                        "Green" -> Color(0xFF40C048)
-                                                                        "Yellow" -> Color(0xFFD8C830)
-                                                                        else -> Color(0xFF808088)
-                                                                    }
-                                                                    Box(Modifier.size(10.dp).background(dotColor, MaterialTheme.shapes.extraSmall))
-                                                                    Text("${cap.direction}", fontSize = 11.sp)
-                                                                }
-                                                            },
+                                                            text = { DoorCapLabel(cap) },
                                                             onClick = {
                                                                 addDoorCapExpanded = false
                                                                 editorState.addPlm(cap.plmId, propsBlockX, propsBlockY, 0x0000)
@@ -2981,6 +3052,19 @@ internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (ov
  * Draw a speed booster arrow overlay — a right-pointing chevron/arrow
  * resembling the in-game speed booster visual.
  */
+@Composable
+private fun DoorCapLabel(cap: RomParser.Companion.DoorCapDef) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        val dotColor = when (cap.color) {
+            "Blue" -> Color(0xFF3880D0); "Red" -> Color(0xFFD05050)
+            "Green" -> Color(0xFF40C048); "Yellow" -> Color(0xFFD8C830)
+            else -> Color(0xFF808088)
+        }
+        Box(Modifier.size(10.dp).background(dotColor, RoundedCornerShape(2.dp)))
+        Text("${cap.color} ${cap.direction}", fontSize = 11.sp)
+    }
+}
+
 private fun drawSpeedBoosterOverlay(g2: java.awt.Graphics2D, x: Int, y: Int, size: Int, color: java.awt.Color) {
     // Background
     g2.color = java.awt.Color(0, 0, 0, 200)

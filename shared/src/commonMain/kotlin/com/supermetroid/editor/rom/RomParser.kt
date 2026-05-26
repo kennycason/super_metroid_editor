@@ -714,6 +714,53 @@ class RomParser(internal val romData: ByteArray) {
         return results
     }
     
+    /**
+     * Full state data fields read from a 26-byte state data block.
+     * Used for multi-state room editing — each state has its own set of pointers.
+     */
+    data class StateData(
+        val stateInfo: RoomStateInfo,
+        val levelDataPtr: Int,
+        val tileset: Int,
+        val musicData: Int,
+        val musicTrack: Int,
+        val fxPtr: Int,
+        val enemySetPtr: Int,
+        val enemyGfxPtr: Int,
+        val bgScrolling: Int,
+        val scrollPtr: Int,
+        val mainAsmPtr: Int,
+        val plmSetPtr: Int,
+        val bgDataPtr: Int,
+        val setupAsmPtr: Int,
+    )
+
+    /** Read full state data fields from a RoomStateInfo. */
+    fun readStateData(info: RoomStateInfo): StateData {
+        val pc = info.stateDataPcOffset
+        return StateData(
+            stateInfo = info,
+            levelDataPtr = readUInt24At(pc),
+            tileset = romData[pc + 3].toInt() and 0xFF,
+            musicData = romData[pc + 4].toInt() and 0xFF,
+            musicTrack = romData[pc + 5].toInt() and 0xFF,
+            fxPtr = readUInt16At(pc + 6),
+            enemySetPtr = readUInt16At(pc + 8),
+            enemyGfxPtr = readUInt16At(pc + 10),
+            bgScrolling = readUInt16At(pc + 12),
+            scrollPtr = readUInt16At(pc + 14),
+            mainAsmPtr = readUInt16At(pc + 18),
+            plmSetPtr = readUInt16At(pc + 20),
+            bgDataPtr = readUInt16At(pc + 22),
+            setupAsmPtr = readUInt16At(pc + 24),
+        )
+    }
+
+    /** Parse all room states with full data for multi-state editing. */
+    fun parseRoomStatesWithData(roomId: Int): List<StateData> {
+        return parseRoomStates(roomId).map { readStateData(it) }
+    }
+
     // ─── PLM (Post Load Modification) parsing ───────────────────────
     
     data class PlmEntry(val id: Int, val x: Int, val y: Int, val param: Int)
@@ -925,6 +972,40 @@ class RomParser(internal val romData: ByteArray) {
      * Parse all door entries for a room. Reads the door-out list until an
      * invalid pointer is encountered, up to [maxDoors].
      */
+    // ─── Space utilization ───────────────────────────────────────
+    data class RoomSpaceUsage(
+        val levelDataCompressed: Int,  // compressed bytes in ROM
+        val levelDataDecompressed: Int, // decompressed size
+        val plmCount: Int,             // number of PLM entries
+        val plmBytes: Int,             // plmCount * 6 + 2 (terminator)
+        val enemyCount: Int,
+        val enemyBytes: Int,           // enemyCount * 16 + 2
+        val scrollBytes: Int,          // width * height
+        val doorCount: Int,
+        val doorBytes: Int,            // doorCount * 12
+    )
+
+    fun readRoomSpaceUsage(roomId: Int): RoomSpaceUsage? {
+        val room = readRoomHeader(roomId) ?: return null
+        val (_, compSize) = decompressLZ2WithSize(room.levelDataPtr)
+        val decompData = decompressLZ2(room.levelDataPtr)
+        val plms = parsePlmSet(room.plmSetPtr)
+        val enemies = parseEnemyPopulation(room.enemySetPtr)
+        val scrollSize = room.width * room.height
+        val doors = parseDoorList(room.doorOut)
+        return RoomSpaceUsage(
+            levelDataCompressed = compSize,
+            levelDataDecompressed = decompData.size,
+            plmCount = plms.size,
+            plmBytes = plms.size * 6 + 2,
+            enemyCount = enemies.size,
+            enemyBytes = enemies.size * 16 + 2,
+            scrollBytes = scrollSize,
+            doorCount = doors.size,
+            doorBytes = doors.size * 12,
+        )
+    }
+
     /** Read a save entry for a given area and save index. */
     fun readSaveEntry(area: Int, saveIndex: Int): SaveEntry? {
         if (area !in 0..7) return null

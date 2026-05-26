@@ -28,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.remember
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -280,7 +282,10 @@ fun RoomPropertiesPanel(
                                     Text(state.conditionName, fontSize = 11.sp)
                                 }
                             },
-                            onClick = { stateDropExpanded = false; selectedStateIdx = idx },
+                            onClick = {
+                                stateDropExpanded = false; selectedStateIdx = idx
+                                editorState.switchRoomState(idx, romParser)
+                            },
                             modifier = Modifier.height(28.dp)
                         )
                     }
@@ -422,6 +427,22 @@ fun RoomPropertiesPanel(
         }
 
         Spacer(modifier = Modifier.height(4.dp))
+
+        // ── Space Usage ──
+        if (romParser != null) {
+            val spaceUsage = remember(room.roomId, editorState.editVersion) {
+                romParser.readRoomSpaceUsage(room.roomId)
+            }
+            if (spaceUsage != null) {
+                SectionHeader("Space Usage")
+                SpaceUsageBar("Level Data", spaceUsage.levelDataCompressed, "compressed")
+                SpaceUsageBar("PLMs", spaceUsage.plmBytes, "${spaceUsage.plmCount} entries")
+                SpaceUsageBar("Enemies", spaceUsage.enemyBytes, "${spaceUsage.enemyCount} entries")
+                SpaceUsageBar("Scrolls", spaceUsage.scrollBytes, "${room.width}×${room.height}")
+                SpaceUsageBar("Doors", spaceUsage.doorBytes, "${spaceUsage.doorCount} entries")
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
 
         // ── Scroll Data (editable) ──
         SectionHeader("Room Scrolls")
@@ -975,6 +996,20 @@ private fun BitfieldRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SpaceUsageBar(label: String, bytes: Int, detail: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(70.dp))
+        Text("$bytes B", fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Medium, modifier = Modifier.width(54.dp))
+        Text(detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
