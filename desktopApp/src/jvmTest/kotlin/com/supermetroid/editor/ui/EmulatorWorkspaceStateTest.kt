@@ -246,7 +246,21 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
-    fun `projectStateDir derives slug from ROM filename`() {
+    fun `projectStateDir uses project file path when set`() {
+        val state = EmulatorWorkspaceState()
+        state.updateProjectFilePath("/Users/kenny/roms/Super Metroid (JU) [!].smedit")
+        val dir = state.projectStateDir()
+        val normalizedPath = dir.path.replace('\\', '/')
+        assertTrue(normalizedPath.endsWith("Super Metroid (JU) [!]_states")) {
+            "Expected path to end with 'Super Metroid (JU) [!]_states' but was '$normalizedPath'"
+        }
+        assertTrue(normalizedPath.contains("/Users/kenny/roms/")) {
+            "Expected states dir to be alongside the project file but was '$normalizedPath'"
+        }
+    }
+
+    @Test
+    fun `projectStateDir falls back to ROM slug when no project file`() {
         val state = EmulatorWorkspaceState()
         state.updateRomPath("/Users/kenny/roms/Super Metroid (JU) [!].smc")
         val dir = state.projectStateDir()
@@ -268,15 +282,15 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
-    fun `projectStateDir changes when ROM path changes`() {
+    fun `projectStateDir is stable across ROM exports`() {
         val state = EmulatorWorkspaceState()
-        state.updateRomPath("/roms/GameA.smc")
-        val dirA = state.projectStateDir()
-        state.updateRomPath("/roms/GameB.sfc")
-        val dirB = state.projectStateDir()
-        assertFalse(dirA.path == dirB.path, "different ROMs should produce different state dirs")
-        assertTrue(dirA.path.contains("GameA"))
-        assertTrue(dirB.path.contains("GameB"))
+        state.updateProjectFilePath("/roms/MyHack.smedit")
+        state.updateRomPath("/roms/MyHack.smc")
+        val dirBefore = state.projectStateDir()
+        // Simulate exporting a patched ROM with version suffix
+        state.updateRomPath("/roms/MyHack-v1.0.smc")
+        val dirAfter = state.projectStateDir()
+        assertEquals(dirBefore.path, dirAfter.path, "state dir should not change when ROM path changes if project file is set")
     }
 
     private fun sampleGraph(): LoadedNavGraph {

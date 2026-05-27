@@ -117,6 +117,10 @@ fun EmulatorWorkspace(
         }
     }
 
+    LaunchedEffect(editorState.projectFilePath) {
+        workspaceState.updateProjectFilePath(editorState.projectFilePath.takeIf { it.isNotBlank() })
+    }
+
     LaunchedEffect(editorState.project.romPath) {
         val romPath = editorState.project.romPath.takeIf { it.isNotBlank() }
         workspaceState.updateRomPath(romPath)

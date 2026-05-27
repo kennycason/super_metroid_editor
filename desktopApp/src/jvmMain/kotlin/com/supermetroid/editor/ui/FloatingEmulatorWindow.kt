@@ -150,6 +150,11 @@ fun FloatingEmulatorWindow(
     val videoHeight = windowWidth / SNES_ASPECT
     val totalHeight = TITLE_BAR_HEIGHT + videoHeight + CONTROL_BAR_HEIGHT
 
+    // Keep project file path in sync so save states are stored alongside the project
+    LaunchedEffect(editorState.projectFilePath) {
+        workspaceState.updateProjectFilePath(editorState.projectFilePath.takeIf { it.isNotBlank() })
+    }
+
     // Auto-set ROM path from editor — restart emulator if a session is active
     LaunchedEffect(editorState.project.romPath) {
         val romPath = editorState.project.romPath.takeIf { it.isNotBlank() }

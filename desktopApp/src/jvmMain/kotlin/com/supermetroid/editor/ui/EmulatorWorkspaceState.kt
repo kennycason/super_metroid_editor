@@ -830,8 +830,28 @@ class EmulatorWorkspaceState(
         updateStateDirForProject()
     }
 
-    /** Compute a project-specific state directory from the current ROM path. */
+    /** Set the .smedit project file path so save states are stored alongside it. */
+    var projectFilePath: String? = null
+        private set
+
+    fun updateProjectFilePath(value: String?) {
+        projectFilePath = value?.trim()?.takeIf { it.isNotEmpty() }
+        updateStateDirForProject()
+    }
+
+    /**
+     * Compute a project-specific state directory.
+     * Prefers a `_states/` folder next to the .smedit project file (stable across ROM exports).
+     * Falls back to ~/.smedit/states/libretro/<slug> if no project file is set.
+     */
     internal fun projectStateDir(): File {
+        // If we have a project file, store states alongside it
+        projectFilePath?.let { path ->
+            val projectFile = File(path)
+            val statesDir = File(projectFile.parentFile, "${projectFile.nameWithoutExtension}_states")
+            return statesDir
+        }
+        // Fallback: derive from ROM path
         val projectSlug = currentRomPath?.let { File(it).nameWithoutExtension }
             ?.replace(Regex("[^a-zA-Z0-9_\\-.]"), "_")
             ?: "default"
@@ -839,7 +859,7 @@ class EmulatorWorkspaceState(
         return File(File(File(base, "states"), "libretro"), projectSlug)
     }
 
-    /** Point save states at a project-specific subdirectory derived from the ROM filename. */
+    /** Point save states at a project-specific subdirectory. */
     private fun updateStateDirForProject() {
         val b = backend as? LibretroBackend ?: return
         b.setStateDir(projectStateDir())
