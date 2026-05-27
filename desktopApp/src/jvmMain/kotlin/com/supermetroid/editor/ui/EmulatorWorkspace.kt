@@ -227,6 +227,10 @@ fun EmulatorWorkspace(
                         editorState = editorState,
                         rooms = rooms,
                         samusPosition = samusPos,
+                        emulatorConnected = workspaceState.isRunning,
+                        onMoveSamusHere = if (workspaceState.isRunning) { x, y ->
+                            scope.launch { workspaceState.moveSamusTo(x, y) }
+                        } else null,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

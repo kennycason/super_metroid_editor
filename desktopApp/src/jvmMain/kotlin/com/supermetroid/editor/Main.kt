@@ -746,12 +746,17 @@ fun main() = application {
                                             Pair(snap.samusX!!.toFloat(), snap.samusY!!.toFloat())
                                         } else null
 
+                                        val emuRunning = emulatorEnabled && emulatorWorkspaceState.isRunning
                                         MapCanvas(
                                             room = selectedRoom,
                                             romParser = romParser,
                                             editorState = editorState,
                                             rooms = rooms,
                                             samusPosition = samusPos,
+                                            emulatorConnected = emuRunning,
+                                            onMoveSamusHere = if (emuRunning) { x, y ->
+                                                scope.launch { emulatorWorkspaceState.moveSamusTo(x, y) }
+                                            } else null,
                                             onRoomSelected = { r ->
                                                 selectedRoom = r
                                                 val romPath = RomPreferences.getLastRomPath()

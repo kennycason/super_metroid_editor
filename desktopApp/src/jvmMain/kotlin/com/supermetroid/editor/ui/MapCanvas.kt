@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -529,6 +530,8 @@ fun MapCanvas(
     editorState: EditorState? = null,
     rooms: List<RoomInfo> = emptyList(),
     samusPosition: Pair<Float, Float>? = null,
+    emulatorConnected: Boolean = false,
+    onMoveSamusHere: ((x: Int, y: Int) -> Unit)? = null,
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -978,7 +981,7 @@ fun MapCanvas(
                     }
 
                 }
-                
+
                 // ─── Map Display ─────────────────────────────────────
                 Box(
                     modifier = Modifier
@@ -1165,6 +1168,9 @@ fun MapCanvas(
                                             }
                                         } else if (ne != null && ne.button == MouseEvent.BUTTON1 && editorState != null) {
                                             val (bx, by) = pointerToBlock(event.changes.first().position.x, event.changes.first().position.y)
+                                            // Track clicked block for "Move Samus Here" when emulator is live
+                                            if (emulatorConnected && bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
+                                            }
                                             // Cmd/Ctrl+click on a door block → navigate to connected room
                                             if ((ne.isMetaDown || ne.isControlDown) && onRoomSelected != null &&
                                                 bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
@@ -2896,6 +2902,29 @@ fun MapCanvas(
                                                     Text("No matches", fontSize = 10.sp,
                                                         modifier = Modifier.padding(8.dp),
                                                         color = MaterialTheme.colorScheme.outline)
+                                                }
+                                            }
+                                        }
+
+                                        // Move Samus Here (only when emulator is connected)
+                                        if (emulatorConnected && onMoveSamusHere != null) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth().height(28.dp)
+                                                    .clickable {
+                                                        val px = propsBlockX * 16 + 8
+                                                        val py = propsBlockY * 16 + 8
+                                                        onMoveSamusHere(px, py)
+                                                    },
+                                                shape = MaterialTheme.shapes.small,
+                                                color = Color(0xFF2196F3)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text("Move Samus Here ($propsBlockX, $propsBlockY)", fontSize = 10.sp,
+                                                        color = Color.White)
                                                 }
                                             }
                                         }

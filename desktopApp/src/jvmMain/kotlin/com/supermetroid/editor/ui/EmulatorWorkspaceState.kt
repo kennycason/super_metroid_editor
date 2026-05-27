@@ -549,6 +549,27 @@ class EmulatorWorkspaceState(
     }
 
     /**
+     * Move Samus to a specific pixel position within the current room.
+     * Writes X to WRAM 0x0AF6 and Y to WRAM 0x0AFA (16-bit LE each).
+     */
+    suspend fun moveSamusTo(x: Int, y: Int) {
+        val b = backend ?: return
+        if (!session.active) {
+            setStatus("No active session — start the emulator first")
+            return
+        }
+        b.writeMemory(0x0AF6, byteArrayOf(
+            (x and 0xFF).toByte(),
+            ((x shr 8) and 0xFF).toByte()
+        ))
+        b.writeMemory(0x0AFA, byteArrayOf(
+            (y and 0xFF).toByte(),
+            ((y shr 8) and 0xFF).toByte()
+        ))
+        setStatus("Moved Samus to ($x, $y)")
+    }
+
+    /**
      * Warp to a room by simulating a door transition.
      * Writes the DoorDef pointer into WRAM 0x078D and sets game_state to 0x06
      * (door transition), causing the SM engine to load the target room.
