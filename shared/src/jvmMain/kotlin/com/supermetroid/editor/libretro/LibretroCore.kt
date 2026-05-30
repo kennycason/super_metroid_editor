@@ -218,9 +218,17 @@ class LibretroCore(private val corePath: String) {
         require(size >= 0) { "Size must be non-negative" }
         val ptr = lib.retro_get_memory_data(LibretroConstants.RETRO_MEMORY_SYSTEM_RAM)
             ?: throw IllegalStateException("WRAM not available")
-        val memSize = lib.retro_get_memory_size(LibretroConstants.RETRO_MEMORY_SYSTEM_RAM)
+        val memSize = systemRamSize()
         if (address + size > memSize) throw IllegalArgumentException("Address out of range: $address + $size > $memSize")
         return ptr.getByteArray(address.toLong(), size)
+    }
+
+    fun systemRamSize(): Int {
+        lib.retro_get_memory_data(LibretroConstants.RETRO_MEMORY_SYSTEM_RAM)
+            ?: throw IllegalStateException("WRAM not available")
+        val size = lib.retro_get_memory_size(LibretroConstants.RETRO_MEMORY_SYSTEM_RAM)
+        check(size <= Int.MAX_VALUE) { "WRAM too large to copy on JVM: $size bytes" }
+        return size.toInt()
     }
 
     /** Write bytes to WRAM at the given offset. */
