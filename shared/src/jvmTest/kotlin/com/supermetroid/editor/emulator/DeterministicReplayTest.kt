@@ -51,7 +51,9 @@ class DeterministicReplayTest {
             assertTrue(result.matched, "Replay mismatch: ${result.failure}")
             assertFalse(captured.log.romHash.isBlank())
             assertFalse(captured.log.initialStateHash.isBlank())
+            assertFalse(captured.log.finalStateHash.isBlank())
             assertNotEquals(captured.log.romHash, captured.log.initialStateHash)
+            assertNotEquals(captured.log.initialStateHash, captured.log.finalStateHash)
             assertEquals(result.expectedFinalFrame?.systemRamHash, result.actualFinalFrame?.systemRamHash)
             assertEquals(result.expectedFinalFrame?.frameState, result.actualFinalFrame?.frameState)
         } finally {

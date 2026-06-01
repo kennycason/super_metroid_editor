@@ -9,6 +9,7 @@ import java.io.File
 // dlopen flags for loading libretro cores with isolated symbol scope
 private const val RTLD_LAZY = 0x00001
 private const val RTLD_LOCAL = 0x00000  // default on Linux, but explicit for clarity
+private const val RTLD_DEEPBIND = 0x00008
 
 /**
  * High-level wrapper around libretro core loaded via JNA.
@@ -64,10 +65,10 @@ class LibretroCore(private val corePath: String) {
     private lateinit var inputStateCallback: RetroInputStateCallback
 
     fun init() {
-        // Load with RTLD_LOCAL to prevent symbol conflicts with Compose/Skia's bundled native libs
-        val options = mapOf(
-            Library.OPTION_OPEN_FLAGS to (RTLD_LAZY or RTLD_LOCAL)
-        )
+        // Keep the core symbols local to avoid collisions with Compose/Skia native libs.
+        // RTLD_DEEPBIND is left opt-in because it can destabilize libstdc++ globals
+        // used by snes9x during ROM loading on some Linux systems.
+        val options = mapOf(Library.OPTION_OPEN_FLAGS to buildOpenFlags())
         lib = Native.load(corePath, LibretroLib::class.java, options)
 
         File(systemDir).mkdirs()
@@ -78,7 +79,9 @@ class LibretroCore(private val corePath: String) {
         audioSampleCallback = RetroAudioSampleCallback { left, right -> handleAudioSample(left, right) }
         audioBatchCallback = RetroAudioSampleBatchCallback { data, frames -> handleAudioBatch(data, frames) }
         inputPollCallback = RetroInputPollCallback { /* nothing needed */ }
-        inputStateCallback = RetroInputStateCallback { port, _, _, id -> handleInputState(port, id) }
+        inputStateCallback = RetroInputStateCallback { port, device, _, id ->
+            handleInputState(port, device, id)
+        }
 
         lib.retro_set_environment(envCallback)
         lib.retro_init()
@@ -189,11 +192,7 @@ class LibretroCore(private val corePath: String) {
     /** Set input for a port. buttons is a list of 12 values (0/1) in SNES order: B,Y,Sel,Start,U,D,L,R,A,X,L,R */
     fun setInput(port: Int, buttons: List<Int>) {
         if (port !in 0..1) return
-        for (i in buttons.indices) {
-            if (i < inputState[port].size) {
-                inputState[port][i] = buttons[i]
-            }
-        }
+        LibretroJoypadInput.applyButtonList(inputState[port], buttons)
     }
 
     fun serializeState(): ByteArray {
@@ -305,6 +304,7 @@ class LibretroCore(private val corePath: String) {
                 true
             }
             LibretroConstants.RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS -> true
+            LibretroConstants.RETRO_ENVIRONMENT_GET_INPUT_BITMASKS -> true
             else -> false
         }
     }
@@ -385,10 +385,9 @@ class LibretroCore(private val corePath: String) {
         return frames
     }
 
-    private fun handleInputState(port: Int, id: Int): Short {
+    private fun handleInputState(port: Int, device: Int, id: Int): Short {
         if (port !in 0..1) return 0
-        if (id !in inputState[port].indices) return 0
-        return inputState[port][id].toShort()
+        return LibretroJoypadInput.resolveState(inputState[port], device, id)
     }
 
     private fun audioAvailable(): Int = audioWritePos - audioReadPos
@@ -413,5 +412,15 @@ class LibretroCore(private val corePath: String) {
         // ~1 second of stereo audio at 32040 Hz
         private const val AUDIO_BUFFER_SIZE = 32040 * 2 * 2
         private val EMPTY_SHORT_ARRAY = ShortArray(0)
+
+        private fun buildOpenFlags(): Int {
+            val osName = System.getProperty("os.name").lowercase()
+            val deepBindEnabled = System.getenv("SMEDIT_LIBRETRO_DEEPBIND") == "1"
+            return if (osName.contains("linux") && deepBindEnabled) {
+                RTLD_LAZY or RTLD_LOCAL or RTLD_DEEPBIND
+            } else {
+                RTLD_LAZY or RTLD_LOCAL
+            }
+        }
     }
 }

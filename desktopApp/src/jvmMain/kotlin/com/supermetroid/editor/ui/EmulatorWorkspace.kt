@@ -291,6 +291,13 @@ fun EmulatorWorkspace(
                                 "load_state" -> workspaceState.loadSelectedState()
                                 "record_on" -> workspaceState.setRecording(true)
                                 "record_off" -> workspaceState.setRecording(false)
+                                "replay_watch" -> workspaceState.watchLastRecording()
+                                "replay_open" -> {
+                                    val path = ReplayFileDialogs.openReplayBundle()
+                                    if (path != null) workspaceState.openReplay(path)
+                                }
+                                "replay_stop" -> workspaceState.stopReplay()
+                                "replay_export" -> workspaceState.exportReplayBundle()
                                 "sync_config" -> workspaceState.configureBridge()
                                 "toggle_mute" -> workspaceState.toggleAudioMute()
                             }
@@ -450,9 +457,21 @@ private fun EmulatorControlCard(
                 )
             }
             if (!workspaceState.isExternalBackend) {
-                workspaceState.recordingPath?.let {
+                workspaceState.replayBundlePath?.let {
+                    Text("Replay bundle: $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                } ?: workspaceState.recordingPath?.let {
                     Text("Recording: $it", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                 }
+            }
+            if (!workspaceState.isExternalBackend && workspaceState.session.replaying) {
+                Text(
+                    "Replay: ${workspaceState.session.replayTitle ?: "attempt"}  " +
+                        "${workspaceState.session.replayFrameIndex}/${workspaceState.session.replayFrameCount}" +
+                        if (workspaceState.session.replayPaused) "  (paused)" else "",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -502,12 +521,7 @@ private fun EmulatorControlCard(
                     ) {
                         Text("Reload Named", fontSize = 12.sp)
                     }
-                    OutlinedButton(
-                        onClick = { onAction(if (workspaceState.session.recording) "record_off" else "record_on") },
-                        enabled = workspaceState.session.active && !workspaceState.isBusy,
-                    ) {
-                        Text(if (workspaceState.session.recording) "Stop Rec" else "Record", fontSize = 12.sp)
-                    }
+                    EmulatorReplayOutlinedButtons(workspaceState, onAction)
                     OutlinedButton(
                         onClick = { onAction("toggle_mute") },
                         enabled = workspaceState.isConnected,
@@ -786,6 +800,7 @@ private fun EmulatorViewport(workspaceState: EmulatorWorkspaceState) {
                     .border(1.dp, EditorColors.emulatorBorder, RoundedCornerShape(8.dp))
                     .focusRequester(focusRequester)
                     .focusable()
+                    .clickable { focusRequester.requestFocus() }
                     .onPreviewKeyEvent { event ->
                         when (event.type) {
                             KeyEventType.KeyDown -> {

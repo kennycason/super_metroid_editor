@@ -1,6 +1,8 @@
 package com.supermetroid.editor.emulator
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -21,6 +23,8 @@ class AttemptLogRecorderTest {
         assertEquals(Sha256.hex(romBytes), captured.log.romHash)
         assertEquals(Sha256.hex(initialState), captured.log.initialStateHash)
         assertTrue(initialState.contentEquals(captured.initialState))
+        assertNotNull(captured.finalState)
+        assertEquals(captured.log.finalStateHash, Sha256.hex(captured.finalState!!))
         assertEquals(listOf(7L, 8L), captured.log.frames.map { it.frameNumber })
         assertEquals(99, captured.log.frames.first().frameState.health)
     }

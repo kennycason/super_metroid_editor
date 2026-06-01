@@ -88,6 +88,12 @@ data class SaveSlotMeta(
     val timestamp: String = "",
 )
 
+@Serializable
+private data class IntegrationMetadata(
+    val default_state: String? = null,
+    val default_player_state: String? = null,
+)
+
 data class RoomMapOverlay(
     val routeLabel: String? = null,
     val plannedRoute: List<LocalRoomPoint> = emptyList(),
@@ -148,6 +154,7 @@ class EmulatorWorkspaceState(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private var backend: EmulatorBackend? = null
+    private lateinit var replayController: EmulatorReplayController
     var frameHolder: FrameHolder? = null
         private set
     /** True when the audio buffer has headroom (emulator is ahead of real-time playback) */
@@ -196,6 +203,8 @@ class EmulatorWorkspaceState(
     var frameBitmap by mutableStateOf<ImageBitmap?>(null)
         private set
     var recordingPath by mutableStateOf<String?>(null)
+        private set
+    var replayBundlePath by mutableStateOf<String?>(null)
         private set
     var bridgeRoundTripMs by mutableStateOf(0f)
         private set
@@ -304,7 +313,12 @@ class EmulatorWorkspaceState(
         isBusy = true
         try {
             val states = b.listStates()
-            saveStates = states.sortedBy { it.name.lowercase() }
+            val sortedStates = states.sortedBy { it.name.lowercase() }
+            saveStates = sortedStates
+            val knownStateNames = sortedStates.map { it.name }.toSet()
+            if (!session.active && (selectedStateName == null || selectedStateName !in knownStateNames)) {
+                selectedStateName = preferredBootStateName(sortedStates)
+            }
             // Load metadata for all states
             val metaMap = mutableMapOf<String, SaveSlotMeta>()
             val metaDir = projectStateDir()
@@ -410,16 +424,34 @@ class EmulatorWorkspaceState(
         stepInFlight = true
         val previousFrameCounter = session.frameCounter
         val startedAt = System.nanoTime()
+        val replayActive = session.controlMode() == EmulatorControlMode.Replaying
+        val action = if (replayActive) List(12) { 0 } else currentAction()
         try {
             val result = b.step(
                 EmulatorInput(
-                    buttons = currentAction(),
+                    buttons = action,
                     repeat = repeat,
                     includeFrame = includeFrame,
                     includeTrace = includeTrace,
                 )
             )
             applyStepResult(result)
+            if (!replayActive) {
+                snapshot = snapshot?.copy(
+                    lastAction = action,
+                    lastRequestedAction = action,
+                    lastActionPreSanitize = action,
+                    controllerConnected = gamepadManager.isConnected,
+                    controllerName = gamepadManager.controllerName,
+                    lastActionSource = "manual",
+                )
+            } else {
+                val replayFrame = result.session.replayFrameIndex.coerceAtMost(result.session.replayFrameCount)
+                snapshot = snapshot?.copy(
+                    lastActionSource = if (result.session.replaying) "replay" else "manual",
+                    recordedFrames = replayFrame,
+                )
+            }
             updateLoopMetrics(
                 previousFrameCounter = previousFrameCounter,
                 currentFrameCounter = result.session.frameCounter,
@@ -652,12 +684,22 @@ class EmulatorWorkspaceState(
         }
     }
 
-    suspend fun setRecording(@Suppress("UNUSED_PARAMETER") active: Boolean) {
-        // Recording is not supported by the libretro backend
-    }
+    suspend fun setRecording(active: Boolean) = replayController.setRecording(active)
+
+    suspend fun openReplay(path: String) = replayController.openReplay(path)
+
+    suspend fun watchLastRecording() = replayController.watchLastRecording()
+
+    suspend fun exportReplayBundle(outputPath: String? = null): String? =
+        replayController.exportReplayBundle(outputPath)
+
+    suspend fun stopReplay() = replayController.stopReplay()
 
     fun setLoopRunning(running: Boolean) {
         isRunning = running
+        if (session.replaying) {
+            session = session.copy(replayPaused = session.replayPaused(isRunning))
+        }
     }
 
     fun toggleAudioMute() {
@@ -848,6 +890,11 @@ class EmulatorWorkspaceState(
         // If we have a project file, store states alongside it
         projectFilePath?.let { path ->
             val projectFile = File(path)
+            val projectDir = projectFile.parentFile
+            val hasLegacyStates = projectDir?.listFiles { f -> f.extension == "state" }?.isNotEmpty() == true
+            if (hasLegacyStates) {
+                return projectDir
+            }
             val statesDir = File(projectFile.parentFile, "${projectFile.nameWithoutExtension}_states")
             return statesDir
         }
@@ -857,6 +904,22 @@ class EmulatorWorkspaceState(
             ?: "default"
         val base = File(System.getProperty("user.home"), ".smedit")
         return File(File(File(base, "states"), "libretro"), projectSlug)
+    }
+
+    private fun preferredBootStateName(states: List<StateInfo>): String? {
+        if (states.isEmpty()) return null
+        val stateNames = states.map { it.name }.toSet()
+        val metadataDefault = runCatching {
+            val metadataFile = File(projectStateDir(), "metadata.json")
+            if (metadataFile.isFile) {
+                val metadata = json.decodeFromString(IntegrationMetadata.serializer(), metadataFile.readText())
+                metadata.default_player_state ?: metadata.default_state
+            } else {
+                null
+            }
+        }.getOrNull()
+        return listOfNotNull(metadataDefault, "ZebesStart", "Start")
+            .firstOrNull { it in stateNames }
     }
 
     /** Point save states at a project-specific subdirectory. */
@@ -962,12 +1025,14 @@ class EmulatorWorkspaceState(
         // No-op for libretro backend (no external bridge to configure)
     }
 
-    private suspend fun applyStepResult(result: StepResult) {
-        session = result.session
+    internal suspend fun applyStepResult(result: StepResult) {
+        session = result.session.copy(replayPaused = result.session.replayPaused(isRunning))
         if (result.states.isNotEmpty()) saveStates = result.states.sortedBy { it.name.lowercase() }
         if (result.recordingPath != null) recordingPath = result.recordingPath
+        if (result.replayBundlePath != null) replayBundlePath = result.replayBundlePath
         result.message?.let { setStatus(it) }
         applySnapshot(result.snapshot)
+        replayController.onStepResultApplied(result)
     }
 
     private suspend fun applySnapshot(incoming: GameSnapshot) {
@@ -1170,6 +1235,51 @@ class EmulatorWorkspaceState(
 
     internal fun setRoomExportForTest(value: EditorRoomExport) {
         roomExportCache[value.roomId] = value
+    }
+
+    init {
+        replayController = EmulatorReplayController(
+            object : EmulatorReplayController.Host {
+                override fun emulatorBackend() = this@EmulatorWorkspaceState.backend
+
+                override val sessionActive: Boolean
+                    get() = this@EmulatorWorkspaceState.session.active
+
+                override val sessionRecording: Boolean
+                    get() = this@EmulatorWorkspaceState.session.recording
+
+                override val sessionReplaying: Boolean
+                    get() = this@EmulatorWorkspaceState.session.replaying
+
+                override var recordingPath: String?
+                    get() = this@EmulatorWorkspaceState.recordingPath
+                    set(value) { this@EmulatorWorkspaceState.recordingPath = value }
+
+                override var replayBundlePath: String?
+                    get() = this@EmulatorWorkspaceState.replayBundlePath
+                    set(value) { this@EmulatorWorkspaceState.replayBundlePath = value }
+
+                override var isBusy: Boolean
+                    get() = this@EmulatorWorkspaceState.isBusy
+                    set(value) { this@EmulatorWorkspaceState.isBusy = value }
+
+                override var isRunning: Boolean
+                    get() = this@EmulatorWorkspaceState.isRunning
+                    set(value) { this@EmulatorWorkspaceState.isRunning = value }
+
+                override suspend fun applyStepResult(result: StepResult) {
+                    this@EmulatorWorkspaceState.applyStepResult(result)
+                }
+
+                override fun setStatus(message: String) {
+                    this@EmulatorWorkspaceState.setStatus(message)
+                }
+
+                override fun setLoopRunning(running: Boolean) {
+                    this@EmulatorWorkspaceState.setLoopRunning(running)
+                }
+            },
+        )
     }
 }
 

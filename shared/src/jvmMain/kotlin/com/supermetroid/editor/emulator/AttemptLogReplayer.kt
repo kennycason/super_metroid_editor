@@ -19,7 +19,7 @@ class AttemptLogReplayer(
         }
 
         val actualEmulatorCore = stepper.emulatorCore
-        if (actualEmulatorCore != log.emulatorCore) {
+        if (!emulatorCoresCompatible(log.emulatorCore, actualEmulatorCore)) {
             return ReplayVerificationResult.failed(
                 checkedFrames = 0,
                 failure = ReplayFailure(
@@ -91,6 +91,15 @@ class AttemptLogReplayer(
                 )
             }
         }
+        val savestateFailure = verifyFinalSavestate(log)
+        if (savestateFailure != null) {
+            return ReplayVerificationResult.failed(
+                checkedFrames = log.frames.size,
+                failure = savestateFailure,
+                expectedFinalFrame = log.frames.lastOrNull(),
+                actualFinalFrame = actualFinalFrame,
+            )
+        }
         return ReplayVerificationResult.matched(
             checkedFrames = log.frames.size,
             expectedFinalFrame = log.frames.lastOrNull(),
@@ -149,5 +158,16 @@ class AttemptLogReplayer(
         if (expected.systemRamHash != actual.systemRamHash) add("systemRamHash")
         val stateDifferences = expected.frameState.differingFields(actual.frameState)
         if (stateDifferences.isNotEmpty()) add("frameState.${stateDifferences.joinToString(separator = "|")}")
+    }
+
+    private fun verifyFinalSavestate(log: AttemptLog): ReplayFailure? {
+        if (log.finalStateHash.isBlank()) return null
+        val actualFinalStateHash = Sha256.hex(stepper.saveState())
+        if (actualFinalStateHash == log.finalStateHash) return null
+        return ReplayFailure(
+            kind = ReplayFailureKind.FINAL_SAVESTATE_HASH_MISMATCH,
+            message = "Final savestate hash mismatch: expected ${log.finalStateHash}, got $actualFinalStateHash",
+            frameNumber = log.frames.lastOrNull()?.frameNumber,
+        )
     }
 }

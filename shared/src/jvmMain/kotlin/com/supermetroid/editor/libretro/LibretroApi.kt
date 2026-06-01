@@ -31,6 +31,9 @@ object LibretroConstants {
     const val RETRO_DEVICE_ID_JOYPAD_X = 9
     const val RETRO_DEVICE_ID_JOYPAD_L = 10
     const val RETRO_DEVICE_ID_JOYPAD_R = 11
+    const val RETRO_DEVICE_ID_JOYPAD_MASK = 256
+
+    const val RETRO_ENVIRONMENT_GET_INPUT_BITMASKS = 51
 
     // Pixel formats
     const val RETRO_PIXEL_FORMAT_0RGB1555 = 0

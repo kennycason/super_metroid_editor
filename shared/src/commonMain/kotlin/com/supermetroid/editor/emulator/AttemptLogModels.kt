@@ -16,6 +16,7 @@ data class AttemptLog(
     val emulatorCore: String,
     val romHash: String,
     val initialStateHash: String,
+    val finalStateHash: String = "",
     val frames: List<FrameRecord>,
 ) {
     val frameCount: Int get() = frames.size
@@ -23,6 +24,37 @@ data class AttemptLog(
     companion object {
         const val CURRENT_VERSION = 2
     }
+}
+
+/** Sidecar metadata for a self-contained shareable replay bundle (.smreplay). */
+@Serializable
+data class ReplayManifest(
+    val formatVersion: Int = CURRENT_FORMAT_VERSION,
+    val title: String = "Super Metroid replay",
+    val description: String = "",
+    val createdAt: String = "",
+    val frameCount: Int = 0,
+    val roomIds: List<String> = emptyList(),
+    val emulatorCore: String = "",
+    val romHash: String = "",
+    val initialStateHash: String = "",
+    val finalStateHash: String = "",
+    val attemptLogFile: String = AttemptReplayBundleFiles.ATTEMPT,
+    val initialStateFile: String = AttemptReplayBundleFiles.STATE,
+    val finalStateFile: String = AttemptReplayBundleFiles.FINAL_STATE,
+    val requiredRom: String = "Super Metroid (JU) [!].sfc",
+) {
+    companion object {
+        const val CURRENT_FORMAT_VERSION = 1
+    }
+}
+
+object AttemptReplayBundleFiles {
+    const val EXTENSION = "smreplay"
+    const val MANIFEST = "manifest.json"
+    const val ATTEMPT = "attempt.json"
+    const val STATE = "initial.state"
+    const val FINAL_STATE = "final.state"
 }
 
 @Serializable
@@ -40,6 +72,7 @@ enum class ReplayFailureKind {
     EMULATOR_CORE_MISMATCH,
     ROM_HASH_MISMATCH,
     INITIAL_STATE_HASH_MISMATCH,
+    FINAL_SAVESTATE_HASH_MISMATCH,
     FRAME_SEQUENCE_MISMATCH,
     REPLAY_STEP_FAILED,
     FRAME_MISMATCH,

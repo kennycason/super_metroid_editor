@@ -8,6 +8,7 @@ import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.RoomInfo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,6 +72,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -247,8 +249,46 @@ fun FloatingEmulatorWindow(
         }
     }
 
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val containerWidthPx = with(density) { maxWidth.toPx() }
+        val containerHeightPx = with(density) { maxHeight.toPx() }
+
+        fun clampWindowWidth(width: Float): Float {
+            if (containerWidthPx <= 0f) return width.coerceIn(MIN_WIDTH, MAX_WIDTH)
+            val maxUsableWidth = containerWidthPx.coerceAtMost(MAX_WIDTH)
+            val minUsableWidth = MIN_WIDTH.coerceAtMost(maxUsableWidth)
+            return width.coerceIn(minUsableWidth, maxUsableWidth)
+        }
+
+        fun windowHeightFor(width: Float): Float = TITLE_BAR_HEIGHT + width / SNES_ASPECT + CONTROL_BAR_HEIGHT
+
+        fun clampOffsetX(x: Float, width: Float): Float {
+            if (containerWidthPx <= 0f) return x
+            return x.coerceIn(0f, (containerWidthPx - width).coerceAtLeast(0f))
+        }
+
+        fun clampOffsetY(y: Float, height: Float): Float {
+            if (containerHeightPx <= 0f) return y
+            return y.coerceIn(0f, (containerHeightPx - height).coerceAtLeast(0f))
+        }
+
+        LaunchedEffect(containerWidthPx, containerHeightPx) {
+            if (containerWidthPx <= 0f || containerHeightPx <= 0f) return@LaunchedEffect
+            val nextWidth = clampWindowWidth(windowWidth)
+            val nextHeight = windowHeightFor(nextWidth)
+            val nextX = clampOffsetX(offsetX, nextWidth)
+            val nextY = clampOffsetY(offsetY, nextHeight)
+            if (nextWidth != windowWidth || nextX != offsetX || nextY != offsetY) {
+                windowWidth = nextWidth
+                offsetX = nextX
+                offsetY = nextY
+                workspaceState.persistEmulatorWindowGeometry(nextX, nextY, nextWidth)
+            }
+        }
+
     Surface(
-        modifier = modifier
+        modifier = Modifier
             .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
             .width(windowWidth.dp)
             .height(totalHeight.dp),
@@ -268,8 +308,8 @@ fun FloatingEmulatorWindow(
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    offsetX += dragAmount.x
-                                    offsetY += dragAmount.y
+                                    offsetX = clampOffsetX(offsetX + dragAmount.x, windowWidth)
+                                    offsetY = clampOffsetY(offsetY + dragAmount.y, totalHeight)
                                 },
                                 onDragEnd = {
                                     workspaceState.persistEmulatorWindowGeometry(offsetX, offsetY, windowWidth)
@@ -371,6 +411,7 @@ fun FloatingEmulatorWindow(
                             .background(EditorColors.emulatorPanelBg)
                             .focusRequester(focusRequester)
                             .focusable()
+                            .clickable { focusRequester.requestFocus() }
                             .onPreviewKeyEvent { event ->
                                 when (event.type) {
                                     KeyEventType.KeyDown -> {
@@ -437,6 +478,26 @@ fun FloatingEmulatorWindow(
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.FillBounds,
                             )
+                            if (workspaceState.session.replaying) {
+                                val replayIndex = workspaceState.session.replayFrameIndex
+                                val replayTotal = workspaceState.session.replayFrameCount
+                                val replayLabel = workspaceState.session.replayTitle ?: "Replay"
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(6.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                ) {
+                                    Text(
+                                        "$replayLabel  $replayIndex/$replayTotal" +
+                                            if (workspaceState.session.replayPaused) "  PAUSED" else "",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
                         } else {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -493,8 +554,6 @@ fun FloatingEmulatorWindow(
                                             workspaceState.updateRomPath(patchedPath)
                                         }
                                     }
-                                    // Don't auto-load save state on fresh start
-                                    workspaceState.clearSavedStateSelection()
                                     workspaceState.startSession()
                                     workspaceState.setLoopRunning(true)
                                 } else if (workspaceState.session.active) {
@@ -506,13 +565,22 @@ fun FloatingEmulatorWindow(
                         modifier = Modifier
                             .size(32.dp)
                             .clip(btnShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            .background(
+                                if (workspaceState.session.replaying) Color(0xFF1565C0).copy(alpha = 0.18f)
+                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                            ),
                     ) {
                         Icon(
                             if (workspaceState.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (workspaceState.isRunning) "Pause" else "Play",
+                            contentDescription = when {
+                                workspaceState.session.replaying && !workspaceState.isRunning -> "Resume replay"
+                                workspaceState.session.replaying -> "Pause replay"
+                                !workspaceState.isRunning -> "Play"
+                                else -> "Pause"
+                            },
                             modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = if (workspaceState.session.replaying) Color(0xFF1565C0)
+                                else MaterialTheme.colorScheme.primary,
                         )
                     }
 
@@ -532,16 +600,39 @@ fun FloatingEmulatorWindow(
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+
+                        Spacer(Modifier.width(4.dp))
+
+                        EmulatorReplayFloatingControls(
+                            workspaceState = workspaceState,
+                            scope = scope,
+                            btnShape = btnShape,
+                            onOpenReplay = {
+                                val path = ReplayFileDialogs.openReplayBundle()
+                                if (path != null) {
+                                    scope.launch { workspaceState.openReplay(path) }
+                                }
+                            },
+                            onExportReplay = {
+                                val suggested = workspaceState.replayBundlePath
+                                    ?.substringAfterLast('/')
+                                    ?.substringAfterLast('\\')
+                                    ?: "replay.${com.supermetroid.editor.emulator.AttemptReplayBundleFiles.EXTENSION}"
+                                val path = ReplayFileDialogs.saveReplayBundle(suggested)
+                                if (path != null) {
+                                    scope.launch { workspaceState.exportReplayBundle(path) }
+                                }
+                            },
+                        )
                     }
 
                     Spacer(Modifier.width(4.dp))
 
-                    // Restart (rebuild patched ROM + restart session — fresh, no save state)
+                    // Restart (rebuild patched ROM + restart session)
                     IconButton(
                         onClick = {
                             scope.launch {
                                 workspaceState.disconnectBridge()
-                                workspaceState.clearSavedStateSelection()
                                 workspaceState.connectBridge()
                                 workspaceState.propagateAudioState()
                                 if (workspaceState.isConnected) {
@@ -762,7 +853,9 @@ fun FloatingEmulatorWindow(
                         detectDragGestures(
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                windowWidth = (windowWidth + dragAmount.x).coerceIn(MIN_WIDTH, MAX_WIDTH)
+                                windowWidth = clampWindowWidth(windowWidth + dragAmount.x)
+                                offsetX = clampOffsetX(offsetX, windowWidth)
+                                offsetY = clampOffsetY(offsetY, windowHeightFor(windowWidth))
                             },
                             onDragEnd = {
                                 workspaceState.persistEmulatorWindowGeometry(offsetX, offsetY, windowWidth)
@@ -779,6 +872,7 @@ fun FloatingEmulatorWindow(
             }
         }
     }
+}
 }
 
 // ── Save slot rich display composables ─────────────────────────────────────
