@@ -156,7 +156,8 @@ fun main() = application {
         rooms = withContext(Dispatchers.IO) { roomRepository.getAllRooms() }
 
         // Auto-load requested ROM first, then fall back to last ROM if available.
-        val bootRomPath = RomPreferences.getLastRomPath()
+        val bootRomPath = System.getenv("SMEDIT_ROM_PATH")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: RomPreferences.getLastRomPath()
         if (bootRomPath != null) {
             try {
                 romLoadInFlight = true
@@ -219,7 +220,9 @@ fun main() = application {
             LocalEditorTheme provides editorThemeState
         ) {
         MaterialTheme(colorScheme = editorThemeState.theme.value.colorScheme) {
-            var emulatorEnabled by remember { mutableStateOf(false) }
+            var emulatorEnabled by remember {
+                mutableStateOf(System.getenv("SMEDIT_OPEN_EMU") == "1")
+            }
             val emulatorWorkspaceState = remember { EmulatorWorkspaceState() }
             var settingsOpen by remember { mutableStateOf(false) }
             var validationOpen by remember { mutableStateOf(false) }

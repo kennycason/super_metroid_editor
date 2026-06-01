@@ -157,6 +157,25 @@ fun FloatingEmulatorWindow(
         workspaceState.updateProjectFilePath(editorState.projectFilePath.takeIf { it.isNotBlank() })
     }
 
+    // Optional boot automation: connect, start session, and open a replay bundle.
+    LaunchedEffect(romParser) {
+        if (System.getenv("SMEDIT_AUTO_START") != "1" || romParser == null) return@LaunchedEffect
+        if (workspaceState.session.active) return@LaunchedEffect
+        if (!workspaceState.isConnected) workspaceState.connectBridge()
+        workspaceState.propagateAudioState()
+        if (!workspaceState.isConnected) return@LaunchedEffect
+        val patchedPath = editorState.exportToRom(romParser)
+        if (patchedPath != null) {
+            workspaceState.updateRomPath(patchedPath)
+        }
+        workspaceState.startSession()
+        workspaceState.setLoopRunning(true)
+        val replayPath = System.getenv("SMEDIT_REPLAY_PATH")?.trim()?.takeIf { it.isNotEmpty() }
+        if (replayPath != null) {
+            workspaceState.openReplay(replayPath)
+        }
+    }
+
     // Auto-set ROM path from editor — restart emulator if a session is active
     LaunchedEffect(editorState.project.romPath) {
         val romPath = editorState.project.romPath.takeIf { it.isNotBlank() }
