@@ -364,6 +364,7 @@ fun SoundEditorCanvas(
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
+                onActiveChannelChanged = { state.pianoRollChannel = it },
                 onSongChanged = { state.notifySongChanged(it) },
                 onPlay = {
                     scope.launch {
@@ -399,7 +400,7 @@ fun SoundEditorCanvas(
                 },
                 onStop = {
                     state.stopPlayback()
-                    state.pianoRollPlaybackTick = -1
+                    state.pianoRollPlaybackTick = 0
                 },
                 onDone = { state.closePianoRoll() },
                 onReset = { if (romParser != null) state.resetPianoRoll(romParser) },

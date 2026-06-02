@@ -176,9 +176,73 @@ target sample's ARAM address with new BRR data. The original blocks stay untouch
 6. Write in-place if it fits, otherwise relocate to free space in `$CF-$DF` and update pointer table
 7. If no free space, expand ROM to 4MB
 
+Current branch implementation note (2026-06-02): `SpcData.buildSampleReplacementWrites`
+uses an in-place overwrite of the exact ROM bytes backing a sample's BRR data. If an
+imported BRR is larger than the original slot, it is trimmed to the original BRR footprint
+and the final BRR block's end flag is forced on. It does not yet append a transfer block,
+patch DIR entries, relocate song-set transfer chains, or expand the ROM.
+
+## SMEDIT Implementation Map
+
+| Area | File | Role |
+|------|------|------|
+| Track/sample browser UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditor.kt` | Track list, sample list, waveform view, Edit Track / Replace WAV actions |
+| Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
+| Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
+| Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
+| ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
+| N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
+| Kotlin fallback renderer | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcRenderer.kt` | Sequence parser and sample-based renderer used when native SPC render is unavailable or insufficient |
+| Native SPC emulator | `shared/src/jvmMain/kotlin/com/supermetroid/editor/rom/NativeSpcEmulator.kt` | JNA bridge to blargg `snes_spc`, builds SPC file images from ARAM, applies transfer blocks, sends play commands, renders mono/stereo PCM |
+| Native SPC build | `shared/build.gradle.kts`, `tools/snes_spc/` | Builds and packages `libspc` resources for JNA |
+
+## Fixed Editor Issue: Piano Roll Zoom Constraints
+
+Symptom seen while opening/zooming Lower Norfair:
+
+```
+[SPC-PIANO] Parsed: 4668 notes, 2278 commands, 7 active channels, 46469 ticks, tempo=27
+java.lang.IllegalArgumentException: Can't represent a size of 373352 in Constraints
+```
+
+Root cause: the piano roll measured a Compose child at `gridWidth.dp`, where
+`gridWidth = totalTicks / ticksPerPixel`. Lower Norfair has about 46,469 parsed ticks
+plus 200 display padding. At the 16x zoom level (`ticksPerPixel = 0.125`), that becomes
+roughly 373,352 display units. Compose Desktop's packed `Constraints` representation
+cannot encode dimensions that large, so layout fails before drawing.
+
+Current branch behavior: `PianoRollEditor` virtualizes the horizontal piano-roll canvas.
+The measured child stays viewport-sized, while draw code treats `hScrollPx` as the world
+offset and renders only visible ticks/notes. Zoom currently exposes `1x`, `2x`, `4x`, and
+`8x`, so Lower Norfair no longer asks Compose to measure an unrepresentable width.
+
+Current piano-roll editing behavior:
+
+- Switching tracks while playback is active stops the old clip and auto-plays the newly rendered track.
+- Entering or leaving Edit Track stops current playback and disables Play All to avoid overlapping waveform and piano-roll previews.
+- Reset reparses original N-SPC data, discards added notes, stops playback, and leaves the cursor at tick `0`.
+- Stop leaves the cursor at tick `0`; closing the piano roll hides it.
+- Right-clicking a note opens editable note properties: tick, length, pitch, velocity, quantize, instrument, delete.
+- Left-drag moves notes, right-edge drag resizes note length, arrow keys move/transposes the selected note, and Delete/Backspace removes it.
+- Drag operations use transient preview state and commit note data once on release; SPC re-encode/render should stay on explicit playback/export paths.
+- Waveform preview and piano-roll preview use RMS-aware preview normalization before JVM playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
+
+## Parser/Renderer Caveats
+
+- Native SPC rendering is the audio ground truth when `libspc` is available.
+- `NspcRenderer` has broader command-side state handling than the current
+  `NspcSequence.parse` piano-roll parser, including `E0` instrument changes,
+  transpose, channel volume, and subroutine calls.
+- `NspcSequence.parse` currently records commands but does not fully apply every command
+  to note state, so piano-roll metadata such as `instruments=[0]` can be simplified even
+  when the native audio preview is correct.
+- `NspcSequence.encode` writes simplified one-block channel data into the original
+  sequence area and guards against overflow into the instrument table at `$6C00`.
+
 ## External Resources
 
 - **SM-SPC**: `/Users/kenny/code/super_metroid/SM-SPC/` — fully symbolic SPC engine source (asar-assemblable)
 - **SM disassembly**: `/Users/kenny/code/super_metroid/sm_disassembly/src/` — CPU-side bank sources
+- **sm decompilation**: `/Users/kenny/code/super_metroid/sm/` — C reimplementation, including `src/spc_player.c`, `src/spc_player.h`, and `src/spc_variables.h`
 - **Sounds reference**: `docs/reference/sounds.txt` — community reference for all sound hex edits
 - **Hex edits**: `docs/rom/hex_edits.txt` (lines 1190+) — sound effect tables and ROM offsets

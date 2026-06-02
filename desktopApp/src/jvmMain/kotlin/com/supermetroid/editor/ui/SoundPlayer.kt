@@ -29,23 +29,24 @@ class SoundPlayer {
                 newClip.framePosition = startFrame.toInt().coerceIn(0, newClip.frameLength - 1)
             }
             newClip.addLineListener { event ->
-                if (event.type == LineEvent.Type.STOP && !loop) {
+                if (event.type == LineEvent.Type.STOP && !loop && clip === newClip) {
                     onComplete?.invoke()
                 }
             }
-            if (loop) newClip.loop(Clip.LOOP_CONTINUOUSLY) else newClip.start()
             clip = newClip
+            if (loop) newClip.loop(Clip.LOOP_CONTINUOUSLY) else newClip.start()
         } catch (e: Exception) {
             System.err.println("Audio playback error: ${e.message}")
         }
     }
 
     fun stop() {
-        clip?.let {
-            try { if (it.isRunning) it.stop(); it.close() } catch (_: Exception) {}
-        }
+        val current = clip
         clip = null
         totalFrames = 0
+        current?.let {
+            try { if (it.isRunning) it.stop(); it.close() } catch (_: Exception) {}
+        }
     }
 
     fun isActive(): Boolean = clip?.isRunning == true

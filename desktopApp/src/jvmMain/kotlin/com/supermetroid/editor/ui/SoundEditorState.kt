@@ -17,6 +17,7 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 class SoundEditorState {
     private val player = SoundPlayer()
@@ -74,6 +75,8 @@ class SoundEditorState {
             System.err.println("[SPC-PIANO] openPianoRoll: no track selected")
             return
         }
+        stopPlayback()
+        playAllEnabled = false
         System.err.println("[SPC-PIANO] Opening piano roll for '${track.name}' " +
             "songSet=0x${track.songSet.toString(16)} playIndex=${track.playIndex}")
         val ram = buildSpcRamForTrack(romParser, track.songSet)
@@ -104,6 +107,8 @@ class SoundEditorState {
     /** Close piano roll, return to waveform view. */
     fun closePianoRoll() {
         System.err.println("[SPC-PIANO] Closing piano roll")
+        stopPlayback()
+        playAllEnabled = false
         isPianoRollOpen = false
         pianoRollPlaybackTick = -1
     }
@@ -112,24 +117,27 @@ class SoundEditorState {
     fun resetPianoRoll(romParser: RomParser) {
         val track = selectedTrack ?: return
         System.err.println("[SPC-PIANO] Resetting to original track data")
+        stopPlayback()
         val ram = buildSpcRamForTrack(romParser, track.songSet)
         val song = NspcSequence.parse(ram, track.playIndex)
         song.title = track.name
         editingSong = song
-        pianoRollPlaybackTick = -1
+        pianoRollPlaybackTick = 0
         statusMessage = "Reset to original"
     }
 
     /** Start piano roll playback with tick tracking. */
     fun startPianoRollPlayback(wav: ShortArray) {
         val song = editingSong ?: return
+        val preview = normalizePreviewPcm(wav, extraGain = EDIT_TRACK_PREVIEW_GAIN)
         pianoRollTickMs = 512.0 / song.tempo.coerceAtLeast(1)
         pianoRollPlayStartMs = System.currentTimeMillis()
         pianoRollPlaybackTick = 0
         val peak = if (wav.isNotEmpty()) wav.maxOf { kotlin.math.abs(it.toInt()) } else 0
-        System.err.println("[SPC-PIANO] Starting playback: ${wav.size} samples (${wav.size / 32000}s), " +
-            "tempo=${song.tempo}, tickMs=${"%.1f".format(pianoRollTickMs)}, peak=$peak")
-        playWaveform(wav)
+        val previewPeak = if (preview.isNotEmpty()) preview.maxOf { kotlin.math.abs(it.toInt()) } else 0
+        System.err.println("[SPC-PIANO] Starting playback: ${preview.size} samples (${preview.size / 32000}s), " +
+            "tempo=${song.tempo}, tickMs=${"%.1f".format(pianoRollTickMs)}, peak=$peak, previewPeak=$previewPeak")
+        playWaveform(preview)
     }
 
     /** Update piano roll playback tick based on elapsed time. */
@@ -247,9 +255,11 @@ class SoundEditorState {
     )
 
     fun selectTrack(track: SpcData.TrackInfo) {
-        val wasPlaying = player.isActive()
+        val shouldAutoPlay = isPlaying || player.isActive() || autoPlayEnabled
         player.stop()
+        isPlaying = false
         playbackPosition = 0f
+        pianoRollPlaybackTick = -1
 
         val clearSamples = track.songSet != lastLoadedSongSet
         selectedTrackId = track.id
@@ -257,13 +267,15 @@ class SoundEditorState {
         currentSongSet = track.songSet
         selectedSample = null
         selectedSampleIndex = -1
+        currentWaveform = null
+        currentLoopStart = -1
+        isPianoRollOpen = false
+        editingSong = null
         statusMessage = "Track: ${track.name}"
-        if (wasPlaying) autoPlayEnabled = true
+        autoPlayEnabled = shouldAutoPlay
         if (clearSamples) {
             trackSamples = emptyList()
             trackUniqueSamples = emptyList()
-            currentWaveform = null
-            currentLoopStart = -1
         }
     }
 
@@ -592,6 +604,10 @@ class SoundEditorState {
     }
 
     companion object {
+        private const val PREVIEW_TARGET_PEAK = 32000.0
+        private const val PREVIEW_TARGET_RMS = 9500.0
+        private const val PREVIEW_MAX_GAIN = 5.0
+        private const val EDIT_TRACK_PREVIEW_GAIN = 2.0
         private val VOICE_CLIP_SONG_SETS = setOf(0x3F, 0x42)
 
         fun resampleLinear(pcm: ShortArray, fromRate: Int, toRate: Int): ShortArray {
@@ -679,7 +695,7 @@ class SoundEditorState {
     fun playSample(sample: DecodedSample, loop: Boolean = false) {
         if (sample.pcmData.isEmpty()) { statusMessage = "Empty sample"; return }
         val extended = extendWithLoop(sample.pcmData, sample.loopStart, sampleRate, 4.0)
-        val pcm = normalizePcm(extended)
+        val pcm = normalizePreviewPcm(extended)
         statusMessage = "Playing sample #${sample.dirEntry.index}..."
         player.onComplete = { isPlaying = false; playbackPosition = 0f }
         player.play(pcm, sampleRate, loop)
@@ -700,7 +716,8 @@ class SoundEditorState {
             statusMessage = "No waveform loaded"
             return
         }
-        val startFrame = (startFraction * waveform.size).toLong().coerceIn(0, waveform.size.toLong() - 1)
+        val preview = normalizePreviewPcm(waveform)
+        val startFrame = (startFraction * preview.size).toLong().coerceIn(0, preview.size.toLong() - 1)
         val loopStr = if (loopEnabled) " (loop)" else ""
         statusMessage = "Playing ${selectedTrack?.name ?: "preview"}$loopStr..."
         player.onComplete = {
@@ -708,7 +725,7 @@ class SoundEditorState {
             playbackPosition = 0f
             if (playAllEnabled) advanceToNextTrack()
         }
-        player.play(waveform, sampleRate, loop = loopEnabled, startFrame = startFrame)
+        player.play(preview, sampleRate, loop = loopEnabled, startFrame = startFrame)
         isPlaying = true
     }
 
@@ -937,11 +954,23 @@ class SoundEditorState {
         currentLoopStart = -1
     }
 
-    private fun normalizePcm(pcm: ShortArray): ShortArray {
+    private fun normalizePreviewPcm(pcm: ShortArray, extraGain: Double = 1.0): ShortArray {
         if (pcm.isEmpty()) return pcm
         val peak = pcm.maxOf { abs(it.toInt()) }
-        if (peak < 100 || peak > 20000) return pcm
-        val gain = 26000.0 / peak
+        if (peak < 64) return pcm
+
+        var sumSquares = 0.0
+        for (sample in pcm) {
+            val value = sample.toDouble()
+            sumSquares += value * value
+        }
+        val rms = sqrt(sumSquares / pcm.size).coerceAtLeast(1.0)
+
+        val peakLimitedGain = PREVIEW_TARGET_PEAK / peak
+        val rmsGain = PREVIEW_TARGET_RMS / rms
+        val baseGain = minOf(PREVIEW_MAX_GAIN, peakLimitedGain, rmsGain).coerceAtLeast(1.0)
+        val gain = (baseGain * extraGain).coerceAtMost(PREVIEW_MAX_GAIN * extraGain)
+        if (gain <= 1.02) return pcm
         return ShortArray(pcm.size) { (pcm[it] * gain).toInt().coerceIn(-32768, 32767).toShort() }
     }
 }
