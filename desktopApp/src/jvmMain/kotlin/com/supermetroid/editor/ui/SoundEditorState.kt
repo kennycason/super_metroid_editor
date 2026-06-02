@@ -5,11 +5,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.supermetroid.editor.rom.NativeSpcEmulator
 import com.supermetroid.editor.rom.NspcRenderer
+import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.awt.FileDialog
+import java.awt.Frame
 import java.io.File
+import javax.sound.sampled.AudioFormat
+import javax.sound.sampled.AudioInputStream
+import javax.sound.sampled.AudioSystem
 import kotlin.math.abs
 
 class SoundEditorState {
@@ -48,6 +54,56 @@ class SoundEditorState {
     var isPlaying by mutableStateOf(false)
         private set
 
+    /** Song set of the last selected track (persists when drilling into a sample). */
+    var currentSongSet by mutableStateOf(-1)
+        private set
+
+    // ─── Piano roll / track editing state ───────────────────────────
+    var editingSong by mutableStateOf<NspcSequence.Song?>(null)
+        private set
+    var pianoRollChannel by mutableStateOf(0)
+    var isPianoRollOpen by mutableStateOf(false)
+        private set
+
+    /** Open the piano roll editor for the current track. */
+    fun openPianoRoll(romParser: RomParser) {
+        val track = selectedTrack ?: return
+        val ram = buildSpcRamForTrack(romParser, track.songSet)
+        val song = NspcSequence.parse(ram, track.playIndex)
+        song.title = track.name
+        editingSong = song
+        pianoRollChannel = 0
+        isPianoRollOpen = true
+        statusMessage = "Editing: ${track.name} (${song.channels.sumOf { it.notes.size }} notes, ${song.totalTicks} ticks)"
+    }
+
+    /** Close piano roll, return to waveform view. */
+    fun closePianoRoll() {
+        isPianoRollOpen = false
+    }
+
+    /** Reset piano roll to original track data. */
+    fun resetPianoRoll(romParser: RomParser) {
+        val track = selectedTrack ?: return
+        val ram = buildSpcRamForTrack(romParser, track.songSet)
+        val song = NspcSequence.parse(ram, track.playIndex)
+        song.title = track.name
+        editingSong = song
+        statusMessage = "Reset to original"
+    }
+
+    /** Notify that the song was modified (triggers recompose). */
+    fun notifySongChanged(song: NspcSequence.Song) {
+        editingSong = song.copy() // force recompose
+    }
+
+    private fun buildSpcRamForTrack(romParser: RomParser, songSet: Int): ByteArray {
+        val baseRam = SpcData.buildInitialSpcRam(romParser)
+        val blocks = SpcData.findSongSetTransferData(romParser, songSet)
+        SpcData.applyTransferBlocks(baseRam, blocks)
+        return baseRam
+    }
+
     private var spcRam: ByteArray? = null
     private var romParserRef: RomParser? = null
     private var lastLoadedSongSet = -1
@@ -67,6 +123,7 @@ class SoundEditorState {
         val clearSamples = track.songSet != lastLoadedSongSet
         selectedTrackId = track.id
         selectedTrack = track
+        currentSongSet = track.songSet
         selectedSample = null
         selectedSampleIndex = -1
         statusMessage = "Track: ${track.name}"
@@ -498,6 +555,14 @@ class SoundEditorState {
         isPlaying = true
     }
 
+    fun playWaveform(pcm: ShortArray) {
+        if (pcm.isEmpty()) { statusMessage = "Empty waveform"; return }
+        player.onComplete = { isPlaying = false; playbackPosition = 0f }
+        player.play(pcm, sampleRate)
+        isPlaying = true
+        statusMessage = "Playing..."
+    }
+
     fun playTrackPreview(startFraction: Float = 0f) {
         val waveform = currentWaveform
         if (waveform == null || waveform.isEmpty()) {
@@ -567,9 +632,15 @@ class SoundEditorState {
             ?: selectedSample?.let { "sample_${it.dirEntry.index}" }
             ?: "sound"
 
-        val dir = File(System.getProperty("user.home"), "Desktop")
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, "${name}.wav")
+        val dialog = FileDialog(null as Frame?, "Export WAV", FileDialog.SAVE)
+        dialog.file = "${name}.wav"
+        dialog.setFilenameFilter { _, fn -> fn.endsWith(".wav", ignoreCase = true) }
+        dialog.isVisible = true
+
+        val dir = dialog.directory ?: return
+        val fileName = dialog.file ?: return
+        val file = File(dir, if (fileName.endsWith(".wav", ignoreCase = true)) fileName else "$fileName.wav")
+
         try {
             exportWav(waveform, sampleRate, file)
             statusMessage = "Exported: ${file.absolutePath}"
@@ -578,6 +649,161 @@ class SoundEditorState {
             statusMessage = "Export failed: ${e.message}"
             System.err.println("[SPC] WAV export error: ${e.message}")
         }
+    }
+
+    data class ImportedWav(val pcm: ShortArray, val sourceRate: Int)
+
+    fun importWav(): ImportedWav? {
+        val dialog = FileDialog(null as Frame?, "Import WAV", FileDialog.LOAD)
+        dialog.setFilenameFilter { _, fn -> fn.endsWith(".wav", ignoreCase = true) }
+        dialog.isVisible = true
+
+        val dir = dialog.directory ?: return null
+        val fileName = dialog.file ?: return null
+        val file = File(dir, fileName)
+
+        return try {
+            val audioStream = AudioSystem.getAudioInputStream(file)
+            val srcFormat = audioStream.format
+            // Convert to mono 16-bit signed PCM
+            val targetFormat = AudioFormat(
+                srcFormat.sampleRate, 16, 1, true, false
+            )
+            val converted = if (srcFormat.matches(targetFormat)) {
+                audioStream
+            } else {
+                AudioSystem.getAudioInputStream(targetFormat, audioStream)
+            }
+            val bytes = converted.readBytes()
+            converted.close()
+            audioStream.close()
+
+            val pcm = ShortArray(bytes.size / 2)
+            for (i in pcm.indices) {
+                val lo = bytes[i * 2].toInt() and 0xFF
+                val hi = bytes[i * 2 + 1].toInt()
+                pcm[i] = ((hi shl 8) or lo).toShort()
+            }
+            val sourceRate = srcFormat.sampleRate.toInt()
+            statusMessage = "Imported: ${file.name} (${pcm.size} samples, ${sourceRate}Hz)"
+            ImportedWav(pcm, sourceRate)
+        } catch (e: Exception) {
+            statusMessage = "Import failed: ${e.message}"
+            System.err.println("[SPC] WAV import error: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Replace a sample in the current song set with a WAV file.
+     * Simple in-place overwrite: find exact ROM bytes, write new BRR there.
+     * If new BRR is longer than original, auto-trim to fit.
+     */
+    fun replaceSampleInRom(
+        romParser: RomParser,
+        editorState: EditorState,
+        sampleDirIndex: Int
+    ) {
+        // Use current song set if a track was selected, otherwise base (0x00)
+        val songSet = if (currentSongSet >= 0) currentSongSet else 0x00
+
+        val imported = importWav() ?: return
+        val resampled = SpcData.resamplePcm(imported.pcm, imported.sourceRate, 32000)
+        val newBrr = SpcData.encodeBrr(resampled)
+
+        val result = SpcData.buildSampleReplacementWrites(
+            romParser, songSet, sampleDirIndex, newBrr
+        )
+        if (result == null) {
+            statusMessage = "Failed to replace sample (see logs)"
+            return
+        }
+
+        val (writes, wasTrimmed) = result
+
+        // Create or update patch
+        val trackName = selectedTrack?.name ?: "songSet 0x${songSet.toString(16)}"
+        val patchName = "SPC: sample #$sampleDirIndex"
+        val existing = editorState.project.patches.find { it.name == patchName }
+        val patchId = existing?.id
+            ?: editorState.addPatch(patchName, "In-place BRR replacement in $trackName").id
+
+        val patchWrites = writes.map { (offset, bytes) ->
+            SmPatchWrite(offset.toLong(), bytes.map { it.toInt() and 0xFF })
+        }
+        editorState.setPatchWrites(patchId, patchWrites)
+        editorState.updatePatch(patchId, enabled = true)
+
+        // Show the imported WAV as current waveform
+        loadVersion++
+        currentWaveform = imported.pcm
+        currentLoopStart = -1
+
+        val totalBytes = writes.sumOf { it.second.size }
+        val trimNote = if (wasTrimmed) " [TRIMMED to fit ${totalBytes}B slot]" else ""
+        statusMessage = "Replaced sample #$sampleDirIndex (${totalBytes}B at ROM 0x${writes.first().first.toString(16)})$trimNote"
+    }
+
+    /**
+     * Reset a sample replacement by removing its patch.
+     */
+    fun resetSampleReplacement(editorState: EditorState, sampleDirIndex: Int) {
+        val patchName = "SPC: sample #$sampleDirIndex"
+        val patch = editorState.project.patches.find { it.name == patchName }
+        if (patch != null) {
+            editorState.removePatch(patch.id)
+            statusMessage = "Reset sample #$sampleDirIndex to original"
+        } else {
+            statusMessage = "No replacement to reset for sample #$sampleDirIndex"
+        }
+    }
+
+    /** Check if a sample has been replaced (has an active patch). */
+    fun isSampleReplaced(editorState: EditorState, sampleDirIndex: Int): Boolean {
+        val patchName = "SPC: sample #$sampleDirIndex"
+        return editorState.project.patches.any { it.name == patchName && it.enabled }
+    }
+
+    fun importWavAndExportBrr() {
+        val imported = importWav() ?: return
+        // Resample to 32kHz (SNES native rate) if needed
+        val resampled = if (imported.sourceRate != 32000) {
+            SpcData.resamplePcm(imported.pcm, imported.sourceRate, 32000)
+        } else {
+            imported.pcm
+        }
+
+        val brr = SpcData.encodeBrr(resampled)
+
+        val dialog = FileDialog(null as Frame?, "Save BRR Sample", FileDialog.SAVE)
+        dialog.file = "sample.brr"
+        dialog.isVisible = true
+
+        val dir = dialog.directory ?: return
+        val fileName = dialog.file ?: return
+        val file = File(dir, if (fileName.endsWith(".brr", ignoreCase = true)) fileName else "$fileName.brr")
+
+        try {
+            file.writeBytes(brr)
+            statusMessage = "Exported BRR: ${file.name} (${brr.size} bytes, ${brr.size / 9} blocks from ${imported.pcm.size} samples)"
+            System.err.println("[SPC] Exported BRR: ${file.absolutePath} (${brr.size} bytes)")
+
+            // Load the imported WAV as current waveform for preview
+            sampleRate = imported.sourceRate
+            currentWaveform = imported.pcm
+            currentLoopStart = -1
+        } catch (e: Exception) {
+            statusMessage = "BRR export failed: ${e.message}"
+            System.err.println("[SPC] BRR export error: ${e.message}")
+        }
+    }
+
+    fun importWavAsPreview() {
+        val imported = importWav() ?: return
+        loadVersion++ // cancel any in-flight track render
+        sampleRate = imported.sourceRate
+        currentWaveform = imported.pcm
+        currentLoopStart = -1
     }
 
     private fun normalizePcm(pcm: ShortArray): ShortArray {

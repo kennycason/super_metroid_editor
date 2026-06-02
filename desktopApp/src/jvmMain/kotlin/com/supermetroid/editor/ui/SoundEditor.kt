@@ -24,10 +24,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.PublishedWithChanges
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import kotlinx.coroutines.launch
@@ -312,6 +316,7 @@ fun SoundEditorCanvas(
     val viewMode = when {
         track != null -> 1
         sample != null -> 2
+        waveform != null -> 3  // imported WAV with no track/sample selected
         else -> 0
     }
 
@@ -345,26 +350,57 @@ fun SoundEditorCanvas(
 
         Spacer(Modifier.height(4.dp))
 
-        key(viewMode) {
-            if (viewMode != 0) {
-                SoundEditorActiveContent(
-                    state = state,
-                    scope = scope,
-                    track = track,
-                    sample = sample,
-                    waveform = waveform,
-                    loading = loading,
-                    loopStart = loopStart,
-                    modifier = Modifier.fillMaxWidth().weight(1f)
-                )
-            } else {
-                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Select a track or sample", fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Browse tracks and BRR samples from the ROM", fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+        // Piano roll mode vs waveform mode
+        if (state.isPianoRollOpen && state.editingSong != null) {
+            PianoRollEditor(
+                song = state.editingSong!!,
+                activeChannel = state.pianoRollChannel,
+                onSongChanged = { state.notifySongChanged(it) },
+                onPlay = {
+                    // TODO: encode song -> render via SPC emulator -> play
+                    scope.launch {
+                        state.editingSong?.let { song ->
+                            if (romParser != null) {
+                                val ram = SpcData.buildInitialSpcRam(romParser)
+                                val blocks = SpcData.findSongSetTransferData(romParser, state.currentSongSet.coerceAtLeast(0))
+                                SpcData.applyTransferBlocks(ram, blocks)
+                                val events = NspcRenderer.parseSequence(ram, state.selectedTrack?.playIndex ?: 0)
+                                val wav = NspcRenderer.renderToWav(events, ram, tempo = song.tempo)
+                                state.playWaveform(wav)
+                            }
+                        }
+                    }
+                },
+                onStop = { state.stopPlayback() },
+                onDone = { state.closePianoRoll() },
+                onReset = { if (romParser != null) state.resetPianoRoll(romParser) },
+                isPlaying = state.isPlaying,
+                modifier = Modifier.fillMaxWidth().weight(1f)
+            )
+        } else {
+            key(viewMode) {
+                if (viewMode != 0) {
+                    SoundEditorActiveContent(
+                        state = state,
+                        editorState = editorState,
+                        romParser = romParser,
+                        scope = scope,
+                        track = track,
+                        sample = sample,
+                        waveform = waveform,
+                        loading = loading,
+                        loopStart = loopStart,
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Select a track or sample", fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(4.dp))
+                            Text("Browse tracks and BRR samples from the ROM", fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                        }
                     }
                 }
             }
@@ -376,6 +412,8 @@ fun SoundEditorCanvas(
 @Composable
 private fun SoundEditorActiveContent(
     state: SoundEditorState,
+    editorState: EditorState,
+    romParser: RomParser?,
     scope: kotlinx.coroutines.CoroutineScope,
     track: SpcData.TrackInfo?,
     sample: SoundEditorState.DecodedSample?,
@@ -477,6 +515,52 @@ private fun SoundEditorActiveContent(
                 }
             }
 
+            // Edit Track — visible when a track is selected
+            if (track != null && romParser != null) {
+                Button(
+                    onClick = { state.openPianoRoll(romParser) },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Edit Track", fontSize = 10.sp)
+                }
+            }
+
+            // Replace WAV — visible when a sample is selected
+            if (sample != null && romParser != null) {
+                Button(
+                    onClick = {
+                        state.replaceSampleInRom(romParser, editorState, sample.dirEntry.index)
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE05555)
+                    )
+                ) {
+                    Icon(Icons.Default.PublishedWithChanges, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Replace WAV", fontSize = 10.sp)
+                }
+
+                // Reset — only if this sample has been replaced
+                if (state.isSampleReplaced(editorState, sample.dirEntry.index)) {
+                    OutlinedButton(
+                        onClick = {
+                            state.resetSampleReplacement(editorState, sample.dirEntry.index)
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Icon(Icons.Default.Undo, null, Modifier.size(14.dp))
+                        Spacer(Modifier.width(2.dp))
+                        Text("Reset", fontSize = 10.sp)
+                    }
+                }
+            }
+
             Spacer(Modifier.weight(1f))
 
             Text("Rate:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -571,13 +655,17 @@ private fun SoundEditorActiveContent(
                 Text("Area: ${track.area}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else if (sample != null) {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.padding(horizontal = 4.dp)) {
                 Text("SPC: 0x${sample.dirEntry.startAddr.toString(16).uppercase().padStart(4, '0')}",
                     fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (sample.loopStart >= 0) {
                     Text("Loop: 0x${sample.dirEntry.loopAddr.toString(16).uppercase().padStart(4, '0')}",
                         fontSize = 9.sp, color = Color(0xFFFDCB6E))
+                }
+                if (romParser != null && state.isSampleReplaced(editorState, sample.dirEntry.index)) {
+                    Text("REPLACED", fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE05555))
                 }
             }
         }
