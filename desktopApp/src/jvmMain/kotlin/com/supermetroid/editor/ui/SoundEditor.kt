@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.NspcRenderer
+import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import kotlinx.coroutines.launch
@@ -352,29 +353,59 @@ fun SoundEditorCanvas(
 
         // Piano roll mode vs waveform mode
         if (state.isPianoRollOpen && state.editingSong != null) {
+            // Tick update loop for playback cursor
+            LaunchedEffect(state.isPlaying) {
+                while (state.isPlaying && state.isPianoRollOpen) {
+                    state.updatePianoRollTick()
+                    kotlinx.coroutines.delay(30)
+                }
+            }
+
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
                 onSongChanged = { state.notifySongChanged(it) },
                 onPlay = {
-                    // TODO: encode song -> render via SPC emulator -> play
                     scope.launch {
                         state.editingSong?.let { song ->
                             if (romParser != null) {
-                                val ram = SpcData.buildInitialSpcRam(romParser)
-                                val blocks = SpcData.findSongSetTransferData(romParser, state.currentSongSet.coerceAtLeast(0))
-                                SpcData.applyTransferBlocks(ram, blocks)
-                                val events = NspcRenderer.parseSequence(ram, state.selectedTrack?.playIndex ?: 0)
-                                val wav = NspcRenderer.renderToWav(events, ram, tempo = song.tempo)
-                                state.playWaveform(wav)
+                                // Use native SPC emulator (cycle-accurate hardware emulation)
+                                val wav = state.renderEditedSong(romParser, song)
+                                if (wav != null && wav.isNotEmpty()) {
+                                    state.startPianoRollPlayback(wav)
+                                } else {
+                                    val ram = state.buildSpcRamForTrack(romParser, state.currentSongSet.coerceAtLeast(0))
+                                    val events = song.channels.flatMapIndexed { ch, channel ->
+                                        channel.notes.map { note ->
+                                            val qTable = NspcSequence.QUANTIZE_TABLE
+                                            val vTable = NspcSequence.VELOCITY_TABLE
+                                            val playDur = (note.duration * qTable[note.quantize]).toInt().coerceAtLeast(1)
+                                            NspcRenderer.NoteEvent(
+                                                tickStart = note.tick,
+                                                tickDuration = playDur,
+                                                channel = ch,
+                                                noteValue = note.noteValue,
+                                                instrumentIdx = note.instrument,
+                                                volume = vTable[note.velocity]
+                                            )
+                                        }
+                                    }
+                                    val fallbackWav = NspcRenderer.renderToWav(events, ram, tempo = song.tempo)
+                                    state.startPianoRollPlayback(fallbackWav)
+                                }
                             }
                         }
                     }
                 },
-                onStop = { state.stopPlayback() },
+                onStop = {
+                    state.stopPlayback()
+                    state.pianoRollPlaybackTick = -1
+                },
                 onDone = { state.closePianoRoll() },
                 onReset = { if (romParser != null) state.resetPianoRoll(romParser) },
+                onSeek = { tick -> state.pianoRollPlaybackTick = tick },
                 isPlaying = state.isPlaying,
+                playbackTick = state.pianoRollPlaybackTick,
                 modifier = Modifier.fillMaxWidth().weight(1f)
             )
         } else {

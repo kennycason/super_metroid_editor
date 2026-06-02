@@ -362,16 +362,24 @@ object NspcRenderer {
         )
         if (totalSamples <= 0) return ShortArray(0)
 
+        System.err.println("[NSPC-RENDER] ${events.size} events, tempo=$effectiveTempo, " +
+            "tickMs=${"%.1f".format(tickMs)}, samplesPerTick=$samplesPerTick, " +
+            "maxTick=$maxTick, totalSamples=$totalSamples")
+
         val mixBuf = FloatArray(totalSamples)
 
         // Pre-decode BRR samples for each instrument
         val sampleCache = mutableMapOf<Int, Pair<ShortArray, Int>>()
 
+        var renderedCount = 0
+        var skippedCount = 0
+
         for (event in events) {
             if (event.isRest || event.isTie || event.noteValue < 0x80) continue
 
             val instrIdx = event.instrumentIdx
-            val instr = instruments.getOrNull(instrIdx) ?: continue
+            val instr = instruments.getOrNull(instrIdx)
+            if (instr == null) { skippedCount++; continue }
             val srcn = instr.srcn
             if (srcn >= 0x80) continue
 
@@ -444,7 +452,8 @@ object NspcRenderer {
                 } else if (srcIdx < pcm.size) {
                     sampleVal = pcm[srcIdx].toDouble()
                 } else {
-                    break
+                    // Non-looping sample exhausted — silence for remainder
+                    sampleVal = 0.0
                 }
 
                 // Envelope
@@ -456,7 +465,11 @@ object NspcRenderer {
 
                 mixBuf[outIdx] += (sampleVal * volume * env).toFloat()
             }
+            renderedCount++
         }
+
+        System.err.println("[NSPC-RENDER] Rendered $renderedCount notes, skipped $skippedCount (no instrument), " +
+            "unique instruments: ${sampleCache.keys.sorted()}")
 
         // Normalize and convert to 16-bit PCM
         val peak = mixBuf.maxOf { abs(it) }.coerceAtLeast(1f)

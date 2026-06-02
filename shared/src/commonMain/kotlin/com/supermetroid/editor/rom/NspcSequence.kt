@@ -84,7 +84,8 @@ object NspcSequence {
     data class Song(
         val channels: Array<Channel> = Array(8) { Channel() },
         var tempo: Int = 36,
-        var title: String = ""
+        var title: String = "",
+        var isModified: Boolean = false
     ) {
         val totalTicks: Int get() = channels.maxOf { it.totalTicks }
 
@@ -369,26 +370,68 @@ object NspcSequence {
      * Encode a song back to N-SPC binary format.
      * Returns a map of SPC RAM address -> bytes to write.
      *
-     * Strategy: write channel data starting at $5830 (after conductor),
-     * build conductor pointing to one block with 8 channel addresses.
+     * Strategy: find where the original conductor for this play index points,
+     * then overwrite that same region with our new data. This keeps everything
+     * within the original sequence data area ($5820-$6BFF) and avoids corrupting
+     * BRR samples or the SPC engine.
+     *
+     * @param spcRam The current SPC RAM (to find original conductor location)
      */
-    fun encode(song: Song, playIndex: Int): Map<Int, ByteArray> {
+    fun encode(song: Song, playIndex: Int, spcRam: ByteArray? = null): Map<Int, ByteArray> {
         val writes = mutableMapOf<Int, ByteArray>()
 
-        // Conductor starts at a fixed location per play index
-        val conductorAddr = 0x5830 + playIndex * 0x2000
+        val totalNotes = song.channels.sumOf { it.notes.size }
+        val totalCmds = song.channels.sumOf { it.commands.size }
+        System.err.println("[NSPC-ENCODE] Encoding song: playIndex=$playIndex, tempo=${song.tempo}, " +
+            "$totalNotes notes, $totalCmds commands across ${song.channels.count { it.notes.isNotEmpty() }} channels")
 
-        // Block pointer table at conductorAddr + 2
+        // Find original conductor address for this play index
+        val originalConductorAddr = if (spcRam != null) {
+            readWord(spcRam, 0x581E + playIndex * 2)
+        } else 0
+
+        // Use original conductor location if valid, otherwise use a safe default
+        // The sequence data area is $5820-$6BFF (~5KB)
+        val conductorAddr = if (originalConductorAddr in 0x5820..0x6800) {
+            originalConductorAddr
+        } else {
+            0x5830 // safe default within sequence data area
+        }
+        System.err.println("[NSPC-ENCODE] Original conductor at 0x${originalConductorAddr.toString(16)}, " +
+            "using 0x${conductorAddr.toString(16)}")
+
+        // Block pointer table right after conductor (conductor = 4 bytes: block_ptr + 0x0000 end)
         val blockTableAddr = conductorAddr + 4
 
-        // Channel data starts after block pointer table (8 * 2 = 16 bytes)
+        // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
         var dataAddr = blockTableAddr + 16
+
+        // Safety: ensure we don't write past instrument table at $6C00
+        val maxDataAddr = 0x6C00
 
         val channelAddrs = IntArray(8)
 
         for (ch in 0 until 8) {
             channelAddrs[ch] = dataAddr
             val channelData = encodeChannel(song.channels[ch], song.tempo, ch == 0)
+            System.err.println("[NSPC-ENCODE]   Ch $ch: ${song.channels[ch].notes.size} notes, " +
+                "${song.channels[ch].commands.size} cmds -> ${channelData.size} bytes at 0x${dataAddr.toString(16)}")
+            if (dataAddr + channelData.size > maxDataAddr) {
+                System.err.println("[NSPC-ENCODE] WARNING: channel $ch data at 0x${dataAddr.toString(16)} " +
+                    "would overflow into instrument table (${channelData.size} bytes). Truncating.")
+                // Write truncated + end marker
+                val truncated = channelData.copyOf(maxDataAddr - dataAddr - 1)
+                truncated[truncated.size - 1] = 0x00 // end marker
+                writes[dataAddr] = truncated
+                dataAddr += truncated.size
+                // Fill remaining channels with just end markers
+                for (remaining in ch + 1 until 8) {
+                    channelAddrs[remaining] = dataAddr
+                    writes[dataAddr] = byteArrayOf(0x00)
+                    dataAddr++
+                }
+                break
+            }
             writes[dataAddr] = channelData
             dataAddr += channelData.size
         }
@@ -414,6 +457,9 @@ object NspcSequence {
         songTableEntry[0] = (conductorAddr and 0xFF).toByte()
         songTableEntry[1] = ((conductorAddr shr 8) and 0xFF).toByte()
         writes[0x581E + playIndex * 2] = songTableEntry
+
+        System.err.println("[NSPC-ENCODE] Conductor at 0x${conductorAddr.toString(16)}, " +
+            "data ends at 0x${dataAddr.toString(16)}, ${dataAddr - conductorAddr} bytes total")
 
         return writes
     }
