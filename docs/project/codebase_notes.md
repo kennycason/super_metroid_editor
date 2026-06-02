@@ -73,8 +73,10 @@ Current branch behavior:
 - Right-clicking a note opens an inline properties panel for tick, length, pitch, velocity, quantize, instrument, and delete.
 - Left-drag moves selected notes, dragging the right edge changes note length, arrow keys move/transposes the selected note, and Delete/Backspace removes it.
 - Dragging uses a transient preview state and commits the underlying `NspcSequence.Note` only on release/exit. Do not call `onSongChanged` or re-encode/render SPC data during pointer-move updates.
+- Piano-roll add/delete/clear/drag/key/property changes emit explicit `[SPC-PIANO-EDIT]` logs with channel, note, tick, length, velocity, quantize, and instrument details. `SoundEditorState.notifySongChanged` still emits the coarse note-count summary.
 - Entering or leaving Edit Track stops current playback and disables Play All so waveform preview and piano-roll preview cannot overlap.
 - Waveform preview and piano-roll preview both pass through RMS-aware preview normalization before JVM `Clip` playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
+- `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit the nearest contextual note's instrument, velocity, quantize, and duration; this is required for user-added notes to be audible in modified playback.
 - Selection/removal uses object identity because `NspcSequence.Note` is a data class and structural equality can collide on repeated notes.
 
 ## Local Reference Codebases

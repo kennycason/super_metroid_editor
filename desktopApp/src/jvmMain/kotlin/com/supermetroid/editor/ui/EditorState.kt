@@ -2239,12 +2239,12 @@ class EditorState {
         if (pendingPositions.contains(key)) return false
         val oldWord = readBlockWord(bx, by)
         val oldBts = readBts(bx, by)
-        val origWord = readOriginalBlockWord(bx, by)
-        val origBts = readOriginalBts(bx, by)
-        if (oldWord == origWord && oldBts == origBts) return false
-        writeBlockWord(bx, by, origWord)
-        writeBts(bx, by, origBts)
-        pendingEdits.add(TileEdit(bx, by, oldWord, origWord, oldBts, origBts))
+        val newWord = RomConstants.AIR_TILE_WORD
+        val newBts = 0
+        if (oldWord == newWord && oldBts == newBts) return false
+        writeBlockWord(bx, by, newWord)
+        writeBts(bx, by, newBts)
+        pendingEdits.add(TileEdit(bx, by, oldWord, newWord, oldBts, newBts))
         pendingPositions.add(key)
         editVersion++
         return true

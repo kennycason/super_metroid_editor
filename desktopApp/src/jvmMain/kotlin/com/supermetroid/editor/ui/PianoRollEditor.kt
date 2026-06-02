@@ -110,6 +110,7 @@ private const val NOTE_TICK_STEP = 12
 private enum class PianoRollDragMode { Move, ResizeEnd }
 
 private data class PianoRollDragState(
+    val channel: Int,
     val note: Note,
     val mode: PianoRollDragMode,
     val startWorldX: Float,
@@ -128,6 +129,27 @@ private fun quantizeTick(tick: Int): Int =
 
 private fun quantizeTickDelta(delta: Int): Int =
     (delta.toFloat() / NOTE_TICK_STEP).roundToInt() * NOTE_TICK_STEP
+
+private fun noteSummary(
+    channel: Int,
+    tick: Int,
+    duration: Int,
+    noteValue: Int,
+    velocity: Int,
+    quantize: Int,
+    instrument: Int
+): String {
+    val inst = instrument.toString(16).uppercase().padStart(2, '0')
+    return "ch=${channel + 1} ${NspcSequence.noteToName(noteValue)} tick=$tick len=$duration vel=$velocity q=$quantize inst=0x$inst"
+}
+
+private fun noteSummary(channel: Int, note: Note): String =
+    noteSummary(channel, note.tick, note.duration, note.noteValue, note.velocity, note.quantize, note.instrument)
+
+private fun logPianoEdit(action: String, channel: Int, note: Note, extra: String = "") {
+    val suffix = if (extra.isBlank()) "" else " $extra"
+    System.err.println("[SPC-PIANO-EDIT] $action ${noteSummary(channel, note)}$suffix")
+}
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -194,13 +216,37 @@ fun PianoRollEditor(
     fun maxStartTickForDuration(duration: Int): Int =
         (totalTicks - duration).coerceAtLeast(0)
 
+    fun noteTemplateFor(channelIndex: Int, tick: Int): Note? {
+        val channelNotes = song.channels[channelIndex].notes
+        return channelNotes
+            .filter { it.tick <= tick }
+            .maxByOrNull { it.tick }
+            ?: channelNotes.minByOrNull { abs(it.tick - tick) }
+            ?: song.channels
+                .flatMap { it.notes }
+                .filter { it.instrument != 0 }
+                .minByOrNull { abs(it.tick - tick) }
+    }
+
     fun commitDrag(state: PianoRollDragState?) {
         if (state != null && state.changed) {
+            val before = noteSummary(state.channel, state.note)
+            val after = noteSummary(
+                state.channel,
+                state.currentTick,
+                state.currentDuration,
+                state.currentNoteValue,
+                state.note.velocity,
+                state.note.quantize,
+                state.note.instrument
+            )
             mutateSong {
                 state.note.tick = state.currentTick
                 state.note.duration = state.currentDuration
                 state.note.noteValue = state.currentNoteValue
             }
+            val action = if (state.mode == PianoRollDragMode.ResizeEnd) "Resize" else "Move"
+            System.err.println("[SPC-PIANO-EDIT] $action $before -> $after")
         }
         dragState = null
     }
@@ -251,11 +297,13 @@ fun PianoRollEditor(
 
             OutlinedButton(
                 onClick = {
+                    val removed = song.channels[activeChannel].notes.size
                     mutateSong {
                         song.channels[activeChannel].notes.clear()
                         selectedNote = null
                         showNoteProperties = false
                     }
+                    System.err.println("[SPC-PIANO-EDIT] Clear channel ch=${activeChannel + 1} removed=$removed")
                 },
                 contentPadding = PaddingValues(horizontal = 10.dp),
                 modifier = Modifier.height(28.dp)
@@ -368,6 +416,7 @@ fun PianoRollEditor(
                 totalTicks = totalTicks,
                 onClose = { showNoteProperties = false },
                 onDelete = {
+                    logPianoEdit("Delete", selectedChannel, noteForProperties, "via=properties")
                     mutateSong {
                         song.channels.forEach { channel ->
                             channel.notes.removeAll { it === noteForProperties }
@@ -549,22 +598,31 @@ fun PianoRollEditor(
                         val tickStep = if (event.isShiftPressed) 48 else NOTE_TICK_STEP
                         when (event.key) {
                             Key.DirectionLeft -> {
+                                val before = noteSummary(selectedChannel, note)
                                 mutateSong { note.tick = (note.tick - tickStep).coerceAtLeast(0) }
+                                System.err.println("[SPC-PIANO-EDIT] MoveKey $before -> ${noteSummary(selectedChannel, note)}")
                                 true
                             }
                             Key.DirectionRight -> {
+                                val before = noteSummary(selectedChannel, note)
                                 mutateSong { note.tick = quantizeTick(note.tick + tickStep).coerceAtMost(maxStartTickFor(note)) }
+                                System.err.println("[SPC-PIANO-EDIT] MoveKey $before -> ${noteSummary(selectedChannel, note)}")
                                 true
                             }
                             Key.DirectionUp -> {
+                                val before = noteSummary(selectedChannel, note)
                                 mutateSong { note.noteValue = (note.noteValue + 1).coerceAtMost(NspcSequence.NOTE_MAX) }
+                                System.err.println("[SPC-PIANO-EDIT] TransposeKey $before -> ${noteSummary(selectedChannel, note)}")
                                 true
                             }
                             Key.DirectionDown -> {
+                                val before = noteSummary(selectedChannel, note)
                                 mutateSong { note.noteValue = (note.noteValue - 1).coerceAtLeast(NspcSequence.NOTE_MIN) }
+                                System.err.println("[SPC-PIANO-EDIT] TransposeKey $before -> ${noteSummary(selectedChannel, note)}")
                                 true
                             }
                             Key.Delete, Key.Backspace -> {
+                                logPianoEdit("Delete", selectedChannel, note, "via=keyboard")
                                 mutateSong {
                                     song.channels.forEach { channel ->
                                         channel.notes.removeAll { it === note }
@@ -611,6 +669,7 @@ fun PianoRollEditor(
                                     selectNote(ch, note)
                                     val worldX = offset.x + hScrollPx
                                     dragState = PianoRollDragState(
+                                        channel = ch,
                                         note = note,
                                         mode = if (isOnResizeHandle(note, offset)) PianoRollDragMode.ResizeEnd else PianoRollDragMode.Move,
                                         startWorldX = worldX,
@@ -628,13 +687,15 @@ fun PianoRollEditor(
                                     val noteValue = NspcSequence.NOTE_MIN + reversedPitch.coerceIn(0, 71)
 
                                     val channel = song.channels[activeChannel]
+                                    val quantizedTick = quantizeTick(tick).coerceIn(0, (totalTicks - 24).coerceAtLeast(0))
+                                    val template = noteTemplateFor(activeChannel, quantizedTick)
                                     val newNote = Note(
-                                        tick = quantizeTick(tick).coerceIn(0, (totalTicks - 24).coerceAtLeast(0)),
-                                        duration = 24,
+                                        tick = quantizedTick,
+                                        duration = template?.duration?.coerceIn(NOTE_TICK_STEP, 0x7F) ?: 24,
                                         noteValue = noteValue,
-                                        velocity = 15,
-                                        quantize = 7,
-                                        instrument = channel.notes.lastOrNull()?.instrument ?: 0
+                                        velocity = template?.velocity ?: 15,
+                                        quantize = template?.quantize ?: 7,
+                                        instrument = template?.instrument ?: 0x0B
                                     )
                                     mutateSong {
                                         channel.notes.add(newNote)
@@ -642,6 +703,7 @@ fun PianoRollEditor(
                                         selectedChannel = activeChannel
                                         showNoteProperties = false
                                     }
+                                    logPianoEdit("Add", activeChannel, newNote)
                                 }
                             }
                         }
@@ -830,28 +892,47 @@ private fun NotePropertiesPanel(
             }
 
             NoteNumberProperty("Tick", note.tick, 6, 999999) {
+                val old = note.tick
                 note.tick = quantizeTick(it).coerceIn(0, (totalTicks - note.duration).coerceAtLeast(0))
+                if (note.tick != old) logPianoEdit("SetTick", channel, note, "$old->${note.tick}")
                 onChanged()
             }
             NoteNumberProperty("Len", note.duration, 4, 9999) {
+                val old = note.duration
                 val maxDuration = (totalTicks - note.tick).coerceAtLeast(NOTE_TICK_STEP)
                 note.duration = quantizeTick(it).coerceIn(NOTE_TICK_STEP, maxDuration)
+                if (note.duration != old) logPianoEdit("SetLen", channel, note, "$old->${note.duration}")
                 onChanged()
             }
             NoteNumberProperty("Pitch", note.noteValue, 3, NspcSequence.NOTE_MAX) {
+                val old = note.noteValue
                 note.noteValue = it.coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX)
+                if (note.noteValue != old) {
+                    System.err.println("[SPC-PIANO-EDIT] SetPitch ch=${channel + 1} " +
+                        "${NspcSequence.noteToName(old)}->${note.name} ${noteSummary(channel, note)}")
+                }
                 onChanged()
             }
             NoteNumberProperty("Vel", note.velocity, 2, 15) {
+                val old = note.velocity
                 note.velocity = it.coerceIn(0, 15)
+                if (note.velocity != old) logPianoEdit("SetVel", channel, note, "$old->${note.velocity}")
                 onChanged()
             }
             NoteNumberProperty("Q", note.quantize, 1, 7) {
+                val old = note.quantize
                 note.quantize = it.coerceIn(0, 7)
+                if (note.quantize != old) logPianoEdit("SetQuantize", channel, note, "$old->${note.quantize}")
                 onChanged()
             }
             NoteNumberProperty("Inst", note.instrument, 3, 255) {
+                val old = note.instrument
                 note.instrument = it.coerceIn(0, 255)
+                if (note.instrument != old) {
+                    val oldInst = old.toString(16).uppercase().padStart(2, '0')
+                    val newInst = note.instrument.toString(16).uppercase().padStart(2, '0')
+                    logPianoEdit("SetInstrument", channel, note, "0x$oldInst->0x$newInst")
+                }
                 onChanged()
             }
 

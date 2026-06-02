@@ -246,6 +246,30 @@ object NspcSequence {
                         b in 0xCA..0xDF -> {
                             st.instrument = b - 0xCA + 0x17
                         }
+                        b == 0xE0 -> {
+                            if (st.ptr < ram.size) {
+                                val inst = ram[st.ptr].toInt() and 0xFF
+                                st.ptr++
+                                st.instrument = inst
+                                song.channels[ch].commands.add(ControlCommand(
+                                    tick = globalTickOffset + blockTick,
+                                    command = b,
+                                    params = intArrayOf(inst)
+                                ))
+                            }
+                        }
+                        b == 0xEA -> {
+                            if (st.ptr < ram.size) {
+                                val transpose = ram[st.ptr].toInt().toByte().toInt()
+                                st.ptr++
+                                st.transpose = transpose
+                                song.channels[ch].commands.add(ControlCommand(
+                                    tick = globalTickOffset + blockTick,
+                                    command = b,
+                                    params = intArrayOf(transpose and 0xFF)
+                                ))
+                            }
+                        }
                         b >= 0xE0 -> {
                             val (cmd, params) = parseControlCommand(ram, st.ptr - 1, b, st)
                             song.channels[ch].commands.add(ControlCommand(
@@ -502,6 +526,9 @@ object NspcSequence {
                 }
                 out.add(cmd.command)
                 for (p in cmd.params) out.add(p)
+                if (cmd.command == 0xE0 && cmd.params.isNotEmpty()) {
+                    lastInstrument = cmd.params[0]
+                }
                 cmdIdx++
             } else if (noteIdx < notes.size) {
                 val note = notes[noteIdx]

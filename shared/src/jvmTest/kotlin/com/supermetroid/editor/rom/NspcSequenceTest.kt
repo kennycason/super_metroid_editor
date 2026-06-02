@@ -86,4 +86,37 @@ class NspcSequenceTest {
         assertEquals(24, ch0[1].duration)
         assertEquals(48, ch0[2].duration)
     }
+
+    @Test
+    fun `parse applies E0 instrument command to subsequent notes`() {
+        val spcRam = ByteArray(65536)
+        val conductorAddr = 0x5830
+        val blockTableAddr = 0x5840
+        val channelAddr = 0x5850
+
+        spcRam[0x581E] = (conductorAddr and 0xFF).toByte()
+        spcRam[0x581F] = ((conductorAddr shr 8) and 0xFF).toByte()
+
+        spcRam[conductorAddr] = (blockTableAddr and 0xFF).toByte()
+        spcRam[conductorAddr + 1] = ((blockTableAddr shr 8) and 0xFF).toByte()
+        spcRam[conductorAddr + 2] = 0
+        spcRam[conductorAddr + 3] = 0
+
+        spcRam[blockTableAddr] = (channelAddr and 0xFF).toByte()
+        spcRam[blockTableAddr + 1] = ((channelAddr shr 8) and 0xFF).toByte()
+
+        spcRam[channelAddr] = 0xE0.toByte()
+        spcRam[channelAddr + 1] = 0x0B
+        spcRam[channelAddr + 2] = 24
+        spcRam[channelAddr + 3] = 0x7F
+        spcRam[channelAddr + 4] = 0x94.toByte()
+        spcRam[channelAddr + 5] = 0x00
+
+        val song = NspcSequence.parse(spcRam, 0)
+        val note = song.channels[0].notes.single()
+        assertEquals(0x0B, note.instrument)
+        assertEquals(15, note.velocity)
+        assertEquals(7, note.quantize)
+        assertEquals(0x94, note.noteValue)
+    }
 }

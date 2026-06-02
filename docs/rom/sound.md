@@ -226,6 +226,7 @@ Current piano-roll editing behavior:
 - Left-drag moves notes, right-edge drag resizes note length, arrow keys move/transposes the selected note, and Delete/Backspace removes it.
 - Drag operations use transient preview state and commit note data once on release; SPC re-encode/render should stay on explicit playback/export paths.
 - Waveform preview and piano-roll preview use RMS-aware preview normalization before JVM playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
+- `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit nearby note instrument, velocity, quantize, and duration so user-added notes render with valid Super Metroid instrument state.
 
 ## Parser/Renderer Caveats
 
