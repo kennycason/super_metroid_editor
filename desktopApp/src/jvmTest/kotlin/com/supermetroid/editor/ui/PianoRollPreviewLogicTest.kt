@@ -244,6 +244,33 @@ class PianoRollPreviewLogicTest {
         assertEquals(27, original.channels[0].commands.single().params[0])
     }
 
+    @Test
+    fun `deepCopySong isolates note lists so adding to copy does not affect original`() {
+        val original = testSong(
+            0 to listOf(note(tick = 0, duration = 24, noteValue = 0x94, instrument = 0x1B))
+        )
+
+        val copy = PianoRollPreviewLogic.deepCopySong(original)
+        copy.channels[0].notes += note(tick = 48, duration = 24, noteValue = 0x99, instrument = 0x1A)
+
+        assertEquals(1, original.channels[0].notes.size)
+        assertEquals(2, copy.channels[0].notes.size)
+    }
+
+    @Test
+    fun `deepCopySong preserves isModified flag`() {
+        val original = testSong(
+            0 to listOf(note(tick = 0, duration = 24, noteValue = 0x94, instrument = 0x1B))
+        )
+        original.isModified = true
+
+        val copy = PianoRollPreviewLogic.deepCopySong(original)
+
+        assertEquals(true, copy.isModified)
+        copy.isModified = false
+        assertEquals(true, original.isModified)
+    }
+
     private fun testSong(vararg notesByChannel: Pair<Int, List<NspcSequence.Note>>): NspcSequence.Song {
         val song = NspcSequence.Song(tempo = 27)
         for ((channel, notes) in notesByChannel) {

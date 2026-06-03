@@ -533,7 +533,7 @@ object NspcSequence {
                 val cmd = commands[cmdIdx]
                 // Insert rest if needed to advance to this tick
                 if (cmd.tick > currentTick) {
-                    emitRests(out, cmd.tick - currentTick, lastDuration)
+                    lastDuration = emitRests(out, cmd.tick - currentTick, lastDuration)
                     currentTick = cmd.tick
                 }
                 out.add(cmd.command)
@@ -548,7 +548,7 @@ object NspcSequence {
                 // Insert rests to reach this note's tick
                 if (note.tick > currentTick) {
                     val gap = note.tick - currentTick
-                    emitRests(out, gap, lastDuration)
+                    lastDuration = emitRests(out, gap, lastDuration)
                     currentTick = note.tick
                 }
 
@@ -571,9 +571,6 @@ object NspcSequence {
                     lastDuration = note.duration
                     lastQuantize = note.quantize
                     lastVelocity = note.velocity
-                } else if (note.duration != lastDuration) {
-                    out.add(note.duration.coerceIn(1, 0x7F))
-                    lastDuration = note.duration
                 }
 
                 // Emit note
@@ -589,17 +586,20 @@ object NspcSequence {
         return ByteArray(out.size) { out[it].toByte() }
     }
 
-    /** Emit rest commands to fill a gap. */
-    private fun emitRests(out: MutableList<Int>, ticks: Int, lastDuration: Int) {
+    /** Emit rest commands to fill a gap. Returns the last duration emitted. */
+    private fun emitRests(out: MutableList<Int>, ticks: Int, lastDuration: Int): Int {
         var remaining = ticks
+        var currentDuration = lastDuration
         while (remaining > 0) {
             val dur = remaining.coerceIn(1, 0x7F)
-            if (dur != lastDuration) {
+            if (dur != currentDuration) {
                 out.add(dur)
+                currentDuration = dur
             }
             out.add(NOTE_REST)
             remaining -= dur
         }
+        return currentDuration
     }
 
     // ─── Utilities ──────────────────────────────────────────────────

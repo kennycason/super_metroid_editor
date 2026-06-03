@@ -121,6 +121,93 @@ class NspcSequenceTest {
     }
 
     @Test
+    fun `encode round-trips notes with large gaps between them`() {
+        val song = NspcSequence.Song(tempo = 40)
+        song.channels[0].notes.addAll(listOf(
+            NspcSequence.Note(tick = 0, duration = 24, noteValue = 0x94, velocity = 15, quantize = 7, instrument = 0),
+            NspcSequence.Note(tick = 200, duration = 48, noteValue = 0x98, velocity = 15, quantize = 7, instrument = 0),
+            NspcSequence.Note(tick = 500, duration = 24, noteValue = 0x9C, velocity = 12, quantize = 5, instrument = 0),
+        ))
+
+        val writes = NspcSequence.encode(song, 0)
+        val spcRam = ByteArray(65536)
+        for ((addr, data) in writes) {
+            if (addr + data.size <= spcRam.size) data.copyInto(spcRam, addr)
+        }
+
+        val parsed = NspcSequence.parse(spcRam, 0)
+        val ch0 = parsed.channels[0].notes
+        assertEquals(3, ch0.size, "Should have 3 notes")
+        assertEquals(0, ch0[0].tick)
+        assertEquals(24, ch0[0].duration)
+        assertEquals(0x94, ch0[0].noteValue)
+        assertEquals(200, ch0[1].tick)
+        assertEquals(48, ch0[1].duration)
+        assertEquals(0x98, ch0[1].noteValue)
+        assertEquals(500, ch0[2].tick)
+        assertEquals(24, ch0[2].duration)
+        assertEquals(0x9C, ch0[2].noteValue)
+        assertEquals(12, ch0[2].velocity)
+        assertEquals(5, ch0[2].quantize)
+    }
+
+    @Test
+    fun `encode emits correct duration bytes after rest gaps`() {
+        // Regression: emitRests must propagate its last duration back to the caller.
+        // If a rest gap uses duration 73, the next note with duration 73 must NOT
+        // skip emitting its duration+qv byte (they'd differ in quantize/velocity).
+        val song = NspcSequence.Song(tempo = 40)
+        song.channels[0].notes.addAll(listOf(
+            NspcSequence.Note(tick = 0, duration = 73, noteValue = 0x94, velocity = 15, quantize = 7, instrument = 0),
+            // Gap of 200 ticks: emitRests produces 127 + 73. Last rest duration = 73.
+            NspcSequence.Note(tick = 273, duration = 73, noteValue = 0x98, velocity = 10, quantize = 4, instrument = 0),
+        ))
+
+        val writes = NspcSequence.encode(song, 0)
+        val spcRam = ByteArray(65536)
+        for ((addr, data) in writes) {
+            if (addr + data.size <= spcRam.size) data.copyInto(spcRam, addr)
+        }
+
+        val parsed = NspcSequence.parse(spcRam, 0)
+        val ch0 = parsed.channels[0].notes
+        assertEquals(2, ch0.size, "Should have 2 notes")
+        assertEquals(273, ch0[1].tick)
+        assertEquals(73, ch0[1].duration)
+        // The velocity/quantize must come through correctly even though duration
+        // matches the last rest's duration
+        assertEquals(10, ch0[1].velocity)
+        assertEquals(4, ch0[1].quantize)
+    }
+
+    @Test
+    fun `encode round-trips multi-channel song with commands`() {
+        val song = NspcSequence.Song(tempo = 55)
+        song.channels[0].notes.addAll(listOf(
+            NspcSequence.Note(tick = 0, duration = 48, noteValue = 0x94, velocity = 15, quantize = 7, instrument = 5),
+            NspcSequence.Note(tick = 48, duration = 48, noteValue = 0x96, velocity = 15, quantize = 7, instrument = 5),
+        ))
+        song.channels[1].notes.addAll(listOf(
+            NspcSequence.Note(tick = 0, duration = 96, noteValue = 0x80, velocity = 12, quantize = 6, instrument = 3),
+        ))
+
+        val writes = NspcSequence.encode(song, 0)
+        val spcRam = ByteArray(65536)
+        for ((addr, data) in writes) {
+            if (addr + data.size <= spcRam.size) data.copyInto(spcRam, addr)
+        }
+
+        val parsed = NspcSequence.parse(spcRam, 0)
+        assertEquals(55, parsed.tempo)
+        assertEquals(2, parsed.channels[0].notes.size)
+        assertEquals(1, parsed.channels[1].notes.size)
+        assertEquals(0x94, parsed.channels[0].notes[0].noteValue)
+        assertEquals(0x96, parsed.channels[0].notes[1].noteValue)
+        assertEquals(0x80, parsed.channels[1].notes[0].noteValue)
+        assertEquals(96, parsed.channels[1].notes[0].duration)
+    }
+
+    @Test
     fun `encode failOnOverflow rejects sequence data crossing instrument table`() {
         val song = NspcSequence.Song(tempo = 40)
         repeat(3000) { i ->

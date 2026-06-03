@@ -191,7 +191,7 @@ class SoundEditorState {
         val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)?.hasDelta ?: true
         song.isModified = hasNoteDelta
         soundEditorLog.info { "[SPC-PIANO] Song modified: $prevNotes -> $newNotes notes, noteDelta=$hasNoteDelta" }
-        editingSong = song.copy() // force recompose
+        editingSong = PianoRollPreviewLogic.deepCopySong(song)
     }
 
     fun recordPianoRollEdit(label: String) {
