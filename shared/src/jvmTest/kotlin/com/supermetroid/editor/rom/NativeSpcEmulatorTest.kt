@@ -1,8 +1,8 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assumptions
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 import kotlin.math.abs
 
 class NativeSpcEmulatorTest {
@@ -72,5 +72,31 @@ class NativeSpcEmulatorTest {
             "All songs should have distinct peaks, got: $peaks"
         }
         println("OK - All songs produce distinct audio")
+    }
+
+    @Test
+    fun `explicit song blocks render like prepatched song RAM`() {
+        Assumptions.assumeTrue(NativeSpcEmulator.isAvailable(), "libspc not available")
+        val parser = loadTestRom()
+        Assumptions.assumeTrue(parser != null, "Test ROM not found")
+        parser!!
+
+        val baseRam = SpcData.buildInitialSpcRam(parser)
+        val blocks = SpcData.findSongSetTransferData(parser, 0x0F)
+        val prepatchedRam = baseRam.copyOf()
+        SpcData.applyTransferBlocks(prepatchedRam, blocks)
+
+        val explicitBlocks = NativeSpcEmulator().use { emu ->
+            emu.loadFromRam(baseRam, blocks, playIndex = 5)
+            emu.renderMono(5)
+        }
+        val prepatched = NativeSpcEmulator().use { emu ->
+            emu.loadFromRam(prepatchedRam, emptyList(), playIndex = 5)
+            emu.renderMono(5)
+        }
+
+        val compareSamples = minOf(explicitBlocks.size, prepatched.size, NativeSpcEmulator.SAMPLE_RATE * 5)
+        val maxDelta = (0 until compareSamples).maxOf { i -> abs(explicitBlocks[i].toInt() - prepatched[i].toInt()) }
+        assertTrue(maxDelta <= 1, "Explicit song blocks should match prepatched RAM; maxDelta=$maxDelta")
     }
 }

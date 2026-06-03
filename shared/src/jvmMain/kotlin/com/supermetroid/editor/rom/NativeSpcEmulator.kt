@@ -68,7 +68,6 @@ class NativeSpcEmulator : AutoCloseable {
         fun spc_skip(spc: Pointer, count: Int): String?
         fun spc_write_port(spc: Pointer, time: Int, port: Int, data: Int)
         fun spc_read_port(spc: Pointer, time: Int, port: Int): Int
-        fun spc_ram(spc: Pointer): Pointer
         fun spc_mute_voices(spc: Pointer, mask: Int)
 
         fun spc_filter_new(): Pointer?
@@ -120,11 +119,11 @@ class NativeSpcEmulator : AutoCloseable {
     }
 
     /**
-     * Initialize the emulator with base engine RAM, apply song set transfer blocks,
-     * and send a play command for the given track ID.
+     * Initialize the emulator with base engine RAM, pre-apply song set transfer
+     * blocks, and send a play command for the given track ID.
      *
      * @param baseRam 64KB SPC RAM with the engine loaded (from SpcData.buildInitialSpcRam)
-     * @param songBlocks Song set transfer blocks to patch into live RAM
+     * @param songBlocks Song set transfer blocks to apply to the SPC RAM image
      * @param playIndex Track ID to send via port 0
      */
     fun loadFromRam(
@@ -141,7 +140,12 @@ class NativeSpcEmulator : AutoCloseable {
 
         library.spc_init_rom(spcPtr, IPL_ROM)
 
-        val spcImage = buildSpcImage(baseRam)
+        val initialRam = if (songBlocks.isEmpty()) {
+            baseRam
+        } else {
+            baseRam.copyOf().also { SpcData.applyTransferBlocks(it, songBlocks) }
+        }
+        val spcImage = buildSpcImage(initialRam)
         val err = library.spc_load_spc(spcPtr, spcImage, spcImage.size.toLong())
         if (err != null) {
             close()
@@ -151,18 +155,6 @@ class NativeSpcEmulator : AutoCloseable {
 
         // Let the engine initialize (~2 seconds)
         library.spc_skip(spcPtr, SAMPLE_RATE * 2 * 2)
-
-        // Patch song set transfer blocks into live emulator RAM
-        if (songBlocks.isNotEmpty()) {
-            val ramPtr = library.spc_ram(spcPtr)
-            for (block in songBlocks) {
-                val dest = block.destAddr and 0xFFFF
-                val len = minOf(block.data.size, RAM_SIZE - dest)
-                if (len > 0) {
-                    ramPtr.write(dest.toLong(), block.data, 0, len)
-                }
-            }
-        }
 
         // Send play command: track ID to port 0
         library.spc_write_port(spcPtr, 0, 0, playIndex)
