@@ -1,5 +1,7 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.util.EditorLog
+
 /**
  * Super Metroid SPC700 music data parser.
  *
@@ -501,7 +503,7 @@ object SpcData {
             }
         }
 
-        System.err.println("[SPC] WARNING: no valid pointer for songSet 0x${songSet.toString(16).padStart(2, '0')}")
+        EditorLog.warn("[SPC] no valid pointer for songSet 0x${songSet.toString(16).padStart(2, '0')}")
         return 0
     }
 
@@ -519,9 +521,9 @@ object SpcData {
             if (ptr > 0) result[ss] = ptr
         }
         if (result.isNotEmpty()) {
-            System.err.println("[SPC] Found ${result.size} song set pointers")
+            EditorLog.info("[SPC] Found ${result.size} song set pointers")
             for ((ss, addr) in result.entries.sortedBy { it.key }) {
-                System.err.println("[SPC]   songSet 0x${ss.toString(16).padStart(2, '0')} -> \$${addr.toString(16).uppercase().padStart(6, '0')}")
+                EditorLog.info("[SPC]   songSet 0x${ss.toString(16).padStart(2, '0')} -> \$${addr.toString(16).uppercase().padStart(6, '0')}")
             }
         }
         return result
@@ -572,7 +574,7 @@ object SpcData {
             val addr2 = (hi2 shl 16) or (mid2 shl 8) or lo2
             if (addr2 == addr1 + 1) {
                 val tablePc = romParser.snesToPc(addr1)
-                System.err.println("[SPC] Found relocated table at \$${addr1.toString(16).uppercase()} (PC 0x${tablePc.toString(16)})")
+                EditorLog.info("[SPC] Found relocated table at \$${addr1.toString(16).uppercase()} (PC 0x${tablePc.toString(16)})")
                 return tablePc
             }
         }
@@ -698,7 +700,7 @@ object SpcData {
         val spcRam = baseRam.copyOf()
         val blocks = findSongSetTransferData(romParser, songSet)
         if (blocks.isEmpty()) {
-            System.err.println("[SPC-REPLACE] Song set 0x${songSet.toString(16)} has no transfer blocks")
+            EditorLog.warn("[SPC-REPLACE] Song set 0x${songSet.toString(16)} has no transfer blocks")
             return null
         }
         applyTransferBlocks(spcRam, blocks)
@@ -707,19 +709,19 @@ object SpcData {
         val dir = findSampleDirectory(spcRam)
         val entry = dir.find { it.index == sampleDirIndex }
         if (entry == null) {
-            System.err.println("[SPC-REPLACE] Sample #$sampleDirIndex not found in directory")
+            EditorLog.warn("[SPC-REPLACE] Sample #$sampleDirIndex not found in directory")
             return null
         }
 
         // 3. Find exact ROM offset
         val location = findSampleRomLocation(romParser, songSet, spcRam, entry, dir)
         if (location == null) {
-            System.err.println("[SPC-REPLACE] Could not find ROM offset for sample #$sampleDirIndex " +
+            EditorLog.warn("[SPC-REPLACE] Could not find ROM offset for sample #$sampleDirIndex " +
                 "at SPC 0x${entry.startAddr.toString(16)}")
             return null
         }
 
-        System.err.println("[SPC-REPLACE] Sample #$sampleDirIndex: SPC 0x${entry.startAddr.toString(16)}, " +
+        EditorLog.info("[SPC-REPLACE] Sample #$sampleDirIndex: SPC 0x${entry.startAddr.toString(16)}, " +
             "ROM PC 0x${location.romPcOffset.toString(16)}, old=${location.brrSize}B, " +
             "new=${newBrr.size}B, max=${location.maxBrrSize}B")
 
@@ -732,7 +734,7 @@ object SpcData {
             // Trim to fit: truncate to max whole BRR blocks that fit
             val maxBlocks = slotSize / 9
             if (maxBlocks == 0) {
-                System.err.println("[SPC-REPLACE] Original slot too small (${slotSize}B)")
+                EditorLog.warn("[SPC-REPLACE] Original slot too small (${slotSize}B)")
                 return null
             }
             finalBrr = newBrr.copyOf(maxBlocks * 9)
@@ -741,18 +743,18 @@ object SpcData {
             // Clear loop flag (bit 1) on last block so it doesn't loop
             finalBrr[finalBrr.size - 9] = (finalBrr[finalBrr.size - 9].toInt() and 0x02.inv()).toByte()
             wasTrimmed = true
-            System.err.println("[SPC-REPLACE] Trimmed to ${finalBrr.size}B ($maxBlocks BRR blocks) to fit slot")
+            EditorLog.warn("[SPC-REPLACE] Trimmed to ${finalBrr.size}B ($maxBlocks BRR blocks) to fit slot")
         } else if (finalBrr.size < slotSize) {
             // Shorter: the end flag in the new BRR is already set by encodeBrr(),
             // remaining old bytes won't be played. Just write what we have.
-            System.err.println("[SPC-REPLACE] New BRR (${finalBrr.size}B) shorter than slot (${slotSize}B) — OK")
+            EditorLog.info("[SPC-REPLACE] New BRR (${finalBrr.size}B) shorter than slot (${slotSize}B) - OK")
         }
 
         // 5. Write the BRR data at the exact ROM offset
         val writes = mutableListOf<Pair<Int, ByteArray>>()
         writes.add(Pair(location.romPcOffset, finalBrr))
 
-        System.err.println("[SPC-REPLACE] Writing ${finalBrr.size}B at ROM PC 0x${location.romPcOffset.toString(16)}")
+        EditorLog.info("[SPC-REPLACE] Writing ${finalBrr.size}B at ROM PC 0x${location.romPcOffset.toString(16)}")
         return Pair(writes, wasTrimmed)
     }
 }

@@ -3,6 +3,9 @@ package com.supermetroid.editor.controller
 import com.studiohartman.jamepad.ControllerManager
 import com.studiohartman.jamepad.ControllerState
 import com.supermetroid.editor.libretro.LibretroConstants
+import io.github.oshai.kotlinlogging.KotlinLogging
+
+private val gamepadLog = KotlinLogging.logger {}
 
 /**
  * Manages gamepad input via Jamepad (SDL2).
@@ -74,7 +77,7 @@ class GamepadManager {
             initialized = true
             consecutiveErrors = 0
         } catch (e: Throwable) {
-            System.err.println("[GamepadManager] Failed to init SDL gamepad: ${e.message}")
+            gamepadLog.warn(e) { "[GamepadManager] Failed to init SDL gamepad: ${e.message}" }
             statusEvent = "Gamepad init failed: ${e.message}"
             disabled = true
         }
@@ -92,9 +95,9 @@ class GamepadManager {
             return pollInternal(mgr)
         } catch (e: Throwable) {
             consecutiveErrors++
-            System.err.println("[GamepadManager] poll error #$consecutiveErrors: ${e.message}")
+            gamepadLog.warn(e) { "[GamepadManager] poll error #$consecutiveErrors: ${e.message}" }
             if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                System.err.println("[GamepadManager] Too many errors, disabling gamepad support")
+                gamepadLog.warn { "[GamepadManager] Too many errors, disabling gamepad support" }
                 statusEvent = "Gamepad disabled due to repeated errors"
                 disabled = true
                 safeClose()
@@ -114,7 +117,7 @@ class GamepadManager {
                 isConnected = false
                 controllerName = null
                 statusEvent = "Controller disconnected: $prevName"
-                println("[GamepadManager] $statusEvent")
+                gamepadLog.info { "[GamepadManager] $statusEvent" }
             }
             return null
         }
@@ -123,7 +126,7 @@ class GamepadManager {
             isConnected = true
             controllerName = state.controllerType ?: "Gamepad"
             statusEvent = "Controller connected: $controllerName"
-            println("[GamepadManager] $statusEvent")
+            gamepadLog.info { "[GamepadManager] $statusEvent" }
         }
 
         val buttons = MutableList(12) { 0 }
@@ -177,7 +180,7 @@ class GamepadManager {
         try {
             manager?.quitSDLGamepad()
         } catch (e: Throwable) {
-            System.err.println("[GamepadManager] Error during close: ${e.message}")
+            gamepadLog.warn(e) { "[GamepadManager] Error during close: ${e.message}" }
         }
         manager = null
         initialized = false

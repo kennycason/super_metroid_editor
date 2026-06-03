@@ -46,7 +46,7 @@ Current flow:
 Known caveats:
 
 - Native SPC render is the accuracy target. The Kotlin renderer and piano-roll parser are convenience layers.
-- `NspcSequence.parse` does not fully apply every command to note metadata yet. Instrument logs such as `instruments=[0]` can be incomplete for real tracks.
+- `NspcSequence.parse` applies `E0` instrument and `EA` transpose state, but it still does not model every N-SPC command. Treat native SPC rendering as the audio ground truth when available.
 - Sequence encoding is simplified and constrained to the existing sequence region before `$6C00`.
 - Sample replacement does not yet implement appended transfer blocks, directory patching, chain relocation, or ROM expansion.
 
@@ -71,13 +71,19 @@ Current branch behavior:
 - Reset reparses the original N-SPC song, removes added notes, stops playback, and leaves the playback cursor at tick `0`.
 - Stop also leaves the piano-roll cursor at tick `0`; close hides it.
 - Right-clicking a note opens an inline properties panel for tick, length, pitch, velocity, quantize, instrument, and delete.
+- The note properties panel is a bottom overlay, not normal layout, so right-clicking a note does not push the piano roll down.
+- The instrument inspector is sourced from the current SPC RAM instrument table: entry address, `SRCN`, sample start/loop pointers, scanned BRR byte length/loop flag, ADSR1/ADSR2/GAIN bytes, decoded ADSR nibbles, pitch-adjust word, and clickable instruments already used in the track.
+- `SRCN`, ADSR1, ADSR2, GAIN, and pitch-adjust are editable as shared instrument-table bytes and are patched into preview SPC RAM at `$6C00 + index*6`. Sample start/loop pointers and BRR data remain read-only diagnostics until there is a safe sample-directory/BRR patch/export path.
 - Left-drag moves selected notes, dragging the right edge changes note length, arrow keys move/transposes the selected note, and Delete/Backspace removes it.
 - Dragging uses a transient preview state and commits the underlying `NspcSequence.Note` only on release/exit. Do not call `onSongChanged` or re-encode/render SPC data during pointer-move updates.
 - Piano-roll add/delete/clear/drag/key/property changes emit explicit `[SPC-PIANO-EDIT]` logs with channel, note, tick, length, velocity, quantize, and instrument details. `SoundEditorState.notifySongChanged` still emits the coarse note-count summary.
 - Entering or leaving Edit Track stops current playback and disables Play All so waveform preview and piano-roll preview cannot overlap.
 - Waveform preview and piano-roll preview both pass through RMS-aware preview normalization before JVM `Clip` playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
 - `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit the nearest contextual note's instrument, velocity, quantize, and duration; this is required for user-added notes to be audible in modified playback.
+- Modified native SPC playback uses `NspcSequence.encode(..., failOnOverflow = true)`. If the simplified encoder cannot fit the edited sequence before `$6C00`, or if native render is silent, Edit Track playback avoids corrupting the instrument table / playing silence.
+- Additive note edits use a hybrid fallback when native re-encode overflows: native original track playback plus software-rendered added notes. Edits that remove or change original notes still require full software fallback because the native original audio cannot subtract or move existing notes.
 - Selection/removal uses object identity because `NspcSequence.Note` is a data class and structural equality can collide on repeated notes.
+- Regression coverage lives in `PianoRollPreviewLogicTest`, `NspcSequenceTest`, and `NspcRendererTest`: additive overlay planning, duplicate note accounting, moved/deleted-note fallback detection, instrument-table patch bytes, PCM mix clipping, Lower Norfair one-note overflow refusal, and instrument metadata parsing.
 
 ## Local Reference Codebases
 

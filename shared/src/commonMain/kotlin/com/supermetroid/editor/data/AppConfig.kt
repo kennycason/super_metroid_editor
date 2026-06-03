@@ -1,5 +1,6 @@
 package com.supermetroid.editor.data
 
+import com.supermetroid.editor.util.EditorLog
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -78,7 +79,7 @@ object AppConfig {
             cached = settings
             settings
         } catch (e: Exception) {
-            System.err.println("[Config] Failed to read config: ${e.message}")
+            EditorLog.error(e, "[Config] Failed to read config: ${e.message}")
             val defaults = withEnvOverrides(AppSettings())
             cached = defaults
             defaults
@@ -91,7 +92,7 @@ object AppConfig {
             configDir.mkdirs()
             configFile.writeText(json.encodeToString(settings))
         } catch (e: Exception) {
-            System.err.println("[Config] Failed to write config: ${e.message}")
+            EditorLog.error(e, "[Config] Failed to write config: ${e.message}")
         }
     }
 

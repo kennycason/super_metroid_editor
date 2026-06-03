@@ -64,10 +64,13 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
 import kotlin.math.abs
 import kotlin.math.max
+
+private val soundEditorUiLog = KotlinLogging.logger {}
 
 // ─── Waveform / bar visualization ───────────────────────────────────────
 
@@ -236,7 +239,7 @@ private fun SampleListContent(
             try {
                 state.loadSamples(romParser)
             } catch (e: Exception) {
-                System.err.println("[SPC] Sample load error: ${e.message}")
+                soundEditorUiLog.error(e) { "[SPC] Sample load error: ${e.message}" }
             }
         }
     }
@@ -298,7 +301,7 @@ fun SoundEditorCanvas(
             try {
                 state.loadTrackSamples(romParser)
             } catch (e: Exception) {
-                System.err.println("[SPC] Track load error in LaunchedEffect: ${e.message}")
+                soundEditorUiLog.error(e) { "[SPC] Track load error in LaunchedEffect: ${e.message}" }
             }
         }
     }
@@ -364,6 +367,16 @@ fun SoundEditorCanvas(
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
+                instrumentInfos = state.pianoRollInstruments,
+                canUndo = state.pianoRollUndoDepth > 0,
+                canRedo = state.pianoRollRedoDepth > 0,
+                onRecordUndo = { label -> state.recordPianoRollEdit(label) },
+                onUndo = { state.undoPianoRollEdit() },
+                onRedo = { state.redoPianoRollEdit() },
+                onInstrumentChanged = {
+                    state.recordPianoRollEdit("Instrument edit")
+                    state.updatePianoRollInstrument(it, romParser)
+                },
                 onActiveChannelChanged = { state.pianoRollChannel = it },
                 onSongChanged = { state.notifySongChanged(it) },
                 onPlay = {
@@ -375,23 +388,10 @@ fun SoundEditorCanvas(
                                 if (wav != null && wav.isNotEmpty()) {
                                     state.startPianoRollPlayback(wav)
                                 } else {
-                                    val ram = state.buildSpcRamForTrack(romParser, state.currentSongSet.coerceAtLeast(0))
-                                    val events = song.channels.flatMapIndexed { ch, channel ->
-                                        channel.notes.map { note ->
-                                            val qTable = NspcSequence.QUANTIZE_TABLE
-                                            val vTable = NspcSequence.VELOCITY_TABLE
-                                            val playDur = (note.duration * qTable[note.quantize]).toInt().coerceAtLeast(1)
-                                            NspcRenderer.NoteEvent(
-                                                tickStart = note.tick,
-                                                tickDuration = playDur,
-                                                channel = ch,
-                                                noteValue = note.noteValue,
-                                                instrumentIdx = note.instrument,
-                                                volume = vTable[note.velocity]
-                                            )
-                                        }
-                                    }
-                                    val fallbackWav = NspcRenderer.renderToWav(events, ram, tempo = song.tempo)
+                                    soundEditorUiLog.info { "[SPC-PIANO] Native modified preview unavailable; using fallback preview" }
+                                    val fallbackWav = state.renderPianoRollFallbackPreview(romParser, song)
+                                    val peak = if (fallbackWav.isNotEmpty()) fallbackWav.maxOf { kotlin.math.abs(it.toInt()) } else 0
+                                    soundEditorUiLog.info { "[SPC-PIANO] Fallback preview render: ${fallbackWav.size} samples, peak=$peak" }
                                     state.startPianoRollPlayback(fallbackWav)
                                 }
                             }

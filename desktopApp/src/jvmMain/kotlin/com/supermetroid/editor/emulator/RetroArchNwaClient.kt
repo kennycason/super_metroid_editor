@@ -1,5 +1,6 @@
 package com.supermetroid.editor.emulator
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -7,6 +8,8 @@ import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+
+private val retroArchNwaLog = KotlinLogging.logger {}
 
 /**
  * UDP client for RetroArch's Network Command interface.
@@ -118,7 +121,7 @@ class RetroArchNwaClient(
         val hexData = parts.drop(2).joinToString("")
         val bytes = hexData.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         if (bytes.size != expectedSize) {
-            System.err.println("[NWA] Expected $expectedSize bytes, got ${bytes.size}")
+            retroArchNwaLog.warn { "[NWA] Expected $expectedSize bytes, got ${bytes.size}" }
         }
         return bytes
     }

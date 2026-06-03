@@ -29,6 +29,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.emulator.GameSnapshot
+import io.github.oshai.kotlinlogging.KotlinLogging
+
+private val itemTrackerLog = KotlinLogging.logger {}
 
 /** Bit flags for collected items at 0x7E09A4 */
 private object ItemFlags {
@@ -100,7 +103,7 @@ fun ItemTrackerPanel(
         try {
             useResource("item_sprites.png") { loadImageBitmap(it) }
         } catch (e: Exception) {
-            System.err.println("[ItemTracker] Failed to load item_sprites.png: ${e.message}")
+            itemTrackerLog.warn(e) { "[ItemTracker] Failed to load item_sprites.png: ${e.message}" }
             null
         }
     }

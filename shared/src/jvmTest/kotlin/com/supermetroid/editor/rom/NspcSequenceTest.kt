@@ -119,4 +119,63 @@ class NspcSequenceTest {
         assertEquals(7, note.quantize)
         assertEquals(0x94, note.noteValue)
     }
+
+    @Test
+    fun `encode failOnOverflow rejects sequence data crossing instrument table`() {
+        val song = NspcSequence.Song(tempo = 40)
+        repeat(3000) { i ->
+            song.channels[0].notes.add(
+                NspcSequence.Note(
+                    tick = i * 24,
+                    duration = 24 + (i % 48),
+                    noteValue = 0x94,
+                    velocity = 15,
+                    quantize = 7,
+                    instrument = 0x0B + (i % 20)
+                )
+            )
+        }
+
+        assertThrows(IllegalStateException::class.java) {
+            NspcSequence.encode(song, 0, failOnOverflow = true)
+        }
+
+        val writes = NspcSequence.encode(song, 0)
+        assertTrue(writes.all { (addr, data) -> addr < 0x6C00 && addr + data.size <= 0x6C00 })
+    }
+
+    @Test
+    fun `Lower Norfair one note edit refuses native encode overflow`() {
+        val parser = loadTestRom() ?: return
+        val spcRam = SpcData.buildInitialSpcRam(parser)
+        val blocks = SpcData.findSongSetTransferData(parser, 0x18)
+        SpcData.applyTransferBlocks(spcRam, blocks)
+
+        val song = NspcSequence.parse(spcRam, 5)
+        val originalNotes = song.channels.sumOf { it.notes.size }
+        assertTrue(originalNotes > 4000, "Lower Norfair should parse as a large song, got $originalNotes notes")
+
+        song.channels[0].notes += NspcSequence.Note(
+            tick = 84,
+            duration = 96,
+            noteValue = NspcSequence.nameToNote("G#1"),
+            velocity = 15,
+            quantize = 7,
+            instrument = 0x1B
+        )
+
+        val ex = assertThrows(IllegalStateException::class.java) {
+            NspcSequence.encode(song, 5, spcRam, failOnOverflow = true)
+        }
+        assertTrue(
+            ex.message?.contains("overflow into instrument table") == true,
+            "Expected instrument table overflow message, got: ${ex.message}"
+        )
+
+        val truncatedWrites = NspcSequence.encode(song, 5, spcRam, failOnOverflow = false)
+        assertTrue(
+            truncatedWrites.all { (addr, data) -> addr < 0x6C00 && addr + data.size <= 0x6C00 },
+            "Non-fail-fast encode must still avoid writing into instrument table"
+        )
+    }
 }

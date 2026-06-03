@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.ByteArrayInputStream
 import java.io.File
 import javax.sound.sampled.AudioFileFormat
@@ -8,6 +9,8 @@ import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.Clip
 import javax.sound.sampled.LineEvent
+
+private val soundPlayerLog = KotlinLogging.logger {}
 
 class SoundPlayer {
     private var clip: Clip? = null
@@ -36,7 +39,7 @@ class SoundPlayer {
             clip = newClip
             if (loop) newClip.loop(Clip.LOOP_CONTINUOUSLY) else newClip.start()
         } catch (e: Exception) {
-            System.err.println("Audio playback error: ${e.message}")
+            soundPlayerLog.error(e) { "Audio playback error: ${e.message}" }
         }
     }
 

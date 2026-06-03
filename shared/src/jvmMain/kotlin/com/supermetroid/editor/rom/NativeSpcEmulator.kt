@@ -3,6 +3,7 @@ package com.supermetroid.editor.rom
 import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.supermetroid.editor.util.EditorLog
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -49,7 +50,7 @@ class NativeSpcEmulator : AutoCloseable {
             try {
                 Native.load("spc", SpcLib::class.java)
             } catch (e: UnsatisfiedLinkError) {
-                System.err.println("[SPC-JNA] Failed to load libspc: ${e.message}")
+                EditorLog.warn(e, "[SPC-JNA] Failed to load libspc: ${e.message}")
                 null
             }
         }
@@ -199,7 +200,7 @@ class NativeSpcEmulator : AutoCloseable {
             val buf = ShortArray(chunk)
             val err = library.spc_play(spcPtr, chunk, buf)
             if (err != null) {
-                System.err.println("[SPC-JNA] Play error at sample ${pos / 2}: $err")
+                EditorLog.warn("[SPC-JNA] Play error at sample ${pos / 2}: $err")
                 break
             }
             if (filterPtr != null) {

@@ -26,6 +26,10 @@ kotlin {
                 // JSON parsing
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 
+                // Runtime logging
+                implementation("io.github.oshai:kotlin-logging-jvm:5.1.0")
+                implementation("org.slf4j:slf4j-simple:2.0.9")
+
                 // JNA (for libretro core loading)
                 implementation("net.java.dev.jna:jna:5.14.0")
 
@@ -55,6 +59,17 @@ tasks.register<JavaExec>("benchmark") {
     listOf("SMEDIT_ROM_PATH", "SMEDIT_LIBRETRO_CORE", "BENCH_BACKENDS", "BENCH_FRAMES", "BENCH_WARMUP_FRAMES").forEach { key ->
         System.getenv(key)?.let { environment(key, it) }
     }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs(
+        "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
+        "-Dorg.slf4j.simpleLogger.showThreadName=false",
+        "-Dorg.slf4j.simpleLogger.showDateTime=false",
+        "-Dorg.slf4j.simpleLogger.showLogName=false",
+        "-Dorg.slf4j.simpleLogger.showShortLogName=false",
+        "-Dorg.slf4j.simpleLogger.logFile=System.out"
+    )
 }
 
 // Ensure the libretro core is built before running or packaging
@@ -99,7 +114,13 @@ compose.desktop {
         // macOS trackpad pinch-to-zoom (magnification gesture)
         jvmArgs(
             "--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
-            "--add-opens", "java.desktop/com.apple.eawt.event=ALL-UNNAMED"
+            "--add-opens", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
+            "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
+            "-Dorg.slf4j.simpleLogger.showThreadName=false",
+            "-Dorg.slf4j.simpleLogger.showDateTime=false",
+            "-Dorg.slf4j.simpleLogger.showLogName=false",
+            "-Dorg.slf4j.simpleLogger.showShortLogName=false",
+            "-Dorg.slf4j.simpleLogger.logFile=System.out"
         )
         nativeDistributions {
             includeAllModules = true

@@ -1,5 +1,6 @@
 package com.supermetroid.editor.libretro
 
+import com.supermetroid.editor.util.EditorLog
 import java.io.File
 
 /**
@@ -68,7 +69,7 @@ object LibretroCoreDiscovery {
         if (!explicitPath.isNullOrBlank()) {
             val f = File(explicitPath)
             if (f.isFile && f.canRead()) return f.absolutePath
-            System.err.println("[LibretroDiscovery] Explicit core path not found: $explicitPath")
+            EditorLog.warn("[LibretroDiscovery] Explicit core path not found: $explicitPath")
         }
 
         // 2. Check environment variable
@@ -76,7 +77,7 @@ object LibretroCoreDiscovery {
         if (envPath != null) {
             val f = File(envPath)
             if (f.isFile && f.canRead()) return f.absolutePath
-            System.err.println("[LibretroDiscovery] Env SMEDIT_LIBRETRO_CORE not found: $envPath")
+            EditorLog.warn("[LibretroDiscovery] Env SMEDIT_LIBRETRO_CORE not found: $envPath")
         }
 
         // 3. Search known directories, preferring cores in PREFERRED_CORES order
@@ -84,7 +85,7 @@ object LibretroCoreDiscovery {
             for (dir in SEARCH_DIRS) {
                 val candidate = File(dir, "${coreName}_libretro$coreExtension")
                 if (candidate.isFile && candidate.canRead()) {
-                    System.err.println("[LibretroDiscovery] Found core: ${candidate.absolutePath}")
+                    EditorLog.info("[LibretroDiscovery] Found core: ${candidate.absolutePath}")
                     return candidate.absolutePath
                 }
             }

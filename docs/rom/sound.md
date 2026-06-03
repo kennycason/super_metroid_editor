@@ -223,20 +223,26 @@ Current piano-roll editing behavior:
 - Reset reparses original N-SPC data, discards added notes, stops playback, and leaves the cursor at tick `0`.
 - Stop leaves the cursor at tick `0`; closing the piano roll hides it.
 - Right-clicking a note opens editable note properties: tick, length, pitch, velocity, quantize, instrument, delete.
+- The note property panel is a bottom overlay, so right-clicking a note does not push the piano roll down.
+- The note property panel also shows an instrument-table inspector for the selected note's `Inst`: table address, `SRCN`, sample start/loop pointers, scanned BRR byte length/loop flag, ADSR1/ADSR2/GAIN bytes, decoded ADSR nibbles, pitch adjustment, and clickable instruments already used in the track.
+- Instrument-table fields are shared playback configuration, not per-note data. `SRCN`, ADSR1, ADSR2, GAIN, and pitch-adjust are editable preview fields patched into SPC RAM at `$6C00 + index*6`; sample start/loop pointers and BRR data remain read-only until SMEDIT has a safe sample-directory/BRR patch/export path.
 - Left-drag moves notes, right-edge drag resizes note length, arrow keys move/transposes the selected note, and Delete/Backspace removes it.
 - Drag operations use transient preview state and commit note data once on release; SPC re-encode/render should stay on explicit playback/export paths.
 - Waveform preview and piano-roll preview use RMS-aware preview normalization before JVM playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
 - `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit nearby note instrument, velocity, quantize, and duration so user-added notes render with valid Super Metroid instrument state.
+- Modified native SPC preview uses fail-fast sequence encoding. If an edited sequence cannot fit before `$6C00`, or if native render returns silence, playback avoids corrupting the instrument table / playing silence.
+- Additive note edits use a hybrid fallback when native re-encode overflows: native original track playback plus software-rendered added notes. Edits that remove or change original notes still require full software fallback because the native original audio cannot subtract or move existing notes.
 
 ## Parser/Renderer Caveats
 
 - Native SPC rendering is the audio ground truth when `libspc` is available.
-- `NspcRenderer` has broader command-side state handling than the current
-  `NspcSequence.parse` piano-roll parser, including `E0` instrument changes,
-  transpose, channel volume, and subroutine calls.
-- `NspcSequence.parse` currently records commands but does not fully apply every command
-  to note state, so piano-roll metadata such as `instruments=[0]` can be simplified even
-  when the native audio preview is correct.
+- `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to note metadata,
+  but it still records many commands without fully modeling their playback-side effects.
+- `NspcRenderer` and native SPC playback are still better cross-checks for command-side
+  behavior such as channel volume, subroutines, sample decode, and envelope playback.
+- `NspcRenderer.readInstrumentTable` exposes instrument-table metadata for the UI.
+- Edit Track preview can patch changed instrument-table bytes into SPC RAM, but
+  `NspcSequence.encode` still does not write sample-directory or BRR data changes.
 - `NspcSequence.encode` writes simplified one-block channel data into the original
   sequence area and guards against overflow into the instrument table at `$6C00`.
 

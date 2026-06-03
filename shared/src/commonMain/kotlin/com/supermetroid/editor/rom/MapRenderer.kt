@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.util.EditorLog
 
 /**
  * Renders Super Metroid room maps from decompressed level data.
@@ -79,7 +80,7 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
         val hasTileGraphics = try {
             tileGraphics.loadTileset(room.tileset)
         } catch (e: Exception) {
-            println("Failed to load tileset ${room.tileset}: ${e.message}")
+            EditorLog.warn(e, "Failed to load tileset ${room.tileset}: ${e.message}")
             false
         }
         

@@ -110,9 +110,21 @@ import com.supermetroid.editor.rom.MapRenderer
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomRenderData
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.image.BufferedImage
 import java.awt.RenderingHints
 import javax.imageio.ImageIO
+
+private val mapCanvasLog = KotlinLogging.logger {}
+
+private fun mapCanvasLogLine(message: Any? = "") {
+    val text = message?.toString() ?: ""
+    when {
+        text.startsWith("ERROR") || text.contains(" ERROR:") -> mapCanvasLog.error { text }
+        text.startsWith("WARN") || text.contains(" WARN:") -> mapCanvasLog.warn { text }
+        else -> mapCanvasLog.info { text }
+    }
+}
 
 private object EnemySpriteCache {
     private val cache = mutableMapOf<String, BufferedImage?>()
@@ -674,7 +686,7 @@ fun MapCanvas(
                         }
                     } catch (e: Exception) {
                         errorMessage = "Error: ${e.message}"
-                        e.printStackTrace()
+                        mapCanvasLog.error(e) { "Room render/load failed: ${e.message}" }
                     } finally {
                         isLoading = false
                     }
@@ -966,10 +978,10 @@ fun MapCanvas(
                                                     val dir = dialog.directory; val file = dialog.file
                                                     if (dir != null && file != null) {
                                                         java.io.File(dir, file).writeText(json)
-                                                        println("Exported room to: $dir$file")
+                                                        mapCanvasLogLine("Exported room to: $dir$file")
                                                     }
                                                 } catch (ex: Exception) {
-                                                    println("Room export failed: ${ex.message}")
+                                                    mapCanvasLogLine("Room export failed: ${ex.message}")
                                                 }
                                             }
                                             mapFocusReq.requestFocus()
