@@ -21,9 +21,13 @@ import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.EnemyUpdate
+import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.NspcRenderer
+import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -900,6 +904,33 @@ class EditorState {
     /** Compose-observable version counter for patch list changes. */
     var patchVersion by mutableStateOf(0)
         private set
+
+    /** Compose-observable version counter for saved music edits. */
+    var musicEditVersion by mutableStateOf(0)
+        private set
+
+    fun musicEditKey(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
+
+    fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
+        project.musicEdits.containsKey(musicEditKey(songSet, playIndex))
+
+    fun getMusicEdit(songSet: Int, playIndex: Int): MusicTrackEdit? =
+        project.musicEdits[musicEditKey(songSet, playIndex)]
+
+    fun setMusicEdit(key: String, edit: MusicTrackEdit) {
+        project.musicEdits[key] = edit
+        dirty = true
+        musicEditVersion++
+    }
+
+    fun removeMusicEdit(key: String): Boolean {
+        val removed = project.musicEdits.remove(key) != null
+        if (removed) {
+            dirty = true
+            musicEditVersion++
+        }
+        return removed
+    }
 
     fun selectPatch(id: String?) { selectedPatchId = id }
 
@@ -2991,6 +3022,209 @@ class EditorState {
         return if (build.isNotEmpty()) "$build-$version" else version
     }
 
+    private fun applyMusicEditsToRom(romData: ByteArray): Int {
+        if (project.musicEdits.isEmpty()) return 0
+
+        var patched = 0
+        val editsBySongSet = project.musicEdits.toSortedMap().entries.groupBy { it.value.songSet }.toSortedMap()
+        for ((songSet, edits) in editsBySongSet) {
+            val exportParser = RomParser(romData)
+            val baseRam = SpcData.buildInitialSpcRam(exportParser)
+            val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
+            val spcRam = baseRam.copyOf()
+            SpcData.applyTransferBlocks(spcRam, songBlocks)
+            val accumulatedWrites = linkedMapOf<Int, ByteArray>()
+
+            for ((key, edit) in edits) {
+                val originalSong = NspcSequence.parse(spcRam, edit.playIndex)
+                val editedSong = MusicEditConversion.toSong(edit)
+                val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
+                    ?: editedSong.isModified
+
+                val sequenceWrites = if (hasNoteDelta) {
+                    NspcSequence.encode(editedSong, edit.playIndex, spcRam, failOnOverflow = true)
+                } else {
+                    emptyMap()
+                }
+
+                val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
+                val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
+                val instrumentWrites = if (editedInstruments.isNotEmpty()) {
+                    PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
+                } else {
+                    emptyMap()
+                }
+
+                if (sequenceWrites.isEmpty() && instrumentWrites.isEmpty()) {
+                    editorLog("[EXPORT] Music edit $key has no note/instrument delta; skipping")
+                    continue
+                }
+
+                val spcWrites = sequenceWrites + instrumentWrites
+                applySpcWritesToRam(spcRam, spcWrites)
+                for ((addr, data) in spcWrites) {
+                    accumulatedWrites[addr] = data
+                }
+                val totalBytes = spcWrites.values.sumOf { it.size }
+
+                patched++
+                editorLog(
+                    "[EXPORT] Music edit '$key' ${edit.trackName}: ${spcWrites.size} SPC write records, " +
+                        "$totalBytes payload bytes, noteDelta=$hasNoteDelta, instrumentWrites=${instrumentWrites.size}"
+                )
+            }
+
+            if (accumulatedWrites.isNotEmpty()) {
+                val chainBytes = writeRelocatedSongSetTransferChain(romData, songSet, accumulatedWrites)
+                editorLog(
+                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
+                        "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
+                )
+            }
+        }
+        return patched
+    }
+
+    private fun writeRelocatedSongSetTransferChain(
+        romData: ByteArray,
+        songSet: Int,
+        spcWrites: Map<Int, ByteArray>
+    ): Int {
+        require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
+
+        val parser = RomParser(romData)
+        val pointerEntryPc = SpcData.findSongSetPointerEntryPc(parser, songSet)
+        require(pointerEntryPc >= 0) {
+            "songSet 0x${songSet.toString(16)} has no writable transfer pointer table entry"
+        }
+
+        val originalPointer = SpcData.readSongSetPointer(parser, songSet)
+        val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
+        require(originalBlocks.isNotEmpty()) {
+            "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
+        }
+
+        val patchBlocks = buildSpcPatchBlocks(spcWrites)
+
+        val relocatedChain = serializeTransferChain(originalBlocks + patchBlocks)
+        val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
+        relocatedChain.copyInto(romData, writePc)
+
+        val relocatedPointer = parser.pcToSnes(writePc)
+        writeRomU24(romData, pointerEntryPc, relocatedPointer)
+
+        editorLog(
+            "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
+                "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
+                "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
+                "(${originalBlocks.size} original + ${patchBlocks.size} patch blocks)"
+        )
+        return relocatedChain.size
+    }
+
+    private fun applySpcWritesToRam(spcRam: ByteArray, spcWrites: Map<Int, ByteArray>) {
+        for ((addr, data) in spcWrites) {
+            require(addr >= 0 && addr + data.size <= spcRam.size) {
+                "SPC write 0x${addr.toString(16)}..0x${(addr + data.size).toString(16)} exceeds SPC RAM"
+            }
+            data.copyInto(spcRam, addr)
+        }
+    }
+
+    private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
+        val bytesByAddr = sortedMapOf<Int, Int>()
+        for ((addr, data) in spcWrites) {
+            val dest = addr and 0xFFFF
+            require(data.isNotEmpty()) { "empty SPC write at 0x${dest.toString(16)}" }
+            require(data.size <= 0xFFFF) { "SPC write at 0x${dest.toString(16)} is too large (${data.size} bytes)" }
+            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
+                "SPC write 0x${dest.toString(16)}..0x${(dest + data.size).toString(16)} exceeds SPC RAM"
+            }
+            for (i in data.indices) {
+                bytesByAddr[dest + i] = data[i].toInt() and 0xFF
+            }
+        }
+        if (bytesByAddr.isEmpty()) return emptyList()
+
+        val blocks = mutableListOf<SpcData.TransferBlock>()
+        var runStart = -1
+        val runBytes = mutableListOf<Int>()
+        var previousAddr = -1
+        for ((addr, value) in bytesByAddr) {
+            if (runStart < 0 || addr != previousAddr + 1) {
+                if (runStart >= 0) {
+                    blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
+                    runBytes.clear()
+                }
+                runStart = addr
+            }
+            runBytes += value
+            previousAddr = addr
+        }
+        if (runStart >= 0) {
+            blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
+        }
+        return blocks
+    }
+
+    private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
+        val out = java.io.ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
+        for (block in blocks) {
+            require(block.data.size <= 0xFFFF) {
+                "transfer block at 0x${block.destAddr.toString(16)} is too large (${block.data.size} bytes)"
+            }
+            writeStreamU16(out, block.data.size)
+            writeStreamU16(out, block.destAddr and 0xFFFF)
+            out.write(block.data)
+        }
+        writeStreamU16(out, 0)
+        return out.toByteArray()
+    }
+
+    private fun writeStreamU16(out: java.io.ByteArrayOutputStream, value: Int) {
+        out.write(value and 0xFF)
+        out.write((value ushr 8) and 0xFF)
+    }
+
+    private fun writeRomU24(romData: ByteArray, offset: Int, value: Int) {
+        require(offset >= 0 && offset + 2 < romData.size) {
+            "out-of-bounds ROM pointer write at 0x${offset.toString(16)}"
+        }
+        romData[offset] = (value and 0xFF).toByte()
+        romData[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+        romData[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+    }
+
+    private fun findMusicTransferFreeSpace(
+        parser: RomParser,
+        romData: ByteArray,
+        requiredBytes: Int
+    ): Int {
+        require(requiredBytes > 0) { "music transfer chain must not be empty" }
+        val preferredBanks = listOf(0xB8, 0xCE, 0x85, 0x83, 0x89)
+        val fallbackBanks = (0x80..0xFF).filterNot { it in preferredBanks }
+        for (bank in preferredBanks + fallbackBanks) {
+            val bankStart = parser.snesToPc((bank shl 16) or 0x8000)
+            val bankEndExclusive = parser.snesToPc((bank shl 16) or 0xFFFF) + 1
+            if (bankStart < 0 || bankEndExclusive > romData.size || bankStart >= bankEndExclusive) continue
+
+            var freeStart = bankEndExclusive
+            while (freeStart > bankStart && romData[freeStart - 1] == 0xFF.toByte()) {
+                freeStart--
+            }
+            if (freeStart >= bankEndExclusive) continue
+
+            val alignedStart = ((freeStart + 0x0F) / 0x10) * 0x10
+            if (alignedStart + requiredBytes <= bankEndExclusive) {
+                return alignedStart
+            }
+        }
+
+        error(
+            "not enough contiguous free ROM space for $requiredBytes-byte relocated SPC transfer chain"
+        )
+    }
+
     fun exportToRom(romParser: RomParser): String? {
         val romPath = project.romPath
         if (romPath.isEmpty()) return null
@@ -3190,6 +3424,16 @@ class EditorState {
             }
             patchesApplied++
         }
+
+        val musicPatched = try {
+            applyMusicEditsToRom(romData)
+        } catch (e: Exception) {
+            val message = "Export failed: music edit could not be written safely (${e.message})"
+            editorLog("ERROR: $message")
+            postStatus(message)
+            return null
+        }
+        if (musicPatched > 0) editorLog("[EXPORT] Patched $musicPatched music track edit(s)")
 
         // Combined per-frame hook: boss-defeated + hyper beam + infinite blue suit
         // Writes a single routine at $DF:F040 (PC $2FF040) and hooks $82:896E.
@@ -4443,7 +4687,7 @@ class EditorState {
         }
         if (asmPatched > 0) editorLog("[EXPORT] Embedded $asmPatched custom ASM routine(s)")
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             out.writeBytes(romData)
@@ -4533,7 +4777,7 @@ class EditorState {
         val orig = File(romPath)
         val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
         out.writeBytes(romData)
-        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $gfxPatched gfx)"
+        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
         editorLog(msg)
         postStatus(msg)
         return out.absolutePath

@@ -272,6 +272,21 @@ object NspcSequence {
                                 ))
                             }
                         }
+                        b == 0xEF -> {
+                            // Subroutine calls are flow control, not editable commands.
+                            // Expand them while parsing so re-encode does not call old code
+                            // addresses in addition to the flattened piano-roll notes.
+                            if (st.ptr + 2 < ram.size) {
+                                val subAddr = readWord(ram, st.ptr)
+                                val count = ram[st.ptr + 2].toInt() and 0xFF
+                                st.subroutineReturn = st.ptr + 3
+                                st.loopAddr = subAddr
+                                st.loopCount = count
+                                st.ptr = subAddr
+                            } else {
+                                st.finished = true
+                            }
+                        }
                         b >= 0xE0 -> {
                             val (cmd, params) = parseControlCommand(ram, st.ptr - 1, b, st)
                             song.channels[ch].commands.add(ControlCommand(
@@ -431,8 +446,18 @@ object NspcSequence {
         EditorLog.info("[NSPC-ENCODE] Original conductor at 0x${originalConductorAddr.toString(16)}, " +
             "using 0x${conductorAddr.toString(16)}")
 
-        // Block pointer table right after conductor (conductor = 4 bytes: block_ptr + 0x0000 end)
-        val blockTableAddr = conductorAddr + 4
+        // Reuse the original first block table when possible. Some songs have a
+        // longer conductor list, so conductor+4 may still be conductor data.
+        val originalBlockTableAddr = if (spcRam != null && conductorAddr in 0 until spcRam.size - 1) {
+            readWord(spcRam, conductorAddr)
+        } else {
+            0
+        }
+        val blockTableAddr = if (originalBlockTableAddr in 0x1500..0x6B00) {
+            originalBlockTableAddr
+        } else {
+            conductorAddr + 4
+        }
 
         // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
         var dataAddr = blockTableAddr + 16
@@ -443,8 +468,14 @@ object NspcSequence {
         val channelAddrs = IntArray(8)
 
         for (ch in 0 until 8) {
+            val channel = song.channels[ch]
+            if (channel.notes.isEmpty() && channel.commands.none { !isFlowControlCommand(it.command) }) {
+                channelAddrs[ch] = 0
+                continue
+            }
+
             channelAddrs[ch] = dataAddr
-            val channelData = encodeChannel(song.channels[ch], song.tempo, ch == 0)
+            val channelData = encodeChannel(channel, song.tempo, ch == 0)
             EditorLog.info("[NSPC-ENCODE]   Ch $ch: ${song.channels[ch].notes.size} notes, " +
                 "${song.channels[ch].commands.size} cmds -> ${channelData.size} bytes at 0x${dataAddr.toString(16)}")
             if (dataAddr + channelData.size > maxDataAddr) {
@@ -513,7 +544,9 @@ object NspcSequence {
         // Sort notes by tick
         val notes = channel.notes.sortedBy { it.tick }
         // Sort commands by tick
-        val commands = channel.commands.sortedBy { it.tick }
+        val commands = channel.commands
+            .filterNot { isFlowControlCommand(it.command) }
+            .sortedBy { it.tick }
 
         var currentTick = 0
         var lastDuration = -1
@@ -601,6 +634,9 @@ object NspcSequence {
         }
         return currentDuration
     }
+
+    private fun isFlowControlCommand(command: Int): Boolean =
+        command == 0xEF
 
     // ─── Utilities ──────────────────────────────────────────────────
 

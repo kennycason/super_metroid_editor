@@ -8,6 +8,24 @@ class SpcDataTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
+    private fun writeU16(rom: ByteArray, offset: Int, value: Int) {
+        rom[offset] = (value and 0xFF).toByte()
+        rom[offset + 1] = ((value shr 8) and 0xFF).toByte()
+    }
+
+    private fun writeU24(rom: ByteArray, offset: Int, value: Int) {
+        rom[offset] = (value and 0xFF).toByte()
+        rom[offset + 1] = ((value shr 8) and 0xFF).toByte()
+        rom[offset + 2] = ((value shr 16) and 0xFF).toByte()
+    }
+
+    private fun writeTransferBlock(rom: ByteArray, offset: Int, dest: Int, data: ByteArray): Int {
+        writeU16(rom, offset, data.size)
+        writeU16(rom, offset + 2, dest)
+        data.copyInto(rom, offset + 4)
+        return offset + 4 + data.size
+    }
+
     @Test
     fun `song set pointer table at 8F-E7E1 has all 24 song sets`() {
         val parser = loadTestRom() ?: return
@@ -31,6 +49,22 @@ class SpcDataTest {
         val parser = loadTestRom() ?: return
         val ptr = SpcData.readSongSetPointer(parser, 0x00)
         assertEquals(0xCF8000, ptr, "Song set 0x00 should point to \$CF:8000")
+    }
+
+    @Test
+    fun `findSongSetPointerEntryPc returns vanilla pointer table entry`() {
+        val rom = ByteArray(0x400000)
+        val parser = RomParser(rom)
+        val songSet = 0x03
+        val tablePc = parser.snesToPc(0x8FE7E1)
+        val chainSnes = 0xCF9000
+        val chainPc = parser.snesToPc(chainSnes)
+
+        writeU24(rom, tablePc + songSet, chainSnes)
+        val end = writeTransferBlock(rom, chainPc, 0x5800, byteArrayOf(0x12, 0x34))
+        writeU16(rom, end, 0)
+
+        assertEquals(tablePc + songSet, SpcData.findSongSetPointerEntryPc(parser, songSet))
     }
 
     @Test
@@ -312,5 +346,89 @@ class SpcDataTest {
         val brinstarStarts = dirBrinstar.map { it.startAddr }.toSet()
         assertNotEquals(titleStarts, brinstarStarts,
             "Title and Green Brinstar should have different sample sets")
+    }
+
+    @Test
+    fun `buildRomWritesForSpcRamWrites maps SPC writes into song transfer blocks`() {
+        val rom = ByteArray(0x400000)
+        val parser = RomParser(rom)
+        val songSet = 0x03
+        val chainSnes = 0xCF9000
+        val chainPc = parser.snesToPc(chainSnes)
+        writeU24(rom, parser.snesToPc(0x8FE7E1) + songSet, chainSnes)
+
+        var pos = chainPc
+        pos = writeTransferBlock(rom, pos, 0x5800, byteArrayOf(0x10, 0x11, 0x12, 0x13))
+        val secondBlockPc = pos
+        pos = writeTransferBlock(rom, pos, 0x5804, byteArrayOf(0x20, 0x21, 0x22, 0x23))
+        writeU16(rom, pos, 0)
+
+        val writes = SpcData.buildRomWritesForSpcRamWrites(
+            parser,
+            songSet,
+            mapOf(0x5802 to byteArrayOf(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte(), 0xDD.toByte()))
+        )
+
+        assertEquals(2, writes.size)
+        assertEquals(chainPc + 4 + 2, writes[0].first)
+        assertArrayEquals(byteArrayOf(0xAA.toByte(), 0xBB.toByte()), writes[0].second)
+        assertEquals(secondBlockPc + 4, writes[1].first)
+        assertArrayEquals(byteArrayOf(0xCC.toByte(), 0xDD.toByte()), writes[1].second)
+    }
+
+    @Test
+    fun `buildRomWritesForSpcRamWrites uses latest overlapping transfer block`() {
+        val rom = ByteArray(0x400000)
+        val parser = RomParser(rom)
+        val songSet = 0x03
+        val chainSnes = 0xCF9000
+        val chainPc = parser.snesToPc(chainSnes)
+        writeU24(rom, parser.snesToPc(0x8FE7E1) + songSet, chainSnes)
+
+        var pos = chainPc
+        pos = writeTransferBlock(rom, pos, 0x5800, byteArrayOf(0x10, 0x11, 0x12, 0x13))
+        val secondBlockPc = pos
+        pos = writeTransferBlock(rom, pos, 0x5802, byteArrayOf(0x20, 0x21))
+        writeU16(rom, pos, 0)
+
+        val writes = SpcData.buildRomWritesForSpcRamWrites(
+            parser,
+            songSet,
+            mapOf(0x5802 to byteArrayOf(0xEE.toByte()))
+        )
+
+        assertEquals(1, writes.size)
+        assertEquals(secondBlockPc + 4, writes.single().first)
+        assertArrayEquals(byteArrayOf(0xEE.toByte()), writes.single().second)
+    }
+
+    @Test
+    fun `buildRomWritesForSpcRamWrites can fall back to base transfer blocks`() {
+        val rom = ByteArray(0x400000)
+        val parser = RomParser(rom)
+        val baseChainSnes = 0xCF8000
+        val songChainSnes = 0xCF9000
+        val baseChainPc = parser.snesToPc(baseChainSnes)
+        val songChainPc = parser.snesToPc(songChainSnes)
+        writeU24(rom, parser.snesToPc(0x8FE7E1), baseChainSnes)
+        writeU24(rom, parser.snesToPc(0x8FE7E1) + 0x03, songChainSnes)
+
+        var pos = baseChainPc
+        pos = writeTransferBlock(rom, pos, 0x6C00, byteArrayOf(0x01, 0x02, 0x03, 0x04))
+        writeU16(rom, pos, 0)
+        pos = songChainPc
+        pos = writeTransferBlock(rom, pos, 0x5800, byteArrayOf(0x10, 0x11, 0x12, 0x13))
+        writeU16(rom, pos, 0)
+
+        val writes = SpcData.buildRomWritesForSpcRamWrites(
+            parser,
+            0x03,
+            mapOf(0x6C01 to byteArrayOf(0x7F)),
+            fallbackToBaseSongSet = true
+        )
+
+        assertEquals(1, writes.size)
+        assertEquals(baseChainPc + 4 + 1, writes.single().first)
+        assertArrayEquals(byteArrayOf(0x7F), writes.single().second)
     }
 }

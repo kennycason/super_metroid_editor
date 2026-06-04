@@ -121,6 +121,68 @@ class NspcSequenceTest {
     }
 
     @Test
+    fun `parse expands EF subroutine notes instead of storing stale flow command`() {
+        val spcRam = ByteArray(65536)
+        val conductorAddr = 0x5830
+        val blockTableAddr = 0x5840
+        val channelAddr = 0x5850
+        val subroutineAddr = 0x5900
+
+        spcRam[0x581E] = (conductorAddr and 0xFF).toByte()
+        spcRam[0x581F] = ((conductorAddr shr 8) and 0xFF).toByte()
+        spcRam[conductorAddr] = (blockTableAddr and 0xFF).toByte()
+        spcRam[conductorAddr + 1] = ((blockTableAddr shr 8) and 0xFF).toByte()
+        spcRam[conductorAddr + 2] = 0
+        spcRam[conductorAddr + 3] = 0
+        spcRam[blockTableAddr] = (channelAddr and 0xFF).toByte()
+        spcRam[blockTableAddr + 1] = ((channelAddr shr 8) and 0xFF).toByte()
+
+        spcRam[channelAddr] = 24
+        spcRam[channelAddr + 1] = 0x7F
+        spcRam[channelAddr + 2] = 0x94.toByte()
+        spcRam[channelAddr + 3] = 0xEF.toByte()
+        spcRam[channelAddr + 4] = (subroutineAddr and 0xFF).toByte()
+        spcRam[channelAddr + 5] = ((subroutineAddr shr 8) and 0xFF).toByte()
+        spcRam[channelAddr + 6] = 2
+        spcRam[channelAddr + 7] = 0x98.toByte()
+        spcRam[channelAddr + 8] = 0
+        spcRam[subroutineAddr] = 0x9C.toByte()
+        spcRam[subroutineAddr + 1] = 0
+
+        val song = NspcSequence.parse(spcRam, 0)
+        val notes = song.channels[0].notes
+
+        assertEquals(listOf(0x94, 0x9C, 0x9C, 0x98), notes.map { it.noteValue })
+        assertEquals(listOf(0, 24, 48, 72), notes.map { it.tick })
+        assertTrue(song.channels[0].commands.none { it.command == 0xEF }, "EF should not be saved as an editable command")
+    }
+
+    @Test
+    fun `encode ignores legacy EF flow-control commands`() {
+        val spcRam = ByteArray(65536)
+        val subroutineAddr = 0x5900
+        spcRam[subroutineAddr] = 0x9C.toByte()
+        spcRam[subroutineAddr + 1] = 0
+
+        val song = NspcSequence.Song(tempo = 40)
+        song.channels[0].commands += NspcSequence.ControlCommand(
+            tick = 0,
+            command = 0xEF,
+            params = intArrayOf(subroutineAddr and 0xFF, (subroutineAddr shr 8) and 0xFF, 2)
+        )
+        song.channels[0].notes += NspcSequence.Note(tick = 0, duration = 24, noteValue = 0x94, velocity = 15, quantize = 7, instrument = 0)
+        song.channels[0].notes += NspcSequence.Note(tick = 24, duration = 24, noteValue = 0x98, velocity = 15, quantize = 7, instrument = 0)
+
+        for ((addr, data) in NspcSequence.encode(song, 0)) {
+            data.copyInto(spcRam, addr)
+        }
+
+        val parsed = NspcSequence.parse(spcRam, 0)
+        assertEquals(listOf(0x94, 0x98), parsed.channels[0].notes.map { it.noteValue })
+        assertTrue(parsed.channels[0].commands.none { it.command == 0xEF })
+    }
+
+    @Test
     fun `encode round-trips notes with large gaps between them`() {
         val song = NspcSequence.Song(tempo = 40)
         song.channels[0].notes.addAll(listOf(

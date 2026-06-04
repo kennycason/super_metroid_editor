@@ -508,6 +508,32 @@ object SpcData {
     }
 
     /**
+     * Find the ROM PC offset of the 3-byte pointer table entry for [songSet].
+     * Song set values are direct byte offsets into the packed table.
+     */
+    fun findSongSetPointerEntryPc(romParser: RomParser, songSet: Int): Int {
+        val rom = romParser.romData
+
+        val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
+        if (vanillaPc >= 0 && vanillaPc + songSet + 2 < rom.size) {
+            val ptr = readPointerAt(rom, vanillaPc + songSet)
+            if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
+                return vanillaPc + songSet
+            }
+        }
+
+        val tableAddr = findRelocatedTable(rom, romParser)
+        if (tableAddr >= 0 && tableAddr + songSet + 2 < rom.size) {
+            val ptr = readPointerAt(rom, tableAddr + songSet)
+            if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
+                return tableAddr + songSet
+            }
+        }
+
+        return -1
+    }
+
+    /**
      * Build the full map of songSet -> SNES pointer for all known song sets.
      * Used for diagnostics and testing.
      */
@@ -630,6 +656,100 @@ object SpcData {
             pos = dataStart + size
         }
         return -1
+    }
+
+    private data class TransferBlockRef(
+        val destAddr: Int,
+        val size: Int,
+        val dataStartPc: Int,
+        val order: Int,
+    ) {
+        fun contains(spcAddr: Int): Boolean = spcAddr >= destAddr && spcAddr < destAddr + size
+        fun romOffsetFor(spcAddr: Int): Int = dataStartPc + (spcAddr - destAddr)
+    }
+
+    private fun parseTransferBlockRefs(romData: ByteArray, chainStartPc: Int): List<TransferBlockRef> {
+        val refs = mutableListOf<TransferBlockRef>()
+        var pos = chainStartPc
+        var order = 0
+        while (pos + 4 <= romData.size) {
+            val size = (romData[pos].toInt() and 0xFF) or
+                ((romData[pos + 1].toInt() and 0xFF) shl 8)
+            if (size == 0) break
+            val dest = (romData[pos + 2].toInt() and 0xFF) or
+                ((romData[pos + 3].toInt() and 0xFF) shl 8)
+            val dataStart = pos + 4
+            if (dataStart + size > romData.size) break
+            refs += TransferBlockRef(dest, size, dataStart, order++)
+            pos = dataStart + size
+        }
+        return refs
+    }
+
+    /**
+     * Convert SPC RAM writes back into ROM PC writes inside a song-set transfer
+     * block chain. This is used for persistent music edits: the editor works in
+     * SPC RAM addresses, but the exported ROM needs PC-offset byte patches.
+     *
+     * If transfer blocks overlap, the latest block in the chain wins, matching
+     * how the game uploads blocks into SPC RAM.
+     */
+    fun buildRomWritesForSpcRamWrites(
+        romParser: RomParser,
+        songSet: Int,
+        spcWrites: Map<Int, ByteArray>,
+        fallbackToBaseSongSet: Boolean = false
+    ): List<Pair<Int, ByteArray>> {
+        if (spcWrites.isEmpty()) return emptyList()
+
+        val ptr = readSongSetPointer(romParser, songSet)
+        require(ptr > 0) { "songSet 0x${songSet.toString(16)} has no valid transfer block pointer" }
+        val chainStartPc = romParser.snesToPc(ptr)
+        val refs = parseTransferBlockRefs(romParser.romData, chainStartPc)
+        require(refs.isNotEmpty()) { "songSet 0x${songSet.toString(16)} has no transfer blocks" }
+        val fallbackRefs = if (fallbackToBaseSongSet && songSet != 0) {
+            val basePtr = readSongSetPointer(romParser, 0)
+            if (basePtr > 0) parseTransferBlockRefs(romParser.romData, romParser.snesToPc(basePtr)) else emptyList()
+        } else {
+            emptyList()
+        }
+
+        val bytesByRomOffset = sortedMapOf<Int, Int>()
+        for ((startAddr, data) in spcWrites) {
+            for (i in data.indices) {
+                val spcAddr = (startAddr + i) and 0xFFFF
+                val ref = refs.lastOrNull { it.contains(spcAddr) }
+                    ?: fallbackRefs.lastOrNull { it.contains(spcAddr) }
+                    ?: error(
+                        "SPC write 0x${spcAddr.toString(16).padStart(4, '0')} is not covered by " +
+                            "songSet 0x${songSet.toString(16)} transfer blocks" +
+                            if (fallbackToBaseSongSet) " or base SPC transfer blocks" else ""
+                    )
+                bytesByRomOffset[ref.romOffsetFor(spcAddr)] = data[i].toInt() and 0xFF
+            }
+        }
+
+        val writes = mutableListOf<Pair<Int, ByteArray>>()
+        var runStart = -1
+        val runBytes = mutableListOf<Int>()
+        var prevOffset = -1
+
+        for ((offset, value) in bytesByRomOffset) {
+            if (runStart < 0 || offset != prevOffset + 1) {
+                if (runStart >= 0) {
+                    writes += runStart to ByteArray(runBytes.size) { runBytes[it].toByte() }
+                    runBytes.clear()
+                }
+                runStart = offset
+            }
+            runBytes += value
+            prevOffset = offset
+        }
+        if (runStart >= 0) {
+            writes += runStart to ByteArray(runBytes.size) { runBytes[it].toByte() }
+        }
+
+        return writes
     }
 
     /**

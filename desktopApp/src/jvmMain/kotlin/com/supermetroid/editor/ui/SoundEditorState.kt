@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.NativeSpcEmulator
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
@@ -82,7 +83,7 @@ class SoundEditorState {
     private var pianoRollTickMs = 0.0
 
     /** Open the piano roll editor for the current track. */
-    fun openPianoRoll(romParser: RomParser) {
+    fun openPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
         val track = selectedTrack ?: run {
             soundEditorLog.warn { "[SPC-PIANO] openPianoRoll: no track selected" }
             return
@@ -94,11 +95,23 @@ class SoundEditorState {
                 "songSet=0x${track.songSet.toString(16)} playIndex=${track.playIndex}"
         }
         val ram = buildSpcRamForTrack(romParser, track.songSet)
-        val song = NspcSequence.parse(ram, track.playIndex)
-        pianoRollInstruments = NspcRenderer.readInstrumentTable(ram)
-        originalPianoRollInstruments = pianoRollInstruments
-        originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(song)
+        val originalSong = NspcSequence.parse(ram, track.playIndex)
+        val originalInstruments = NspcRenderer.readInstrumentTable(ram)
+        originalPianoRollInstruments = originalInstruments
+        originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(originalSong)
+
+        val savedEdit = editorState?.getMusicEdit(track.songSet, track.playIndex)
+        val song = savedEdit?.let { MusicEditConversion.toSong(it) } ?: originalSong
+        val savedInstruments = savedEdit
+            ?.let { MusicEditConversion.toInstrumentEntries(it) }
+            ?.takeIf { it.isNotEmpty() }
+        pianoRollInstruments = if (savedInstruments != null) {
+            rebuildInstrumentMetadata(romParser, savedInstruments)
+        } else {
+            originalInstruments
+        }
         song.title = track.name
+        song.isModified = hasPianoRollEdits(song)
         editingSong = song
         clearPianoRollHistory()
         pianoRollChannel = 0
@@ -121,7 +134,11 @@ class SoundEditorState {
                 soundEditorLog.info { "[SPC-PIANO]   Ch $ch: ${notes.size} notes, ${cmds.size} cmds, instruments=$instrSet$range" }
             }
         }
-        statusMessage = "Editing: ${track.name} ($totalNotes notes, ${song.totalTicks} ticks)"
+        statusMessage = if (savedEdit != null) {
+            "Editing saved project music: ${track.name} ($totalNotes notes, ${song.totalTicks} ticks)"
+        } else {
+            "Editing: ${track.name} ($totalNotes notes, ${song.totalTicks} ticks)"
+        }
     }
 
     /** Close piano roll, return to waveform view. */
@@ -135,7 +152,7 @@ class SoundEditorState {
     }
 
     /** Reset piano roll to original track data. */
-    fun resetPianoRoll(romParser: RomParser) {
+    fun resetPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
         val track = selectedTrack ?: return
         soundEditorLog.info { "[SPC-PIANO] Resetting to original track data" }
         stopPlayback()
@@ -148,6 +165,7 @@ class SoundEditorState {
         editingSong = song
         clearPianoRollHistory()
         pianoRollPlaybackTick = 0
+        removePianoRollProjectEdit(editorState)
         statusMessage = "Reset to original"
     }
 
@@ -185,13 +203,14 @@ class SoundEditorState {
     }
 
     /** Notify that the song was modified (triggers recompose). */
-    fun notifySongChanged(song: NspcSequence.Song) {
+    fun notifySongChanged(song: NspcSequence.Song, editorState: EditorState? = null) {
         val prevNotes = editingSong?.channels?.sumOf { it.notes.size } ?: 0
         val newNotes = song.channels.sumOf { it.notes.size }
         val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)?.hasDelta ?: true
         song.isModified = hasNoteDelta
         soundEditorLog.info { "[SPC-PIANO] Song modified: $prevNotes -> $newNotes notes, noteDelta=$hasNoteDelta" }
         editingSong = PianoRollPreviewLogic.deepCopySong(song)
+        syncPianoRollProjectEdit(editorState)
     }
 
     fun recordPianoRollEdit(label: String) {
@@ -201,20 +220,22 @@ class SoundEditorState {
         soundEditorLog.info { "[SPC-PIANO-UNDO] Record '$label' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
     }
 
-    fun undoPianoRollEdit(): Boolean {
+    fun undoPianoRollEdit(editorState: EditorState? = null): Boolean {
         val song = editingSong ?: return false
         val snapshot = pianoRollHistory.undo(song, pianoRollInstruments) ?: return false
         restorePianoRollSnapshot(snapshot)
         syncPianoRollHistoryDepths()
+        syncPianoRollProjectEdit(editorState)
         soundEditorLog.info { "[SPC-PIANO-UNDO] Undo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
 
-    fun redoPianoRollEdit(): Boolean {
+    fun redoPianoRollEdit(editorState: EditorState? = null): Boolean {
         val song = editingSong ?: return false
         val snapshot = pianoRollHistory.redo(song, pianoRollInstruments) ?: return false
         restorePianoRollSnapshot(snapshot)
         syncPianoRollHistoryDepths()
+        syncPianoRollProjectEdit(editorState)
         soundEditorLog.info { "[SPC-PIANO-UNDO] Redo '${snapshot.label}' undo=$pianoRollUndoDepth redo=$pianoRollRedoDepth" }
         return true
     }
@@ -240,7 +261,8 @@ class SoundEditorState {
 
     fun updatePianoRollInstrument(
         updated: NspcRenderer.InstrumentEntry,
-        romParser: RomParser?
+        romParser: RomParser?,
+        editorState: EditorState? = null
     ) {
         val idx = updated.index
         if (idx !in pianoRollInstruments.indices) return
@@ -269,7 +291,44 @@ class SoundEditorState {
         val after = "srcn=${hexByte(normalized.srcn)} adsr1=${hexByte(normalized.adsr1)} adsr2=${hexByte(normalized.adsr2)} " +
             "gain=${hexByte(normalized.gain)} pitch=${hexWord(normalized.pitchAdj)}"
         soundEditorLog.info { "[SPC-PIANO-INST] Set index=${hexByte(idx)} $before -> $after" }
+        syncPianoRollProjectEdit(editorState)
         statusMessage = "Edited instrument ${hexByte(idx)}"
+    }
+
+    private fun hasPianoRollEdits(song: NspcSequence.Song): Boolean {
+        val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)?.hasDelta
+            ?: song.isModified
+        val hasInstrumentDelta = PianoRollPreviewLogic.instrumentPatchWrites(
+            pianoRollInstruments,
+            originalPianoRollInstruments
+        ).isNotEmpty()
+        return hasNoteDelta || hasInstrumentDelta
+    }
+
+    fun syncPianoRollProjectEdit(editorState: EditorState?) {
+        val projectState = editorState ?: return
+        val track = selectedTrack ?: return
+        val song = editingSong ?: return
+        val key = MusicEditConversion.key(track.songSet, track.playIndex)
+
+        if (!hasPianoRollEdits(song)) {
+            if (projectState.removeMusicEdit(key)) {
+                soundEditorLog.info { "[SPC-PIANO-SAVE] Removed project music edit key=$key (${track.name})" }
+            }
+            return
+        }
+
+        projectState.setMusicEdit(key, MusicEditConversion.toProjectEdit(track, song, pianoRollInstruments))
+        soundEditorLog.info { "[SPC-PIANO-SAVE] Staged project music edit key=$key (${track.name})" }
+    }
+
+    fun removePianoRollProjectEdit(editorState: EditorState?) {
+        val projectState = editorState ?: return
+        val track = selectedTrack ?: return
+        val key = MusicEditConversion.key(track.songSet, track.playIndex)
+        if (projectState.removeMusicEdit(key)) {
+            soundEditorLog.info { "[SPC-PIANO-SAVE] Removed project music edit key=$key (${track.name})" }
+        }
     }
 
     fun applyPianoRollInstrumentEdits(spcRam: ByteArray) {
@@ -385,6 +444,9 @@ class SoundEditorState {
                         soundEditorLog.info { "[SPC-PIANO] Native render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak" }
                         mono
                     }
+                } else if (hasNoteDelta && instrumentWrites.isEmpty() && noteDeltaPlan != null) {
+                    soundEditorLog.info { "[SPC-PIANO] Using delta hybrid preview for note-only edit" }
+                    null
                 } else {
                     soundEditorLog.info { "[SPC-PIANO] Rendering MODIFIED track via native SPC emulator" }
                     val spcRam = baseRam.copyOf()
@@ -494,6 +556,7 @@ class SoundEditorState {
 
     private var spcRam: ByteArray? = null
     private var romParserRef: RomParser? = null
+    private var editorStateRef: EditorState? = null
     private var lastLoadedSongSet = -1
     private var loadVersion = 0
 
@@ -572,10 +635,11 @@ class SoundEditorState {
         }
     }
 
-    suspend fun loadTrackSamples(romParser: RomParser) {
+    suspend fun loadTrackSamples(romParser: RomParser, editorState: EditorState? = null) {
         val track = selectedTrack ?: return
         val version = ++loadVersion
         romParserRef = romParser
+        editorStateRef = editorState
 
         if (track.songSet == lastLoadedSongSet && trackSamples.isNotEmpty()) {
             buildCompositeWaveform(track, version)
@@ -660,6 +724,16 @@ class SoundEditorState {
         val trimmed = withContext(Dispatchers.Default) {
             val ram = spcRam
             val parser = romParserRef ?: return@withContext ShortArray(0)
+            val savedEdit = editorStateRef?.getMusicEdit(track.songSet, track.playIndex)
+
+            if (ram != null && savedEdit != null) {
+                val editedResult = renderSavedMusicEditPreview(ram, parser, track, savedEdit, rate)
+                if (editedResult != null && editedResult.size > rate / 2) {
+                    val peak = editedResult.maxOf { abs(it.toInt()) }
+                    soundEditorLog.info { "[SPC] Rendered saved music edit for ${track.name}: ${editedResult.size} samples, peak=$peak" }
+                    return@withContext editedResult
+                }
+            }
 
             if (ram != null) {
                 val nativeResult = tryNativeSpcRender(ram, parser, track, rate)
@@ -748,7 +822,8 @@ class SoundEditorState {
         if (version != loadVersion) return
         currentWaveform = trimmed
         currentLoopStart = -1
-        statusMessage = "${track.name}: ${trimmed.size * 1000L / rate}ms"
+        val editedLabel = if (editorStateRef?.hasMusicEdit(track.songSet, track.playIndex) == true) " [edited]" else ""
+        statusMessage = "${track.name}$editedLabel: ${trimmed.size * 1000L / rate}ms"
 
         if ((autoPlayEnabled || playAllEnabled) && trimmed.isNotEmpty()) {
             autoPlayEnabled = false
@@ -804,6 +879,164 @@ class SoundEditorState {
             soundEditorLog.warn(e) { "[SPC-JNA] Native render failed for ${track.name}: ${e.message}" }
             null
         }
+    }
+
+    private fun renderSavedMusicEditPreview(
+        baseRam: ByteArray,
+        romParser: RomParser,
+        track: SpcData.TrackInfo,
+        edit: MusicTrackEdit,
+        sampleRate: Int
+    ): ShortArray? {
+        val songBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
+        val editedRam = baseRam.copyOf()
+        SpcData.applyTransferBlocks(editedRam, songBlocks)
+
+        val editedSong = MusicEditConversion.toSong(edit)
+        val originalSong = NspcSequence.parse(editedRam, track.playIndex)
+        val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
+            ?: editedSong.isModified
+
+        val originalInstruments = NspcRenderer.readInstrumentTable(editedRam)
+        val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
+        val instrumentWrites = if (editedInstruments.isNotEmpty()) {
+            PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
+        } else {
+            emptyMap()
+        }
+
+        val deltaPlan = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)
+        if (
+            deltaPlan != null &&
+            deltaPlan.hasDelta &&
+            instrumentWrites.isEmpty() &&
+            NativeSpcEmulator.isAvailable()
+        ) {
+            try {
+                val nativeSr = NativeSpcEmulator.SAMPLE_RATE
+                val base = NativeSpcEmulator().use { emu ->
+                    emu.loadFromRam(baseRam, songBlocks, track.playIndex)
+                    trimNativeTrackPreview(emu.renderMono(120), nativeSr)
+                }
+                val maxSeconds = base.size / nativeSr.toDouble()
+                val additions = if (deltaPlan.addEvents.isNotEmpty()) {
+                    NspcRenderer.renderToWav(
+                        deltaPlan.addEvents,
+                        editedRam,
+                        tempo = editedSong.tempo,
+                        sampleRate = nativeSr,
+                        maxSeconds = maxSeconds,
+                        normalize = false
+                    )
+                } else {
+                    ShortArray(0)
+                }
+                val removals = if (deltaPlan.removeEvents.isNotEmpty()) {
+                    NspcRenderer.renderToWav(
+                        deltaPlan.removeEvents,
+                        editedRam,
+                        tempo = editedSong.tempo,
+                        sampleRate = nativeSr,
+                        maxSeconds = maxSeconds,
+                        normalize = false
+                    )
+                } else {
+                    ShortArray(0)
+                }
+                val mixed = PianoRollPreviewLogic.mixPreviewDeltaPcm(base, additions, removals)
+                soundEditorLog.info {
+                    "[SPC] Saved music edit delta hybrid preview for ${track.name}: " +
+                        "+${deltaPlan.addEvents.size} -${deltaPlan.removeEvents.size} note overlays, " +
+                        "basePeak=${PianoRollPreviewLogic.peakOf(base)}, " +
+                        "addPeak=${PianoRollPreviewLogic.peakOf(additions)}, " +
+                        "removePeak=${PianoRollPreviewLogic.peakOf(removals)}, " +
+                        "mixedPeak=${PianoRollPreviewLogic.peakOf(mixed)}"
+                }
+                return if (sampleRate != nativeSr && mixed.isNotEmpty()) {
+                    resampleLinear(mixed, nativeSr, sampleRate)
+                } else {
+                    mixed
+                }
+            } catch (e: Exception) {
+                soundEditorLog.warn(e) { "[SPC] Saved music edit hybrid render failed for ${track.name}: ${e.message}" }
+            }
+        }
+
+        val sequenceWrites = try {
+            if (hasNoteDelta) {
+                NspcSequence.encode(editedSong, track.playIndex, editedRam, failOnOverflow = true)
+            } else {
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            soundEditorLog.warn(e) { "[SPC] Saved music edit native encode failed for ${track.name}: ${e.message}" }
+            null
+        }
+
+        if (sequenceWrites != null && NativeSpcEmulator.isAvailable()) {
+            val patchBlocks = (sequenceWrites + instrumentWrites).map { (addr, data) ->
+                SpcData.TransferBlock(addr, data)
+            }
+            try {
+                NativeSpcEmulator().use { emu ->
+                    emu.loadFromRam(baseRam, songBlocks + patchBlocks, track.playIndex)
+                    val nativeSr = NativeSpcEmulator.SAMPLE_RATE
+                    var mono = emu.renderMono(120)
+                    mono = trimNativeTrackPreview(mono, nativeSr)
+                    val peak = if (mono.isNotEmpty()) mono.maxOf { abs(it.toInt()) } else 0
+                    if (peak > 200) {
+                        return if (sampleRate != nativeSr && mono.isNotEmpty()) {
+                            resampleLinear(mono, nativeSr, sampleRate)
+                        } else {
+                            mono
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                soundEditorLog.warn(e) { "[SPC] Saved music edit native render failed for ${track.name}: ${e.message}" }
+            }
+        }
+
+        if (sequenceWrites != null) {
+            for ((addr, data) in sequenceWrites + instrumentWrites) {
+                if (addr >= 0 && addr + data.size <= editedRam.size) data.copyInto(editedRam, addr)
+            }
+            return NspcRenderer.renderTrack(editedRam, track.playIndex, sampleRate, 120.0)
+        }
+
+        if (editedInstruments.isNotEmpty()) {
+            PianoRollPreviewLogic.writeInstrumentEntries(editedRam, editedInstruments)
+        }
+        val events = editedSong.channels.flatMapIndexed { ch, channel ->
+            channel.notes.map { PianoRollPreviewLogic.noteEvent(ch, it) }
+        }
+        return NspcRenderer.renderToWav(events, editedRam, tempo = editedSong.tempo, sampleRate = sampleRate, maxSeconds = 120.0)
+    }
+
+    private fun trimNativeTrackPreview(mono: ShortArray, nativeSr: Int): ShortArray {
+        var result = mono
+        val fadeSamples = nativeSr * 5
+        if (result.size > fadeSamples) {
+            val fadeStart = result.size - fadeSamples
+            for (i in 0 until fadeSamples) {
+                val gain = 1.0f - (i.toFloat() / fadeSamples)
+                result[fadeStart + i] = (result[fadeStart + i] * gain).toInt().toShort()
+            }
+        }
+
+        val silenceThreshold = 64
+        val silenceWindow = nativeSr / 2
+        var trimEnd = result.size
+        while (trimEnd > silenceWindow) {
+            val windowStart = trimEnd - silenceWindow
+            val windowPeak = (windowStart until trimEnd).maxOf { abs(result[it].toInt()) }
+            if (windowPeak > silenceThreshold) break
+            trimEnd = windowStart
+        }
+        if (trimEnd < result.size) {
+            result = result.copyOf(trimEnd)
+        }
+        return result
     }
 
     private fun renderVoiceClip(
