@@ -35,6 +35,10 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 private val editorStateLog = KotlinLogging.logger {}
+private const val MUSIC_SONG_TABLE_BASE = 0x581E
+private const val MUSIC_SEQUENCE_DATA_MIN = 0x5820
+private const val MUSIC_SEQUENCE_EXPORT_MIN = MUSIC_SONG_TABLE_BASE
+private const val MUSIC_SEQUENCE_EXPORT_MAX = 0x6C00
 
 private fun editorLog(message: Any? = "") {
     val text = message?.toString() ?: ""
@@ -3031,23 +3035,34 @@ class EditorState {
             val exportParser = RomParser(romData)
             val baseRam = SpcData.buildInitialSpcRam(exportParser)
             val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
-            val spcRam = baseRam.copyOf()
-            SpcData.applyTransferBlocks(spcRam, songBlocks)
-            val accumulatedWrites = linkedMapOf<Int, ByteArray>()
+            val originalSpcRam = baseRam.copyOf()
+            SpcData.applyTransferBlocks(originalSpcRam, songBlocks)
+            val accumulatedWrites = SpcWriteAccumulator(songSet)
+            val knownPlayIndexes = SpcData.KNOWN_TRACKS
+                .filter { it.songSet == songSet }
+                .mapTo(mutableSetOf()) { it.playIndex }
+            edits.mapTo(knownPlayIndexes) { it.value.playIndex }
+            val originalSequenceRanges = buildOriginalSequenceRanges(originalSpcRam, knownPlayIndexes)
 
             for ((key, edit) in edits) {
-                val originalSong = NspcSequence.parse(spcRam, edit.playIndex)
+                val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
                 val editedSong = MusicEditConversion.toSong(edit)
                 val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
                     ?: editedSong.isModified
 
                 val sequenceWrites = if (hasNoteDelta) {
-                    NspcSequence.encode(editedSong, edit.playIndex, spcRam, failOnOverflow = true)
+                    NspcSequence.encode(editedSong, edit.playIndex, originalSpcRam, failOnOverflow = true)
                 } else {
                     emptyMap()
                 }
+                validateMusicSequenceWrites(
+                    key = key,
+                    playIndex = edit.playIndex,
+                    writes = sequenceWrites,
+                    originalRange = originalSequenceRanges[edit.playIndex]
+                )
 
-                val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
+                val originalInstruments = NspcRenderer.readInstrumentTable(originalSpcRam)
                 val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
                 val instrumentWrites = if (editedInstruments.isNotEmpty()) {
                     PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
@@ -3060,11 +3075,10 @@ class EditorState {
                     continue
                 }
 
+                val owner = "music edit '$key' (${edit.trackName})"
+                mergeSpcWrites(accumulatedWrites, owner, sequenceWrites, rejectAnyOverlap = true)
+                mergeSpcWrites(accumulatedWrites, owner, instrumentWrites, rejectAnyOverlap = false)
                 val spcWrites = sequenceWrites + instrumentWrites
-                applySpcWritesToRam(spcRam, spcWrites)
-                for ((addr, data) in spcWrites) {
-                    accumulatedWrites[addr] = data
-                }
                 val totalBytes = spcWrites.values.sumOf { it.size }
 
                 patched++
@@ -3075,7 +3089,7 @@ class EditorState {
             }
 
             if (accumulatedWrites.isNotEmpty()) {
-                val chainBytes = writeRelocatedSongSetTransferChain(romData, songSet, accumulatedWrites)
+                val chainBytes = writeRelocatedSongSetTransferChain(romData, songSet, accumulatedWrites.toWriteMap())
                 editorLog(
                     "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
                         "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
@@ -3084,6 +3098,163 @@ class EditorState {
         }
         return patched
     }
+
+    private data class SpcWriteAccumulator(
+        val songSet: Int,
+        val bytesByAddr: java.util.TreeMap<Int, Int> = java.util.TreeMap(),
+        val ownersByAddr: MutableMap<Int, String> = mutableMapOf()
+    ) {
+        fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
+
+        fun toWriteMap(): Map<Int, ByteArray> {
+            val writes = linkedMapOf<Int, ByteArray>()
+            var runStart = -1
+            val runBytes = mutableListOf<Int>()
+            var previousAddr = -1
+
+            fun flushRun() {
+                if (runStart >= 0) {
+                    writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
+                    runBytes.clear()
+                    runStart = -1
+                }
+            }
+
+            for ((addr, value) in bytesByAddr) {
+                if (runStart < 0 || addr != previousAddr + 1) {
+                    flushRun()
+                    runStart = addr
+                }
+                runBytes += value
+                previousAddr = addr
+            }
+            flushRun()
+            return writes
+        }
+    }
+
+    private data class SongSequenceRange(
+        val playIndex: Int,
+        val start: Int,
+        val endExclusive: Int
+    )
+
+    private fun buildOriginalSequenceRanges(
+        spcRam: ByteArray,
+        playIndexes: Set<Int>
+    ): Map<Int, SongSequenceRange> {
+        val startsByPlayIndex = linkedMapOf<Int, Int>()
+        for (playIndex in playIndexes.sorted()) {
+            val sequencePointers = collectOriginalSequencePointers(spcRam, playIndex)
+            val start = sequencePointers.minOrNull() ?: continue
+            startsByPlayIndex[playIndex] = start
+        }
+
+        return startsByPlayIndex.mapValues { (playIndex, start) ->
+            val endExclusive = startsByPlayIndex.values
+                .filter { it > start }
+                .minOrNull()
+                ?: MUSIC_SEQUENCE_EXPORT_MAX
+            SongSequenceRange(playIndex, start, endExclusive)
+        }
+    }
+
+    private fun collectOriginalSequencePointers(spcRam: ByteArray, playIndex: Int): List<Int> {
+        val conductorAddr = readSpcU16(spcRam, MUSIC_SONG_TABLE_BASE + playIndex * 2)
+        if (!isMusicSequenceDataAddr(conductorAddr)) return emptyList()
+
+        val pointers = mutableListOf(conductorAddr)
+        var conductorPtr = conductorAddr
+        repeat(16) {
+            val blockTableAddr = readSpcU16(spcRam, conductorPtr)
+            conductorPtr += 2
+            if (blockTableAddr == 0) return pointers
+            if (!isMusicSequenceDataAddr(blockTableAddr)) return@repeat
+            pointers += blockTableAddr
+            for (ch in 0 until 8) {
+                val channelAddr = readSpcU16(spcRam, blockTableAddr + ch * 2)
+                if (isMusicSequenceDataAddr(channelAddr)) pointers += channelAddr
+            }
+        }
+        return pointers
+    }
+
+    private fun validateMusicSequenceWrites(
+        key: String,
+        playIndex: Int,
+        writes: Map<Int, ByteArray>,
+        originalRange: SongSequenceRange?
+    ) {
+        val songTableEntry = MUSIC_SONG_TABLE_BASE + playIndex * 2
+        for ((addr, data) in writes) {
+            val dest = addr and 0xFFFF
+            val endExclusive = dest + data.size
+            require(data.isNotEmpty()) { "music edit $key produced an empty sequence write at 0x${dest.toString(16)}" }
+            if (dest == songTableEntry && data.size == 2) continue
+            require(dest >= MUSIC_SEQUENCE_EXPORT_MIN && endExclusive <= MUSIC_SEQUENCE_EXPORT_MAX) {
+                "music edit $key produced unsafe sequence SPC write " +
+                    "0x${dest.toString(16).padStart(4, '0')}.." +
+                    "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
+            }
+            if (originalRange != null) {
+                require(dest >= originalRange.start && endExclusive <= originalRange.endExclusive) {
+                    "music edit $key re-encode crosses original playIndex ${originalRange.playIndex} allocation " +
+                        "0x${originalRange.start.toString(16).padStart(4, '0')}.." +
+                        "0x${(originalRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
+                        "0x${dest.toString(16).padStart(4, '0')}.." +
+                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}; sequence relocation is required"
+                }
+            }
+        }
+    }
+
+    private fun mergeSpcWrites(
+        accumulator: SpcWriteAccumulator,
+        owner: String,
+        writes: Map<Int, ByteArray>,
+        rejectAnyOverlap: Boolean
+    ) {
+        val songSetLabel = "0x${accumulator.songSet.toString(16).padStart(2, '0')}"
+        for ((addr, data) in writes) {
+            val dest = addr and 0xFFFF
+            require(data.isNotEmpty()) { "$owner produced an empty SPC write at 0x${dest.toString(16)}" }
+            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
+                "$owner produced out-of-bounds SPC write " +
+                    "0x${dest.toString(16).padStart(4, '0')}.." +
+                    "0x${(dest + data.size - 1).toString(16).padStart(4, '0')}"
+            }
+            for (i in data.indices) {
+                val spcAddr = dest + i
+                val value = data[i].toInt() and 0xFF
+                val existing = accumulator.bytesByAddr[spcAddr]
+                val previousOwner = accumulator.ownersByAddr[spcAddr]
+                if (existing != null && previousOwner != owner) {
+                    require(!rejectAnyOverlap) {
+                        "music edits for songSet $songSetLabel overlap at SPC " +
+                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
+                    }
+                    require(existing == value) {
+                        "music edits for songSet $songSetLabel write different values at SPC " +
+                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
+                    }
+                } else if (existing != null && existing != value) {
+                    require(false) {
+                        "$owner produced conflicting SPC bytes at 0x${spcAddr.toString(16).padStart(4, '0')}"
+                    }
+                }
+                accumulator.bytesByAddr[spcAddr] = value
+                accumulator.ownersByAddr[spcAddr] = owner
+            }
+        }
+    }
+
+    private fun readSpcU16(spcRam: ByteArray, addr: Int): Int {
+        if (addr < 0 || addr + 1 >= spcRam.size) return 0
+        return (spcRam[addr].toInt() and 0xFF) or ((spcRam[addr + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun isMusicSequenceDataAddr(addr: Int): Boolean =
+        addr in MUSIC_SEQUENCE_DATA_MIN until MUSIC_SEQUENCE_EXPORT_MAX
 
     private fun writeRelocatedSongSetTransferChain(
         romData: ByteArray,
@@ -3120,15 +3291,6 @@ class EditorState {
                 "(${originalBlocks.size} original + ${patchBlocks.size} patch blocks)"
         )
         return relocatedChain.size
-    }
-
-    private fun applySpcWritesToRam(spcRam: ByteArray, spcWrites: Map<Int, ByteArray>) {
-        for ((addr, data) in spcWrites) {
-            require(addr >= 0 && addr + data.size <= spcRam.size) {
-                "SPC write 0x${addr.toString(16)}..0x${(addr + data.size).toString(16)} exceeds SPC RAM"
-            }
-            data.copyInto(spcRam, addr)
-        }
     }
 
     private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {

@@ -8,6 +8,7 @@ import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -65,7 +66,7 @@ class MusicEditExportTest {
     }
 
     @Test
-    fun `export writes saved title screen note edits into ROM transfer data`() {
+    fun `export writes saved title screen after-button note edits into ROM transfer data`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")
         romBytes!!
@@ -74,22 +75,27 @@ class MusicEditExportTest {
         inputRom.writeBytes(romBytes)
         val parser = RomParser(inputRom.readBytes())
         val songSet = 0x03
-        val playIndex = 5
+        val playIndex = 6
 
         val spcRam = SpcData.buildInitialSpcRam(parser).also {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
         }
         val originalSong = NspcSequence.parse(spcRam, playIndex)
         val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
-        assumeTrue(originalSong.channels[0].notes.isNotEmpty(), "Title Screen channel 0 has no notes")
+        assumeTrue(originalSong.channels.any { it.notes.isNotEmpty() }, "Title Screen after-button track has no notes")
 
         val editedSong = PianoRollPreviewLogic.deepCopySong(originalSong)
-        val changedNote = editedSong.channels[0].notes.first()
-        val expectedNoteValue = (changedNote.noteValue + 1).coerceAtMost(NspcSequence.NOTE_MAX)
+        val channelIndex = editedSong.channels.indexOfFirst { it.notes.isNotEmpty() }
+        val changedNote = editedSong.channels[channelIndex].notes.first()
+        val expectedNoteValue = if (changedNote.noteValue < NspcSequence.NOTE_MAX) {
+            changedNote.noteValue + 1
+        } else {
+            changedNote.noteValue - 1
+        }
         changedNote.noteValue = expectedNoteValue
         editedSong.isModified = true
 
-        val track = SpcData.TrackInfo(songSet = songSet, playIndex = playIndex, name = "Title Screen", area = "Menu")
+        val track = SpcData.TrackInfo(songSet = songSet, playIndex = playIndex, name = "Title Screen (After Button)", area = "Menu")
         val state = EditorState()
         state.testMode = true
         state.initForRom(inputRom.absolutePath)
@@ -111,6 +117,79 @@ class MusicEditExportTest {
             SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exportedParser, songSet))
         }
         val exportedSong = NspcSequence.parse(exportedRam, playIndex)
-        assertEquals(expectedNoteValue, exportedSong.channels[0].notes.first().noteValue)
+        assertEquals(expectedNoteValue, exportedSong.channels[channelIndex].notes.first().noteValue)
+    }
+
+    @Test
+    fun `export refuses overlapping note edits in the same title song set`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidTitlePair.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val songSet = 0x03
+
+        val spcRam = SpcData.buildInitialSpcRam(parser).also {
+            SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
+        }
+        val originalInstruments = NspcRenderer.readInstrumentTable(spcRam)
+
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        addOneNoteValueEdit(
+            state = state,
+            spcRam = spcRam,
+            originalInstruments = originalInstruments,
+            songSet = songSet,
+            playIndex = 5,
+            name = "Title Screen"
+        )
+        addOneNoteValueEdit(
+            state = state,
+            spcRam = spcRam,
+            originalInstruments = originalInstruments,
+            songSet = songSet,
+            playIndex = 6,
+            name = "Title Screen After Button"
+        )
+
+        val exportedPath = state.exportToRom(parser)
+
+        assertNull(
+            exportedPath,
+            "Overlapping edits in one song set must fail safely instead of exporting a corrupt transfer chain"
+        )
+    }
+
+    private fun addOneNoteValueEdit(
+        state: EditorState,
+        spcRam: ByteArray,
+        originalInstruments: List<NspcRenderer.InstrumentEntry>,
+        songSet: Int,
+        playIndex: Int,
+        name: String
+    ) {
+        val originalSong = NspcSequence.parse(spcRam, playIndex)
+        val channelIndex = originalSong.channels.indexOfFirst { it.notes.isNotEmpty() }
+        assumeTrue(channelIndex >= 0, "$name has no editable notes")
+
+        val editedSong = PianoRollPreviewLogic.deepCopySong(originalSong)
+        val changedNote = editedSong.channels[channelIndex].notes.first()
+        changedNote.noteValue = if (changedNote.noteValue < NspcSequence.NOTE_MAX) {
+            changedNote.noteValue + 1
+        } else {
+            changedNote.noteValue - 1
+        }
+        editedSong.isModified = true
+
+        val track = SpcData.TrackInfo(songSet = songSet, playIndex = playIndex, name = name, area = "Menu")
+        state.setMusicEdit(
+            MusicEditConversion.key(songSet, playIndex),
+            MusicEditConversion.toProjectEdit(track, editedSong, originalInstruments)
+        )
     }
 }

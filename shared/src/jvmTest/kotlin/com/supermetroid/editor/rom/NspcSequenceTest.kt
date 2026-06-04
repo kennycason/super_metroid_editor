@@ -183,6 +183,40 @@ class NspcSequenceTest {
     }
 
     @Test
+    fun `encode does not reuse unsafe low block table pointer`() {
+        val spcRam = ByteArray(RomConstants.SPC_RAM_SIZE)
+        val playIndex = 6
+        val conductorAddr = 0x5D9D
+        val unsafeBlockTableAddr = 0x18F0
+        val songTableEntry = 0x581E + playIndex * 2
+
+        spcRam[songTableEntry] = (conductorAddr and 0xFF).toByte()
+        spcRam[songTableEntry + 1] = ((conductorAddr shr 8) and 0xFF).toByte()
+        spcRam[conductorAddr] = (unsafeBlockTableAddr and 0xFF).toByte()
+        spcRam[conductorAddr + 1] = ((unsafeBlockTableAddr shr 8) and 0xFF).toByte()
+        spcRam[conductorAddr + 2] = 0
+        spcRam[conductorAddr + 3] = 0
+
+        val song = NspcSequence.Song(tempo = 21)
+        song.channels[0].notes += NspcSequence.Note(
+            tick = 0,
+            duration = 24,
+            noteValue = NspcSequence.nameToNote("C3"),
+            velocity = 15,
+            quantize = 7,
+            instrument = 0x1E
+        )
+
+        val writes = NspcSequence.encode(song, playIndex, spcRam, failOnOverflow = true)
+
+        assertFalse(writes.containsKey(unsafeBlockTableAddr), "Encoder must not write channel table to low SPC RAM")
+        assertTrue(
+            writes.all { (addr, data) -> addr >= 0x581E && addr + data.size <= 0x6C00 },
+            "All re-encode writes must stay in song sequence RAM"
+        )
+    }
+
+    @Test
     fun `encode round-trips notes with large gaps between them`() {
         val song = NspcSequence.Song(tempo = 40)
         song.channels[0].notes.addAll(listOf(

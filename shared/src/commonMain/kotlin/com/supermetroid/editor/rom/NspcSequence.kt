@@ -13,6 +13,9 @@ import com.supermetroid.editor.util.EditorLog
  * MIDI-like: noteValue 0x80 = MIDI 24 (C1), so MIDI = noteValue - 0x80 + 24
  */
 object NspcSequence {
+    private const val SEQUENCE_DATA_MIN = 0x5820
+    private const val SEQUENCE_DATA_MAX = 0x6C00
+    private const val DEFAULT_CONDUCTOR_ADDR = 0x5830
 
     // Note value constants
     const val NOTE_MIN = 0x80       // C1
@@ -436,12 +439,12 @@ object NspcSequence {
             readWord(spcRam, 0x581E + playIndex * 2)
         } else 0
 
-        // Use original conductor location if valid, otherwise use a safe default
-        // The sequence data area is $5820-$6BFF (~5KB)
-        val conductorAddr = if (originalConductorAddr in 0x5820..0x6800) {
+        // Use original conductor location if valid, otherwise use a safe default.
+        // The sequence data area is $5820-$6BFF; lower addresses are SPC engine RAM.
+        val conductorAddr = if (isSafeSequenceWrite(originalConductorAddr, 4)) {
             originalConductorAddr
         } else {
-            0x5830 // safe default within sequence data area
+            DEFAULT_CONDUCTOR_ADDR
         }
         EditorLog.info("[NSPC-ENCODE] Original conductor at 0x${originalConductorAddr.toString(16)}, " +
             "using 0x${conductorAddr.toString(16)}")
@@ -453,10 +456,19 @@ object NspcSequence {
         } else {
             0
         }
-        val blockTableAddr = if (originalBlockTableAddr in 0x1500..0x6B00) {
+        var blockTableAddr = if (isSafeSequenceWrite(originalBlockTableAddr, 16)) {
             originalBlockTableAddr
         } else {
             conductorAddr + 4
+        }
+        if (!isSafeSequenceWrite(blockTableAddr, 16)) {
+            val warning = "block table at 0x${blockTableAddr.toString(16)} is outside sequence RAM"
+            if (failOnOverflow) {
+                EditorLog.warn("[NSPC-ENCODE] $warning. Refusing native re-encode.")
+                throw IllegalStateException(warning)
+            }
+            EditorLog.warn("[NSPC-ENCODE] $warning. Using default sequence area.")
+            blockTableAddr = DEFAULT_CONDUCTOR_ADDR + 4
         }
 
         // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
@@ -637,6 +649,9 @@ object NspcSequence {
 
     private fun isFlowControlCommand(command: Int): Boolean =
         command == 0xEF
+
+    private fun isSafeSequenceWrite(addr: Int, size: Int): Boolean =
+        addr >= SEQUENCE_DATA_MIN && size >= 0 && addr + size <= SEQUENCE_DATA_MAX
 
     // ─── Utilities ──────────────────────────────────────────────────
 
