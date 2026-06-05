@@ -80,6 +80,7 @@ import com.supermetroid.editor.ui.FloatingEmulatorWindow
 import com.supermetroid.editor.ui.KraidSpriteEditor
 import com.supermetroid.editor.ui.LocalSwingWindow
 import com.supermetroid.editor.ui.MapCanvas
+import com.supermetroid.editor.ui.ItemLocationPanel
 import com.supermetroid.editor.ui.PatchEditorCanvas
 import com.supermetroid.editor.ui.PatchListPanel
 import com.supermetroid.editor.ui.PatternEditorCanvas
@@ -120,6 +121,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val mainLog = KotlinLogging.logger {}
+
+private const val TAB_ROOMS = 0
+private const val TAB_ITEMS = 1
+private const val TAB_TILES = 2
+private const val TAB_PATCHES = 3
+private const val TAB_SOUND = 4
+private const val TAB_SPRITES = 5
+private const val TAB_MAP = 6
+private const val TAB_TEXT = 7
+private const val TAB_ENEMY = 8
+private const val TAB_BOSS = 9
 
 fun main() = application {
     val roomRepository = remember { RoomRepository() }
@@ -383,7 +395,7 @@ fun main() = application {
                 var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
                 // Auto-switch to Palette tab when user samples a tile
                 val sampledRow = editorState.sampledPaletteRow
-                if (sampledRow >= 0 && leftTab == 1) {
+                if (sampledRow >= 0 && leftTab == TAB_TILES) {
                     tilesetSubTab = 2
                 }
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -409,7 +421,7 @@ fun main() = application {
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                val tabNames = listOf("Rooms", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
+                                val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
                                 tabNames.forEachIndexed { idx, name ->
                                     val selected = leftTab == idx
                                     Text(
@@ -421,7 +433,7 @@ fun main() = application {
                                         modifier = Modifier
                                             .clickable {
                                                 leftTab = idx
-                                                if (idx == 2) editorState.seedDefaultPatches()
+                                                if (idx == TAB_PATCHES) editorState.seedDefaultPatches()
                                             }
                                             .padding(horizontal = 8.dp, vertical = 6.dp)
                                     )
@@ -430,7 +442,7 @@ fun main() = application {
 
                             key(leftTab) {
                             when (leftTab) {
-                                0 -> {
+                                TAB_ROOMS -> {
                                     // Top: room list
                                     RoomListView(
                                         rooms = rooms,
@@ -495,7 +507,7 @@ fun main() = application {
                                                             romParser = rp,
                                                             editorState = editorState,
                                                             modifier = Modifier.fillMaxSize(),
-                                                            onNavigateToMap = { leftTab = 5 },
+                                                            onNavigateToMap = { leftTab = TAB_MAP },
                                                         )
                                                     } else {
                                                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -512,7 +524,21 @@ fun main() = application {
                                         }
                                     }
                                 }
-                                1 -> {
+                                TAB_ITEMS -> {
+                                    ItemLocationPanel(
+                                        rooms = rooms,
+                                        selectedRoom = selectedRoom,
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        onRoomSelected = { room ->
+                                            selectedRoom = room
+                                            val romPath = RomPreferences.getLastRomPath()
+                                            if (romPath != null) saveLastRoom(romPath, room)
+                                        },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                                TAB_TILES -> {
                                     // Tilesets tab: sub-tabs [Tilesets | Patterns | Palette]
                                     TabRow(
                                         selectedTabIndex = tilesetSubTab,
@@ -640,13 +666,13 @@ fun main() = application {
                                     }
                                     }
                                 }
-                                2 -> {
+                                TAB_PATCHES -> {
                                     PatchListPanel(
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
-                                3 -> {
+                                TAB_SOUND -> {
                                     SoundListPanel(
                                         romParser = romParser,
                                         editorState = editorState,
@@ -654,7 +680,7 @@ fun main() = application {
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 }
-                                4 -> {
+                                TAB_SPRITES -> {
                                     val entries = com.supermetroid.editor.rom.EnemySpriteGraphics.EDITOR_ENEMIES
                                     val grouped = entries.groupBy { it.category }
                                     Column(
@@ -705,19 +731,19 @@ fun main() = application {
                                         }
                                     }
                                 }
-                                5 -> MinimapSidebar(
+                                TAB_MAP -> MinimapSidebar(
                                     state = minimapEditorState,
                                     romParser = romParser,
                                     editorState = editorState,
                                     modifier = Modifier.fillMaxSize()
                                 )
-                                6 -> TextEditorSidebar(
+                                TAB_TEXT -> TextEditorSidebar(
                                     romParser = romParser,
                                     editorState = editorState,
                                     modifier = Modifier.fillMaxSize()
                                 )
-                                7 -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
-                                8 -> BossTabSidebar(editorState = editorState, romParser = romParser)
+                                TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
+                                TAB_BOSS -> BossTabSidebar(editorState = editorState, romParser = romParser)
                             }
                             }
                         }
@@ -733,7 +759,7 @@ fun main() = application {
                             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                 key(leftTab, tilesetSubTab, selectedSpriteIdx) {
                                 when (leftTab) {
-                                    0 -> {
+                                    TAB_ROOMS, TAB_ITEMS -> {
                                         val snap = emulatorWorkspaceState.snapshot
                                         val samusPos = if (
                                             emulatorEnabled
@@ -768,7 +794,7 @@ fun main() = application {
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     }
-                                    1 -> {
+                                    TAB_TILES -> {
                                         if (tilesetSubTab == 1) {
                                             PatternEditorCanvas(
                                                 editorState = editorState,
@@ -784,18 +810,18 @@ fun main() = application {
                                             )
                                         }
                                     }
-                                    2 -> PatchEditorCanvas(
+                                    TAB_PATCHES -> PatchEditorCanvas(
                                         editorState = editorState,
                                         romParser = romParser,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    3 -> SoundEditorCanvas(
+                                    TAB_SOUND -> SoundEditorCanvas(
                                         romParser = romParser,
                                         editorState = editorState,
                                         soundEditorState = soundEditorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    4 -> {
+                                    TAB_SPRITES -> {
                                         if (selectedSpriteIdx == -1) {
                                             SamusSpriteViewer(
                                                 romParser = romParser,
@@ -828,18 +854,18 @@ fun main() = application {
                                         }
                                         } // else (enemy sprites)
                                     }
-                                    5 -> MinimapCanvas(
+                                    TAB_MAP -> MinimapCanvas(
                                         state = minimapEditorState,
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    6 -> TextEditorPreview(
+                                    TAB_TEXT -> TextEditorPreview(
                                         romParser = romParser,
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    7 -> EnemyTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
-                                    8 -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    TAB_ENEMY -> EnemyTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    TAB_BOSS -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
                                 }
                                 }
                             }
@@ -896,7 +922,7 @@ fun main() = application {
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1
                                             )
-                                        } else if (leftTab == 5) {
+                                        } else if (leftTab == TAB_MAP) {
                                             val ms = minimapEditorState
                                             val mhx = ms.hoverX; val mhy = ms.hoverY
                                             if (mhx in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
@@ -919,7 +945,7 @@ fun main() = application {
                                             } else {
                                                 Spacer(Modifier.width(1.dp))
                                             }
-                                        } else if (leftTab == 0 && es.hoverBlockX >= 0) {
+                                        } else if ((leftTab == TAB_ROOMS || leftTab == TAB_ITEMS) && es.hoverBlockX >= 0) {
                                             val hx = es.hoverBlockX
                                             val hy = es.hoverBlockY
                                             val hw = es.hoverTileWord
@@ -947,7 +973,7 @@ fun main() = application {
                                         }
 
                                         val brush = es.brush
-                                        if (leftTab == 0 && brush != null) {
+                                        if ((leftTab == TAB_ROOMS || leftTab == TAB_ITEMS) && brush != null) {
                                             val bt = brush.blockType
                                             Text(
                                                 "${brush.cols}×${brush.rows} #${brush.primaryIndex} 0x${bt.toString(16).uppercase()} ${blockTypeName(bt)}" +

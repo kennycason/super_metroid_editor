@@ -166,6 +166,28 @@ class EditorState {
     val workingPlms: List<RomParser.PlmEntry> get() = _workingPlms
     private var originalPlmCount = 0
 
+    /**
+     * PLMs for any room with project-level PLM additions/removals applied.
+     * For the active room, return the live working list so unsaved edits are visible immediately.
+     */
+    fun effectivePlmsForRoom(roomId: Int, romParser: RomParser): List<RomParser.PlmEntry> {
+        if (roomId == currentRoomId && workingLevelData != null) {
+            return _workingPlms.toList()
+        }
+
+        val plms = romParser.getAllPlmEntriesForRoom(roomId).toMutableList()
+        val roomEdits = project.rooms[project.roomKey(roomId)] ?: return plms
+
+        for (change in roomEdits.plmChanges) {
+            when (change.action) {
+                "add" -> plms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                "remove" -> plms.removeAll { it.id == change.plmId && it.x == change.x && it.y == change.y }
+            }
+        }
+
+        return plms
+    }
+
     /** Door entries for the current room (mutable for editing). */
     private val _workingDoors = mutableListOf<RomParser.DoorEntry>()
     var doorEntries: List<RomParser.DoorEntry>
