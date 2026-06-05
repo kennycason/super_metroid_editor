@@ -69,8 +69,8 @@ Patches
 Sound
 
 <p>
-  <img src="screenshots/smedit_sound_editor.png" width="50%" alt="Sound" />
-  <img src="screenshots/smedit_sound.png" width="50%" alt="Sound" />
+  <img src="screenshots/smedit_sound_editor.png" width="49%" alt="Sound" />
+  <img src="screenshots/smedit_sound.png" width="49%" alt="Sound" />
 </p>
 
 
