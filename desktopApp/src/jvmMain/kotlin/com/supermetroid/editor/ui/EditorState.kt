@@ -45,7 +45,14 @@ private fun editorLog(message: Any? = "") {
     }
 }
 
+data class FloatingMapSelection(val x: Int, val y: Int)
 
+private data class MapSelectionBounds(
+    val minX: Int,
+    val minY: Int,
+    val maxX: Int,
+    val maxY: Int,
+)
 
 // ─── Editor State ───────────────────────────────────────────────
 
@@ -60,6 +67,8 @@ class EditorState {
     /** Map selection rectangle in block coordinates (inclusive). */
     var mapSelStart by mutableStateOf<Pair<Int, Int>?>(null)
     var mapSelEnd by mutableStateOf<Pair<Int, Int>?>(null)
+    var floatingSelection by mutableStateOf<FloatingMapSelection?>(null)
+        private set
 
     /** Selection rectangle in tileset: (startCol, startRow, endCol, endRow). */
     var tilesetSelStart by mutableStateOf<Pair<Int, Int>?>(null)
@@ -1347,86 +1356,13 @@ class EditorState {
         return pat
     }
 
-    /**
-     * Shift all tiles within the current selection by (dx, dy).
-     * Copies tile words + BTS from the selection area, clears the source,
-     * writes to the destination, and moves the selection rectangle.
-     * Each shift is one undo step.
-     */
+    /** Move the current selection preview without touching room tiles. */
     fun shiftSelection(dx: Int, dy: Int) {
-        val s = mapSelStart ?: return
-        val e = mapSelEnd ?: return
-        val data = workingLevelData ?: return
-        val bw = workingBlocksWide; val bh = workingBlocksTall
-        if (bw <= 0 || bh <= 0) return
-
-        val minX = minOf(s.first, e.first).coerceIn(0, bw - 1)
-        val maxX = maxOf(s.first, e.first).coerceIn(0, bw - 1)
-        val minY = minOf(s.second, e.second).coerceIn(0, bh - 1)
-        val maxY = maxOf(s.second, e.second).coerceIn(0, bh - 1)
-        val cols = maxX - minX + 1
-        val rows = maxY - minY + 1
-
-        // Read all tiles in the selection
-        val savedWords = Array(rows) { ry -> IntArray(cols) { rx -> readBlockWord(minX + rx, minY + ry) } }
-        val savedBts = Array(rows) { ry -> IntArray(cols) { rx -> readBts(minX + rx, minY + ry) } }
-
-        // Also read destination tiles (for undo — some may overlap with source)
-        val destMinX = minX + dx; val destMinY = minY + dy
-        val destWords = Array(rows) { ry -> IntArray(cols) { rx ->
-            val tx = destMinX + rx; val ty = destMinY + ry
-            if (tx in 0 until bw && ty in 0 until bh) readBlockWord(tx, ty) else 0
-        }}
-        val destBts = Array(rows) { ry -> IntArray(cols) { rx ->
-            val tx = destMinX + rx; val ty = destMinY + ry
-            if (tx in 0 until bw && ty in 0 until bh) readBts(tx, ty) else 0
-        }}
-
-        // Collect undo edits: record all source + dest tiles before changes
-        val edits = mutableListOf<TileEdit>()
-        val touchedCells = mutableSetOf<Pair<Int, Int>>()
-        for (ry in 0 until rows) for (rx in 0 until cols) {
-            val sx = minX + rx; val sy = minY + ry
-            if (touchedCells.add(sx to sy))
-                edits.add(TileEdit(sx, sy, savedWords[ry][rx], RomConstants.AIR_TILE_WORD, savedBts[ry][rx], 0))
+        if (floatingSelection == null && mapSelStart != null && mapSelEnd != null) {
+            beginFloatingSelectionFromMapSelection()
         }
-        for (ry in 0 until rows) for (rx in 0 until cols) {
-            val tx = destMinX + rx; val ty = destMinY + ry
-            if (tx in 0 until bw && ty in 0 until bh && touchedCells.add(tx to ty))
-                edits.add(TileEdit(tx, ty, destWords[ry][rx], savedWords[ry][rx], destBts[ry][rx], savedBts[ry][rx]))
-        }
-
-        // Apply: clear ALL source cells first, then write ALL destination cells
-        // This handles overlapping source/dest correctly
-        for (ry in 0 until rows) for (rx in 0 until cols) {
-            writeBlockWord(minX + rx, minY + ry, RomConstants.AIR_TILE_WORD)
-            writeBts(minX + rx, minY + ry, 0)
-        }
-        for (ry in 0 until rows) for (rx in 0 until cols) {
-            val tx = destMinX + rx; val ty = destMinY + ry
-            if (tx in 0 until bw && ty in 0 until bh) {
-                writeBlockWord(tx, ty, savedWords[ry][rx])
-                writeBts(tx, ty, savedBts[ry][rx])
-            }
-        }
-
-        // Push undo
-        val op = EditOperation("Shift selection (${dx},${dy})", edits)
-        undoStack.add(op); redoStack.clear(); undoVersion++
-
-        // Move selection rectangle
-        val newMinX = (minX + dx).coerceIn(0, bw - 1)
-        val newMinY = (minY + dy).coerceIn(0, bh - 1)
-        val newMaxX = (maxX + dx).coerceIn(0, bw - 1)
-        val newMaxY = (maxY + dy).coerceIn(0, bh - 1)
-        mapSelStart = newMinX to newMinY
-        mapSelEnd = newMaxX to newMaxY
-
-        // Save edits to project
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        roomEdits.operations.add(op)
-
-        editVersion++; dirty = true
+        val floating = floatingSelection ?: return
+        setFloatingSelectionPosition(floating.x + dx, floating.y + dy)
     }
 
     /**
@@ -1707,6 +1643,7 @@ class EditorState {
         tilesetSelEnd = tilesetSelStart
         mapSelStart = null
         mapSelEnd = null
+        floatingSelection = null
         val eff = getEffectiveTileDefault(currentTilesetId, index)
         brush = TileBrush.single(index, eff.blockType, eff.bts)
     }
@@ -1726,6 +1663,7 @@ class EditorState {
         val e = tilesetSelEnd ?: return
         mapSelStart = null
         mapSelEnd = null
+        floatingSelection = null
         val c0 = minOf(s.first, e.first)
         val c1 = maxOf(s.first, e.first)
         val r0 = minOf(s.second, e.second)
@@ -1766,15 +1704,15 @@ class EditorState {
     }
 
     fun flipOrCaptureH() {
-        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) captureMapSelection()
+        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) beginFloatingSelectionFromMapSelection()
         toggleHFlip()
     }
     fun flipOrCaptureV() {
-        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) captureMapSelection()
+        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) beginFloatingSelectionFromMapSelection()
         toggleVFlip()
     }
     fun rotateOrCapture() {
-        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) captureMapSelection()
+        if (activeTool == EditorTool.SELECT && mapSelStart != null && mapSelEnd != null) beginFloatingSelectionFromMapSelection()
         rotateClockwise()
     }
 
@@ -1819,6 +1757,7 @@ class EditorState {
             btsOverrides = remapKeys(b.btsOverrides),
             flipOverrides = newFlipOverrides
         )
+        clampFloatingSelectionToRoom()
     }
 
     fun setBlockType(type: Int) { brush = brush?.copy(blockType = type) }
@@ -1840,6 +1779,7 @@ class EditorState {
         val sampledBts = readBts(bx, by)
         val btsMap = if (sampledBts != 0) mapOf(0L to sampledBts) else emptyMap()
         brush = TileBrush(tiles = listOf(listOf(metatileIdx)), blockType = bt, hFlip = hf, vFlip = vf, btsOverrides = btsMap)
+        floatingSelection = null
         tilesetSelStart = Pair(metatileIdx % gridCols, metatileIdx / gridCols)
         tilesetSelEnd = tilesetSelStart
         // Capture palette row from the sampled metatile's first sub-tile
@@ -1855,29 +1795,30 @@ class EditorState {
         activeTool = EditorTool.PAINT
     }
 
-    /** Convert the current map selection rectangle into a multi-tile brush. */
-    fun captureMapSelection() {
-        val s = mapSelStart ?: return
-        val e = mapSelEnd ?: return
-        val minX = minOf(s.first, e.first).coerceIn(0, workingBlocksWide - 1)
-        val maxX = maxOf(s.first, e.first).coerceIn(0, workingBlocksWide - 1)
-        val minY = minOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1)
-        val maxY = maxOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1)
-        if (minX == maxX && minY == maxY) {
-            sampleTile(minX, minY)
-            return
-        }
+    private fun mapSelectionBounds(): MapSelectionBounds? {
+        val s = mapSelStart ?: return null
+        val e = mapSelEnd ?: return null
+        if (workingBlocksWide <= 0 || workingBlocksTall <= 0) return null
+        return MapSelectionBounds(
+            minX = minOf(s.first, e.first).coerceIn(0, workingBlocksWide - 1),
+            minY = minOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1),
+            maxX = maxOf(s.first, e.first).coerceIn(0, workingBlocksWide - 1),
+            maxY = maxOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1),
+        )
+    }
+
+    private fun brushFromMapSelection(bounds: MapSelectionBounds): TileBrush {
         val rows = mutableListOf<List<Int>>()
         val btsMap = mutableMapOf<Long, Int>()
         val btMap = mutableMapOf<Long, Int>()
         val flipMap = mutableMapOf<Long, Int>()
-        for (by in minY..maxY) {
+        for (by in bounds.minY..bounds.maxY) {
             val row = mutableListOf<Int>()
-            for (bx in minX..maxX) {
+            for (bx in bounds.minX..bounds.maxX) {
                 val word = readBlockWord(bx, by)
                 row.add(word and 0x3FF)
-                val r = by - minY
-                val c = bx - minX
+                val r = by - bounds.minY
+                val c = bx - bounds.minX
                 val key = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
                 val tileH = (word shr 10) and 1
                 val tileV = (word shr 11) and 1
@@ -1891,17 +1832,116 @@ class EditorState {
             }
             rows.add(row)
         }
-        val primaryBt = (readBlockWord(minX, minY) shr 12) and 0xF
-        brush = TileBrush(
+        val primaryBt = (readBlockWord(bounds.minX, bounds.minY) shr 12) and 0xF
+        return TileBrush(
             tiles = rows,
             blockType = primaryBt,
             blockTypeOverrides = btMap,
             btsOverrides = btsMap,
             flipOverrides = flipMap
         )
+    }
+
+    /** Convert the current map selection rectangle into a paint brush. */
+    fun captureMapSelection() {
+        val bounds = mapSelectionBounds() ?: return
+        if (bounds.minX == bounds.maxX && bounds.minY == bounds.maxY) {
+            sampleTile(bounds.minX, bounds.minY)
+            return
+        }
+        brush = brushFromMapSelection(bounds)
         mapSelStart = null
         mapSelEnd = null
+        floatingSelection = null
         activeTool = EditorTool.PAINT
+    }
+
+    /** Copy the current map selection into the brush without changing map tiles. */
+    fun copyMapSelectionToBrush(): Boolean {
+        val bounds = mapSelectionBounds() ?: return false
+        brush = if (bounds.minX == bounds.maxX && bounds.minY == bounds.maxY) {
+            val word = readBlockWord(bounds.minX, bounds.minY)
+            val bts = readBts(bounds.minX, bounds.minY)
+            val btsMap = if (bts != 0) mapOf(0L to bts) else emptyMap()
+            TileBrush(
+                tiles = listOf(listOf(word and 0x3FF)),
+                blockType = (word shr 12) and 0xF,
+                hFlip = (word shr 10) and 1 != 0,
+                vFlip = (word shr 11) and 1 != 0,
+                btsOverrides = btsMap,
+            )
+        } else {
+            brushFromMapSelection(bounds)
+        }
+        return true
+    }
+
+    /** Lift the current selection into a floating preview. This does not modify room tiles. */
+    fun beginFloatingSelectionFromMapSelection(): Boolean {
+        val bounds = mapSelectionBounds() ?: return false
+        brush = if (bounds.minX == bounds.maxX && bounds.minY == bounds.maxY) {
+            val word = readBlockWord(bounds.minX, bounds.minY)
+            val bts = readBts(bounds.minX, bounds.minY)
+            val btsMap = if (bts != 0) mapOf(0L to bts) else emptyMap()
+            TileBrush(
+                tiles = listOf(listOf(word and 0x3FF)),
+                blockType = (word shr 12) and 0xF,
+                hFlip = (word shr 10) and 1 != 0,
+                vFlip = (word shr 11) and 1 != 0,
+                btsOverrides = btsMap,
+            )
+        } else {
+            brushFromMapSelection(bounds)
+        }
+        mapSelStart = null
+        mapSelEnd = null
+        activeTool = EditorTool.SELECT
+        setFloatingSelectionPosition(bounds.minX, bounds.minY)
+        return true
+    }
+
+    fun beginFloatingSelectionFromBrushAt(x: Int, y: Int): Boolean {
+        if (brush == null) return false
+        mapSelStart = null
+        mapSelEnd = null
+        activeTool = EditorTool.SELECT
+        setFloatingSelectionPosition(x, y)
+        return true
+    }
+
+    private fun clampedFloatingPosition(x: Int, y: Int, b: TileBrush): FloatingMapSelection {
+        if (workingBlocksWide <= 0 || workingBlocksTall <= 0) return FloatingMapSelection(0, 0)
+        val maxX = (workingBlocksWide - b.cols).coerceAtLeast(0)
+        val maxY = (workingBlocksTall - b.rows).coerceAtLeast(0)
+        return FloatingMapSelection(x.coerceIn(0, maxX), y.coerceIn(0, maxY))
+    }
+
+    private fun clampFloatingSelectionToRoom() {
+        val floating = floatingSelection ?: return
+        val b = brush ?: return
+        floatingSelection = clampedFloatingPosition(floating.x, floating.y, b)
+    }
+
+    fun setFloatingSelectionPosition(x: Int, y: Int) {
+        val b = brush ?: return
+        floatingSelection = clampedFloatingPosition(x, y, b)
+    }
+
+    fun commitFloatingSelection(): Boolean {
+        val floating = floatingSelection ?: return false
+        if (brush == null) return false
+        beginStroke()
+        val changed = paintAt(floating.x, floating.y)
+        endStroke()
+        floatingSelection = null
+        activeTool = EditorTool.SELECT
+        return changed
+    }
+
+    fun cancelFloatingSelection(): Boolean {
+        if (floatingSelection == null) return false
+        floatingSelection = null
+        return true
     }
 
     // ─── Project lifecycle ──────────────────────────────────────
@@ -1929,6 +1969,9 @@ class EditorState {
         tileGraphics = null
         workingLevelData = null
         originalLevelData = null
+        mapSelStart = null
+        mapSelEnd = null
+        floatingSelection = null
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         spriteSheetGfx = null
@@ -1972,6 +2015,9 @@ class EditorState {
         workingLevelData = data
         workingBlocksWide = blocksWide
         workingBlocksTall = blocksTall
+        mapSelStart = null
+        mapSelEnd = null
+        floatingSelection = null
         undoStack.clear()
         redoStack.clear()
         undoVersion++
@@ -1985,6 +2031,9 @@ class EditorState {
     fun loadRoom(roomId: Int, romParser: RomParser, room: com.supermetroid.editor.data.Room) {
         currentRoomId = roomId
         currentTilesetId = room.tileset
+        mapSelStart = null
+        mapSelEnd = null
+        floatingSelection = null
         val tg = TileGraphics(romParser)
         if (tg.loadTileset(room.tileset)) {
             applyCustomGfxToTileGraphics(tg, room.tileset)
@@ -2735,7 +2784,7 @@ class EditorState {
 
     fun endStroke() {
         if (pendingEdits.isEmpty() && pendingPlmAdds.isEmpty()) return
-        val desc = when (activeTool) {
+        val desc = if (floatingSelection != null) "Place selection ${pendingEdits.size} tile(s)" else when (activeTool) {
             EditorTool.PAINT -> "Paint ${pendingEdits.size} tile(s)"
             EditorTool.FILL -> "Fill ${pendingEdits.size} tile(s)"
             EditorTool.ERASE -> "Erase ${pendingEdits.size} tile(s)"

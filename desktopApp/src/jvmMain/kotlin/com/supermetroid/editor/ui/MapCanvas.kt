@@ -575,10 +575,23 @@ fun MapCanvas(
                 if (keyEvent.type == KeyEventType.KeyDown && editorState != null) {
                     when (keyEvent.key) {
                         Key.H -> { editorState.flipOrCaptureH(); true }
-                        Key.V -> { if (!keyEvent.isCtrlPressed && !keyEvent.isMetaPressed) { editorState.flipOrCaptureV(); true } else false }
+                        Key.C -> {
+                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                editorState.copyMapSelectionToBrush(); true
+                            } else false
+                        }
+                        Key.V -> {
+                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                val bx = editorState.hoverBlockX.takeIf { it >= 0 } ?: editorState.floatingSelection?.x ?: 0
+                                val by = editorState.hoverBlockY.takeIf { it >= 0 } ?: editorState.floatingSelection?.y ?: 0
+                                editorState.beginFloatingSelectionFromBrushAt(bx, by); true
+                            } else {
+                                editorState.flipOrCaptureV(); true
+                            }
+                        }
                         Key.R -> { editorState.rotateOrCapture(); true }
                         Key.DirectionUp -> {
-                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(0, -step); true
                             } else if (onRoomSelected != null && rooms.isNotEmpty()) {
@@ -589,7 +602,7 @@ fun MapCanvas(
                             } else false
                         }
                         Key.DirectionDown -> {
-                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(0, step); true
                             } else if (onRoomSelected != null && rooms.isNotEmpty()) {
@@ -600,13 +613,13 @@ fun MapCanvas(
                             } else false
                         }
                         Key.DirectionLeft -> {
-                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(-step, 0); true
                             } else false
                         }
                         Key.DirectionRight -> {
-                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
+                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(step, 0); true
                             } else false
@@ -629,21 +642,26 @@ fun MapCanvas(
                         }
                         Key.P -> {
                             if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
-                                editorState.captureMapSelection()
+                                editorState.beginFloatingSelectionFromMapSelection()
                             } else {
+                                editorState.cancelFloatingSelection()
                                 editorState.activeTool = EditorTool.PAINT
                             }; true
                         }
-                        Key.F -> { editorState.activeTool = EditorTool.FILL; true }
-                        Key.E -> { editorState.activeTool = EditorTool.ERASE; true }
-                        Key.I -> { editorState.activeTool = EditorTool.SAMPLE; true }
+                        Key.F -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.FILL; true }
+                        Key.E -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.ERASE; true }
+                        Key.I -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.SAMPLE; true }
                         Key.Enter -> {
-                            if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
-                                editorState.captureMapSelection(); true
+                            if (editorState.floatingSelection != null) {
+                                editorState.commitFloatingSelection(); true
+                            } else if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
+                                editorState.beginFloatingSelectionFromMapSelection(); true
                             } else false
                         }
                         Key.Escape -> {
-                            if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
+                            if (editorState.cancelFloatingSelection()) {
+                                true
+                            } else if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
                                 editorState.mapSelStart = null; editorState.mapSelEnd = null; true
                             } else false
                         }
@@ -816,8 +834,9 @@ fun MapCanvas(
                             selected = editorState.activeTool == EditorTool.PAINT,
                             onClick = {
                                 if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
-                                    editorState.captureMapSelection()
+                                    editorState.beginFloatingSelectionFromMapSelection()
                                 } else {
+                                    editorState.cancelFloatingSelection()
                                     editorState.activeTool = EditorTool.PAINT
                                 }
                                 mapFocusReq.requestFocus()
@@ -827,19 +846,19 @@ fun MapCanvas(
                         )
                         FilterChip(
                             selected = editorState.activeTool == EditorTool.FILL,
-                            onClick = { editorState.activeTool = EditorTool.FILL; mapFocusReq.requestFocus() },
+                            onClick = { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.FILL; mapFocusReq.requestFocus() },
                             label = { Icon(Icons.Default.FormatColorFill, contentDescription = "Fill (G)", modifier = Modifier.size(14.dp)) },
                             modifier = Modifier.height(28.dp)
                         )
                         FilterChip(
                             selected = editorState.activeTool == EditorTool.ERASE,
-                            onClick = { editorState.activeTool = EditorTool.ERASE; mapFocusReq.requestFocus() },
+                            onClick = { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.ERASE; mapFocusReq.requestFocus() },
                             label = { Icon(Icons.Outlined.Delete, contentDescription = "Erase (E)", modifier = Modifier.size(14.dp)) },
                             modifier = Modifier.height(28.dp)
                         )
                         FilterChip(
                             selected = editorState.activeTool == EditorTool.SAMPLE,
-                            onClick = { editorState.activeTool = EditorTool.SAMPLE; mapFocusReq.requestFocus() },
+                            onClick = { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.SAMPLE; mapFocusReq.requestFocus() },
                             label = { Icon(Icons.Default.Colorize, contentDescription = "Sample (I)", modifier = Modifier.size(14.dp)) },
                             modifier = Modifier.height(28.dp)
                         )
@@ -873,36 +892,38 @@ fun MapCanvas(
                         Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
                         // Flip / Rotate buttons
+                        val canTransformBrushOrSelection = editorState.brush != null ||
+                            (editorState.mapSelStart != null && editorState.mapSelEnd != null)
                         IconButton(
                             onClick = { editorState.flipOrCaptureH(); mapFocusReq.requestFocus() },
-                            enabled = editorState.brush != null,
+                            enabled = canTransformBrushOrSelection,
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(Icons.Default.Flip, contentDescription = "H-Flip (H)",
                                 modifier = Modifier.size(16.dp),
                                 tint = if (editorState.brush?.hFlip == true) MaterialTheme.colorScheme.primary
-                                       else if (editorState.brush != null) MaterialTheme.colorScheme.onSurface
+                                       else if (canTransformBrushOrSelection) MaterialTheme.colorScheme.onSurface
                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                         }
                         IconButton(
                             onClick = { editorState.flipOrCaptureV(); mapFocusReq.requestFocus() },
-                            enabled = editorState.brush != null,
+                            enabled = canTransformBrushOrSelection,
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(Icons.Default.Flip, contentDescription = "V-Flip (V)",
                                 modifier = Modifier.size(16.dp).graphicsLayer(rotationZ = 90f),
                                 tint = if (editorState.brush?.vFlip == true) MaterialTheme.colorScheme.primary
-                                       else if (editorState.brush != null) MaterialTheme.colorScheme.onSurface
+                                       else if (canTransformBrushOrSelection) MaterialTheme.colorScheme.onSurface
                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                         }
                         IconButton(
                             onClick = { editorState.rotateOrCapture(); mapFocusReq.requestFocus() },
-                            enabled = editorState.brush != null,
+                            enabled = canTransformBrushOrSelection,
                             modifier = Modifier.size(28.dp)
                         ) {
                             Icon(Icons.Default.RotateRight, contentDescription = "Rotate (R)",
                                 modifier = Modifier.size(16.dp),
-                                tint = if (editorState.brush != null) MaterialTheme.colorScheme.onSurface
+                                tint = if (canTransformBrushOrSelection) MaterialTheme.colorScheme.onSurface
                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                         }
 
@@ -1201,6 +1222,11 @@ fun MapCanvas(
                                                 }
                                             }
                                             if (ne.isMetaDown || ne.isControlDown) return@onPointerEvent
+                                            if (editorState.floatingSelection != null) {
+                                                editorState.setFloatingSelectionPosition(bx, by)
+                                                editorState.commitFloatingSelection()
+                                                return@onPointerEvent
+                                            }
                                             when (editorState.activeTool) {
                                                 EditorTool.SELECT -> {
                                                     editorState.mapSelStart = Pair(bx, by)
@@ -1249,6 +1275,9 @@ fun MapCanvas(
                                         if (editorState != null) {
                                             val (bx, by) = pointerToBlock(pos.x, pos.y)
                                             editorState.updateHover(bx, by)
+                                            if (!isPainting && !isDragging && editorState.floatingSelection != null) {
+                                                editorState.setFloatingSelectionPosition(bx, by)
+                                            }
                                         }
                                         if (isDragging) {
                                             val dx = lastDragX - pos.x; val dy = lastDragY - pos.y; lastDragX = pos.x; lastDragY = pos.y
@@ -1420,15 +1449,17 @@ fun MapCanvas(
                                             }
                                         }
                                     }
-                                    // Ghost cursor preview: render actual tile graphics
-                                    if (editorState != null && editorState.hoverBlockX >= 0 && editorState.brush != null &&
-                                        editorState.activeTool == EditorTool.PAINT) {
-                                        val hx = editorState.hoverBlockX
-                                        val hy = editorState.hoverBlockY
+                                    // Ghost preview: render actual tile graphics for paint or floating selection placement.
+                                    if (editorState != null && editorState.brush != null &&
+                                        ((editorState.activeTool == EditorTool.PAINT && editorState.hoverBlockX >= 0) ||
+                                            editorState.floatingSelection != null)) {
+                                        val floating = editorState.floatingSelection
+                                        val hx = floating?.x ?: editorState.hoverBlockX
+                                        val hy = floating?.y ?: editorState.hoverBlockY
                                         val b = editorState.brush!!
                                         val tg = editorState.tileGraphics
                                         // Build a preview image of the brush at the hover position
-                                        val previewBitmap = remember(b, hx, hy, tg) {
+                                        val previewBitmap = remember(b, tg) {
                                             if (tg == null) null
                                             else {
                                                 val pw = b.cols * 16; val ph = b.rows * 16
@@ -1465,7 +1496,7 @@ fun MapCanvas(
                                             val offY = hy * tileSize
                                             Image(
                                                 bitmap = previewBitmap,
-                                                contentDescription = "Brush preview",
+                                                contentDescription = if (floating != null) "Selection preview" else "Brush preview",
                                                 modifier = Modifier
                                                     .offset(x = (offX).dp, y = (offY).dp)
                                                     .requiredWidth((b.cols * 16 * zoomLevel).dp)
@@ -1473,10 +1504,38 @@ fun MapCanvas(
                                                 contentScale = ContentScale.FillBounds
                                             )
                                         }
+                                        if (floating != null) {
+                                            Canvas(
+                                                modifier = Modifier
+                                                    .requiredWidth((data.width * zoomLevel).dp)
+                                                    .requiredHeight((data.height * zoomLevel).dp)
+                                            ) {
+                                                val tileW = size.width / data.blocksWide
+                                                val tileH = size.height / data.blocksTall
+                                                val rx = hx * tileW
+                                                val ry = hy * tileH
+                                                val rw = b.cols * tileW
+                                                val rh = b.rows * tileH
+                                                drawRect(
+                                                    color = Color.Cyan.copy(alpha = 0.12f),
+                                                    topLeft = androidx.compose.ui.geometry.Offset(rx, ry),
+                                                    size = androidx.compose.ui.geometry.Size(rw, rh)
+                                                )
+                                                drawRect(
+                                                    color = Color.Cyan.copy(alpha = 0.9f),
+                                                    topLeft = androidx.compose.ui.geometry.Offset(rx, ry),
+                                                    size = androidx.compose.ui.geometry.Size(rw, rh),
+                                                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                                        width = 2f,
+                                                        pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 4f))
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                     // Select mode cursor: crosshair outline
                                     if (editorState != null && editorState.hoverBlockX >= 0 && editorState.activeTool == EditorTool.SELECT
-                                        && editorState.mapSelStart == null) {
+                                        && editorState.mapSelStart == null && editorState.floatingSelection == null) {
                                         Canvas(
                                             modifier = Modifier
                                                 .requiredWidth((data.width * zoomLevel).dp)
@@ -1634,7 +1693,7 @@ fun MapCanvas(
                                     text = { Text("Paint", fontSize = 11.sp) },
                                     onClick = {
                                         contextMenuExpanded = false
-                                        editorState?.captureMapSelection()
+                                        editorState?.beginFloatingSelectionFromMapSelection()
                                     }
                                 )
                                 DropdownMenuItem(

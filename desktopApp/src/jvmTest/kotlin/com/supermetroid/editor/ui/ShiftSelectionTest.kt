@@ -1,90 +1,114 @@
 package com.supermetroid.editor.ui
 
-import com.supermetroid.editor.rom.RomConstants
-import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ShiftSelectionTest {
 
-    @Test
-    fun `shift selection right by 1 moves tiles`() {
-        val rp = TestRomHelper.loadRomParser() ?: return
-        val room = rp.readRoomHeader(0x91F8) ?: return // Landing Site
-        val es = EditorState()
-        es.loadRoom(0x91F8, rp, room)
+    private fun newState(): EditorState {
+        val state = EditorState()
+        state.testMode = true
+        state.initTestLevel(blocksWide = 6, blocksTall = 6)
+        return state
+    }
 
-        // Read tile at (5, 5)
-        val origWord = es.readBlockWord(5, 5)
-        val origBts = es.readBts(5, 5)
+    private fun EditorState.writeWord(bx: Int, by: Int, word: Int) {
+        val data = workingLevelData!!
+        val idx = by * workingBlocksWide + bx
+        val offset = 2 + idx * 2
+        data[offset] = (word and 0xFF).toByte()
+        data[offset + 1] = ((word shr 8) and 0xFF).toByte()
+    }
 
-        // Set selection around (5, 5) - single tile
-        es.mapSelStart = 5 to 5
-        es.mapSelEnd = 5 to 5
-
-        // Shift right by 1
-        es.shiftSelection(1, 0)
-
-        // Tile at (5, 5) should be cleared
-        assertEquals(RomConstants.AIR_TILE_WORD, es.readBlockWord(5, 5), "Source should be air tile")
-        assertEquals(0, es.readBts(5, 5), "Source BTS should be cleared")
-
-        // Tile at (6, 5) should have the original data
-        assertEquals(origWord, es.readBlockWord(6, 5), "Destination should have original tile")
-        assertEquals(origBts, es.readBts(6, 5), "Destination should have original BTS")
-
-        // Selection should have moved
-        assertEquals(6 to 5, es.mapSelStart)
-        assertEquals(6 to 5, es.mapSelEnd)
+    private fun EditorState.writeBtsForTest(bx: Int, by: Int, bts: Int) {
+        val data = workingLevelData!!
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val idx = by * workingBlocksWide + bx
+        data[2 + layer1Size + idx] = bts.toByte()
     }
 
     @Test
-    fun `shift 2x2 selection down moves all tiles`() {
-        val rp = TestRomHelper.loadRomParser() ?: return
-        val room = rp.readRoomHeader(0x91F8) ?: return
-        val es = EditorState()
-        es.loadRoom(0x91F8, rp, room)
+    fun `shift selection creates floating preview without modifying tiles`() {
+        val state = newState()
+        val sourceWord = 0x8005
+        val destWord = 0x8009
+        state.writeWord(1, 1, sourceWord)
+        state.writeBtsForTest(1, 1, 0x12)
+        state.writeWord(2, 1, destWord)
 
-        // Read 2x2 block at (10, 10)
-        val words = Array(2) { y -> IntArray(2) { x -> es.readBlockWord(10 + x, 10 + y) } }
+        state.mapSelStart = 1 to 1
+        state.mapSelEnd = 1 to 1
+        state.shiftSelection(1, 0)
 
-        es.mapSelStart = 10 to 10
-        es.mapSelEnd = 11 to 11
-
-        es.shiftSelection(0, 1)
-
-        // Top row (y=10) should be cleared — it was source-only, not destination
-        for (x in 0..1) {
-            assertEquals(RomConstants.AIR_TILE_WORD, es.readBlockWord(10 + x, 10), "Row 10 should be air tile")
-        }
-        // Rows 11-12 should have the shifted data
-        for (y in 0..1) for (x in 0..1) {
-            assertEquals(words[y][x], es.readBlockWord(10 + x, 11 + y),
-                "Tile at (${10+x}, ${11+y}) should have data from (${10+x}, ${10+y})")
-        }
-
-        // Selection moved down
-        assertEquals(10 to 11, es.mapSelStart)
-        assertEquals(11 to 12, es.mapSelEnd)
+        assertEquals(sourceWord, state.readBlockWord(1, 1), "Source remains unchanged while preview floats")
+        assertEquals(0x12, state.readBts(1, 1))
+        assertEquals(destWord, state.readBlockWord(2, 1), "Destination is not overwritten before commit")
+        assertEquals(FloatingMapSelection(2, 1), state.floatingSelection)
+        assertNull(state.mapSelStart)
+        assertNotNull(state.brush)
     }
 
     @Test
-    fun `shift is undoable`() {
-        val rp = TestRomHelper.loadRomParser() ?: return
-        val room = rp.readRoomHeader(0x91F8) ?: return
-        val es = EditorState()
-        es.loadRoom(0x91F8, rp, room)
+    fun `commit floating selection writes destination as one undoable placement`() {
+        val state = newState()
+        val sourceWord = 0x8005
+        val destWord = 0x8009
+        state.writeWord(1, 1, sourceWord)
+        state.writeBtsForTest(1, 1, 0x12)
+        state.writeWord(2, 1, destWord)
 
-        val origWord = es.readBlockWord(5, 5)
-        es.mapSelStart = 5 to 5
-        es.mapSelEnd = 5 to 5
-        es.shiftSelection(1, 0)
+        state.mapSelStart = 1 to 1
+        state.mapSelEnd = 1 to 1
+        state.shiftSelection(1, 0)
+        val committed = state.commitFloatingSelection()
 
-        // After shift: (5,5) is air, (6,5) has original
-        assertEquals(RomConstants.AIR_TILE_WORD, es.readBlockWord(5, 5))
+        assertTrue(committed)
+        assertEquals(sourceWord, state.readBlockWord(1, 1), "Selection placement copies; it does not clear source")
+        assertEquals(sourceWord, state.readBlockWord(2, 1), "Destination is overwritten only after commit")
+        assertEquals(0x12, state.readBts(2, 1))
+        assertNull(state.floatingSelection)
 
-        // Undo
-        es.undo()
-        assertEquals(origWord, es.readBlockWord(5, 5), "Undo should restore original tile")
+        state.undo()
+        assertEquals(destWord, state.readBlockWord(2, 1), "Undo restores overwritten destination")
+        assertEquals(sourceWord, state.readBlockWord(1, 1), "Undo leaves original source intact")
+    }
+
+    @Test
+    fun `floating selection clamps to room bounds`() {
+        val state = newState()
+        state.writeWord(4, 4, 0x8010)
+        state.writeWord(5, 5, 0x8011)
+        state.mapSelStart = 4 to 4
+        state.mapSelEnd = 5 to 5
+
+        state.shiftSelection(10, 10)
+
+        assertEquals(FloatingMapSelection(4, 4), state.floatingSelection)
+    }
+
+    @Test
+    fun `flip and rotate selection transform floating preview without writing`() {
+        val state = newState()
+        state.writeWord(1, 1, 0x8001)
+        state.writeWord(2, 1, 0x8002)
+        state.writeWord(1, 2, 0x8003)
+        state.writeWord(2, 2, 0x8004)
+        state.activeTool = EditorTool.SELECT
+        state.mapSelStart = 1 to 1
+        state.mapSelEnd = 2 to 2
+
+        state.flipOrCaptureH()
+        state.rotateOrCapture()
+
+        assertEquals(FloatingMapSelection(1, 1), state.floatingSelection)
+        assertNull(state.mapSelStart)
+        assertFalse(state.undoStack.isNotEmpty(), "Transforms should not create undo entries before placement")
+        assertEquals(2, state.brush!!.rows)
+        assertEquals(2, state.brush!!.cols)
+        assertTrue(state.brush!!.hFlip)
     }
 }
