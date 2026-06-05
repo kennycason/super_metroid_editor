@@ -42,13 +42,17 @@ val spcSourceDir = rootProject.file("tools/snes_spc")
 val jnaPlatform = detectJnaPlatformDir()
 val libName = detectLibName()
 val nativeOutputDir = file("src/jvmMain/resources/$jnaPlatform")
+val spcMakefile = spcSourceDir.resolve("Makefile")
+val spcSourceFilesDir = spcSourceDir.resolve("snes_spc")
 
 val buildNativeSpc = tasks.register("buildNativeSpc") {
     description = "Compile libspc shared library for the current platform"
     group = "build"
 
-    inputs.dir(spcSourceDir.resolve("snes_spc"))
-    inputs.file(spcSourceDir.resolve("Makefile"))
+    if (spcMakefile.exists() && spcSourceFilesDir.exists()) {
+        inputs.dir(spcSourceFilesDir)
+        inputs.file(spcMakefile)
+    }
     // On macOS we output to both arch dirs (fat binary)
     val osNameCfg = System.getProperty("os.name").lowercase()
     if (osNameCfg.contains("mac") || osNameCfg.contains("darwin")) {
@@ -59,7 +63,7 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
     }
 
     doLast {
-        if (!spcSourceDir.resolve("Makefile").exists()) {
+        if (!spcMakefile.exists() || !spcSourceFilesDir.exists()) {
             logger.warn("snes_spc submodule not checked out — skipping native build")
             return@doLast
         }
