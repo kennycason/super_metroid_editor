@@ -37,6 +37,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -188,6 +189,10 @@ fun PianoRollEditor(
     instrumentInfos: List<NspcRenderer.InstrumentEntry> = emptyList(),
     canUndo: Boolean = false,
     canRedo: Boolean = false,
+    exportBudgetBytes: Int = 0,
+    relocationBudgetBytes: Int = 0,
+    originalSequenceBytes: Int = 0,
+    originalFlattenedBytes: Int = 0,
     onRecordUndo: (String) -> Unit = {},
     onUndo: () -> Boolean = { false },
     onRedo: () -> Boolean = { false },
@@ -231,6 +236,16 @@ fun PianoRollEditor(
     var dragState by remember { mutableStateOf<PianoRollDragState?>(null) }
     var selectionBox by remember { mutableStateOf<PianoRollSelectionBox?>(null) }
     var clipboardNotes by remember { mutableStateOf<List<PianoRollEditLogic.ClipboardNote>>(emptyList()) }
+    val flattenedBytes = remember(song, editVersion) { NspcSequence.encodedSequenceSize(song) }
+    val originalFlatBytes = originalFlattenedBytes.takeIf { it > 0 } ?: flattenedBytes
+    val trackUsageBytes = (originalSequenceBytes + flattenedBytes - originalFlatBytes).coerceAtLeast(0)
+    val budgetFit = remember(song, editVersion, relocationBudgetBytes, flattenedBytes) {
+        if (song.isModified && relocationBudgetBytes > 0 && flattenedBytes > relocationBudgetBytes) {
+            runCatching { MusicSequenceBudget.fitSongToEncodedBudget(song, relocationBudgetBytes) }.getOrNull()
+        } else {
+            null
+        }
+    }
 
     fun scrollTo(x: Float) {
         hScrollPx = x.coerceIn(0f, maxHScroll)
@@ -589,6 +604,17 @@ fun PianoRollEditor(
                 Text("Done", fontSize = 10.sp)
             }
         }
+
+        PianoRollExportBudgetMeter(
+            trackUsageBytes = trackUsageBytes,
+            flattenedBytes = flattenedBytes,
+            budgetBytes = exportBudgetBytes,
+            relocationBudgetBytes = relocationBudgetBytes,
+            originalSequenceBytes = originalSequenceBytes,
+            isModified = song.isModified,
+            fitPreview = budgetFit,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+        )
 
         // Piano roll canvas
         val gridHeight = (totalPitches * noteHeight).toInt()
@@ -1100,6 +1126,74 @@ fun PianoRollEditor(
                         .padding(start = 6.dp, end = 6.dp, bottom = 6.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PianoRollExportBudgetMeter(
+    trackUsageBytes: Int,
+    flattenedBytes: Int,
+    budgetBytes: Int,
+    relocationBudgetBytes: Int,
+    originalSequenceBytes: Int,
+    isModified: Boolean,
+    fitPreview: MusicSequenceBudget.FitResult?,
+    modifier: Modifier = Modifier
+) {
+    val hasBudget = budgetBytes > 0
+    val ratio = if (hasBudget) trackUsageBytes.toFloat() / budgetBytes else 0f
+    val trackDelta = trackUsageBytes - originalSequenceBytes
+    val trackOver = trackUsageBytes - budgetBytes
+    val relocationText = when {
+        relocationBudgetBytes <= 0 -> "phase-1 flat export ${flattenedBytes} B"
+        flattenedBytes <= relocationBudgetBytes -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B"
+        fitPreview != null -> {
+            "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B trims after tick ${fitPreview.cutoffTick}"
+        }
+        else -> "phase-1 flat export $flattenedBytes/$relocationBudgetBytes B cannot fit"
+    }
+    val color = when {
+        !hasBudget -> MaterialTheme.colorScheme.outline
+        trackUsageBytes <= budgetBytes -> Color(0xFF55D17A)
+        ratio <= 1.10f -> Color(0xFFE0B84F)
+        else -> Color(0xFFE06666)
+    }
+    val message = when {
+        !hasBudget -> "Track budget unavailable; $relocationText"
+        !isModified -> {
+            "Track budget $trackUsageBytes/$budgetBytes B vanilla; $relocationText"
+        }
+        trackUsageBytes <= budgetBytes -> {
+            val deltaLabel = if (trackDelta >= 0) "+$trackDelta" else trackDelta.toString()
+            "Track budget $trackUsageBytes/$budgetBytes B ($deltaLabel B); $relocationText"
+        }
+        relocationBudgetBytes > 0 && flattenedBytes <= relocationBudgetBytes -> {
+            "Track over by $trackOver B; $relocationText"
+        }
+        fitPreview != null -> "Track over by $trackOver B; $relocationText"
+        else -> "Track over by $trackOver B; $relocationText"
+    }
+
+    Surface(
+        modifier = modifier,
+        color = Color(0xFF171722),
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.45f))
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 5.dp)
+        ) {
+            Text("Export budget", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator(
+                progress = ratio.coerceIn(0f, 1f),
+                modifier = Modifier.width(160.dp).height(6.dp),
+                color = color,
+                trackColor = Color(0xFF2B2B38)
+            )
+            Text(message, fontSize = 9.sp, color = color, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
     }
 }

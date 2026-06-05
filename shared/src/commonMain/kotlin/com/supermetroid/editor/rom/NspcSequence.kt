@@ -414,20 +414,28 @@ object NspcSequence {
      * Encode a song back to N-SPC binary format.
      * Returns a map of SPC RAM address -> bytes to write.
      *
-     * Strategy: find where the original conductor for this play index points,
-     * then overwrite that same region with our new data. This keeps everything
-     * within the original sequence data area ($5820-$6BFF) and avoids corrupting
-     * BRR samples or the SPC engine.
+     * By default, this finds where the original conductor for the play index points
+     * and overwrites that region. When conductorAddrOverride is supplied, callers
+     * own allocation and sequenceEndAddr is treated as the hard write boundary.
      *
      * @param spcRam The current SPC RAM (to find original conductor location)
+     * @param conductorAddrOverride Optional explicit conductor address for relocated exports.
+     * @param sequenceEndAddr Exclusive SPC RAM boundary for relocated sequence writes.
      */
     fun encode(
         song: Song,
         playIndex: Int,
         spcRam: ByteArray? = null,
-        failOnOverflow: Boolean = false
+        failOnOverflow: Boolean = false,
+        conductorAddrOverride: Int? = null,
+        sequenceEndAddr: Int = SEQUENCE_DATA_MAX
     ): Map<Int, ByteArray> {
         val writes = mutableMapOf<Int, ByteArray>()
+        val maxDataAddr = if (conductorAddrOverride != null) {
+            sequenceEndAddr.coerceIn(0, RomConstants.SPC_RAM_SIZE)
+        } else {
+            SEQUENCE_DATA_MAX
+        }
 
         val totalNotes = song.channels.sumOf { it.notes.size }
         val totalCmds = song.channels.sumOf { it.commands.size }
@@ -441,27 +449,41 @@ object NspcSequence {
 
         // Use original conductor location if valid, otherwise use a safe default.
         // The sequence data area is $5820-$6BFF; lower addresses are SPC engine RAM.
-        val conductorAddr = if (isSafeSequenceWrite(originalConductorAddr, 4)) {
-            originalConductorAddr
-        } else {
-            DEFAULT_CONDUCTOR_ADDR
+        val conductorAddr = when {
+            conductorAddrOverride != null -> conductorAddrOverride
+            isSafeSequenceWrite(originalConductorAddr, 4) -> originalConductorAddr
+            else -> DEFAULT_CONDUCTOR_ADDR
+        }
+        if (!isSafeSequenceWrite(conductorAddr, 20, maxDataAddr)) {
+            val warning = "conductor at 0x${conductorAddr.toString(16)} is outside sequence RAM"
+            if (failOnOverflow) {
+                EditorLog.warn("[NSPC-ENCODE] $warning. Refusing native re-encode.")
+                throw IllegalStateException(warning)
+            }
+            EditorLog.warn("[NSPC-ENCODE] $warning. Using default sequence area.")
         }
         EditorLog.info("[NSPC-ENCODE] Original conductor at 0x${originalConductorAddr.toString(16)}, " +
             "using 0x${conductorAddr.toString(16)}")
 
         // Reuse the original first block table when possible. Some songs have a
         // longer conductor list, so conductor+4 may still be conductor data.
-        val originalBlockTableAddr = if (spcRam != null && conductorAddr in 0 until spcRam.size - 1) {
+        val originalBlockTableAddr = if (
+            conductorAddrOverride == null &&
+            spcRam != null &&
+            conductorAddr in 0 until spcRam.size - 1
+        ) {
             readWord(spcRam, conductorAddr)
         } else {
             0
         }
-        var blockTableAddr = if (isSafeSequenceWrite(originalBlockTableAddr, 16)) {
+        var blockTableAddr = if (conductorAddrOverride != null) {
+            conductorAddr + 4
+        } else if (isSafeSequenceWrite(originalBlockTableAddr, 16)) {
             originalBlockTableAddr
         } else {
             conductorAddr + 4
         }
-        if (!isSafeSequenceWrite(blockTableAddr, 16)) {
+        if (!isSafeSequenceWrite(blockTableAddr, 16, maxDataAddr)) {
             val warning = "block table at 0x${blockTableAddr.toString(16)} is outside sequence RAM"
             if (failOnOverflow) {
                 EditorLog.warn("[NSPC-ENCODE] $warning. Refusing native re-encode.")
@@ -474,14 +496,11 @@ object NspcSequence {
         // Channel data starts after block pointer table (8 channels * 2 bytes = 16 bytes)
         var dataAddr = blockTableAddr + 16
 
-        // Safety: ensure we don't write past instrument table at $6C00
-        val maxDataAddr = 0x6C00
-
         val channelAddrs = IntArray(8)
 
         for (ch in 0 until 8) {
             val channel = song.channels[ch]
-            if (channel.notes.isEmpty() && channel.commands.none { !isFlowControlCommand(it.command) }) {
+            if (!isChannelActive(channel)) {
                 channelAddrs[ch] = 0
                 continue
             }
@@ -541,6 +560,17 @@ object NspcSequence {
             "data ends at 0x${dataAddr.toString(16)}, ${dataAddr - conductorAddr} bytes total")
 
         return writes
+    }
+
+    fun encodedSequenceSize(song: Song): Int {
+        var size = 4 + 16 // conductor + one 8-channel block table
+        for (ch in 0 until 8) {
+            val channel = song.channels[ch]
+            if (isChannelActive(channel)) {
+                size += encodeChannel(channel, song.tempo, ch == 0).size
+            }
+        }
+        return size
     }
 
     /** Encode a single channel's notes and commands to N-SPC binary. */
@@ -650,8 +680,11 @@ object NspcSequence {
     private fun isFlowControlCommand(command: Int): Boolean =
         command == 0xEF
 
-    private fun isSafeSequenceWrite(addr: Int, size: Int): Boolean =
-        addr >= SEQUENCE_DATA_MIN && size >= 0 && addr + size <= SEQUENCE_DATA_MAX
+    private fun isChannelActive(channel: Channel): Boolean =
+        channel.notes.isNotEmpty() || channel.commands.any { !isFlowControlCommand(it.command) }
+
+    private fun isSafeSequenceWrite(addr: Int, size: Int, maxAddr: Int = SEQUENCE_DATA_MAX): Boolean =
+        addr >= SEQUENCE_DATA_MIN && size >= 0 && addr + size <= maxAddr
 
     // ─── Utilities ──────────────────────────────────────────────────
 

@@ -35,10 +35,6 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 private val editorStateLog = KotlinLogging.logger {}
-private const val MUSIC_SONG_TABLE_BASE = 0x581E
-private const val MUSIC_SEQUENCE_DATA_MIN = 0x5820
-private const val MUSIC_SEQUENCE_EXPORT_MIN = MUSIC_SONG_TABLE_BASE
-private const val MUSIC_SEQUENCE_EXPORT_MAX = 0x6C00
 
 private fun editorLog(message: Any? = "") {
     val text = message?.toString() ?: ""
@@ -3033,6 +3029,7 @@ class EditorState {
         val editsBySongSet = project.musicEdits.toSortedMap().entries.groupBy { it.value.songSet }.toSortedMap()
         for ((songSet, edits) in editsBySongSet) {
             val exportParser = RomParser(romData)
+            val baseBlocks = SpcData.parseTransferBlocks(romData, exportParser.snesToPc(0xCF8000))
             val baseRam = SpcData.buildInitialSpcRam(exportParser)
             val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
             val originalSpcRam = baseRam.copyOf()
@@ -3042,7 +3039,14 @@ class EditorState {
                 .filter { it.songSet == songSet }
                 .mapTo(mutableSetOf()) { it.playIndex }
             edits.mapTo(knownPlayIndexes) { it.value.playIndex }
-            val originalSequenceRanges = buildOriginalSequenceRanges(originalSpcRam, knownPlayIndexes)
+            val editedPlayIndexes = edits.mapTo(mutableSetOf()) { it.value.playIndex }
+            val protectedPlayIndexes = knownPlayIndexes - editedPlayIndexes
+            val occupiedSequenceRanges = MusicSequenceBudget.buildProtectedSpcOccupancy(
+                baseBlocks = baseBlocks,
+                songBlocks = songBlocks,
+                spcRam = originalSpcRam,
+                protectedPlayIndexes = protectedPlayIndexes
+            ).toMutableList()
 
             for ((key, edit) in edits) {
                 val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
@@ -3050,17 +3054,36 @@ class EditorState {
                 val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
                     ?: editedSong.isModified
 
-                val sequenceWrites = if (hasNoteDelta) {
-                    NspcSequence.encode(editedSong, edit.playIndex, originalSpcRam, failOnOverflow = true)
+                val relocatedSequence = if (hasNoteDelta) {
+                    MusicSequenceBudget.encodeRelocated(
+                        song = editedSong,
+                        playIndex = edit.playIndex,
+                        spcRam = originalSpcRam,
+                        occupiedRanges = occupiedSequenceRanges,
+                        key = key
+                    ).also { patch ->
+                        if (patch.fit.trimmed) {
+                            editorLog(
+                                "WARN [EXPORT] Music edit '$key' ${edit.trackName}: " +
+                                    "trimmed ${patch.fit.removedNotes} notes and ${patch.fit.removedCommands} commands after tick " +
+                                    "${patch.fit.cutoffTick} to fit ${patch.fit.encodedBytes}/${patch.fit.budgetBytes} sequence bytes"
+                            )
+                        }
+                    }
                 } else {
-                    emptyMap()
+                    null
                 }
+                val relocationRange = relocatedSequence?.allocation
+                val sequenceWrites = relocatedSequence?.writes ?: emptyMap()
                 validateMusicSequenceWrites(
                     key = key,
                     playIndex = edit.playIndex,
                     writes = sequenceWrites,
-                    originalRange = originalSequenceRanges[edit.playIndex]
+                    allocatedRange = relocationRange
                 )
+                if (relocationRange != null) {
+                    occupiedSequenceRanges += relocationRange
+                }
 
                 val originalInstruments = NspcRenderer.readInstrumentTable(originalSpcRam)
                 val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
@@ -3133,76 +3156,30 @@ class EditorState {
         }
     }
 
-    private data class SongSequenceRange(
-        val playIndex: Int,
-        val start: Int,
-        val endExclusive: Int
-    )
-
-    private fun buildOriginalSequenceRanges(
-        spcRam: ByteArray,
-        playIndexes: Set<Int>
-    ): Map<Int, SongSequenceRange> {
-        val startsByPlayIndex = linkedMapOf<Int, Int>()
-        for (playIndex in playIndexes.sorted()) {
-            val sequencePointers = collectOriginalSequencePointers(spcRam, playIndex)
-            val start = sequencePointers.minOrNull() ?: continue
-            startsByPlayIndex[playIndex] = start
-        }
-
-        return startsByPlayIndex.mapValues { (playIndex, start) ->
-            val endExclusive = startsByPlayIndex.values
-                .filter { it > start }
-                .minOrNull()
-                ?: MUSIC_SEQUENCE_EXPORT_MAX
-            SongSequenceRange(playIndex, start, endExclusive)
-        }
-    }
-
-    private fun collectOriginalSequencePointers(spcRam: ByteArray, playIndex: Int): List<Int> {
-        val conductorAddr = readSpcU16(spcRam, MUSIC_SONG_TABLE_BASE + playIndex * 2)
-        if (!isMusicSequenceDataAddr(conductorAddr)) return emptyList()
-
-        val pointers = mutableListOf(conductorAddr)
-        var conductorPtr = conductorAddr
-        repeat(16) {
-            val blockTableAddr = readSpcU16(spcRam, conductorPtr)
-            conductorPtr += 2
-            if (blockTableAddr == 0) return pointers
-            if (!isMusicSequenceDataAddr(blockTableAddr)) return@repeat
-            pointers += blockTableAddr
-            for (ch in 0 until 8) {
-                val channelAddr = readSpcU16(spcRam, blockTableAddr + ch * 2)
-                if (isMusicSequenceDataAddr(channelAddr)) pointers += channelAddr
-            }
-        }
-        return pointers
-    }
-
     private fun validateMusicSequenceWrites(
         key: String,
         playIndex: Int,
         writes: Map<Int, ByteArray>,
-        originalRange: SongSequenceRange?
+        allocatedRange: MusicSequenceBudget.SpcRange?
     ) {
-        val songTableEntry = MUSIC_SONG_TABLE_BASE + playIndex * 2
+        val songTableEntry = MusicSequenceBudget.SONG_TABLE_BASE + playIndex * 2
         for ((addr, data) in writes) {
             val dest = addr and 0xFFFF
             val endExclusive = dest + data.size
             require(data.isNotEmpty()) { "music edit $key produced an empty sequence write at 0x${dest.toString(16)}" }
             if (dest == songTableEntry && data.size == 2) continue
-            require(dest >= MUSIC_SEQUENCE_EXPORT_MIN && endExclusive <= MUSIC_SEQUENCE_EXPORT_MAX) {
+            require(dest >= MusicSequenceBudget.SONG_TABLE_BASE && endExclusive <= MusicSequenceBudget.SEQUENCE_EXPORT_MAX) {
                 "music edit $key produced unsafe sequence SPC write " +
                     "0x${dest.toString(16).padStart(4, '0')}.." +
                     "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
             }
-            if (originalRange != null) {
-                require(dest >= originalRange.start && endExclusive <= originalRange.endExclusive) {
-                    "music edit $key re-encode crosses original playIndex ${originalRange.playIndex} allocation " +
-                        "0x${originalRange.start.toString(16).padStart(4, '0')}.." +
-                        "0x${(originalRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
+            if (allocatedRange != null) {
+                require(dest >= allocatedRange.start && endExclusive <= allocatedRange.endExclusive) {
+                    "music edit $key re-encode escaped relocated allocation " +
+                        "0x${allocatedRange.start.toString(16).padStart(4, '0')}.." +
+                        "0x${(allocatedRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
                         "0x${dest.toString(16).padStart(4, '0')}.." +
-                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}; sequence relocation is required"
+                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
                 }
             }
         }
@@ -3247,14 +3224,6 @@ class EditorState {
             }
         }
     }
-
-    private fun readSpcU16(spcRam: ByteArray, addr: Int): Int {
-        if (addr < 0 || addr + 1 >= spcRam.size) return 0
-        return (spcRam[addr].toInt() and 0xFF) or ((spcRam[addr + 1].toInt() and 0xFF) shl 8)
-    }
-
-    private fun isMusicSequenceDataAddr(addr: Int): Boolean =
-        addr in MUSIC_SEQUENCE_DATA_MIN until MUSIC_SEQUENCE_EXPORT_MAX
 
     private fun writeRelocatedSongSetTransferChain(
         romData: ByteArray,

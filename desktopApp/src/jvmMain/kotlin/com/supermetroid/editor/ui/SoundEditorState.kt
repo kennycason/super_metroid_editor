@@ -81,6 +81,14 @@ class SoundEditorState {
     var pianoRollPlaybackTick by mutableStateOf(-1)
     private var pianoRollPlayStartMs = 0L
     private var pianoRollTickMs = 0.0
+    var pianoRollExportBudgetBytes by mutableStateOf(0)
+        private set
+    var pianoRollRelocationBudgetBytes by mutableStateOf(0)
+        private set
+    var pianoRollOriginalSequenceBytes by mutableStateOf(0)
+        private set
+    var pianoRollOriginalFlattenedBytes by mutableStateOf(0)
+        private set
 
     /** Open the piano roll editor for the current track. */
     fun openPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
@@ -97,6 +105,11 @@ class SoundEditorState {
         val ram = buildSpcRamForTrack(romParser, track.songSet)
         val originalSong = NspcSequence.parse(ram, track.playIndex)
         val originalInstruments = NspcRenderer.readInstrumentTable(ram)
+        val trackBudget = MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex)
+        pianoRollExportBudgetBytes = trackBudget.trackBytes
+        pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
+        pianoRollOriginalSequenceBytes = trackBudget.trackBytes
+        pianoRollOriginalFlattenedBytes = NspcSequence.encodedSequenceSize(originalSong)
         originalPianoRollInstruments = originalInstruments
         originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(originalSong)
 
@@ -148,6 +161,10 @@ class SoundEditorState {
         playAllEnabled = false
         isPianoRollOpen = false
         pianoRollPlaybackTick = -1
+        pianoRollExportBudgetBytes = 0
+        pianoRollRelocationBudgetBytes = 0
+        pianoRollOriginalSequenceBytes = 0
+        pianoRollOriginalFlattenedBytes = 0
         clearPianoRollHistory()
     }
 
@@ -159,6 +176,11 @@ class SoundEditorState {
         val ram = buildSpcRamForTrack(romParser, track.songSet)
         val song = NspcSequence.parse(ram, track.playIndex)
         pianoRollInstruments = NspcRenderer.readInstrumentTable(ram)
+        val trackBudget = MusicSequenceBudget.trackBudgetForTrack(romParser, track.songSet, track.playIndex)
+        pianoRollExportBudgetBytes = trackBudget.trackBytes
+        pianoRollRelocationBudgetBytes = trackBudget.relocationBytes
+        pianoRollOriginalSequenceBytes = trackBudget.trackBytes
+        pianoRollOriginalFlattenedBytes = NspcSequence.encodedSequenceSize(song)
         originalPianoRollInstruments = pianoRollInstruments
         originalPianoRollSong = PianoRollPreviewLogic.deepCopySong(song)
         song.title = track.name
@@ -444,9 +466,6 @@ class SoundEditorState {
                         soundEditorLog.info { "[SPC-PIANO] Native render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak" }
                         mono
                     }
-                } else if (hasNoteDelta && instrumentWrites.isEmpty() && noteDeltaPlan != null) {
-                    soundEditorLog.info { "[SPC-PIANO] Using delta hybrid preview for note-only edit" }
-                    null
                 } else {
                     soundEditorLog.info { "[SPC-PIANO] Rendering MODIFIED track via native SPC emulator" }
                     val spcRam = baseRam.copyOf()
@@ -457,11 +476,31 @@ class SoundEditorState {
                         ((spcRam[0x581E + track.playIndex * 2 + 1].toInt() and 0xFF) shl 8)
                     soundEditorLog.info { "[SPC-PIANO] Original conductor for playIndex ${track.playIndex} at 0x${origConductor.toString(16)}" }
 
-                    val sequenceWrites = if (hasNoteDelta) {
-                        NspcSequence.encode(song, track.playIndex, spcRam, failOnOverflow = true)
+                    val relocatedSequence = if (hasNoteDelta) {
+                        relocatedSequencePatchForTrack(
+                            romParser = romParser,
+                            songBlocks = songBlocks,
+                            spcRam = spcRam,
+                            track = track,
+                            song = song
+                        ).also { patch ->
+                            soundEditorLog.info {
+                                "[SPC-PIANO] Relocated preview sequence: " +
+                                    "0x${patch.allocation.start.toString(16)}.." +
+                                    "0x${patch.allocation.endExclusive.toString(16)}, " +
+                                    "${patch.fit.encodedBytes}/${patch.fit.budgetBytes} bytes"
+                            }
+                            if (patch.fit.trimmed) {
+                                soundEditorLog.warn {
+                                    "[SPC-PIANO] Preview tail-trimmed ${patch.fit.removedNotes} notes and " +
+                                        "${patch.fit.removedCommands} commands after tick ${patch.fit.cutoffTick}"
+                                }
+                            }
+                        }
                     } else {
-                        emptyMap()
+                        null
                     }
+                    val sequenceWrites = relocatedSequence?.writes ?: emptyMap()
                     val writes = sequenceWrites + instrumentWrites
                     val totalBytes = writes.values.sumOf { it.size }
                     soundEditorLog.info { "[SPC-PIANO] Encoded ${writes.size} writes, $totalBytes bytes total:" }
@@ -524,6 +563,34 @@ class SoundEditorState {
         return PianoRollPreviewLogic.instrumentPatchWrites(
             pianoRollInstruments,
             originalPianoRollInstruments
+        )
+    }
+
+    private fun relocatedSequencePatchForTrack(
+        romParser: RomParser,
+        songBlocks: List<SpcData.TransferBlock>,
+        spcRam: ByteArray,
+        track: SpcData.TrackInfo,
+        song: NspcSequence.Song
+    ): MusicSequenceBudget.RelocatedSequencePatch {
+        val baseBlocks = SpcData.parseTransferBlocks(romParser.getRomData(), romParser.snesToPc(0xCF8000))
+        val knownPlayIndexes = SpcData.KNOWN_TRACKS
+            .filter { it.songSet == track.songSet }
+            .mapTo(mutableSetOf()) { it.playIndex }
+        knownPlayIndexes += track.playIndex
+        val protectedPlayIndexes = knownPlayIndexes - track.playIndex
+        val occupied = MusicSequenceBudget.buildProtectedSpcOccupancy(
+            baseBlocks = baseBlocks,
+            songBlocks = songBlocks,
+            spcRam = spcRam,
+            protectedPlayIndexes = protectedPlayIndexes
+        )
+        return MusicSequenceBudget.encodeRelocated(
+            song = song,
+            playIndex = track.playIndex,
+            spcRam = spcRam,
+            occupiedRanges = occupied,
+            key = MusicEditConversion.key(track.songSet, track.playIndex)
         )
     }
 
@@ -906,6 +973,63 @@ class SoundEditorState {
         }
 
         val deltaPlan = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)
+        if ((hasNoteDelta || instrumentWrites.isNotEmpty()) && NativeSpcEmulator.isAvailable()) {
+            try {
+                val relocatedSequence = if (hasNoteDelta) {
+                    relocatedSequencePatchForTrack(
+                        romParser = romParser,
+                        songBlocks = songBlocks,
+                        spcRam = editedRam,
+                        track = track,
+                        song = editedSong
+                    ).also { patch ->
+                        soundEditorLog.info {
+                            "[SPC] Saved edit relocated sequence for ${track.name}: " +
+                                "0x${patch.allocation.start.toString(16)}.." +
+                                "0x${patch.allocation.endExclusive.toString(16)}, " +
+                                "${patch.fit.encodedBytes}/${patch.fit.budgetBytes} bytes"
+                        }
+                        if (patch.fit.trimmed) {
+                            soundEditorLog.warn {
+                                "[SPC] Saved edit tail-trimmed ${patch.fit.removedNotes} notes and " +
+                                    "${patch.fit.removedCommands} commands after tick ${patch.fit.cutoffTick}"
+                            }
+                        }
+                    }
+                } else {
+                    null
+                }
+                val patchBlocks = ((relocatedSequence?.writes ?: emptyMap()) + instrumentWrites).map { (addr, data) ->
+                    SpcData.TransferBlock(addr, data)
+                }
+                NativeSpcEmulator().use { emu ->
+                    emu.loadFromRam(baseRam, songBlocks + patchBlocks, track.playIndex)
+                    val nativeSr = NativeSpcEmulator.SAMPLE_RATE
+                    var mono = emu.renderMono(120)
+                    mono = trimNativeTrackPreview(mono, nativeSr)
+                    val peak = if (mono.isNotEmpty()) mono.maxOf { abs(it.toInt()) } else 0
+                    if (peak > 200) {
+                        soundEditorLog.info {
+                            "[SPC] Saved edit native relocated preview for ${track.name}: " +
+                                "${mono.size} samples, peak=$peak"
+                        }
+                        return if (sampleRate != nativeSr && mono.isNotEmpty()) {
+                            resampleLinear(mono, nativeSr, sampleRate)
+                        } else {
+                            mono
+                        }
+                    }
+                    soundEditorLog.warn {
+                        "[SPC] Saved edit native relocated preview was silent for ${track.name}; using fallback"
+                    }
+                }
+            } catch (e: Exception) {
+                soundEditorLog.warn(e) {
+                    "[SPC] Saved edit relocated native preview failed for ${track.name}: ${e.message}"
+                }
+            }
+        }
+
         if (
             deltaPlan != null &&
             deltaPlan.hasDelta &&
