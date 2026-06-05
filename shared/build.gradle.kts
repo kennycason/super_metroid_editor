@@ -130,6 +130,8 @@ kotlin {
         
         val jvmMain by getting {
             dependencies {
+                implementation("io.github.oshai:kotlin-logging-jvm:5.1.0")
+                implementation("org.slf4j:slf4j-simple:2.0.9")
                 implementation("net.java.dev.jna:jna:5.14.0")
             }
         }

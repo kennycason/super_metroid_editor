@@ -306,6 +306,71 @@ data class CustomAsmEntry(
 )
 
 /**
+ * Serializable N-SPC note edit used by the sound editor.
+ */
+@Serializable
+data class MusicNoteEdit(
+    val tick: Int,
+    val duration: Int,
+    val noteValue: Int,
+    val velocity: Int = 15,
+    val quantize: Int = 7,
+    val instrument: Int = 0,
+)
+
+/**
+ * Serializable N-SPC control command edit.
+ */
+@Serializable
+data class MusicCommandEdit(
+    val tick: Int,
+    val command: Int,
+    val params: List<Int> = emptyList(),
+)
+
+/**
+ * One editable N-SPC channel in a saved music track edit.
+ */
+@Serializable
+data class MusicChannelEdit(
+    val notes: MutableList<MusicNoteEdit> = mutableListOf(),
+    val commands: MutableList<MusicCommandEdit> = mutableListOf(),
+)
+
+/**
+ * Saved instrument table entry. These are SPC RAM instrument table values,
+ * not BRR sample bytes.
+ */
+@Serializable
+data class MusicInstrumentEdit(
+    val index: Int,
+    val tableAddr: Int,
+    val srcn: Int,
+    val adsr1: Int,
+    val adsr2: Int,
+    val gain: Int,
+    val pitchAdj: Int,
+)
+
+/**
+ * A saved piano-roll edit for one song set/play index.
+ */
+@Serializable
+data class MusicTrackEdit(
+    val songSet: Int,
+    val playIndex: Int,
+    val trackName: String = "",
+    val tempo: Int,
+    val channels: MutableList<MusicChannelEdit> = mutableListOf(),
+    val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
+) {
+    companion object {
+        fun key(songSet: Int, playIndex: Int): String =
+            "${songSet.toString(16).uppercase().padStart(2, '0')}:${playIndex.toString(16).uppercase().padStart(2, '0')}"
+    }
+}
+
+/**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
  */
@@ -320,6 +385,7 @@ data class SmEditProject(
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
+    val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",

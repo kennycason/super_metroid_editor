@@ -1,10 +1,13 @@
 package com.supermetroid.editor.emulator
 
 import com.supermetroid.editor.data.AppConfig
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+
+private val retroArchLog = KotlinLogging.logger {}
 
 /**
  * EmulatorBackend that connects to an external RetroArch instance via NWA (UDP).
@@ -156,7 +159,7 @@ class RetroArchBackend : EmulatorBackend {
             val proc = Runtime.getRuntime().exec(cmd)
             proc.waitFor()
             if (proc.exitValue() == 0) {
-                println("[RetroArch] Killed existing RetroArch process(es)")
+                retroArchLog.info { "[RetroArch] Killed existing RetroArch process(es)" }
                 // Give OS time to release the UDP port
                 kotlinx.coroutines.delay(500)
             }
@@ -168,7 +171,7 @@ class RetroArchBackend : EmulatorBackend {
     private fun killRetroArch() {
         retroArchProcess?.let { proc ->
             if (proc.isAlive) {
-                println("[RetroArch] Terminating RetroArch process")
+                retroArchLog.info { "[RetroArch] Terminating RetroArch process" }
                 proc.destroy()
             }
         }
@@ -204,14 +207,14 @@ class RetroArchBackend : EmulatorBackend {
 
             val wasFirstSuccess = lastSuccessfulPollFrame == 0
             if (consecutiveFailures > 0) {
-                println("[RetroArch] NWA recovered after $consecutiveFailures failures")
+                retroArchLog.info { "[RetroArch] NWA recovered after $consecutiveFailures failures" }
             }
             consecutiveFailures = 0
             lastSuccessfulPollFrame = frameCounter
 
             // Log first successful poll and then periodically (~5 seconds)
             if (wasFirstSuccess || frameCounter % 50 == 0) {
-                println("[RetroArch] Poll OK: room=0x${roomId.toString(16).uppercase()} hp=$hp pos=($sx,$sy) items=0x${readWord(itemsBytes).toString(16)} beams=0x${readWord(beamsBytes).toString(16)}")
+                retroArchLog.info { "[RetroArch] Poll OK: room=0x${roomId.toString(16).uppercase()} hp=$hp pos=($sx,$sy) items=0x${readWord(itemsBytes).toString(16)} beams=0x${readWord(beamsBytes).toString(16)}" }
             }
 
             GameSnapshot(
@@ -237,7 +240,7 @@ class RetroArchBackend : EmulatorBackend {
         } catch (e: Exception) {
             consecutiveFailures++
             if (consecutiveFailures <= 3 || consecutiveFailures % 10 == 0) {
-                System.err.println("[RetroArch] Snapshot poll failed ($consecutiveFailures): ${e.message}")
+                retroArchLog.warn(e) { "[RetroArch] Snapshot poll failed ($consecutiveFailures): ${e.message}" }
             }
             // After 10 consecutive failures (~1 second), mark session as terminated
             if (consecutiveFailures >= 10) {
@@ -269,16 +272,16 @@ class RetroArchBackend : EmulatorBackend {
                 if (coreFile.exists()) {
                     cmd.add("-L")
                     cmd.add(corePath)
-                    println("[RetroArch] Using core: $corePath")
+                    retroArchLog.info { "[RetroArch] Using core: $corePath" }
                 } else {
-                    System.err.println("[RetroArch] Core not found: $corePath (launching without -L)")
+                    retroArchLog.warn { "[RetroArch] Core not found: $corePath (launching without -L)" }
                 }
             } else {
-                System.err.println("[RetroArch] No SNES core found. RetroArch may not load the ROM automatically.")
+                retroArchLog.warn { "[RetroArch] No SNES core found. RetroArch may not load the ROM automatically." }
             }
             cmd.add(romPath)
 
-            println("[RetroArch] Launching: ${cmd.joinToString(" ")}")
+            retroArchLog.info { "[RetroArch] Launching: ${cmd.joinToString(" ")}" }
             val pb = ProcessBuilder(cmd)
             pb.inheritIO()
             retroArchProcess = pb.start()
@@ -295,11 +298,11 @@ class RetroArchBackend : EmulatorBackend {
             try {
                 val result = client.readMemory(GAME_STATE, 2)
                 if (result.size == 2) {
-                    println("[RetroArch] NWA memory accessible after attempt $attempt")
+                    retroArchLog.info { "[RetroArch] NWA memory accessible after attempt $attempt" }
                     return true
                 }
             } catch (e: Exception) {
-                println("[RetroArch] NWA probe attempt $attempt: ${e.javaClass.simpleName}: ${e.message}")
+                retroArchLog.info { "[RetroArch] NWA probe attempt $attempt: ${e.javaClass.simpleName}: ${e.message}" }
                 // If we got a PortUnreachable or similar socket error, recreate the socket
                 if (e is java.net.PortUnreachableException || e is java.net.SocketException) {
                     client.reconnect()

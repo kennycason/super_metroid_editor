@@ -10,6 +10,7 @@ import com.supermetroid.editor.rom.RomConstants.ROM_SIZE
 import com.supermetroid.editor.rom.RomConstants.ROM_SIZE_WITH_HEADER
 import com.supermetroid.editor.rom.RomConstants.SMC_HEADER_SIZE
 import com.supermetroid.editor.rom.RomConstants.STATE_DATA_SIZE
+import com.supermetroid.editor.util.EditorLog
 
 /**
  * Parser for Super Metroid ROM files (.smc format)
@@ -135,7 +136,7 @@ class RomParser(internal val romData: ByteArray) {
                 setupAsmPtr = setupAsmPtr
             )
         } catch (e: Exception) {
-            println("Room 0x${roomId.toString(16)}: exception ${e.message}")
+            EditorLog.warn(e, "Room 0x${roomId.toString(16)} parse failed: ${e.message}")
             null
         }
     }

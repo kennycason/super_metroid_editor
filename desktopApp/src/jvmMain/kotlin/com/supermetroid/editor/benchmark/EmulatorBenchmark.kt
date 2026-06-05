@@ -4,7 +4,14 @@ import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorInput
 import com.supermetroid.editor.emulator.LibretroBackend
 import com.supermetroid.editor.emulator.SessionConfig
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+
+private val emulatorBenchmarkLog = KotlinLogging.logger {}
+
+private fun benchLog(message: Any? = "") {
+    emulatorBenchmarkLog.info { message?.toString() ?: "" }
+}
 
 /**
  * Headless benchmark for the libretro (snes9x) emulator backend.
@@ -37,7 +44,7 @@ fun main() {
             }
             found ?: candidates.firstOrNull { java.io.File(it).exists() }
             ?: run {
-                System.err.println("Set SMEDIT_ROM_PATH to the Super Metroid ROM")
+                emulatorBenchmarkLog.error { "Set SMEDIT_ROM_PATH to the Super Metroid ROM" }
                 System.exit(1)
                 ""
             }
@@ -48,57 +55,57 @@ fun main() {
     val backends = (System.getenv("BENCH_BACKENDS") ?: "libretro")
         .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-    println("╔══════════════════════════════════════════════════╗")
-    println("║        Emulator Backend Benchmark                ║")
-    println("╠══════════════════════════════════════════════════╣")
-    println("║ ROM:     $romPath")
-    println("║ Warmup:  $warmupFrames frames")
-    println("║ Bench:   $benchFrames frames")
-    println("║ Backends: ${backends.joinToString(", ")}")
-    println("╚══════════════════════════════════════════════════╝")
-    println()
+    benchLog("╔══════════════════════════════════════════════════╗")
+    benchLog("║        Emulator Backend Benchmark                ║")
+    benchLog("╠══════════════════════════════════════════════════╣")
+    benchLog("║ ROM:     $romPath")
+    benchLog("║ Warmup:  $warmupFrames frames")
+    benchLog("║ Bench:   $benchFrames frames")
+    benchLog("║ Backends: ${backends.joinToString(", ")}")
+    benchLog("╚══════════════════════════════════════════════════╝")
+    benchLog()
 
     val results = mutableListOf<BenchResult>()
 
     for (backendName in backends) {
-        println("── $backendName ──────────────────────────────────")
+        benchLog("── $backendName ──────────────────────────────────")
         try {
             val result = benchmarkBackend(backendName, romPath, warmupFrames, benchFrames)
             results.add(result)
             printResult(result)
         } catch (e: Exception) {
-            println("  FAILED: ${e.message}")
-            e.printStackTrace()
+            benchLog("  FAILED: ${e.message}")
+            emulatorBenchmarkLog.error(e) { "Benchmark failed for $backendName: ${e.message}" }
         }
-        println()
+        benchLog()
     }
 
     // Also run libretro with audio disabled for raw speed comparison
     if (backends.contains("libretro")) {
-        println("── libretro (no audio — raw speed) ───────────────")
+        benchLog("── libretro (no audio — raw speed) ───────────────")
         try {
             val result = benchmarkBackend("libretro-no-audio", romPath, warmupFrames, benchFrames)
             results.add(result)
             printResult(result)
         } catch (e: Exception) {
-            println("  FAILED: ${e.message}")
-            e.printStackTrace()
+            benchLog("  FAILED: ${e.message}")
+            emulatorBenchmarkLog.error(e) { "Benchmark failed for libretro-no-audio: ${e.message}" }
         }
-        println()
+        benchLog()
     }
 
     if (results.size >= 2) {
-        println("── Comparison (with-frame) ───────────────────────")
+        benchLog("── Comparison (with-frame) ───────────────────────")
         val fastest = results.minByOrNull { it.avgStepMs }!!
         for (r in results) {
             val ratio = r.avgStepMs / fastest.avgStepMs
             val label = if (r == fastest) " ← fastest" else " (${String.format("%.1f", ratio)}x slower)"
-            println("  ${r.backend.padEnd(20)} ${String.format("%8.2f", r.avgStepMs)} ms/step  ${String.format("%7.1f", r.fps)} FPS$label")
+            benchLog("  ${r.backend.padEnd(20)} ${String.format("%8.2f", r.avgStepMs)} ms/step  ${String.format("%7.1f", r.fps)} FPS$label")
         }
 
         val libretro = results.find { it.backend == "libretro" }
         if (libretro != null) {
-            println("  libretro (with audio pacing): ${String.format("%.1f", libretro.fps)} FPS — real-time sync via audio output")
+            benchLog("  libretro (with audio pacing): ${String.format("%.1f", libretro.fps)} FPS — real-time sync via audio output")
         }
     }
 }
@@ -125,24 +132,24 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
 
     return runBlocking {
         try {
-            print("  Connecting... ")
+            benchLog("  Connecting...")
             val caps = backend.connect()
-            println("${caps.backendName}")
+            benchLog("${caps.backendName}")
 
-            print("  Starting session... ")
+            benchLog("  Starting session...")
             backend.startSession(SessionConfig(romPath = romPath))
-            println("ok")
+            benchLog("ok")
 
             // Warmup
-            print("  Warming up ($warmupFrames frames)... ")
+            benchLog("  Warming up ($warmupFrames frames)...")
             val noFrameInput = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false)
             for (i in 0 until warmupFrames) {
                 backend.step(noFrameInput)
             }
-            println("done")
+            benchLog("done")
 
             // Benchmark: step WITHOUT frame (pure emulation speed)
-            print("  Benchmarking no-frame ($benchFrames frames)... ")
+            benchLog("  Benchmarking no-frame ($benchFrames frames)...")
             val noFrameInputBench = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false)
             val noFrameTimes = LongArray(benchFrames)
 
@@ -154,13 +161,13 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
             }
             val noFrameNanos = System.nanoTime() - noFrameStart
             val noFrameMs = noFrameTimes.map { it / 1_000_000.0 }.sorted()
-            println("done")
-            println("  [no-frame] Avg: ${String.format("%.3f", noFrameMs.average())} ms  " +
+            benchLog("done")
+            benchLog("  [no-frame] Avg: ${String.format("%.3f", noFrameMs.average())} ms  " +
                     "P50: ${String.format("%.3f", noFrameMs[noFrameMs.size / 2])} ms  " +
                     "FPS: ${String.format("%.1f", benchFrames.toDouble() / (noFrameNanos / 1_000_000_000.0))}")
 
             // Benchmark: step WITH frame (realistic workload)
-            print("  Benchmarking with-frame ($benchFrames frames)... ")
+            benchLog("  Benchmarking with-frame ($benchFrames frames)...")
             val withFrameInput = EmulatorInput(repeat = 1, includeFrame = true, includeTrace = false)
             val stepTimes = LongArray(benchFrames)
 
@@ -171,7 +178,7 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
                 stepTimes[i] = System.nanoTime() - t0
             }
             val totalNanos = System.nanoTime() - totalStart
-            println("done")
+            benchLog("done")
 
             // Compute stats
             val stepMs = stepTimes.map { it / 1_000_000.0 }.sorted()
@@ -195,12 +202,12 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
 }
 
 fun printResult(r: BenchResult) {
-    println("  Total:   ${r.totalMs} ms for ${r.frames} frames")
-    println("  Avg:     ${String.format("%.3f", r.avgStepMs)} ms/step")
-    println("  Min:     ${String.format("%.3f", r.minStepMs)} ms")
-    println("  Max:     ${String.format("%.3f", r.maxStepMs)} ms")
-    println("  P50:     ${String.format("%.3f", r.p50Ms)} ms")
-    println("  P95:     ${String.format("%.3f", r.p95Ms)} ms")
-    println("  P99:     ${String.format("%.3f", r.p99Ms)} ms")
-    println("  FPS:     ${String.format("%.1f", r.fps)}")
+    benchLog("  Total:   ${r.totalMs} ms for ${r.frames} frames")
+    benchLog("  Avg:     ${String.format("%.3f", r.avgStepMs)} ms/step")
+    benchLog("  Min:     ${String.format("%.3f", r.minStepMs)} ms")
+    benchLog("  Max:     ${String.format("%.3f", r.maxStepMs)} ms")
+    benchLog("  P50:     ${String.format("%.3f", r.p50Ms)} ms")
+    benchLog("  P95:     ${String.format("%.3f", r.p95Ms)} ms")
+    benchLog("  P99:     ${String.format("%.3f", r.p99Ms)} ms")
+    benchLog("  FPS:     ${String.format("%.1f", r.fps)}")
 }

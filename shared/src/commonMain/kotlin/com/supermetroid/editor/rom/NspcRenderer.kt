@@ -1,5 +1,6 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.util.EditorLog
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -45,7 +46,13 @@ object NspcRenderer {
         val adsr1: Int,
         val adsr2: Int,
         val gain: Int,
-        val pitchAdj: Int
+        val pitchAdj: Int,
+        val index: Int = -1,
+        val tableAddr: Int = 0,
+        val sampleStartAddr: Int = -1,
+        val sampleLoopAddr: Int = -1,
+        val brrByteLength: Int = -1,
+        val brrLoops: Boolean = false
     )
 
     private fun readWord(ram: ByteArray, addr: Int): Int {
@@ -53,22 +60,47 @@ object NspcRenderer {
         return (ram[addr].toInt() and 0xFF) or ((ram[addr + 1].toInt() and 0xFF) shl 8)
     }
 
-    private fun readInstrumentTable(ram: ByteArray): List<InstrumentEntry> {
+    fun readInstrumentTable(ram: ByteArray): List<InstrumentEntry> {
         val entries = mutableListOf<InstrumentEntry>()
         for (i in 0 until MAX_INSTRUMENTS) {
             val off = INSTR_TABLE_ADDR + i * 6
             if (off + 5 >= ram.size) break
             val srcn = ram[off].toInt() and 0xFF
             if (srcn >= MAX_SAMPLES && srcn < 0x80) break
+            val sampleDirOff = if (srcn < MAX_SAMPLES) SAMPLE_DIR_ADDR + srcn * 4 else -1
+            val sampleStart = if (sampleDirOff >= 0 && sampleDirOff + 3 < ram.size) readWord(ram, sampleDirOff) else -1
+            val sampleLoop = if (sampleDirOff >= 0 && sampleDirOff + 3 < ram.size) readWord(ram, sampleDirOff + 2) else -1
+            val (brrBytes, brrLoops) = scanBrrLength(ram, sampleStart)
             entries.add(InstrumentEntry(
                 srcn = srcn,
                 adsr1 = ram[off + 1].toInt() and 0xFF,
                 adsr2 = ram[off + 2].toInt() and 0xFF,
                 gain = ram[off + 3].toInt() and 0xFF,
-                pitchAdj = readWord(ram, off + 4)
+                pitchAdj = readWord(ram, off + 4),
+                index = i,
+                tableAddr = off,
+                sampleStartAddr = sampleStart,
+                sampleLoopAddr = sampleLoop,
+                brrByteLength = brrBytes,
+                brrLoops = brrLoops
             ))
         }
         return entries
+    }
+
+    private fun scanBrrLength(ram: ByteArray, startAddr: Int): Pair<Int, Boolean> {
+        if (startAddr !in 0 until ram.size) return -1 to false
+        var addr = startAddr
+        var blocks = 0
+        var loops = false
+        while (addr + 8 < ram.size && blocks < 4096) {
+            val header = ram[addr].toInt() and 0xFF
+            loops = loops || (header and 0x02) != 0
+            blocks++
+            addr += 9
+            if ((header and 0x01) != 0) return blocks * 9 to loops
+        }
+        return -1 to loops
     }
 
     private fun readPitchTable(ram: ByteArray): IntArray {
@@ -93,7 +125,7 @@ object NspcRenderer {
     ): List<NoteEvent> {
         val conductorAddr = readWord(spcRam, SONG_TABLE_ADDR + playIndex * 2)
         if (conductorAddr < 0x1500 || conductorAddr >= 0xFFF0) {
-            System.err.println("[NSPC] Invalid conductor addr 0x${conductorAddr.toString(16)} for playIndex $playIndex")
+            EditorLog.warn("[NSPC] Invalid conductor addr 0x${conductorAddr.toString(16)} for playIndex $playIndex")
             return emptyList()
         }
 
@@ -134,7 +166,7 @@ object NspcRenderer {
             }
         }
 
-        System.err.println("[NSPC] Parsed ${events.size} events, ${blocksProcessed} blocks, ${globalTick} ticks")
+        EditorLog.info("[NSPC] Parsed ${events.size} events, ${blocksProcessed} blocks, ${globalTick} ticks")
         return events
     }
 
@@ -340,7 +372,9 @@ object NspcRenderer {
         spcRam: ByteArray,
         tempo: Int = 0,
         sampleRate: Int = 32000,
-        maxSeconds: Double = 120.0
+        maxSeconds: Double = 120.0,
+        normalize: Boolean = true,
+        targetPeak: Float = 28000f
     ): ShortArray {
         if (events.isEmpty()) return ShortArray(0)
 
@@ -362,16 +396,24 @@ object NspcRenderer {
         )
         if (totalSamples <= 0) return ShortArray(0)
 
+        EditorLog.info("[NSPC-RENDER] ${events.size} events, tempo=$effectiveTempo, " +
+            "tickMs=${"%.1f".format(tickMs)}, samplesPerTick=$samplesPerTick, " +
+            "maxTick=$maxTick, totalSamples=$totalSamples")
+
         val mixBuf = FloatArray(totalSamples)
 
         // Pre-decode BRR samples for each instrument
         val sampleCache = mutableMapOf<Int, Pair<ShortArray, Int>>()
 
+        var renderedCount = 0
+        var skippedCount = 0
+
         for (event in events) {
             if (event.isRest || event.isTie || event.noteValue < 0x80) continue
 
             val instrIdx = event.instrumentIdx
-            val instr = instruments.getOrNull(instrIdx) ?: continue
+            val instr = instruments.getOrNull(instrIdx)
+            if (instr == null) { skippedCount++; continue }
             val srcn = instr.srcn
             if (srcn >= 0x80) continue
 
@@ -401,12 +443,14 @@ object NspcRenderer {
             val pitch = if (shift >= 0) basePitch shl shift else basePitch shr (-shift)
             val pitchRatio = pitch.toDouble() / 0x1000
 
-            // Add instrument pitch adjustment
-            val instrPitchAdj = if (instr.pitchAdj != 0) {
-                val adj = instr.pitchAdj.toShort().toInt()
-                adj.toDouble() / 0x1000
-            } else 0.0
-            val finalRatio = (pitchRatio + instrPitchAdj).coerceIn(0.01, 16.0)
+            // SM stores instrument tuning as a fixed-point multiplier. 0x1000 is
+            // unity; common values like 0x2003 are roughly 2x, not an additive offset.
+            val instrumentPitchMultiplier = if (instr.pitchAdj != 0) {
+                instr.pitchAdj.toDouble() / 0x1000
+            } else {
+                1.0
+            }
+            val finalRatio = (pitchRatio * instrumentPitchMultiplier).coerceIn(0.01, 16.0)
 
             // Determine the duration in samples
             val durSamples = (event.tickDuration * samplesPerTick).coerceAtLeast(1)
@@ -444,7 +488,8 @@ object NspcRenderer {
                 } else if (srcIdx < pcm.size) {
                     sampleVal = pcm[srcIdx].toDouble()
                 } else {
-                    break
+                    // Non-looping sample exhausted — silence for remainder
+                    sampleVal = 0.0
                 }
 
                 // Envelope
@@ -456,11 +501,18 @@ object NspcRenderer {
 
                 mixBuf[outIdx] += (sampleVal * volume * env).toFloat()
             }
+            renderedCount++
         }
 
-        // Normalize and convert to 16-bit PCM
-        val peak = mixBuf.maxOf { abs(it) }.coerceAtLeast(1f)
-        val gain = 28000f / peak
+        EditorLog.info("[NSPC-RENDER] Rendered $renderedCount notes, skipped $skippedCount (no instrument), " +
+            "unique instruments: ${sampleCache.keys.sorted()}")
+
+        val gain = if (normalize) {
+            val peak = mixBuf.maxOf { abs(it) }.coerceAtLeast(1f)
+            targetPeak / peak
+        } else {
+            1f
+        }
         return ShortArray(mixBuf.size) { (mixBuf[it] * gain).toInt().coerceIn(-32768, 32767).toShort() }
     }
 

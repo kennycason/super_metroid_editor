@@ -51,6 +51,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`rom/limits.md`](rom/limits.md)           | Per-room limits (PLMs, enemies, FX, scrolls, dimensions), bank free space sizes, scroll values, layer 2/BG scrolling, FX type codes.                                                                                                                                                                                   | When adding validation or hitting export errors |
 | [`rom/internals.md`](rom/internals.md)     | Deep engine reference. Door system end-to-end (15-step transition state machine), PLM execution lifecycle, block collision dispatch, free space management patterns, reference codebase paths.                                                                                                                         | When implementing new engine features           |
 | [`rom/hex_edits.txt`](rom/hex_edits.txt)   | Extensive recipe list for raw hex edits: physics, beams, missiles, morph ball, suits, doors, HUD, FX, sounds.                                                                                                                                                                                                          | When creating new patches                       |
+| [`rom/sound.md`](rom/sound.md)             | SPC-700 sound system: ARAM layout, transfer block format, song set pointer table (`$8F:E7E1`), BRR sample format, sample directory, music triggering, SFX libraries, CPU-SPC transfer protocol, SMEDIT sample replacement strategy.                                                                                    | When working on audio features                  |
 | [`rom/enemies.md`](rom/enemies.md)         | Enemy species headers, population sets, multi-piece/possessor system (types A-D), verified name mapping with ROM strings and SMILE GIF visual IDs.                                                                                                                                                                     | When working on enemy editing or validation     |
 
 ### Boss Data (`docs/bosses/`)
@@ -84,6 +85,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`project/plan.md`](project/plan.md)                 | SMILE feature parity gap analysis and implementation phases.                                      |
 | [`project/roadmap.md`](project/roadmap.md)           | Feature roadmap: boss/enemy stats editors, patches, sprite export, scroll editor, FX editor, etc. |
 | [`project/smile_parity.md`](project/smile_parity.md) | Complete SMILE vs SMEDIT feature comparison matrix with priority tiers and implementation notes.   |
+| [`project/codebase_notes.md`](project/codebase_notes.md) | Local repo/codebase map, current sound branch architecture notes, and piano-roll editor implementation notes. |
 
 ### Analysis Scripts (`docs/code/`)
 
@@ -190,8 +192,8 @@ Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 
 | Kejardon's docs               | https://patrickjohnston.org/ASM/ROM%20data/Super%20Metroid/Kejardon's%20docs/                             |
 | Patrick Johnston bank logs    | https://patrickjohnston.org/bank/8F (also /B4, /A0, /A7, /A8, etc.)                                       |
 | Metroid Construction wiki     | https://wiki.metroidconstruction.com/                                                                     |
-| SM decompilation (snesrev/sm) | `~/code/sm/` — C structs, bank-by-bank reimplementation                                                   |
-| SM-SPC                        | `~/code/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
-| MapRandomizer                 | `~/code/MapRandomizer/` — Door handling, room geometry                                                    |
+| SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
+| SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
+| MapRandomizer                 | `~/code/super_metroid/MapRandomizer/` — Door handling, room geometry                                      |
 | SM Mod 3.0.80                 | `docs/Super Metroid Mod 3.0.80/SMMM_black.html` — Community reference (ground truth for species IDs)      |
 | SMILE source                  | `~/code/super_metroid/smile/` — Original SM editor                                                        |

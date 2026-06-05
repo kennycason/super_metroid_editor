@@ -1,5 +1,6 @@
 package com.supermetroid.editor.data
 
+import com.supermetroid.editor.util.EditorLog
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -30,7 +31,7 @@ object PatchRepository {
         return metaList.mapNotNull { meta ->
             val ipsStream = loadResource("patches/${meta.file}")
             if (ipsStream == null) {
-                println("WARN: bundled patch ${meta.file} not found")
+                EditorLog.warn("[PatchRepository] Bundled patch ${meta.file} not found")
                 return@mapNotNull null
             }
             try {
@@ -44,7 +45,7 @@ object PatchRepository {
                     writes = writes.toMutableList()
                 )
             } catch (e: Exception) {
-                println("WARN: failed to parse ${meta.file}: ${e.message}")
+                EditorLog.warn(e, "[PatchRepository] Failed to parse ${meta.file}: ${e.message}")
                 null
             }
         }

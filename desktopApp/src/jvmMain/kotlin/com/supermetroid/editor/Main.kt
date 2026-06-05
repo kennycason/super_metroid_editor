@@ -110,6 +110,7 @@ import com.supermetroid.editor.ui.TilesetListPanel
 import com.supermetroid.editor.ui.TilesetPreview
 import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
@@ -117,6 +118,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val mainLog = KotlinLogging.logger {}
 
 fun main() = application {
     val roomRepository = remember { RoomRepository() }
@@ -168,7 +171,7 @@ fun main() = application {
                     selectedRoom = pickDefaultRoom(rooms, bootRomPath)
                 }
             } catch (e: Exception) {
-                println("Failed to auto-load ROM: ${e.message}")
+                mainLog.error(e) { "Failed to auto-load ROM: ${e.message}" }
             } finally {
                 romLoadInFlight = false
             }
@@ -265,7 +268,7 @@ fun main() = application {
                                             editorState.initForRom(file.absolutePath)
                                             selectedRoom = pickDefaultRoom(rooms, file.absolutePath)
                                         } catch (e: Exception) {
-                                            e.printStackTrace()
+                                            mainLog.error(e) { "Failed to load selected ROM: ${e.message}" }
                                         } finally {
                                             romLoadInFlight = false
                                         }

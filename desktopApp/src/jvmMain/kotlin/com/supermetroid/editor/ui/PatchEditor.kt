@@ -52,8 +52,11 @@ import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
+import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
 import java.io.File
+
+private val patchEditorLog = KotlinLogging.logger {}
 
 // ─── Left column: patch list panel ──────────────────────────────────────
 
@@ -99,7 +102,7 @@ fun PatchListPanel(
                                 editorState.setPatchWrites(patch.id,
                                     writes.map { SmPatchWrite(it.offset, it.bytes) })
                             } catch (e: Exception) {
-                                println("IPS import failed: ${e.message}")
+                                patchEditorLog.error(e) { "IPS import failed: ${e.message}" }
                             }
                         }
                     },

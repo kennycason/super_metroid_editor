@@ -1,5 +1,6 @@
 package com.supermetroid.editor.data
 
+import com.supermetroid.editor.util.EditorLog
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -81,7 +82,7 @@ object PatternLibrary {
             val data = json.decodeFromString<PatternList>(file.readText())
             data.patterns
         } catch (e: Exception) {
-            System.err.println("[PatternLibrary] Failed to read ${file.name}: ${e.message}")
+            EditorLog.error(e, "[PatternLibrary] Failed to read ${file.name}: ${e.message}")
             emptyList()
         }
     }
@@ -95,7 +96,7 @@ object PatternLibrary {
             }
             file.writeText(json.encodeToString(PatternList(patterns.toMutableList())))
         } catch (e: Exception) {
-            System.err.println("[PatternLibrary] Failed to write ${file.name}: ${e.message}")
+            EditorLog.error(e, "[PatternLibrary] Failed to write ${file.name}: ${e.message}")
         }
     }
 }

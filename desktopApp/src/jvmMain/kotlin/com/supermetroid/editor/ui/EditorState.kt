@@ -21,13 +21,29 @@ import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.EnemyUpdate
+import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.NspcRenderer
+import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.json.Json
 import java.io.File
+
+private val editorStateLog = KotlinLogging.logger {}
+
+private fun editorLog(message: Any? = "") {
+    val text = message?.toString() ?: ""
+    when {
+        text.startsWith("ERROR") || text.contains(" ERROR:") -> editorStateLog.error { text }
+        text.startsWith("WARN") || text.contains(" WARN:") -> editorStateLog.warn { text }
+        else -> editorStateLog.info { text }
+    }
+}
 
 
 
@@ -684,7 +700,7 @@ class EditorState {
 
         spriteSheetGfx = gfx
         spriteSheetPalette = palette
-        println("[SPRITE] loadPhantoonTileSheet: loaded ${gfx.getTileCount()} tiles, palette=${palette.size} colors, spriteSheetGfx set")
+        editorLog("[SPRITE] loadPhantoonTileSheet: loaded ${gfx.getTileCount()} tiles, palette=${palette.size} colors, spriteSheetGfx set")
 
         return gfx.renderSheet(palette)
     }
@@ -697,21 +713,21 @@ class EditorState {
      * Must be called after [loadPhantoonTileSheet] to have the gfx session available.
      */
     fun applyPhantoonTileSheetEdits(pixels: IntArray, w: Int, h: Int) {
-        println("[SPRITE] applyPhantoonTileSheetEdits called (${w}x${h}, ${pixels.size} px)")
+        editorLog("[SPRITE] applyPhantoonTileSheetEdits called (${w}x${h}, ${pixels.size} px)")
         val gfx = spriteSheetGfx
-        if (gfx == null) { println("[SPRITE] ABORT: spriteSheetGfx is null — was loadPhantoonTileSheet() called first?"); return }
+        if (gfx == null) { editorLog("[SPRITE] ABORT: spriteSheetGfx is null — was loadPhantoonTileSheet() called first?"); return }
         val palette = spriteSheetPalette
-        if (palette == null) { println("[SPRITE] ABORT: spriteSheetPalette is null"); return }
+        if (palette == null) { editorLog("[SPRITE] ABORT: spriteSheetPalette is null"); return }
         gfx.importFromArgb(pixels, w, h, palette)
         val rawBlocks = gfx.getRawBlocks()
-        if (rawBlocks == null) { println("[SPRITE] ABORT: getRawBlocks() returned null after importFromArgb"); return }
+        if (rawBlocks == null) { editorLog("[SPRITE] ABORT: getRawBlocks() returned null after importFromArgb"); return }
         for ((i, raw) in rawBlocks.withIndex()) {
             val b64 = java.util.Base64.getEncoder().encodeToString(raw)
             project.customGfx.spriteTileBlocks["phantoon:$i"] = b64
-            println("[SPRITE] Stored phantoon:$i — ${raw.size} raw bytes, ${b64.length} b64 chars")
+            editorLog("[SPRITE] Stored phantoon:$i — ${raw.size} raw bytes, ${b64.length} b64 chars")
         }
         dirty = true
-        println("[SPRITE] applyPhantoonTileSheetEdits DONE — ${rawBlocks.size} blocks stored, spriteTileBlocks keys=${project.customGfx.spriteTileBlocks.keys}")
+        editorLog("[SPRITE] applyPhantoonTileSheetEdits DONE — ${rawBlocks.size} blocks stored, spriteTileBlocks keys=${project.customGfx.spriteTileBlocks.keys}")
     }
 
     /** Whether the project has custom Phantoon tile block data. */
@@ -888,6 +904,33 @@ class EditorState {
     /** Compose-observable version counter for patch list changes. */
     var patchVersion by mutableStateOf(0)
         private set
+
+    /** Compose-observable version counter for saved music edits. */
+    var musicEditVersion by mutableStateOf(0)
+        private set
+
+    fun musicEditKey(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
+
+    fun hasMusicEdit(songSet: Int, playIndex: Int): Boolean =
+        project.musicEdits.containsKey(musicEditKey(songSet, playIndex))
+
+    fun getMusicEdit(songSet: Int, playIndex: Int): MusicTrackEdit? =
+        project.musicEdits[musicEditKey(songSet, playIndex)]
+
+    fun setMusicEdit(key: String, edit: MusicTrackEdit) {
+        project.musicEdits[key] = edit
+        dirty = true
+        musicEditVersion++
+    }
+
+    fun removeMusicEdit(key: String): Boolean {
+        val removed = project.musicEdits.remove(key) != null
+        if (removed) {
+            dirty = true
+            musicEditVersion++
+        }
+        return removed
+    }
 
     fun selectPatch(id: String?) { selectedPatchId = id }
 
@@ -1543,7 +1586,7 @@ class EditorState {
                 PatternCell(0x049),
             ))
         } catch (e: Exception) {
-            println("Failed to seed some built-in patterns: ${e.message}")
+            editorLog("Failed to seed some built-in patterns: ${e.message}")
         }
 
         dirty = true
@@ -1623,7 +1666,7 @@ class EditorState {
                 }
             }
         } catch (e: Exception) {
-            println("Failed to load bundled patches: ${e.message}")
+            editorLog("Failed to load bundled patches: ${e.message}")
         }
 
         // Insert new patches at position 0 so they appear before any user patches
@@ -1848,12 +1891,12 @@ class EditorState {
             try {
                 project = json.decodeFromString(SmEditProject.serializer(), file.readText())
                 val enabledPatches = project.patches.filter { it.enabled }
-                println("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
+                editorLog("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
                 if (enabledPatches.isNotEmpty()) {
-                    println("  Enabled patches: ${enabledPatches.joinToString { "'${it.name}'" }}")
+                    editorLog("  Enabled patches: ${enabledPatches.joinToString { "'${it.name}'" }}")
                 }
             } catch (e: Exception) {
-                println("Failed to load project: ${e.message}")
+                editorLog("Failed to load project: ${e.message}")
                 project = SmEditProject(romPath = romPath)
             }
         } else {
@@ -2020,7 +2063,7 @@ class EditorState {
                     undoStack.add(op)
                 }
                 undoVersion++
-                println("Replayed $count saved edits for room 0x$roomKey")
+                editorLog("Replayed $count saved edits for room 0x$roomKey")
             }
             // Replay saved PLM changes
             for (change in savedRoom.plmChanges) {
@@ -2122,7 +2165,7 @@ class EditorState {
         }
 
         editVersion++
-        println("Switched to state $stateIndex: ${state.stateInfo.conditionName} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})")
+        editorLog("Switched to state $stateIndex: ${state.stateInfo.conditionName} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})")
     }
 
     fun readBlockWord(bx: Int, by: Int): Int {
@@ -2239,12 +2282,12 @@ class EditorState {
         if (pendingPositions.contains(key)) return false
         val oldWord = readBlockWord(bx, by)
         val oldBts = readBts(bx, by)
-        val origWord = readOriginalBlockWord(bx, by)
-        val origBts = readOriginalBts(bx, by)
-        if (oldWord == origWord && oldBts == origBts) return false
-        writeBlockWord(bx, by, origWord)
-        writeBts(bx, by, origBts)
-        pendingEdits.add(TileEdit(bx, by, oldWord, origWord, oldBts, origBts))
+        val newWord = RomConstants.AIR_TILE_WORD
+        val newBts = 0
+        if (oldWord == newWord && oldBts == newBts) return false
+        writeBlockWord(bx, by, newWord)
+        writeBts(bx, by, newBts)
+        pendingEdits.add(TileEdit(bx, by, oldWord, newWord, oldBts, newBts))
         pendingPositions.add(key)
         editVersion++
         return true
@@ -2334,7 +2377,7 @@ class EditorState {
             var idx = 0x51
             while (idx in usedIndices && idx <= 0x1FF) idx++
             if (idx > 0x1FF) {
-                println("WARN: item collection bit pool exhausted (>431 items)")
+                editorLog("WARN: item collection bit pool exhausted (>431 items)")
                 idx = 0x200
             }
             idx
@@ -2922,12 +2965,12 @@ class EditorState {
 
             File(projectFilePath).writeText(json.encodeToString(SmEditProject.serializer(), project))
             dirty = false
-            println("Project saved: $projectFilePath")
+            editorLog("Project saved: $projectFilePath")
             postStatus("Project saved: $projectFilePath")
             romParser?.let { exportCustomGfxPngs(it) }
             if (!testMode) PatternLibrary.saveAll(project.patterns)
             true
-        } catch (e: Exception) { println("Save failed: ${e.message}"); postStatus("Save failed: ${e.message}"); false }
+        } catch (e: Exception) { editorLog("Save failed: ${e.message}"); postStatus("Save failed: ${e.message}"); false }
     }
 
     /** Export custom tileset graphics as PNGs to project folder. Folder is per-ROM so projects don't overwrite each other. */
@@ -2948,7 +2991,7 @@ class EditorState {
                 if (result != null) {
                     val (pixels, w, h) = result
                     val out = File(folder, "ure_$tilesetId.png")
-                    if (writePng(out.absolutePath, pixels, w, h)) println("Exported $out")
+                    if (writePng(out.absolutePath, pixels, w, h)) editorLog("Exported $out")
                 }
             } catch (_: Exception) {}
         }
@@ -2960,7 +3003,7 @@ class EditorState {
                     if (result != null) {
                         val (pixels, w, h) = result
                         val out = File(folder, "cre.png")
-                        if (writePng(out.absolutePath, pixels, w, h)) println("Exported $out")
+                        if (writePng(out.absolutePath, pixels, w, h)) editorLog("Exported $out")
                     }
                 } catch (_: Exception) {}
             }
@@ -2979,12 +3022,346 @@ class EditorState {
         return if (build.isNotEmpty()) "$build-$version" else version
     }
 
+    private fun applyMusicEditsToRom(romData: ByteArray): Int {
+        if (project.musicEdits.isEmpty()) return 0
+
+        var patched = 0
+        val editsBySongSet = project.musicEdits.toSortedMap().entries.groupBy { it.value.songSet }.toSortedMap()
+        for ((songSet, edits) in editsBySongSet) {
+            val exportParser = RomParser(romData)
+            val baseBlocks = SpcData.parseTransferBlocks(romData, exportParser.snesToPc(0xCF8000))
+            val baseRam = SpcData.buildInitialSpcRam(exportParser)
+            val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
+            val originalSpcRam = baseRam.copyOf()
+            SpcData.applyTransferBlocks(originalSpcRam, songBlocks)
+            val accumulatedWrites = SpcWriteAccumulator(songSet)
+            val knownPlayIndexes = SpcData.KNOWN_TRACKS
+                .filter { it.songSet == songSet }
+                .mapTo(mutableSetOf()) { it.playIndex }
+            edits.mapTo(knownPlayIndexes) { it.value.playIndex }
+            val editedPlayIndexes = edits.mapTo(mutableSetOf()) { it.value.playIndex }
+            val protectedPlayIndexes = knownPlayIndexes - editedPlayIndexes
+            val occupiedSequenceRanges = MusicSequenceBudget.buildProtectedSpcOccupancy(
+                baseBlocks = baseBlocks,
+                songBlocks = songBlocks,
+                spcRam = originalSpcRam,
+                protectedPlayIndexes = protectedPlayIndexes
+            ).toMutableList()
+
+            for ((key, edit) in edits) {
+                val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
+                val editedSong = MusicEditConversion.toSong(edit)
+                val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
+                    ?: editedSong.isModified
+
+                val relocatedSequence = if (hasNoteDelta) {
+                    MusicSequenceBudget.encodeRelocated(
+                        song = editedSong,
+                        playIndex = edit.playIndex,
+                        spcRam = originalSpcRam,
+                        occupiedRanges = occupiedSequenceRanges,
+                        key = key
+                    ).also { patch ->
+                        if (patch.fit.trimmed) {
+                            editorLog(
+                                "WARN [EXPORT] Music edit '$key' ${edit.trackName}: " +
+                                    "trimmed ${patch.fit.removedNotes} notes and ${patch.fit.removedCommands} commands after tick " +
+                                    "${patch.fit.cutoffTick} to fit ${patch.fit.encodedBytes}/${patch.fit.budgetBytes} sequence bytes"
+                            )
+                        }
+                    }
+                } else {
+                    null
+                }
+                val relocationRange = relocatedSequence?.allocation
+                val sequenceWrites = relocatedSequence?.writes ?: emptyMap()
+                validateMusicSequenceWrites(
+                    key = key,
+                    playIndex = edit.playIndex,
+                    writes = sequenceWrites,
+                    allocatedRange = relocationRange
+                )
+                if (relocationRange != null) {
+                    occupiedSequenceRanges += relocationRange
+                }
+
+                val originalInstruments = NspcRenderer.readInstrumentTable(originalSpcRam)
+                val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
+                val instrumentWrites = if (editedInstruments.isNotEmpty()) {
+                    PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
+                } else {
+                    emptyMap()
+                }
+
+                if (sequenceWrites.isEmpty() && instrumentWrites.isEmpty()) {
+                    editorLog("[EXPORT] Music edit $key has no note/instrument delta; skipping")
+                    continue
+                }
+
+                val owner = "music edit '$key' (${edit.trackName})"
+                mergeSpcWrites(accumulatedWrites, owner, sequenceWrites, rejectAnyOverlap = true)
+                mergeSpcWrites(accumulatedWrites, owner, instrumentWrites, rejectAnyOverlap = false)
+                val spcWrites = sequenceWrites + instrumentWrites
+                val totalBytes = spcWrites.values.sumOf { it.size }
+
+                patched++
+                editorLog(
+                    "[EXPORT] Music edit '$key' ${edit.trackName}: ${spcWrites.size} SPC write records, " +
+                        "$totalBytes payload bytes, noteDelta=$hasNoteDelta, instrumentWrites=${instrumentWrites.size}"
+                )
+            }
+
+            if (accumulatedWrites.isNotEmpty()) {
+                val chainBytes = writeRelocatedSongSetTransferChain(romData, songSet, accumulatedWrites.toWriteMap())
+                editorLog(
+                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
+                        "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
+                )
+            }
+        }
+        return patched
+    }
+
+    private data class SpcWriteAccumulator(
+        val songSet: Int,
+        val bytesByAddr: java.util.TreeMap<Int, Int> = java.util.TreeMap(),
+        val ownersByAddr: MutableMap<Int, String> = mutableMapOf()
+    ) {
+        fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
+
+        fun toWriteMap(): Map<Int, ByteArray> {
+            val writes = linkedMapOf<Int, ByteArray>()
+            var runStart = -1
+            val runBytes = mutableListOf<Int>()
+            var previousAddr = -1
+
+            fun flushRun() {
+                if (runStart >= 0) {
+                    writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
+                    runBytes.clear()
+                    runStart = -1
+                }
+            }
+
+            for ((addr, value) in bytesByAddr) {
+                if (runStart < 0 || addr != previousAddr + 1) {
+                    flushRun()
+                    runStart = addr
+                }
+                runBytes += value
+                previousAddr = addr
+            }
+            flushRun()
+            return writes
+        }
+    }
+
+    private fun validateMusicSequenceWrites(
+        key: String,
+        playIndex: Int,
+        writes: Map<Int, ByteArray>,
+        allocatedRange: MusicSequenceBudget.SpcRange?
+    ) {
+        val songTableEntry = MusicSequenceBudget.SONG_TABLE_BASE + playIndex * 2
+        for ((addr, data) in writes) {
+            val dest = addr and 0xFFFF
+            val endExclusive = dest + data.size
+            require(data.isNotEmpty()) { "music edit $key produced an empty sequence write at 0x${dest.toString(16)}" }
+            if (dest == songTableEntry && data.size == 2) continue
+            require(dest >= MusicSequenceBudget.SONG_TABLE_BASE && endExclusive <= MusicSequenceBudget.SEQUENCE_EXPORT_MAX) {
+                "music edit $key produced unsafe sequence SPC write " +
+                    "0x${dest.toString(16).padStart(4, '0')}.." +
+                    "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
+            }
+            if (allocatedRange != null) {
+                require(dest >= allocatedRange.start && endExclusive <= allocatedRange.endExclusive) {
+                    "music edit $key re-encode escaped relocated allocation " +
+                        "0x${allocatedRange.start.toString(16).padStart(4, '0')}.." +
+                        "0x${(allocatedRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
+                        "0x${dest.toString(16).padStart(4, '0')}.." +
+                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
+                }
+            }
+        }
+    }
+
+    private fun mergeSpcWrites(
+        accumulator: SpcWriteAccumulator,
+        owner: String,
+        writes: Map<Int, ByteArray>,
+        rejectAnyOverlap: Boolean
+    ) {
+        val songSetLabel = "0x${accumulator.songSet.toString(16).padStart(2, '0')}"
+        for ((addr, data) in writes) {
+            val dest = addr and 0xFFFF
+            require(data.isNotEmpty()) { "$owner produced an empty SPC write at 0x${dest.toString(16)}" }
+            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
+                "$owner produced out-of-bounds SPC write " +
+                    "0x${dest.toString(16).padStart(4, '0')}.." +
+                    "0x${(dest + data.size - 1).toString(16).padStart(4, '0')}"
+            }
+            for (i in data.indices) {
+                val spcAddr = dest + i
+                val value = data[i].toInt() and 0xFF
+                val existing = accumulator.bytesByAddr[spcAddr]
+                val previousOwner = accumulator.ownersByAddr[spcAddr]
+                if (existing != null && previousOwner != owner) {
+                    require(!rejectAnyOverlap) {
+                        "music edits for songSet $songSetLabel overlap at SPC " +
+                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
+                    }
+                    require(existing == value) {
+                        "music edits for songSet $songSetLabel write different values at SPC " +
+                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
+                    }
+                } else if (existing != null && existing != value) {
+                    require(false) {
+                        "$owner produced conflicting SPC bytes at 0x${spcAddr.toString(16).padStart(4, '0')}"
+                    }
+                }
+                accumulator.bytesByAddr[spcAddr] = value
+                accumulator.ownersByAddr[spcAddr] = owner
+            }
+        }
+    }
+
+    private fun writeRelocatedSongSetTransferChain(
+        romData: ByteArray,
+        songSet: Int,
+        spcWrites: Map<Int, ByteArray>
+    ): Int {
+        require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
+
+        val parser = RomParser(romData)
+        val pointerEntryPc = SpcData.findSongSetPointerEntryPc(parser, songSet)
+        require(pointerEntryPc >= 0) {
+            "songSet 0x${songSet.toString(16)} has no writable transfer pointer table entry"
+        }
+
+        val originalPointer = SpcData.readSongSetPointer(parser, songSet)
+        val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
+        require(originalBlocks.isNotEmpty()) {
+            "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
+        }
+
+        val patchBlocks = buildSpcPatchBlocks(spcWrites)
+
+        val relocatedChain = serializeTransferChain(originalBlocks + patchBlocks)
+        val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
+        relocatedChain.copyInto(romData, writePc)
+
+        val relocatedPointer = parser.pcToSnes(writePc)
+        writeRomU24(romData, pointerEntryPc, relocatedPointer)
+
+        editorLog(
+            "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
+                "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
+                "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
+                "(${originalBlocks.size} original + ${patchBlocks.size} patch blocks)"
+        )
+        return relocatedChain.size
+    }
+
+    private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
+        val bytesByAddr = sortedMapOf<Int, Int>()
+        for ((addr, data) in spcWrites) {
+            val dest = addr and 0xFFFF
+            require(data.isNotEmpty()) { "empty SPC write at 0x${dest.toString(16)}" }
+            require(data.size <= 0xFFFF) { "SPC write at 0x${dest.toString(16)} is too large (${data.size} bytes)" }
+            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
+                "SPC write 0x${dest.toString(16)}..0x${(dest + data.size).toString(16)} exceeds SPC RAM"
+            }
+            for (i in data.indices) {
+                bytesByAddr[dest + i] = data[i].toInt() and 0xFF
+            }
+        }
+        if (bytesByAddr.isEmpty()) return emptyList()
+
+        val blocks = mutableListOf<SpcData.TransferBlock>()
+        var runStart = -1
+        val runBytes = mutableListOf<Int>()
+        var previousAddr = -1
+        for ((addr, value) in bytesByAddr) {
+            if (runStart < 0 || addr != previousAddr + 1) {
+                if (runStart >= 0) {
+                    blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
+                    runBytes.clear()
+                }
+                runStart = addr
+            }
+            runBytes += value
+            previousAddr = addr
+        }
+        if (runStart >= 0) {
+            blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
+        }
+        return blocks
+    }
+
+    private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
+        val out = java.io.ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
+        for (block in blocks) {
+            require(block.data.size <= 0xFFFF) {
+                "transfer block at 0x${block.destAddr.toString(16)} is too large (${block.data.size} bytes)"
+            }
+            writeStreamU16(out, block.data.size)
+            writeStreamU16(out, block.destAddr and 0xFFFF)
+            out.write(block.data)
+        }
+        writeStreamU16(out, 0)
+        return out.toByteArray()
+    }
+
+    private fun writeStreamU16(out: java.io.ByteArrayOutputStream, value: Int) {
+        out.write(value and 0xFF)
+        out.write((value ushr 8) and 0xFF)
+    }
+
+    private fun writeRomU24(romData: ByteArray, offset: Int, value: Int) {
+        require(offset >= 0 && offset + 2 < romData.size) {
+            "out-of-bounds ROM pointer write at 0x${offset.toString(16)}"
+        }
+        romData[offset] = (value and 0xFF).toByte()
+        romData[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+        romData[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+    }
+
+    private fun findMusicTransferFreeSpace(
+        parser: RomParser,
+        romData: ByteArray,
+        requiredBytes: Int
+    ): Int {
+        require(requiredBytes > 0) { "music transfer chain must not be empty" }
+        val preferredBanks = listOf(0xB8, 0xCE, 0x85, 0x83, 0x89)
+        val fallbackBanks = (0x80..0xFF).filterNot { it in preferredBanks }
+        for (bank in preferredBanks + fallbackBanks) {
+            val bankStart = parser.snesToPc((bank shl 16) or 0x8000)
+            val bankEndExclusive = parser.snesToPc((bank shl 16) or 0xFFFF) + 1
+            if (bankStart < 0 || bankEndExclusive > romData.size || bankStart >= bankEndExclusive) continue
+
+            var freeStart = bankEndExclusive
+            while (freeStart > bankStart && romData[freeStart - 1] == 0xFF.toByte()) {
+                freeStart--
+            }
+            if (freeStart >= bankEndExclusive) continue
+
+            val alignedStart = ((freeStart + 0x0F) / 0x10) * 0x10
+            if (alignedStart + requiredBytes <= bankEndExclusive) {
+                return alignedStart
+            }
+        }
+
+        error(
+            "not enough contiguous free ROM space for $requiredBytes-byte relocated SPC transfer chain"
+        )
+    }
+
     fun exportToRom(romParser: RomParser): String? {
         val romPath = project.romPath
         if (romPath.isEmpty()) return null
         saveProject(romParser)
-        println("[EXPORT] Starting export — romPath=$romPath, romSize=${romParser.getRomData().size}")
-        println("[EXPORT] Project spriteTileBlocks keys: ${project.customGfx.spriteTileBlocks.keys}")
+        editorLog("[EXPORT] Starting export — romPath=$romPath, romSize=${romParser.getRomData().size}")
+        editorLog("[EXPORT] Project spriteTileBlocks keys: ${project.customGfx.spriteTileBlocks.keys}")
         val romData = romParser.getRomData().copyOf()
         val roomsPatched = mutableSetOf<String>()
 
@@ -2994,10 +3371,10 @@ class EditorState {
         var patchesApplied = 0
         val enabledCount = project.patches.count { it.enabled }
         val disabledCount = project.patches.size - enabledCount
-        println("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
+        editorLog("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
         for (patch in project.patches) {
             if (!patch.enabled) continue
-            println("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
+            editorLog("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
             if (patch.configType == "ceres_escape_seconds") {
                 val totalSecs = (patch.configValue ?: 60).coerceIn(15, 600)
                 val mins = totalSecs / 60
@@ -3009,7 +3386,7 @@ class EditorState {
                     romData[off] = secsBcd.toByte()
                     romData[off + 1] = minsBcd.toByte()
                 }
-                println("[EXPORT]   Ceres timer: ${mins}m${secs}s")
+                editorLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
                 var beamCount = 0
@@ -3028,7 +3405,7 @@ class EditorState {
                     }
                     beamCount++
                 }
-                println("[EXPORT]   Beam damage: $beamCount beams modified")
+                editorLog("[EXPORT]   Beam damage: $beamCount beams modified")
             } else if (patch.configType == "boss_stats") {
                 val data = patch.configData ?: continue
                 var fieldCount = 0
@@ -3041,7 +3418,7 @@ class EditorState {
                     }
                     fieldCount++
                 }
-                println("[EXPORT]   Boss stats: $fieldCount fields modified")
+                editorLog("[EXPORT]   Boss stats: $fieldCount fields modified")
             } else if (patch.configType == "phantoon") {
                 val data = patch.configData ?: continue
                 var fieldCount = 0
@@ -3054,7 +3431,7 @@ class EditorState {
                     }
                     fieldCount++
                 }
-                println("[EXPORT]   Phantoon behavior: $fieldCount fields modified")
+                editorLog("[EXPORT]   Phantoon behavior: $fieldCount fields modified")
             } else if (patch.configType == "enemy_stats") {
                 val data = patch.configData ?: continue
                 var modCount = 0
@@ -3098,7 +3475,7 @@ class EditorState {
                         }
                     }
                 }
-                println("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
+                editorLog("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
             } else if (patch.configType == "enemy_drops") {
                 val data = patch.configData ?: continue
                 var modCount = 0
@@ -3118,7 +3495,7 @@ class EditorState {
                         modCount++
                     }
                 }
-                println("[EXPORT]   Enemy drop rates: $modCount values modified")
+                editorLog("[EXPORT]   Enemy drop rates: $modCount values modified")
             } else if (patch.configType == "enemy_vuln") {
                 val data = patch.configData ?: continue
                 var modCount = 0
@@ -3138,7 +3515,7 @@ class EditorState {
                         modCount++
                     }
                 }
-                println("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
+                editorLog("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
             } else if (patch.configType == "samus_physics") {
                 val data = patch.configData ?: continue
                 var modCount = 0
@@ -3150,7 +3527,7 @@ class EditorState {
                     }
                     modCount++
                 }
-                println("[EXPORT]   Samus physics: $modCount values modified")
+                editorLog("[EXPORT]   Samus physics: $modCount values modified")
             } else if (patch.configType == "controller_config") {
                 val data = patch.configData ?: continue
                 var slotCount = 0
@@ -3163,9 +3540,9 @@ class EditorState {
                     }
                     slotCount++
                 }
-                println("[EXPORT]   Controller config: $slotCount buttons remapped")
+                editorLog("[EXPORT]   Controller config: $slotCount buttons remapped")
             } else if (patch.configType == "boss_defeated" || patch.configType == "hyper_beam") {
-                println("[EXPORT]   (deferred to combined per-frame hook)")
+                editorLog("[EXPORT]   (deferred to combined per-frame hook)")
             } else {
                 val totalBytes = patch.writes.sumOf { it.bytes.size }
                 for (write in patch.writes) {
@@ -3174,10 +3551,20 @@ class EditorState {
                         if (off + i < romData.size) romData[off + i] = b.toByte()
                     }
                 }
-                println("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
+                editorLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
             }
             patchesApplied++
         }
+
+        val musicPatched = try {
+            applyMusicEditsToRom(romData)
+        } catch (e: Exception) {
+            val message = "Export failed: music edit could not be written safely (${e.message})"
+            editorLog("ERROR: $message")
+            postStatus(message)
+            return null
+        }
+        if (musicPatched > 0) editorLog("[EXPORT] Patched $musicPatched music track edit(s)")
 
         // Combined per-frame hook: boss-defeated + hyper beam + infinite blue suit
         // Writes a single routine at $DF:F040 (PC $2FF040) and hooks $82:896E.
@@ -3195,7 +3582,7 @@ class EditorState {
                 if (patch.id == "bundled_infinite_blue_suit") infiniteBlueSuit = true
             }
             if (enabledBosses.isNotEmpty() || hyperBeam || infiniteBlueSuit) {
-                println("[EXPORT] Per-frame hook active: bosses=${enabledBosses.ifEmpty { "none" }}, hyperBeam=$hyperBeam, infiniteBlueSuit=$infiniteBlueSuit")
+                editorLog("[EXPORT] Per-frame hook active: bosses=${enabledBosses.ifEmpty { "none" }}, hyperBeam=$hyperBeam, infiniteBlueSuit=$infiniteBlueSuit")
                 val code = mutableListOf<Int>()
                 // Chain to original: JSL $8289EF
                 code.addAll(listOf(0x22, 0xEF, 0x89, 0x82))
@@ -3279,9 +3666,9 @@ class EditorState {
                     val addr = 0x1096E + i
                     if (addr < romData.size) romData[addr] = b.toByte()
                 }
-                println("[EXPORT]   Per-frame hook: ${code.size} bytes at \$DF:F040, hook at \$82:896E")
+                editorLog("[EXPORT]   Per-frame hook: ${code.size} bytes at \$DF:F040, hook at \$82:896E")
             } else {
-                println("[EXPORT] Per-frame hook: not needed (no boss flags, hyper beam, or blue suit)")
+                editorLog("[EXPORT] Per-frame hook: not needed (no boss flags, hyper beam, or blue suit)")
             }
         }
 
@@ -3331,7 +3718,7 @@ class EditorState {
         // The scan absorbed any FFFF terminator at the boundary; skip past it.
         // Cost: at most 2 wasted bytes if there was no terminator.
         if (gfxFreePtr + 2 <= bankB4End) gfxFreePtr += 2
-        println("[EXPORT] B4 free space: raw=0x${rawGfxFreePtr.toString(16)}, guarded=0x${gfxFreePtr.toString(16)} (+2 terminator guard)")
+        editorLog("[EXPORT] B4 free space: raw=0x${rawGfxFreePtr.toString(16)}, guarded=0x${gfxFreePtr.toString(16)} (+2 terminator guard)")
 
         // Free space tracker for level data banks ($C0-$CE).
         // Each bank is scanned from the end to find trailing 0xFF padding.
@@ -3399,7 +3786,7 @@ class EditorState {
                 }
 
                 if (ptrToStates.size > 1) {
-                    println("Room 0x$roomKey: ${ptrToStates.size} distinct level data pointers across ${allStateOffsets.size} states — applying edits to ALL")
+                    editorLog("Room 0x$roomKey: ${ptrToStates.size} distinct level data pointers across ${allStateOffsets.size} states — applying edits to ALL")
                 }
 
                 for ((lvlPtr, statesForPtr) in ptrToStates) {
@@ -3426,7 +3813,7 @@ class EditorState {
                     val roundTripped = LZ5Compressor.decompress(compressed)
                     if (!roundTripped.contentEquals(editedData)) {
                         val diffIdx = editedData.indices.firstOrNull { roundTripped.getOrNull(it) != editedData[it] }
-                        println("ERROR: LZ5 round-trip FAILED for room 0x$roomKey lvlPtr=\$${lvlPtr.toString(16)}! Size: orig=${editedData.size} rt=${roundTripped.size}, first diff at byte $diffIdx")
+                        editorLog("ERROR: LZ5 round-trip FAILED for room 0x$roomKey lvlPtr=\$${lvlPtr.toString(16)}! Size: orig=${editedData.size} rt=${roundTripped.size}, first diff at byte $diffIdx")
                     }
 
                     val pcOff = romParser.snesToPc(lvlPtr)
@@ -3451,13 +3838,13 @@ class EditorState {
                                     romData[stateOffset + 2] = ((newSnes shr 16) and 0xFF).toByte()
                                 }
                                 for (i in pcOff until pcOff + origSize) romData[i] = 0xFF.toByte()
-                                println("Room 0x$roomKey: relocated level data \$${lvlPtr.toString(16)} to \$${tryBank.toString(16).uppercase()}:${(newSnes and 0xFFFF).toString(16).uppercase()} (${compressed.size} bytes, updated ${statesForPtr.size} state(s))")
+                                editorLog("Room 0x$roomKey: relocated level data \$${lvlPtr.toString(16)} to \$${tryBank.toString(16).uppercase()}:${(newSnes and 0xFFFF).toString(16).uppercase()} (${compressed.size} bytes, updated ${statesForPtr.size} state(s))")
                                 relocated = true
                                 break
                             }
                         }
                         if (!relocated) {
-                            println("WARN: Room 0x$roomKey lvlPtr=\$${lvlPtr.toString(16)} compressed ${compressed.size} > orig $origSize and no free space — skipped")
+                            editorLog("WARN: Room 0x$roomKey lvlPtr=\$${lvlPtr.toString(16)} compressed ${compressed.size} > orig $origSize and no free space — skipped")
                         }
                     }
                 }
@@ -3526,9 +3913,9 @@ class EditorState {
                                 updatedStates++
                             }
                         }
-                        println("Room 0x$roomKey: relocated PLM set 0x${psd.plmSetPtr.toString(16)} to 0x${newSnes.toString(16)} (updated $updatedStates states)")
+                        editorLog("Room 0x$roomKey: relocated PLM set 0x${psd.plmSetPtr.toString(16)} to 0x${newSnes.toString(16)} (updated $updatedStates states)")
                     } else {
-                        println("WARN: Room 0x$roomKey no free space for expanded PLM set 0x${psd.plmSetPtr.toString(16)} — skipped")
+                        editorLog("WARN: Room 0x$roomKey no free space for expanded PLM set 0x${psd.plmSetPtr.toString(16)} — skipped")
                         continue
                     }
 
@@ -3542,7 +3929,7 @@ class EditorState {
                         romData[offset + 5] = ((plm.param shr 8) and 0xFF).toByte()
                         offset += 6
                         val name = RomParser.plmDisplayName(plm.id, plm.param)
-                        println("  PLM: $name (0x${plm.id.toString(16)}) at (${plm.x},${plm.y}) param=0x${plm.param.toString(16)}")
+                        editorLog("  PLM: $name (0x${plm.id.toString(16)}) at (${plm.x},${plm.y}) param=0x${plm.param.toString(16)}")
                     }
                     romData[offset] = 0; romData[offset + 1] = 0
                     if (writePc == plmPc) {
@@ -3566,7 +3953,7 @@ class EditorState {
                         romData[freePtr++] = 0x80.toByte() // terminator
                         val snesPtr = romParser.pcToSnes(freePtr - dataSize) and 0xFFFF
                         cmdIdToAddr[cmdId] = snesPtr
-                        println("Room 0x$roomKey: wrote custom scroll command '$cmdId' (${commands.size} entries) at \$8F:${snesPtr.toString(16).uppercase()}")
+                        editorLog("Room 0x$roomKey: wrote custom scroll command '$cmdId' (${commands.size} entries) at \$8F:${snesPtr.toString(16).uppercase()}")
                     }
                 }
                 // Patch PLM params: replace 0xCC00|idx with actual ROM address
@@ -3623,8 +4010,8 @@ class EditorState {
                     val vanillaCapX = romParser.readByteAt(entryPc + 4)
                     val vanillaCapY = romParser.readByteAt(entryPc + 5)
                     val crossArea = if (dc.bitflag and 0x40 != 0) " CROSS-AREA" else ""
-                    println("Room 0x$roomKey door $doorIndex: orient=$orientation($dirName$capStr) cap=($capX,$capY) dest=0x${dc.destRoomPtr.toString(16)} entry=0x${dc.entryCode.toString(16)} bitflag=0x${dc.bitflag.toString(16)}$crossArea")
-                    println("  vanilla: dest=0x${vanillaDestPtr.toString(16)} orient=$vanillaOrient cap=($vanillaCapX,$vanillaCapY) bitflag=0x${romParser.readUInt16At(entryPc + 2).toString(16)}")
+                    editorLog("Room 0x$roomKey door $doorIndex: orient=$orientation($dirName$capStr) cap=($capX,$capY) dest=0x${dc.destRoomPtr.toString(16)} entry=0x${dc.entryCode.toString(16)} bitflag=0x${dc.bitflag.toString(16)}$crossArea")
+                    editorLog("  vanilla: dest=0x${vanillaDestPtr.toString(16)} orient=$vanillaOrient cap=($vanillaCapX,$vanillaCapY) bitflag=0x${romParser.readUInt16At(entryPc + 2).toString(16)}")
 
                     var finalCapCode = dc.doorCapCode
                     var finalOrientation = orientation
@@ -3634,7 +4021,7 @@ class EditorState {
                         val maxY = destRoom.height * 16
                         if (capX >= maxX || capY >= maxY) {
                             // Cap position is out of bounds — try to auto-derive a valid one
-                            println("WARN: Room 0x$roomKey door $doorIndex cap position ($capX,$capY) " +
+                            editorLog("WARN: Room 0x$roomKey door $doorIndex cap position ($capX,$capY) " +
                                 "is OUT OF BOUNDS for dest room 0x${dc.destRoomPtr.toString(16)} " +
                                 "(${destRoom.width}x${destRoom.height} screens = ${maxX}x${maxY} blocks). " +
                                 "screenX=${dc.screenX} screenY=${dc.screenY} orient=$orientation bitflag=0x${dc.bitflag.toString(16)}")
@@ -3645,15 +4032,15 @@ class EditorState {
                                 finalCapCode = derived
                                 val newCapX = derived and 0xFF
                                 val newCapY = (derived shr 8) and 0xFF
-                                println("  FIX: auto-derived valid cap → ($newCapX,$newCapY)")
+                                editorLog("  FIX: auto-derived valid cap → ($newCapX,$newCapY)")
                             } else {
                                 // Cannot derive — clear cap flag (bit 2) to prevent corrupt PLM
                                 finalOrientation = orientation and 0xFB.toInt()
-                                println("  FIX: could not derive cap, cleared cap flag (orient $orientation → $finalOrientation)")
+                                editorLog("  FIX: could not derive cap, cleared cap flag (orient $orientation → $finalOrientation)")
                             }
                         }
                     } else {
-                        println("WARN: Room 0x$roomKey door $doorIndex dest 0x${dc.destRoomPtr.toString(16)} — could not read dest room header!")
+                        editorLog("WARN: Room 0x$roomKey door $doorIndex dest 0x${dc.destRoomPtr.toString(16)} — could not read dest room header!")
                     }
 
                     // Auto-fix cross-area flag if source and dest are in different areas
@@ -3662,7 +4049,7 @@ class EditorState {
                         if (room.area != destRoom.area) {
                             if (finalBitflag and 0x40 == 0) {
                                 finalBitflag = finalBitflag or 0x40
-                                println("  FIX: auto-set cross-area flag (area ${room.area} → ${destRoom.area})")
+                                editorLog("  FIX: auto-set cross-area flag (area ${room.area} → ${destRoom.area})")
                             }
                         }
                     }
@@ -3732,9 +4119,9 @@ class EditorState {
                             romData[stateOffset + 9] = ((newPtr shr 8) and 0xFF).toByte()
                         }
                     }
-                    println("Room 0x$roomKey: relocated enemy set to 0x${newSnes.toString(16)}")
+                    editorLog("Room 0x$roomKey: relocated enemy set to 0x${newSnes.toString(16)}")
                 } else {
-                    println("WARN: Room 0x$roomKey no free space for expanded enemy set — skipped enemy patch")
+                    editorLog("WARN: Room 0x$roomKey no free space for expanded enemy set — skipped enemy patch")
                     return@enemyPatch
                 }
 
@@ -3797,7 +4184,7 @@ class EditorState {
                 val neededSpecies = (finalSpecies - vanillaSpecies).filter { it !in existingSpecies }
                 val skippedVanilla = (finalSpecies intersect vanillaSpecies) - existingSpecies
                 if (skippedVanilla.isNotEmpty()) {
-                    println("Room 0x$roomKey: skipped ${skippedVanilla.size} vanilla species from GFX set " +
+                    editorLog("Room 0x$roomKey: skipped ${skippedVanilla.size} vanilla species from GFX set " +
                             "(${skippedVanilla.joinToString { "0x${it.toString(16)}" }})")
                 }
                 if (neededSpecies.isEmpty()) return@gfxPatch
@@ -3807,7 +4194,7 @@ class EditorState {
                 var nextPal = maxPalIdx + 1
                 for (specId in neededSpecies) {
                     if (newEntries.size >= 4) {
-                        println("WARN: Room 0x$roomKey GFX set already has ${newEntries.size} entries (SNES max 4) — skipping species 0x${specId.toString(16)}")
+                        editorLog("WARN: Room 0x$roomKey GFX set already has ${newEntries.size} entries (SNES max 4) — skipping species 0x${specId.toString(16)}")
                         continue
                     }
                     // Validate species: read HP from DNA at offset +4.
@@ -3819,11 +4206,11 @@ class EditorState {
                         (romData[specPc + 4].toInt() and 0xFF) or ((romData[specPc + 5].toInt() and 0xFF) shl 8)
                     } else 0
                     if (specHp == 0) {
-                        println("WARN: Room 0x$roomKey: skipping species 0x${specId.toString(16)} from GFX set — HP=0 (invalid species ID)")
+                        editorLog("WARN: Room 0x$roomKey: skipping species 0x${specId.toString(16)} from GFX set — HP=0 (invalid species ID)")
                         continue
                     }
                     newEntries.add(RomParser.EnemyGfxEntry(specId, nextPal))
-                    println("Room 0x$roomKey: added species 0x${specId.toString(16)} to GFX set (palette=$nextPal)")
+                    editorLog("Room 0x$roomKey: added species 0x${specId.toString(16)} to GFX set (palette=$nextPal)")
                     nextPal++
                 }
                 if (newEntries.size == gfxEntries.size) return@gfxPatch
@@ -3849,9 +4236,9 @@ class EditorState {
                             romData[stateOffset + 11] = ((newGfxOffset shr 8) and 0xFF).toByte()
                         }
                     }
-                    println("Room 0x$roomKey: relocated GFX set to 0x${newGfxSnes.toString(16)}")
+                    editorLog("Room 0x$roomKey: relocated GFX set to 0x${newGfxSnes.toString(16)}")
                 } else {
-                    println("WARN: Room 0x$roomKey no free space in bank \$B4 for expanded GFX set")
+                    editorLog("WARN: Room 0x$roomKey no free space in bank \$B4 for expanded GFX set")
                     return@gfxPatch
                 }
 
@@ -3920,9 +4307,9 @@ class EditorState {
                             romData[scrollPtrOff] = (newSnesPtr and 0xFF).toByte()
                             romData[scrollPtrOff + 1] = ((newSnesPtr shr 8) and 0xFF).toByte()
                         }
-                        println("Room 0x$roomKey: relocated scroll data \$${room.roomScrollsPtr.toString(16)} to \$8F:${newSnesPtr.toString(16).uppercase()} (${modifiedScrolls.size} bytes, updated ${allStateOffsets.size} state(s))")
+                        editorLog("Room 0x$roomKey: relocated scroll data \$${room.roomScrollsPtr.toString(16)} to \$8F:${newSnesPtr.toString(16).uppercase()} (${modifiedScrolls.size} bytes, updated ${allStateOffsets.size} state(s))")
                     } else {
-                        println("WARN: Room 0x$roomKey: no free space in bank \$8F for expanded scroll data (${modifiedScrolls.size} bytes) — writing in-place (WILL CORRUPT adjacent data!)")
+                        editorLog("WARN: Room 0x$roomKey: no free space in bank \$8F for expanded scroll data (${modifiedScrolls.size} bytes) — writing in-place (WILL CORRUPT adjacent data!)")
                         for (i in modifiedScrolls.indices) {
                             if (scrollPc + i < romData.size) romData[scrollPc + i] = modifiedScrolls[i].toByte()
                         }
@@ -3958,7 +4345,7 @@ class EditorState {
                         offset += 2
                     }
                     if (remapped > 0) {
-                        println("Room 0x$roomKey: remapped $remapped screen indices in scroll command at \$8F:${cmdPtr.toString(16).uppercase()} (width ${ room.width}→$effectiveWidth)")
+                        editorLog("Room 0x$roomKey: remapped $remapped screen indices in scroll command at \$8F:${cmdPtr.toString(16).uppercase()} (width ${ room.width}→$effectiveWidth)")
                     }
                 }
             }
@@ -4006,7 +4393,7 @@ class EditorState {
                     // Each write = 6 bytes (A9 xx 8F ll CD 7E). Header = 2 (E2 20). Footer = 1 (6B).
                     val asmSize = 2 + writes.size * 6 + 1
                     if (freePtr + asmSize > bank8FEnd) {
-                        println("WARN: Room 0x$roomKey: no free space for door ASM generation (${asmSize} bytes)")
+                        editorLog("WARN: Room 0x$roomKey: no free space for door ASM generation (${asmSize} bytes)")
                         continue
                     }
                     val newPc = freePtr
@@ -4027,7 +4414,7 @@ class EditorState {
                     romData[freePtr++] = 0x6B.toByte() // RTL
                     val newSnesPtr = romParser.pcToSnes(newPc) and 0xFFFF
                     generatedAsmPtrs[door.entryCode] = newSnesPtr
-                    println("Room 0x$roomKey: generated new door ASM at \$8F:${newSnesPtr.toString(16).uppercase()} (${writes.size} scroll writes, was \$8F:${door.entryCode.toString(16).uppercase()})")
+                    editorLog("Room 0x$roomKey: generated new door ASM at \$8F:${newSnesPtr.toString(16).uppercase()} (${writes.size} scroll writes, was \$8F:${door.entryCode.toString(16).uppercase()})")
                 }
 
                 // Update door entry entryCode pointers in ROM
@@ -4091,7 +4478,7 @@ class EditorState {
                     }
                 }
                 if (patchedFxPtrs.isNotEmpty()) {
-                    println("Room 0x$roomKey: patched FX for ${patchedFxPtrs.size} state(s)")
+                    editorLog("Room 0x$roomKey: patched FX for ${patchedFxPtrs.size} state(s)")
                     roomsPatched.add(roomKey)
                 }
             }
@@ -4113,7 +4500,7 @@ class EditorState {
                     romData[headerPc + 9] = (it and 0xFF).toByte()
                     romData[headerPc + 10] = ((it shr 8) and 0xFF).toByte()
                 }
-                println("Room 0x$roomKey: patched room header")
+                editorLog("Room 0x$roomKey: patched room header")
             }
 
             // Patch state data fields (tileset, music, BG scrolling)
@@ -4154,11 +4541,11 @@ class EditorState {
                     System.arraycopy(compressed, 0, romData, crePc, compressed.size)
                     for (i in compressed.size until origSize) romData[crePc + i] = 0xFF.toByte()
                     gfxPatched++
-                    println("Patched CRE graphics in-place (${compressed.size}/$origSize bytes)")
+                    editorLog("Patched CRE graphics in-place (${compressed.size}/$origSize bytes)")
                 } else {
-                    println("WARN: Compressed CRE gfx (${compressed.size}) exceeds original ($origSize) — skipped")
+                    editorLog("WARN: Compressed CRE gfx (${compressed.size}) exceeds original ($origSize) — skipped")
                 }
-            } catch (e: Exception) { println("WARN: CRE gfx patch failed: ${e.message}") }
+            } catch (e: Exception) { editorLog("WARN: CRE gfx patch failed: ${e.message}") }
         }
 
         // Custom variable (URE) graphics per tileset
@@ -4178,11 +4565,11 @@ class EditorState {
                     System.arraycopy(compressed, 0, romData, gfxPc, compressed.size)
                     for (i in compressed.size until origSize) romData[gfxPc + i] = 0xFF.toByte()
                     gfxPatched++
-                    println("Patched tileset $tsId variable gfx in-place (${compressed.size}/$origSize bytes)")
+                    editorLog("Patched tileset $tsId variable gfx in-place (${compressed.size}/$origSize bytes)")
                 } else {
-                    println("WARN: Compressed tileset $tsId gfx (${compressed.size}) exceeds original ($origSize) — skipped")
+                    editorLog("WARN: Compressed tileset $tsId gfx (${compressed.size}) exceeds original ($origSize) — skipped")
                 }
-            } catch (e: Exception) { println("WARN: Tileset $tsId gfx patch failed: ${e.message}") }
+            } catch (e: Exception) { editorLog("WARN: Tileset $tsId gfx patch failed: ${e.message}") }
         }
 
         // Custom palette overrides per tileset (raw BGR555 → LZ5 compress → write in-place)
@@ -4190,7 +4577,7 @@ class EditorState {
             val tsId = tsIdStr.toIntOrNull() ?: continue
             try {
                 val rawPal = java.util.Base64.getDecoder().decode(palB64)
-                if (rawPal.size != 256) { println("WARN: Palette $tsId has ${rawPal.size} bytes (expected 256) — skipped"); continue }
+                if (rawPal.size != 256) { editorLog("WARN: Palette $tsId has ${rawPal.size} bytes (expected 256) — skipped"); continue }
                 val compressed = lz5Compress(rawPal)
                 val entryOffset = tablePC + tsId * 9
                 val palSnes = (romData[entryOffset + 6].toInt() and 0xFF) or
@@ -4202,11 +4589,11 @@ class EditorState {
                     System.arraycopy(compressed, 0, romData, palPc, compressed.size)
                     for (i in compressed.size until origSize) romData[palPc + i] = 0xFF.toByte()
                     gfxPatched++
-                    println("Patched tileset $tsId palette in-place (${compressed.size}/$origSize bytes)")
+                    editorLog("Patched tileset $tsId palette in-place (${compressed.size}/$origSize bytes)")
                 } else {
-                    println("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) — skipped")
+                    editorLog("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) — skipped")
                 }
-            } catch (e: Exception) { println("WARN: Tileset $tsId palette patch failed: ${e.message}") }
+            } catch (e: Exception) { editorLog("WARN: Tileset $tsId palette patch failed: ${e.message}") }
         }
 
         // Apply sprite palette overrides (Samus suits, beams — raw BGR555, no compression)
@@ -4218,38 +4605,38 @@ class EditorState {
                 if (colors.size == region.colorCount) {
                     com.supermetroid.editor.rom.SpritePalettes.writeColors(romData, region, colors)
                     gfxPatched++
-                    println("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
+                    editorLog("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
                 }
-            } catch (e: Exception) { println("WARN: Sprite palette '$regionId' patch failed: ${e.message}") }
+            } catch (e: Exception) { editorLog("WARN: Sprite palette '$regionId' patch failed: ${e.message}") }
         }
 
         // Apply Phantoon sprite tile patches (raw 4bpp → LZ5 compress → write to $B7)
-        println("[EXPORT] Phantoon sprite blocks: spriteTileBlocks.keys=${gfxData.spriteTileBlocks.keys}, size=${gfxData.spriteTileBlocks.size}")
+        editorLog("[EXPORT] Phantoon sprite blocks: spriteTileBlocks.keys=${gfxData.spriteTileBlocks.keys}, size=${gfxData.spriteTileBlocks.size}")
         for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
             val b64 = gfxData.spriteTileBlocks["phantoon:$i"]
             if (b64 == null) {
-                println("[EXPORT] Phantoon block $i: NO DATA in spriteTileBlocks (key 'phantoon:$i' not found)")
+                editorLog("[EXPORT] Phantoon block $i: NO DATA in spriteTileBlocks (key 'phantoon:$i' not found)")
                 continue
             }
-            println("[EXPORT] Phantoon block $i: found ${b64.length} b64 chars")
+            editorLog("[EXPORT] Phantoon block $i: found ${b64.length} b64 chars")
             try {
                 val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                println("[EXPORT] Phantoon block $i: decoded to ${rawBytes.size} raw bytes")
+                editorLog("[EXPORT] Phantoon block $i: decoded to ${rawBytes.size} raw bytes")
                 val compressed = lz5Compress(rawBytes)
-                println("[EXPORT] Phantoon block $i: compressed to ${compressed.size} bytes")
+                editorLog("[EXPORT] Phantoon block $i: compressed to ${compressed.size} bytes")
                 val (_, origSize) = romParser.decompressLZ2WithSize(block.snesAddress)
-                println("[EXPORT] Phantoon block $i: original compressed size=$origSize, fits=${compressed.size <= origSize}")
+                editorLog("[EXPORT] Phantoon block $i: original compressed size=$origSize, fits=${compressed.size <= origSize}")
                 if (compressed.size <= origSize) {
                     System.arraycopy(compressed, 0, romData, block.pcAddress, compressed.size)
                     for (j in compressed.size until origSize) romData[block.pcAddress + j] = 0xFF.toByte()
                     gfxPatched++
-                    println("[EXPORT] Patched Phantoon sprite tile block $i: ${compressed.size}/$origSize bytes at PC=0x${block.pcAddress.toString(16)}")
+                    editorLog("[EXPORT] Patched Phantoon sprite tile block $i: ${compressed.size}/$origSize bytes at PC=0x${block.pcAddress.toString(16)}")
                 } else {
-                    println("[EXPORT] WARN: Phantoon sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
+                    editorLog("[EXPORT] WARN: Phantoon sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
                 }
             } catch (e: Exception) {
-                println("[EXPORT] WARN: Phantoon sprite block $i patch failed: ${e.message}")
-                e.printStackTrace()
+                editorLog("[EXPORT] WARN: Phantoon sprite block $i patch failed: ${e.message}")
+                editorStateLog.error(e) { "[EXPORT] Phantoon sprite block $i patch failed" }
             }
         }
 
@@ -4257,22 +4644,22 @@ class EditorState {
         for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.withIndex()) {
             val b64 = gfxData.spriteTileBlocks["kraid:$i"]
             if (b64 == null) continue
-            println("[EXPORT] Kraid block $i: found ${b64.length} b64 chars")
+            editorLog("[EXPORT] Kraid block $i: found ${b64.length} b64 chars")
             try {
                 val rawBytes = java.util.Base64.getDecoder().decode(b64)
                 val compressed = lz5Compress(rawBytes)
                 val (_, origSize) = romParser.decompressLZ2WithSize(block.snesAddress)
-                println("[EXPORT] Kraid block $i: ${compressed.size}/$origSize bytes")
+                editorLog("[EXPORT] Kraid block $i: ${compressed.size}/$origSize bytes")
                 if (compressed.size <= origSize) {
                     System.arraycopy(compressed, 0, romData, block.pcAddress, compressed.size)
                     for (j in compressed.size until origSize) romData[block.pcAddress + j] = 0xFF.toByte()
                     gfxPatched++
-                    println("[EXPORT] Patched Kraid sprite tile block $i at PC=0x${block.pcAddress.toString(16)}")
+                    editorLog("[EXPORT] Patched Kraid sprite tile block $i at PC=0x${block.pcAddress.toString(16)}")
                 } else {
-                    println("[EXPORT] WARN: Kraid sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
+                    editorLog("[EXPORT] WARN: Kraid sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
                 }
             } catch (e: Exception) {
-                println("[EXPORT] WARN: Kraid sprite block $i patch failed: ${e.message}")
+                editorLog("[EXPORT] WARN: Kraid sprite block $i patch failed: ${e.message}")
             }
         }
 
@@ -4286,23 +4673,23 @@ class EditorState {
                 val block = com.supermetroid.editor.rom.EnemySpriteGraphics.readGraphicsBlock(romParser, speciesId)
                 val stats = com.supermetroid.editor.rom.EnemySpriteGraphics.readSpeciesStats(romParser, speciesId)
                 if (block == null || stats == null) {
-                    println("[EXPORT] WARN: Enemy $speciesHex: could not resolve GRAPHADR or stats — skipped")
+                    editorLog("[EXPORT] WARN: Enemy $speciesHex: could not resolve GRAPHADR or stats — skipped")
                     continue
                 }
                 val tileDataSize = stats.first
                 if (rawBytes.size != tileDataSize) {
-                    println("[EXPORT] WARN: Enemy $speciesHex: raw size ${rawBytes.size} != expected tileDataSize $tileDataSize — skipped")
+                    editorLog("[EXPORT] WARN: Enemy $speciesHex: raw size ${rawBytes.size} != expected tileDataSize $tileDataSize — skipped")
                     continue
                 }
                 if (block.pcAddress + tileDataSize > romData.size) {
-                    println("[EXPORT] WARN: Enemy $speciesHex: write would exceed ROM bounds — skipped")
+                    editorLog("[EXPORT] WARN: Enemy $speciesHex: write would exceed ROM bounds — skipped")
                     continue
                 }
                 System.arraycopy(rawBytes, 0, romData, block.pcAddress, rawBytes.size)
                 gfxPatched++
-                println("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${block.pcAddress.toString(16)} (SNES \$${block.snesAddress.toString(16).uppercase()})")
+                editorLog("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${block.pcAddress.toString(16)} (SNES \$${block.snesAddress.toString(16).uppercase()})")
             } catch (e: Exception) {
-                println("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
+                editorLog("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
             }
         }
 
@@ -4314,13 +4701,13 @@ class EditorState {
             try {
                 val rawBytes = java.util.Base64.getDecoder().decode(b64)
                 if (rawBytes.size != 32) {
-                    println("[EXPORT] WARN: Enemy palette $speciesHex: expected 32 bytes, got ${rawBytes.size} — skipped")
+                    editorLog("[EXPORT] WARN: Enemy palette $speciesHex: expected 32 bytes, got ${rawBytes.size} — skipped")
                     continue
                 }
                 val rom = romParser.getRomData()
                 val headerPc = romParser.snesToPc(com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_AI or speciesId)
                 if (headerPc < 0 || headerPc + 0x0D > rom.size) {
-                    println("[EXPORT] WARN: Enemy palette $speciesHex: invalid species header — skipped")
+                    editorLog("[EXPORT] WARN: Enemy palette $speciesHex: invalid species header — skipped")
                     continue
                 }
                 val palPtr = com.supermetroid.editor.rom.readU16(rom, headerPc + 2)
@@ -4328,14 +4715,14 @@ class EditorState {
                 val palSnes = (aiBank shl 16) or (palPtr and 0xFFFF)
                 val palPc = romParser.snesToPc(palSnes)
                 if (palPc < 0 || palPc + 32 > romData.size) {
-                    println("[EXPORT] WARN: Enemy palette $speciesHex: palette address out of bounds — skipped")
+                    editorLog("[EXPORT] WARN: Enemy palette $speciesHex: palette address out of bounds — skipped")
                     continue
                 }
                 System.arraycopy(rawBytes, 0, romData, palPc, 32)
                 gfxPatched++
-                println("[EXPORT] Patched enemy $speciesHex palette: 32 bytes at PC=0x${palPc.toString(16)} (SNES \$${palSnes.toString(16).uppercase()})")
+                editorLog("[EXPORT] Patched enemy $speciesHex palette: 32 bytes at PC=0x${palPc.toString(16)} (SNES \$${palSnes.toString(16).uppercase()})")
             } catch (e: Exception) {
-                println("[EXPORT] WARN: Enemy palette $speciesHex patch failed: ${e.message}")
+                editorLog("[EXPORT] WARN: Enemy palette $speciesHex patch failed: ${e.message}")
             }
         }
 
@@ -4353,7 +4740,7 @@ class EditorState {
                 romData[offset] = byte
             }
             minimapPatched += edits.size
-            println("Minimap area $area: patched ${edits.size} tiles")
+            editorLog("Minimap area $area: patched ${edits.size} tiles")
         }
 
         // ─── Text edits ────────────────────────────────────────────
@@ -4375,7 +4762,7 @@ class EditorState {
             }
             textPatched++
         }
-        if (textPatched > 0) println("[EXPORT] Patched $textPatched text entries")
+        if (textPatched > 0) editorLog("[EXPORT] Patched $textPatched text entries")
 
         // ─── Custom ASM embedding ─────────────────────────────────────
         // Write custom code bytes to free space in bank $A0 and update
@@ -4408,7 +4795,7 @@ class EditorState {
             freePtr++ // leave 1 byte gap
 
             if (freePtr + codeBytes.size > bankEnd) {
-                println("[EXPORT] WARN: Not enough free space in bank \$A0 for custom ASM ($key)")
+                editorLog("[EXPORT] WARN: Not enough free space in bank \$A0 for custom ASM ($key)")
                 continue
             }
 
@@ -4427,21 +4814,21 @@ class EditorState {
 
             asmPatched++
             val label = entry.label.ifEmpty { fieldName }
-            println("[EXPORT] Custom ASM: $label → \$A0:${newSnesPtr.toString(16).uppercase()} (${codeBytes.size} bytes) for species \$${parts[0]}")
+            editorLog("[EXPORT] Custom ASM: $label → \$A0:${newSnesPtr.toString(16).uppercase()} (${codeBytes.size} bytes) for species \$${parts[0]}")
         }
-        if (asmPatched > 0) println("[EXPORT] Embedded $asmPatched custom ASM routine(s)")
+        if (asmPatched > 0) editorLog("[EXPORT] Embedded $asmPatched custom ASM routine(s)")
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             out.writeBytes(romData)
-            println("Exported (vanilla copy, no edits): ${out.absolutePath}")
+            editorLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
             return out.absolutePath
         }
 
         // ─── Export verification pass ───────────────────────────────
         // Re-read all modified data from the export copy and validate.
-        println("\n=== Export Verification ===")
+        editorLog("\n=== Export Verification ===")
         var verifyErrors = 0
         val exportParser = RomParser(romData)
         for (roomKey in roomsPatched) {
@@ -4465,8 +4852,8 @@ class EditorState {
             }
 
             if (allStateOffsets.size > 1 || distinctLevelPtrs.size > 1 || distinctPlmPtrs.size > 1) {
-                println("Room 0x$roomKey: ${allStateOffsets.size} states, ${distinctLevelPtrs.size} distinct level ptrs, ${distinctPlmPtrs.size} distinct PLM ptrs")
-                for (info in stateInfos) println(info)
+                editorLog("Room 0x$roomKey: ${allStateOffsets.size} states, ${distinctLevelPtrs.size} distinct level ptrs, ${distinctPlmPtrs.size} distinct PLM ptrs")
+                for (info in stateInfos) editorLog(info)
             }
 
             // Verify each distinct level data pointer decompresses correctly
@@ -4475,7 +4862,7 @@ class EditorState {
                 try {
                     val decompressed = exportParser.decompressLZ2(lvlPtr)
                     if (decompressed.isEmpty()) {
-                        println("  ERROR: level data at \$${lvlPtr.toString(16)} decompressed to 0 bytes!")
+                        editorLog("  ERROR: level data at \$${lvlPtr.toString(16)} decompressed to 0 bytes!")
                         verifyErrors++
                     }
                     // Check for door blocks (type 9) and report them
@@ -4489,10 +4876,10 @@ class EditorState {
                         if ((word shr 12) and 0xF == 9) doorBlockCount++
                     }
                     if (doorBlockCount > 0) {
-                        println("  level data \$${lvlPtr.toString(16)}: $doorBlockCount door blocks (type 9)")
+                        editorLog("  level data \$${lvlPtr.toString(16)}: $doorBlockCount door blocks (type 9)")
                     }
                 } catch (e: Exception) {
-                    println("  ERROR: failed to decompress level data at \$${lvlPtr.toString(16)}: ${e.message}")
+                    editorLog("  ERROR: failed to decompress level data at \$${lvlPtr.toString(16)}: ${e.message}")
                     verifyErrors++
                 }
             }
@@ -4503,26 +4890,26 @@ class EditorState {
                 val plms = exportParser.parsePlmSet(plmPtr)
                 val doorCaps = plms.filter { RomParser.doorCapColor(it.id) != null }
                 if (doorCaps.isNotEmpty()) {
-                    println("  PLM set \$${plmPtr.toString(16)}: ${plms.size} entries, ${doorCaps.size} door cap(s):")
+                    editorLog("  PLM set \$${plmPtr.toString(16)}: ${plms.size} entries, ${doorCaps.size} door cap(s):")
                     for (dc in doorCaps) {
                         val name = RomParser.doorCapDisplayName(dc.id) ?: "Unknown"
-                        println("    $name at (${dc.x},${dc.y}) param=0x${dc.param.toString(16)}")
+                        editorLog("    $name at (${dc.x},${dc.y}) param=0x${dc.param.toString(16)}")
                     }
                 }
             }
         }
         if (verifyErrors > 0) {
-            println("EXPORT VERIFICATION: $verifyErrors error(s) found!")
+            editorLog("EXPORT VERIFICATION: $verifyErrors error(s) found!")
         } else {
-            println("EXPORT VERIFICATION: all checks passed")
+            editorLog("EXPORT VERIFICATION: all checks passed")
         }
-        println("=== End Verification ===\n")
+        editorLog("=== End Verification ===\n")
 
         val orig = File(romPath)
         val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
         out.writeBytes(romData)
-        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $gfxPatched gfx)"
-        println(msg)
+        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
+        editorLog(msg)
         postStatus(msg)
         return out.absolutePath
     }
@@ -4541,7 +4928,7 @@ class EditorState {
         val patched = File(smcPath).readBytes()
 
         if (original.size != patched.size) {
-            println("[IPS] ROM size mismatch: ${original.size} vs ${patched.size}")
+            editorLog("[IPS] ROM size mismatch: ${original.size} vs ${patched.size}")
             return null
         }
 
@@ -4550,7 +4937,7 @@ class EditorState {
         val ipsFile = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.ips")
         ipsFile.writeBytes(ipsData)
         val msg = "Exported IPS: ${ipsFile.absolutePath} (${ipsData.size} bytes)"
-        println(msg)
+        editorLog(msg)
         postStatus(msg)
         return ipsFile.absolutePath
     }
