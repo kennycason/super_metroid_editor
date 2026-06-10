@@ -46,7 +46,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         private const val SPECIES_CROCOMIRE = 0xDDBF
         private const val CROCOMIRE_BG2_ORIGIN_X = -0x33
         private const val CROCOMIRE_BG2_ORIGIN_Y = -0x43
-        private const val CROCOMIRE_OAM_TILE_BASE = 0x1A0
+        private const val CROCOMIRE_BG2_ENEMY_TILE_BASE = 0xD0
 
         private val CROCOMIRE_BG2_Y_ADJUST_FRAMES = setOf(
             0xBFC4, 0xBFF6, 0xC028, 0xC05A,
@@ -55,6 +55,36 @@ class BossPoseScanner(private val romParser: RomParser) {
             0xC47A, 0xC4AC, 0xC4DE, 0xC510,
             0xC542
         )
+
+        private val CROCOMIRE_TAIL_TILE_OVERRIDES: Map<Pair<Int, Int>, Int> = crocomireTailTileOverrides()
+
+        private fun crocomireTailTileOverrides(): Map<Pair<Int, Int>, Int> {
+            val overrides = mutableMapOf<Pair<Int, Int>, Int>()
+
+            fun putRun(tilemapSnesAddress: Int, tileStart: Int, rawTileStart: Int, count: Int) {
+                for (i in 0 until count) {
+                    overrides[tilemapSnesAddress to (tileStart + i)] =
+                        CROCOMIRE_BG2_ENEMY_TILE_BASE + rawTileStart + i
+                }
+            }
+
+            // Crocomire's animated tail tilemaps use raw tail strips near $20/$26/$2C,
+            // while the rest of the BG2 body uses the normal physical $D0 VRAM layout.
+            putRun(0xA4D852, 0x140, 0x20, 6)
+            putRun(0xA4D852, 0x150, 0x30, 6)
+
+            putRun(0xA4D876, 0x126, 0x26, 6)
+            putRun(0xA4D876, 0x136, 0x36, 6)
+
+            putRun(0xA4D89A, 0x12C, 0x2C, 4)
+            overrides[0xA4D89A to 0x0C8] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x30
+            overrides[0xA4D89A to 0x0C9] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x31
+            putRun(0xA4D89A, 0x13C, 0x3C, 4)
+            overrides[0xA4D89A to 0x0E7] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x40
+            overrides[0xA4D89A to 0x0E8] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x41
+
+            return overrides
+        }
 
         private val KNOWN_INSTR_LISTS: Map<Int, List<KnownInstrList>> = mapOf(
             // Mother Brain brain (P1) — custom drawing via MotherBrain_DrawBrain
@@ -368,8 +398,8 @@ class BossPoseScanner(private val romParser: RomParser) {
             extendedTilemapOriginY = CROCOMIRE_BG2_ORIGIN_Y - yAdjust,
             wrapExtendedTilemapTilePage = false,
             extendedTilemapsBehindOam = true,
-            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.OR_BASE_LOW_9,
-            oamTileNumberBase = CROCOMIRE_OAM_TILE_BASE
+            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
+            extendedTilemapTileNumberOverrides = CROCOMIRE_TAIL_TILE_OVERRIDES
         )
     }
 

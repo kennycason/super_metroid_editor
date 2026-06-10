@@ -63,7 +63,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val wrapExtendedTilemapTilePage: Boolean = false,
         val extendedTilemapsBehindOam: Boolean = false,
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
-        val oamTileNumberBase: Int = 0
+        val oamTileNumberBase: Int = 0,
+        val extendedTilemapTileNumberOverrides: Map<Pair<Int, Int>, Int> = emptyMap()
     )
 
     enum class OamTileNumberMode {
@@ -558,7 +559,7 @@ class EnemySpritemap(private val romParser: RomParser) {
                 tileLayer[key] = TileDrawCommand(
                     x = x,
                     y = y,
-                    tileNum = extendedTilemapTileNumber(tileWord, options),
+                    tileNum = extendedTilemapTileNumber(tileWord, options, run.child.tilemap.snesAddress),
                     hFlip = (tileWord shr 14) and 1 != 0,
                     vFlip = (tileWord shr 15) and 1 != 0,
                     is16x16 = false
@@ -570,8 +571,13 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     private fun isExtendedTilemapBlank(tileWord: Int): Boolean = (tileWord and 0x03FF) == EXTENDED_TILEMAP_BLANK_TILE
 
-    private fun extendedTilemapTileNumber(tileWord: Int, options: RenderOptions): Int {
+    private fun extendedTilemapTileNumber(
+        tileWord: Int,
+        options: RenderOptions,
+        tilemapSnesAddress: Int
+    ): Int {
         val tileNum = tileWord and 0x03FF
+        options.extendedTilemapTileNumberOverrides[tilemapSnesAddress to tileNum]?.let { return it }
         return if (options.wrapExtendedTilemapTilePage && tileNum in 0x100..0x1FF) {
             tileNum and 0xFF
         } else {

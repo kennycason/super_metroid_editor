@@ -173,9 +173,10 @@ class BossPoseScannerTest {
         assertEquals(-0x43, initialPose.renderOptions.extendedTilemapOriginY)
         assertTrue(!initialPose.renderOptions.wrapExtendedTilemapTilePage,
             "Crocomire BG2 body should use room/enemy VRAM tile indices directly")
-        assertEquals(EnemySpritemap.OamTileNumberMode.OR_BASE_LOW_9, initialPose.renderOptions.oamTileNumberMode,
-            "Crocomire OAM should preserve the game's enemy-set tile base bits")
-        assertEquals(0x1A0, initialPose.renderOptions.oamTileNumberBase)
+        assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, initialPose.renderOptions.oamTileNumberMode,
+            "Crocomire OAM should use physical room VRAM tile IDs shared with the BG2 body")
+        assertEquals(0xF6, initialPose.renderOptions.extendedTilemapTileNumberOverrides[0xA4D876 to 0x126],
+            "Crocomire's moving tail tilemap should resolve through the raw tail strip at tile \$26")
 
         val stepBackPose = poses.find { it.frame.snesAddress == 0xA4BFF6 }
         assertTrue(stepBackPose != null, "Should find Crocomire step-back extended pose")

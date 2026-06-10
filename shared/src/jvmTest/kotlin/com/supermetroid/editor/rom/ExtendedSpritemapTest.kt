@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -176,6 +177,40 @@ class ExtendedSpritemapTest {
     }
 
     @Test
+    fun `extended tilemaps can override tile numbers by tilemap address`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = solidTileData(8)
+        val palette = testPalette()
+        val ext = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(5))),
+                        snesAddress = 0x123456
+                    ),
+                    hitboxPtr = 0
+                )
+            ),
+            snesAddress = 0
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            ext,
+            tileData,
+            palette,
+            EnemySpritemap.RenderOptions(
+                extendedTilemapTileNumberOverrides = mapOf((0x123456 to 5) to 7)
+            )
+        )
+        assertNotNull(rendered, "Tilemap with tile override should render")
+        assertTrue(rendered!!.pixels.all { it == (palette[7] or (0xFF shl 24)) },
+            "The tilemap-specific override should render tile 7 instead of tile 5")
+    }
+
+    @Test
     fun `Crocomire renders BG2 tilemap layer behind OAM`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
@@ -195,11 +230,19 @@ class ExtendedSpritemapTest {
         assertTrue(renderTiles.size > rawEnemyTiles.size,
             "Crocomire pose rendering should include room BG tiles plus injected enemy tiles")
 
-        val injectedStart = 0xD0 * RomConstants.BYTES_PER_4BPP_TILE
-        assertEquals(
-            rawEnemyTiles[0],
-            renderTiles[injectedStart],
-            "Crocomire raw enemy tile 0 should land at VRAM tile \$D0 for BG/OAM rendering"
+        val bgInjectedStart = 0xD0 * RomConstants.BYTES_PER_4BPP_TILE
+        assertArrayEquals(
+            rawEnemyTiles.copyOfRange(0, RomConstants.BYTES_PER_4BPP_TILE),
+            renderTiles.copyOfRange(bgInjectedStart, bgInjectedStart + RomConstants.BYTES_PER_4BPP_TILE),
+            "Crocomire raw enemy tile 0 should land at VRAM tile \$D0 for BG2 rendering"
+        )
+
+        val limbTileStart = 0x12D * RomConstants.BYTES_PER_4BPP_TILE
+        val rawLimbTile = (0x12D - 0xD0) * RomConstants.BYTES_PER_4BPP_TILE
+        assertArrayEquals(
+            rawEnemyTiles.copyOfRange(rawLimbTile, rawLimbTile + RomConstants.BYTES_PER_4BPP_TILE),
+            renderTiles.copyOfRange(limbTileStart, limbTileStart + RomConstants.BYTES_PER_4BPP_TILE),
+            "Crocomire OAM limb tile \$12D should resolve through the shared physical \$D0 VRAM layout"
         )
     }
 
