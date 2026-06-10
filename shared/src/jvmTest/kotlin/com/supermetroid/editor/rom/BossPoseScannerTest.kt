@@ -16,20 +16,19 @@ class BossPoseScannerTest {
     // ─── Pose discovery tests ────────────────────────────────────────
 
     @Test
-    fun `Ridley has compact poses with consistent palette`() {
+    fun `Ridley has extended body poses`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
         val poses = scanner.scanPoses(0xE17F, minEntries = 4)
 
         assertTrue(poses.isNotEmpty(), "Ridley should have poses")
-        assertTrue(poses.size >= 10, "Ridley should have 10+ poses (found ${poses.size})")
-
-        // All poses should use at most 2 palette rows (single-enemy filter)
-        for (pose in poses) {
-            val palRows = pose.spritemap.entries.map { it.palRow }.toSet()
-            assertTrue(palRows.size <= 2,
-                "Pose '${pose.name}' has ${palRows.size} palette rows $palRows — should be <=2 (cross-contamination)")
-        }
+        assertTrue(poses.size >= 6, "Ridley should have multiple extended poses (found ${poses.size})")
+        assertTrue(
+            poses.any { it.frame is EnemySpritemap.RenderableFrame.Extended && it.childCount == 4 },
+            "Ridley should expose real 4-child extended body frames"
+        )
+        assertTrue(poses.all { it.spritemap.entries.isNotEmpty() },
+            "Ridley extended frames should flatten to renderable OAM entries")
     }
 
     @Test
@@ -53,24 +52,25 @@ class BossPoseScannerTest {
     }
 
     @Test
-    fun `Ridley head pose renders with good fill`() {
+    fun `Ridley extended body pose renders with good fill`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
         val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xE17F) ?: return
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xE17F) ?: return
 
-        val poses = scanner.scanPoses(0xE17F, minEntries = 10)
-        // Find the compact head pose (56x56, 15 entries)
-        val headPose = poses.find { it.entryCount == 15 }
-        assertTrue(headPose != null, "Should find Ridley head pose with 15 OAM entries")
+        val poses = scanner.scanPoses(0xE17F, minEntries = 4)
+        val bodyPose = poses.find {
+            it.frame is EnemySpritemap.RenderableFrame.Extended && it.childCount == 4
+        }
+        assertTrue(bodyPose != null, "Should find Ridley 4-part extended body pose")
 
-        val rendered = scanner.renderPose(headPose!!, tileData, palette)
-        assertTrue(rendered != null, "Head pose should render")
-        assertTrue(rendered!!.width <= 60 && rendered.height <= 60,
-            "Head pose should be compact (${rendered.width}x${rendered.height})")
+        val rendered = scanner.renderPose(bodyPose!!, tileData, palette)
+        assertTrue(rendered != null, "Extended body pose should render")
+        assertTrue(rendered!!.width in 32..160 && rendered.height in 32..160,
+            "Extended body should be reasonably bounded (${rendered.width}x${rendered.height})")
 
         val fillPct = rendered.pixels.count { (it ushr 24) > 0 } * 100 / (rendered.width * rendered.height)
-        assertTrue(fillPct >= 30, "Head should have good fill (${fillPct}%)")
+        assertTrue(fillPct >= 10, "Extended body should have visible fill (${fillPct}%)")
     }
 
     // ─── Cross-contamination prevention ──────────────────────────────
@@ -159,6 +159,30 @@ class BossPoseScannerTest {
         assertTrue(poses.isNotEmpty(), "Crocomire should have poses (mouth/claw fragments)")
     }
 
+    @Test
+    fun `Crocomire extended poses use BG2 tilemap placement`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+        val poses = scanner.scanPoses(0xDDBF, minEntries = 3)
+        val initialPose = poses.find { it.frame.snesAddress == 0xA4C2EC }
+        assertTrue(initialPose != null, "Should find Crocomire initial extended pose")
+
+        assertTrue(!initialPose!!.renderOptions.normalizeExtendedTilemaps,
+            "Crocomire BG2 body should render in screen-relative tilemap coordinates")
+        assertEquals(-0x33, initialPose.renderOptions.extendedTilemapOriginX)
+        assertEquals(-0x43, initialPose.renderOptions.extendedTilemapOriginY)
+        assertTrue(!initialPose.renderOptions.wrapExtendedTilemapTilePage,
+            "Crocomire BG2 body should use room/enemy VRAM tile indices directly")
+        assertEquals(EnemySpritemap.OamTileNumberMode.OR_BASE_LOW_9, initialPose.renderOptions.oamTileNumberMode,
+            "Crocomire OAM should preserve the game's enemy-set tile base bits")
+        assertEquals(0x1A0, initialPose.renderOptions.oamTileNumberBase)
+
+        val stepBackPose = poses.find { it.frame.snesAddress == 0xA4BFF6 }
+        assertTrue(stepBackPose != null, "Should find Crocomire step-back extended pose")
+        assertEquals(-0x43 + 2, stepBackPose!!.renderOptions.extendedTilemapOriginY,
+            "Step-back frames should apply Crocomire's per-frame BG2 Y adjustment")
+    }
+
     // ─── Edge cases ──────────────────────────────────────────────────
 
     @Test
@@ -174,7 +198,7 @@ class BossPoseScannerTest {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
         val allPoses = scanner.scanPoses(0xE17F, minEntries = 3)
-        val highPoses = scanner.scanPoses(0xE17F, minEntries = 15)
+        val highPoses = scanner.scanPoses(0xE17F, minEntries = 1000)
         assertTrue(highPoses.size < allPoses.size,
             "Higher minEntries should reduce results (all=${allPoses.size}, high=${highPoses.size})")
     }

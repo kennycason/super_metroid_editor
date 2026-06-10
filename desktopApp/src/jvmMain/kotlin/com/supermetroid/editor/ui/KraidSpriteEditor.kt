@@ -340,15 +340,17 @@ private fun KraidComponentsTab(
                     KraidComponentItem(entity, selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Divider()
-                Spacer(Modifier.height(4.dp))
-                Text("Belly Details (BG2)", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(2.dp))
+                if (KraidSpritemap.BIGSPRMAP_COMPONENTS.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Divider()
+                    Spacer(Modifier.height(4.dp))
+                    Text("Belly Details (BG2)", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
 
-                KraidSpritemap.BIGSPRMAP_COMPONENTS.forEach { def ->
-                    KraidComponentItem(KraidComponent.BigSprmap(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    KraidSpritemap.BIGSPRMAP_COMPONENTS.forEach { def ->
+                        KraidComponentItem(KraidComponent.BigSprmap(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    }
                 }
             } else {
                 Text("Room: \$A59F \u00b7 Tileset: 27 \u00b7 AI: \$A7", fontSize = 9.sp,
@@ -370,15 +372,17 @@ private fun KraidComponentsTab(
                     KraidComponentItem(KraidComponent.Body(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
                 }
 
-                Spacer(Modifier.height(8.dp))
-                Divider()
-                Spacer(Modifier.height(4.dp))
-                Text("Detail Components", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(2.dp))
+                if (KraidSpritemap.BIGSPRMAP_COMPONENTS.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Divider()
+                    Spacer(Modifier.height(4.dp))
+                    Text("Detail Components", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
 
-                KraidSpritemap.BIGSPRMAP_COMPONENTS.forEach { def ->
-                    KraidComponentItem(KraidComponent.BigSprmap(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    KraidSpritemap.BIGSPRMAP_COMPONENTS.forEach { def ->
+                        KraidComponentItem(KraidComponent.BigSprmap(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                    }
                 }
             }
         }

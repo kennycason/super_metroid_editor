@@ -47,34 +47,16 @@ class KraidSpriteTest {
     }
 
     @Test
-    fun `belly details render at correct 16x16 size`() {
-        val rp = loadTestRom() ?: return
-        val kraid = KraidSpritemap(rp)
-        if (!kraid.load()) return
+    fun `kraid detail components do not include phantoon tilemaps`() {
+        val phantoonTilemaps = setOf(
+            0xA7E27E, 0xA7E292, 0xA7E2A6, 0xA7E2BA, 0xA7E2CE,
+            0xA7E2E2, 0xA7E2F6, 0xA7E30A, 0xA7E39A, 0xA7E3B6
+        )
 
-        for (i in 0 until 8) {
-            val def = KraidSpritemap.BIGSPRMAP_COMPONENTS[i]
-            val sprite = kraid.renderBigSprmap(def)
-            assertNotNull(sprite, "${def.name} should render")
-            assertEquals(16, sprite!!.width, "${def.name} width should be 16px")
-            assertEquals(16, sprite.height, "${def.name} height should be 16px")
-            assertTrue(sprite.pixels.any { it != 0 }, "${def.name} should have visible pixels")
-        }
-    }
-
-    @Test
-    fun `feet render at correct 32x16 size`() {
-        val rp = loadTestRom() ?: return
-        val kraid = KraidSpritemap(rp)
-        if (!kraid.load()) return
-
-        for (i in 8..9) {
-            val def = KraidSpritemap.BIGSPRMAP_COMPONENTS[i]
-            val sprite = kraid.renderBigSprmap(def)
-            assertNotNull(sprite, "${def.name} should render")
-            assertEquals(32, sprite!!.width, "${def.name} width should be 32px")
-            assertEquals(16, sprite.height, "${def.name} height should be 16px")
-        }
+        assertTrue(
+            KraidSpritemap.BIGSPRMAP_COMPONENTS.none { it.tilemapSnes in phantoonTilemaps },
+            "Kraid should not expose Phantoon eye/mouth tilemaps as belly or foot details"
+        )
     }
 
     @Test

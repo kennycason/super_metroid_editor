@@ -16,11 +16,10 @@ class RidleySpritemapTest {
         val poses = ridley.loadPoses()
 
         assertTrue(poses.isNotEmpty(), "Should find at least one Ridley pose")
-        assertTrue(poses.size >= 10, "Should find at least 10 poses (found ${poses.size})")
+        assertTrue(poses.size >= 6, "Should find multiple extended poses (found ${poses.size})")
 
-        // Should have at least one large pose (full body or body section)
-        val largePoses = poses.filter { it.entryCount >= 10 }
-        assertTrue(largePoses.isNotEmpty(), "Should have at least one pose with 10+ OAM entries")
+        val extendedPoses = poses.filter { it.frame is EnemySpritemap.RenderableFrame.Extended }
+        assertTrue(extendedPoses.isNotEmpty(), "Should have extended body poses")
     }
 
     @Test
@@ -54,17 +53,14 @@ class RidleySpritemapTest {
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return
         val poses = ridley.loadPoses()
 
-        // A medium pose (body section, not full body) should auto-crop to reasonable sizes
-        val medPose = poses.firstOrNull { it.entryCount in 10..16 } ?: return
-        val assembled = ridley.renderPose(medPose, tileData, palette) ?: return
+        val bodyPose = poses.firstOrNull { it.frame is EnemySpritemap.RenderableFrame.Extended } ?: return
+        val assembled = ridley.renderPose(bodyPose, tileData, palette) ?: return
 
-        // Body sections should be well under 200px after auto-crop
         assertTrue(assembled.width < 200,
-            "Auto-cropped body section should be < 200px wide (was ${assembled.width})")
+            "Auto-cropped body pose should be < 200px wide (was ${assembled.width})")
         assertTrue(assembled.height < 200,
-            "Auto-cropped body section should be < 200px tall (was ${assembled.height})")
+            "Auto-cropped body pose should be < 200px tall (was ${assembled.height})")
 
-        // Fill percentage should be reasonable (> 10%)
         val filled = assembled.pixels.count { (it ushr 24) > 0 }
         val fillPct = (filled * 100) / (assembled.width * assembled.height)
         assertTrue(fillPct > 10,

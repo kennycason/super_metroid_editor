@@ -337,10 +337,11 @@ fun EnemySpriteViewer(
             val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
                 val pal = palette ?: return@remember emptyList()
                 val td = tileData ?: return@remember emptyList()
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
                 val scanner = BossPoseScanner(rp)
                 val poses = scanner.scanPoses(entry.speciesId, minEntries = 3)
                 poses.mapNotNull { pose ->
-                    val rendered = scanner.renderPose(pose, td, pal) ?: return@mapNotNull null
+                    val rendered = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null
                     pose to rendered
                 }
             }
@@ -430,7 +431,13 @@ fun EnemySpriteViewer(
                                 filterQuality = FilterQuality.None
                             )
                         }
-                        Text("${selectedPose.name} — ${selectedPose.entryCount} OAM entries, ${selectedAssembled.width}x${selectedAssembled.height}px",
+                        val poseDetailText = if (selectedPose.tilemapCount > 0) {
+                            "${selectedPose.entryCount} render tiles, ${selectedPose.childCount} children, " +
+                                "${selectedPose.tilemapCount} BG2 tilemaps"
+                        } else {
+                            "${selectedPose.entryCount} OAM entries"
+                        }
+                        Text("${selectedPose.name} — $poseDetailText, ${selectedAssembled.width}x${selectedAssembled.height}px",
                             fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

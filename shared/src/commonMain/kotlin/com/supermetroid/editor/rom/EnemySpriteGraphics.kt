@@ -18,6 +18,10 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         /** @see RomConstants.BYTES_PER_4BPP_TILE */
         const val BYTES_PER_TILE = RomConstants.BYTES_PER_4BPP_TILE
 
+        private const val CROCOMIRE_SPECIES_ID = 0xDDBF
+        private const val CROCOMIRE_TILESET_ID = 0x1B
+        private const val CROCOMIRE_ENEMY_VRAM_TILE_BASE = 0xD0
+
         /**
          * One LZ5-compressed block of sprite tiles in the ROM.
          * @param pcAddress PC offset of compressed data
@@ -244,6 +248,26 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             val rom = romParser.getRomData()
             if (block.pcAddress + tileDataSize > rom.size) return null
             return rom.copyOfRange(block.pcAddress, block.pcAddress + tileDataSize)
+        }
+
+        /**
+         * Build tile data for pose rendering when the game composes sprites from
+         * multiple VRAM sources. Most enemies render directly from their raw enemy
+         * graphics; Crocomire's BG2 body also references room tileset $1B, while
+         * its enemy graphics are injected at VRAM tile $D0.
+         */
+        fun loadEnemyRenderTileData(
+            romParser: RomParser,
+            speciesId: Int,
+            enemyTileData: ByteArray? = null
+        ): ByteArray? {
+            val rawEnemyTiles = enemyTileData ?: loadEnemyTileData(romParser, speciesId) ?: return null
+            if (speciesId != CROCOMIRE_SPECIES_ID) return rawEnemyTiles
+
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return rawEnemyTiles
+            tileGraphics.injectRawTileData(CROCOMIRE_ENEMY_VRAM_TILE_BASE, rawEnemyTiles)
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: rawEnemyTiles
         }
 
         /** Extract a ≤16-color palette from an ARGB pixel array (index 0 = transparent). */

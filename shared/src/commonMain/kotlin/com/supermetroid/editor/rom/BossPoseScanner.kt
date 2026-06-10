@@ -18,7 +18,11 @@ class BossPoseScanner(private val romParser: RomParser) {
     data class BossPose(
         val name: String,
         val spritemap: EnemySpritemap.Spritemap,
-        val entryCount: Int
+        val entryCount: Int,
+        val frame: EnemySpritemap.RenderableFrame = EnemySpritemap.RenderableFrame.Oam(spritemap),
+        val childCount: Int = 1,
+        val tilemapCount: Int = 0,
+        val renderOptions: EnemySpritemap.RenderOptions = EnemySpritemap.RenderOptions()
     )
 
     private val smap = EnemySpritemap(romParser)
@@ -38,6 +42,19 @@ class BossPoseScanner(private val romParser: RomParser) {
          * Sources: ~/code/super_metroid/sm/src/sm_a9.c, sm_aa.c, sm_a6.c
          */
         private data class KnownInstrList(val bank: Int, val ptr: Int, val label: String)
+
+        private const val SPECIES_CROCOMIRE = 0xDDBF
+        private const val CROCOMIRE_BG2_ORIGIN_X = -0x33
+        private const val CROCOMIRE_BG2_ORIGIN_Y = -0x43
+        private const val CROCOMIRE_OAM_TILE_BASE = 0x1A0
+
+        private val CROCOMIRE_BG2_Y_ADJUST_FRAMES = setOf(
+            0xBFC4, 0xBFF6, 0xC028, 0xC05A,
+            0xC08C, 0xC0BE, 0xC0F0, 0xC122,
+            0xC154, 0xC186, 0xC1B8, 0xC1EA,
+            0xC47A, 0xC4AC, 0xC4DE, 0xC510,
+            0xC542
+        )
 
         private val KNOWN_INSTR_LISTS: Map<Int, List<KnownInstrList>> = mapOf(
             // Mother Brain brain (P1) — custom drawing via MotherBrain_DrawBrain
@@ -86,6 +103,45 @@ class BossPoseScanner(private val romParser: RomParser) {
                 KnownInstrList(0xA9, 0x9900, "Walk Bwd 4"),
                 KnownInstrList(0xA9, 0x993A, "Walk Bwd 5"),
             ),
+            // Crocomire — multibox extended spritemaps with BG2 tilemap children.
+            // Source: bank_A4.asm InstList_Crocomire_*.
+            0xDDBF to listOf(
+                KnownInstrList(0xA4, 0xBADE, "Initial"),
+                KnownInstrList(0xA4, 0xBBCE, "Step Forward"),
+                KnownInstrList(0xA4, 0xBC30, "Step Back"),
+                KnownInstrList(0xA4, 0xBC34, "Stepping Back"),
+                KnownInstrList(0xA4, 0xBC56, "Wait Damage"),
+                KnownInstrList(0xA4, 0xBCD8, "Moving Claws"),
+                KnownInstrList(0xA4, 0xBD2A, "Roar"),
+                KnownInstrList(0xA4, 0xBD8E, "Close Mouth"),
+                KnownInstrList(0xA4, 0xBDAE, "Power Bomb Open"),
+                KnownInstrList(0xA4, 0xBDB2, "Power Bomb Half"),
+                KnownInstrList(0xA4, 0xBDB6, "Power Bomb Closed"),
+            ),
+            // Ridley / Ceres Ridley — extended spritemaps composed from legs,
+            // hand, torso, and head/neck OAM spritemaps.
+            // Source: bank_A6.asm InstList_Ridley_*.
+            0xE17F to ridleyInstructionLists(),
+            0xE13F to ridleyInstructionLists(),
+        )
+
+        private fun ridleyInstructionLists(): List<KnownInstrList> = listOf(
+            KnownInstrList(0xA6, 0xE538, "Initial Left"),
+            KnownInstrList(0xA6, 0xE542, "Initial Right"),
+            KnownInstrList(0xA6, 0xE548, "Ceres Lunge Left"),
+            KnownInstrList(0xA6, 0xE576, "Ceres Lunge Right"),
+            KnownInstrList(0xA6, 0xE658, "Retrieve Baby Left"),
+            KnownInstrList(0xA6, 0xE676, "Retrieve Baby Right"),
+            KnownInstrList(0xA6, 0xE690, "Opening Roar Left"),
+            KnownInstrList(0xA6, 0xE6AE, "Opening Roar Right"),
+            KnownInstrList(0xA6, 0xE6C8, "Death Roar Left"),
+            KnownInstrList(0xA6, 0xE6DE, "Death Roar Right"),
+            KnownInstrList(0xA6, 0xE6F0, "Turn Right"),
+            KnownInstrList(0xA6, 0xE706, "Turn Left"),
+            KnownInstrList(0xA6, 0xE73A, "Fireball Left"),
+            KnownInstrList(0xA6, 0xE7B4, "Fireball Right"),
+            KnownInstrList(0xA6, 0xE7AC, "Fireball End Left"),
+            KnownInstrList(0xA6, 0xE820, "Fireball End Right"),
         )
     }
 
@@ -108,7 +164,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         // Strategy 1: Use known instruction lists from decompilation
         val knownLists = KNOWN_INSTR_LISTS[speciesId]
         if (knownLists != null) {
-            return scanKnownInstructionLists(knownLists, tileCount, minEntries)
+            return scanKnownInstructionLists(speciesId, knownLists, minEntries)
         }
 
         // Strategy 2: Fall back to AI bank scan
@@ -119,11 +175,21 @@ class BossPoseScanner(private val romParser: RomParser) {
      * Parse spritemaps from known instruction list addresses.
      */
     private fun scanKnownInstructionLists(
+        speciesId: Int,
         lists: List<KnownInstrList>,
-        tileCount: Int,
         minEntries: Int
     ): List<BossPose> {
-        val allSpritemaps = mutableListOf<Pair<String, EnemySpritemap.Spritemap>>()
+        data class Candidate(
+            val label: String,
+            val spritemap: EnemySpritemap.Spritemap,
+            val frame: EnemySpritemap.RenderableFrame,
+            val entryCount: Int,
+            val childCount: Int,
+            val tilemapCount: Int,
+            val renderOptions: EnemySpritemap.RenderOptions
+        )
+
+        val allFrames = mutableListOf<Candidate>()
         val seenAddrs = mutableSetOf<Int>()
 
         for (instrList in lists) {
@@ -146,8 +212,10 @@ class BossPoseScanner(private val romParser: RomParser) {
                 seenAddrs.add(word1)
 
                 val smapSnes = (instrList.bank shl 16) or word1
-                val parsed = smap.parseSpritemap(smapSnes) ?: continue
-                if (parsed.entries.size < minEntries) continue
+                val frame = smap.parseRenderableFrame(smapSnes) ?: continue
+                val parsed = smap.flattenRenderableFrame(frame)
+                val entryCount = renderableEntryCount(frame, parsed)
+                if (entryCount < minEntries) continue
 
                 // For known instruction lists, use relaxed tile validation (256 max)
                 // since multi-entity bosses share VRAM space (e.g., MB body uses tiles 128+
@@ -156,22 +224,39 @@ class BossPoseScanner(private val romParser: RomParser) {
                 val hasOutOfRange = parsed.entries.any { (it.tileNum and 0xFF) >= maxTile }
                 if (hasOutOfRange) continue
 
-                allSpritemaps.add(instrList.label to parsed)
+                allFrames.add(
+                    Candidate(
+                        label = instrList.label,
+                        spritemap = parsed,
+                        frame = frame,
+                        entryCount = entryCount,
+                        childCount = renderableChildCount(frame),
+                        tilemapCount = renderableTilemapCount(frame),
+                        renderOptions = renderOptionsForKnownFrame(speciesId, frame)
+                    )
+                )
             }
         }
 
-        // Deduplicate by OAM entry content
-        val uniquePoses = allSpritemaps.distinctBy { (_, sm) ->
-            sm.entries.map { e -> "${e.tileNum}_${e.xOffset}_${e.yOffset}" }.joinToString("|")
-        }
+        // Deduplicate by source frame address first. Extended bosses often reuse
+        // the exact same frame from several instruction lists.
+        val uniquePoses = allFrames.distinctBy { it.frame.snesAddress }
 
-        return uniquePoses.mapIndexed { idx, (label, sm) ->
+        return uniquePoses.mapIndexed { idx, candidate ->
             val name = when {
-                sm.entries.size >= 15 -> "$label ${idx + 1}"
-                sm.entries.size >= 8 -> "$label ${idx + 1}"
-                else -> "$label ${idx + 1}"
+                candidate.entryCount >= 15 -> "${candidate.label} ${idx + 1}"
+                candidate.entryCount >= 8 -> "${candidate.label} ${idx + 1}"
+                else -> "${candidate.label} ${idx + 1}"
             }
-            BossPose(name, sm, sm.entries.size)
+            BossPose(
+                name = name,
+                spritemap = candidate.spritemap,
+                entryCount = candidate.entryCount,
+                frame = candidate.frame,
+                childCount = candidate.childCount,
+                tilemapCount = candidate.tilemapCount,
+                renderOptions = candidate.renderOptions
+            )
         }
     }
 
@@ -258,8 +343,62 @@ class BossPoseScanner(private val romParser: RomParser) {
         tileData: ByteArray,
         palette: IntArray
     ): EnemySpritemap.AssembledSprite? {
-        val assembled = smap.renderSpritemap(pose.spritemap, tileData, palette) ?: return null
+        val assembled = smap.renderRenderableFrame(pose.frame, tileData, palette, pose.renderOptions) ?: return null
         return autoCrop(assembled, pose.spritemap)
+    }
+
+    private fun renderOptionsForKnownFrame(
+        speciesId: Int,
+        frame: EnemySpritemap.RenderableFrame
+    ): EnemySpritemap.RenderOptions {
+        if (speciesId != SPECIES_CROCOMIRE || frame !is EnemySpritemap.RenderableFrame.Extended) {
+            return EnemySpritemap.RenderOptions()
+        }
+
+        val framePtr = frame.spritemap.snesAddress and 0xFFFF
+        val yAdjust = if (framePtr in CROCOMIRE_BG2_Y_ADJUST_FRAMES) {
+            readS16OrZero(frame.spritemap.snesAddress + 0x1C)
+        } else {
+            0
+        }
+
+        return EnemySpritemap.RenderOptions(
+            normalizeExtendedTilemaps = false,
+            extendedTilemapOriginX = CROCOMIRE_BG2_ORIGIN_X,
+            extendedTilemapOriginY = CROCOMIRE_BG2_ORIGIN_Y - yAdjust,
+            wrapExtendedTilemapTilePage = false,
+            extendedTilemapsBehindOam = true,
+            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.OR_BASE_LOW_9,
+            oamTileNumberBase = CROCOMIRE_OAM_TILE_BASE
+        )
+    }
+
+    private fun renderableEntryCount(
+        frame: EnemySpritemap.RenderableFrame,
+        flattened: EnemySpritemap.Spritemap
+    ): Int {
+        return when (frame) {
+            is EnemySpritemap.RenderableFrame.Oam -> flattened.entries.size
+            is EnemySpritemap.RenderableFrame.Extended ->
+                flattened.entries.size + frame.spritemap.children
+                    .filterIsInstance<EnemySpritemap.ExtendedChild.Tilemap>()
+                    .sumOf { it.tilemap.tileCount }
+        }
+    }
+
+    private fun renderableChildCount(frame: EnemySpritemap.RenderableFrame): Int {
+        return when (frame) {
+            is EnemySpritemap.RenderableFrame.Oam -> 1
+            is EnemySpritemap.RenderableFrame.Extended -> frame.spritemap.children.size
+        }
+    }
+
+    private fun renderableTilemapCount(frame: EnemySpritemap.RenderableFrame): Int {
+        return when (frame) {
+            is EnemySpritemap.RenderableFrame.Oam -> 0
+            is EnemySpritemap.RenderableFrame.Extended ->
+                frame.spritemap.children.count { it is EnemySpritemap.ExtendedChild.Tilemap }
+        }
     }
 
     private fun autoCrop(
@@ -327,5 +466,12 @@ class BossPoseScanner(private val romParser: RomParser) {
 
     private fun readU16(data: ByteArray, offset: Int): Int {
         return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun readS16OrZero(snesAddr: Int): Int {
+        val pc = romParser.snesToPc(snesAddr)
+        if (pc < 0 || pc + 2 > rom.size) return 0
+        val word = readU16(rom, pc)
+        return if (word >= 0x8000) word - 0x10000 else word
     }
 }
