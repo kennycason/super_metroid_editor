@@ -63,7 +63,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val wrapExtendedTilemapTilePage: Boolean = false,
         val extendedTilemapsBehindOam: Boolean = false,
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
-        val oamTileNumberBase: Int = 0
+        val oamTileNumberBase: Int = 0,
+        val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
     )
 
     enum class OamTileNumberMode {
@@ -567,7 +568,7 @@ class EnemySpritemap(private val romParser: RomParser) {
             for ((idx, tileWord) in run.run.tiles.withIndex()) {
                 val x = startX + idx * 8
                 val key = x to y
-                if (isExtendedTilemapBlank(tileWord)) {
+                if (isExtendedTilemapBlank(tileWord, options)) {
                     tileLayer.remove(key)
                     continue
                 }
@@ -584,7 +585,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         return tileLayer.values.toList()
     }
 
-    private fun isExtendedTilemapBlank(tileWord: Int): Boolean = (tileWord and 0x03FF) == EXTENDED_TILEMAP_BLANK_TILE
+    private fun isExtendedTilemapBlank(tileWord: Int, options: RenderOptions): Boolean =
+        (tileWord and 0x03FF) in options.extendedTilemapBlankTiles
 
     private fun extendedTilemapTileNumber(
         tileWord: Int,
@@ -755,7 +757,6 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     private companion object {
         const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
-        const val EXTENDED_TILEMAP_BLANK_TILE = 0x0338
     }
 
     private fun readS16(data: ByteArray, offset: Int): Int {

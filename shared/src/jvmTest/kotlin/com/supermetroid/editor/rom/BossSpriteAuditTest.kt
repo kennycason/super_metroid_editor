@@ -171,7 +171,8 @@ class BossSpriteAuditTest {
 
         for ((speciesId, name) in bosses) {
             val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: continue
-            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: continue
+            val rawTileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: continue
+            val tileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, speciesId, rawTileData) ?: rawTileData
 
             val poses = scanner.scanPoses(speciesId, minEntries = 3)
 

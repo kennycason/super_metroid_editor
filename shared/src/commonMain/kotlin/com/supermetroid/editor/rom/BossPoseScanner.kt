@@ -30,16 +30,25 @@ class BossPoseScanner(private val romParser: RomParser) {
         val renderOptions: EnemySpritemap.RenderOptions = EnemySpritemap.RenderOptions(),
         val durationTicks: Int = 1,
         val tileDataVariant: TileDataVariant = TileDataVariant.DEFAULT,
-        val usesCrocomireBgTileData: Boolean = false
+        val usesCrocomireBgTileData: Boolean = false,
+        val usesDraygonBgTileData: Boolean = false,
+        val compositeParts: List<CompositePart> = emptyList()
+    )
+
+    data class CompositePart(
+        val frame: EnemySpritemap.RenderableFrame,
+        val renderOptions: EnemySpritemap.RenderOptions = EnemySpritemap.RenderOptions()
     )
 
     private val smap = EnemySpritemap(romParser)
     private val rom = romParser.getRomData()
     private var crocomireRoomTileDataCache: ByteArray? = null
+    private var draygonRoomTileDataCache: ByteArray? = null
 
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
-        fun hasKnownPoses(speciesId: Int): Boolean = KNOWN_INSTR_LISTS.containsKey(speciesId)
+        fun hasKnownPoses(speciesId: Int): Boolean =
+            speciesId == SPECIES_DRAYGON_BODY || KNOWN_INSTR_LISTS.containsKey(speciesId)
 
         /**
          * Known instruction list addresses from the SM decompilation.
@@ -53,8 +62,20 @@ class BossPoseScanner(private val romParser: RomParser) {
         private data class KnownInstrList(val bank: Int, val ptr: Int, val label: String)
 
         private const val SPECIES_CROCOMIRE = 0xDDBF
+        private const val SPECIES_DRAYGON_BODY = 0xDE3F
+        private const val SPECIES_DRAYGON_EYE = 0xDE7F
+        private const val SPECIES_DRAYGON_TAIL = 0xDEBF
+        private const val SPECIES_DRAYGON_ARMS = 0xDEFF
+        private val DRAYGON_SPECIES_IDS = setOf(
+            SPECIES_DRAYGON_BODY,
+            SPECIES_DRAYGON_EYE,
+            SPECIES_DRAYGON_TAIL,
+            SPECIES_DRAYGON_ARMS
+        )
         private const val CROCOMIRE_BG2_ORIGIN_X = -0x33
         private const val CROCOMIRE_BG2_ORIGIN_Y = -0x43
+        private const val DRAYGON_BG2_ORIGIN_X = -0x3E
+        private const val DRAYGON_BG2_ORIGIN_Y = -0x40
         private const val INSTRUCTION_COMMON_GOTO_Y = 0x80ED
         private const val INSTRUCTION_COMMON_SLEEP = 0x812F
         private val CROCOMIRE_SKELETON_INSTR_LISTS = setOf(0xE14A, 0xE158, 0xE1C6, 0xE1CC, 0xE1D2)
@@ -139,6 +160,11 @@ class BossPoseScanner(private val romParser: RomParser) {
             // Source: bank_A6.asm InstList_Ridley_*.
             0xE17F to ridleyInstructionLists(),
             0xE13F to ridleyInstructionLists(),
+            // Draygon sub-entities. The body is handled by a composite scanner
+            // because vanilla sets body/eye/tail/arms instruction lists together.
+            SPECIES_DRAYGON_EYE to draygonEyeInstructionLists(),
+            SPECIES_DRAYGON_TAIL to draygonTailInstructionLists(),
+            SPECIES_DRAYGON_ARMS to draygonArmsInstructionLists(),
         )
 
         private fun ridleyInstructionLists(): List<KnownInstrList> = listOf(
@@ -159,6 +185,49 @@ class BossPoseScanner(private val romParser: RomParser) {
             KnownInstrList(0xA6, 0xE7AC, "Fireball End Left"),
             KnownInstrList(0xA6, 0xE820, "Fireball End Right"),
         )
+
+        private fun draygonEyeInstructionLists(): List<KnownInstrList> = listOf(
+            KnownInstrList(0xA5, 0x9944, "Eye Left Idle"),
+            KnownInstrList(0xA5, 0x997A, "Eye Left Dying"),
+            KnownInstrList(0xA5, 0x999C, "Eye Left Dead"),
+            KnownInstrList(0xA5, 0x99AE, "Eye Left Looking Left"),
+            KnownInstrList(0xA5, 0x99B4, "Eye Left Looking Right"),
+            KnownInstrList(0xA5, 0x99BA, "Eye Left Looking Up"),
+            KnownInstrList(0xA5, 0x99C0, "Eye Left Looking Down"),
+            KnownInstrList(0xA5, 0x9CD6, "Eye Right Idle"),
+            KnownInstrList(0xA5, 0x9D1C, "Eye Right Dying"),
+            KnownInstrList(0xA5, 0x9D3E, "Eye Right Dead"),
+            KnownInstrList(0xA5, 0x9D50, "Eye Right Looking Right"),
+            KnownInstrList(0xA5, 0x9D56, "Eye Right Looking Left"),
+            KnownInstrList(0xA5, 0x9D5C, "Eye Right Looking Up"),
+            KnownInstrList(0xA5, 0x9D62, "Eye Right Looking Down"),
+        )
+
+        private fun draygonTailInstructionLists(): List<KnownInstrList> = listOf(
+            KnownInstrList(0xA5, 0x99C6, "Tail Left Idle"),
+            KnownInstrList(0xA5, 0x99FC, "Tail Left Fake Whip"),
+            KnownInstrList(0xA5, 0x9A68, "Tail Left Final Whips"),
+            KnownInstrList(0xA5, 0x9AE8, "Tail Left Whip"),
+            KnownInstrList(0xA5, 0x9B5A, "Tail Left Flail"),
+            KnownInstrList(0xA5, 0x9D68, "Tail Right Idle"),
+            KnownInstrList(0xA5, 0x9D9E, "Tail Right Fake Whip"),
+            KnownInstrList(0xA5, 0x9E21, "Tail Right Final Whips"),
+            KnownInstrList(0xA5, 0x9EA1, "Tail Right Whip"),
+            KnownInstrList(0xA5, 0x9F15, "Tail Right Flail"),
+        )
+
+        private fun draygonArmsInstructionLists(): List<KnownInstrList> = listOf(
+            KnownInstrList(0xA5, 0x97E7, "Arms Left Idle"),
+            KnownInstrList(0xA5, 0x9813, "Arms Left Near Apex"),
+            KnownInstrList(0xA5, 0x9825, "Arms Left Fake Grab"),
+            KnownInstrList(0xA5, 0x9845, "Arms Left Grab"),
+            KnownInstrList(0xA5, 0x9867, "Arms Left Dying"),
+            KnownInstrList(0xA5, 0x9BDA, "Arms Right Idle"),
+            KnownInstrList(0xA5, 0x9C06, "Arms Right Near Apex"),
+            KnownInstrList(0xA5, 0x9C18, "Arms Right Fake Grab"),
+            KnownInstrList(0xA5, 0x9C38, "Arms Right Grab"),
+            KnownInstrList(0xA5, 0x9C5A, "Arms Right Dying"),
+        )
     }
 
     /**
@@ -176,6 +245,10 @@ class BossPoseScanner(private val romParser: RomParser) {
         val aiBank = rom[headerPc + 0x0C].toInt() and 0xFF
         val rawTileSize = readU16(rom, headerPc)
         val tileCount = (rawTileSize and 0x7FFF) / 32
+
+        if (speciesId == SPECIES_DRAYGON_BODY) {
+            return scanDraygonCompositePoses(minEntries)
+        }
 
         // Strategy 1: Use known instruction lists from decompilation
         val knownLists = KNOWN_INSTR_LISTS[speciesId]
@@ -205,7 +278,8 @@ class BossPoseScanner(private val romParser: RomParser) {
             val renderOptions: EnemySpritemap.RenderOptions,
             val durationTicks: Int,
             val tileDataVariant: TileDataVariant,
-            val usesCrocomireBgTileData: Boolean
+            val usesCrocomireBgTileData: Boolean,
+            val usesDraygonBgTileData: Boolean
         )
 
         val allFrames = mutableListOf<Candidate>()
@@ -256,6 +330,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                         durationTicks = word0,
                         tileDataVariant = tileDataVariantForKnownFrame(speciesId, instrList),
                         usesCrocomireBgTileData = speciesId == SPECIES_CROCOMIRE &&
+                            frame is EnemySpritemap.RenderableFrame.Extended,
+                        usesDraygonBgTileData = speciesId in DRAYGON_SPECIES_IDS &&
                             frame is EnemySpritemap.RenderableFrame.Extended
                     )
                 )
@@ -282,9 +358,176 @@ class BossPoseScanner(private val romParser: RomParser) {
                 renderOptions = candidate.renderOptions,
                 durationTicks = candidate.durationTicks,
                 tileDataVariant = candidate.tileDataVariant,
-                usesCrocomireBgTileData = candidate.usesCrocomireBgTileData
+                usesCrocomireBgTileData = candidate.usesCrocomireBgTileData,
+                usesDraygonBgTileData = candidate.usesDraygonBgTileData
             )
         }
+    }
+
+    private fun scanDraygonCompositePoses(minEntries: Int): List<BossPose> {
+        val poses = mutableListOf<BossPose>()
+
+        val leftEyeIdle = intArrayOf(
+            0xA5A36B, 0xA5A375, 0xA5A37F, 0xA5A375,
+            0xA5A393, 0xA5A393, 0xA5A3A7, 0xA5A3A7,
+            0xA5A3B1, 0xA5A37F, 0xA5A375, 0xA5A36B
+        )
+        val leftTailIdle = intArrayOf(
+            0xA5A40B, 0xA5A41D, 0xA5A42F, 0xA5A441,
+            0xA5A453, 0xA5A465, 0xA5A477, 0xA5A465,
+            0xA5A453, 0xA5A441, 0xA5A42F, 0xA5A41D
+        )
+        val leftArmsIdle = intArrayOf(
+            0xA5A2DF, 0xA5A2E9, 0xA5A2F3, 0xA5A2FD, 0xA5A307, 0xA5A311
+        )
+
+        val rightEyeIdle = intArrayOf(
+            0xA5A693, 0xA5A69D, 0xA5A6A7, 0xA5A69D,
+            0xA5A6BB, 0xA5A6BB, 0xA5A6CF, 0xA5A6CF,
+            0xA5A6D9, 0xA5A6A7, 0xA5A69D, 0xA5A693
+        )
+        val rightTailIdle = intArrayOf(
+            0xA5A779, 0xA5A78B, 0xA5A79D, 0xA5A7AF,
+            0xA5A7C1, 0xA5A7D3, 0xA5A7E5, 0xA5A7D3,
+            0xA5A7C1, 0xA5A7AF, 0xA5A79D, 0xA5A78B
+        )
+        val rightArmsIdle = intArrayOf(
+            0xA5A607, 0xA5A611, 0xA5A61B, 0xA5A625, 0xA5A62F, 0xA5A639
+        )
+
+        for (i in leftEyeIdle.indices) {
+            createDraygonCompositePose(
+                label = "Idle Left ${i + 1}",
+                durationTicks = if (i == 0) 8 else 6,
+                frameAddresses = listOf(
+                    0xA5A3BB,
+                    leftEyeIdle[i],
+                    leftTailIdle[i],
+                    leftArmsIdle[i % leftArmsIdle.size]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        for (i in rightEyeIdle.indices) {
+            createDraygonCompositePose(
+                label = "Idle Right ${i + 1}",
+                durationTicks = if (i == 0) 8 else 6,
+                frameAddresses = listOf(
+                    0xA5A6E3,
+                    rightEyeIdle[i],
+                    rightTailIdle[i],
+                    rightArmsIdle[i % rightArmsIdle.size]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        val leftMouth = intArrayOf(0xA5A343, 0xA5A34D, 0xA5A357, 0xA5A361, 0xA5A357, 0xA5A34D, 0xA5A343)
+        for (i in leftMouth.indices) {
+            createDraygonCompositePose(
+                label = "Roar Left ${i + 1}",
+                durationTicks = 6,
+                frameAddresses = listOf(
+                    0xA5A3BB,
+                    leftMouth[i],
+                    leftEyeIdle[0],
+                    leftTailIdle[0],
+                    leftArmsIdle[0]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        val rightMouth = intArrayOf(0xA5A66B, 0xA5A675, 0xA5A67F, 0xA5A689, 0xA5A67F, 0xA5A675, 0xA5A66B)
+        for (i in rightMouth.indices) {
+            createDraygonCompositePose(
+                label = "Roar Right ${i + 1}",
+                durationTicks = 6,
+                frameAddresses = listOf(
+                    0xA5A6E3,
+                    rightMouth[i],
+                    rightEyeIdle[0],
+                    rightTailIdle[0],
+                    rightArmsIdle[0]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        val leftTailWhip = intArrayOf(
+            0xA5A42F, 0xA5A489, 0xA5A4A3, 0xA5A4C5,
+            0xA5A4EF, 0xA5A521, 0xA5A55B, 0xA5A59D,
+            0xA5A55B, 0xA5A521, 0xA5A4EF, 0xA5A4C5, 0xA5A4A3, 0xA5A489
+        )
+        for (i in leftTailWhip.indices) {
+            createDraygonCompositePose(
+                label = "Tail Whip Left ${i + 1}",
+                durationTicks = if (i < 7) maxOf(1, 7 - i) else minOf(6, i - 6),
+                frameAddresses = listOf(
+                    0xA5A3BB,
+                    leftEyeIdle[0],
+                    leftTailWhip[i],
+                    leftArmsIdle[0]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        val rightTailWhip = intArrayOf(
+            0xA5A79D, 0xA5A7F7, 0xA5A811, 0xA5A833,
+            0xA5A85D, 0xA5A88F, 0xA5A8C9, 0xA5A90B,
+            0xA5A8C9, 0xA5A88F, 0xA5A85D, 0xA5A833, 0xA5A811, 0xA5A7F7
+        )
+        for (i in rightTailWhip.indices) {
+            createDraygonCompositePose(
+                label = "Tail Whip Right ${i + 1}",
+                durationTicks = if (i < 7) maxOf(1, 7 - i) else minOf(6, i - 6),
+                frameAddresses = listOf(
+                    0xA5A6E3,
+                    rightEyeIdle[0],
+                    rightTailWhip[i],
+                    rightArmsIdle[0]
+                ),
+                minEntries = minEntries
+            )?.let { poses.add(it) }
+        }
+
+        return poses.distinctBy { pose ->
+            pose.compositeParts.joinToString("|") { it.frame.snesAddress.toString(16) }
+        }
+    }
+
+    private fun createDraygonCompositePose(
+        label: String,
+        durationTicks: Int,
+        frameAddresses: List<Int>,
+        minEntries: Int
+    ): BossPose? {
+        val parts = frameAddresses.map { addr ->
+            val frame = smap.parseRenderableFrame(addr) ?: return null
+            CompositePart(frame, draygonRenderOptions(frame))
+        }
+        val flattenedEntries = parts.flatMap { smap.flattenRenderableFrame(it.frame).entries }
+        val combinedSpritemap = EnemySpritemap.Spritemap(flattenedEntries, parts.first().frame.snesAddress)
+        val entryCount = parts.sumOf { part ->
+            val flattened = smap.flattenRenderableFrame(part.frame)
+            renderableEntryCount(part.frame, flattened)
+        }
+        if (entryCount < minEntries) return null
+
+        return BossPose(
+            name = label,
+            spritemap = combinedSpritemap,
+            entryCount = entryCount,
+            frame = parts.first().frame,
+            childCount = parts.sumOf { renderableChildCount(it.frame) },
+            tilemapCount = parts.sumOf { renderableTilemapCount(it.frame) },
+            renderOptions = draygonRenderOptions(parts.first().frame),
+            durationTicks = durationTicks,
+            usesDraygonBgTileData = true,
+            compositeParts = parts
+        )
     }
 
     /**
@@ -375,10 +618,22 @@ class BossPoseScanner(private val romParser: RomParser) {
             TileDataVariant.CROCOMIRE_SKELETON ->
                 EnemySpriteGraphics.applyCrocomireSkeletonTileData(romParser, tileData) ?: tileData
         }
-        val bgTileData = if (pose.usesCrocomireBgTileData) {
-            crocomireRoomTileData()
-        } else {
-            null
+        val bgTileData = when {
+            pose.usesCrocomireBgTileData -> crocomireRoomTileData()
+            pose.usesDraygonBgTileData -> draygonRoomTileData()
+            else -> null
+        }
+        if (pose.compositeParts.isNotEmpty()) {
+            val sprites = pose.compositeParts.mapNotNull { part ->
+                smap.renderRenderableFrame(
+                    part.frame,
+                    renderTileData,
+                    palette,
+                    part.renderOptions,
+                    extendedTilemapTileData = bgTileData
+                )
+            }
+            return composeAssembledSprites(sprites, pose.spritemap)
         }
         val assembled = smap.renderRenderableFrame(
             pose.frame,
@@ -398,6 +653,14 @@ class BossPoseScanner(private val romParser: RomParser) {
         return loaded
     }
 
+    private fun draygonRoomTileData(): ByteArray? {
+        val cached = draygonRoomTileDataCache
+        if (cached != null) return cached
+        val loaded = EnemySpriteGraphics.loadDraygonRoomTileData(romParser)
+        draygonRoomTileDataCache = loaded
+        return loaded
+    }
+
     private fun tileDataVariantForKnownFrame(
         speciesId: Int,
         instrList: KnownInstrList
@@ -413,6 +676,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         speciesId: Int,
         frame: EnemySpritemap.RenderableFrame
     ): EnemySpritemap.RenderOptions {
+        if (speciesId in setOf(SPECIES_DRAYGON_EYE, SPECIES_DRAYGON_TAIL, SPECIES_DRAYGON_ARMS)) {
+            return draygonRenderOptions(frame)
+        }
         if (speciesId != SPECIES_CROCOMIRE || frame !is EnemySpritemap.RenderableFrame.Extended) {
             return EnemySpritemap.RenderOptions()
         }
@@ -428,6 +694,22 @@ class BossPoseScanner(private val romParser: RomParser) {
             normalizeExtendedTilemaps = false,
             extendedTilemapOriginX = CROCOMIRE_BG2_ORIGIN_X,
             extendedTilemapOriginY = CROCOMIRE_BG2_ORIGIN_Y - yAdjust,
+            wrapExtendedTilemapTilePage = false,
+            extendedTilemapsBehindOam = true,
+            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
+            extendedTilemapBlankTiles = setOf(0x0338, 0x0147, 0x02FF)
+        )
+    }
+
+    private fun draygonRenderOptions(
+        frame: EnemySpritemap.RenderableFrame
+    ): EnemySpritemap.RenderOptions {
+        val hasTilemap = frame is EnemySpritemap.RenderableFrame.Extended &&
+            frame.spritemap.children.any { it is EnemySpritemap.ExtendedChild.Tilemap }
+        return EnemySpritemap.RenderOptions(
+            normalizeExtendedTilemaps = !hasTilemap,
+            extendedTilemapOriginX = DRAYGON_BG2_ORIGIN_X,
+            extendedTilemapOriginY = DRAYGON_BG2_ORIGIN_Y,
             wrapExtendedTilemapTilePage = false,
             extendedTilemapsBehindOam = true,
             oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9
@@ -504,6 +786,51 @@ class BossPoseScanner(private val romParser: RomParser) {
             cropW, cropH, cropped,
             assembled.originX - cropMinX,
             assembled.originY - cropMinY,
+            spritemap
+        )
+    }
+
+    private fun composeAssembledSprites(
+        sprites: List<EnemySpritemap.AssembledSprite>,
+        spritemap: EnemySpritemap.Spritemap
+    ): EnemySpritemap.AssembledSprite? {
+        if (sprites.isEmpty()) return null
+
+        val minX = sprites.minOf { -it.originX }
+        val minY = sprites.minOf { -it.originY }
+        val maxX = sprites.maxOf { it.width - it.originX }
+        val maxY = sprites.maxOf { it.height - it.originY }
+        val w = maxX - minX
+        val h = maxY - minY
+        if (w <= 0 || h <= 0) return null
+
+        val pixels = IntArray(w * h)
+        for (sprite in sprites) {
+            for (y in 0 until sprite.height) {
+                val globalY = y - sprite.originY
+                val dy = globalY - minY
+                if (dy !in 0 until h) continue
+                for (x in 0 until sprite.width) {
+                    val argb = sprite.pixels[y * sprite.width + x]
+                    if ((argb ushr 24) == 0) continue
+                    val globalX = x - sprite.originX
+                    val dx = globalX - minX
+                    if (dx in 0 until w) {
+                        pixels[dy * w + dx] = argb
+                    }
+                }
+            }
+        }
+
+        return autoCrop(
+            EnemySpritemap.AssembledSprite(
+                width = w,
+                height = h,
+                pixels = pixels,
+                originX = -minX,
+                originY = -minY,
+                spritemap = spritemap
+            ),
             spritemap
         )
     }

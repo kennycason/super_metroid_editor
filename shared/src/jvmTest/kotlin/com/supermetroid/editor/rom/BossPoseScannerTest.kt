@@ -207,6 +207,50 @@ class BossPoseScannerTest {
             "Skeleton pose should render as a substantial corpse/skeleton assembly")
     }
 
+    @Test
+    fun `Draygon body poses compose body eye tail and arms`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xDE3F) ?: return
+        val rawTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDE3F) ?: return
+        val renderTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDE3F, rawTiles) ?: return
+
+        val poses = scanner.scanPoses(0xDE3F, minEntries = 3)
+        assertTrue(poses.size >= 12, "Draygon should expose composite idle poses")
+
+        val idle = poses.firstOrNull { it.name == "Idle Left 1" }
+        assertNotNull(idle, "Draygon should include a left-facing full idle pose")
+        assertEquals(4, idle!!.compositeParts.size,
+            "Idle Draygon should compose body, eye, tail, and arms")
+        assertTrue(idle.tilemapCount >= 2,
+            "Idle Draygon should include body and eye BG2 tilemaps")
+        assertTrue(idle.childCount >= 5,
+            "Idle Draygon should include multibox children from all parts")
+
+        val rendered = scanner.renderPose(idle, renderTiles, palette)
+        assertNotNull(rendered, "Composite Draygon pose should render")
+        assertTrue(rendered!!.width >= 96 && rendered.height >= 96,
+            "Composite Draygon should be a large boss assembly (${rendered.width}x${rendered.height})")
+        assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 1000,
+            "Composite Draygon should have substantial visible pixels")
+    }
+
+    @Test
+    fun `Draygon composite poses use vanilla BG2 origin and low9 sprite tile numbers`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+        val pose = scanner.scanPoses(0xDE3F, minEntries = 3).firstOrNull { it.name == "Idle Left 1" }
+        assertNotNull(pose, "Should find Draygon left idle pose")
+
+        val bodyPart = pose!!.compositeParts.first()
+        assertTrue(!bodyPart.renderOptions.normalizeExtendedTilemaps,
+            "Draygon body tilemap should render in BG2 tilemap coordinates")
+        assertEquals(-0x3E, bodyPart.renderOptions.extendedTilemapOriginX)
+        assertEquals(-0x40, bodyPart.renderOptions.extendedTilemapOriginY)
+        assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, bodyPart.renderOptions.oamTileNumberMode,
+            "Draygon OAM children should use physical low-9-bit tile IDs")
+    }
+
     // ─── Edge cases ──────────────────────────────────────────────────
 
     @Test

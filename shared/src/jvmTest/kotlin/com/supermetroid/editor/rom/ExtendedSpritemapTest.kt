@@ -177,6 +177,42 @@ class ExtendedSpritemapTest {
     }
 
     @Test
+    fun `extended tilemaps can use boss-specific blank filler tiles`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = solidTileData(0x200)
+        val palette = testPalette()
+        val ext = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(
+                            EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(0x0147)),
+                            EnemySpritemap.ExtendedTilemapRun(0x2002, listOf(2))
+                        ),
+                        snesAddress = 0
+                    ),
+                    hitboxPtr = 0
+                )
+            ),
+            snesAddress = 0
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            ext,
+            tileData,
+            palette,
+            EnemySpritemap.RenderOptions(extendedTilemapBlankTiles = setOf(0x0147))
+        )
+        assertNotNull(rendered, "Tilemap with custom blank filler should still render later cells")
+        assertEquals(8, rendered!!.width, "Custom blank filler should not expand render bounds")
+        assertEquals(palette[2] or (0xFF shl 24), rendered.pixels.first(),
+            "Only the non-filler tile should be drawn")
+    }
+
+    @Test
     fun `Crocomire renders BG2 tilemap layer behind OAM`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
@@ -272,6 +308,63 @@ class ExtendedSpritemapTest {
             skeletonTiles.copyOfRange(lastSkeletonDest, lastSkeletonDest + RomConstants.BYTES_PER_4BPP_TILE),
             "Last Crocomire skeleton DMA chunk should land at sprite tile \$1F0"
         )
+    }
+
+    @Test
+    fun `Draygon render tile data places shared graphics at BG2 sprite tile page`() {
+        val rp = loadTestRom() ?: return
+        val rawEnemyTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDE3F) ?: return
+        val renderTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDE3F, rawEnemyTiles) ?: return
+
+        val bgSpritePageStart = 0x100 * RomConstants.BYTES_PER_4BPP_TILE
+        assertTrue(renderTiles.size >= bgSpritePageStart + rawEnemyTiles.size,
+            "Draygon render buffer should include the physical BG2 sprite tile page")
+        assertArrayEquals(
+            rawEnemyTiles.copyOfRange(0, RomConstants.BYTES_PER_4BPP_TILE),
+            renderTiles.copyOfRange(bgSpritePageStart, bgSpritePageStart + RomConstants.BYTES_PER_4BPP_TILE),
+            "Draygon raw tile 0 should be available as physical tile \$100 for BG2 tilemaps"
+        )
+    }
+
+    @Test
+    fun `Draygon BG2 tilemaps render from room tileset while OAM uses enemy graphics`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xDE3F) ?: return
+        val rawEnemyTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDE3F) ?: return
+        val injectedTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDE3F, rawEnemyTiles) ?: return
+        val roomTiles = EnemySpriteGraphics.loadDraygonRoomTileData(rp) ?: return
+        val bodyTilemap = smap.parseExtendedTilemap(0xA5B4A4) ?: return
+        val bodyFrame = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = bodyTilemap,
+                    hitboxPtr = 0
+                )
+            ),
+            snesAddress = 0xA5B4A4
+        )
+        val draygonOptions = EnemySpritemap.RenderOptions(
+            normalizeExtendedTilemaps = false,
+            extendedTilemapBlankTiles = setOf(0x0338, 0x0147, 0x02FF)
+        )
+
+        val roomBody = smap.renderExtendedSpritemap(bodyFrame, roomTiles, palette, draygonOptions) ?: return
+        val splitBody = smap.renderExtendedSpritemap(
+            bodyFrame,
+            injectedTiles,
+            palette,
+            draygonOptions,
+            extendedTilemapTileData = roomTiles
+        ) ?: return
+        val corruptedBody = smap.renderExtendedSpritemap(bodyFrame, injectedTiles, palette, draygonOptions) ?: return
+
+        assertArrayEquals(roomBody.pixels, splitBody.pixels,
+            "Draygon BG2 body should use room tileset \$1C even when OAM uses injected enemy graphics")
+        assertTrue(!roomBody.pixels.contentEquals(corruptedBody.pixels),
+            "Rendering Draygon BG2 body from raw enemy graphics produces the scrambled tile-sheet layout")
     }
 
     @Test

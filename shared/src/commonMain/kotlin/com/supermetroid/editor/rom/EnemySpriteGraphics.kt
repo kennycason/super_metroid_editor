@@ -20,8 +20,12 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
 
         private const val CROCOMIRE_SPECIES_ID = 0xDDBF
         private const val CROCOMIRE_TILESET_ID = 0x1B
+        private const val DRAYGON_TILESET_ID = 0x1C
         private const val CROCOMIRE_BG_ENEMY_TILE_BASE = 0xD0
+        private const val DRAYGON_BODY_SPECIES_ID = 0xDE3F
+        private const val DRAYGON_BG_ENEMY_TILE_BASE = 0x100
         private const val CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES = 0x200
+        private val DRAYGON_SPECIES_IDS = setOf(0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF)
         private val CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS = intArrayOf(
             0x1600, 0x1700, 0x1800, 0x1900, 0x1E00, 0x1F00
         )
@@ -268,6 +272,17 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             enemyTileData: ByteArray? = null
         ): ByteArray? {
             val rawEnemyTiles = enemyTileData ?: loadEnemyTileData(romParser, speciesId) ?: return null
+            if (speciesId in DRAYGON_SPECIES_IDS) {
+                val draygonTiles = if (speciesId == DRAYGON_BODY_SPECIES_ID) {
+                    rawEnemyTiles
+                } else {
+                    loadEnemyTileData(romParser, DRAYGON_BODY_SPECIES_ID) ?: rawEnemyTiles
+                }
+                val dest = DRAYGON_BG_ENEMY_TILE_BASE * BYTES_PER_TILE
+                val out = ByteArray(dest + draygonTiles.size)
+                draygonTiles.copyInto(out, destinationOffset = dest)
+                return out
+            }
             if (speciesId != CROCOMIRE_SPECIES_ID) return rawEnemyTiles
 
             val tileGraphics = TileGraphics(romParser)
@@ -280,6 +295,12 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         fun loadCrocomireRoomTileData(romParser: RomParser): ByteArray? {
             val tileGraphics = TileGraphics(romParser)
             if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return null
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        fun loadDraygonRoomTileData(romParser: RomParser): ByteArray? {
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(DRAYGON_TILESET_ID)) return null
             return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
         }
 
