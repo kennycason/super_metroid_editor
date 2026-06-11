@@ -291,8 +291,29 @@ fun EnemySpriteViewer(
         val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
             val pal = palette ?: return@remember null
             val td = tileData ?: return@remember null
-            val smap = EnemySpritemap(rp)
-            smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+            if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
+                val scanner = BossPoseScanner(rp)
+                val frames = scanner.scanPoses(entry.speciesId, minEntries = 3).mapNotNull { pose ->
+                    val assembled = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null
+                    SpriteAnimationFrame(
+                        pixels = assembled.pixels,
+                        width = assembled.width,
+                        height = assembled.height,
+                        // Static boss instruction-list sleeps can be $7FFF; keep previews responsive.
+                        durationTicks = pose.durationTicks.takeIf { it in 1..120 } ?: 8,
+                        label = pose.name
+                    )
+                }
+                if (frames.size > 1) {
+                    SpriteAnimation("${entry.name} Body Poses", frames, loop = true)
+                } else {
+                    null
+                }
+            } else {
+                val smap = EnemySpritemap(rp)
+                smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+            }
         }
 
         if (enemyAnimation != null && enemyAnimation.frames.size > 1) {

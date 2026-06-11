@@ -15,6 +15,11 @@ package com.supermetroid.editor.rom
  */
 class BossPoseScanner(private val romParser: RomParser) {
 
+    enum class TileDataVariant {
+        DEFAULT,
+        CROCOMIRE_SKELETON
+    }
+
     data class BossPose(
         val name: String,
         val spritemap: EnemySpritemap.Spritemap,
@@ -22,11 +27,15 @@ class BossPoseScanner(private val romParser: RomParser) {
         val frame: EnemySpritemap.RenderableFrame = EnemySpritemap.RenderableFrame.Oam(spritemap),
         val childCount: Int = 1,
         val tilemapCount: Int = 0,
-        val renderOptions: EnemySpritemap.RenderOptions = EnemySpritemap.RenderOptions()
+        val renderOptions: EnemySpritemap.RenderOptions = EnemySpritemap.RenderOptions(),
+        val durationTicks: Int = 1,
+        val tileDataVariant: TileDataVariant = TileDataVariant.DEFAULT,
+        val usesCrocomireBgTileData: Boolean = false
     )
 
     private val smap = EnemySpritemap(romParser)
     private val rom = romParser.getRomData()
+    private var crocomireRoomTileDataCache: ByteArray? = null
 
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
@@ -46,7 +55,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         private const val SPECIES_CROCOMIRE = 0xDDBF
         private const val CROCOMIRE_BG2_ORIGIN_X = -0x33
         private const val CROCOMIRE_BG2_ORIGIN_Y = -0x43
-        private const val CROCOMIRE_BG2_ENEMY_TILE_BASE = 0xD0
+        private const val INSTRUCTION_COMMON_GOTO_Y = 0x80ED
+        private const val INSTRUCTION_COMMON_SLEEP = 0x812F
+        private val CROCOMIRE_SKELETON_INSTR_LISTS = setOf(0xE14A, 0xE158, 0xE1C6, 0xE1CC, 0xE1D2)
 
         private val CROCOMIRE_BG2_Y_ADJUST_FRAMES = setOf(
             0xBFC4, 0xBFF6, 0xC028, 0xC05A,
@@ -55,36 +66,6 @@ class BossPoseScanner(private val romParser: RomParser) {
             0xC47A, 0xC4AC, 0xC4DE, 0xC510,
             0xC542
         )
-
-        private val CROCOMIRE_TAIL_TILE_OVERRIDES: Map<Pair<Int, Int>, Int> = crocomireTailTileOverrides()
-
-        private fun crocomireTailTileOverrides(): Map<Pair<Int, Int>, Int> {
-            val overrides = mutableMapOf<Pair<Int, Int>, Int>()
-
-            fun putRun(tilemapSnesAddress: Int, tileStart: Int, rawTileStart: Int, count: Int) {
-                for (i in 0 until count) {
-                    overrides[tilemapSnesAddress to (tileStart + i)] =
-                        CROCOMIRE_BG2_ENEMY_TILE_BASE + rawTileStart + i
-                }
-            }
-
-            // Crocomire's animated tail tilemaps use raw tail strips near $20/$26/$2C,
-            // while the rest of the BG2 body uses the normal physical $D0 VRAM layout.
-            putRun(0xA4D852, 0x140, 0x20, 6)
-            putRun(0xA4D852, 0x150, 0x30, 6)
-
-            putRun(0xA4D876, 0x126, 0x26, 6)
-            putRun(0xA4D876, 0x136, 0x36, 6)
-
-            putRun(0xA4D89A, 0x12C, 0x2C, 4)
-            overrides[0xA4D89A to 0x0C8] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x30
-            overrides[0xA4D89A to 0x0C9] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x31
-            putRun(0xA4D89A, 0x13C, 0x3C, 4)
-            overrides[0xA4D89A to 0x0E7] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x40
-            overrides[0xA4D89A to 0x0E8] = CROCOMIRE_BG2_ENEMY_TILE_BASE + 0x41
-
-            return overrides
-        }
 
         private val KNOWN_INSTR_LISTS: Map<Int, List<KnownInstrList>> = mapOf(
             // Mother Brain brain (P1) — custom drawing via MotherBrain_DrawBrain
@@ -147,6 +128,11 @@ class BossPoseScanner(private val romParser: RomParser) {
                 KnownInstrList(0xA4, 0xBDAE, "Power Bomb Open"),
                 KnownInstrList(0xA4, 0xBDB2, "Power Bomb Half"),
                 KnownInstrList(0xA4, 0xBDB6, "Power Bomb Closed"),
+                KnownInstrList(0xA4, 0xE14A, "Skeleton Falling"),
+                KnownInstrList(0xA4, 0xE158, "Skeleton Collapse"),
+                KnownInstrList(0xA4, 0xE1C6, "Skeleton Apart"),
+                KnownInstrList(0xA4, 0xE1CC, "Skeleton Dead"),
+                KnownInstrList(0xA4, 0xE1D2, "Skeleton River"),
             ),
             // Ridley / Ceres Ridley — extended spritemaps composed from legs,
             // hand, torso, and head/neck OAM spritemaps.
@@ -216,7 +202,10 @@ class BossPoseScanner(private val romParser: RomParser) {
             val entryCount: Int,
             val childCount: Int,
             val tilemapCount: Int,
-            val renderOptions: EnemySpritemap.RenderOptions
+            val renderOptions: EnemySpritemap.RenderOptions,
+            val durationTicks: Int,
+            val tileDataVariant: TileDataVariant,
+            val usesCrocomireBgTileData: Boolean
         )
 
         val allFrames = mutableListOf<Candidate>()
@@ -236,6 +225,7 @@ class BossPoseScanner(private val romParser: RomParser) {
 
                 if (word0 == 0 && word1 == 0) break
                 if (word0 == 0x8000) break
+                if (word0 == INSTRUCTION_COMMON_GOTO_Y || word0 == INSTRUCTION_COMMON_SLEEP) break
                 if (word0 >= 0x8000) continue
 
                 if (word1 in seenAddrs) continue
@@ -262,7 +252,11 @@ class BossPoseScanner(private val romParser: RomParser) {
                         entryCount = entryCount,
                         childCount = renderableChildCount(frame),
                         tilemapCount = renderableTilemapCount(frame),
-                        renderOptions = renderOptionsForKnownFrame(speciesId, frame)
+                        renderOptions = renderOptionsForKnownFrame(speciesId, frame),
+                        durationTicks = word0,
+                        tileDataVariant = tileDataVariantForKnownFrame(speciesId, instrList),
+                        usesCrocomireBgTileData = speciesId == SPECIES_CROCOMIRE &&
+                            frame is EnemySpritemap.RenderableFrame.Extended
                     )
                 )
             }
@@ -285,7 +279,10 @@ class BossPoseScanner(private val romParser: RomParser) {
                 frame = candidate.frame,
                 childCount = candidate.childCount,
                 tilemapCount = candidate.tilemapCount,
-                renderOptions = candidate.renderOptions
+                renderOptions = candidate.renderOptions,
+                durationTicks = candidate.durationTicks,
+                tileDataVariant = candidate.tileDataVariant,
+                usesCrocomireBgTileData = candidate.usesCrocomireBgTileData
             )
         }
     }
@@ -373,8 +370,43 @@ class BossPoseScanner(private val romParser: RomParser) {
         tileData: ByteArray,
         palette: IntArray
     ): EnemySpritemap.AssembledSprite? {
-        val assembled = smap.renderRenderableFrame(pose.frame, tileData, palette, pose.renderOptions) ?: return null
+        val renderTileData = when (pose.tileDataVariant) {
+            TileDataVariant.DEFAULT -> tileData
+            TileDataVariant.CROCOMIRE_SKELETON ->
+                EnemySpriteGraphics.applyCrocomireSkeletonTileData(romParser, tileData) ?: tileData
+        }
+        val bgTileData = if (pose.usesCrocomireBgTileData) {
+            crocomireRoomTileData()
+        } else {
+            null
+        }
+        val assembled = smap.renderRenderableFrame(
+            pose.frame,
+            renderTileData,
+            palette,
+            pose.renderOptions,
+            extendedTilemapTileData = bgTileData
+        ) ?: return null
         return autoCrop(assembled, pose.spritemap)
+    }
+
+    private fun crocomireRoomTileData(): ByteArray? {
+        val cached = crocomireRoomTileDataCache
+        if (cached != null) return cached
+        val loaded = EnemySpriteGraphics.loadCrocomireRoomTileData(romParser)
+        crocomireRoomTileDataCache = loaded
+        return loaded
+    }
+
+    private fun tileDataVariantForKnownFrame(
+        speciesId: Int,
+        instrList: KnownInstrList
+    ): TileDataVariant {
+        return if (speciesId == SPECIES_CROCOMIRE && instrList.ptr in CROCOMIRE_SKELETON_INSTR_LISTS) {
+            TileDataVariant.CROCOMIRE_SKELETON
+        } else {
+            TileDataVariant.DEFAULT
+        }
     }
 
     private fun renderOptionsForKnownFrame(
@@ -398,8 +430,7 @@ class BossPoseScanner(private val romParser: RomParser) {
             extendedTilemapOriginY = CROCOMIRE_BG2_ORIGIN_Y - yAdjust,
             wrapExtendedTilemapTilePage = false,
             extendedTilemapsBehindOam = true,
-            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
-            extendedTilemapTileNumberOverrides = CROCOMIRE_TAIL_TILE_OVERRIDES
+            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9
         )
     }
 

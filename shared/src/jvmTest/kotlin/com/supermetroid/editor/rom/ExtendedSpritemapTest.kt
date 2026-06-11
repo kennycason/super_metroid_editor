@@ -177,40 +177,6 @@ class ExtendedSpritemapTest {
     }
 
     @Test
-    fun `extended tilemaps can override tile numbers by tilemap address`() {
-        val rp = loadTestRom() ?: return
-        val smap = EnemySpritemap(rp)
-        val tileData = solidTileData(8)
-        val palette = testPalette()
-        val ext = EnemySpritemap.ExtendedSpritemap(
-            children = listOf(
-                EnemySpritemap.ExtendedChild.Tilemap(
-                    xOffset = 0,
-                    yOffset = 0,
-                    tilemap = EnemySpritemap.ExtendedTilemap(
-                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(5))),
-                        snesAddress = 0x123456
-                    ),
-                    hitboxPtr = 0
-                )
-            ),
-            snesAddress = 0
-        )
-
-        val rendered = smap.renderExtendedSpritemap(
-            ext,
-            tileData,
-            palette,
-            EnemySpritemap.RenderOptions(
-                extendedTilemapTileNumberOverrides = mapOf((0x123456 to 5) to 7)
-            )
-        )
-        assertNotNull(rendered, "Tilemap with tile override should render")
-        assertTrue(rendered!!.pixels.all { it == (palette[7] or (0xFF shl 24)) },
-            "The tilemap-specific override should render tile 7 instead of tile 5")
-    }
-
-    @Test
     fun `Crocomire renders BG2 tilemap layer behind OAM`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
@@ -243,6 +209,68 @@ class ExtendedSpritemapTest {
             rawEnemyTiles.copyOfRange(rawLimbTile, rawLimbTile + RomConstants.BYTES_PER_4BPP_TILE),
             renderTiles.copyOfRange(limbTileStart, limbTileStart + RomConstants.BYTES_PER_4BPP_TILE),
             "Crocomire OAM limb tile \$12D should resolve through the shared physical \$D0 VRAM layout"
+        )
+    }
+
+    @Test
+    fun `Crocomire BG2 tilemaps can render from room tiles while OAM uses injected sprite VRAM`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xDDBF) ?: return
+        val rawEnemyTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDDBF) ?: return
+        val injectedTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDDBF, rawEnemyTiles) ?: return
+        val roomTiles = EnemySpriteGraphics.loadCrocomireRoomTileData(rp) ?: return
+        val tailTilemap = smap.parseExtendedTilemap(0xA4D852) ?: return
+        val tailFrame = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = tailTilemap,
+                    hitboxPtr = 0
+                )
+            ),
+            snesAddress = 0xA4D852
+        )
+
+        val roomTail = smap.renderExtendedSpritemap(tailFrame, roomTiles, palette) ?: return
+        val splitTail = smap.renderExtendedSpritemap(
+            tailFrame,
+            injectedTiles,
+            palette,
+            extendedTilemapTileData = roomTiles
+        ) ?: return
+        val corruptedTail = smap.renderExtendedSpritemap(tailFrame, injectedTiles, palette) ?: return
+
+        assertArrayEquals(roomTail.pixels, splitTail.pixels,
+            "Crocomire tail tilemap should use room BG tile data even when OAM uses injected sprite VRAM")
+        assertTrue(!roomTail.pixels.contentEquals(corruptedTail.pixels),
+            "Rendering Crocomire BG2 tail from injected OAM data corrupts the tail tiles")
+    }
+
+    @Test
+    fun `Crocomire skeleton render tile data applies death sequence DMA chunks`() {
+        val rp = loadTestRom() ?: return
+        val rawEnemyTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDDBF) ?: return
+        val renderTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDDBF, rawEnemyTiles) ?: return
+        val skeletonTiles = EnemySpriteGraphics.applyCrocomireSkeletonTileData(rp, renderTiles) ?: return
+        val block = EnemySpriteGraphics.readGraphicsBlock(rp, 0xDDBF) ?: return
+        val rom = rp.getRomData()
+        val skeletonPc = block.pcAddress + rawEnemyTiles.size
+
+        val firstSkeletonDest = 0x160 * RomConstants.BYTES_PER_4BPP_TILE
+        assertArrayEquals(
+            rom.copyOfRange(skeletonPc, skeletonPc + RomConstants.BYTES_PER_4BPP_TILE),
+            skeletonTiles.copyOfRange(firstSkeletonDest, firstSkeletonDest + RomConstants.BYTES_PER_4BPP_TILE),
+            "First Crocomire skeleton DMA chunk should land at sprite tile \$160"
+        )
+
+        val lastChunkSource = skeletonPc + 5 * 0x200
+        val lastSkeletonDest = 0x1F0 * RomConstants.BYTES_PER_4BPP_TILE
+        assertArrayEquals(
+            rom.copyOfRange(lastChunkSource, lastChunkSource + RomConstants.BYTES_PER_4BPP_TILE),
+            skeletonTiles.copyOfRange(lastSkeletonDest, lastSkeletonDest + RomConstants.BYTES_PER_4BPP_TILE),
+            "Last Crocomire skeleton DMA chunk should land at sprite tile \$1F0"
         )
     }
 

@@ -63,8 +63,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         val wrapExtendedTilemapTilePage: Boolean = false,
         val extendedTilemapsBehindOam: Boolean = false,
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
-        val oamTileNumberBase: Int = 0,
-        val extendedTilemapTileNumberOverrides: Map<Pair<Int, Int>, Int> = emptyMap()
+        val oamTileNumberBase: Int = 0
     )
 
     enum class OamTileNumberMode {
@@ -428,11 +427,18 @@ class EnemySpritemap(private val romParser: RomParser) {
         frame: RenderableFrame,
         tileData: ByteArray,
         palette: IntArray,
-        options: RenderOptions = RenderOptions()
+        options: RenderOptions = RenderOptions(),
+        extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         return when (frame) {
             is RenderableFrame.Oam -> renderSpritemap(frame.spritemap, tileData, palette)
-            is RenderableFrame.Extended -> renderExtendedSpritemap(frame.spritemap, tileData, palette, options)
+            is RenderableFrame.Extended -> renderExtendedSpritemap(
+                frame.spritemap,
+                tileData,
+                palette,
+                options,
+                extendedTilemapTileData
+            )
         }
     }
 
@@ -462,7 +468,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         ext: ExtendedSpritemap,
         tileData: ByteArray,
         palette: IntArray,
-        options: RenderOptions = RenderOptions()
+        options: RenderOptions = RenderOptions(),
+        extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         val flattened = flattenExtendedSpritemap(ext)
         val oamCommands = mutableListOf<TileDrawCommand>()
@@ -481,11 +488,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         }
 
         val tilemapCommands = buildExtendedTilemapCommands(ext, options)
-        val commands = if (options.extendedTilemapsBehindOam) {
-            tilemapCommands + oamCommands
-        } else {
-            oamCommands + tilemapCommands
-        }
+        val commands = oamCommands + tilemapCommands
         if (commands.isEmpty()) return null
 
         var minX = Int.MAX_VALUE
@@ -506,8 +509,20 @@ class EnemySpritemap(private val romParser: RomParser) {
         if (w <= 0 || h <= 0) return null
 
         val pixels = IntArray(w * h)
-        for (cmd in commands) {
-            renderTileCommand(pixels, w, h, minX, minY, cmd, tileData, palette)
+        val tilemapData = extendedTilemapTileData ?: tileData
+
+        fun renderCommands(cmds: List<TileDrawCommand>, data: ByteArray) {
+            for (cmd in cmds) {
+                renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette)
+            }
+        }
+
+        if (options.extendedTilemapsBehindOam) {
+            renderCommands(tilemapCommands, tilemapData)
+            renderCommands(oamCommands, tileData)
+        } else {
+            renderCommands(oamCommands, tileData)
+            renderCommands(tilemapCommands, tilemapData)
         }
 
         return AssembledSprite(w, h, pixels, -minX, -minY, flattened)
@@ -559,7 +574,7 @@ class EnemySpritemap(private val romParser: RomParser) {
                 tileLayer[key] = TileDrawCommand(
                     x = x,
                     y = y,
-                    tileNum = extendedTilemapTileNumber(tileWord, options, run.child.tilemap.snesAddress),
+                    tileNum = extendedTilemapTileNumber(tileWord, options),
                     hFlip = (tileWord shr 14) and 1 != 0,
                     vFlip = (tileWord shr 15) and 1 != 0,
                     is16x16 = false
@@ -573,11 +588,9 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     private fun extendedTilemapTileNumber(
         tileWord: Int,
-        options: RenderOptions,
-        tilemapSnesAddress: Int
+        options: RenderOptions
     ): Int {
         val tileNum = tileWord and 0x03FF
-        options.extendedTilemapTileNumberOverrides[tilemapSnesAddress to tileNum]?.let { return it }
         return if (options.wrapExtendedTilemapTilePage && tileNum in 0x100..0x1FF) {
             tileNum and 0xFF
         } else {

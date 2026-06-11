@@ -21,6 +21,10 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val CROCOMIRE_SPECIES_ID = 0xDDBF
         private const val CROCOMIRE_TILESET_ID = 0x1B
         private const val CROCOMIRE_BG_ENEMY_TILE_BASE = 0xD0
+        private const val CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES = 0x200
+        private val CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS = intArrayOf(
+            0x1600, 0x1700, 0x1800, 0x1900, 0x1E00, 0x1F00
+        )
 
         /**
          * One LZ5-compressed block of sprite tiles in the ROM.
@@ -268,8 +272,48 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
 
             val tileGraphics = TileGraphics(romParser)
             if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return rawEnemyTiles
+            val roomTileData = tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: rawEnemyTiles
             tileGraphics.injectRawTileData(CROCOMIRE_BG_ENEMY_TILE_BASE, rawEnemyTiles)
-            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: rawEnemyTiles
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: roomTileData
+        }
+
+        fun loadCrocomireRoomTileData(romParser: RomParser): ByteArray? {
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return null
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        /**
+         * Crocomire's death sequence DMA-loads six 16-tile skeleton chunks over
+         * sprite VRAM. Apply those chunks to an already composed Crocomire render
+         * tile buffer so corpse/skeleton poses can render without disturbing live
+         * Crocomire poses.
+         */
+        fun applyCrocomireSkeletonTileData(
+            romParser: RomParser,
+            renderTileData: ByteArray
+        ): ByteArray? {
+            val stats = readSpeciesStats(romParser, CROCOMIRE_SPECIES_ID) ?: return null
+            val block = readGraphicsBlock(romParser, CROCOMIRE_SPECIES_ID) ?: return null
+            val rom = romParser.getRomData()
+            val skeletonPc = block.pcAddress + stats.first
+            val totalSkeletonBytes = CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES * CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS.size
+            if (skeletonPc < 0 || skeletonPc + totalSkeletonBytes > rom.size) return null
+
+            val out = renderTileData.copyOf()
+            for ((chunkIndex, vramWordOffset) in CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS.withIndex()) {
+                val destTile = vramWordOffset / 0x10
+                val dest = destTile * BYTES_PER_TILE
+                val src = skeletonPc + chunkIndex * CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES
+                if (dest + CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES > out.size) return null
+                rom.copyInto(
+                    destination = out,
+                    destinationOffset = dest,
+                    startIndex = src,
+                    endIndex = src + CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES
+                )
+            }
+            return out
         }
 
         /** Extract a ≤16-color palette from an ARGB pixel array (index 0 = transparent). */

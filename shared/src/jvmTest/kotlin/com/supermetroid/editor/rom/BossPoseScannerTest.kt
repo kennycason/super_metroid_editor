@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -175,13 +176,35 @@ class BossPoseScannerTest {
             "Crocomire BG2 body should use room/enemy VRAM tile indices directly")
         assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, initialPose.renderOptions.oamTileNumberMode,
             "Crocomire OAM should use physical room VRAM tile IDs shared with the BG2 body")
-        assertEquals(0xF6, initialPose.renderOptions.extendedTilemapTileNumberOverrides[0xA4D876 to 0x126],
-            "Crocomire's moving tail tilemap should resolve through the raw tail strip at tile \$26")
+        assertTrue(initialPose.usesCrocomireBgTileData,
+            "Crocomire BG2 tilemaps should render from the room BG tileset, not the injected OAM tile buffer")
+        assertTrue(initialPose.durationTicks > 0,
+            "Known Crocomire poses should preserve instruction-list timing for animation playback")
 
         val stepBackPose = poses.find { it.frame.snesAddress == 0xA4BFF6 }
         assertTrue(stepBackPose != null, "Should find Crocomire step-back extended pose")
         assertEquals(-0x43 + 2, stepBackPose!!.renderOptions.extendedTilemapOriginY,
             "Step-back frames should apply Crocomire's per-frame BG2 Y adjustment")
+    }
+
+    @Test
+    fun `Crocomire skeleton poses are discovered and render with skeleton tile data`() {
+        val rp = loadTestRom() ?: return
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xDDBF) ?: return
+        val rawTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDDBF) ?: return
+        val renderTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xDDBF, rawTiles) ?: return
+        val scanner = BossPoseScanner(rp)
+        val poses = scanner.scanPoses(0xDDBF, minEntries = 3)
+
+        val skeletonPoses = poses.filter { it.tileDataVariant == BossPoseScanner.TileDataVariant.CROCOMIRE_SKELETON }
+        assertTrue(skeletonPoses.isNotEmpty(), "Crocomire corpse/skeleton instruction lists should be included")
+        assertTrue(skeletonPoses.any { it.frame.snesAddress == 0xA4E1FE },
+            "Skeleton falling frame should be parsed from InstList_CrocomireCorpse_Skeleton_Falling")
+
+        val rendered = scanner.renderPose(skeletonPoses.first(), renderTiles, palette)
+        assertNotNull(rendered, "Skeleton pose should render with the death-sequence tile overlay")
+        assertTrue(rendered!!.width >= 48 && rendered.height >= 48,
+            "Skeleton pose should render as a substantial corpse/skeleton assembly")
     }
 
     // ─── Edge cases ──────────────────────────────────────────────────
