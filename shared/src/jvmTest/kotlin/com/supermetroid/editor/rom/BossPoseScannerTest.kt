@@ -116,6 +116,32 @@ class BossPoseScannerTest {
     }
 
     @Test
+    fun `Mother Brain P2 renders body with room tilemaps and runtime leg tiles`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xEC7F) ?: return
+        val rawTiles = EnemySpriteGraphics.loadEnemyTileData(rp, 0xEC7F) ?: return
+        val renderTiles = EnemySpriteGraphics.loadEnemyRenderTileData(rp, 0xEC7F, rawTiles) ?: return
+
+        val poses = scanner.scanPoses(0xEC7F, minEntries = 3)
+        val standing = poses.firstOrNull { it.frame.snesAddress == 0xA99FA0 }
+        assertNotNull(standing, "Mother Brain P2 should expose the standing extended body frame")
+        assertTrue(standing!!.usesMotherBrainBgTileData,
+            "Mother Brain P2 torso tilemaps should render from the room BG tileset")
+        assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, standing.renderOptions.oamTileNumberMode,
+            "Mother Brain P2 limbs use physical low-9-bit OBJ tile IDs")
+        assertTrue(standing.tilemapCount >= 2,
+            "Mother Brain P2 standing frame should include torso BG2 tilemaps")
+
+        val rendered = scanner.renderPose(standing, renderTiles, palette)
+        assertNotNull(rendered, "Mother Brain P2 standing frame should render")
+        assertTrue(rendered!!.width >= 80 && rendered.height >= 80,
+            "Mother Brain P2 body should render as a large assembly (${rendered.width}x${rendered.height})")
+        assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 1000,
+            "Mother Brain P2 body should have substantial visible pixels")
+    }
+
+    @Test
     fun `Torizo has compact body poses`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)

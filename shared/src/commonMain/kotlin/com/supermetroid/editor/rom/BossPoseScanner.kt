@@ -32,6 +32,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         val tileDataVariant: TileDataVariant = TileDataVariant.DEFAULT,
         val usesCrocomireBgTileData: Boolean = false,
         val usesDraygonBgTileData: Boolean = false,
+        val usesMotherBrainBgTileData: Boolean = false,
         val compositeParts: List<CompositePart> = emptyList()
     )
 
@@ -44,6 +45,7 @@ class BossPoseScanner(private val romParser: RomParser) {
     private val rom = romParser.getRomData()
     private var crocomireRoomTileDataCache: ByteArray? = null
     private var draygonRoomTileDataCache: ByteArray? = null
+    private var motherBrainRoomTileDataCache: ByteArray? = null
 
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
@@ -62,6 +64,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         private data class KnownInstrList(val bank: Int, val ptr: Int, val label: String)
 
         private const val SPECIES_CROCOMIRE = 0xDDBF
+        private const val SPECIES_MOTHER_BRAIN_BODY = 0xEC7F
         private const val SPECIES_DRAYGON_BODY = 0xDE3F
         private const val SPECIES_DRAYGON_EYE = 0xDE7F
         private const val SPECIES_DRAYGON_TAIL = 0xDEBF
@@ -279,7 +282,8 @@ class BossPoseScanner(private val romParser: RomParser) {
             val durationTicks: Int,
             val tileDataVariant: TileDataVariant,
             val usesCrocomireBgTileData: Boolean,
-            val usesDraygonBgTileData: Boolean
+            val usesDraygonBgTileData: Boolean,
+            val usesMotherBrainBgTileData: Boolean
         )
 
         val allFrames = mutableListOf<Candidate>()
@@ -332,6 +336,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                         usesCrocomireBgTileData = speciesId == SPECIES_CROCOMIRE &&
                             frame is EnemySpritemap.RenderableFrame.Extended,
                         usesDraygonBgTileData = speciesId in DRAYGON_SPECIES_IDS &&
+                            frame is EnemySpritemap.RenderableFrame.Extended,
+                        usesMotherBrainBgTileData = speciesId == SPECIES_MOTHER_BRAIN_BODY &&
                             frame is EnemySpritemap.RenderableFrame.Extended
                     )
                 )
@@ -359,7 +365,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                 durationTicks = candidate.durationTicks,
                 tileDataVariant = candidate.tileDataVariant,
                 usesCrocomireBgTileData = candidate.usesCrocomireBgTileData,
-                usesDraygonBgTileData = candidate.usesDraygonBgTileData
+                usesDraygonBgTileData = candidate.usesDraygonBgTileData,
+                usesMotherBrainBgTileData = candidate.usesMotherBrainBgTileData
             )
         }
     }
@@ -621,6 +628,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         val bgTileData = when {
             pose.usesCrocomireBgTileData -> crocomireRoomTileData()
             pose.usesDraygonBgTileData -> draygonRoomTileData()
+            pose.usesMotherBrainBgTileData -> motherBrainRoomTileData()
             else -> null
         }
         if (pose.compositeParts.isNotEmpty()) {
@@ -661,6 +669,14 @@ class BossPoseScanner(private val romParser: RomParser) {
         return loaded
     }
 
+    private fun motherBrainRoomTileData(): ByteArray? {
+        val cached = motherBrainRoomTileDataCache
+        if (cached != null) return cached
+        val loaded = EnemySpriteGraphics.loadMotherBrainRoomTileData(romParser)
+        motherBrainRoomTileDataCache = loaded
+        return loaded
+    }
+
     private fun tileDataVariantForKnownFrame(
         speciesId: Int,
         instrList: KnownInstrList
@@ -678,6 +694,9 @@ class BossPoseScanner(private val romParser: RomParser) {
     ): EnemySpritemap.RenderOptions {
         if (speciesId in setOf(SPECIES_DRAYGON_EYE, SPECIES_DRAYGON_TAIL, SPECIES_DRAYGON_ARMS)) {
             return draygonRenderOptions(frame)
+        }
+        if (speciesId == SPECIES_MOTHER_BRAIN_BODY && frame is EnemySpritemap.RenderableFrame.Extended) {
+            return motherBrainBodyRenderOptions()
         }
         if (speciesId != SPECIES_CROCOMIRE || frame !is EnemySpritemap.RenderableFrame.Extended) {
             return EnemySpritemap.RenderOptions()
@@ -715,6 +734,14 @@ class BossPoseScanner(private val romParser: RomParser) {
             oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9
         )
     }
+
+    private fun motherBrainBodyRenderOptions(): EnemySpritemap.RenderOptions =
+        EnemySpritemap.RenderOptions(
+            normalizeExtendedTilemaps = true,
+            extendedTilemapsBehindOam = true,
+            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
+            extendedTilemapBlankTiles = setOf(0x0338)
+        )
 
     private fun renderableEntryCount(
         frame: EnemySpritemap.RenderableFrame,

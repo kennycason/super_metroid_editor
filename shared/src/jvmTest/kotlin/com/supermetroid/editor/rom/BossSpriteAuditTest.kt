@@ -162,6 +162,7 @@ class BossSpriteAuditTest {
             0xE17F to "Ridley",
             0xDDBF to "Crocomire",
             0xEC3F to "MotherBrain_P1",
+            0xEC7F to "MotherBrain_P2",
             0xEEBF to "BigMetroid",
             0xEEFF to "Torizo",
             0xEF7F to "GoldenTorizo",
