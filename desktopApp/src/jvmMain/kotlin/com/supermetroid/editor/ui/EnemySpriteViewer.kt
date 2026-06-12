@@ -117,6 +117,7 @@ fun EnemySpriteViewer(
     val gfxBlock = remember(entry.speciesId) {
         EnemySpriteGraphics.readGraphicsBlock(rp, entry.speciesId)
     }
+    val isMotherBrainBody = entry.speciesId == 0xEC7F
 
     val tileData = remember(entry.speciesId, refreshKey) {
         editorState.loadEnemyTileData(rp, entry.speciesId)
@@ -138,7 +139,12 @@ fun EnemySpriteViewer(
         val pal = palette ?: return@remember null
         val td = tileData ?: return@remember null
         val gfx = EnemySpriteGraphics(rp)
-        gfx.loadFromRaw(listOf(td))
+        val sheetTiles = if (isMotherBrainBody) {
+            EnemySpriteGraphics.loadMotherBrainBodySourceTileData(rp, td) ?: td
+        } else {
+            td
+        }
+        gfx.loadFromRaw(listOf(sheetTiles))
         gfx.renderSheet(pal, 16)
     }
 
@@ -291,8 +297,29 @@ fun EnemySpriteViewer(
         val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
             val pal = palette ?: return@remember null
             val td = tileData ?: return@remember null
-            val smap = EnemySpritemap(rp)
-            smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+            if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
+                val scanner = BossPoseScanner(rp)
+                val frames = scanner.scanPoses(entry.speciesId, minEntries = 3).mapNotNull { pose ->
+                    val assembled = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null
+                    SpriteAnimationFrame(
+                        pixels = assembled.pixels,
+                        width = assembled.width,
+                        height = assembled.height,
+                        // Static boss instruction-list sleeps can be $7FFF; keep previews responsive.
+                        durationTicks = pose.durationTicks.takeIf { it in 1..120 } ?: 8,
+                        label = pose.name
+                    )
+                }
+                if (frames.size > 1) {
+                    SpriteAnimation("${entry.name} Body Poses", frames, loop = true)
+                } else {
+                    null
+                }
+            } else {
+                val smap = EnemySpritemap(rp)
+                smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+            }
         }
 
         if (enemyAnimation != null && enemyAnimation.frames.size > 1) {
@@ -337,10 +364,11 @@ fun EnemySpriteViewer(
             val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
                 val pal = palette ?: return@remember emptyList()
                 val td = tileData ?: return@remember emptyList()
+                val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
                 val scanner = BossPoseScanner(rp)
                 val poses = scanner.scanPoses(entry.speciesId, minEntries = 3)
                 poses.mapNotNull { pose ->
-                    val rendered = scanner.renderPose(pose, td, pal) ?: return@mapNotNull null
+                    val rendered = scanner.renderPose(pose, renderTileData, pal) ?: return@mapNotNull null
                     pose to rendered
                 }
             }
@@ -430,7 +458,13 @@ fun EnemySpriteViewer(
                                 filterQuality = FilterQuality.None
                             )
                         }
-                        Text("${selectedPose.name} — ${selectedPose.entryCount} OAM entries, ${selectedAssembled.width}x${selectedAssembled.height}px",
+                        val poseDetailText = if (selectedPose.tilemapCount > 0) {
+                            "${selectedPose.entryCount} render tiles, ${selectedPose.childCount} children, " +
+                                "${selectedPose.tilemapCount} BG2 tilemaps"
+                        } else {
+                            "${selectedPose.entryCount} OAM entries"
+                        }
+                        Text("${selectedPose.name} — $poseDetailText, ${selectedAssembled.width}x${selectedAssembled.height}px",
                             fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -508,62 +542,104 @@ fun EnemySpriteViewer(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tile Sheet", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                            Text(
+                                if (isMotherBrainBody) "Runtime Tile Sources" else "Tile Sheet",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface)
                             Surface(
-                                color = if (hasCustom) Color(0xFF333366) else Color(0xFF336633),
+                                color = when {
+                                    isMotherBrainBody -> Color(0xFF3A3A33)
+                                    hasCustom -> Color(0xFF333366)
+                                    else -> Color(0xFF336633)
+                                },
                                 shape = RoundedCornerShape(3.dp)
                             ) {
                                 Text(
-                                    if (hasCustom) "CUSTOM" else "ROM",
+                                    when {
+                                        isMotherBrainBody -> "MULTI-SOURCE"
+                                        hasCustom -> "CUSTOM"
+                                        else -> "ROM"
+                                    },
                                     fontSize = 7.sp,
-                                    color = if (hasCustom) Color(0xFF8888FF) else Color(0xFF88FF88),
+                                    color = when {
+                                        isMotherBrainBody -> Color(0xFFE6DFA6)
+                                        hasCustom -> Color(0xFF8888FF)
+                                        else -> Color(0xFF88FF88)
+                                    },
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Button(
-                                onClick = {
-                                    val pal = palette ?: return@Button
-                                    // Build reference bitmap from assembled sprite
-                                    val refBitmap = assembledSprite?.let { sprite ->
-                                        val img = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
-                                        img.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
-                                        img.toComposeImageBitmap()
-                                    }
-                                    editingPixels = pixels.copyOf()
-                                    editingWidth = w
-                                    editingHeight = h
-                                    editingPalette = pal
-                                    editingReference = refBitmap
-                                },
-                                modifier = Modifier.height(28.dp),
-                                contentPadding = ButtonDefaults.ContentPadding.let {
-                                    androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
-                                }
-                            ) {
-                                Text("Edit Tiles", fontSize = 10.sp)
-                            }
-                            if (hasCustom) {
+                        if (!isMotherBrainBody) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Button(
                                     onClick = {
-                                        editorState.resetEnemyTiles(entry.speciesId)
-                                        refreshKey++
+                                        val pal = palette ?: return@Button
+                                        // Build reference bitmap from assembled sprite
+                                        val refBitmap = assembledSprite?.let { sprite ->
+                                            val img = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
+                                            img.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
+                                            img.toComposeImageBitmap()
+                                        }
+                                        editingPixels = pixels.copyOf()
+                                        editingWidth = w
+                                        editingHeight = h
+                                        editingPalette = pal
+                                        editingReference = refBitmap
                                     },
                                     modifier = Modifier.height(28.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                    ),
                                     contentPadding = ButtonDefaults.ContentPadding.let {
                                         androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                                     }
                                 ) {
-                                    Text("Reset", fontSize = 10.sp)
+                                    Text("Edit Tiles", fontSize = 10.sp)
+                                }
+                                if (hasCustom) {
+                                    Button(
+                                        onClick = {
+                                            editorState.resetEnemyTiles(entry.speciesId)
+                                            refreshKey++
+                                        },
+                                        modifier = Modifier.height(28.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                        ),
+                                        contentPadding = ButtonDefaults.ContentPadding.let {
+                                            androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                        }
+                                    ) {
+                                        Text("Reset", fontSize = 10.sp)
+                                    }
                                 }
                             }
+                        } else if (hasCustom) {
+                            Button(
+                                onClick = {
+                                    editorState.resetEnemyTiles(entry.speciesId)
+                                    refreshKey++
+                                },
+                                modifier = Modifier.height(28.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                ),
+                                contentPadding = ButtonDefaults.ContentPadding.let {
+                                    androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                }
+                            ) {
+                                Text("Reset Raw", fontSize = 10.sp)
+                            }
                         }
+                    }
+                    if (isMotherBrainBody) {
+                        Text(
+                            "MB2 body tiles are split across room tileset \$0E, head DMA \$B7:8000, leg DMA \$B7:9000, and the raw \$EC7F supplement. Generic enemy tile editing is disabled here so it does not patch only the supplement.",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                            lineHeight = 13.sp
+                        )
                     }
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
 

@@ -18,6 +18,29 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         /** @see RomConstants.BYTES_PER_4BPP_TILE */
         const val BYTES_PER_TILE = RomConstants.BYTES_PER_4BPP_TILE
 
+        private const val CROCOMIRE_SPECIES_ID = 0xDDBF
+        private const val MOTHER_BRAIN_BODY_SPECIES_ID = 0xEC7F
+        private const val CROCOMIRE_TILESET_ID = 0x1B
+        private const val DRAYGON_TILESET_ID = 0x1C
+        private const val MOTHER_BRAIN_TILESET_ID = 0x0E
+        private const val CROCOMIRE_BG_ENEMY_TILE_BASE = 0xD0
+        private const val DRAYGON_BODY_SPECIES_ID = 0xDE3F
+        private const val DRAYGON_BG_ENEMY_TILE_BASE = 0x100
+        private const val MOTHER_BRAIN_BODY_RAW_TILE_BASE = 0xD0
+        private const val MOTHER_BRAIN_LEGS_TILE_BASE = 0x140
+        private const val MOTHER_BRAIN_RENDER_TILE_COUNT = 0x200
+        private const val MOTHER_BRAIN_BODY_ROOM_TILE_START = 0x160
+        private const val MOTHER_BRAIN_BODY_ROOM_TILE_COUNT = 0xA0
+        private const val MOTHER_BRAIN_HEAD_TILES_SNES = 0xB78000
+        private const val MOTHER_BRAIN_LEGS_TILES_SNES = 0xB79000
+        private const val MOTHER_BRAIN_HEAD_TILES_SIZE = 0x1000
+        private const val MOTHER_BRAIN_LEGS_TILES_SIZE = 0x1000
+        private const val CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES = 0x200
+        private val DRAYGON_SPECIES_IDS = setOf(0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF)
+        private val CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS = intArrayOf(
+            0x1600, 0x1700, 0x1800, 0x1900, 0x1E00, 0x1F00
+        )
+
         /**
          * One LZ5-compressed block of sprite tiles in the ROM.
          * @param pcAddress PC offset of compressed data
@@ -244,6 +267,156 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             val rom = romParser.getRomData()
             if (block.pcAddress + tileDataSize > rom.size) return null
             return rom.copyOfRange(block.pcAddress, block.pcAddress + tileDataSize)
+        }
+
+        /**
+         * Build tile data for pose rendering when the game composes sprites from
+         * multiple VRAM sources. Most enemies render directly from their raw enemy
+         * graphics; Crocomire's BG2 body also references room tileset $1B, while
+         * its enemy graphics are injected at physical room/VRAM tile $D0. Crocomire's
+         * OAM child spritemaps use those same physical tile IDs; SNES OBJ palette and
+         * name-table bits are not additional editor tile-index offsets.
+         */
+        fun loadEnemyRenderTileData(
+            romParser: RomParser,
+            speciesId: Int,
+            enemyTileData: ByteArray? = null
+        ): ByteArray? {
+            val rawEnemyTiles = enemyTileData ?: loadEnemyTileData(romParser, speciesId) ?: return null
+            if (speciesId in DRAYGON_SPECIES_IDS) {
+                val draygonTiles = if (speciesId == DRAYGON_BODY_SPECIES_ID) {
+                    rawEnemyTiles
+                } else {
+                    loadEnemyTileData(romParser, DRAYGON_BODY_SPECIES_ID) ?: rawEnemyTiles
+                }
+                val dest = DRAYGON_BG_ENEMY_TILE_BASE * BYTES_PER_TILE
+                val out = ByteArray(dest + draygonTiles.size)
+                draygonTiles.copyInto(out, destinationOffset = dest)
+                return out
+            }
+            if (speciesId == MOTHER_BRAIN_BODY_SPECIES_ID) {
+                return loadMotherBrainBodyRenderTileData(romParser, rawEnemyTiles)
+            }
+            if (speciesId != CROCOMIRE_SPECIES_ID) return rawEnemyTiles
+
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return rawEnemyTiles
+            val roomTileData = tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: rawEnemyTiles
+            tileGraphics.injectRawTileData(CROCOMIRE_BG_ENEMY_TILE_BASE, rawEnemyTiles)
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: roomTileData
+        }
+
+        fun loadCrocomireRoomTileData(romParser: RomParser): ByteArray? {
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(CROCOMIRE_TILESET_ID)) return null
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        fun loadDraygonRoomTileData(romParser: RomParser): ByteArray? {
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(DRAYGON_TILESET_ID)) return null
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        fun loadMotherBrainRoomTileData(romParser: RomParser): ByteArray? {
+            val tileGraphics = TileGraphics(romParser)
+            if (!tileGraphics.loadTileset(MOTHER_BRAIN_TILESET_ID)) return null
+            return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        /**
+         * Build a compact sheet of the tile sources Mother Brain phase 2 uses at
+         * runtime. This is intentionally not the same as GRAPHADR: the torso is
+         * drawn from room tileset $0E BG tiles, while head/limbs are DMA-loaded
+         * from bank $B7 and $EC7F contributes only a small supplemental block.
+         */
+        fun loadMotherBrainBodySourceTileData(
+            romParser: RomParser,
+            bodyRawTiles: ByteArray? = null
+        ): ByteArray? {
+            val roomTiles = loadMotherBrainRoomTileData(romParser) ?: return null
+            val headTiles = readRawBytes(romParser, MOTHER_BRAIN_HEAD_TILES_SNES, MOTHER_BRAIN_HEAD_TILES_SIZE)
+                ?: return null
+            val legTiles = readRawBytes(romParser, MOTHER_BRAIN_LEGS_TILES_SNES, MOTHER_BRAIN_LEGS_TILES_SIZE)
+                ?: return null
+            val rawBodyTiles = bodyRawTiles ?: loadEnemyTileData(romParser, MOTHER_BRAIN_BODY_SPECIES_ID)
+                ?: return null
+
+            val roomStart = MOTHER_BRAIN_BODY_ROOM_TILE_START * BYTES_PER_TILE
+            val roomEnd = roomStart + MOTHER_BRAIN_BODY_ROOM_TILE_COUNT * BYTES_PER_TILE
+            if (roomEnd > roomTiles.size) return null
+            val roomBodyTiles = roomTiles.copyOfRange(roomStart, roomEnd)
+
+            val totalSize = roomBodyTiles.size + headTiles.size + legTiles.size + rawBodyTiles.size
+            val out = ByteArray(totalSize)
+            var dest = 0
+            for (block in listOf(roomBodyTiles, headTiles, legTiles, rawBodyTiles)) {
+                block.copyInto(out, destinationOffset = dest)
+                dest += block.size
+            }
+            return out
+        }
+
+        /**
+         * Mother Brain phase 2 uses the room/BG tilemap for the torso and a
+         * runtime sprite DMA block for limbs. The $EC7F GRAPHADR block is only
+         * supplemental data at fixed page $D0, so pose rendering needs the same
+         * composed OBJ tile space the fight builds at runtime.
+         */
+        private fun loadMotherBrainBodyRenderTileData(
+            romParser: RomParser,
+            bodyRawTiles: ByteArray
+        ): ByteArray? {
+            val headTiles = readRawBytes(romParser, MOTHER_BRAIN_HEAD_TILES_SNES, MOTHER_BRAIN_HEAD_TILES_SIZE)
+                ?: return bodyRawTiles
+            val legTiles = readRawBytes(romParser, MOTHER_BRAIN_LEGS_TILES_SNES, MOTHER_BRAIN_LEGS_TILES_SIZE)
+                ?: return bodyRawTiles
+
+            val out = ByteArray(MOTHER_BRAIN_RENDER_TILE_COUNT * BYTES_PER_TILE)
+            headTiles.copyInto(out, destinationOffset = 0)
+            bodyRawTiles.copyInto(out, destinationOffset = MOTHER_BRAIN_BODY_RAW_TILE_BASE * BYTES_PER_TILE)
+            legTiles.copyInto(out, destinationOffset = MOTHER_BRAIN_LEGS_TILE_BASE * BYTES_PER_TILE)
+            return out
+        }
+
+        private fun readRawBytes(romParser: RomParser, snesAddress: Int, size: Int): ByteArray? {
+            val rom = romParser.getRomData()
+            val pc = romParser.snesToPc(snesAddress)
+            if (pc < 0 || pc + size > rom.size) return null
+            return rom.copyOfRange(pc, pc + size)
+        }
+
+        /**
+         * Crocomire's death sequence DMA-loads six 16-tile skeleton chunks over
+         * sprite VRAM. Apply those chunks to an already composed Crocomire render
+         * tile buffer so corpse/skeleton poses can render without disturbing live
+         * Crocomire poses.
+         */
+        fun applyCrocomireSkeletonTileData(
+            romParser: RomParser,
+            renderTileData: ByteArray
+        ): ByteArray? {
+            val stats = readSpeciesStats(romParser, CROCOMIRE_SPECIES_ID) ?: return null
+            val block = readGraphicsBlock(romParser, CROCOMIRE_SPECIES_ID) ?: return null
+            val rom = romParser.getRomData()
+            val skeletonPc = block.pcAddress + stats.first
+            val totalSkeletonBytes = CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES * CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS.size
+            if (skeletonPc < 0 || skeletonPc + totalSkeletonBytes > rom.size) return null
+
+            val out = renderTileData.copyOf()
+            for ((chunkIndex, vramWordOffset) in CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS.withIndex()) {
+                val destTile = vramWordOffset / 0x10
+                val dest = destTile * BYTES_PER_TILE
+                val src = skeletonPc + chunkIndex * CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES
+                if (dest + CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES > out.size) return null
+                rom.copyInto(
+                    destination = out,
+                    destinationOffset = dest,
+                    startIndex = src,
+                    endIndex = src + CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES
+                )
+            }
+            return out
         }
 
         /** Extract a ≤16-color palette from an ARGB pixel array (index 0 = transparent). */

@@ -56,6 +56,99 @@ class EnemySpritemap(private val romParser: RomParser) {
         val spritemap: Spritemap
     )
 
+    data class RenderOptions(
+        val normalizeExtendedTilemaps: Boolean = true,
+        val extendedTilemapOriginX: Int = 0,
+        val extendedTilemapOriginY: Int = 0,
+        val wrapExtendedTilemapTilePage: Boolean = false,
+        val extendedTilemapsBehindOam: Boolean = false,
+        val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
+        val oamTileNumberBase: Int = 0,
+        val extendedOamOriginX: Int = 0,
+        val extendedOamOriginY: Int = 0,
+        val preserveExtendedChildDrawOrder: Boolean = false,
+        val reverseExtendedOamDrawOrder: Boolean = false,
+        val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
+    )
+
+    enum class OamTileNumberMode {
+        LOW_8,
+        LOW_9,
+        OR_BASE_LOW_9
+    }
+
+    sealed class RenderableFrame {
+        abstract val snesAddress: Int
+
+        data class Oam(
+            val spritemap: Spritemap
+        ) : RenderableFrame() {
+            override val snesAddress: Int = spritemap.snesAddress
+        }
+
+        data class Extended(
+            val spritemap: ExtendedSpritemap
+        ) : RenderableFrame() {
+            override val snesAddress: Int = spritemap.snesAddress
+        }
+    }
+
+    data class ExtendedSpritemap(
+        val children: List<ExtendedChild>,
+        val snesAddress: Int
+    )
+
+    sealed class ExtendedChild {
+        abstract val xOffset: Int
+        abstract val yOffset: Int
+        abstract val hitboxPtr: Int
+        abstract val snesAddress: Int
+
+        data class Oam(
+            override val xOffset: Int,
+            override val yOffset: Int,
+            val spritemap: Spritemap,
+            override val hitboxPtr: Int
+        ) : ExtendedChild() {
+            override val snesAddress: Int = spritemap.snesAddress
+        }
+
+        data class Tilemap(
+            override val xOffset: Int,
+            override val yOffset: Int,
+            val tilemap: ExtendedTilemap,
+            override val hitboxPtr: Int
+        ) : ExtendedChild() {
+            override val snesAddress: Int = tilemap.snesAddress
+        }
+    }
+
+    data class ExtendedTilemap(
+        val runs: List<ExtendedTilemapRun>,
+        val snesAddress: Int
+    ) {
+        val tileCount: Int get() = runs.sumOf { it.tiles.size }
+    }
+
+    data class ExtendedTilemapRun(
+        val dest: Int,
+        val tiles: List<Int>
+    )
+
+    private data class TileDrawCommand(
+        val x: Int,
+        val y: Int,
+        val tileNum: Int,
+        val hFlip: Boolean,
+        val vFlip: Boolean,
+        val is16x16: Boolean
+    )
+
+    private data class TileDrawLayer(
+        val commands: List<TileDrawCommand>,
+        val usesExtendedTilemapData: Boolean
+    )
+
     /**
      * Parse a spritemap at the given SNES address.
      * @return parsed Spritemap or null if the data doesn't look valid
@@ -91,6 +184,91 @@ class EnemySpritemap(private val romParser: RomParser) {
         return Spritemap(entries, snesAddr)
     }
 
+    fun parseRenderableFrame(snesAddr: Int): RenderableFrame? {
+        parseExtendedSpritemap(snesAddr)?.let { return RenderableFrame.Extended(it) }
+        return parseSpritemap(snesAddr)?.let { RenderableFrame.Oam(it) }
+    }
+
+    /**
+     * Parse a vanilla multibox/extended enemy spritemap:
+     *
+     *   count
+     *   x, y, spritemapOrExtendedTilemapPtr, hitboxPtr
+     *   ...
+     *
+     * The pointed child is an extended tilemap when its first word is $FFFE;
+     * otherwise it is a normal OAM spritemap.
+     */
+    fun parseExtendedSpritemap(snesAddr: Int): ExtendedSpritemap? {
+        val rom = romParser.getRomData()
+        val pc = romParser.snesToPc(snesAddr)
+        if (pc < 0 || pc + 2 > rom.size) return null
+
+        val count = readU16(rom, pc)
+        if (count !in 1..64) return null
+        if (pc + 2 + count * 8 > rom.size) return null
+
+        val bank = snesAddr and 0xFF0000
+        val children = mutableListOf<ExtendedChild>()
+
+        for (i in 0 until count) {
+            val ePc = pc + 2 + i * 8
+            val x = readS16(rom, ePc)
+            val y = readS16(rom, ePc + 2)
+            val childPtr = readU16(rom, ePc + 4)
+            val hitboxPtr = readU16(rom, ePc + 6)
+            if (childPtr < 0x8000) return null
+
+            val childSnes = bank or childPtr
+            val childPc = romParser.snesToPc(childSnes)
+            if (childPc < 0 || childPc + 2 > rom.size) return null
+
+            val firstWord = readU16(rom, childPc)
+            val child = if (firstWord == 0xFFFE) {
+                val tilemap = parseExtendedTilemap(childSnes) ?: return null
+                ExtendedChild.Tilemap(x, y, tilemap, hitboxPtr)
+            } else {
+                val spritemap = parseSpritemap(childSnes) ?: return null
+                ExtendedChild.Oam(x, y, spritemap, hitboxPtr)
+            }
+            children.add(child)
+        }
+
+        return ExtendedSpritemap(children, snesAddr)
+    }
+
+    fun parseExtendedTilemap(snesAddr: Int): ExtendedTilemap? {
+        val rom = romParser.getRomData()
+        val pc = romParser.snesToPc(snesAddr)
+        if (pc < 0 || pc + 2 > rom.size) return null
+        if (readU16(rom, pc) != 0xFFFE) return null
+
+        val runs = mutableListOf<ExtendedTilemapRun>()
+        var offset = pc + 2
+        var totalTiles = 0
+
+        for (run in 0 until 128) {
+            if (offset + 2 > rom.size) return null
+            val dest = readU16(rom, offset)
+            offset += 2
+            if (dest == 0xFFFF) {
+                return if (runs.isEmpty()) null else ExtendedTilemap(runs, snesAddr)
+            }
+            if (offset + 2 > rom.size) return null
+            val count = readU16(rom, offset)
+            offset += 2
+            if (count !in 1..1024) return null
+            if (offset + count * 2 > rom.size) return null
+
+            val tiles = MutableList(count) { idx -> readU16(rom, offset + idx * 2) }
+            offset += count * 2
+            totalTiles += count
+            if (totalTiles > 4096) return null
+            runs.add(ExtendedTilemapRun(dest, tiles))
+        }
+        return null
+    }
+
     /**
      * Find the best default spritemap for an enemy species by tracing the
      * init function's instruction list setup.
@@ -117,7 +295,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         val tileCount = (rawTileSize and 0x7FFF) / RomConstants.BYTES_PER_4BPP_TILE
 
         // Check if there's a direction table — if so, try all directions and pick best
-        val dirTableAddr = findDirectionTableAddress(rom, initPc, aiBank)
+        val dirTableAddr = findDirectionTableAddress(rom, initPc)
         if (dirTableAddr != null) {
             val tablePc = romParser.snesToPc((aiBank shl 16) or dirTableAddr)
             if (tablePc >= 0 && tablePc + 8 <= rom.size) {
@@ -157,7 +335,7 @@ class EnemySpritemap(private val romParser: RomParser) {
      * which is the standard SNES enemy direction table lookup.
      * Returns the 16-bit SNES offset of the table within the AI bank, or null.
      */
-    private fun findDirectionTableAddress(rom: ByteArray, initPc: Int, aiBank: Int): Int? {
+    private fun findDirectionTableAddress(rom: ByteArray, initPc: Int): Int? {
         val scanLimit = minOf(120, rom.size - initPc - 5)
         for (i in 0 until scanLimit) {
             val pc = initPc + i
@@ -243,7 +421,6 @@ class EnemySpritemap(private val romParser: RomParser) {
         val pixels = IntArray(w * h)
 
         for (entry in spritemap.entries) {
-            val size = if (entry.is16x16) 16 else 8
             val localTile = entry.tileNum and 0xFF
 
             if (entry.is16x16) {
@@ -254,6 +431,296 @@ class EnemySpritemap(private val romParser: RomParser) {
         }
 
         return AssembledSprite(w, h, pixels, -minX, -minY, spritemap)
+    }
+
+    fun renderRenderableFrame(
+        frame: RenderableFrame,
+        tileData: ByteArray,
+        palette: IntArray,
+        options: RenderOptions = RenderOptions(),
+        extendedTilemapTileData: ByteArray? = null
+    ): AssembledSprite? {
+        return when (frame) {
+            is RenderableFrame.Oam -> renderSpritemap(frame.spritemap, tileData, palette)
+            is RenderableFrame.Extended -> renderExtendedSpritemap(
+                frame.spritemap,
+                tileData,
+                palette,
+                options,
+                extendedTilemapTileData
+            )
+        }
+    }
+
+    fun flattenRenderableFrame(frame: RenderableFrame): Spritemap {
+        return when (frame) {
+            is RenderableFrame.Oam -> frame.spritemap
+            is RenderableFrame.Extended -> flattenExtendedSpritemap(frame.spritemap)
+        }
+    }
+
+    fun flattenExtendedSpritemap(ext: ExtendedSpritemap): Spritemap {
+        val entries = ext.children.flatMap { child ->
+            when (child) {
+                is ExtendedChild.Oam -> child.spritemap.entries.map { entry ->
+                    entry.copy(
+                        xOffset = entry.xOffset + child.xOffset,
+                        yOffset = entry.yOffset + child.yOffset
+                    )
+                }
+                is ExtendedChild.Tilemap -> emptyList()
+            }
+        }
+        return Spritemap(entries, ext.snesAddress)
+    }
+
+    fun renderExtendedSpritemap(
+        ext: ExtendedSpritemap,
+        tileData: ByteArray,
+        palette: IntArray,
+        options: RenderOptions = RenderOptions(),
+        extendedTilemapTileData: ByteArray? = null
+    ): AssembledSprite? {
+        val flattened = flattenExtendedSpritemap(ext)
+        val oamChildren = ext.children.filterIsInstance<ExtendedChild.Oam>().let { children ->
+            if (options.reverseExtendedOamDrawOrder) children.asReversed() else children
+        }
+        val oamCommands = oamChildren.flatMap { buildOamCommands(it, options) }
+        val tilemapCommands = buildExtendedTilemapCommands(ext, options)
+        val layers = buildExtendedDrawLayers(ext, options, oamCommands, tilemapCommands)
+        val commands = layers.flatMap { it.commands }
+        if (commands.isEmpty()) return null
+
+        var minX = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var minY = Int.MAX_VALUE
+        var maxY = Int.MIN_VALUE
+
+        for (cmd in commands) {
+            val size = if (cmd.is16x16) 16 else 8
+            minX = minOf(minX, cmd.x)
+            maxX = maxOf(maxX, cmd.x + size)
+            minY = minOf(minY, cmd.y)
+            maxY = maxOf(maxY, cmd.y + size)
+        }
+
+        val w = maxX - minX
+        val h = maxY - minY
+        if (w <= 0 || h <= 0) return null
+
+        val pixels = IntArray(w * h)
+        val tilemapData = extendedTilemapTileData ?: tileData
+
+        fun renderLayer(layer: TileDrawLayer) {
+            val data = if (layer.usesExtendedTilemapData) tilemapData else tileData
+            for (cmd in layer.commands) {
+                renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette)
+            }
+        }
+
+        for (layer in layers) {
+            renderLayer(layer)
+        }
+
+        return AssembledSprite(w, h, pixels, -minX, -minY, flattened)
+    }
+
+    private fun buildExtendedDrawLayers(
+        ext: ExtendedSpritemap,
+        options: RenderOptions,
+        oamCommands: List<TileDrawCommand>,
+        tilemapCommands: List<TileDrawCommand>
+    ): List<TileDrawLayer> {
+        if (options.preserveExtendedChildDrawOrder) {
+            val layers = mutableListOf<TileDrawLayer>()
+            var emittedTilemaps = false
+            for (child in ext.children) {
+                when (child) {
+                    is ExtendedChild.Oam -> {
+                        val commands = buildOamCommands(child, options)
+                        if (commands.isNotEmpty()) {
+                            layers.add(TileDrawLayer(commands, usesExtendedTilemapData = false))
+                        }
+                    }
+                    is ExtendedChild.Tilemap -> if (!emittedTilemaps) {
+                        emittedTilemaps = true
+                        if (tilemapCommands.isNotEmpty()) {
+                            layers.add(TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true))
+                        }
+                    }
+                }
+            }
+            return layers
+        }
+
+        return if (options.extendedTilemapsBehindOam) {
+            listOf(
+                TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true),
+                TileDrawLayer(oamCommands, usesExtendedTilemapData = false)
+            )
+        } else {
+            listOf(
+                TileDrawLayer(oamCommands, usesExtendedTilemapData = false),
+                TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true)
+            )
+        }.filter { it.commands.isNotEmpty() }
+    }
+
+    private fun buildOamCommands(
+        child: ExtendedChild.Oam,
+        options: RenderOptions
+    ): List<TileDrawCommand> {
+        return child.spritemap.entries.map { entry ->
+            TileDrawCommand(
+                x = entry.xOffset + child.xOffset + options.extendedOamOriginX,
+                y = entry.yOffset + child.yOffset + options.extendedOamOriginY,
+                tileNum = oamTileNumber(entry, options),
+                hFlip = entry.hFlip,
+                vFlip = entry.vFlip,
+                is16x16 = entry.is16x16
+            )
+        }
+    }
+
+    private fun oamTileNumber(entry: OamEntry, options: RenderOptions): Int {
+        return when (options.oamTileNumberMode) {
+            OamTileNumberMode.LOW_8 -> entry.tileNum and 0xFF
+            OamTileNumberMode.LOW_9 -> entry.tileNum and 0x1FF
+            OamTileNumberMode.OR_BASE_LOW_9 -> options.oamTileNumberBase or (entry.tileNum and 0x1FF)
+        }
+    }
+
+    private fun buildExtendedTilemapCommands(
+        ext: ExtendedSpritemap,
+        options: RenderOptions
+    ): List<TileDrawCommand> {
+        val tilemapChildren = ext.children.filterIsInstance<ExtendedChild.Tilemap>()
+        if (tilemapChildren.isEmpty()) return emptyList()
+
+        data class PositionedTilemap(val child: ExtendedChild.Tilemap, val row: Int, val col: Int, val run: ExtendedTilemapRun)
+
+        val positionedRuns = tilemapChildren.flatMap { child ->
+            child.tilemap.runs.map { run ->
+                PositionedTilemap(
+                    child = child,
+                    row = tilemapDestRow(run.dest),
+                    col = tilemapDestCol(run.dest),
+                    run = run
+                )
+            }
+        }
+        if (positionedRuns.isEmpty()) return emptyList()
+
+        val minRow = if (options.normalizeExtendedTilemaps) positionedRuns.minOf { it.row } else 0
+        val minCol = if (options.normalizeExtendedTilemaps) positionedRuns.minOf { it.col } else 0
+        val tileLayer = linkedMapOf<Pair<Int, Int>, TileDrawCommand>()
+
+        for (run in positionedRuns) {
+            val y = options.extendedTilemapOriginY + run.child.yOffset + (run.row - minRow) * 8
+            val startX = options.extendedTilemapOriginX + run.child.xOffset + (run.col - minCol) * 8
+            for ((idx, tileWord) in run.run.tiles.withIndex()) {
+                val x = startX + idx * 8
+                val key = x to y
+                if (isExtendedTilemapBlank(tileWord, options)) {
+                    tileLayer.remove(key)
+                    continue
+                }
+                tileLayer[key] = TileDrawCommand(
+                    x = x,
+                    y = y,
+                    tileNum = extendedTilemapTileNumber(tileWord, options),
+                    hFlip = (tileWord shr 14) and 1 != 0,
+                    vFlip = (tileWord shr 15) and 1 != 0,
+                    is16x16 = false
+                )
+            }
+        }
+        return tileLayer.values.toList()
+    }
+
+    private fun isExtendedTilemapBlank(tileWord: Int, options: RenderOptions): Boolean =
+        (tileWord and 0x03FF) in options.extendedTilemapBlankTiles
+
+    private fun extendedTilemapTileNumber(
+        tileWord: Int,
+        options: RenderOptions
+    ): Int {
+        val tileNum = tileWord and 0x03FF
+        return if (options.wrapExtendedTilemapTilePage && tileNum in 0x100..0x1FF) {
+            tileNum and 0xFF
+        } else {
+            tileNum
+        }
+    }
+
+    private fun renderTileCommand(
+        pixels: IntArray,
+        w: Int,
+        h: Int,
+        originX: Int,
+        originY: Int,
+        cmd: TileDrawCommand,
+        tileData: ByteArray,
+        palette: IntArray
+    ) {
+        if (cmd.is16x16) {
+            val subTiles = intArrayOf(
+                cmd.tileNum, cmd.tileNum + 1,
+                cmd.tileNum + 16, cmd.tileNum + 17
+            )
+            val subOffsets = arrayOf(
+                0 to 0, 8 to 0,
+                0 to 8, 8 to 8
+            )
+            for (si in 0 until 4) {
+                val subTile = subTiles[si]
+                val (subDx, subDy) = subOffsets[si]
+                val adjDx = if (cmd.hFlip) 8 - subDx else subDx
+                val adjDy = if (cmd.vFlip) 8 - subDy else subDy
+                render8x8TileCommand(
+                    pixels, w, h, originX, originY,
+                    cmd.copy(
+                        x = cmd.x + adjDx,
+                        y = cmd.y + adjDy,
+                        tileNum = subTile,
+                        is16x16 = false
+                    ),
+                    tileData,
+                    palette
+                )
+            }
+        } else {
+            render8x8TileCommand(pixels, w, h, originX, originY, cmd, tileData, palette)
+        }
+    }
+
+    private fun render8x8TileCommand(
+        pixels: IntArray,
+        w: Int,
+        h: Int,
+        originX: Int,
+        originY: Int,
+        cmd: TileDrawCommand,
+        tileData: ByteArray,
+        palette: IntArray
+    ) {
+        val tileOffset = cmd.tileNum * RomConstants.BYTES_PER_4BPP_TILE
+        if (tileOffset < 0 || tileOffset + RomConstants.BYTES_PER_4BPP_TILE > tileData.size) return
+
+        for (py in 0 until 8) {
+            for (px in 0 until 8) {
+                val srcX = if (cmd.hFlip) 7 - px else px
+                val srcY = if (cmd.vFlip) 7 - py else py
+                val ci = readPixelFromTile(tileData, tileOffset, srcX, srcY)
+                if (ci == 0) continue
+
+                val dx = cmd.x - originX + px
+                val dy = cmd.y - originY + py
+                if (dx in 0 until w && dy in 0 until h) {
+                    pixels[dy * w + dx] = palette[ci.coerceIn(0, palette.size - 1)] or (0xFF shl 24)
+                }
+            }
+        }
     }
 
     private fun render8x8Tile(
@@ -333,6 +800,21 @@ class EnemySpritemap(private val romParser: RomParser) {
         val bp2 = (tileData[tileOffset + py * 2 + 16].toInt() shr bit) and 1
         val bp3 = (tileData[tileOffset + py * 2 + 17].toInt() shr bit) and 1
         return bp0 or (bp1 shl 1) or (bp2 shl 2) or (bp3 shl 3)
+    }
+
+    private fun tilemapDestOffset(dest: Int): Int = (dest - EXTENDED_TILEMAP_BASE_DEST).coerceAtLeast(0)
+
+    private fun tilemapDestRow(dest: Int): Int = tilemapDestOffset(dest) / 0x40
+
+    private fun tilemapDestCol(dest: Int): Int = (tilemapDestOffset(dest) and 0x3F) / 2
+
+    private companion object {
+        const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
+    }
+
+    private fun readS16(data: ByteArray, offset: Int): Int {
+        val word = readU16(data, offset)
+        return if (word >= 0x8000) word - 0x10000 else word
     }
 
     /**

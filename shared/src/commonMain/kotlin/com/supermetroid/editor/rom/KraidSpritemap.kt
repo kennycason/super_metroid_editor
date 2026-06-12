@@ -39,18 +39,7 @@ class KraidSpritemap(private val romParser: RomParser) {
             BodyTilemapDef("Body (full height)", 0xA7A0C8, 32, 12),
         )
 
-        val BIGSPRMAP_COMPONENTS = listOf(
-            ComponentDef("Belly detail 0", 0xA7E27E),
-            ComponentDef("Belly detail 1", 0xA7E292),
-            ComponentDef("Belly detail 2", 0xA7E2A6),
-            ComponentDef("Belly detail 3", 0xA7E2BA),
-            ComponentDef("Belly detail 4", 0xA7E2CE),
-            ComponentDef("Belly detail 5", 0xA7E2E2),
-            ComponentDef("Belly detail 6", 0xA7E2F6),
-            ComponentDef("Belly detail 7", 0xA7E30A),
-            ComponentDef("Foot (left)", 0xA7E39A),
-            ComponentDef("Foot (right)", 0xA7E3B6),
-        )
+        val BIGSPRMAP_COMPONENTS = emptyList<ComponentDef>()
 
         val ALL_COMPONENTS: List<Any> = listOf("Full Body (nametable)") + BODY_TILEMAPS + BIGSPRMAP_COMPONENTS
     }

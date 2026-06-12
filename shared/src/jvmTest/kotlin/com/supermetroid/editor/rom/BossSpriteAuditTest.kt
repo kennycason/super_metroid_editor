@@ -153,7 +153,6 @@ class BossSpriteAuditTest {
     @Test
     fun `render boss audit with name table awareness`() {
         val rp = loadTestRom() ?: return
-        val smap = EnemySpritemap(rp)
         val scanner = BossPoseScanner(rp)
         val outDir = File("/tmp/boss_audit_v2")
         outDir.mkdirs()
@@ -162,16 +161,19 @@ class BossSpriteAuditTest {
             0xE17F to "Ridley",
             0xDDBF to "Crocomire",
             0xEC3F to "MotherBrain_P1",
+            0xEC7F to "MotherBrain_P2",
             0xEEBF to "BigMetroid",
             0xEEFF to "Torizo",
             0xEF7F to "GoldenTorizo",
             0xF293 to "Botwoon",
             0xDE3F to "Draygon",
+            0xDF3F to "SporeSpawn",
         )
 
         for ((speciesId, name) in bosses) {
             val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: continue
-            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: continue
+            val rawTileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: continue
+            val tileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, speciesId, rawTileData) ?: rawTileData
 
             val poses = scanner.scanPoses(speciesId, minEntries = 3)
 
