@@ -142,6 +142,78 @@ class ExtendedSpritemapTest {
     }
 
     @Test
+    fun `extended renderer can preserve mixed child draw order`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = solidTileData(4)
+        val palette = testPalette()
+        val ext = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Oam(
+                    xOffset = 0,
+                    yOffset = 0,
+                    spritemap = EnemySpritemap.Spritemap(
+                        entries = listOf(
+                            EnemySpritemap.OamEntry(
+                                xOffset = 0,
+                                yOffset = 0,
+                                tileNum = 1,
+                                palRow = 0,
+                                hFlip = false,
+                                vFlip = false,
+                                is16x16 = false
+                            )
+                        ),
+                        snesAddress = 0
+                    ),
+                    hitboxPtr = 0
+                ),
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(2))),
+                        snesAddress = 0
+                    ),
+                    hitboxPtr = 0
+                ),
+                EnemySpritemap.ExtendedChild.Oam(
+                    xOffset = 8,
+                    yOffset = 0,
+                    spritemap = EnemySpritemap.Spritemap(
+                        entries = listOf(
+                            EnemySpritemap.OamEntry(
+                                xOffset = 0,
+                                yOffset = 0,
+                                tileNum = 3,
+                                palRow = 0,
+                                hFlip = false,
+                                vFlip = false,
+                                is16x16 = false
+                            )
+                        ),
+                        snesAddress = 0
+                    ),
+                    hitboxPtr = 0
+                )
+            ),
+            snesAddress = 0
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            ext,
+            tileData,
+            palette,
+            EnemySpritemap.RenderOptions(preserveExtendedChildDrawOrder = true)
+        )
+        assertNotNull(rendered, "Synthetic mixed extended spritemap should render")
+        assertEquals(palette[2] or (0xFF shl 24), rendered!!.pixels.first(),
+            "Tilemap child should draw over earlier OAM when preserving ROM child order")
+        assertEquals(palette[3] or (0xFF shl 24), rendered.pixels[8],
+            "Later OAM child should draw over the earlier tilemap group")
+    }
+
+    @Test
     fun `extended tilemaps replace cells and blank tile clears previous cell`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)

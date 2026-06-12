@@ -882,9 +882,12 @@ class BossPoseScanner(private val romParser: RomParser) {
     private fun motherBrainBodyRenderOptions(): EnemySpritemap.RenderOptions =
         EnemySpritemap.RenderOptions(
             normalizeExtendedTilemaps = true,
-            extendedTilemapsBehindOam = true,
+            extendedTilemapOriginX = 0x10,
+            extendedTilemapOriginY = -0x10,
             oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
-            extendedOamOriginY = 0x28,
+            extendedOamOriginX = 0x31,
+            extendedOamOriginY = 0x15,
+            preserveExtendedChildDrawOrder = true,
             extendedTilemapBlankTiles = setOf(0x0338)
         )
 

@@ -66,6 +66,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         val oamTileNumberBase: Int = 0,
         val extendedOamOriginX: Int = 0,
         val extendedOamOriginY: Int = 0,
+        val preserveExtendedChildDrawOrder: Boolean = false,
         val reverseExtendedOamDrawOrder: Boolean = false,
         val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
     )
@@ -141,6 +142,11 @@ class EnemySpritemap(private val romParser: RomParser) {
         val hFlip: Boolean,
         val vFlip: Boolean,
         val is16x16: Boolean
+    )
+
+    private data class TileDrawLayer(
+        val commands: List<TileDrawCommand>,
+        val usesExtendedTilemapData: Boolean
     )
 
     /**
@@ -481,7 +487,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         }
         val oamCommands = oamChildren.flatMap { buildOamCommands(it, options) }
         val tilemapCommands = buildExtendedTilemapCommands(ext, options)
-        val commands = oamCommands + tilemapCommands
+        val layers = buildExtendedDrawLayers(ext, options, oamCommands, tilemapCommands)
+        val commands = layers.flatMap { it.commands }
         if (commands.isEmpty()) return null
 
         var minX = Int.MAX_VALUE
@@ -504,21 +511,59 @@ class EnemySpritemap(private val romParser: RomParser) {
         val pixels = IntArray(w * h)
         val tilemapData = extendedTilemapTileData ?: tileData
 
-        fun renderCommands(cmds: List<TileDrawCommand>, data: ByteArray) {
-            for (cmd in cmds) {
+        fun renderLayer(layer: TileDrawLayer) {
+            val data = if (layer.usesExtendedTilemapData) tilemapData else tileData
+            for (cmd in layer.commands) {
                 renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette)
             }
         }
 
-        if (options.extendedTilemapsBehindOam) {
-            renderCommands(tilemapCommands, tilemapData)
-            renderCommands(oamCommands, tileData)
-        } else {
-            renderCommands(oamCommands, tileData)
-            renderCommands(tilemapCommands, tilemapData)
+        for (layer in layers) {
+            renderLayer(layer)
         }
 
         return AssembledSprite(w, h, pixels, -minX, -minY, flattened)
+    }
+
+    private fun buildExtendedDrawLayers(
+        ext: ExtendedSpritemap,
+        options: RenderOptions,
+        oamCommands: List<TileDrawCommand>,
+        tilemapCommands: List<TileDrawCommand>
+    ): List<TileDrawLayer> {
+        if (options.preserveExtendedChildDrawOrder) {
+            val layers = mutableListOf<TileDrawLayer>()
+            var emittedTilemaps = false
+            for (child in ext.children) {
+                when (child) {
+                    is ExtendedChild.Oam -> {
+                        val commands = buildOamCommands(child, options)
+                        if (commands.isNotEmpty()) {
+                            layers.add(TileDrawLayer(commands, usesExtendedTilemapData = false))
+                        }
+                    }
+                    is ExtendedChild.Tilemap -> if (!emittedTilemaps) {
+                        emittedTilemaps = true
+                        if (tilemapCommands.isNotEmpty()) {
+                            layers.add(TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true))
+                        }
+                    }
+                }
+            }
+            return layers
+        }
+
+        return if (options.extendedTilemapsBehindOam) {
+            listOf(
+                TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true),
+                TileDrawLayer(oamCommands, usesExtendedTilemapData = false)
+            )
+        } else {
+            listOf(
+                TileDrawLayer(oamCommands, usesExtendedTilemapData = false),
+                TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true)
+            )
+        }.filter { it.commands.isNotEmpty() }
     }
 
     private fun buildOamCommands(

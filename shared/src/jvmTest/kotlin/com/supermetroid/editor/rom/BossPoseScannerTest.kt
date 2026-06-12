@@ -130,9 +130,19 @@ class BossPoseScannerTest {
             "Mother Brain P2 torso tilemaps should render from the room BG tileset")
         assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, standing.renderOptions.oamTileNumberMode,
             "Mother Brain P2 limbs use physical low-9-bit OBJ tile IDs")
-        assertEquals(0x28, standing.renderOptions.extendedOamOriginY,
-            "Mother Brain P2 extended OAM limbs should attach lower on the BG torso")
-        assertTrue(standing.tilemapCount >= 2,
+        assertEquals(0x10, standing.renderOptions.extendedTilemapOriginX,
+            "Mother Brain P2 BG torso should be shifted forward relative to the legs")
+        assertEquals(-0x10, standing.renderOptions.extendedTilemapOriginY,
+            "Mother Brain P2 BG torso should be raised relative to the legs")
+        assertEquals(0x31, standing.renderOptions.extendedOamOriginX,
+            "Mother Brain P2 extended OAM limbs should align with the BG torso")
+        assertEquals(0x15, standing.renderOptions.extendedOamOriginY,
+            "Mother Brain P2 extended OAM limbs should attach at the lower torso")
+        assertTrue(standing.renderOptions.preserveExtendedChildDrawOrder,
+            "Mother Brain P2 should draw rear limbs, BG torso, then front limbs")
+        assertEquals(9, standing.childCount,
+            "Mother Brain P2 standing frame should preserve all multibox children")
+        assertEquals(2, standing.tilemapCount,
             "Mother Brain P2 standing frame should include torso BG2 tilemaps")
 
         val sourceTiles = EnemySpriteGraphics.loadMotherBrainBodySourceTileData(rp, rawTiles)
@@ -146,7 +156,7 @@ class BossPoseScannerTest {
 
         val rendered = scanner.renderPose(standing, renderTiles, palette)
         assertNotNull(rendered, "Mother Brain P2 standing frame should render")
-        assertTrue(rendered!!.width >= 80 && rendered.height >= 100,
+        assertTrue(rendered!!.width >= 90 && rendered.height >= 90,
             "Mother Brain P2 body should render as a large assembly (${rendered.width}x${rendered.height})")
         assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 1000,
             "Mother Brain P2 body should have substantial visible pixels")
