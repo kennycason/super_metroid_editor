@@ -64,11 +64,14 @@ class BossPoseScanner(private val romParser: RomParser) {
         private data class KnownInstrList(val bank: Int, val ptr: Int, val label: String)
 
         private const val SPECIES_CROCOMIRE = 0xDDBF
+        private const val SPECIES_SPORE_SPAWN = 0xDF3F
         private const val SPECIES_MOTHER_BRAIN_BODY = 0xEC7F
         private const val SPECIES_DRAYGON_BODY = 0xDE3F
         private const val SPECIES_DRAYGON_EYE = 0xDE7F
         private const val SPECIES_DRAYGON_TAIL = 0xDEBF
         private const val SPECIES_DRAYGON_ARMS = 0xDEFF
+        private const val SPECIES_BOTWOON = 0xF293
+        private const val BOTWOON_BODY_SEGMENT_COUNT = 13
         private val DRAYGON_SPECIES_IDS = setOf(
             SPECIES_DRAYGON_BODY,
             SPECIES_DRAYGON_EYE,
@@ -168,6 +171,85 @@ class BossPoseScanner(private val romParser: RomParser) {
             SPECIES_DRAYGON_EYE to draygonEyeInstructionLists(),
             SPECIES_DRAYGON_TAIL to draygonTailInstructionLists(),
             SPECIES_DRAYGON_ARMS to draygonArmsInstructionLists(),
+            // Spore Spawn — main head/body extended spritemaps. The stalk is
+            // managed separately by enemy projectiles in bank $86.
+            SPECIES_SPORE_SPAWN to sporeSpawnInstructionLists(),
+        )
+
+        private data class BotwoonDirection(
+            val label: String,
+            val headSpritemap: Int,
+            val bodySpritemaps: IntArray,
+            val tailSpritemap: Int,
+            val segmentStepX: Int,
+            val segmentStepY: Int
+        )
+
+        private val BOTWOON_DIRECTIONS = listOf(
+            BotwoonDirection(
+                "Up",
+                0xB3E389,
+                intArrayOf(0x8DB70E, 0x8DB715, 0x8DB71C, 0x8DB723),
+                0x8DB72A,
+                0,
+                16
+            ),
+            BotwoonDirection(
+                "Up Right",
+                0xB3E37D,
+                intArrayOf(0x8DB6F2, 0x8DB6F9, 0x8DB700, 0x8DB707),
+                0x8DB75B,
+                -11,
+                11
+            ),
+            BotwoonDirection(
+                "Right",
+                0xB3E371,
+                intArrayOf(0x8DB6D6, 0x8DB6DD, 0x8DB6E4, 0x8DB6EB),
+                0x8DB754,
+                -16,
+                0
+            ),
+            BotwoonDirection(
+                "Down Right",
+                0xB3E365,
+                intArrayOf(0x8DB6BA, 0x8DB6C1, 0x8DB6C8, 0x8DB6CF),
+                0x8DB74D,
+                -11,
+                -11
+            ),
+            BotwoonDirection(
+                "Down",
+                0xB3E359,
+                intArrayOf(0x8DB69E, 0x8DB6A5, 0x8DB6AC, 0x8DB6B3),
+                0x8DB746,
+                0,
+                -16
+            ),
+            BotwoonDirection(
+                "Down Left",
+                0xB3E341,
+                intArrayOf(0x8DB666, 0x8DB66D, 0x8DB674, 0x8DB67B),
+                0x8DB73F,
+                11,
+                -11
+            ),
+            BotwoonDirection(
+                "Left",
+                0xB3E335,
+                intArrayOf(0x8DB64A, 0x8DB651, 0x8DB658, 0x8DB65F),
+                0x8DB738,
+                16,
+                0
+            ),
+            BotwoonDirection(
+                "Up Left",
+                0xB3E329,
+                intArrayOf(0x8DB62E, 0x8DB635, 0x8DB63C, 0x8DB643),
+                0x8DB731,
+                11,
+                11
+            ),
         )
 
         private fun ridleyInstructionLists(): List<KnownInstrList> = listOf(
@@ -231,6 +313,18 @@ class BossPoseScanner(private val romParser: RomParser) {
             KnownInstrList(0xA5, 0x9C38, "Arms Right Grab"),
             KnownInstrList(0xA5, 0x9C5A, "Arms Right Dying"),
         )
+
+        private fun sporeSpawnInstructionLists(): List<KnownInstrList> = listOf(
+            KnownInstrList(0xA5, 0xE6B9, "Dead"),
+            KnownInstrList(0xA5, 0xE6C7, "Initial Alive"),
+            KnownInstrList(0xA5, 0xE6D5, "Fight Started"),
+            KnownInstrList(0xA5, 0xE6E3, "Opening"),
+            KnownInstrList(0xA5, 0xE715, "Fully Open"),
+            KnownInstrList(0xA5, 0xE729, "Closing"),
+            KnownInstrList(0xA5, 0xE77D, "Death Start"),
+            KnownInstrList(0xA5, 0xE78D, "Death Loop"),
+            KnownInstrList(0xA5, 0xE7BD, "Death Harden"),
+        )
     }
 
     /**
@@ -251,6 +345,9 @@ class BossPoseScanner(private val romParser: RomParser) {
 
         if (speciesId == SPECIES_DRAYGON_BODY) {
             return scanDraygonCompositePoses(minEntries)
+        }
+        if (speciesId == SPECIES_BOTWOON) {
+            return scanBotwoonCompositePoses(minEntries)
         }
 
         // Strategy 1: Use known instruction lists from decompilation
@@ -369,6 +466,50 @@ class BossPoseScanner(private val romParser: RomParser) {
                 usesMotherBrainBgTileData = candidate.usesMotherBrainBgTileData
             )
         }
+    }
+
+    private fun scanBotwoonCompositePoses(minEntries: Int): List<BossPose> {
+        return BOTWOON_DIRECTIONS.mapNotNull { direction ->
+            createBotwoonCompositePose(direction, minEntries)
+        }
+    }
+
+    private fun createBotwoonCompositePose(
+        direction: BotwoonDirection,
+        minEntries: Int
+    ): BossPose? {
+        val head = smap.parseSpritemap(direction.headSpritemap) ?: return null
+        val entries = mutableListOf<EnemySpritemap.OamEntry>()
+        entries.addAll(head.entries)
+
+        for (segmentIndex in 1..BOTWOON_BODY_SEGMENT_COUNT) {
+            val spritemapAddress = if (segmentIndex == BOTWOON_BODY_SEGMENT_COUNT) {
+                direction.tailSpritemap
+            } else {
+                direction.bodySpritemaps[(segmentIndex - 1) % direction.bodySpritemaps.size]
+            }
+            val segment = smap.parseSpritemap(spritemapAddress) ?: return null
+            val xOffset = direction.segmentStepX * segmentIndex
+            val yOffset = direction.segmentStepY * segmentIndex
+            entries.addAll(segment.entries.map { entry ->
+                entry.copy(
+                    xOffset = entry.xOffset + xOffset,
+                    yOffset = entry.yOffset + yOffset
+                )
+            })
+        }
+
+        if (entries.size < minEntries) return null
+
+        val combined = EnemySpritemap.Spritemap(entries, direction.headSpritemap)
+        return BossPose(
+            name = "Full Body ${direction.label}",
+            spritemap = combined,
+            entryCount = entries.size,
+            frame = EnemySpritemap.RenderableFrame.Oam(combined),
+            childCount = BOTWOON_BODY_SEGMENT_COUNT + 1,
+            durationTicks = 8
+        )
     }
 
     private fun scanDraygonCompositePoses(minEntries: Int): List<BossPose> {
@@ -697,6 +838,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         }
         if (speciesId == SPECIES_MOTHER_BRAIN_BODY && frame is EnemySpritemap.RenderableFrame.Extended) {
             return motherBrainBodyRenderOptions()
+        }
+        if (speciesId == SPECIES_SPORE_SPAWN && frame is EnemySpritemap.RenderableFrame.Extended) {
+            return EnemySpritemap.RenderOptions(reverseExtendedOamDrawOrder = true)
         }
         if (speciesId != SPECIES_CROCOMIRE || frame !is EnemySpritemap.RenderableFrame.Extended) {
             return EnemySpritemap.RenderOptions()

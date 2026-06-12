@@ -66,6 +66,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         val oamTileNumberBase: Int = 0,
         val extendedOamOriginX: Int = 0,
         val extendedOamOriginY: Int = 0,
+        val reverseExtendedOamDrawOrder: Boolean = false,
         val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
     )
 
@@ -475,7 +476,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         val flattened = flattenExtendedSpritemap(ext)
-        val oamCommands = ext.children.filterIsInstance<ExtendedChild.Oam>().flatMap { buildOamCommands(it, options) }
+        val oamChildren = ext.children.filterIsInstance<ExtendedChild.Oam>().let { children ->
+            if (options.reverseExtendedOamDrawOrder) children.asReversed() else children
+        }
+        val oamCommands = oamChildren.flatMap { buildOamCommands(it, options) }
         val tilemapCommands = buildExtendedTilemapCommands(ext, options)
         val commands = oamCommands + tilemapCommands
         if (commands.isEmpty()) return null

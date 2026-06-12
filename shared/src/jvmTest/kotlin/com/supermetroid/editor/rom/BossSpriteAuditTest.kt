@@ -153,7 +153,6 @@ class BossSpriteAuditTest {
     @Test
     fun `render boss audit with name table awareness`() {
         val rp = loadTestRom() ?: return
-        val smap = EnemySpritemap(rp)
         val scanner = BossPoseScanner(rp)
         val outDir = File("/tmp/boss_audit_v2")
         outDir.mkdirs()
@@ -168,6 +167,7 @@ class BossSpriteAuditTest {
             0xEF7F to "GoldenTorizo",
             0xF293 to "Botwoon",
             0xDE3F to "Draygon",
+            0xDF3F to "SporeSpawn",
         )
 
         for ((speciesId, name) in bosses) {

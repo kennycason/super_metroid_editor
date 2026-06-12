@@ -174,19 +174,70 @@ class BossPoseScannerTest {
     @Test
     fun `Botwoon has renderable head poses`() {
         val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xF293) ?: return
+        val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xF293) ?: return
+
+        val head = smap.findDefaultSpritemap(0xF293)
+        assertNotNull(head, "Botwoon should still expose its normal head spritemap")
+
+        val rendered = smap.renderSpritemap(head!!, tileData, palette)
+        assertTrue(rendered != null, "Best pose should render")
+        val fillPct = rendered!!.pixels.count { (it ushr 24) > 0 } * 100 / (rendered.width * rendered.height)
+        assertTrue(fillPct >= 20, "Botwoon head should have decent fill (${fillPct}%)")
+    }
+
+    @Test
+    fun `Botwoon body poses include projectile body and tail segments`() {
+        val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
         val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xF293) ?: return
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xF293) ?: return
 
         val poses = scanner.scanPoses(0xF293, minEntries = 3)
-        assertTrue(poses.isNotEmpty(), "Botwoon should have poses")
+        val right = poses.firstOrNull { it.name == "Full Body Right" }
+        assertNotNull(right, "Botwoon should expose a full right-facing body pose")
+        assertEquals(14, right!!.childCount,
+            "Botwoon composite should include the head plus 13 body/tail projectile segments")
+        assertTrue(right.entryCount >= 15,
+            "Botwoon full pose should include head entries and all body/tail segment entries")
+        assertTrue(right.spritemap.entries.any { (it.tileNum and 0x1FF) in 0x1A0..0x1A7 },
+            "Botwoon full pose should include tail projectile tiles")
 
-        // Best pose should render with decent fill
-        val best = poses.first()
-        val rendered = scanner.renderPose(best, tileData, palette)
-        assertTrue(rendered != null, "Best pose should render")
-        val fillPct = rendered!!.pixels.count { (it ushr 24) > 0 } * 100 / (rendered.width * rendered.height)
-        assertTrue(fillPct >= 20, "Botwoon best pose should have decent fill (${fillPct}%)")
+        val rendered = scanner.renderPose(right, tileData, palette)
+        assertNotNull(rendered, "Botwoon full body pose should render")
+        assertTrue(rendered!!.width >= 160 || rendered.height >= 160,
+            "Botwoon full body should be substantially larger than the head (${rendered.width}x${rendered.height})")
+        assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 900,
+            "Botwoon full body should have substantial visible pixels")
+    }
+
+    @Test
+    fun `Spore Spawn known poses include open and closed body frames`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xDF3F) ?: return
+        val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xDF3F) ?: return
+
+        val poses = scanner.scanPoses(0xDF3F, minEntries = 3)
+        assertTrue(poses.size >= 6, "Spore Spawn should expose closed/open/death poses")
+        assertTrue(poses.any { it.frame.snesAddress == 0xA5EE6F },
+            "Spore Spawn closed frame should be parsed from the known instruction lists")
+        assertTrue(poses.any { it.frame.snesAddress == 0xA5EF3D },
+            "Spore Spawn fully-open frame should be parsed from the known instruction lists")
+        assertTrue(poses.any { it.childCount == 2 },
+            "Spore Spawn opening/open frames should combine shell and mouth spritemaps")
+        assertTrue(poses.filter { it.frame is EnemySpritemap.RenderableFrame.Extended }
+            .all { it.renderOptions.reverseExtendedOamDrawOrder },
+            "Spore Spawn should draw its middle/core child behind the shell plates")
+
+        val open = poses.first { it.frame.snesAddress == 0xA5EF3D }
+        val rendered = scanner.renderPose(open, tileData, palette)
+        assertNotNull(rendered, "Spore Spawn open pose should render")
+        assertTrue(rendered!!.width >= 64 && rendered.height >= 80,
+            "Spore Spawn open body should render as a large boss pose (${rendered.width}x${rendered.height})")
+        assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 1200,
+            "Spore Spawn open body should have substantial visible pixels")
     }
 
     @Test
