@@ -130,12 +130,23 @@ class BossPoseScannerTest {
             "Mother Brain P2 torso tilemaps should render from the room BG tileset")
         assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, standing.renderOptions.oamTileNumberMode,
             "Mother Brain P2 limbs use physical low-9-bit OBJ tile IDs")
+        assertEquals(0x28, standing.renderOptions.extendedOamOriginY,
+            "Mother Brain P2 extended OAM limbs should attach lower on the BG torso")
         assertTrue(standing.tilemapCount >= 2,
             "Mother Brain P2 standing frame should include torso BG2 tilemaps")
 
+        val sourceTiles = EnemySpriteGraphics.loadMotherBrainBodySourceTileData(rp, rawTiles)
+        assertNotNull(sourceTiles, "Mother Brain P2 source sheet should include runtime body sources")
+        val sourceTileCount = sourceTiles!!.size / EnemySpriteGraphics.BYTES_PER_TILE
+        assertEquals(
+            0xA0 + 0x80 + 0x80 + rawTiles.size / EnemySpriteGraphics.BYTES_PER_TILE,
+            sourceTileCount,
+            "Mother Brain P2 source sheet should include room body, head DMA, leg DMA, and raw supplement tiles"
+        )
+
         val rendered = scanner.renderPose(standing, renderTiles, palette)
         assertNotNull(rendered, "Mother Brain P2 standing frame should render")
-        assertTrue(rendered!!.width >= 80 && rendered.height >= 80,
+        assertTrue(rendered!!.width >= 80 && rendered.height >= 100,
             "Mother Brain P2 body should render as a large assembly (${rendered.width}x${rendered.height})")
         assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 1000,
             "Mother Brain P2 body should have substantial visible pixels")

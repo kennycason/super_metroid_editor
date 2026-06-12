@@ -740,6 +740,7 @@ class BossPoseScanner(private val romParser: RomParser) {
             normalizeExtendedTilemaps = true,
             extendedTilemapsBehindOam = true,
             oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
+            extendedOamOriginY = 0x28,
             extendedTilemapBlankTiles = setOf(0x0338)
         )
 

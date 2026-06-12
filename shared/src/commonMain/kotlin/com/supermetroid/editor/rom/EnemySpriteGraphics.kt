@@ -29,6 +29,8 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val MOTHER_BRAIN_BODY_RAW_TILE_BASE = 0xD0
         private const val MOTHER_BRAIN_LEGS_TILE_BASE = 0x140
         private const val MOTHER_BRAIN_RENDER_TILE_COUNT = 0x200
+        private const val MOTHER_BRAIN_BODY_ROOM_TILE_START = 0x160
+        private const val MOTHER_BRAIN_BODY_ROOM_TILE_COUNT = 0xA0
         private const val MOTHER_BRAIN_HEAD_TILES_SNES = 0xB78000
         private const val MOTHER_BRAIN_LEGS_TILES_SNES = 0xB79000
         private const val MOTHER_BRAIN_HEAD_TILES_SIZE = 0x1000
@@ -320,6 +322,39 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             val tileGraphics = TileGraphics(romParser)
             if (!tileGraphics.loadTileset(MOTHER_BRAIN_TILESET_ID)) return null
             return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES)
+        }
+
+        /**
+         * Build a compact sheet of the tile sources Mother Brain phase 2 uses at
+         * runtime. This is intentionally not the same as GRAPHADR: the torso is
+         * drawn from room tileset $0E BG tiles, while head/limbs are DMA-loaded
+         * from bank $B7 and $EC7F contributes only a small supplemental block.
+         */
+        fun loadMotherBrainBodySourceTileData(
+            romParser: RomParser,
+            bodyRawTiles: ByteArray? = null
+        ): ByteArray? {
+            val roomTiles = loadMotherBrainRoomTileData(romParser) ?: return null
+            val headTiles = readRawBytes(romParser, MOTHER_BRAIN_HEAD_TILES_SNES, MOTHER_BRAIN_HEAD_TILES_SIZE)
+                ?: return null
+            val legTiles = readRawBytes(romParser, MOTHER_BRAIN_LEGS_TILES_SNES, MOTHER_BRAIN_LEGS_TILES_SIZE)
+                ?: return null
+            val rawBodyTiles = bodyRawTiles ?: loadEnemyTileData(romParser, MOTHER_BRAIN_BODY_SPECIES_ID)
+                ?: return null
+
+            val roomStart = MOTHER_BRAIN_BODY_ROOM_TILE_START * BYTES_PER_TILE
+            val roomEnd = roomStart + MOTHER_BRAIN_BODY_ROOM_TILE_COUNT * BYTES_PER_TILE
+            if (roomEnd > roomTiles.size) return null
+            val roomBodyTiles = roomTiles.copyOfRange(roomStart, roomEnd)
+
+            val totalSize = roomBodyTiles.size + headTiles.size + legTiles.size + rawBodyTiles.size
+            val out = ByteArray(totalSize)
+            var dest = 0
+            for (block in listOf(roomBodyTiles, headTiles, legTiles, rawBodyTiles)) {
+                block.copyInto(out, destinationOffset = dest)
+                dest += block.size
+            }
+            return out
         }
 
         /**

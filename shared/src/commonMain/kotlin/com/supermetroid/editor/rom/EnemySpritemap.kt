@@ -64,6 +64,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val extendedTilemapsBehindOam: Boolean = false,
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
         val oamTileNumberBase: Int = 0,
+        val extendedOamOriginX: Int = 0,
+        val extendedOamOriginY: Int = 0,
         val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
     )
 
@@ -473,21 +475,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         val flattened = flattenExtendedSpritemap(ext)
-        val oamCommands = mutableListOf<TileDrawCommand>()
-
-        for (entry in flattened.entries) {
-            oamCommands.add(
-                TileDrawCommand(
-                    x = entry.xOffset,
-                    y = entry.yOffset,
-                    tileNum = oamTileNumber(entry, options),
-                    hFlip = entry.hFlip,
-                    vFlip = entry.vFlip,
-                    is16x16 = entry.is16x16
-                )
-            )
-        }
-
+        val oamCommands = ext.children.filterIsInstance<ExtendedChild.Oam>().flatMap { buildOamCommands(it, options) }
         val tilemapCommands = buildExtendedTilemapCommands(ext, options)
         val commands = oamCommands + tilemapCommands
         if (commands.isEmpty()) return null
@@ -527,6 +515,22 @@ class EnemySpritemap(private val romParser: RomParser) {
         }
 
         return AssembledSprite(w, h, pixels, -minX, -minY, flattened)
+    }
+
+    private fun buildOamCommands(
+        child: ExtendedChild.Oam,
+        options: RenderOptions
+    ): List<TileDrawCommand> {
+        return child.spritemap.entries.map { entry ->
+            TileDrawCommand(
+                x = entry.xOffset + child.xOffset + options.extendedOamOriginX,
+                y = entry.yOffset + child.yOffset + options.extendedOamOriginY,
+                tileNum = oamTileNumber(entry, options),
+                hFlip = entry.hFlip,
+                vFlip = entry.vFlip,
+                is16x16 = entry.is16x16
+            )
+        }
     }
 
     private fun oamTileNumber(entry: OamEntry, options: RenderOptions): Int {
