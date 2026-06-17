@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -46,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -106,6 +109,7 @@ fun TilePixelEditor(
     val palVer = editorState.paletteVersion  // observe palette changes from left-column editor
     val palettes = tileGraphics.getPalettes()
     val coroutineScope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
 
     // Sync selection from left-column palette editor (via editorState.sampledPaletteRow/Col)
     val extRow = editorState.sampledPaletteRow
@@ -127,6 +131,17 @@ fun TilePixelEditor(
             redoStack.clear()
             pendingEdits = mutableListOf()
         }
+    }
+
+    fun stopDrawing(): Boolean {
+        val wasDrawing = isDrawing
+        isDrawing = false
+        if (wasDrawing) commitPending()
+        return wasDrawing
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
     }
 
     fun undo() {
@@ -213,6 +228,7 @@ fun TilePixelEditor(
     }
 
     Column(modifier = modifier.fillMaxSize().background(Color(0xFF1A1A2E))
+        .focusRequester(focusRequester)
         .focusable()
         .onKeyEvent { event ->
             if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) {
@@ -364,6 +380,8 @@ fun TilePixelEditor(
                             .fillMaxSize()
                             .pointerHoverIcon(PixelEditorCursors.forPixelTool(activeTool))
                             .onPointerEvent(PointerEventType.Press) { event ->
+                                if (!isPrimaryPointerPress(event.nativeEvent)) return@onPointerEvent
+                                focusRequester.requestFocus()
                                 val pos = event.changes.first().position
                                 val px = (pos.x / density / zoomLevel).toInt().coerceIn(0, 15)
                                 val py = (pos.y / density / zoomLevel).toInt().coerceIn(0, 15)
@@ -372,8 +390,14 @@ fun TilePixelEditor(
                                         isDrawing = true
                                         drawPixel(px, py)
                                     }
-                                    PixelTool.FILL -> floodFill(px, py)
-                                    PixelTool.EYEDROPPER -> eyedrop(px, py)
+                                    PixelTool.FILL -> {
+                                        isDrawing = false
+                                        floodFill(px, py)
+                                    }
+                                    PixelTool.EYEDROPPER -> {
+                                        isDrawing = false
+                                        eyedrop(px, py)
+                                    }
                                     PixelTool.SELECT -> {} // SELECT not used in TilePixelEditor
                                 }
                             }
@@ -382,17 +406,19 @@ fun TilePixelEditor(
                                 val px = (pos.x / density / zoomLevel).toInt()
                                 val py = (pos.y / density / zoomLevel).toInt()
                                 hoverPixel = if (px in 0..15 && py in 0..15) px to py else null
+                                if (isDrawing && !isPrimaryPointerStillDown(event.nativeEvent)) {
+                                    stopDrawing()
+                                    return@onPointerEvent
+                                }
                                 if (isDrawing && (activeTool == PixelTool.PENCIL || activeTool == PixelTool.ERASER)) {
                                     drawPixel(px.coerceIn(0, 15), py.coerceIn(0, 15))
                                 }
                             }
                             .onPointerEvent(PointerEventType.Release) {
-                                if (isDrawing) {
-                                    isDrawing = false
-                                    commitPending()
-                                }
+                                stopDrawing()
                             }
                             .onPointerEvent(PointerEventType.Exit) {
+                                stopDrawing()
                                 hoverPixel = null
                             }
                     ) {
@@ -556,6 +582,7 @@ fun TilePixelEditor(
                                             RoundedCornerShape(2.dp)
                                         )
                                         .clickable {
+                                            focusRequester.requestFocus()
                                             selectedPalRow = palRow
                                             selectedColorIdx = colIdx
                                             editorState.sampledPaletteRow = palRow

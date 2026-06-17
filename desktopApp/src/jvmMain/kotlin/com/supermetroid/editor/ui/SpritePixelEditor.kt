@@ -43,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -127,12 +130,27 @@ fun SpritePixelEditor(
     var showTileGrid by remember { mutableStateOf(fixedPalette != null) }
     var editVersion by remember { mutableStateOf(0) }
     var isDrawing by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
 
     // Force recomposition when state changes
     fun refreshVersion() { editVersion = state.editVersion }
 
+    fun stopDrawing(commit: Boolean = true): Boolean {
+        val wasDrawing = isDrawing
+        isDrawing = false
+        if (wasDrawing && commit && state.activeTool != PixelTool.SELECT) {
+            state.commitPending()
+        }
+        return wasDrawing
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
     Column(
         modifier = modifier.fillMaxSize().background(Color(0xFF1A1A2E))
+            .focusRequester(focusRequester)
             .focusable()
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
@@ -298,11 +316,27 @@ fun SpritePixelEditor(
                     modifier = Modifier
                         .size((canvasW / density).dp, (canvasH / density).dp)
                         .pointerHoverIcon(PixelEditorCursors.forPixelTool(state.activeTool))
+                        .onPointerEvent(PointerEventType.Scroll) { e ->
+                            if (isZoomModifierPressed(e.nativeEvent)) {
+                                val scrollDelta = e.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
+                                zoomLevel = zoomAfterScroll(
+                                    currentZoom = zoomLevel.toFloat(),
+                                    scrollDeltaY = scrollDelta.y,
+                                    minZoom = 2f,
+                                    maxZoom = 48f
+                                ).toInt().coerceIn(2, 48)
+                            }
+                        }
                         .onPointerEvent(PointerEventType.Move) { e ->
                             val pos = e.changes.first().position
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)
                             val py = (pos.y / zoomLevel).toInt().coerceIn(0, imageHeight - 1)
                             hoverX = px; hoverY = py
+                            if (isDrawing && !isPrimaryPointerStillDown(e.nativeEvent)) {
+                                stopDrawing()
+                                refreshVersion()
+                                return@onPointerEvent
+                            }
                             if (isDrawing) {
                                 when (state.activeTool) {
                                     PixelTool.PENCIL -> { if (!state.isStampMode) state.drawPixel(px, py) }
@@ -314,19 +348,35 @@ fun SpritePixelEditor(
                             }
                         }
                         .onPointerEvent(PointerEventType.Press) { e ->
+                            if (!isPrimaryPointerPress(e.nativeEvent)) return@onPointerEvent
+                            focusRequester.requestFocus()
                             val pos = e.changes.first().position
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)
                             val py = (pos.y / zoomLevel).toInt().coerceIn(0, imageHeight - 1)
-                            isDrawing = true
                             when (state.activeTool) {
                                 PixelTool.PENCIL -> {
-                                    if (state.isStampMode) state.pasteAt(px, py)
-                                    else state.drawPixel(px, py)
+                                    if (state.isStampMode) {
+                                        isDrawing = false
+                                        state.pasteAt(px, py)
+                                    } else {
+                                        isDrawing = true
+                                        state.drawPixel(px, py)
+                                    }
                                 }
-                                PixelTool.ERASER -> state.drawPixel(px, py)
-                                PixelTool.FILL -> state.floodFill(px, py)
-                                PixelTool.EYEDROPPER -> state.eyedrop(px, py)
+                                PixelTool.ERASER -> {
+                                    isDrawing = true
+                                    state.drawPixel(px, py)
+                                }
+                                PixelTool.FILL -> {
+                                    isDrawing = false
+                                    state.floodFill(px, py)
+                                }
+                                PixelTool.EYEDROPPER -> {
+                                    isDrawing = false
+                                    state.eyedrop(px, py)
+                                }
                                 PixelTool.SELECT -> {
+                                    isDrawing = true
                                     state.selActive = true
                                     state.selX1 = px; state.selY1 = py
                                     state.selX2 = px; state.selY2 = py
@@ -335,16 +385,17 @@ fun SpritePixelEditor(
                             refreshVersion()
                         }
                         .onPointerEvent(PointerEventType.Release) {
-                            isDrawing = false
-                            if (state.activeTool != PixelTool.SELECT) state.commitPending()
+                            val wasDrawing = stopDrawing()
                             // If selection is just a click (zero size), clear it
-                            if (state.activeTool == PixelTool.SELECT && state.selX1 == state.selX2 && state.selY1 == state.selY2) {
+                            if (wasDrawing && state.activeTool == PixelTool.SELECT && state.selX1 == state.selX2 && state.selY1 == state.selY2) {
                                 state.selActive = false
                             }
                             refreshVersion()
                         }
                         .onPointerEvent(PointerEventType.Exit) {
+                            stopDrawing()
                             hoverX = -1; hoverY = -1
+                            refreshVersion()
                         }
                 ) {
                     // Draw pixels
@@ -467,7 +518,10 @@ fun SpritePixelEditor(
                             modifier = Modifier
                                 .size(14.dp)
                                 .clip(RoundedCornerShape(2.dp))
-                                .clickable { state.selectedColorArgb = argb }
+                                .clickable {
+                                    focusRequester.requestFocus()
+                                    state.selectedColorArgb = argb
+                                }
                                 .border(
                                     if (isSelected) 2.dp else 0.5.dp,
                                     if (isSelected) Color.White else Color(0x60FFFFFF),

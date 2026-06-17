@@ -4,6 +4,20 @@ plugins {
     id("org.jetbrains.compose")
 }
 
+val macGestureJvmArgs = listOf(
+    "--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
+    "--add-opens", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
+)
+
+val appLoggingJvmArgs = listOf(
+    "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
+    "-Dorg.slf4j.simpleLogger.showThreadName=false",
+    "-Dorg.slf4j.simpleLogger.showDateTime=false",
+    "-Dorg.slf4j.simpleLogger.showLogName=false",
+    "-Dorg.slf4j.simpleLogger.showShortLogName=false",
+    "-Dorg.slf4j.simpleLogger.logFile=System.out",
+)
+
 kotlin {
     jvm {
         jvmToolchain(17)
@@ -62,14 +76,7 @@ tasks.register<JavaExec>("benchmark") {
 }
 
 tasks.withType<JavaExec>().configureEach {
-    jvmArgs(
-        "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
-        "-Dorg.slf4j.simpleLogger.showThreadName=false",
-        "-Dorg.slf4j.simpleLogger.showDateTime=false",
-        "-Dorg.slf4j.simpleLogger.showLogName=false",
-        "-Dorg.slf4j.simpleLogger.showShortLogName=false",
-        "-Dorg.slf4j.simpleLogger.logFile=System.out"
-    )
+    jvmArgs(macGestureJvmArgs + appLoggingJvmArgs)
 }
 
 // Ensure the libretro core is built before running or packaging
@@ -112,16 +119,7 @@ compose.desktop {
     application {
         mainClass = "com.supermetroid.editor.MainKt"
         // macOS trackpad pinch-to-zoom (magnification gesture)
-        jvmArgs(
-            "--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
-            "--add-opens", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
-            "-Dorg.slf4j.simpleLogger.defaultLogLevel=info",
-            "-Dorg.slf4j.simpleLogger.showThreadName=false",
-            "-Dorg.slf4j.simpleLogger.showDateTime=false",
-            "-Dorg.slf4j.simpleLogger.showLogName=false",
-            "-Dorg.slf4j.simpleLogger.showShortLogName=false",
-            "-Dorg.slf4j.simpleLogger.logFile=System.out"
-        )
+        jvmArgs(*(macGestureJvmArgs + appLoggingJvmArgs).toTypedArray())
         nativeDistributions {
             includeAllModules = true
             appResourcesRootDir.set(project.layout.buildDirectory.dir("appResources"))

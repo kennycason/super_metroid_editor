@@ -549,6 +549,7 @@ fun MapCanvas(
 ) {
     val zoomState = remember { mutableStateOf(1f) }
     val zoomLevel = zoomState.value
+    AttachMacPinchZoom(LocalSwingWindow.current, zoomState, minZoom = 0.25f, maxZoom = 4f)
     var showGrid by remember { mutableStateOf(true) }
     var showShortChargeRuler by remember { mutableStateOf(false) }
     var shortChargeStutters by remember { mutableStateOf(0) }
@@ -1149,13 +1150,13 @@ fun MapCanvas(
                                     )
                                     .onPointerEvent(PointerEventType.Scroll) { event ->
                                         val ne = event.nativeEvent as? MouseEvent
-                                        val isZoom = ne?.let { it.isControlDown || it.isMetaDown } ?: false
+                                        val isZoom = isZoomModifierPressed(event.nativeEvent)
                                         val sd = event.changes.first().scrollDelta
                                         if (isZoom) {
                                             val mousePos = event.changes.first().position
                                             val contentXBefore = (hScrollState.value + mousePos.x) / zoomLevel
                                             val contentYBefore = (vScrollState.value + mousePos.y) / zoomLevel
-                                            val newZoom = (zoomLevel * if (sd.y < 0) EditorColors.ZOOM_FACTOR else 1f / EditorColors.ZOOM_FACTOR).coerceIn(0.25f, 4f)
+                                            val newZoom = zoomAfterScroll(zoomLevel, sd.y, minZoom = 0.25f, maxZoom = 4f)
                                             zoomState.value = newZoom
                                             coroutineScope.launch {
                                                 val newScrollX = (contentXBefore * newZoom - mousePos.x).toInt().coerceAtLeast(0)
