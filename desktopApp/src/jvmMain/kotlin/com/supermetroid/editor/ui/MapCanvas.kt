@@ -2041,7 +2041,7 @@ fun MapCanvas(
                                             Text("Door Connection", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             Spacer(modifier = Modifier.height(2.dp))
 
-                                            val allDoors = editorState.doorEntries
+                                            val allDoors = remember(editVersion) { editorState.doorEntries.toList() }
                                             val roomIdToName = remember(rooms) {
                                                 rooms.associate {
                                                     it.getRoomIdAsInt() to it.name
@@ -2202,7 +2202,7 @@ fun MapCanvas(
                                                                 verticalAlignment = Alignment.CenterVertically) {
                                                                 Text(
                                                                     if (entranceTemplates.isEmpty()) "No existing entrances found"
-                                                                    else "Copy from existing entrance...",
+                                                                    else "Copy from existing",
                                                                     fontSize = 9.sp,
                                                                     color = if (entranceTemplates.isEmpty()) MaterialTheme.colorScheme.outline
                                                                         else MaterialTheme.colorScheme.onSurface,
@@ -2253,14 +2253,6 @@ fun MapCanvas(
                                                             }
                                                         }
                                                     }
-                                                }
-                                                if (entranceTemplates.isNotEmpty()) {
-                                                    Text(
-                                                        "Copies facing, screen, cap, distance, and entry ASM from a real door into this room.",
-                                                        fontSize = 8.sp,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        modifier = Modifier.padding(start = 72.dp)
-                                                    )
                                                 }
                                                 Spacer(modifier = Modifier.height(4.dp))
 
