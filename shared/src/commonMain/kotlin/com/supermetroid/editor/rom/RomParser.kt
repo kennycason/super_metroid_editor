@@ -1701,9 +1701,9 @@ class RomParser(internal val romData: ByteArray) {
         }
 
         fun scrollValueLabel(v: Int): String = when (v) {
-            0x00 -> "Red (lock)"
-            0x01 -> "Blue (unlock)"
-            0x02 -> "Green (gate)"
+            0x00 -> "Red (blocked)"
+            0x01 -> "Blue (normal)"
+            0x02 -> "Green (lower rows)"
             else -> "?$v"
         }
 

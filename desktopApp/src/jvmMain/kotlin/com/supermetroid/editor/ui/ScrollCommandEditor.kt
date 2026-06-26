@@ -122,7 +122,7 @@ fun ScrollCommandEditor(
             LegendDot(SCROLL_RED, "Red")
             LegendDot(SCROLL_NONE, "None")
         }
-        Text("Blue=camera scrolls, Green=revealed but locked, Red=hidden",
+        Text("Blue=normal camera, Green=normal + lower rows, Red=blocked",
             fontSize = 7.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         Spacer(Modifier.height(2.dp))

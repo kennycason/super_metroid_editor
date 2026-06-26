@@ -83,7 +83,7 @@ fun SpritePaletteEditor(
         ) {
             Column {
                 Text("Sprite Palettes", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("Samus suits, beams", fontSize = 11.sp,
+                Text("Samus, beams, bosses, enemies", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val hasAnyOverride = SpritePalettes.REGIONS.any { editorState.hasSpritePaletteOverride(it.id) }
@@ -104,15 +104,61 @@ fun SpritePaletteEditor(
         }
         Spacer(modifier = Modifier.height(12.dp))
 
+        fun targetSpriteRegionIds(): List<String> =
+            if (selectedRegionId != null) listOf(selectedRegionId!!)
+            else SpritePalettes.REGIONS.map { it.id }
+
+        fun applySpriteEffect(effectId: String) {
+            val effect = PaletteEffects.findEffect(effectId) ?: return
+            for (regionId in targetSpriteRegionIds()) {
+                val colors = getColors(regionId) ?: continue
+                effect.apply(colors)
+                editorState.saveSpritePaletteOverride(regionId, colors)
+                editorState.setPaletteEffect(regionId, effect.id)
+            }
+            editVersion++
+        }
+
+        @Composable
+        fun PaletteRegionSection(title: String, regions: List<SpritePalettes.PaletteRegion>) {
+            if (regions.isEmpty()) return
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(4.dp))
+            for (region in regions) {
+                PaletteRegionCard(
+                    region = region,
+                    colors = getColors(region.id),
+                    isSelected = selectedRegionId == region.id,
+                    hasOverride = editorState.hasSpritePaletteOverride(region.id),
+                    selectedColorIdx = if (selectedRegionId == region.id) selectedColorIdx else -1,
+                    onSelect = {
+                        selectedRegionId = if (selectedRegionId == region.id) null else region.id
+                        selectedColorIdx = -1
+                        showHsvPicker = false
+                    },
+                    onColorClick = { idx ->
+                        selectedRegionId = region.id
+                        selectedColorIdx = idx
+                        showHsvPicker = true
+                    },
+                    onReset = {
+                        editorState.resetSpritePaletteOverride(region.id)
+                        editorState.clearPaletteEffect(region.id)
+                        editVersion++
+                    }
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+
         // ─── Random buttons ───────────────────────────────────────
-        Row(
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedButton(onClick = {
-                val targets = if (selectedRegionId != null) listOf(selectedRegionId!!)
-                else SpritePalettes.REGIONS.map { it.id }
-                for (regionId in targets) {
+                for (regionId in targetSpriteRegionIds()) {
                     val colors = getColors(regionId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     editorState.saveSpritePaletteOverride(regionId, colors)
@@ -121,9 +167,7 @@ fun SpritePaletteEditor(
                 editVersion++
             }) { Text("Random Palette", fontSize = 10.sp) }
             OutlinedButton(onClick = {
-                val targets = if (selectedRegionId != null) listOf(selectedRegionId!!)
-                else SpritePalettes.REGIONS.map { it.id }
-                for (regionId in targets) {
+                for (regionId in targetSpriteRegionIds()) {
                     val colors = getColors(regionId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     PaletteEffects.mutate(colors)
@@ -132,6 +176,12 @@ fun SpritePaletteEditor(
                 }
                 editVersion++
             }) { Text("Full Random", fontSize = 10.sp) }
+            OutlinedButton(onClick = { applySpriteEffect("psychedelic-randomize") }) {
+                Text("Psychedelic", fontSize = 10.sp)
+            }
+            OutlinedButton(onClick = { applySpriteEffect("mathematical-randomize") }) {
+                Text("Mathematical", fontSize = 10.sp)
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -199,63 +249,13 @@ fun SpritePaletteEditor(
         @Suppress("UNUSED_VARIABLE")
         val ev = editVersion // force recomposition
 
-        // Samus section
-        Text("Samus", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(modifier = Modifier.height(4.dp))
-        for (region in SpritePalettes.SAMUS_REGIONS) {
-            PaletteRegionCard(
-                region = region,
-                colors = getColors(region.id),
-                isSelected = selectedRegionId == region.id,
-                hasOverride = editorState.hasSpritePaletteOverride(region.id),
-                selectedColorIdx = if (selectedRegionId == region.id) selectedColorIdx else -1,
-                onSelect = {
-                    selectedRegionId = if (selectedRegionId == region.id) null else region.id
-                    selectedColorIdx = -1
-                    showHsvPicker = false
-                },
-                onColorClick = { idx ->
-                    selectedRegionId = region.id
-                    selectedColorIdx = idx
-                    showHsvPicker = true
-                },
-                onReset = {
-                    editorState.resetSpritePaletteOverride(region.id)
-                    editorState.clearPaletteEffect(region.id)
-                    editVersion++
-                }
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-        }
-
+        PaletteRegionSection("Samus", SpritePalettes.SAMUS_REGIONS)
         Spacer(modifier = Modifier.height(8.dp))
-        Text("Beams", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(modifier = Modifier.height(4.dp))
-        for (region in SpritePalettes.BEAM_REGIONS) {
-            PaletteRegionCard(
-                region = region,
-                colors = getColors(region.id),
-                isSelected = selectedRegionId == region.id,
-                hasOverride = editorState.hasSpritePaletteOverride(region.id),
-                selectedColorIdx = if (selectedRegionId == region.id) selectedColorIdx else -1,
-                onSelect = {
-                    selectedRegionId = if (selectedRegionId == region.id) null else region.id
-                    selectedColorIdx = -1
-                    showHsvPicker = false
-                },
-                onColorClick = { idx ->
-                    selectedRegionId = region.id
-                    selectedColorIdx = idx
-                    showHsvPicker = true
-                },
-                onReset = {
-                    editorState.resetSpritePaletteOverride(region.id)
-                    editorState.clearPaletteEffect(region.id)
-                    editVersion++
-                }
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-        }
+        PaletteRegionSection("Beams", SpritePalettes.BEAM_REGIONS)
+        Spacer(modifier = Modifier.height(8.dp))
+        PaletteRegionSection("Bosses", SpritePalettes.BOSSES_REGIONS)
+        Spacer(modifier = Modifier.height(8.dp))
+        PaletteRegionSection("Enemies", SpritePalettes.ENEMIES_REGIONS)
 
         // ─── Color editor (HSV picker) for selected color ──────────
         if (showHsvPicker && selectedRegionId != null && selectedColorIdx >= 0) {
@@ -420,14 +420,28 @@ fun AreaPaletteEditor(
         }
         Spacer(modifier = Modifier.height(8.dp))
 
+        fun targetTilesets(): List<Int> =
+            if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
+
+        fun applyAreaEffect(effectId: String) {
+            val effect = PaletteEffects.findEffect(effectId) ?: return
+            for (tsId in targetTilesets()) {
+                val colors = getColors(tsId) ?: continue
+                effect.apply(colors)
+                editorState.saveTilesetPaletteFromColors(tsId, colors)
+                editorState.setPaletteEffect("tileset:$tsId", effect.id)
+            }
+            editVersion++
+        }
+
         // Random buttons
-        Row(
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedButton(onClick = {
-                val targets = if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
-                for (tsId in targets) {
+                for (tsId in targetTilesets()) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     editorState.saveTilesetPaletteFromColors(tsId, colors)
@@ -436,8 +450,7 @@ fun AreaPaletteEditor(
                 editVersion++
             }) { Text("Random Palette", fontSize = 10.sp) }
             OutlinedButton(onClick = {
-                val targets = if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
-                for (tsId in targets) {
+                for (tsId in targetTilesets()) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     PaletteEffects.mutate(colors)
@@ -446,6 +459,12 @@ fun AreaPaletteEditor(
                 }
                 editVersion++
             }) { Text("Full Random", fontSize = 10.sp) }
+            OutlinedButton(onClick = { applyAreaEffect("psychedelic-randomize") }) {
+                Text("Psychedelic", fontSize = 10.sp)
+            }
+            OutlinedButton(onClick = { applyAreaEffect("mathematical-randomize") }) {
+                Text("Mathematical", fontSize = 10.sp)
+            }
         }
         Spacer(modifier = Modifier.height(8.dp))
 

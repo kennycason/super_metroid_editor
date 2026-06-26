@@ -89,6 +89,9 @@ class PaletteEffectsTest {
         assert("invert" in ids)
         assert("cyberpunk" in ids)
         assert("thermal" in ids)
+        assert("psychedelic-randomize" in ids)
+        assert("mathematical-randomize" in ids)
+        assert("ghost25" in ids)
     }
 
     @Test
@@ -98,5 +101,23 @@ class PaletteEffectsTest {
             val copy = colors.copyOf()
             effect.apply(copy) // should not throw
         }
+    }
+
+    @Test
+    fun `psychedelic and mathematical randomize preserve transparent entries`() {
+        val original = IntArray(32) { i ->
+            if (i == 0 || i == 16) 0
+            else PaletteEffects.rgb5ToBgr555((i * 3) % 32, (i * 5) % 32, (i * 7) % 32)
+        }
+
+        val psychedelic = original.copyOf()
+        PaletteEffects.psychedelicRandomize(psychedelic)
+        assertEquals(0, psychedelic[0])
+        assertEquals(0, psychedelic[16])
+
+        val mathematical = original.copyOf()
+        PaletteEffects.mathematicalRandomize(mathematical)
+        assertEquals(0, mathematical[0])
+        assertEquals(0, mathematical[16])
     }
 }

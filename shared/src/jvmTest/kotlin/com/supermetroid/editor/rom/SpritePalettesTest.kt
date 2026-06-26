@@ -25,7 +25,20 @@ class SpritePalettesTest {
         assertNotNull(SpritePalettes.findRegion("samus_power"))
         assertNotNull(SpritePalettes.findRegion("samus_varia"))
         assertNotNull(SpritePalettes.findRegion("beam_standard"))
+        assertNotNull(SpritePalettes.findRegion("boss_ridley"))
+        assertNotNull(SpritePalettes.findRegion("boss_mother_brain"))
+        assertNotNull(SpritePalettes.findRegion("enemy_space_pirate_gold"))
+        assertNotNull(SpritePalettes.findRegion("enemy_escape_etecoon"))
         assertEquals(null, SpritePalettes.findRegion("nonexistent"))
+    }
+
+    @Test
+    fun `region catalog includes colorizer boss and enemy categories`() {
+        assertEquals(4, SpritePalettes.SAMUS_REGIONS.size)
+        assertEquals(1, SpritePalettes.BEAM_REGIONS.size)
+        assertEquals(16, SpritePalettes.BOSSES_REGIONS.size)
+        assertEquals(71, SpritePalettes.ENEMIES_REGIONS.size)
+        assertEquals(92, SpritePalettes.REGIONS.size)
     }
 
     @Test

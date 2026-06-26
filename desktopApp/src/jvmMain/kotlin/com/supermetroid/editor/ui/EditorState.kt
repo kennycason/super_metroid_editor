@@ -22,6 +22,7 @@ import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.EnemyUpdate
 import com.supermetroid.editor.data.MusicTrackEdit
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
@@ -43,6 +44,252 @@ private fun editorLog(message: Any? = "") {
         text.startsWith("WARN") || text.contains(" WARN:") -> editorStateLog.warn { text }
         else -> editorStateLog.info { text }
     }
+}
+
+private val NORMAL_ENEMY_GFX_VRAM_DESTINATIONS = listOf(1, 2, 3, 7)
+
+internal fun selectEnemyGfxVramDestination(
+    existingEntries: List<RomParser.EnemyGfxEntry>,
+    vanillaDestinations: List<Int>,
+): Int? {
+    val usedRows = existingEntries.map { it.paletteIndex and 0xFF }.toSet()
+    val vanillaNormal = vanillaDestinations
+        .filter { (it and 0xFF) in NORMAL_ENEMY_GFX_VRAM_DESTINATIONS }
+        .distinct()
+
+    return vanillaNormal.firstOrNull { (it and 0xFF) !in usedRows }
+        ?: NORMAL_ENEMY_GFX_VRAM_DESTINATIONS.firstOrNull { it !in usedRows }
+        ?: vanillaDestinations.distinct().firstOrNull()
+}
+
+internal fun collectVanillaEnemyGfxDestinations(
+    romParser: RomParser,
+    roomRepository: RoomRepository = RoomRepository(),
+): Map<Int, List<Int>> {
+    val bySpecies = linkedMapOf<Int, MutableList<Int>>()
+    val seenGfxPtrs = mutableSetOf<Int>()
+
+    for (roomInfo in roomRepository.getAllRooms()) {
+        val roomId = roomInfo.getRoomIdAsInt()
+        val stateGfxPtrs = romParser.parseRoomStatesWithData(roomId)
+            .map { it.enemyGfxPtr }
+            .distinct()
+        for (gfxPtr in stateGfxPtrs) {
+            if (gfxPtr == 0 || gfxPtr == 0xFFFF || !seenGfxPtrs.add(gfxPtr)) continue
+            for (entry in romParser.parseEnemyGfxSet(gfxPtr)) {
+                val destinations = bySpecies.getOrPut(entry.speciesId) { mutableListOf() }
+                if (entry.paletteIndex !in destinations) destinations.add(entry.paletteIndex)
+            }
+        }
+    }
+
+    return bySpecies.mapValues { it.value.toList() }
+}
+
+internal data class DoorScrollWrite(
+    val scrollValue: Int,
+    val addressLowByte: Int,
+)
+
+private const val MOTHER_BRAIN_ROOM_ID = 0xDD58
+private const val NMI_FLAG_BG2_ENEMY_VRAM_TRANSFER_ADDR = 0x0E1E
+private const val ENEMY_BG2_TILEMAP_SIZE_ADDR = 0x179A
+
+internal fun shouldClearEnemyBg2TransferOnDoor(sourceRoomId: Int, destRoomId: Int): Boolean =
+    sourceRoomId == MOTHER_BRAIN_ROOM_ID && destRoomId != MOTHER_BRAIN_ROOM_ID
+
+internal fun parseDoorScrollWrites(
+    romParser: RomParser,
+    entryCode: Int,
+    maxBytes: Int = 80,
+): List<DoorScrollWrite> {
+    if (entryCode == 0 || entryCode == 0xFFFF) return emptyList()
+    val pc = runCatching { romParser.snesToPc(0x8F0000 or entryCode) }.getOrNull() ?: return emptyList()
+    val writes = mutableListOf<DoorScrollWrite>()
+    var i = 0
+    while (i < maxBytes) {
+        val b = romParser.readByteAt(pc + i)
+        if (b == 0x60 || b == 0x6B) break
+        if (b == 0xA9 && i + 5 < maxBytes) {
+            val value = romParser.readByteAt(pc + i + 1)
+            val next = romParser.readByteAt(pc + i + 2)
+            if (next == 0x8F) {
+                val lo = romParser.readByteAt(pc + i + 3)
+                val hi = romParser.readByteAt(pc + i + 4)
+                val bank = romParser.readByteAt(pc + i + 5)
+                if (hi == 0xCD && bank == 0x7E && lo in 0x20..0x7F) {
+                    writes.add(DoorScrollWrite(value, lo))
+                }
+                i += 6
+                continue
+            }
+        }
+        if ((b == 0x08 || b == 0x28) && i + 1 <= maxBytes) {
+            i++
+            continue
+        }
+        if ((b == 0xE2 || b == 0xC2) && i + 1 < maxBytes) {
+            i += 2
+            continue
+        }
+        i++
+    }
+    return writes
+}
+
+internal fun buildDoorAsmClearingEnemyBg2Transfer(scrollWrites: List<DoorScrollWrite>): ByteArray {
+    val bytes = mutableListOf<Int>()
+    fun addWordAddress(address: Int) {
+        bytes.add(address and 0xFF)
+        bytes.add((address shr 8) and 0xFF)
+        bytes.add(0x7E)
+    }
+
+    bytes.add(0x08) // PHP
+    bytes.add(0xC2) // REP #$20
+    bytes.add(0x20)
+    bytes.add(0xA9) // LDA #$0000
+    bytes.add(0x00)
+    bytes.add(0x00)
+    bytes.add(0x8F) // STA $7E0E1E
+    addWordAddress(NMI_FLAG_BG2_ENEMY_VRAM_TRANSFER_ADDR)
+    bytes.add(0x8F) // STA $7E179A
+    addWordAddress(ENEMY_BG2_TILEMAP_SIZE_ADDR)
+    bytes.add(0xE2) // SEP #$20
+    bytes.add(0x20)
+    for (write in scrollWrites) {
+        bytes.add(0xA9) // LDA #imm8
+        bytes.add(write.scrollValue and 0xFF)
+        bytes.add(0x8F) // STA long
+        bytes.add(write.addressLowByte and 0xFF)
+        bytes.add(0xCD)
+        bytes.add(0x7E)
+    }
+    bytes.add(0x28) // PLP
+    bytes.add(0x60) // RTS
+    return bytes.map { it.toByte() }.toByteArray()
+}
+
+internal data class DoorDependentBgTransfer(
+    val doorDefPtr: Int,
+    val srcAddr: Int,
+    val vramDst: Int,
+    val size: Int,
+)
+
+private fun bgDataCommandSize(command: Int): Int? = when (command) {
+    0x0000 -> 2
+    0x0002, 0x0008 -> 9
+    0x0004 -> 7
+    0x0006, 0x000A, 0x000C -> 2
+    0x000E -> 11
+    else -> null
+}
+
+internal fun readDoorEntryAtDoorDefPtr(
+    romParser: RomParser,
+    doorDefPtr: Int,
+): RomParser.DoorEntry? {
+    if (doorDefPtr < 0x8000 || doorDefPtr == 0xFFFF) return null
+    val pc = runCatching { romParser.snesToPc(RomConstants.BANK_FX or doorDefPtr) }.getOrNull() ?: return null
+    val destRoom = romParser.readUInt16At(pc)
+    if (destRoom < 0x8000 || destRoom == 0xFFFF) return null
+    return RomParser.DoorEntry(
+        destRoomPtr = destRoom,
+        bitflag = romParser.readUInt16At(pc + 2),
+        doorCapCode = romParser.readUInt16At(pc + 4),
+        screenX = romParser.readByteAt(pc + 6),
+        screenY = romParser.readByteAt(pc + 7),
+        distFromDoor = romParser.readUInt16At(pc + 8),
+        entryCode = romParser.readUInt16At(pc + 10),
+        doorDefPtr = doorDefPtr,
+    )
+}
+
+internal fun parseDoorDependentBgTransfers(
+    romParser: RomParser,
+    bgDataPtr: Int,
+    maxCommands: Int = 64,
+): List<DoorDependentBgTransfer> {
+    if (bgDataPtr == 0 || bgDataPtr == 0xFFFF) return emptyList()
+    val pc = runCatching { romParser.snesToPc(RomConstants.BANK_ROOM_DATA or bgDataPtr) }.getOrNull()
+        ?: return emptyList()
+    val transfers = mutableListOf<DoorDependentBgTransfer>()
+    var offset = pc
+    repeat(maxCommands) {
+        val command = romParser.readUInt16At(offset)
+        if (command == 0x0000) return transfers
+        val size = bgDataCommandSize(command) ?: return transfers
+        if (command == 0x000E) {
+            val srcAddr = romParser.readByteAt(offset + 4) or
+                (romParser.readByteAt(offset + 5) shl 8) or
+                (romParser.readByteAt(offset + 6) shl 16)
+            transfers.add(
+                DoorDependentBgTransfer(
+                    doorDefPtr = romParser.readUInt16At(offset + 2),
+                    srcAddr = srcAddr,
+                    vramDst = romParser.readUInt16At(offset + 7),
+                    size = romParser.readUInt16At(offset + 9),
+                )
+            )
+        }
+        offset += size
+    }
+    return transfers
+}
+
+private fun sameDoorDependentBgEntrance(a: RomParser.DoorEntry, b: RomParser.DoorEntry): Boolean =
+    a.destRoomPtr == b.destRoomPtr &&
+        (a.bitflag and 0xFF00) == (b.bitflag and 0xFF00) &&
+        a.doorCapCode == b.doorCapCode &&
+        a.screenX == b.screenX &&
+        a.screenY == b.screenY
+
+internal fun findMatchingDoorDependentBgTransfer(
+    romParser: RomParser,
+    bgDataPtr: Int,
+    newDoor: RomParser.DoorEntry,
+): DoorDependentBgTransfer? {
+    val transfers = parseDoorDependentBgTransfers(romParser, bgDataPtr)
+    if (transfers.any { it.doorDefPtr == newDoor.doorDefPtr }) return null
+    return transfers.firstOrNull { transfer ->
+        val templateDoor = readDoorEntryAtDoorDefPtr(romParser, transfer.doorDefPtr) ?: return@firstOrNull false
+        sameDoorDependentBgEntrance(templateDoor, newDoor)
+    }
+}
+
+internal fun buildBgDataWithClonedDoorDependentTransfer(
+    romParser: RomParser,
+    bgDataPtr: Int,
+    newDoorDefPtr: Int,
+    template: DoorDependentBgTransfer,
+    maxCommands: Int = 64,
+): ByteArray? {
+    if (bgDataPtr == 0 || bgDataPtr == 0xFFFF) return null
+    val pc = runCatching { romParser.snesToPc(RomConstants.BANK_ROOM_DATA or bgDataPtr) }.getOrNull()
+        ?: return null
+    var offset = pc
+    repeat(maxCommands) {
+        val command = romParser.readUInt16At(offset)
+        val size = bgDataCommandSize(command) ?: return null
+        if (command == 0x0000) {
+            val bytes = mutableListOf<Int>()
+            for (i in pc until offset) bytes.add(romParser.readByteAt(i))
+            bytes.addAll(
+                listOf(
+                    0x0E, 0x00,
+                    newDoorDefPtr and 0xFF, (newDoorDefPtr shr 8) and 0xFF,
+                    template.srcAddr and 0xFF, (template.srcAddr shr 8) and 0xFF, (template.srcAddr shr 16) and 0xFF,
+                    template.vramDst and 0xFF, (template.vramDst shr 8) and 0xFF,
+                    template.size and 0xFF, (template.size shr 8) and 0xFF,
+                    0x00, 0x00,
+                )
+            )
+            return bytes.map { it.toByte() }.toByteArray()
+        }
+        offset += size
+    }
+    return null
 }
 
 data class FloatingMapSelection(val x: Int, val y: Int)
@@ -289,7 +536,7 @@ class EditorState {
     fun hasCustomPalette(tilesetId: Int): Boolean =
         project.customGfx.palettes.containsKey(tilesetId.toString())
 
-    // ─── Sprite palette editing (Samus suits, beams) ───────────────
+    // ─── Sprite palette editing (Samus, beams, bosses, enemies) ─────
 
     /**
      * Read a sprite palette region from ROM, applying any project overrides.
@@ -3807,6 +4054,10 @@ class EditorState {
             }
         }
 
+        val vanillaEnemyGfxDestinationsBySpecies by lazy {
+            collectVanillaEnemyGfxDestinations(romParser)
+        }
+
         for ((roomKey, roomEdits) in project.rooms) {
             val hasTileEdits = roomEdits.operations.isNotEmpty()
             val hasPlmEdits = roomEdits.plmChanges.isNotEmpty()
@@ -4125,6 +4376,87 @@ class EditorState {
                         }
                     }
 
+                    var finalEntryCode = dc.entryCode
+                    if (shouldClearEnemyBg2TransferOnDoor(roomId, dc.destRoomPtr)) {
+                        val scrollWrites = parseDoorScrollWrites(romParser, dc.entryCode)
+                        if (dc.entryCode == 0 || scrollWrites.isNotEmpty()) {
+                            val asm = buildDoorAsmClearingEnemyBg2Transfer(scrollWrites)
+                            if (freePtr + asm.size <= bank8FEnd) {
+                                val newPc = freePtr
+                                for (byte in asm) romData[freePtr++] = byte
+                                finalEntryCode = romParser.pcToSnes(newPc) and 0xFFFF
+                                val preserved = if (scrollWrites.isNotEmpty()) {
+                                    ", preserved ${scrollWrites.size} scroll write(s)"
+                                } else {
+                                    ""
+                                }
+                                editorLog("  FIX: generated arrival ASM to clear stale enemy BG2 transfer flag$preserved " +
+                                    "(was \$8F:${dc.entryCode.toString(16).uppercase()}, now \$8F:${finalEntryCode.toString(16).uppercase()})")
+                            } else {
+                                editorLog("WARN: Room 0x$roomKey door $doorIndex: no free space for enemy BG2 cleanup door ASM (${asm.size} bytes)")
+                            }
+                        } else {
+                            editorLog("WARN: Room 0x$roomKey door $doorIndex: preserves custom entry ASM " +
+                                "\$8F:${dc.entryCode.toString(16).uppercase()}; could not safely add enemy BG2 cleanup")
+                        }
+                    }
+
+                    val doorListPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or room.doorOut)
+                    val doorDefPtr = romParser.readUInt16At(doorListPc + doorIndex * 2)
+                    if (doorDefPtr >= 0x8000 && destRoom != null) {
+                        val bgDoor = RomParser.DoorEntry(
+                            destRoomPtr = dc.destRoomPtr,
+                            bitflag = finalBitflag,
+                            doorCapCode = finalCapCode,
+                            screenX = dc.screenX,
+                            screenY = dc.screenY,
+                            distFromDoor = dc.distFromDoor,
+                            entryCode = finalEntryCode,
+                            doorDefPtr = doorDefPtr,
+                        )
+                        val bgParser = RomParser(romData)
+                        val destStateOffsets = bgParser.findAllStateDataOffsets(dc.destRoomPtr)
+                        val distinctBgPtrs = destStateOffsets
+                            .map { stateOffset ->
+                                (romData[stateOffset + 22].toInt() and 0xFF) or
+                                    ((romData[stateOffset + 23].toInt() and 0xFF) shl 8)
+                            }
+                            .filter { it != 0 && it != 0xFFFF }
+                            .distinct()
+                        for (oldBgPtr in distinctBgPtrs) {
+                            val currentBgParser = RomParser(romData)
+                            val template = findMatchingDoorDependentBgTransfer(currentBgParser, oldBgPtr, bgDoor)
+                                ?: continue
+                            val newBgData = buildBgDataWithClonedDoorDependentTransfer(
+                                currentBgParser,
+                                oldBgPtr,
+                                doorDefPtr,
+                                template,
+                            ) ?: continue
+                            if (freePtr + newBgData.size > bank8FEnd) {
+                                editorLog("WARN: Room 0x$roomKey door $doorIndex: no free space to clone door-dependent BG data " +
+                                    "for dest 0x${dc.destRoomPtr.toString(16)} (${newBgData.size} bytes)")
+                                continue
+                            }
+                            val newPc = freePtr
+                            for (byte in newBgData) romData[freePtr++] = byte
+                            val newBgPtr = romParser.pcToSnes(newPc) and 0xFFFF
+                            for (stateOffset in destStateOffsets) {
+                                val stateBgPtr = (romData[stateOffset + 22].toInt() and 0xFF) or
+                                    ((romData[stateOffset + 23].toInt() and 0xFF) shl 8)
+                                if (stateBgPtr == oldBgPtr) {
+                                    romData[stateOffset + 22] = (newBgPtr and 0xFF).toByte()
+                                    romData[stateOffset + 23] = ((newBgPtr shr 8) and 0xFF).toByte()
+                                }
+                            }
+                            roomsPatched.add(dc.destRoomPtr.toString(16).uppercase())
+                            editorLog("  FIX: cloned door-dependent BG transfer for dest room " +
+                                "0x${dc.destRoomPtr.toString(16)} door \$83:${doorDefPtr.toString(16).uppercase()} " +
+                                "from template door \$83:${template.doorDefPtr.toString(16).uppercase()} " +
+                                "(bg \$8F:${oldBgPtr.toString(16).uppercase()} → \$8F:${newBgPtr.toString(16).uppercase()})")
+                        }
+                    }
+
                     romData[entryPc] = (dc.destRoomPtr and 0xFF).toByte()
                     romData[entryPc + 1] = ((dc.destRoomPtr shr 8) and 0xFF).toByte()
                     romData[entryPc + 2] = (finalBitflag and 0xFF).toByte()
@@ -4135,8 +4467,8 @@ class EditorState {
                     romData[entryPc + 7] = (dc.screenY and 0xFF).toByte()
                     romData[entryPc + 8] = (dc.distFromDoor and 0xFF).toByte()
                     romData[entryPc + 9] = ((dc.distFromDoor shr 8) and 0xFF).toByte()
-                    romData[entryPc + 10] = (dc.entryCode and 0xFF).toByte()
-                    romData[entryPc + 11] = ((dc.entryCode shr 8) and 0xFF).toByte()
+                    romData[entryPc + 10] = (finalEntryCode and 0xFF).toByte()
+                    romData[entryPc + 11] = ((finalEntryCode shr 8) and 0xFF).toByte()
                 }
                 roomsPatched.add(roomKey)
             }
@@ -4260,9 +4592,7 @@ class EditorState {
                 }
                 if (neededSpecies.isEmpty()) return@gfxPatch
 
-                val maxPalIdx = gfxEntries.maxOfOrNull { it.paletteIndex and 0xFF } ?: 0
                 val newEntries = gfxEntries.toMutableList()
-                var nextPal = maxPalIdx + 1
                 for (specId in neededSpecies) {
                     if (newEntries.size >= 4) {
                         editorLog("WARN: Room 0x$roomKey GFX set already has ${newEntries.size} entries (SNES max 4) — skipping species 0x${specId.toString(16)}")
@@ -4280,9 +4610,16 @@ class EditorState {
                         editorLog("WARN: Room 0x$roomKey: skipping species 0x${specId.toString(16)} from GFX set — HP=0 (invalid species ID)")
                         continue
                     }
-                    newEntries.add(RomParser.EnemyGfxEntry(specId, nextPal))
-                    editorLog("Room 0x$roomKey: added species 0x${specId.toString(16)} to GFX set (palette=$nextPal)")
-                    nextPal++
+                    val vramDestination = selectEnemyGfxVramDestination(
+                        existingEntries = newEntries,
+                        vanillaDestinations = vanillaEnemyGfxDestinationsBySpecies[specId].orEmpty(),
+                    )
+                    if (vramDestination == null) {
+                        editorLog("WARN: Room 0x$roomKey: skipping species 0x${specId.toString(16)} from GFX set — no safe VRAM destination available")
+                        continue
+                    }
+                    newEntries.add(RomParser.EnemyGfxEntry(specId, vramDestination))
+                    editorLog("Room 0x$roomKey: added species 0x${specId.toString(16)} to GFX set (vramDst=0x${vramDestination.toString(16)})")
                 }
                 if (newEntries.size == gfxEntries.size) return@gfxPatch
 
@@ -4667,7 +5004,7 @@ class EditorState {
             } catch (e: Exception) { editorLog("WARN: Tileset $tsId palette patch failed: ${e.message}") }
         }
 
-        // Apply sprite palette overrides (Samus suits, beams — raw BGR555, no compression)
+        // Apply sprite palette overrides (Samus, beams, bosses, enemies — raw BGR555, no compression)
         for ((regionId, palB64) in gfxData.spritePalettes) {
             val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId) ?: continue
             try {

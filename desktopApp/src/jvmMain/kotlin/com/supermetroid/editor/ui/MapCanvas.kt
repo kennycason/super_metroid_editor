@@ -126,6 +126,25 @@ private fun mapCanvasLogLine(message: Any? = "") {
     }
 }
 
+internal fun originalScrollTriggersAt(
+    originalPlms: List<RomParser.PlmEntry>,
+    x: Int,
+    y: Int,
+): List<RomParser.PlmEntry> =
+    originalPlms.filter { it.id == 0xB703 && it.x == x && it.y == y }
+
+internal fun reusableScrollCommandPtrs(
+    originalPlms: List<RomParser.PlmEntry>,
+    currentPlms: List<RomParser.PlmEntry>,
+): List<Int> =
+    (originalPlms + currentPlms)
+        .asSequence()
+        .filter { it.id == 0xB703 }
+        .map { it.param }
+        .distinct()
+        .sorted()
+        .toList()
+
 private object EnemySpriteCache {
     private val cache = mutableMapOf<String, BufferedImage?>()
 
@@ -161,6 +180,21 @@ internal fun shotBlockCategory(bts: Int): ShotCategory = when (bts) {
 }
 
 internal enum class ShotCategory { BEAM, SUPER, PB, HIDDEN, DOOR }
+
+internal fun mergeDoorBitflagWithMatchedOrientation(
+    currentBitflag: Int,
+    matchedOrientation: Int?,
+    crossArea: Boolean? = null,
+): Int {
+    val currentLowFlags = currentBitflag and 0xFF
+    val lowFlags = when (crossArea) {
+        null -> currentLowFlags
+        true -> currentLowFlags or 0x40
+        false -> currentLowFlags and 0x40.inv()
+    }
+    val orientation = matchedOrientation ?: ((currentBitflag shr 8) and 0xFF)
+    return ((orientation and 0xFF) shl 8) or (lowFlags and 0xFF)
+}
 
 /**
  * Named BTS options for block types that have well-known sub-types.
@@ -2079,7 +2113,11 @@ fun MapCanvas(
                                                                             val srcArea = room?.let { romParser?.readRoomHeader(it.getRoomIdAsInt())?.area }
                                                                             val destArea = romParser?.readRoomHeader(rid)?.area
                                                                             val crossAreaBit = if (srcArea != null && destArea != null && srcArea != destArea) 0x40 else 0
-                                                                            val newBitflag = (currentDoor.bitflag and 0x40.inv()) or crossAreaBit
+                                                                            val newBitflag = mergeDoorBitflagWithMatchedOrientation(
+                                                                                currentDoor.bitflag,
+                                                                                match?.orientation,
+                                                                                crossAreaBit != 0
+                                                                            )
                                                                             editorState.updateDoor(propsBts,
                                                                                 currentDoor.copy(
                                                                                     destRoomPtr = rid,
@@ -2152,8 +2190,13 @@ fun MapCanvas(
                                                         currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
                                                     val match = romParser?.findVanillaDoorMatch(
                                                         currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
+                                                    val newBitflag = mergeDoorBitflagWithMatchedOrientation(
+                                                        currentDoor.bitflag,
+                                                        match?.orientation
+                                                    )
                                                     editorState.updateDoor(propsBts, currentDoor.copy(
                                                         screenX = v,
+                                                        bitflag = newBitflag,
                                                         entryCode = match?.entryCode ?: currentDoor.entryCode,
                                                         doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
                                                     ))
@@ -2166,8 +2209,13 @@ fun MapCanvas(
                                                         currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
                                                     val match = romParser?.findVanillaDoorMatch(
                                                         currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
+                                                    val newBitflag = mergeDoorBitflagWithMatchedOrientation(
+                                                        currentDoor.bitflag,
+                                                        match?.orientation
+                                                    )
                                                     editorState.updateDoor(propsBts, currentDoor.copy(
                                                         screenY = v,
+                                                        bitflag = newBitflag,
                                                         entryCode = match?.entryCode ?: currentDoor.entryCode,
                                                         doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
                                                     ))
@@ -2608,6 +2656,7 @@ fun MapCanvas(
                                         // Add Scroll Trigger button + dropdown
                                         Spacer(modifier = Modifier.height(4.dp))
                                         var addScrollExpanded by remember { mutableStateOf(false) }
+                                        var showScrollEditor by remember { mutableStateOf(false) }
                                         Box {
                                             Surface(
                                                 modifier = Modifier.fillMaxWidth().height(28.dp)
@@ -2627,23 +2676,35 @@ fun MapCanvas(
                                                 expanded = addScrollExpanded,
                                                 onDismissRequest = { addScrollExpanded = false }
                                             ) {
-                                                val existingScrollCmds = editorState.workingPlms
-                                                    ?.filter { it.id == 0xB703 }
-                                                    ?.map { it.param }
-                                                    ?.distinct()
-                                                    ?.sorted()
+                                                val rw = roomHeader?.width ?: 1
+                                                val originalScrollTriggers = roomHeader
+                                                    ?.let { romParser.parsePlmSet(it.plmSetPtr) }
                                                     ?: emptyList()
-                                                if (existingScrollCmds.isNotEmpty()) {
-                                                    Text("Reuse command from this room:", fontSize = 9.sp,
+                                                val originalHere = originalScrollTriggersAt(
+                                                    originalScrollTriggers,
+                                                    propsBlockX,
+                                                    propsBlockY,
+                                                )
+                                                val reusableCommandPtrs = reusableScrollCommandPtrs(
+                                                    originalScrollTriggers,
+                                                    editorState.workingPlms,
+                                                )
+                                                fun commandLines(cmdPtr: Int): List<String> {
+                                                    return if (rw > 0 && (cmdPtr and 0xFF00) != 0xCC00) {
+                                                        RomParser.decodeScrollCommands(romParser, cmdPtr, rw)
+                                                            .map { (sIdx, _, sv) -> RomParser.formatScrollCommand(sIdx, sv, rw) }
+                                                    } else if ((cmdPtr and 0xFF00) == 0xCC00) {
+                                                        val cmds = editorState.getScrollCommand("cmd_${cmdPtr and 0xFF}").orEmpty()
+                                                        cmds.map { RomParser.formatScrollCommand(it.screenIndex, it.scrollValue, rw) }
+                                                    } else emptyList()
+                                                }
+                                                if (originalHere.isNotEmpty()) {
+                                                    Text("Restore original trigger here:", fontSize = 9.sp,
                                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                                         color = MaterialTheme.colorScheme.primary,
                                                         fontWeight = FontWeight.Bold)
-                                                    for (cmdPtr in existingScrollCmds) {
-                                                        val rw = roomHeader?.width ?: 1
-                                                        val cmdLines = if (romParser != null && rw > 0) {
-                                                            RomParser.decodeScrollCommands(romParser, cmdPtr, rw)
-                                                                .map { (sIdx, _, sv) -> RomParser.formatScrollCommand(sIdx, sv, rw) }
-                                                        } else emptyList()
+                                                    for (trigger in originalHere) {
+                                                        val cmdLines = commandLines(trigger.param)
                                                         val itemHeight = (28 + cmdLines.size * 14).coerceAtMost(80)
                                                         DropdownMenuItem(
                                                             text = {
@@ -2651,6 +2712,34 @@ fun MapCanvas(
                                                                     for (line in cmdLines) {
                                                                         Text(line, fontSize = 9.sp,
                                                                             color = Color.White)
+                                                                    }
+                                                                    Text("original ptr \$${trigger.param.toString(16).uppercase().padStart(4, '0')}",
+                                                                        fontSize = 7.sp,
+                                                                        color = Color(0xFF99AABB))
+                                                                }
+                                                            },
+                                                            onClick = {
+                                                                addScrollExpanded = false
+                                                                editorState.addPlm(0xB703, propsBlockX, propsBlockY, trigger.param)
+                                                            },
+                                                            modifier = Modifier.heightIn(min = itemHeight.dp)
+                                                        )
+                                                    }
+                                                    Divider()
+                                                }
+                                                if (reusableCommandPtrs.isNotEmpty()) {
+                                                    Text("Reuse command:", fontSize = 9.sp,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold)
+                                                    for (cmdPtr in reusableCommandPtrs) {
+                                                        val cmdLines = commandLines(cmdPtr)
+                                                        val itemHeight = (28 + cmdLines.size * 14).coerceAtMost(80)
+                                                        DropdownMenuItem(
+                                                            text = {
+                                                                Column {
+                                                                    for (line in cmdLines) {
+                                                                        Text(line, fontSize = 9.sp, color = Color.White)
                                                                     }
                                                                     Text("ptr \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
                                                                         fontSize = 7.sp,
@@ -2666,6 +2755,15 @@ fun MapCanvas(
                                                     }
                                                     Divider()
                                                 }
+                                                DropdownMenuItem(
+                                                    text = { Text("+ New Custom Trigger...", fontSize = 10.sp, color = Color.White) },
+                                                    onClick = {
+                                                        addScrollExpanded = false
+                                                        showScrollEditor = true
+                                                    },
+                                                    modifier = Modifier.height(28.dp)
+                                                )
+                                                Divider()
                                                 Text("Treadmill extensions:", fontSize = 9.sp,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                                     color = Color(0xFFFF8040),
@@ -2693,7 +2791,6 @@ fun MapCanvas(
                                         }
 
                                         // ─── New Custom Scroll Trigger (visual editor) ───
-                                        var showScrollEditor by remember { mutableStateOf(false) }
                                         if (!showScrollEditor) {
                                             Spacer(modifier = Modifier.height(2.dp))
                                             Surface(

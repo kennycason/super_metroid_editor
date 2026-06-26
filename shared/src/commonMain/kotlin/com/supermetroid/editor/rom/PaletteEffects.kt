@@ -4,6 +4,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
+import kotlin.random.Random
 
 /**
  * Palette color effects engine for Super Metroid.
@@ -247,6 +248,159 @@ object PaletteEffects {
         Triple((0..31).random(), (0..31).random(), (0..31).random())
     }
 
+    fun psychedelicRandomize(colors: IntArray) {
+        val subPaletteSize = 16
+        val numSubPalettes = (colors.size + subPaletteSize - 1) / subPaletteSize
+
+        for (sp in 0 until numSubPalettes) {
+            val baseHue = Random.nextFloat() * 360f
+            val numAnchors = 3 + Random.nextInt(3)
+            val anchors = FloatArray(numAnchors) { a ->
+                (baseHue + a * (360f / numAnchors) + (Random.nextFloat() * 40f - 20f)).floorMod360()
+            }
+
+            val start = sp * subPaletteSize
+            val end = min(start + subPaletteSize, colors.size)
+            for (i in start until end) {
+                if (colors[i] == 0) continue
+                val anchor = anchors[Random.nextInt(anchors.size)]
+                val hue = (anchor + Random.nextFloat() * 50f - 25f).floorMod360()
+                val sat = 0.7f + Random.nextFloat() * 0.3f
+                val value = 0.3f + Random.nextFloat() * 0.7f
+                val (r, g, b) = hsvToRgb(hue, sat, value)
+                colors[i] = rgb5ToBgr555(r, g, b)
+            }
+        }
+    }
+
+    fun mathematicalRandomize(colors: IntArray) {
+        data class HarmonyStop(val hue: Float, val sat: Float, val valScale: Float)
+
+        fun schemeAnalogous(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val spread = 25f + Random.nextFloat() * 35f
+            val sat = 0.5f + Random.nextFloat() * 0.4f
+            return listOf(
+                HarmonyStop((base - spread).floorMod360(), sat * 0.8f, 1.0f),
+                HarmonyStop(base, sat, 1.0f),
+                HarmonyStop((base + spread).floorMod360(), sat * 0.9f, 0.95f),
+            )
+        }
+
+        fun schemeComplementary(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val sat = 0.55f + Random.nextFloat() * 0.4f
+            return listOf(
+                HarmonyStop(base, sat, 1.0f),
+                HarmonyStop(base, sat * 0.5f, 0.8f),
+                HarmonyStop((base + 180f).floorMod360(), sat, 0.95f),
+            )
+        }
+
+        fun schemeTriadic(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val sat = 0.5f + Random.nextFloat() * 0.45f
+            return listOf(
+                HarmonyStop(base, sat, 1.0f),
+                HarmonyStop((base + 120f).floorMod360(), sat * 0.9f, 0.95f),
+                HarmonyStop((base + 240f).floorMod360(), sat * 0.85f, 0.9f),
+            )
+        }
+
+        fun schemeSplitComplementary(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val sat = 0.5f + Random.nextFloat() * 0.4f
+            return listOf(
+                HarmonyStop(base, sat, 1.0f),
+                HarmonyStop((base + 150f).floorMod360(), sat * 0.9f, 0.95f),
+                HarmonyStop((base + 210f).floorMod360(), sat * 0.85f, 0.9f),
+            )
+        }
+
+        fun schemeGradientSweep(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val arc = 60f + Random.nextFloat() * 120f
+            val numStops = 4 + Random.nextInt(3)
+            val sat = 0.5f + Random.nextFloat() * 0.45f
+            return List(numStops) { i ->
+                val t = i / (numStops - 1).toFloat()
+                HarmonyStop((base + t * arc).floorMod360(), sat * (0.7f + t * 0.3f), 0.85f + t * 0.15f)
+            }
+        }
+
+        fun schemeTetradic(): List<HarmonyStop> {
+            val base = Random.nextFloat() * 360f
+            val offset = 30f + Random.nextFloat() * 60f
+            val sat = 0.5f + Random.nextFloat() * 0.4f
+            return listOf(
+                HarmonyStop(base, sat, 1.0f),
+                HarmonyStop((base + offset).floorMod360(), sat * 0.9f, 0.95f),
+                HarmonyStop((base + 180f).floorMod360(), sat * 0.85f, 0.9f),
+                HarmonyStop((base + 180f + offset).floorMod360(), sat * 0.8f, 0.85f),
+            )
+        }
+
+        val schemes = listOf(
+            ::schemeAnalogous,
+            ::schemeComplementary,
+            ::schemeTriadic,
+            ::schemeSplitComplementary,
+            ::schemeGradientSweep,
+            ::schemeTetradic,
+        )
+
+        val subPaletteSize = 16
+        val numSubPalettes = (colors.size + subPaletteSize - 1) / subPaletteSize
+        for (sp in 0 until numSubPalettes) {
+            val start = sp * subPaletteSize
+            val end = min(start + subPaletteSize, colors.size)
+            val entries = (start until end).mapNotNull { idx ->
+                val color = colors[idx]
+                if (color == 0) null
+                else {
+                    val (r, g, b) = bgr555ToRgb5(color)
+                    idx to luminance(r, g, b).toFloat()
+                }
+            }
+            if (entries.isEmpty()) continue
+
+            val rankByIndex = entries
+                .sortedBy { it.second }
+                .mapIndexed { rank, entry -> entry.first to rank }
+                .toMap()
+            val stops = schemes.random().invoke()
+
+            for ((idx, lum) in entries) {
+                val rank = rankByIndex[idx] ?: continue
+                val t = if (entries.size > 1) rank / (entries.size - 1).toFloat() else 0.5f
+                val stopPos = t * (stops.size - 1)
+                val stopIdx = min(stopPos.toInt(), stops.size - 2)
+                val stopT = stopPos - stopIdx
+                val s0 = stops[stopIdx]
+                val s1 = stops[stopIdx + 1]
+
+                var hueDiff = s1.hue - s0.hue
+                if (hueDiff > 180f) hueDiff -= 360f
+                if (hueDiff < -180f) hueDiff += 360f
+                val hue = (s0.hue + hueDiff * stopT).floorMod360()
+                val sat = s0.sat + (s1.sat - s0.sat) * stopT
+                val valScale = s0.valScale + (s1.valScale - s0.valScale) * stopT
+                val value = ((lum / 31f) * valScale).coerceIn(0.1f, 1.0f)
+                val (r, g, b) = hsvToRgb(hue, sat, value)
+                colors[idx] = rgb5ToBgr555(r, g, b)
+            }
+        }
+    }
+
+    fun randomTransparency(colors: IntArray, percentage: Int) {
+        for (i in colors.indices) {
+            val color = colors[i]
+            if (color == 0) continue
+            val hash = ((color.toLong() * 2654435761L) xor (i.toLong() * 2246822519L)) and 0xFFFFFFFFL
+            if ((hash % 100L) < percentage) colors[i] = 0
+        }
+    }
+
     /** Small random mutations: nudge each channel by +-5, preserving overall feel */
     fun mutate(colors: IntArray) = transformColors(colors) { r, g, b, _ ->
         Triple(
@@ -260,6 +414,11 @@ object PaletteEffects {
     fun randomEffect(colors: IntArray) {
         val effect = EFFECTS.random()
         effect.apply(colors)
+    }
+
+    private fun Float.floorMod360(): Float {
+        val mod = this % 360f
+        return if (mod < 0f) mod + 360f else mod
     }
 
     // ─── Effect registry ───────────────────────────────────────────
@@ -284,6 +443,8 @@ object PaletteEffects {
         EffectDef("neonpink", "Neon Pink") { neonPink(it) },
         EffectDef("psychedelic", "Psychedelic") { psychedelic(it) },
         EffectDef("randomize", "Random Chaos") { randomize(it) },
+        EffectDef("psychedelic-randomize", "Psychedelic Chaos") { psychedelicRandomize(it) },
+        EffectDef("mathematical-randomize", "Mathematical Harmony") { mathematicalRandomize(it) },
         EffectDef("vaporwave", "Vaporwave") { vaporwave(it) },
         EffectDef("pastel", "Pastel") { pastel(it) },
         EffectDef("hue90", "Hue +90") { hueShift(it, 90f) },
@@ -298,6 +459,9 @@ object PaletteEffects {
         EffectDef("acid", "Acid Trip") { acid(it) },
         EffectDef("thermal", "Thermal") { thermal(it) },
         EffectDef("hologram", "Hologram") { hologram(it) },
+        EffectDef("ghost10", "Ghost 10%") { randomTransparency(it, 10) },
+        EffectDef("ghost25", "Ghost 25%") { randomTransparency(it, 25) },
+        EffectDef("ghost50", "Ghost 50%") { randomTransparency(it, 50) },
     )
 
     fun findEffect(id: String): EffectDef? = EFFECTS.find { it.id == id }
