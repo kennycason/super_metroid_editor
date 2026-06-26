@@ -145,6 +145,53 @@ internal fun reusableScrollCommandPtrs(
         .sorted()
         .toList()
 
+internal data class DoorTemplateChoice(
+    val sourceRoomId: Int,
+    val sourceRoomName: String,
+    val doorIndex: Int,
+    val door: RomParser.DoorEntry,
+)
+
+internal fun doorTemplateChoicesForDestination(
+    romParser: RomParser,
+    rooms: List<RoomInfo>,
+    destRoomId: Int,
+): List<DoorTemplateChoice> {
+    return rooms.flatMap { roomInfo ->
+        val sourceRoomId = roomInfo.getRoomIdAsInt()
+        val sourceRoom = romParser.readRoomHeader(sourceRoomId) ?: return@flatMap emptyList()
+        romParser.parseDoorList(sourceRoom.doorOut).mapIndexedNotNull { doorIndex, door ->
+            if (door.destRoomPtr == destRoomId) {
+                DoorTemplateChoice(sourceRoomId, roomInfo.name, doorIndex, door)
+            } else {
+                null
+            }
+        }
+    }
+}
+
+internal fun doorWithTemplateValues(
+    currentDoor: RomParser.DoorEntry,
+    templateDoor: RomParser.DoorEntry,
+    crossArea: Boolean,
+): RomParser.DoorEntry {
+    val templateLowFlagsWithoutCrossArea = templateDoor.bitflag and 0xBF
+    val finalLowFlags = if (crossArea) {
+        templateLowFlagsWithoutCrossArea or 0x40
+    } else {
+        templateLowFlagsWithoutCrossArea and 0x40.inv()
+    }
+    return currentDoor.copy(
+        destRoomPtr = templateDoor.destRoomPtr,
+        bitflag = ((templateDoor.direction and 0xFF) shl 8) or (finalLowFlags and 0xFF),
+        doorCapCode = templateDoor.doorCapCode,
+        screenX = templateDoor.screenX,
+        screenY = templateDoor.screenY,
+        distFromDoor = templateDoor.distFromDoor,
+        entryCode = templateDoor.entryCode,
+    )
+}
+
 private object EnemySpriteCache {
     private val cache = mutableMapOf<String, BufferedImage?>()
 
@@ -2135,9 +2182,90 @@ fun MapCanvas(
                                                 }
                                                 Spacer(modifier = Modifier.height(4.dp))
 
+                                                val dirNames = listOf("Right", "Left", "Down", "Up")
+                                                val entranceTemplates = remember(currentDoor.destRoomPtr, rooms, romParser) {
+                                                    doorTemplateChoicesForDestination(romParser, rooms, currentDoor.destRoomPtr)
+                                                }
+                                                var entranceDropExpanded by remember { mutableStateOf(false) }
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                                    Text("Entrance:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                                                    Box(modifier = Modifier.weight(1f)) {
+                                                        Surface(
+                                                            modifier = Modifier.fillMaxWidth().height(28.dp)
+                                                                .clickable(enabled = entranceTemplates.isNotEmpty()) {
+                                                                    entranceDropExpanded = true
+                                                                },
+                                                            shape = MaterialTheme.shapes.small,
+                                                            color = MaterialTheme.colorScheme.surfaceVariant
+                                                        ) {
+                                                            Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
+                                                                verticalAlignment = Alignment.CenterVertically) {
+                                                                Text(
+                                                                    if (entranceTemplates.isEmpty()) "No existing entrances found"
+                                                                    else "Copy from existing entrance...",
+                                                                    fontSize = 9.sp,
+                                                                    color = if (entranceTemplates.isEmpty()) MaterialTheme.colorScheme.outline
+                                                                        else MaterialTheme.colorScheme.onSurface,
+                                                                    modifier = Modifier.weight(1f)
+                                                                )
+                                                                if (entranceTemplates.isNotEmpty()) Text("▾", fontSize = 9.sp)
+                                                            }
+                                                        }
+                                                        DropdownMenu(
+                                                            expanded = entranceDropExpanded,
+                                                            onDismissRequest = { entranceDropExpanded = false },
+                                                            modifier = Modifier.width(360.dp).requiredSizeIn(maxHeight = 360.dp)
+                                                        ) {
+                                                            for (choice in entranceTemplates) {
+                                                                val d = choice.door
+                                                                val dir = dirNames.getOrElse(d.direction and 0x03) { "?" }
+                                                                val capX = d.doorCapCode and 0xFF
+                                                                val capY = (d.doorCapCode shr 8) and 0xFF
+                                                                val entry = "\$${d.entryCode.toString(16).uppercase().padStart(4, '0')}"
+                                                                val defPtr = "\$${d.doorDefPtr.toString(16).uppercase().padStart(4, '0')}"
+                                                                DropdownMenuItem(
+                                                                    text = {
+                                                                        Column {
+                                                                            Text(
+                                                                                "${choice.sourceRoomName} door ${choice.doorIndex} ($defPtr)",
+                                                                                fontSize = 10.sp,
+                                                                                fontWeight = FontWeight.Bold
+                                                                            )
+                                                                            Text(
+                                                                                "$dir  screen=(${d.screenX},${d.screenY})  cap=($capX,$capY)  entry=$entry",
+                                                                                fontSize = 8.sp,
+                                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                                            )
+                                                                        }
+                                                                    },
+                                                                    onClick = {
+                                                                        entranceDropExpanded = false
+                                                                        val srcArea = romParser.readRoomHeader(room.getRoomIdAsInt())?.area
+                                                                        val destArea = romParser.readRoomHeader(currentDoor.destRoomPtr)?.area
+                                                                        val crossArea = srcArea != null && destArea != null && srcArea != destArea
+                                                                        editorState.updateDoor(
+                                                                            propsBts,
+                                                                            doorWithTemplateValues(currentDoor, d, crossArea)
+                                                                        )
+                                                                    },
+                                                                    modifier = Modifier.height(42.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if (entranceTemplates.isNotEmpty()) {
+                                                    Text(
+                                                        "Copies facing, screen, cap, distance, and entry ASM from a real door into this room.",
+                                                        fontSize = 8.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(start = 72.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(4.dp))
+
                                                 // Direction dropdown
                                                 var dirDropExpanded by remember { mutableStateOf(false) }
-                                                val dirNames = listOf("Right", "Left", "Down", "Up")
                                                 val currentDir = currentDoor.direction and 0x03
                                                 val isBubble = (currentDoor.direction and 0x04) != 0
                                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
