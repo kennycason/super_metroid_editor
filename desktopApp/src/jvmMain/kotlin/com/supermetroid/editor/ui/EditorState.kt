@@ -3946,7 +3946,7 @@ class EditorState {
                         "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
                             "movePtr@0x82353=${romData.hexAt(0x82353, 2)}, " +
                             "posePtr@0x8801C=${romData.hexAt(0x8801C, 2)}, " +
-                            "code@0x87C20=${romData.hexAt(0x87C20, 12)}, " +
+                            "code@0x87800=${romData.hexAt(0x87800, 12)}, " +
                             "guard@0x880BE=${romData.hexAt(0x880BE, 12)}"
                     )
                 }

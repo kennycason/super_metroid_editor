@@ -22,7 +22,7 @@
   {
     "file": "spider_ball.ips",
     "name": "Spider Ball",
-    "description": "Prototype Spider Ball: hold d-pad while morphed near a solid surface to attach and rotate around it; press Jump to detach. Enabled by Morph Ball."
+    "description": "Prototype Spider Ball: press d-pad while morphed near a solid surface to attach and rotate around it; press Jump or Up from floor/air to detach. Enabled by Morph Ball."
   },
   {
     "file": "energy_free_shinesparks.ips",
