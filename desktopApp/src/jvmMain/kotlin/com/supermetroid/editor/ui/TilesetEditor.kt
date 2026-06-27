@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.GetApp
 import androidx.compose.material.icons.filled.Publish
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
@@ -205,6 +206,29 @@ fun TilesetCanvas(
     val gridData = tilesetEditorState.gridData
     val coroutineScope = rememberCoroutineScope()
     var showPixelEditor by remember { mutableStateOf(false) }
+
+    fun reloadCurrentTileset() {
+        val parser = romParser ?: return
+        val id = editorState.editorTilesetId
+        tilesetEditorState.isLoading = true
+        tilesetEditorState.errorMessage = null
+        coroutineScope.launch {
+            try {
+                val ok = withContext(Dispatchers.Default) { editorState.loadEditorTileset(id, parser) }
+                if (!ok) {
+                    tilesetEditorState.errorMessage = "Failed to load tileset $id"
+                    return@launch
+                }
+                val tg = editorState.editorTileGraphics!!
+                tilesetEditorState.gridData = withContext(Dispatchers.Default) { tg.renderTilesetGrid() }
+                tilesetEditorState.palettes = tg.getPalettes()
+            } catch (e: Exception) {
+                tilesetEditorState.errorMessage = e.message ?: "Error"
+            } finally {
+                tilesetEditorState.isLoading = false
+            }
+        }
+    }
 
     // If pixel editor is open, show it instead of the grid
     if (showPixelEditor && editorState.editorTileGraphics != null && selectedMeta >= 0) {
@@ -405,6 +429,106 @@ fun TilesetCanvas(
                                                 tilesetEditorState.gridData = withContext(Dispatchers.Default) { tg.renderTilesetGrid() }
                                             }
                                         }
+                                    }
+                                },
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+
+                    val hasRevertOptions = editorState.hasCurrentTilesetOverrides()
+                    var revertMenuExpanded by remember { mutableStateOf(false) }
+                    val hasPaletteOverride = editorState.hasCustomPalette(tilesetId) ||
+                            editorState.getPaletteEffect("tileset:$tilesetId") != null
+                    Box {
+                        Surface(
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clickable(enabled = hasRevertOptions) { revertMenuExpanded = true },
+                            shape = MaterialTheme.shapes.small,
+                            color = if (hasRevertOptions) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                        alpha = if (hasRevertOptions) 1f else 0.45f
+                                    )
+                                )
+                                Text(
+                                    "Revert",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                        alpha = if (hasRevertOptions) 1f else 0.45f
+                                    )
+                                )
+                                if (hasRevertOptions) {
+                                    Text("●", fontSize = 8.sp, color = Color(0xFF66BB6A))
+                                }
+                                Text(
+                                    "▾",
+                                    fontSize = 8.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                        alpha = if (hasRevertOptions) 0.8f else 0.35f
+                                    )
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = revertMenuExpanded,
+                            onDismissRequest = { revertMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Revert Area Tiles (URE)", fontSize = 10.sp) },
+                                enabled = editorState.hasCustomVarGfx(),
+                                onClick = {
+                                    revertMenuExpanded = false
+                                    if (editorState.resetCurrentTilesetOverrides(areaTiles = true, commonTiles = false, palette = false)) {
+                                        reloadCurrentTileset()
+                                    }
+                                },
+                                modifier = Modifier.height(28.dp)
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Revert Common Tiles (CRE)", fontSize = 10.sp) },
+                                enabled = editorState.hasCustomCreGfx(),
+                                onClick = {
+                                    revertMenuExpanded = false
+                                    if (editorState.resetCurrentTilesetOverrides(areaTiles = false, commonTiles = true, palette = false)) {
+                                        reloadCurrentTileset()
+                                    }
+                                },
+                                modifier = Modifier.height(28.dp)
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Revert Palette", fontSize = 10.sp) },
+                                enabled = hasPaletteOverride,
+                                onClick = {
+                                    revertMenuExpanded = false
+                                    if (editorState.resetCurrentTilesetOverrides(areaTiles = false, commonTiles = false, palette = true)) {
+                                        reloadCurrentTileset()
+                                    }
+                                },
+                                modifier = Modifier.height(28.dp)
+                            )
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("Revert All", fontSize = 10.sp) },
+                                enabled = hasRevertOptions,
+                                onClick = {
+                                    revertMenuExpanded = false
+                                    if (editorState.resetCurrentTilesetOverrides(areaTiles = true, commonTiles = true, palette = true)) {
+                                        reloadCurrentTileset()
                                     }
                                 },
                                 modifier = Modifier.height(28.dp)

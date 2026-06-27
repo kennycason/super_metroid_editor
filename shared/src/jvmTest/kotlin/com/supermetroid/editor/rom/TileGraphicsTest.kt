@@ -304,6 +304,73 @@ class TileGraphicsTest {
             assertEquals(TileGraphics.TOTAL_TILES, map.size)
             assertTrue(map.all { it in 0..7 })
         }
+
+        @Test
+        fun `importTileSheet encodes pixels using exported tile palette row`() {
+            val g = gfx ?: return
+            g.loadTileset(0)
+            val paletteMap = g.buildTilePaletteMap()
+            val palettes = g.getPalettes()!!
+            val varTileCount = g.getVarTileCount()
+            val originalVarGfx = g.getRawVarGfx()!!.copyOf()
+
+            fun colorDistance(a: Int, b: Int): Int {
+                val dr = ((a shr 16) and 0xFF) - ((b shr 16) and 0xFF)
+                val dg = ((a shr 8) and 0xFF) - ((b shr 8) and 0xFF)
+                val db = (a and 0xFF) - (b and 0xFF)
+                return dr * dr + dg * dg + db * db
+            }
+
+            fun closestIndex(color: Int, palette: IntArray): Int =
+                (1 until palette.size).minBy { colorDistance(color, palette[it]) }
+
+            var chosenTile = -1
+            var targetRow = -1
+            var foreignColor = 0
+            var expectedIndex = -1
+
+            search@ for (tile in 0 until varTileCount) {
+                val row = paletteMap[tile]
+                for (otherRow in palettes.indices) {
+                    if (otherRow == row) continue
+                    for (colorIndex in 1 until 16) {
+                        val color = palettes[otherRow][colorIndex]
+                        val closestInTarget = closestIndex(color, palettes[row])
+                        if (closestInTarget != colorIndex && colorDistance(color, palettes[row][closestInTarget]) > 0) {
+                            chosenTile = tile
+                            targetRow = row
+                            foreignColor = color
+                            expectedIndex = closestInTarget
+                            break@search
+                        }
+                    }
+                }
+            }
+
+            assertTrue(chosenTile >= 0, "Need a tile/color pair that distinguishes palette-row encoding")
+
+            val width = 16 * 8
+            val height = ((varTileCount + 15) / 16) * 8
+            val pixels = IntArray(width * height)
+            val tileX = (chosenTile % 16) * 8
+            val tileY = (chosenTile / 16) * 8
+            for (py in 0 until 8) for (px in 0 until 8) {
+                pixels[(tileY + py) * width + tileX + px] = foreignColor
+            }
+
+            try {
+                val imported = g.importTileSheet(pixels, width, 0, varTileCount)
+                g.applyCustomVarGfx(imported)
+
+                assertEquals(
+                    expectedIndex,
+                    g.readPixelIndex(chosenTile, 0, 0),
+                    "Import must quantize against tile $chosenTile palette row $targetRow, not the source color's row"
+                )
+            } finally {
+                g.applyCustomVarGfx(originalVarGfx)
+            }
+        }
     }
 
     // ── CRE / Variable split ─────────────────────────────────────

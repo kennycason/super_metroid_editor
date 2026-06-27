@@ -315,11 +315,12 @@ class TileGraphics(private val romParser: RomParser) {
 
     /**
      * Convert an ARGB pixel grid back to raw 4bpp tile data.
-     * For each 8x8 tile, finds the best matching palette row and encodes indices.
+     * For each 8x8 tile, uses the palette row assigned by the tileset's metatile table.
      */
     @Suppress("UNUSED_PARAMETER")
     fun importTileSheet(pixels: IntArray, imgWidth: Int, startTile: Int, numTiles: Int, cols: Int = 16): ByteArray {
         val pal = cachedPalette ?: return ByteArray(0)
+        val tilePalMap = buildTilePaletteMap()
         val result = ByteArray(numTiles * BYTES_PER_TILE)
         for (i in 0 until numTiles) {
             val cx = (i % cols) * 8; val cy = (i / cols) * 8
@@ -328,8 +329,10 @@ class TileGraphics(private val romParser: RomParser) {
                 val si = (cy + py) * imgWidth + (cx + px)
                 tilePixels[py * 8 + px] = if (si in pixels.indices) pixels[si] else 0
             }
-            val bestPal = findBestPaletteForTile(tilePixels, pal)
-            encode4bppTile(tilePixels, pal[bestPal], result, i * BYTES_PER_TILE)
+            val tileNum = startTile + i
+            val paletteRow = tilePalMap.getOrNull(tileNum)
+                ?: findBestPaletteForTile(tilePixels, pal)
+            encode4bppTile(tilePixels, pal[paletteRow], result, i * BYTES_PER_TILE)
         }
         return result
     }
@@ -616,8 +619,8 @@ class TileGraphics(private val romParser: RomParser) {
 
     private fun findClosestPaletteIndex(argb: Int, palette: IntArray): Int {
         val r = (argb shr 16) and 0xFF; val g = (argb shr 8) and 0xFF; val b = argb and 0xFF
-        var bestIdx = 0; var bestDist = Int.MAX_VALUE
-        for (i in palette.indices) {
+        var bestIdx = 1; var bestDist = Int.MAX_VALUE
+        for (i in 1 until palette.size) {
             val pr = (palette[i] shr 16) and 0xFF
             val pg = (palette[i] shr 8) and 0xFF
             val pb = palette[i] and 0xFF

@@ -528,13 +528,54 @@ class EditorState {
 
     /** Remove the custom palette override, restoring the ROM default. */
     fun resetPaletteOverride(tilesetId: Int) {
-        project.customGfx.palettes.remove(tilesetId.toString())
-        dirty = true
+        val removedPalette = project.customGfx.palettes.remove(tilesetId.toString()) != null
+        val removedEffect = project.customGfx.paletteEffects.remove("tileset:$tilesetId") != null
+        if (removedPalette || removedEffect) {
+            dirty = true
+            paletteVersion++
+        }
     }
 
     /** Check if the project has a custom palette for the given tileset. */
     fun hasCustomPalette(tilesetId: Int): Boolean =
         project.customGfx.palettes.containsKey(tilesetId.toString())
+
+    fun hasCurrentTilesetOverrides(): Boolean =
+        hasCustomVarGfx() ||
+                hasCustomCreGfx() ||
+                hasCustomPalette(editorTilesetId) ||
+                project.customGfx.paletteEffects.containsKey("tileset:$editorTilesetId")
+
+    fun resetCurrentTilesetOverrides(
+        areaTiles: Boolean,
+        commonTiles: Boolean,
+        palette: Boolean,
+    ): Boolean {
+        var changed = false
+        val tilesetKey = editorTilesetId.toString()
+        if (areaTiles && project.customGfx.varGfx.remove(tilesetKey) != null) {
+            changed = true
+        }
+        if (commonTiles && project.customGfx.creGfx != null) {
+            project.customGfx.creGfx = null
+            changed = true
+        }
+        if (palette) {
+            var paletteChanged = false
+            if (project.customGfx.palettes.remove(tilesetKey) != null) {
+                paletteChanged = true
+            }
+            if (project.customGfx.paletteEffects.remove("tileset:$tilesetKey") != null) {
+                paletteChanged = true
+            }
+            if (paletteChanged) {
+                paletteVersion++
+                changed = true
+            }
+        }
+        if (changed) dirty = true
+        return changed
+    }
 
     // ─── Sprite palette editing (Samus, beams, bosses, enemies) ─────
 

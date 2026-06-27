@@ -37,6 +37,51 @@ class EditorStateTest {
     // ── Toggle flip ──────────────────────────────────────────────
 
     @Nested
+    inner class TilesetOverrides {
+        @Test
+        fun `resetCurrentTilesetOverrides clears only selected override groups`() {
+            state.project.customGfx.varGfx["0"] = "area"
+            state.project.customGfx.varGfx["1"] = "other-area"
+            state.project.customGfx.creGfx = "common"
+            state.project.customGfx.palettes["0"] = "palette"
+            state.project.customGfx.palettes["1"] = "other-palette"
+            state.project.customGfx.paletteEffects["tileset:0"] = "random_palette"
+            state.project.customGfx.paletteEffects["tileset:1"] = "random_palette"
+
+            assertTrue(state.hasCurrentTilesetOverrides())
+
+            assertTrue(state.resetCurrentTilesetOverrides(areaTiles = true, commonTiles = false, palette = false))
+            assertFalse(state.project.customGfx.varGfx.containsKey("0"))
+            assertEquals("other-area", state.project.customGfx.varGfx["1"])
+            assertEquals("common", state.project.customGfx.creGfx)
+            assertEquals("palette", state.project.customGfx.palettes["0"])
+
+            assertTrue(state.resetCurrentTilesetOverrides(areaTiles = false, commonTiles = true, palette = true))
+            assertNull(state.project.customGfx.creGfx)
+            assertFalse(state.project.customGfx.palettes.containsKey("0"))
+            assertFalse(state.project.customGfx.paletteEffects.containsKey("tileset:0"))
+            assertEquals("other-palette", state.project.customGfx.palettes["1"])
+            assertEquals("random_palette", state.project.customGfx.paletteEffects["tileset:1"])
+        }
+
+        @Test
+        fun `resetCurrentTilesetOverrides returns false when nothing changed`() {
+            assertFalse(state.resetCurrentTilesetOverrides(areaTiles = true, commonTiles = true, palette = true))
+        }
+
+        @Test
+        fun `resetPaletteOverride clears palette effect`() {
+            state.project.customGfx.palettes["0"] = "palette"
+            state.project.customGfx.paletteEffects["tileset:0"] = "full_random"
+
+            state.resetPaletteOverride(0)
+
+            assertFalse(state.project.customGfx.palettes.containsKey("0"))
+            assertFalse(state.project.customGfx.paletteEffects.containsKey("tileset:0"))
+        }
+    }
+
+    @Nested
     inner class ToggleFlip {
         @Test
         fun `toggleHFlip toggles brush hFlip`() {
