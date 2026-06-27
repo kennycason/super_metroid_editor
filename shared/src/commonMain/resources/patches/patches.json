@@ -20,6 +20,11 @@
     "description": "Preserve horizontal momentum when landing while running (speedkeep)."
   },
   {
+    "file": "spider_ball.ips",
+    "name": "Spider Ball",
+    "description": "Prototype Spider Ball: hold d-pad while morphed near a solid surface to attach and rotate around it; press Jump to detach. Enabled by Morph Ball."
+  },
+  {
     "file": "energy_free_shinesparks.ips",
     "name": "Energy-Free Shinesparks",
     "description": "Shinesparks no longer cost energy or require 30+ HP to activate."

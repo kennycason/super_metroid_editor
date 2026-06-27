@@ -597,55 +597,105 @@ private fun ControllerConfigEditor(
     }
 }
 
+private enum class PatchWriteViewMode {
+    Hex,
+    Asm,
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: Modifier) {
     var rawText by remember(patch.id, editorState.patchVersion) {
         mutableStateOf(writesToText(patch.writes))
     }
     var parseError by remember(patch.id) { mutableStateOf<String?>(null) }
+    var viewMode by remember(patch.id) { mutableStateOf(PatchWriteViewMode.Hex) }
+    val asmText = remember(rawText, viewMode) {
+        if (viewMode != PatchWriteViewMode.Asm) {
+            ""
+        } else {
+            val result = parseText(rawText)
+            if (result.error != null) {
+                "; Cannot disassemble: ${result.error}"
+            } else {
+                disassemblePatchWrites(result.writes)
+            }
+        }
+    }
 
     Column(modifier = modifier.padding(12.dp)) {
-        // Instructions
-        Text(
-            "Format: one record per line — OFFSET: BB BB BB ...  (hex values, offset is PC file address)",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "Example: 8F625: 22    or    15962: 04    or    8267F: EA EA EA",
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (viewMode == PatchWriteViewMode.Hex) {
+            Text(
+                "Format: one record per line — OFFSET: BB BB BB ...  (hex values, offset is PC file address)",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "Example: 8F625: 22    or    15962: 04    or    8267F: EA EA EA",
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Text(
+                "Read-only 65816 disassembly generated from the current hex text. Addresses use headerless LoROM mapping.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "M/X immediate widths default to 16-bit and track REP/SEP inside each write record.",
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(8.dp))
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Button(
-                onClick = {
-                    val result = parseText(rawText)
-                    if (result.error != null) {
-                        parseError = result.error
-                    } else {
-                        parseError = null
-                        editorState.setPatchWrites(patch.id, result.writes)
-                    }
-                },
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            FilterChip(
+                selected = viewMode == PatchWriteViewMode.Hex,
+                onClick = { viewMode = PatchWriteViewMode.Hex },
+                label = { Text("Hex", fontSize = 11.sp) },
                 modifier = Modifier.height(32.dp)
-            ) { Text("Apply Changes", fontSize = 12.sp) }
+            )
+            FilterChip(
+                selected = viewMode == PatchWriteViewMode.Asm,
+                onClick = { viewMode = PatchWriteViewMode.Asm },
+                label = { Text("ASM", fontSize = 11.sp) },
+                modifier = Modifier.height(32.dp)
+            )
 
-            Button(
-                onClick = { rawText = writesToText(patch.writes) },
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                modifier = Modifier.height(32.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            ) { Text("Revert", fontSize = 12.sp) }
+            Spacer(Modifier.weight(1f))
+
+            if (viewMode == PatchWriteViewMode.Hex) {
+                Button(
+                    onClick = {
+                        val result = parseText(rawText)
+                        if (result.error != null) {
+                            parseError = result.error
+                        } else {
+                            parseError = null
+                            editorState.setPatchWrites(patch.id, result.writes)
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) { Text("Apply Changes", fontSize = 12.sp) }
+
+                Button(
+                    onClick = { rawText = writesToText(patch.writes) },
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                ) { Text("Revert", fontSize = 12.sp) }
+            }
 
             if (parseError != null) {
                 Text(
@@ -659,17 +709,24 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
 
         Spacer(Modifier.height(8.dp))
 
-        // The hex text editor
+        // The patch text viewer/editor
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF1E1E2E), RoundedCornerShape(6.dp))
                 .padding(2.dp)
         ) {
-            val scrollState = rememberScrollState()
+            val verticalScrollState = rememberScrollState()
+            val horizontalScrollState = rememberScrollState()
             BasicTextField(
-                value = rawText,
-                onValueChange = { rawText = it; parseError = null },
+                value = if (viewMode == PatchWriteViewMode.Hex) rawText else asmText,
+                onValueChange = {
+                    if (viewMode == PatchWriteViewMode.Hex) {
+                        rawText = it
+                        parseError = null
+                    }
+                },
+                readOnly = viewMode == PatchWriteViewMode.Asm,
                 textStyle = TextStyle(
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,
@@ -679,7 +736,8 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
                 cursorBrush = SolidColor(Color(0xFFF5C2E7)),
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(scrollState)
+                    .verticalScroll(verticalScrollState)
+                    .horizontalScroll(horizontalScrollState)
                     .padding(12.dp)
             )
         }

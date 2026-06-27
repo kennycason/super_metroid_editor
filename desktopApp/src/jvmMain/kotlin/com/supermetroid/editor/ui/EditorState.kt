@@ -34,6 +34,7 @@ import com.supermetroid.editor.rom.TileGraphics
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.security.MessageDigest
 
 private val editorStateLog = KotlinLogging.logger {}
 
@@ -44,6 +45,18 @@ private fun editorLog(message: Any? = "") {
         text.startsWith("WARN") || text.contains(" WARN:") -> editorStateLog.warn { text }
         else -> editorStateLog.info { text }
     }
+}
+
+private fun ByteArray.hexAt(offset: Int, count: Int): String {
+    if (offset < 0 || offset >= size) return "<out-of-range>"
+    val end = (offset + count).coerceAtMost(size)
+    return (offset until end).joinToString(" ") { (this[it].toInt() and 0xFF).toString(16).padStart(2, '0') }
+}
+
+private fun bytesSha256(bytes: List<Int>): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    for (b in bytes) digest.update((b and 0xFF).toByte())
+    return digest.digest().joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 }
 
 private val NORMAL_ENEMY_GFX_VRAM_DESTINATIONS = listOf(1, 2, 3, 7)
@@ -1843,7 +1856,7 @@ class EditorState {
 
     /** Find an existing patch by configType, or create and add one. Used by Enemy/Boss tabs. */
     fun findOrCreateConfigPatch(configType: String): SmPatch {
-        seedDefaultPatches()
+        seedDefaultPatches(forceRefreshBundled = true)
         val existing = project.patches.find { it.configType == configType }
         if (existing != null) return existing
         val patch = SmPatch(
@@ -1860,8 +1873,8 @@ class EditorState {
     private var patchesSeeded = false
 
     /** Ensure all default patches exist; loads bundled IPS + hardcoded hex demos. Idempotent. */
-    fun seedDefaultPatches() {
-        if (patchesSeeded) return
+    fun seedDefaultPatches(forceRefreshBundled: Boolean = false) {
+        if (patchesSeeded && !forceRefreshBundled) return
         patchesSeeded = true
         // Remove legacy/duplicate patches from old configs
         val removed = project.patches.removeAll { it.id in LEGACY_PATCH_IDS }
@@ -1872,6 +1885,7 @@ class EditorState {
 
         val existingIds = project.patches.map { it.id }.toSet()
         var added = 0
+        var refreshed = 0
 
         // Collect patches in desired display order: config → hardcoded → bundled IPS
         val ordered = mutableListOf<SmPatch>()
@@ -1904,10 +1918,24 @@ class EditorState {
                 if (patch.id !in existingIds) {
                     ordered.add(patch)
                 } else {
-                    // Update name/description from canonical source for existing patches
+                    // Bundled IPS patches are source-controlled resources. Refresh existing
+                    // project copies so iterative bundled patch development is not trapped
+                    // behind stale serialized write lists.
                     project.patches.find { it.id == patch.id }?.let {
                         it.name = patch.name
                         it.description = patch.description
+                        val oldHash = bytesSha256(it.writes.flatMap { write -> write.bytes })
+                        val newHash = bytesSha256(patch.writes.flatMap { write -> write.bytes })
+                        if (oldHash != newHash || it.writes.size != patch.writes.size) {
+                            it.writes.clear()
+                            it.writes.addAll(patch.writes.map { write ->
+                                PatchWrite(write.offset, write.bytes.toList())
+                            })
+                            refreshed++
+                            if (patch.id == "bundled_spider_ball") {
+                                editorLog("[PATCH-SEED] Refreshed Spider Ball bundled writes: ${patch.writes.size} records, sha256=$newHash")
+                            }
+                        }
                     }
                 }
             }
@@ -1921,7 +1949,7 @@ class EditorState {
             added = ordered.size
         }
 
-        if (added > 0) { patchVersion++ }
+        if (added > 0 || refreshed > 0) { patchVersion++ }
     }
 
     // ─── Tile selection ─────────────────────────────────────────
@@ -3716,6 +3744,7 @@ class EditorState {
     }
 
     fun exportToRom(romParser: RomParser): String? {
+        seedDefaultPatches(forceRefreshBundled = true)
         val romPath = project.romPath
         if (romPath.isEmpty()) return null
         saveProject(romParser)
@@ -3911,6 +3940,16 @@ class EditorState {
                     }
                 }
                 editorLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
+                if (patch.id == "bundled_spider_ball") {
+                    val flatHash = bytesSha256(patch.writes.flatMap { it.bytes })
+                    editorLog(
+                        "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
+                            "movePtr@0x82353=${romData.hexAt(0x82353, 2)}, " +
+                            "posePtr@0x8801C=${romData.hexAt(0x8801C, 2)}, " +
+                            "code@0x87C20=${romData.hexAt(0x87C20, 12)}, " +
+                            "guard@0x880BE=${romData.hexAt(0x880BE, 12)}"
+                    )
+                }
             }
             patchesApplied++
         }

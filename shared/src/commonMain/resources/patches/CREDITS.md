@@ -33,6 +33,7 @@ licensed under the **MIT License** (Copyright 2023 maddo, kyleb).
 | Fast Reload | (community) |
 | E-Tank Refill Full | (community) |
 | Energy Station Reserves | (community) |
+| Spider Ball | SMEdit prototype, informed by Metroid II spider ball behavior |
 | Aim Anything | (community) |
 | Complementary Suits | (community) |
 | Boss Defeated (Kraid, Phantoon, Draygon, Ridley, All) | SMEdit (based on MapRandomizer RAM/ROM docs) |
