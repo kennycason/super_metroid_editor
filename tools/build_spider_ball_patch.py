@@ -218,9 +218,9 @@ SPIDER_BALL_ITEM_GFX_SIZE = 0x100
 
 MESSAGE_BOX_TABLE_ORIGINAL = 0x869B
 MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES = 29
-MESSAGE_BOX_TABLE_RELOCATED = 0x9800
-SPIDER_BALL_MESSAGE_ID = 0x1E
-SPIDER_BALL_MESSAGE_TILEMAP = 0x9900
+MESSAGE_BOX_TABLE_RELOCATED = 0x9C00
+SPIDER_BALL_MESSAGE_ID = 0x1D
+SPIDER_BALL_MESSAGE_TILEMAP = 0x9D00
 SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
 
 MORPH_PLM_SETUP_VISIBLE_CHOZO = 0xEE64
@@ -917,15 +917,16 @@ def message_box_entry(tilemap_addr: int) -> bytes:
 
 
 def build_message_box_table(base: bytes) -> bytes:
-    original = read_bank85(
+    table = bytearray(read_bank85(
         base,
         MESSAGE_BOX_TABLE_ORIGINAL,
         MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES * 6,
-    )
+    ))
+    spider_entry_offset = (SPIDER_BALL_MESSAGE_ID - 1) * 6
+    table[spider_entry_offset : spider_entry_offset + 6] = message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP)
     return b"".join(
         (
-            original,
-            message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP),
+            bytes(table),
             message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP_END),
         )
     )
