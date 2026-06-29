@@ -864,6 +864,8 @@ fun PatternEditorCanvas(
                         val cell = editorState.patReadCell(propsBlockX, propsBlockY)
                         if (cell != null && cell.plmId != 0) {
                             val plmName = when {
+                                editorState.isCustomItemPlm(cell.plmId) ->
+                                    editorState.customItemNameForPlm(cell.plmId) ?: "Item 0x${cell.plmId.toString(16)}"
                                 RomParser.isItemPlm(cell.plmId) ->
                                     RomParser.itemNameForPlm(cell.plmId) ?: "Item 0x${cell.plmId.toString(16)}"
                                 RomParser.isStationPlm(cell.plmId) ->
@@ -891,6 +893,9 @@ fun PatternEditorCanvas(
                         Spacer(Modifier.height(4.dp))
                         var addItemExpanded by remember { mutableStateOf(false) }
                         var addItemStyle by remember { mutableStateOf(0) }
+                        val customItems = remember(editorState.patchVersion, editorState.project.patches) {
+                            editorState.enabledCustomItems()
+                        }
                         Box {
                             Surface(
                                 modifier = Modifier.fillMaxWidth().height(28.dp)
@@ -922,6 +927,29 @@ fun PatternEditorCanvas(
                                     val plmId = when (addItemStyle) {
                                         1 -> item.chozoId; 2 -> item.hiddenId; else -> item.visibleId
                                     }
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically) {
+                                                Text(item.shortLabel, fontSize = 9.sp,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold)
+                                                Text(item.name, fontSize = 11.sp)
+                                            }
+                                        },
+                                        onClick = {
+                                            addItemExpanded = false
+                                            editorState.patSetCellPlm(propsBlockX, propsBlockY, plmId, 0)
+                                        },
+                                        modifier = Modifier.height(28.dp)
+                                    )
+                                }
+                                for (item in customItems) {
+                                    val plmId = when (addItemStyle) {
+                                        1 -> item.chozoPlmId
+                                        2 -> item.hiddenPlmId
+                                        else -> item.visiblePlmId
+                                    } ?: continue
                                     DropdownMenuItem(
                                         text = {
                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp),

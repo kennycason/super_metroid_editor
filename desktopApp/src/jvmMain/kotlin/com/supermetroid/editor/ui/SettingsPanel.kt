@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +43,10 @@ fun SettingsPopup(
     onDismiss: () -> Unit,
     emulatorWorkspaceState: EmulatorWorkspaceState,
     editorState: EditorState? = null,
+    showRoomItemNames: Boolean = true,
+    showRoomEnemyNames: Boolean = true,
+    onShowRoomItemNamesChange: (Boolean) -> Unit = {},
+    onShowRoomEnemyNamesChange: (Boolean) -> Unit = {},
 ) {
     Popup(
         alignment = Alignment.TopEnd,
@@ -105,6 +110,10 @@ fun SettingsPopup(
                             AppConfig.update { copy(fontSize = size.name) }
                         },
                         editorState = editorState,
+                        showRoomItemNames = showRoomItemNames,
+                        showRoomEnemyNames = showRoomEnemyNames,
+                        onShowRoomItemNamesChange = onShowRoomItemNamesChange,
+                        onShowRoomEnemyNamesChange = onShowRoomEnemyNamesChange,
                     )
                     1 -> EmulatorSettingsTab(emulatorWorkspaceState, currentFontSize)
                 }
@@ -120,6 +129,10 @@ private fun GeneralSettingsTab(
     onThemeChange: (EditorTheme) -> Unit,
     onFontSizeChange: (FontSize) -> Unit,
     editorState: EditorState? = null,
+    showRoomItemNames: Boolean,
+    showRoomEnemyNames: Boolean,
+    onShowRoomItemNamesChange: (Boolean) -> Unit,
+    onShowRoomEnemyNamesChange: (Boolean) -> Unit,
 ) {
     // ── Theme Section ──
     Text(
@@ -194,6 +207,28 @@ private fun GeneralSettingsTab(
         }
     }
 
+    // ── Room Editor Section ──
+    Text(
+        "Room Editor",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    SettingsCheckboxRow(
+        label = "Show item names",
+        description = "Draw item name badges under room item icons.",
+        checked = showRoomItemNames,
+        onCheckedChange = onShowRoomItemNamesChange,
+        fontSize = currentFontSize,
+    )
+    SettingsCheckboxRow(
+        label = "Show enemy names",
+        description = "Draw enemy name badges above room enemy sprites.",
+        checked = showRoomEnemyNames,
+        onCheckedChange = onShowRoomEnemyNamesChange,
+        fontSize = currentFontSize,
+    )
+
     // ── Preview ──
     Spacer(Modifier.height(2.dp))
     Text(
@@ -265,6 +300,34 @@ private fun GeneralSettingsTab(
             fontSize = currentFontSize.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun SettingsCheckboxRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    fontSize: FontSize,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+        Column {
+            Text(label, fontSize = fontSize.body, color = MaterialTheme.colorScheme.onSurface)
+            Text(description, fontSize = fontSize.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

@@ -6,6 +6,19 @@ Build Spider Ball as a wall and ceiling traversal mode while leaving normal Morp
 
 The current prototype keeps breaking when Spider owns ground movement, especially downhill slopes. The planned reset is to stop treating floors as Spider surfaces. Ground, slopes, mockball, falling, and normal rolling should remain vanilla Morph Ball behavior unless Samus intentionally attaches to a wall.
 
+## Inventory Screen Plan
+
+Spider Ball should become a real item in editor data and ROM pickup data first, then get in-game pause-screen presentation as a follow-up patch.
+
+Planned pause-screen layout:
+
+- Extend the Misc section by one text row.
+- Put `SPIDER BALL` under `SPRING BALL` and above `SCREW ATTACK`.
+- Move the Boots section down one row so Misc has room for the new item text.
+- Keep Spider Ball out of the beam/boot/suit sections; it is a Misc upgrade.
+- Update the equipment-screen tilemaps, item bitmask tables, selector positions, and category movement bounds together so cursor navigation and text display remain aligned.
+- Initially Spider Ball can be treated as collected-only behavior, matching the movement patch's current item gate. If we later want pause-screen toggling, switch movement gating from `collected_items` to `equipped_items`.
+
 ## State Model
 
 ### VanillaMorph

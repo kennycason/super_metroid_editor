@@ -105,6 +105,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.rom.MapRenderer
 import com.supermetroid.editor.rom.RomConstants
@@ -200,6 +201,75 @@ private object EnemySpriteCache {
             val stream = EnemySpriteCache::class.java.getResourceAsStream("/enemies/$hexId.png")
             stream?.use { ImageIO.read(it) }
         }
+    }
+}
+
+private object ItemSpriteSheetCache {
+    private var sheet: BufferedImage? = null
+    private var loaded = false
+
+    fun get(): BufferedImage? {
+        if (!loaded) {
+            loaded = true
+            sheet = ItemSpriteSheetCache::class.java.getResourceAsStream("/item_sprites.png")
+                ?.use { ImageIO.read(it) }
+        }
+        return sheet
+    }
+}
+
+private data class RoomItemSpriteCoord(val x: Int, val y: Int)
+
+private data class ItemOverlayDef(
+    val name: String,
+    val shortLabel: String,
+    val sprite: RoomItemSpriteCoord?,
+)
+
+private val ROOM_ITEM_SPRITE_COORDS = mapOf(
+    "Morph Ball" to RoomItemSpriteCoord(0, 0),
+    "Bomb" to RoomItemSpriteCoord(32, 0),
+    "Energy Tank" to RoomItemSpriteCoord(64, 0),
+    "Missile" to RoomItemSpriteCoord(0, 16),
+    "Super Missile" to RoomItemSpriteCoord(32, 16),
+    "Power Bomb" to RoomItemSpriteCoord(64, 16),
+    "Reserve Tank" to RoomItemSpriteCoord(96, 16),
+    "Hi-Jump Boots" to RoomItemSpriteCoord(0, 32),
+    "Speed Booster" to RoomItemSpriteCoord(32, 32),
+    "Grapple Beam" to RoomItemSpriteCoord(64, 32),
+    "X-Ray Scope" to RoomItemSpriteCoord(96, 32),
+    "Spring Ball" to RoomItemSpriteCoord(0, 48),
+    "Space Jump" to RoomItemSpriteCoord(32, 48),
+    "Screw Attack" to RoomItemSpriteCoord(64, 48),
+    "Charge Beam" to RoomItemSpriteCoord(96, 48),
+    "Spazer" to RoomItemSpriteCoord(0, 64),
+    "Wave Beam" to RoomItemSpriteCoord(32, 64),
+    "Ice Beam" to RoomItemSpriteCoord(64, 64),
+    "Plasma Beam" to RoomItemSpriteCoord(96, 64),
+    "Varia Suit" to RoomItemSpriteCoord(0, 80),
+    "Gravity Suit" to RoomItemSpriteCoord(32, 80),
+)
+
+private fun buildItemOverlayDefs(customItems: List<CustomItemDef>): Map<Int, ItemOverlayDef> = buildMap {
+    for (item in RomParser.ITEM_DEFS) {
+        val def = ItemOverlayDef(
+            name = item.name,
+            shortLabel = item.shortLabel,
+            sprite = ROOM_ITEM_SPRITE_COORDS[item.name],
+        )
+        put(item.chozoId, def)
+        put(item.visibleId, def)
+        put(item.hiddenId, def)
+    }
+    for (item in customItems) {
+        val def = ItemOverlayDef(
+            name = item.name,
+            shortLabel = item.shortLabel,
+            sprite = RoomItemSpriteCoord(item.iconX, item.iconY),
+        )
+        item.chozoPlmId?.let { put(it, def) }
+        item.visiblePlmId?.let { put(it, def) }
+        item.hiddenPlmId?.let { put(it, def) }
     }
 }
 
@@ -626,6 +696,8 @@ fun MapCanvas(
     emulatorConnected: Boolean = false,
     onMoveSamusHere: ((x: Int, y: Int) -> Unit)? = null,
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
+    showItemNames: Boolean = true,
+    showEnemyNames: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val zoomState = remember { mutableStateOf(1f) }
@@ -1121,6 +1193,9 @@ fun MapCanvas(
                             val effectiveBlocksWide = editorState?.workingBlocksWide ?: data.blocksWide
                             val effectiveBlocksTall = editorState?.workingBlocksTall ?: data.blocksTall
                             val activeOverlays = overlayToggles.filter { it.value }.keys
+                            val customItems = remember(editorState?.patchVersion, editorState?.project?.patches) {
+                                editorState?.enabledCustomItems().orEmpty()
+                            }
 
                             val roomHeader = remember(room, editVersion) {
                                 room?.let { r ->
@@ -1168,9 +1243,9 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode()) {
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer2Pixels = layer2Data)
+                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showEnemyNames = showEnemyNames)
                             }
                             
                             val hScrollState = rememberScrollState()
@@ -1207,13 +1282,13 @@ fun MapCanvas(
                             }
                             
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode()) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer2Pixels = layer2Data)
+                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showEnemyNames = showEnemyNames)
                                     }
                                 }
                                 compositeImage
@@ -2466,14 +2541,16 @@ fun MapCanvas(
                                         Text("Items / PLMs", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                                         val plmsHere = editorState.getPlmsAt(propsBlockX, propsBlockY)
-                                        val itemPlms = plmsHere.filter { RomParser.isItemPlm(it.id) }
-                                        val otherPlms = plmsHere.filter { !RomParser.isItemPlm(it.id) }
+                                        val itemPlms = plmsHere.filter { editorState.isEditorItemPlm(it.id) }
+                                        val otherPlms = plmsHere.filter { !editorState.isEditorItemPlm(it.id) }
 
                                         if (itemPlms.isEmpty() && otherPlms.isEmpty()) {
                                             Text("None", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline)
                                         }
                                         for (plm in itemPlms) {
-                                            val iName = RomParser.itemNameForPlm(plm.id) ?: "PLM 0x${plm.id.toString(16)}"
+                                            val iName = editorState.customItemNameForPlm(plm.id)
+                                                ?: RomParser.itemNameForPlm(plm.id)
+                                                ?: "PLM 0x${plm.id.toString(16)}"
                                             Row(
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -2585,6 +2662,9 @@ fun MapCanvas(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         var addItemExpanded by remember { mutableStateOf(false) }
                                         var addItemStyle by remember { mutableStateOf(0) }
+                                        val placementCustomItems = remember(editorState.patchVersion, editorState.project.patches) {
+                                            editorState.enabledCustomItems()
+                                        }
                                         Box {
                                             Surface(
                                                 modifier = Modifier.fillMaxWidth().height(28.dp)
@@ -2622,6 +2702,29 @@ fun MapCanvas(
                                                         2 -> item.hiddenId
                                                         else -> item.visibleId
                                                     }
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                                verticalAlignment = Alignment.CenterVertically) {
+                                                                Text(item.shortLabel, fontSize = 9.sp,
+                                                                    color = MaterialTheme.colorScheme.primary,
+                                                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                                                Text(item.name, fontSize = 11.sp)
+                                                            }
+                                                        },
+                                                        onClick = {
+                                                            addItemExpanded = false
+                                                            editorState.addPlm(plmId, propsBlockX, propsBlockY, 0)
+                                                        },
+                                                        modifier = Modifier.height(28.dp)
+                                                    )
+                                                }
+                                                for (item in placementCustomItems) {
+                                                    val plmId = when (addItemStyle) {
+                                                        1 -> item.chozoPlmId
+                                                        2 -> item.hiddenPlmId
+                                                        else -> item.visiblePlmId
+                                                    } ?: continue
                                                     DropdownMenuItem(
                                                         text = {
                                                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -3498,7 +3601,10 @@ private fun buildCompositeImage(
     layer3Pixels: IntArray? = null,
     layer3Width: Int = 256,
     layer3Height: Int = 264,
-    layer2Pixels: IntArray? = null
+    layer2Pixels: IntArray? = null,
+    customItems: List<CustomItemDef> = emptyList(),
+    showItemNames: Boolean = true,
+    showEnemyNames: Boolean = true,
 ): BufferedImage {
     val img = BufferedImage(data.width, data.height, BufferedImage.TYPE_INT_ARGB)
 
@@ -3699,6 +3805,7 @@ private fun buildCompositeImage(
     if (activeOverlays.contains(TileOverlay.ITEMS) && data.plmEntries.isNotEmpty()) {
         val g2 = g as java.awt.Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
         val labelFont = java.awt.Font("SansSerif", java.awt.Font.BOLD, 9)
         g.font = labelFont
         val fm = g.fontMetrics
@@ -3706,14 +3813,17 @@ private fun buildCompositeImage(
         val stationColor = java.awt.Color(0x44, 0xCC, 0xFF)    // cyan
         val gateColor = java.awt.Color(0xCC, 0x66, 0xFF)       // purple
         val doorCapColor = java.awt.Color(0x60, 0x80, 0xB0)    // gray-blue
+        val itemSpriteSheet = ItemSpriteSheetCache.get()
+        val itemDefs = buildItemOverlayDefs(customItems)
         for (plm in data.plmEntries) {
-            val isItem = RomParser.isItemPlm(plm.id)
+            val itemDef = itemDefs[plm.id]
+            val isItem = itemDef != null
             val isStation = RomParser.isStationPlm(plm.id)
             val isGate = RomParser.isGatePlm(plm.id)
             val isDoorCap = RomParser.doorCapColor(plm.id) != null
             if (!isItem && !isStation && !isGate && !isDoorCap) continue
             val name = when {
-                isItem -> RomParser.ITEM_DEFS.find { it.chozoId == plm.id || it.visibleId == plm.id || it.hiddenId == plm.id }?.name ?: continue
+                isItem -> itemDef?.name ?: continue
                 isStation -> RomParser.stationNameForPlm(plm.id) ?: continue
                 isDoorCap -> RomParser.doorCapDisplayName(plm.id) ?: continue
                 else -> RomParser.gateNameForPlm(plm.id, plm.param) ?: continue
@@ -3726,18 +3836,55 @@ private fun buildCompositeImage(
             }
             val horiz = isDoorCap && RomParser.doorCapIsHorizontal(plm.id)
             val cx = if (horiz) plm.x * 16 + 32 else plm.x * 16 + 8
-            val cy = if (horiz) plm.y * 16 + 8 else plm.y * 16 + 32
-            val textWidth = fm.stringWidth(name)
-            val badgeW = textWidth + 6
-            val badgeH = fm.height + 2
-            val bx = cx - badgeW / 2
-            val by = cy - badgeH / 2
-            g2.color = java.awt.Color(0, 0, 0, 200)
-            g2.fillRoundRect(bx, by, badgeW, badgeH, 4, 4)
-            g2.color = badgeBorder
-            g2.drawRoundRect(bx, by, badgeW, badgeH, 4, 4)
-            g2.color = java.awt.Color.WHITE
-            g2.drawString(name, bx + 3, by + fm.ascent + 1)
+            val cy = when {
+                horiz -> plm.y * 16 + 8
+                isDoorCap -> plm.y * 16 + 32
+                else -> plm.y * 16 + 8
+            }
+            if (isItem) {
+                val sprite = itemDef?.sprite
+                if (itemSpriteSheet != null && sprite != null) {
+                    g2.color = java.awt.Color(0, 0, 0, 160)
+                    g2.fillRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                    g2.color = itemColor
+                    g2.drawRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                    g2.drawImage(
+                        itemSpriteSheet,
+                        cx - 8,
+                        cy - 8,
+                        cx + 8,
+                        cy + 8,
+                        sprite.x,
+                        sprite.y,
+                        sprite.x + 16,
+                        sprite.y + 16,
+                        null,
+                    )
+                } else {
+                    val label = itemDef?.shortLabel?.take(2).orEmpty()
+                    g2.color = java.awt.Color(0, 0, 0, 200)
+                    g2.fillRoundRect(cx - 8, cy - 8, 16, 16, 4, 4)
+                    g2.color = itemColor
+                    g2.drawRoundRect(cx - 8, cy - 8, 16, 16, 4, 4)
+                    g2.color = java.awt.Color.WHITE
+                    val labelW = fm.stringWidth(label)
+                    g2.drawString(label, cx - labelW / 2, cy + (fm.ascent - fm.descent) / 2)
+                }
+            }
+            if (!isItem || showItemNames) {
+                val textWidth = fm.stringWidth(name)
+                val badgeW = textWidth + 6
+                val badgeH = fm.height + 2
+                val bx = (cx - badgeW / 2).coerceIn(0, maxOf(0, data.width - badgeW))
+                val rawBadgeY = if (isItem) cy + 12 else cy - badgeH / 2
+                val by = rawBadgeY.coerceIn(0, maxOf(0, data.height - badgeH))
+                g2.color = java.awt.Color(0, 0, 0, 200)
+                g2.fillRoundRect(bx, by, badgeW, badgeH, 4, 4)
+                g2.color = badgeBorder
+                g2.drawRoundRect(bx, by, badgeW, badgeH, 4, 4)
+                g2.color = java.awt.Color.WHITE
+                g2.drawString(name, bx + 3, by + fm.ascent + 1)
+            }
         }
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
     }
@@ -3810,18 +3957,20 @@ private fun buildCompositeImage(
                 g2.stroke = java.awt.BasicStroke(1f)
             }
 
-            val textWidth = fm.stringWidth(name)
-            val badgeW = textWidth + 6
-            val badgeH = fm.height + 2
-            val bx = ex - badgeW / 2
-            val spriteH = sprite?.height ?: 12
-            val by = ey - spriteH / 2 - badgeH - 2
-            g2.color = java.awt.Color(0, 0, 0, 200)
-            g2.fillRoundRect(bx, by, badgeW, badgeH, 4, 4)
-            g2.color = markerColor
-            g2.drawRoundRect(bx, by, badgeW, badgeH, 4, 4)
-            g2.color = java.awt.Color.WHITE
-            g2.drawString(name, bx + 3, by + fm.ascent + 1)
+            if (showEnemyNames) {
+                val textWidth = fm.stringWidth(name)
+                val badgeW = textWidth + 6
+                val badgeH = fm.height + 2
+                val bx = ex - badgeW / 2
+                val spriteH = sprite?.height ?: 12
+                val by = ey - spriteH / 2 - badgeH - 2
+                g2.color = java.awt.Color(0, 0, 0, 200)
+                g2.fillRoundRect(bx, by, badgeW, badgeH, 4, 4)
+                g2.color = markerColor
+                g2.drawRoundRect(bx, by, badgeW, badgeH, 4, 4)
+                g2.color = java.awt.Color.WHITE
+                g2.drawString(name, bx + 3, by + fm.ascent + 1)
+            }
         }
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF)
     }

@@ -198,11 +198,28 @@ ORIG_POSE_SPRING_GROUND = 0x814F
 ORIG_POSE_SPRING_AIR = 0x8157
 ORIG_POSE_SPRING_FALLING = 0x815F
 
-MORPH_BALL_ITEM_BIT = 0x0004
+SPIDER_BALL_ITEM_BIT = 0x0010
 SPIDER_ACTIVE_MAGIC = 0x5A5A
 SPIDER_STATE_WALL_RIGHT = 0x0001
 SPIDER_STATE_WALL_LEFT = 0x0002
 SPIDER_STATE_CEILING = 0x0004
+
+# Custom Spider Ball item PLMs in bank $84 free space. These mirror the Morph
+# Ball item's visible/Chozo/hidden scripts, but the pickup instruction grants
+# the Spider Ball bit.
+SPIDER_BALL_PLM_VISIBLE = 0xF200
+SPIDER_BALL_PLM_CHOZO = 0xF204
+SPIDER_BALL_PLM_HIDDEN = 0xF208
+SPIDER_BALL_PLM_LIST_START = 0xF20C
+
+MORPH_PLM_SETUP_VISIBLE_CHOZO = 0xEE64
+MORPH_PLM_SETUP_HIDDEN = 0xEE8E
+MORPH_VISIBLE_LIST_START = 0xE3EF
+MORPH_VISIBLE_LIST_END = 0xE41D
+MORPH_CHOZO_LIST_START = 0xE89C
+MORPH_CHOZO_LIST_END = 0xE8D7
+MORPH_HIDDEN_LIST_START = 0xEDCC
+MORPH_HIDDEN_LIST_END = 0xEE0D
 
 
 def emit_probe_state_push(w: Bank90Writer) -> None:
@@ -275,7 +292,7 @@ def build_spider_code() -> bytes:
     w.php()
     w.rep_30()
     w.lda_abs(COLLECTED_ITEMS)
-    w.and_imm(MORPH_BALL_ITEM_BIT)
+    w.and_imm(SPIDER_BALL_ITEM_BIT)
     w.branch(0xF0, "WrapperInactive")  # BEQ
     w.lda_abs(SPIDER_ACTIVE)
     w.cmp_imm(SPIDER_ACTIVE_MAGIC)
@@ -797,6 +814,54 @@ def build_pose_guard_code() -> bytes:
     return w.resolve()
 
 
+def read_bank84(base: bytes, addr: int, length: int) -> bytes:
+    pc = lorom_pc(0x84, addr)
+    return base[pc : pc + length]
+
+
+def relocate_morph_plm_list(data: bytes, old_start: int, new_start: int) -> bytes:
+    out = bytearray(data)
+    old_end = old_start + len(out)
+    for i in range(len(out) - 1):
+        value = out[i] | (out[i + 1] << 8)
+        if old_start <= value < old_end:
+            relocated = new_start + (value - old_start)
+            out[i : i + 2] = u16(relocated)
+
+    pickup_offsets = [
+        i for i in range(len(out) - 4)
+        if out[i : i + 2] == bytes((0xF3, 0x88)) and out[i + 4] == 0x09
+    ]
+    if len(pickup_offsets) != 1:
+        raise ValueError(f"expected one Morph Ball pickup instruction, found {len(pickup_offsets)}")
+    pickup_offset = pickup_offsets[0]
+    out[pickup_offset + 2 : pickup_offset + 4] = u16(SPIDER_BALL_ITEM_BIT)
+    return bytes(out)
+
+
+def build_spider_item_plms(base: bytes) -> bytes:
+    visible_raw = read_bank84(base, MORPH_VISIBLE_LIST_START, MORPH_VISIBLE_LIST_END - MORPH_VISIBLE_LIST_START)
+    chozo_raw = read_bank84(base, MORPH_CHOZO_LIST_START, MORPH_CHOZO_LIST_END - MORPH_CHOZO_LIST_START)
+    hidden_raw = read_bank84(base, MORPH_HIDDEN_LIST_START, MORPH_HIDDEN_LIST_END - MORPH_HIDDEN_LIST_START)
+
+    visible_start = SPIDER_BALL_PLM_LIST_START
+    chozo_start = visible_start + len(visible_raw)
+    hidden_start = chozo_start + len(chozo_raw)
+
+    visible = relocate_morph_plm_list(visible_raw, MORPH_VISIBLE_LIST_START, visible_start)
+    chozo = relocate_morph_plm_list(chozo_raw, MORPH_CHOZO_LIST_START, chozo_start)
+    hidden = relocate_morph_plm_list(hidden_raw, MORPH_HIDDEN_LIST_START, hidden_start)
+
+    headers = b"".join(
+        (
+            u16(MORPH_PLM_SETUP_VISIBLE_CHOZO), u16(visible_start),
+            u16(MORPH_PLM_SETUP_VISIBLE_CHOZO), u16(chozo_start),
+            u16(MORPH_PLM_SETUP_HIDDEN), u16(hidden_start),
+        )
+    )
+    return headers + visible + chozo + hidden
+
+
 def make_ips(records: list[tuple[int, bytes]]) -> bytes:
     out = bytearray(b"PATCH")
     for offset, data in records:
@@ -837,8 +902,10 @@ def apply_ips(rom: bytearray, ips: bytes) -> None:
 
 
 def main() -> None:
+    base = BASE_ROM.read_bytes()
     code = build_spider_code()
     pose_guard = build_pose_guard_code()
+    spider_item_plms = build_spider_item_plms(base)
     free_len = 0x10000 - CODE_ADDR
     if len(code) > free_len:
         raise SystemExit(f"Spider Ball code is {len(code)} bytes, exceeds free space {free_len}")
@@ -863,10 +930,11 @@ def main() -> None:
         (lorom_pc(0x91, 0x8038), u16(POSE_GUARD_ADDR)),
         (lorom_pc(0x91, 0x803A), u16(POSE_GUARD_ADDR)),
         (lorom_pc(0x91, POSE_GUARD_ADDR), pose_guard),
+        # Custom visible/Chozo/hidden Spider Ball item PLMs.
+        (lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE), spider_item_plms),
     ]
     ips = make_ips(records)
 
-    base = BASE_ROM.read_bytes()
     expected_originals = {
         lorom_pc(0x90, 0xA353): bytes.fromhex("21 A5"),
         lorom_pc(0x90, 0xA35B): bytes.fromhex("CA A5"),
@@ -883,6 +951,7 @@ def main() -> None:
             "AD 1C 0A C9 29 00 F0 05 C9 2A 00 D0 3D AD 27 0A "
             "29 FF 00 C9 05 00 F0 32 A5 8B 89 00 03 D0 2B AD"
         ),
+        lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE): b"\xFF" * min(64, len(spider_item_plms)),
     }
     for offset, expected in expected_originals.items():
         actual = base[offset : offset + len(expected)]
@@ -904,6 +973,12 @@ def main() -> None:
     print(f"Wrote {OUT_IPS.relative_to(ROOT)}")
     print(f"Spider Ball code: {len(code)} bytes at $90:{CODE_ADDR:04X}")
     print(f"Spider Ball pose guard: {len(pose_guard)} bytes at $91:{POSE_GUARD_ADDR:04X}")
+    print(
+        "Spider Ball PLMs: "
+        f"{len(spider_item_plms)} bytes at $84:{SPIDER_BALL_PLM_VISIBLE:04X} "
+        f"(visible ${SPIDER_BALL_PLM_VISIBLE:04X}, Chozo ${SPIDER_BALL_PLM_CHOZO:04X}, "
+        f"hidden ${SPIDER_BALL_PLM_HIDDEN:04X})"
+    )
     print(f"IPS size: {len(ips)} bytes")
 
 

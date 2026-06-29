@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorCapabilities
@@ -567,6 +568,46 @@ class EmulatorWorkspaceState(
             ((y shr 8) and 0xFF).toByte()
         ))
         setStatus("Moved Samus to ($x, $y)")
+    }
+
+    suspend fun setCustomItemObtained(item: CustomItemDef, obtained: Boolean) {
+        val b = backend ?: return
+        if (!session.active) {
+            setStatus("No active session — start the emulator first")
+            return
+        }
+        if (item.bitMask == 0) {
+            setStatus("${item.name} has no item bit configured")
+            return
+        }
+        isBusy = true
+        try {
+            val address = emulatorWramAddress(item.itemWordAddress)
+            val currentBytes = b.readMemory(address, 2)
+            val current = readLeWord(currentBytes)
+            val updated = if (obtained) {
+                current or item.bitMask
+            } else {
+                current and item.bitMask.inv()
+            } and 0xFFFF
+            b.writeMemory(address, byteArrayOf((updated and 0xFF).toByte(), ((updated shr 8) and 0xFF).toByte()))
+            if (item.itemWordAddress == 0x09A4 || item.itemWordAddress == 0x7E09A4) {
+                snapshot = snapshot?.copy(collectedItems = updated)
+            }
+            setStatus("${if (obtained) "Granted" else "Removed"} ${item.name}")
+        } catch (e: Exception) {
+            setStatus("Failed to update ${item.name}: ${e.message}")
+        } finally {
+            isBusy = false
+        }
+    }
+
+    private fun emulatorWramAddress(address: Int): Int =
+        if (isExternalBackend && address in 0x0000..0x1FFFF) 0x7E0000 + address else address
+
+    private fun readLeWord(bytes: ByteArray): Int {
+        if (bytes.size < 2) return 0
+        return (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)
     }
 
     /**

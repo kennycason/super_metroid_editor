@@ -191,6 +191,8 @@ fun main() = application {
     }
     
     val appSettings = remember { AppConfig.load() }
+    var showRoomItemNames by remember { mutableStateOf(appSettings.roomEditorShowItemNames) }
+    var showRoomEnemyNames by remember { mutableStateOf(appSettings.roomEditorShowEnemyNames) }
     val windowState = rememberWindowState(
         width = appSettings.window.width.dp,
         height = appSettings.window.height.dp,
@@ -376,6 +378,16 @@ fun main() = application {
                                     onDismiss = { settingsOpen = false },
                                     emulatorWorkspaceState = emulatorWorkspaceState,
                                     editorState = editorState,
+                                    showRoomItemNames = showRoomItemNames,
+                                    showRoomEnemyNames = showRoomEnemyNames,
+                                    onShowRoomItemNamesChange = { enabled ->
+                                        showRoomItemNames = enabled
+                                        AppConfig.update { copy(roomEditorShowItemNames = enabled) }
+                                    },
+                                    onShowRoomEnemyNamesChange = { enabled ->
+                                        showRoomEnemyNames = enabled
+                                        AppConfig.update { copy(roomEditorShowEnemyNames = enabled) }
+                                    },
                                 )
                             }
                         }
@@ -433,7 +445,7 @@ fun main() = application {
                                         modifier = Modifier
                                             .clickable {
                                                 leftTab = idx
-                                                if (idx == TAB_PATCHES) editorState.seedDefaultPatches()
+                                                if (idx == TAB_PATCHES || idx == TAB_ITEMS) editorState.seedDefaultPatches()
                                             }
                                             .padding(horizontal = 8.dp, vertical = 6.dp)
                                     )
@@ -791,6 +803,8 @@ fun main() = application {
                                                 val romPath = RomPreferences.getLastRomPath()
                                                 if (romPath != null) saveLastRoom(romPath, r)
                                             },
+                                            showItemNames = showRoomItemNames,
+                                            showEnemyNames = showRoomEnemyNames,
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     }

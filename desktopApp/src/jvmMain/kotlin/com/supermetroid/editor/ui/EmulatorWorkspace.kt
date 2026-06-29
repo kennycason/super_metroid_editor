@@ -110,6 +110,9 @@ fun EmulatorWorkspace(
 ) {
     val scope = rememberCoroutineScope()
     val roomOverlay = room?.let { workspaceState.roomMapOverlay(it) }
+    val customItems = remember(editorState.patchVersion, editorState.project.patches) {
+        editorState.enabledCustomItems()
+    }
 
     LaunchedEffect(Unit) {
         if (workspaceState.navGraph == null) {
@@ -296,7 +299,13 @@ fun EmulatorWorkspace(
                             }
                         }
                     })
-                    ItemTrackerPanel(snapshot = workspaceState.snapshot)
+                    ItemTrackerPanel(
+                        snapshot = workspaceState.snapshot,
+                        customItems = customItems,
+                        onCustomItemToggled = { item, obtained ->
+                            scope.launch { workspaceState.setCustomItemObtained(item, obtained) }
+                        },
+                    )
                     if (!workspaceState.isExternalBackend) {
                         InventoryCard(
                             title = "States",

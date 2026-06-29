@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.emulator.GameSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 
@@ -59,20 +61,22 @@ private object BeamFlags {
 
 /** Sprite coordinates in item_sprites.png (16x16 grid) */
 private data class SpriteCoord(val x: Int, val y: Int)
+private data class ItemSpriteEntry(val label: String, val coord: SpriteCoord, val flag: Int)
+private data class CustomItemSpriteEntry(val item: CustomItemDef, val coord: SpriteCoord, val flag: Int)
 
-private val ITEM_SPRITES: List<Triple<String, SpriteCoord, Int>> = listOf(
+private val ITEM_SPRITES: List<ItemSpriteEntry> = listOf(
     // name, sprite coord, bit flag from collectedItems
-    Triple("Morph", SpriteCoord(0, 0), ItemFlags.MORPH_BALL),
-    Triple("Bombs", SpriteCoord(32, 0), ItemFlags.BOMBS),
-    Triple("Spring", SpriteCoord(0, 48), ItemFlags.SPRING_BALL),
-    Triple("Screw", SpriteCoord(64, 48), ItemFlags.SCREW_ATTACK),
-    Triple("HiJump", SpriteCoord(0, 32), ItemFlags.HI_JUMP),
-    Triple("Space", SpriteCoord(32, 48), ItemFlags.SPACE_JUMP),
-    Triple("Speed", SpriteCoord(32, 32), ItemFlags.SPEED_BOOSTER),
-    Triple("Grapple", SpriteCoord(64, 32), ItemFlags.GRAPPLE),
-    Triple("XRay", SpriteCoord(96, 32), ItemFlags.XRAY),
-    Triple("Varia", SpriteCoord(0, 80), ItemFlags.VARIA_SUIT),
-    Triple("Gravity", SpriteCoord(32, 80), ItemFlags.GRAVITY_SUIT),
+    ItemSpriteEntry("Morph", SpriteCoord(0, 0), ItemFlags.MORPH_BALL),
+    ItemSpriteEntry("Bombs", SpriteCoord(32, 0), ItemFlags.BOMBS),
+    ItemSpriteEntry("Spring", SpriteCoord(0, 48), ItemFlags.SPRING_BALL),
+    ItemSpriteEntry("Screw", SpriteCoord(64, 48), ItemFlags.SCREW_ATTACK),
+    ItemSpriteEntry("HiJump", SpriteCoord(0, 32), ItemFlags.HI_JUMP),
+    ItemSpriteEntry("Space", SpriteCoord(32, 48), ItemFlags.SPACE_JUMP),
+    ItemSpriteEntry("Speed", SpriteCoord(32, 32), ItemFlags.SPEED_BOOSTER),
+    ItemSpriteEntry("Grapple", SpriteCoord(64, 32), ItemFlags.GRAPPLE),
+    ItemSpriteEntry("XRay", SpriteCoord(96, 32), ItemFlags.XRAY),
+    ItemSpriteEntry("Varia", SpriteCoord(0, 80), ItemFlags.VARIA_SUIT),
+    ItemSpriteEntry("Gravity", SpriteCoord(32, 80), ItemFlags.GRAVITY_SUIT),
 )
 
 private val BEAM_SPRITES: List<Triple<String, SpriteCoord, Int>> = listOf(
@@ -94,6 +98,8 @@ private val RESERVE_SPRITE = SpriteCoord(96, 16)
 @Composable
 fun ItemTrackerPanel(
     snapshot: GameSnapshot?,
+    customItems: List<CustomItemDef> = emptyList(),
+    onCustomItemToggled: ((CustomItemDef, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val themeState = LocalEditorTheme.current
@@ -117,6 +123,11 @@ fun ItemTrackerPanel(
 
     val items = snapshot?.collectedItems ?: 0
     val beams = snapshot?.collectedBeams ?: 0
+    val customItemSprites = remember(customItems) {
+        customItems
+            .filter { it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
+            .map { item -> CustomItemSpriteEntry(item, SpriteCoord(item.iconX, item.iconY), item.bitMask) }
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -151,8 +162,21 @@ fun ItemTrackerPanel(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                for ((_, coord, flag) in ITEM_SPRITES) {
-                    SpriteCell(itemBitmap, coord, obtained = items and flag != 0)
+                for (entry in ITEM_SPRITES) {
+                    SpriteCell(itemBitmap, entry.coord, obtained = items and entry.flag != 0)
+                }
+                for (entry in customItemSprites) {
+                    val obtained = items and entry.flag != 0
+                    SpriteCell(
+                        itemBitmap,
+                        entry.coord,
+                        obtained = obtained,
+                        modifier = if (onCustomItemToggled != null) {
+                            Modifier.clickable { onCustomItemToggled(entry.item, !obtained) }
+                        } else {
+                            Modifier
+                        },
+                    )
                 }
             }
 
@@ -175,8 +199,9 @@ private fun SpriteCell(
     coord: SpriteCoord,
     obtained: Boolean,
     displaySize: Int = 28,
+    modifier: Modifier = Modifier,
 ) {
-    Canvas(modifier = Modifier.size(displaySize.dp)) {
+    Canvas(modifier = modifier.size(displaySize.dp)) {
         drawImage(
             image = bitmap,
             srcOffset = IntOffset(coord.x, coord.y),

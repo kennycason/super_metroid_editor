@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.rom.RomParser
 
@@ -49,6 +50,12 @@ private data class ItemLocation(
 ) {
     val areaName: String get() = itemAreaName(area)
 }
+
+private data class ItemLocationDef(
+    val name: String,
+    val shortLabel: String,
+    val sprite: ItemSpriteCoord?,
+)
 
 private val ITEM_SPRITE_COORDS = mapOf(
     "Morph Ball" to ItemSpriteCoord(0, 0),
@@ -122,9 +129,13 @@ fun ItemLocationPanel(
 
     val editVersion = editorState.editVersion
     val romVersion = editorState.romVersion
-    val itemLocations = remember(rooms, romParser, editVersion, romVersion, editorState.project) {
+    val patchVersion = editorState.patchVersion
+    val itemLocations = remember(rooms, romParser, editVersion, romVersion, patchVersion, editorState.project) {
         if (romParser == null) emptyList()
         else collectItemLocations(rooms, romParser, editorState)
+    }
+    val customItems = remember(editorState.patchVersion, editorState.project.patches) {
+        editorState.enabledCustomItems()
     }
 
     val majorLocations = remember(itemLocations) {
@@ -154,7 +165,7 @@ fun ItemLocationPanel(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Items (${itemLocations.size})",
+                    text = "Items (${itemLocations.size + customItems.size})",
                     fontSize = fs.heading,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
@@ -200,6 +211,23 @@ fun ItemLocationPanel(
                                     isSelected = selectedRoom?.handle == location.room.handle,
                                     onClick = { onRoomSelected(location.room) },
                                 )
+                            }
+                        }
+                    }
+                }
+
+                if (customItems.isNotEmpty()) {
+                    item(key = "custom_header") {
+                        ItemSectionHeader("Patch Items")
+                    }
+                    item(key = "custom_grid") {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            for (item in customItems) {
+                                CustomItemTile(bitmap = itemBitmap, item = item)
                             }
                         }
                     }
@@ -260,9 +288,24 @@ private fun collectItemLocations(
 ): List<ItemLocation> {
     val itemDefByPlmId = buildMap {
         for (def in RomParser.ITEM_DEFS) {
-            put(def.chozoId, def)
-            put(def.visibleId, def)
-            put(def.hiddenId, def)
+            val locationDef = ItemLocationDef(
+                name = def.name,
+                shortLabel = def.shortLabel,
+                sprite = ITEM_SPRITE_COORDS[def.name],
+            )
+            put(def.chozoId, locationDef)
+            put(def.visibleId, locationDef)
+            put(def.hiddenId, locationDef)
+        }
+        for (item in editorState.enabledCustomItems()) {
+            val locationDef = ItemLocationDef(
+                name = item.name,
+                shortLabel = item.shortLabel,
+                sprite = ItemSpriteCoord(item.iconX, item.iconY),
+            )
+            item.chozoPlmId?.let { put(it, locationDef) }
+            item.visiblePlmId?.let { put(it, locationDef) }
+            item.hiddenPlmId?.let { put(it, locationDef) }
         }
     }
 
@@ -290,7 +333,7 @@ private fun collectItemLocations(
                 ItemLocation(
                     itemName = def.name,
                     shortLabel = def.shortLabel,
-                    sprite = ITEM_SPRITE_COORDS[def.name],
+                    sprite = def.sprite,
                     plm = plm,
                     room = roomInfo,
                     area = roomHeader?.area ?: -1,
@@ -361,6 +404,48 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
             isSelected = selectedRoom?.handle == location.room.handle,
             onClick = { onRoomSelected(location.room) },
         )
+    }
+}
+
+@Composable
+private fun CustomItemTile(
+    bitmap: ImageBitmap?,
+    item: CustomItemDef,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ItemGlyph(
+                bitmap = bitmap,
+                sprite = ItemSpriteCoord(item.iconX, item.iconY),
+                label = item.shortLabel,
+                sizeDp = 22,
+            )
+            Spacer(Modifier.width(6.dp))
+            Column {
+                Text(
+                    text = item.name,
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "bit 0x${item.bitMask.toString(16).uppercase().padStart(4, '0')}",
+                    fontSize = fs.detail,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 

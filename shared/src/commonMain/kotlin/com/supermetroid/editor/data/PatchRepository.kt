@@ -8,7 +8,8 @@ import kotlinx.serialization.json.Json
 private data class PatchMeta(
     val file: String,
     val name: String,
-    val description: String = ""
+    val description: String = "",
+    val customItems: List<CustomItemDef> = emptyList()
 )
 
 /** Load a classpath resource with fallback to thread context classloader. */
@@ -42,7 +43,8 @@ object PatchRepository {
                     name = meta.name,
                     description = meta.description,
                     enabled = false,
-                    writes = writes.toMutableList()
+                    writes = writes.toMutableList(),
+                    customItems = meta.customItems.map { it.copy() }.toMutableList()
                 )
             } catch (e: Exception) {
                 EditorLog.warn(e, "[PatchRepository] Failed to parse ${meta.file}: ${e.message}")

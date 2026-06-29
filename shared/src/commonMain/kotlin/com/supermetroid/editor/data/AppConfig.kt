@@ -51,6 +51,8 @@ data class AppSettings(
     val emulatorWindowWidth: Float = 512f,
     val emulatorWindowX: Float = 40f,
     val emulatorWindowY: Float = 40f,
+    val roomEditorShowItemNames: Boolean = true,
+    val roomEditorShowEnemyNames: Boolean = true,
 )
 
 object AppConfig {

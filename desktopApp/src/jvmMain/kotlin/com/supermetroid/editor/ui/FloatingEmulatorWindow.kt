@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.RoomInfo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -128,6 +129,9 @@ fun FloatingEmulatorWindow(
 ) {
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
+    val customItems = remember(editorState.patchVersion, editorState.project.patches) {
+        editorState.enabledCustomItems()
+    }
 
     // Draggable position (persisted)
     val savedConfig = remember { AppConfig.load() }
@@ -359,6 +363,10 @@ fun FloatingEmulatorWindow(
                             // Item tracker icons
                             ItemTrackerPanel(
                                 snapshot = workspaceState.snapshot,
+                                customItems = customItems,
+                                onCustomItemToggled = { item, obtained ->
+                                    scope.launch { workspaceState.setCustomItemObtained(item, obtained) }
+                                },
                             )
                         }
                     }
@@ -666,7 +674,7 @@ fun FloatingEmulatorWindow(
                                                     )
                                                 }
                                             } else {
-                                                SaveSlotRow(slotIndex = i, meta = meta)
+                                                SaveSlotRow(slotIndex = i, meta = meta, customItems = customItems)
                                             }
                                         },
                                         onClick = { workspaceState.saveSlotIndex = i; showSaveMenu = false },
@@ -815,11 +823,20 @@ private val MINI_ITEM_SPRITES = listOf(
 
 /** Full row for a populated save slot in the dropdown. */
 @Composable
-private fun SaveSlotRow(slotIndex: Int, meta: SaveSlotMeta) {
+private fun SaveSlotRow(
+    slotIndex: Int,
+    meta: SaveSlotMeta,
+    customItems: List<CustomItemDef>,
+) {
     val itemBitmap = remember {
         try {
             useResource("item_sprites.png") { loadImageBitmap(it) }
         } catch (_: Exception) { null }
+    }
+    val customItemSprites = remember(customItems) {
+        customItems
+            .filter { it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
+            .map { item -> MiniItemEntry(MiniSpriteCoord(item.iconX, item.iconY), item.bitMask) }
     }
 
     Row(
@@ -872,7 +889,7 @@ private fun SaveSlotRow(slotIndex: Int, meta: SaveSlotMeta) {
             // Item powerup icons — only obtained
             val items = meta.collectedItems
             val beams = meta.collectedBeams
-            for (entry in MINI_ITEM_SPRITES) {
+            for (entry in MINI_ITEM_SPRITES + customItemSprites) {
                 val bits = if (entry.isBeam) beams else items
                 if (bits and entry.bit != 0) {
                     MiniSpriteIcon(itemBitmap, entry.sprite)

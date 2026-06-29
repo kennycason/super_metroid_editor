@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.DoorChange
 import com.supermetroid.editor.data.EditOperation
 import com.supermetroid.editor.data.PatchRepository
@@ -1295,6 +1296,96 @@ class EditorState {
         dirty = true; patchVersion++
     }
 
+    fun enabledCustomItems(): List<CustomItemDef> =
+        project.patches
+            .asSequence()
+            .filter { it.enabled }
+            .flatMap { it.customItems.asSequence() }
+            .map { it.copy() }
+            .toList()
+
+    data class CustomItemPlmDef(
+        val item: CustomItemDef,
+        val variant: String,
+        val plmId: Int,
+    )
+
+    fun enabledCustomItemPlms(): List<CustomItemPlmDef> =
+        enabledCustomItems().flatMap { item ->
+            buildList {
+                item.visiblePlmId?.let { add(CustomItemPlmDef(item, "Visible", it)) }
+                item.chozoPlmId?.let { add(CustomItemPlmDef(item, "Chozo", it)) }
+                item.hiddenPlmId?.let { add(CustomItemPlmDef(item, "Hidden", it)) }
+            }
+        }
+
+    fun customItemPlmDef(plmId: Int): CustomItemPlmDef? =
+        enabledCustomItemPlms().firstOrNull { it.plmId == plmId }
+
+    fun customItemNameForPlm(plmId: Int): String? =
+        customItemPlmDef(plmId)?.let { "${it.item.name} (${it.variant})" }
+
+    fun isCustomItemPlm(plmId: Int): Boolean = customItemPlmDef(plmId) != null
+
+    fun isEditorItemPlm(plmId: Int): Boolean = RomParser.isItemPlm(plmId) || isCustomItemPlm(plmId)
+
+    fun addPatchCustomItem(patchId: String): CustomItemDef? {
+        val patch = project.patches.find { it.id == patchId } ?: return null
+        val usedIds = patch.customItems.map { it.id }.toSet()
+        var suffix = patch.customItems.size + 1
+        var id = "custom_item_$suffix"
+        while (id in usedIds) {
+            suffix++
+            id = "custom_item_$suffix"
+        }
+        val item = CustomItemDef(
+            id = id,
+            name = "Custom Item $suffix",
+            shortLabel = "CI",
+            bitMask = nextCustomItemBitMask(),
+            iconX = 64,
+            iconY = 80,
+        )
+        patch.customItems.add(item)
+        dirty = true; patchVersion++
+        return item
+    }
+
+    fun removePatchCustomItem(patchId: String, itemId: String) {
+        val patch = project.patches.find { it.id == patchId } ?: return
+        val removed = patch.customItems.removeAll { it.id == itemId }
+        if (removed) {
+            dirty = true; patchVersion++
+        }
+    }
+
+    fun updatePatchCustomItem(
+        patchId: String,
+        itemId: String,
+        name: String? = null,
+        shortLabel: String? = null,
+        description: String? = null,
+        bitMask: Int? = null,
+        iconX: Int? = null,
+        iconY: Int? = null,
+        category: String? = null,
+    ) {
+        val item = project.patches.find { it.id == patchId }?.customItems?.find { it.id == itemId } ?: return
+        if (name != null) item.name = name
+        if (shortLabel != null) item.shortLabel = shortLabel.take(4)
+        if (description != null) item.description = description
+        if (bitMask != null) item.bitMask = bitMask and 0xFFFF
+        if (iconX != null) item.iconX = iconX.coerceIn(0, 112)
+        if (iconY != null) item.iconY = iconY.coerceIn(0, 112)
+        if (category != null) item.category = category
+        dirty = true; patchVersion++
+    }
+
+    private fun nextCustomItemBitMask(): Int {
+        val used = project.patches.flatMap { it.customItems }.map { it.bitMask }.toSet()
+        return listOf(0x0010, 0x0040, 0x0080, 0x0400, 0x0800).firstOrNull { it !in used } ?: 0
+    }
+
     fun setPatchWrites(id: String, writes: List<SmPatchWrite>) {
         val patch = project.patches.find { it.id == id } ?: return
         patch.writes.clear()
@@ -1924,6 +2015,11 @@ class EditorState {
                     project.patches.find { it.id == patch.id }?.let {
                         it.name = patch.name
                         it.description = patch.description
+                        if (it.customItems != patch.customItems) {
+                            it.customItems.clear()
+                            it.customItems.addAll(patch.customItems.map { customItem -> customItem.copy() })
+                            refreshed++
+                        }
                         val oldHash = bytesSha256(it.writes.flatMap { write -> write.bytes })
                         val newHash = bytesSha256(patch.writes.flatMap { write -> write.bytes })
                         if (oldHash != newHash || it.writes.size != patch.writes.size) {
@@ -2282,6 +2378,7 @@ class EditorState {
         }
         dirty = false
         patchesSeeded = false
+        seedDefaultPatches(forceRefreshBundled = true)
         tileGraphics = null
         workingLevelData = null
         originalLevelData = null
@@ -2739,7 +2836,7 @@ class EditorState {
         }
 
     private fun autoAssignParam(plmId: Int, param: Int): Int = when {
-        param == 0 && RomParser.isItemPlm(plmId) -> {
+        param == 0 && isEditorItemPlm(plmId) -> {
             val usedIndices = mutableSetOf<Int>()
             // Replay add/remove history to find NET used params (not ghost entries)
             for ((_, roomEdits) in project.rooms) {
@@ -2758,7 +2855,7 @@ class EditorState {
             }
             // Include vanilla item params from current room
             for (plm in _workingPlms) {
-                if (RomParser.isItemPlm(plm.id) && plm.param > 0) usedIndices.add(plm.param)
+                if (isEditorItemPlm(plm.id) && plm.param > 0) usedIndices.add(plm.param)
             }
             // Vanilla items use 0x00-0x50; search 0x51-0x1FF (431 slots)
             var idx = 0x51
@@ -2801,7 +2898,7 @@ class EditorState {
         val addChange = PlmChange("add", plmId, x, y, actualParam)
         project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
 
-        val name = RomParser.plmDisplayName(plmId)
+        val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
         val op = EditOperation("Add $name ($x,$y)", plmAdds = listOf(addChange), plmRemoves = removedChanges)
         undoStack.add(op)
         redoStack.clear()
@@ -2852,7 +2949,7 @@ class EditorState {
         val changes = removed.map { PlmChange("remove", it.id, it.x, it.y, it.param) }
         for (c in changes) project.getOrCreateRoom(currentRoomId).plmChanges.add(c)
 
-        val name = RomParser.plmDisplayName(plmId)
+        val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
         val op = EditOperation("Remove $name ($x,$y)", plmRemoves = changes)
         undoStack.add(op)
         redoStack.clear()
@@ -3947,7 +4044,8 @@ class EditorState {
                             "movePtr@0x82353=${romData.hexAt(0x82353, 2)}, " +
                             "posePtr@0x8801C=${romData.hexAt(0x8801C, 2)}, " +
                             "code@0x87800=${romData.hexAt(0x87800, 12)}, " +
-                            "guard@0x880BE=${romData.hexAt(0x880BE, 12)}"
+                            "guard@0x880BE=${romData.hexAt(0x880BE, 12)}, " +
+                            "plm@0x27200=${romData.hexAt(0x27200, 12)}"
                     )
                 }
             }
@@ -4282,7 +4380,7 @@ class EditorState {
                     val deduped = mutableListOf<RomParser.PlmEntry>()
                     for (plm in modifiedPlms.reversed()) {
                         val key = (plm.x.toLong() shl 16) or plm.y.toLong()
-                        if (RomParser.isItemPlm(plm.id)) {
+                        if (isEditorItemPlm(plm.id)) {
                             if (key in seen) continue
                             seen.add(key)
                         }

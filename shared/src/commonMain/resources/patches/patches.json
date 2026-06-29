@@ -22,7 +22,24 @@
   {
     "file": "spider_ball.ips",
     "name": "Spider Ball",
-    "description": "Prototype Spider Ball: press d-pad while morphed near a solid surface to attach and rotate around it; press Jump or Up from floor/air to detach. Enabled by Morph Ball."
+    "description": "Prototype Spider Ball: press d-pad while morphed near a solid surface to attach and rotate around it; press Jump or Up from floor/air to detach. Requires the Spider Ball custom item.",
+    "customItems": [
+      {
+        "id": "spider_ball",
+        "name": "Spider Ball",
+        "shortLabel": "SP",
+        "description": "Wall traversal while morphed.",
+        "source": "patch",
+        "itemWordAddress": 2468,
+        "bitMask": 16,
+        "iconX": 64,
+        "iconY": 80,
+        "category": "Major",
+        "visiblePlmId": 61952,
+        "chozoPlmId": 61956,
+        "hiddenPlmId": 61960
+      }
+    ]
   },
   {
     "file": "energy_free_shinesparks.ips",

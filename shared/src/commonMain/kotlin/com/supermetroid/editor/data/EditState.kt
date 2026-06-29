@@ -208,6 +208,27 @@ data class PatchWrite(
 )
 
 /**
+ * Patch-declared item metadata. This lets IPS/config patches expose new
+ * inventory bits to editor UI without adding them to the vanilla PLM catalog.
+ */
+@Serializable
+data class CustomItemDef(
+    val id: String,
+    var name: String,
+    var shortLabel: String,
+    var description: String = "",
+    var source: String = "patch",
+    var itemWordAddress: Int = 0x09A4,
+    var bitMask: Int = 0,
+    var iconX: Int = 0,
+    var iconY: Int = 0,
+    var category: String = "Major",
+    var visiblePlmId: Int? = null,
+    var chozoPlmId: Int? = null,
+    var hiddenPlmId: Int? = null
+)
+
+/**
  * A named, toggleable patch: a collection of write operations.
  * Config patches (configType != null) use a GUI to set parameters; writes may be
  * computed at export time from configValue instead of stored in writes.
@@ -221,7 +242,8 @@ data class SmPatch(
     val writes: MutableList<PatchWrite> = mutableListOf(),
     var configType: String? = null,
     var configValue: Int? = null,
-    var configData: MutableMap<String, Int>? = null
+    var configData: MutableMap<String, Int>? = null,
+    val customItems: MutableList<CustomItemDef> = mutableListOf()
 )
 
 /**

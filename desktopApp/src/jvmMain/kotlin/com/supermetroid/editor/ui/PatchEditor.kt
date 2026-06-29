@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
@@ -290,6 +291,7 @@ fun PatchEditorCanvas(
 
 @Composable
 private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
+    @Suppress("UNUSED_VARIABLE") val pv = editorState.patchVersion
     var editingName by remember(patch.id) { mutableStateOf(false) }
     var nameText by remember(patch.id) { mutableStateOf(patch.name) }
     var descText by remember(patch.id) { mutableStateOf(patch.description) }
@@ -382,7 +384,186 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 modifier = Modifier.clickable { editingName = true }
             )
         }
+
+        CustomItemsEditor(patch = patch, editorState = editorState)
     }
+}
+
+@Composable
+private fun CustomItemsEditor(patch: SmPatch, editorState: EditorState) {
+    var expanded by remember(patch.id) { mutableStateOf(patch.customItems.isNotEmpty()) }
+
+    Spacer(Modifier.height(8.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Custom items (${patch.customItems.size})",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp),
+        ) {
+            Text(if (expanded) "Hide" else "Show", fontSize = 10.sp)
+        }
+        Button(
+            onClick = {
+                editorState.addPatchCustomItem(patch.id)
+                expanded = true
+            },
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp),
+        ) {
+            Text("+ Add Item", fontSize = 10.sp)
+        }
+    }
+
+    if (!expanded) return
+
+    if (patch.customItems.isEmpty()) {
+        Text(
+            "No custom items declared by this patch.",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        return
+    }
+
+    Column(
+        modifier = Modifier.padding(top = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Name", fontSize = 10.sp, modifier = Modifier.width(150.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Label", fontSize = 10.sp, modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Bit", fontSize = 10.sp, modifier = Modifier.width(72.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Icon X", fontSize = 10.sp, modifier = Modifier.width(50.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Icon Y", fontSize = 10.sp, modifier = Modifier.width(50.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        for (item in patch.customItems) {
+            CustomItemEditorRow(patch = patch, item = item, editorState = editorState)
+        }
+    }
+}
+
+@Composable
+private fun CustomItemEditorRow(
+    patch: SmPatch,
+    item: CustomItemDef,
+    editorState: EditorState,
+) {
+    var nameText by remember(item.id, item.name) { mutableStateOf(item.name) }
+    var labelText by remember(item.id, item.shortLabel) { mutableStateOf(item.shortLabel) }
+    var bitText by remember(item.id, item.bitMask) { mutableStateOf("0x${item.bitMask.toString(16).uppercase().padStart(4, '0')}") }
+    var iconXText by remember(item.id, item.iconX) { mutableStateOf(item.iconX.toString()) }
+    var iconYText by remember(item.id, item.iconY) { mutableStateOf(item.iconY.toString()) }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompactPatchField(
+            value = nameText,
+            widthDp = 150,
+            onValueChange = {
+                nameText = it
+                editorState.updatePatchCustomItem(patch.id, item.id, name = it)
+            },
+        )
+        CompactPatchField(
+            value = labelText,
+            widthDp = 48,
+            onValueChange = {
+                labelText = it.take(4)
+                editorState.updatePatchCustomItem(patch.id, item.id, shortLabel = labelText)
+            },
+        )
+        CompactPatchField(
+            value = bitText,
+            widthDp = 72,
+            onValueChange = {
+                bitText = it
+                parsePatchInt(it)?.let { parsed ->
+                    editorState.updatePatchCustomItem(patch.id, item.id, bitMask = parsed)
+                }
+            },
+            monospace = true,
+        )
+        CompactPatchField(
+            value = iconXText,
+            widthDp = 50,
+            onValueChange = {
+                iconXText = it
+                it.toIntOrNull()?.let { parsed ->
+                    editorState.updatePatchCustomItem(patch.id, item.id, iconX = parsed)
+                }
+            },
+            monospace = true,
+        )
+        CompactPatchField(
+            value = iconYText,
+            widthDp = 50,
+            onValueChange = {
+                iconYText = it
+                it.toIntOrNull()?.let { parsed ->
+                    editorState.updatePatchCustomItem(patch.id, item.id, iconY = parsed)
+                }
+            },
+            monospace = true,
+        )
+        Text(
+            "Remove",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.clickable { editorState.removePatchCustomItem(patch.id, item.id) }.padding(4.dp),
+        )
+    }
+}
+
+@Composable
+private fun CompactPatchField(
+    value: String,
+    widthDp: Int,
+    onValueChange: (String) -> Unit,
+    monospace: Boolean = false,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = TextStyle(
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = Modifier
+            .width(widthDp.dp)
+            .height(26.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 5.dp),
+    )
+}
+
+private fun parsePatchInt(text: String): Int? {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return null
+    val cleaned = when {
+        trimmed.startsWith("0x", ignoreCase = true) -> trimmed.drop(2)
+        trimmed.startsWith('$') -> trimmed.drop(1)
+        else -> trimmed
+    }
+    val radix = if (cleaned.any { it in 'A'..'F' || it in 'a'..'f' } || trimmed.startsWith("0x", true) || trimmed.startsWith('$')) 16 else 10
+    return cleaned.toIntOrNull(radix)
 }
 
 // ─── Config patch: Ceres escape time ────────────────────────────────────
