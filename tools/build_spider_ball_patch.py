@@ -206,11 +206,22 @@ SPIDER_STATE_CEILING = 0x0004
 
 # Custom Spider Ball item PLMs in bank $84 free space. These mirror the Morph
 # Ball item's visible/Chozo/hidden scripts, but the pickup instruction grants
-# the Spider Ball bit.
+# the Spider Ball bit and points at Spider-specific item graphics/message text.
 SPIDER_BALL_PLM_VISIBLE = 0xF200
 SPIDER_BALL_PLM_CHOZO = 0xF204
 SPIDER_BALL_PLM_HIDDEN = 0xF208
 SPIDER_BALL_PLM_LIST_START = 0xF20C
+
+SPIDER_BALL_ITEM_GFX_SOURCE = 0x8700
+SPIDER_BALL_ITEM_GFX_ADDR = 0xF000
+SPIDER_BALL_ITEM_GFX_SIZE = 0x100
+
+MESSAGE_BOX_TABLE_ORIGINAL = 0x869B
+MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES = 29
+MESSAGE_BOX_TABLE_RELOCATED = 0x9800
+SPIDER_BALL_MESSAGE_ID = 0x1E
+SPIDER_BALL_MESSAGE_TILEMAP = 0x9900
+SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
 
 MORPH_PLM_SETUP_VISIBLE_CHOZO = 0xEE64
 MORPH_PLM_SETUP_HIDDEN = 0xEE8E
@@ -819,6 +830,107 @@ def read_bank84(base: bytes, addr: int, length: int) -> bytes:
     return base[pc : pc + length]
 
 
+def read_bank85(base: bytes, addr: int, length: int) -> bytes:
+    pc = lorom_pc(0x85, addr)
+    return base[pc : pc + length]
+
+
+def read_bank89(base: bytes, addr: int, length: int) -> bytes:
+    pc = lorom_pc(0x89, addr)
+    return base[pc : pc + length]
+
+
+def remap_4bpp_tile(tile: bytes, palette_map: list[int]) -> bytes:
+    if len(tile) != 32:
+        raise ValueError(f"expected one 4bpp SNES tile, got {len(tile)} bytes")
+    out = bytearray(32)
+    for row in range(8):
+        plane0 = tile[row * 2]
+        plane1 = tile[row * 2 + 1]
+        plane2 = tile[16 + row * 2]
+        plane3 = tile[16 + row * 2 + 1]
+        row_colors: list[int] = []
+        for col in range(8):
+            mask = 1 << (7 - col)
+            color = 0
+            if plane0 & mask:
+                color |= 0x1
+            if plane1 & mask:
+                color |= 0x2
+            if plane2 & mask:
+                color |= 0x4
+            if plane3 & mask:
+                color |= 0x8
+            row_colors.append(palette_map[color] & 0xF)
+        for col, color in enumerate(row_colors):
+            mask = 1 << (7 - col)
+            if color & 0x1:
+                out[row * 2] |= mask
+            if color & 0x2:
+                out[row * 2 + 1] |= mask
+            if color & 0x4:
+                out[16 + row * 2] |= mask
+            if color & 0x8:
+                out[16 + row * 2 + 1] |= mask
+    return bytes(out)
+
+
+def build_spider_item_gfx(base: bytes) -> bytes:
+    morph_gfx = read_bank89(base, SPIDER_BALL_ITEM_GFX_SOURCE, SPIDER_BALL_ITEM_GFX_SIZE)
+    palette_map = list(range(16))
+    # Keep transparency at 0 and rotate Morph's used colours so the icon shape
+    # remains readable while clearly not being the Morph Ball pickup.
+    palette_map[1] = 9
+    palette_map[9] = 12
+    palette_map[12] = 13
+    palette_map[13] = 15
+    palette_map[15] = 1
+    return b"".join(
+        remap_4bpp_tile(morph_gfx[offset : offset + 32], palette_map)
+        for offset in range(0, len(morph_gfx), 32)
+    )
+
+
+def encode_small_message_tilemap(text: str) -> bytes:
+    if any(ch != " " and not ("a" <= ch <= "z") for ch in text):
+        raise ValueError("small message text supports lowercase a-z and spaces")
+    text_width = 19
+    if len(text) > text_width:
+        raise ValueError(f"small message text is too long: {text!r}")
+
+    words: list[int] = [0x000E] * 6
+    left_spaces = (text_width - len(text)) // 2
+    right_spaces = text_width - len(text) - left_spaces
+    for ch in (" " * left_spaces) + text + (" " * right_spaces):
+        if ch == " ":
+            words.append(0x284E)
+        else:
+            words.append(0x28E0 + ord(ch) - ord("a"))
+    words.extend([0x000E] * (32 - len(words)))
+    if len(words) != 32:
+        raise ValueError(f"small message produced {len(words)} tiles")
+    return b"".join(u16(word) for word in words)
+
+
+def message_box_entry(tilemap_addr: int) -> bytes:
+    return u16(0x8436) + u16(0x8289) + u16(tilemap_addr)
+
+
+def build_message_box_table(base: bytes) -> bytes:
+    original = read_bank85(
+        base,
+        MESSAGE_BOX_TABLE_ORIGINAL,
+        MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES * 6,
+    )
+    return b"".join(
+        (
+            original,
+            message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP),
+            message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP_END),
+        )
+    )
+
+
 def relocate_morph_plm_list(data: bytes, old_start: int, new_start: int) -> bytes:
     out = bytearray(data)
     old_end = old_start + len(out)
@@ -836,6 +948,16 @@ def relocate_morph_plm_list(data: bytes, old_start: int, new_start: int) -> byte
         raise ValueError(f"expected one Morph Ball pickup instruction, found {len(pickup_offsets)}")
     pickup_offset = pickup_offsets[0]
     out[pickup_offset + 2 : pickup_offset + 4] = u16(SPIDER_BALL_ITEM_BIT)
+    out[pickup_offset + 4] = SPIDER_BALL_MESSAGE_ID
+
+    gfx_offsets = [
+        i for i in range(len(out) - 11)
+        if out[i : i + 4] == bytes((0x64, 0x87, 0x00, 0x87))
+    ]
+    if len(gfx_offsets) != 1:
+        raise ValueError(f"expected one Morph Ball item graphics instruction, found {len(gfx_offsets)}")
+    gfx_offset = gfx_offsets[0]
+    out[gfx_offset + 2 : gfx_offset + 4] = u16(SPIDER_BALL_ITEM_GFX_ADDR)
     return bytes(out)
 
 
@@ -906,6 +1028,9 @@ def main() -> None:
     code = build_spider_code()
     pose_guard = build_pose_guard_code()
     spider_item_plms = build_spider_item_plms(base)
+    spider_item_gfx = build_spider_item_gfx(base)
+    message_box_table = build_message_box_table(base)
+    spider_ball_message = encode_small_message_tilemap("spider ball")
     free_len = 0x10000 - CODE_ADDR
     if len(code) > free_len:
         raise SystemExit(f"Spider Ball code is {len(code)} bytes, exceeds free space {free_len}")
@@ -930,8 +1055,17 @@ def main() -> None:
         (lorom_pc(0x91, 0x8038), u16(POSE_GUARD_ADDR)),
         (lorom_pc(0x91, 0x803A), u16(POSE_GUARD_ADDR)),
         (lorom_pc(0x91, POSE_GUARD_ADDR), pose_guard),
+        # Relocate/extend the message definition table so Spider Ball can use
+        # a new message id without overwriting vanilla message/button tables.
+        (lorom_pc(0x85, 0x8251), u16(MESSAGE_BOX_TABLE_RELOCATED + 2)),
+        (lorom_pc(0x85, 0x8255), u16(MESSAGE_BOX_TABLE_RELOCATED)),
+        (lorom_pc(0x85, 0x82F2), u16(MESSAGE_BOX_TABLE_RELOCATED + 4)),
+        (lorom_pc(0x85, 0x82F7), u16(MESSAGE_BOX_TABLE_RELOCATED + 10)),
+        (lorom_pc(0x85, MESSAGE_BOX_TABLE_RELOCATED), message_box_table),
+        (lorom_pc(0x85, SPIDER_BALL_MESSAGE_TILEMAP), spider_ball_message),
         # Custom visible/Chozo/hidden Spider Ball item PLMs.
         (lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE), spider_item_plms),
+        (lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR), spider_item_gfx),
     ]
     ips = make_ips(records)
 
@@ -951,7 +1085,14 @@ def main() -> None:
             "AD 1C 0A C9 29 00 F0 05 C9 2A 00 D0 3D AD 27 0A "
             "29 FF 00 C9 05 00 F0 32 A5 8B 89 00 03 D0 2B AD"
         ),
+        lorom_pc(0x85, 0x8251): bytes.fromhex("9D 86"),
+        lorom_pc(0x85, 0x8255): bytes.fromhex("9B 86"),
+        lorom_pc(0x85, 0x82F2): bytes.fromhex("9F 86"),
+        lorom_pc(0x85, 0x82F7): bytes.fromhex("A5 86"),
+        lorom_pc(0x85, MESSAGE_BOX_TABLE_RELOCATED): b"\xFF" * len(message_box_table),
+        lorom_pc(0x85, SPIDER_BALL_MESSAGE_TILEMAP): b"\xFF" * len(spider_ball_message),
         lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE): b"\xFF" * min(64, len(spider_item_plms)),
+        lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR): b"\xFF" * len(spider_item_gfx),
     }
     for offset, expected in expected_originals.items():
         actual = base[offset : offset + len(expected)]
@@ -978,6 +1119,12 @@ def main() -> None:
         f"{len(spider_item_plms)} bytes at $84:{SPIDER_BALL_PLM_VISIBLE:04X} "
         f"(visible ${SPIDER_BALL_PLM_VISIBLE:04X}, Chozo ${SPIDER_BALL_PLM_CHOZO:04X}, "
         f"hidden ${SPIDER_BALL_PLM_HIDDEN:04X})"
+    )
+    print(f"Spider Ball item graphics: {len(spider_item_gfx)} bytes at $89:{SPIDER_BALL_ITEM_GFX_ADDR:04X}")
+    print(
+        "Spider Ball message: "
+        f"id ${SPIDER_BALL_MESSAGE_ID:02X}, table ${MESSAGE_BOX_TABLE_RELOCATED:04X}, "
+        f"tilemap ${SPIDER_BALL_MESSAGE_TILEMAP:04X}"
     )
     print(f"IPS size: {len(ips)} bytes")
 
