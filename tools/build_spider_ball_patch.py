@@ -26,6 +26,8 @@ BASE_ROM = ROOT / "test-resources" / "Super Metroid (JU) [!].smc"
 OUT_IPS = ROOT / "shared" / "src" / "commonMain" / "resources" / "patches" / "spider_ball.ips"
 CODE_ADDR = 0xF800
 POSE_GUARD_ADDR = 0x80BE
+PAUSE_TILE_LOAD_WRAPPER_ADDR = 0xF710
+PAUSE_EQUIPMENT_DATA_ADDR = 0xF7C0
 
 
 def lorom_pc(bank: int, addr: int) -> int:
@@ -152,6 +154,7 @@ DP_TEMP_14 = 0x14
 DP_CONTROLLER_1_INPUT = 0x8B
 DP_CONTROLLER_1_NEW = 0x8F
 
+EQUIPPED_ITEMS = 0x09A2
 COLLECTED_ITEMS = 0x09A4
 UP_BINDING = 0x09AA
 DOWN_BINDING = 0x09AC
@@ -222,6 +225,19 @@ MESSAGE_BOX_TABLE_RELOCATED = 0x9C00
 SPIDER_BALL_MESSAGE_ID = 0x1E
 SPIDER_BALL_MESSAGE_TILEMAP = 0x9D00
 SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
+
+PAUSE_SPIDER_LABEL_GFX_SOURCE = 0xF200
+PAUSE_SPIDER_LABEL_TILE_BASE = 0x0300
+
+PAUSE_SUIT_MASKS_ADDR = PAUSE_EQUIPMENT_DATA_ADDR
+PAUSE_BOOT_MASKS_ADDR = PAUSE_SUIT_MASKS_ADDR + 7 * 2
+PAUSE_SUIT_OFFSETS_ADDR = PAUSE_BOOT_MASKS_ADDR + 3 * 2
+PAUSE_BOOT_OFFSETS_ADDR = PAUSE_SUIT_OFFSETS_ADDR + 7 * 2
+PAUSE_SUIT_TILEMAP_PTRS_ADDR = PAUSE_BOOT_OFFSETS_ADDR + 3 * 2
+PAUSE_BOOT_TILEMAP_PTRS_ADDR = PAUSE_SUIT_TILEMAP_PTRS_ADDR + 7 * 2
+PAUSE_SPIDER_LABEL_TILEMAP_ADDR = PAUSE_BOOT_TILEMAP_PTRS_ADDR + 3 * 2
+PAUSE_SUIT_XY_ADDR = PAUSE_SPIDER_LABEL_TILEMAP_ADDR + 9 * 2
+PAUSE_BOOT_XY_ADDR = PAUSE_SUIT_XY_ADDR + 7 * 4
 
 MORPH_PLM_SETUP_VISIBLE_CHOZO = 0xEE64
 MORPH_PLM_SETUP_HIDDEN = 0xEE8E
@@ -302,7 +318,7 @@ def build_spider_code() -> bytes:
     w.label("SpiderBallMovementWrapper")
     w.php()
     w.rep_30()
-    w.lda_abs(COLLECTED_ITEMS)
+    w.lda_abs(EQUIPPED_ITEMS)
     w.and_imm(SPIDER_BALL_ITEM_BIT)
     w.branch(0xF0, "WrapperInactive")  # BEQ
     w.lda_abs(SPIDER_ACTIVE)
@@ -853,6 +869,11 @@ def read_bank89(base: bytes, addr: int, length: int) -> bytes:
     return base[pc : pc + length]
 
 
+def read_bankb6(base: bytes, addr: int, length: int) -> bytes:
+    pc = lorom_pc(0xB6, addr)
+    return base[pc : pc + length]
+
+
 def remap_4bpp_tile(tile: bytes, palette_map: list[int]) -> bytes:
     if len(tile) != 32:
         raise ValueError(f"expected one 4bpp SNES tile, got {len(tile)} bytes")
@@ -886,6 +907,63 @@ def remap_4bpp_tile(tile: bytes, palette_map: list[int]) -> bytes:
             if color & 0x8:
                 out[16 + row * 2 + 1] |= mask
     return bytes(out)
+
+
+PAUSE_LABEL_FONT = {
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+}
+
+
+def encode_4bpp_tile(pixels: list[list[int]]) -> bytes:
+    if len(pixels) != 8 or any(len(row) != 8 for row in pixels):
+        raise ValueError("expected 8x8 pixel tile")
+    out = bytearray(32)
+    for row in range(8):
+        for col, color in enumerate(pixels[row]):
+            mask = 1 << (7 - col)
+            if color & 0x1:
+                out[row * 2] |= mask
+            if color & 0x2:
+                out[row * 2 + 1] |= mask
+            if color & 0x4:
+                out[16 + row * 2] |= mask
+            if color & 0x8:
+                out[16 + row * 2 + 1] |= mask
+    return bytes(out)
+
+
+def build_pause_label_tiles(text: str) -> bytes:
+    width = 64
+    bg = 0x0B
+    fg = 0x0A
+    pixels = [[bg for _ in range(width)] for _ in range(8)]
+    x = 1
+    for ch in text:
+        if ch == " ":
+            x += 3
+            continue
+        glyph = PAUSE_LABEL_FONT[ch]
+        if x + 5 > width:
+            raise ValueError(f"pause label text is too wide: {text!r}")
+        for y, row in enumerate(glyph):
+            for dx, bit in enumerate(row):
+                if bit == "1":
+                    pixels[y][x + dx] = fg
+        x += 6
+
+    tiles = []
+    for tile in range(8):
+        tile_pixels = [row[tile * 8 : (tile + 1) * 8] for row in pixels]
+        tiles.append(encode_4bpp_tile(tile_pixels))
+    return b"".join(tiles)
 
 
 def build_spider_item_gfx(base: bytes) -> bytes:
@@ -997,6 +1075,95 @@ def build_spider_item_plms(base: bytes) -> bytes:
     return headers + visible + chozo + hidden
 
 
+def build_pause_tile_load_wrapper() -> bytes:
+    def dma_to_vram(vram_word_addr: int, source_bank: int, source_addr: int, length: int) -> bytes:
+        return b"".join(
+            (
+                bytes((0xA9, vram_word_addr & 0xFF, 0x8D, 0x16, 0x21)),
+                bytes((0xA9, (vram_word_addr >> 8) & 0xFF, 0x8D, 0x17, 0x21)),
+                bytes((0xA9, 0x80, 0x8D, 0x15, 0x21)),
+                bytes((0x22, 0xA9, 0x91, 0x80)),
+                bytes((0x01, 0x01, 0x18)),
+                long_le((source_bank << 16) | source_addr),
+                u16(length),
+                bytes((0xA9, 0x02, 0x8D, 0x0B, 0x42)),
+            )
+        )
+
+    return b"".join(
+        (
+            bytes((0x08, 0xE2, 0x30)),
+            dma_to_vram(0x0000, 0xB6, 0x8000, 0x4000),
+            dma_to_vram(0x2000, 0xB6, 0xC000, 0x2000),
+            dma_to_vram(0x4000, 0x9A, 0xB200, 0x2000),
+            dma_to_vram(0x3000, 0xB6, PAUSE_SPIDER_LABEL_GFX_SOURCE, 0x0100),
+            bytes((0x28, 0x6B)),
+        )
+    )
+
+
+def build_pause_equipment_data() -> bytes:
+    suit_masks = [0x0001, 0x0020, 0x0004, 0x1000, 0x0002, SPIDER_BALL_ITEM_BIT, 0x0008]
+    boot_masks = [0x0100, 0x0200, 0x2000]
+    suit_offsets = [0x3A6A, 0x3AAA, 0x3B6A, 0x3BAA, 0x3BEA, 0x3C2A, 0x3C6A]
+    boot_offsets = [0x3D2A, 0x3D6A, 0x3DAA]
+    suit_tilemap_ptrs = [
+        0xBF64,
+        0xBF76,
+        0xBF88,
+        0xBF9A,
+        0xBFAC,
+        PAUSE_SPIDER_LABEL_TILEMAP_ADDR,
+        0xBFC0,
+    ]
+    boot_tilemap_ptrs = [0xBFD2, 0xBFE4, 0xBFF6]
+    spider_tilemap = [0x08FF] + [0x0800 | (PAUSE_SPIDER_LABEL_TILE_BASE + i) for i in range(8)]
+    suit_xy = [
+        0x00CC, 0x004C,
+        0x00CC, 0x0054,
+        0x00CC, 0x006C,
+        0x00CC, 0x0074,
+        0x00CC, 0x007C,
+        0x00CC, 0x0084,
+        0x00CC, 0x008C,
+    ]
+    boot_xy = [
+        0x00CC, 0x00A4,
+        0x00CC, 0x00AC,
+        0x00CC, 0x00B4,
+    ]
+    words = (
+        suit_masks
+        + boot_masks
+        + suit_offsets
+        + boot_offsets
+        + suit_tilemap_ptrs
+        + boot_tilemap_ptrs
+        + spider_tilemap
+        + suit_xy
+        + boot_xy
+    )
+    return b"".join(u16(word) for word in words)
+
+
+def build_pause_equipment_base_tilemap(base: bytes) -> bytes:
+    tilemap = bytearray(read_bankb6(base, 0xE800, 0x0800))
+    original = bytes(tilemap)
+    width = 32
+    x_start = 20
+    x_end = 30
+
+    def copy_row(src_y: int, dst_y: int) -> None:
+        for x in range(x_start, x_end + 1):
+            src = (src_y * width + x) * 2
+            dst = (dst_y * width + x) * 2
+            tilemap[dst : dst + 2] = original[src : src + 2]
+
+    for src_y, dst_y in ((16, 17), (17, 18), (18, 19), (19, 20), (20, 21), (21, 22), (22, 23)):
+        copy_row(src_y, dst_y)
+    return bytes(tilemap)
+
+
 def make_ips(records: list[tuple[int, bytes]]) -> bytes:
     out = bytearray(b"PATCH")
     for offset, data in records:
@@ -1044,6 +1211,10 @@ def main() -> None:
     spider_item_gfx = build_spider_item_gfx(base)
     message_box_table = build_message_box_table(base)
     spider_ball_message = encode_small_message_tilemap("spider ball")
+    pause_tile_load_wrapper = build_pause_tile_load_wrapper()
+    pause_spider_label_tiles = build_pause_label_tiles("SPIDER BALL")
+    pause_equipment_data = build_pause_equipment_data()
+    pause_equipment_base_tilemap = build_pause_equipment_base_tilemap(base)
     free_len = 0x10000 - CODE_ADDR
     if len(code) > free_len:
         raise SystemExit(f"Spider Ball code is {len(code)} bytes, exceeds free space {free_len}")
@@ -1052,6 +1223,13 @@ def main() -> None:
         raise SystemExit(
             f"Spider Ball pose guard is {len(pose_guard)} bytes, exceeds unused bank $91 space {pose_guard_len}"
         )
+    pause_data_end = PAUSE_EQUIPMENT_DATA_ADDR + len(pause_equipment_data)
+    if pause_data_end > 0x10000:
+        raise SystemExit(
+            f"Spider Ball pause equipment data ends at $82:{pause_data_end:04X}, outside bank $82"
+        )
+    if PAUSE_TILE_LOAD_WRAPPER_ADDR + len(pause_tile_load_wrapper) > PAUSE_EQUIPMENT_DATA_ADDR:
+        raise SystemExit("Spider Ball pause tile-load wrapper overlaps pause equipment data")
 
     records = [
         # SamusMovementHandler_Normal dispatch table entries for morph/spring ball.
@@ -1079,6 +1257,39 @@ def main() -> None:
         # Custom visible/Chozo/hidden Spider Ball item PLMs.
         (lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE), spider_item_plms),
         (lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR), spider_item_gfx),
+        # Pause/equipment menu support for Spider Ball as a togglable misc item.
+        (lorom_pc(0x82, 0x8E75), bytes((0x5C, PAUSE_TILE_LOAD_WRAPPER_ADDR & 0xFF, PAUSE_TILE_LOAD_WRAPPER_ADDR >> 8, 0x82))),
+        (lorom_pc(0x82, PAUSE_TILE_LOAD_WRAPPER_ADDR), pause_tile_load_wrapper),
+        (lorom_pc(0xB6, PAUSE_SPIDER_LABEL_GFX_SOURCE), pause_spider_label_tiles),
+        (lorom_pc(0x82, PAUSE_EQUIPMENT_DATA_ADDR), pause_equipment_data),
+        (lorom_pc(0xB6, 0xE800), pause_equipment_base_tilemap),
+        (lorom_pc(0x82, 0xC030), u16(PAUSE_SUIT_OFFSETS_ADDR)),
+        (lorom_pc(0x82, 0xC032), u16(PAUSE_BOOT_OFFSETS_ADDR)),
+        (lorom_pc(0x82, 0xC038), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xC03A), u16(PAUSE_BOOT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xC048), u16(PAUSE_SUIT_TILEMAP_PTRS_ADDR)),
+        (lorom_pc(0x82, 0xC04A), u16(PAUSE_BOOT_TILEMAP_PTRS_ADDR)),
+        (lorom_pc(0x82, 0xC192), u16(PAUSE_SUIT_XY_ADDR)),
+        (lorom_pc(0x82, 0xC194), u16(PAUSE_BOOT_XY_ADDR)),
+        (lorom_pc(0x82, 0xA1DF), u16(PAUSE_SUIT_OFFSETS_ADDR)),
+        (lorom_pc(0x82, 0xA1ED), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xA202), u16(PAUSE_SUIT_TILEMAP_PTRS_ADDR)),
+        (lorom_pc(0x82, 0xA20D), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xA228), u16(0x000E)),
+        (lorom_pc(0x82, 0xA230), u16(PAUSE_BOOT_OFFSETS_ADDR)),
+        (lorom_pc(0x82, 0xA23E), u16(PAUSE_BOOT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xA258), u16(PAUSE_BOOT_TILEMAP_PTRS_ADDR)),
+        (lorom_pc(0x82, 0xA25E), u16(PAUSE_BOOT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xABE5), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xABEC), u16(0x000E)),
+        (lorom_pc(0x82, 0xAC01), u16(PAUSE_BOOT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xB10F), u16(0x0600)),
+        (lorom_pc(0x82, 0xB1BC), u16(0x000C)),
+        (lorom_pc(0x82, 0xB4BE), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xB4C5), u16(0x000E)),
+        (lorom_pc(0x82, 0xB4ED), u16(PAUSE_SUIT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xB518), u16(PAUSE_BOOT_MASKS_ADDR)),
+        (lorom_pc(0x82, 0xB546), u16(PAUSE_BOOT_MASKS_ADDR)),
     ]
     ips = make_ips(records)
 
@@ -1106,6 +1317,38 @@ def main() -> None:
         lorom_pc(0x85, SPIDER_BALL_MESSAGE_TILEMAP): b"\xFF" * len(spider_ball_message),
         lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE): b"\xFF" * min(64, len(spider_item_plms)),
         lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR): b"\xFF" * len(spider_item_gfx),
+        lorom_pc(0x82, 0x8E75): bytes.fromhex("08 E2 30 A9"),
+        lorom_pc(0x82, PAUSE_TILE_LOAD_WRAPPER_ADDR): b"\xFF" * len(pause_tile_load_wrapper),
+        lorom_pc(0xB6, PAUSE_SPIDER_LABEL_GFX_SOURCE): b"\xFF" * len(pause_spider_label_tiles),
+        lorom_pc(0x82, PAUSE_EQUIPMENT_DATA_ADDR): b"\xFF" * len(pause_equipment_data),
+        lorom_pc(0xB6, 0xE800): read_bankb6(base, 0xE800, 0x0800),
+        lorom_pc(0x82, 0xC030): u16(0xC076),
+        lorom_pc(0x82, 0xC032): u16(0xC082),
+        lorom_pc(0x82, 0xC038): u16(0xC056),
+        lorom_pc(0x82, 0xC03A): u16(0xC062),
+        lorom_pc(0x82, 0xC048): u16(0xC096),
+        lorom_pc(0x82, 0xC04A): u16(0xC0A2),
+        lorom_pc(0x82, 0xC192): u16(0xC1B2),
+        lorom_pc(0x82, 0xC194): u16(0xC1CA),
+        lorom_pc(0x82, 0xA1DF): u16(0xC076),
+        lorom_pc(0x82, 0xA1ED): u16(0xC056),
+        lorom_pc(0x82, 0xA202): u16(0xC096),
+        lorom_pc(0x82, 0xA20D): u16(0xC056),
+        lorom_pc(0x82, 0xA228): u16(0x000C),
+        lorom_pc(0x82, 0xA230): u16(0xC082),
+        lorom_pc(0x82, 0xA23E): u16(0xC062),
+        lorom_pc(0x82, 0xA258): u16(0xC0A2),
+        lorom_pc(0x82, 0xA25E): u16(0xC062),
+        lorom_pc(0x82, 0xABE5): u16(0xC056),
+        lorom_pc(0x82, 0xABEC): u16(0x000C),
+        lorom_pc(0x82, 0xAC01): u16(0xC062),
+        lorom_pc(0x82, 0xB10F): u16(0x0500),
+        lorom_pc(0x82, 0xB1BC): u16(0x000A),
+        lorom_pc(0x82, 0xB4BE): u16(0xC056),
+        lorom_pc(0x82, 0xB4C5): u16(0x000A),
+        lorom_pc(0x82, 0xB4ED): u16(0xC056),
+        lorom_pc(0x82, 0xB518): u16(0xC062),
+        lorom_pc(0x82, 0xB546): u16(0xC062),
     }
     for offset, expected in expected_originals.items():
         actual = base[offset : offset + len(expected)]
@@ -1138,6 +1381,11 @@ def main() -> None:
         "Spider Ball message: "
         f"id ${SPIDER_BALL_MESSAGE_ID:02X}, table ${MESSAGE_BOX_TABLE_RELOCATED:04X}, "
         f"tilemap ${SPIDER_BALL_MESSAGE_TILEMAP:04X}"
+    )
+    print(
+        "Spider Ball pause menu: "
+        f"wrapper ${PAUSE_TILE_LOAD_WRAPPER_ADDR:04X}, data ${PAUSE_EQUIPMENT_DATA_ADDR:04X}-"
+        f"${pause_data_end - 1:04X}, label tiles $B6:{PAUSE_SPIDER_LABEL_GFX_SOURCE:04X}"
     )
     print(f"IPS size: {len(ips)} bytes")
 
