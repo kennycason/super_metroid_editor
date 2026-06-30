@@ -219,7 +219,7 @@ SPIDER_BALL_ITEM_GFX_SIZE = 0x100
 MESSAGE_BOX_TABLE_ORIGINAL = 0x869B
 MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES = 29
 MESSAGE_BOX_TABLE_RELOCATED = 0x9C00
-SPIDER_BALL_MESSAGE_ID = 0x1D
+SPIDER_BALL_MESSAGE_ID = 0x1E
 SPIDER_BALL_MESSAGE_TILEMAP = 0x9D00
 SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
 
@@ -490,6 +490,19 @@ def build_spider_code() -> bytes:
     w.label("CeilingTouchLeftWall")
     w.jmp_label("SetSpiderWallLeftHandled")
     w.label("CeilingHasCeiling")
+    w.lda_dp(DP_CONTROLLER_1_INPUT)
+    w.and_abs(DOWN_BINDING)
+    w.branch(0xF0, "CeilingCheckLeft")
+    w.lda_abs(SPIDER_CONTACT)
+    w.and_imm(0x0001)
+    w.branch(0xD0, "CeilingDownRightWall")
+    w.lda_abs(SPIDER_CONTACT)
+    w.and_imm(0x0002)
+    w.branch(0xF0, "CeilingCheckLeft")
+    w.jmp_label("SetSpiderWallLeftHandled")
+    w.label("CeilingDownRightWall")
+    w.jmp_label("SetSpiderWallRightHandled")
+    w.label("CeilingCheckLeft")
     w.lda_dp(DP_CONTROLLER_1_INPUT)
     w.and_abs(LEFT_BINDING)
     w.branch(0xF0, "CeilingCheckRight")
@@ -917,16 +930,15 @@ def message_box_entry(tilemap_addr: int) -> bytes:
 
 
 def build_message_box_table(base: bytes) -> bytes:
-    table = bytearray(read_bank85(
+    original = read_bank85(
         base,
         MESSAGE_BOX_TABLE_ORIGINAL,
         MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES * 6,
-    ))
-    spider_entry_offset = (SPIDER_BALL_MESSAGE_ID - 1) * 6
-    table[spider_entry_offset : spider_entry_offset + 6] = message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP)
+    )
     return b"".join(
         (
-            bytes(table),
+            original,
+            message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP),
             message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP_END),
         )
     )
