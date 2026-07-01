@@ -224,4 +224,51 @@ class GifEncoderTest {
             tmpFile.delete()
         }
     }
+
+    @Test
+    fun `encode enemy animation exports for Crocomire and Space Pirate`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val animations = listOfNotNull(
+            buildEnemyExportAnimation(rp, 0xDDBF),
+            buildEnemyExportAnimation(rp, 0xF353)
+        )
+
+        assertEquals(2, animations.size, "Crocomire and Space Pirate export animations should build")
+        for (animation in animations) {
+            assertTrue(animation.frames.size > 1, "${animation.name} should have multiple export frames")
+
+            val gifBytes = GifEncoder.encode(animation.frames)
+            assertTrue(gifBytes.size > 32, "${animation.name} GIF should contain image data")
+            assertEquals('G'.code.toByte(), gifBytes[0])
+            assertEquals(0x3B.toByte(), gifBytes.last(), "${animation.name} GIF should have a trailer")
+
+            val (sheetPixels, sheetW, sheetH) = renderSpriteSheet(animation.frames, columns = 8)
+            assertTrue(sheetW > 0 && sheetH > 0, "${animation.name} sprite sheet should have dimensions")
+            assertTrue(sheetPixels.any { (it ushr 24) > 0 }, "${animation.name} sprite sheet should have visible pixels")
+        }
+    }
+
+    private fun buildEnemyExportAnimation(rp: RomParser, speciesId: Int): SpriteAnimation? {
+        val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return null
+        val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: return null
+        val name = RomParser.enemyName(speciesId)
+
+        if (BossPoseScanner.hasKnownPoses(speciesId)) {
+            val scanner = BossPoseScanner(rp)
+            val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, speciesId, tileData) ?: tileData
+            val frames = scanner.scanPoses(speciesId, minEntries = 3).mapNotNull { pose ->
+                val assembled = scanner.renderPose(pose, renderTileData, palette) ?: return@mapNotNull null
+                SpriteAnimationFrame(
+                    pixels = assembled.pixels,
+                    width = assembled.width,
+                    height = assembled.height,
+                    durationTicks = pose.durationTicks.takeIf { it in 1..120 } ?: 8,
+                    label = pose.name
+                )
+            }
+            return if (frames.size > 1) SpriteAnimation("$name Body Poses", frames, loop = true) else null
+        }
+
+        return EnemySpritemap(rp).buildAnimation(speciesId, tileData, palette, name)
+    }
 }

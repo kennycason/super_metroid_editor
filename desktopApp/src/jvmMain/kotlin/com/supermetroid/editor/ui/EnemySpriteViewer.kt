@@ -52,6 +52,7 @@ import com.supermetroid.editor.rom.SpriteAnimationFrame
 import com.supermetroid.editor.rom.renderSpriteSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -107,6 +108,7 @@ fun EnemySpriteViewer(
 
     var paletteRefreshKey by remember { mutableStateOf(0) }
     var editingColorIdx by remember { mutableStateOf(-1) }
+    var exportStatus by remember { mutableStateOf("") }
 
     val stats = remember(entry.speciesId) {
         EnemySpriteGraphics.readSpeciesStats(rp, entry.speciesId)
@@ -161,6 +163,13 @@ fun EnemySpriteViewer(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
+        if (exportStatus.isNotEmpty()) {
+            Text(
+                exportStatus,
+                fontSize = 10.sp,
+                color = Color(0xFFFFD54F)
+            )
+        }
 
         // Species info
         Surface(
@@ -337,18 +346,51 @@ fun EnemySpriteViewer(
                         animation = enemyAnimation,
                         previewSize = 192,
                         onExportPng = { frame, idx ->
-                            scope.launch(Dispatchers.IO) {
-                                enemyExportFramePng(frame, "${entry.name.lowercase().replace(' ', '_')}_frame$idx")
+                            val file = chooseEnemyPngFile(
+                                dialogTitle = "Save Frame as PNG",
+                                defaultName = "${enemyExportSafeName(entry.name)}_frame$idx.png"
+                            ) ?: return@AnimationPlayer
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) { enemyExportFramePng(frame, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" }
+                                )
                             }
                         },
                         onExportGif = { anim ->
-                            scope.launch(Dispatchers.IO) {
-                                enemyExportAnimationGif(anim, entry.name.lowercase().replace(' ', '_'))
+                            val file = chooseEnemyGifFile(
+                                dialogTitle = "Save Animation as GIF",
+                                defaultName = "${enemyExportSafeName(entry.name)}.gif"
+                            ) ?: return@AnimationPlayer
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.Default) { enemyExportAnimationGif(anim, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" }
+                                )
                             }
                         },
                         onExportSheet = { anim ->
-                            scope.launch(Dispatchers.IO) {
-                                enemyExportSheet(anim, "${entry.name.lowercase().replace(' ', '_')}_sheet")
+                            val file = chooseEnemyPngFile(
+                                dialogTitle = "Save Sprite Sheet as PNG",
+                                defaultName = "${enemyExportSafeName(entry.name)}_sheet.png"
+                            ) ?: return@AnimationPlayer
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) { enemyExportSheet(anim, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" }
+                                )
                             }
                         }
                     )
@@ -692,53 +734,53 @@ fun EnemySpriteViewer(
 
 // ─── Enemy export helpers ────────────────────────────────────────────
 
-private fun enemyExportFramePng(frame: SpriteAnimationFrame, defaultName: String) {
-    val chooser = JFileChooser().apply {
-        dialogTitle = "Save Frame as PNG"
-        selectedFile = File("$defaultName.png")
-        fileFilter = FileNameExtensionFilter("PNG Images", "png")
-    }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
-        }
-        val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
-        bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+private fun enemyExportSafeName(value: String): String =
+    value.lowercase()
+        .replace(Regex("[^a-z0-9]+"), "_")
+        .trim('_')
+        .ifBlank { "enemy" }
+
+private fun enemyExportFramePng(frame: SpriteAnimationFrame, file: File) {
+    val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+    bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+    ImageIO.write(bi, "png", file)
+}
+
+private fun enemyExportAnimationGif(animation: SpriteAnimation, file: File) {
+    val gifBytes = GifEncoder.encode(animation.frames)
+    file.writeBytes(gifBytes)
+}
+
+private fun enemyExportSheet(animation: SpriteAnimation, file: File) {
+    val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
+    if (w > 0 && h > 0) {
+        val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, w, h, pixels, 0, w)
         ImageIO.write(bi, "png", file)
     }
 }
 
-private fun enemyExportAnimationGif(animation: SpriteAnimation, defaultName: String) {
+private fun chooseEnemyPngFile(dialogTitle: String, defaultName: String): File? {
     val chooser = JFileChooser().apply {
-        dialogTitle = "Save Animation as GIF"
-        selectedFile = File("$defaultName.gif")
-        fileFilter = FileNameExtensionFilter("GIF Images", "gif")
+        this.dialogTitle = dialogTitle
+        selectedFile = File(defaultName)
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
     }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".gif")) File(it.parentFile, "${it.name}.gif") else it
-        }
-        val gifBytes = GifEncoder.encode(animation.frames)
-        file.writeBytes(gifBytes)
+    if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+    return chooser.selectedFile.let {
+        if (!it.name.endsWith(".png", ignoreCase = true)) File(it.parentFile, "${it.name}.png") else it
     }
 }
 
-private fun enemyExportSheet(animation: SpriteAnimation, defaultName: String) {
+private fun chooseEnemyGifFile(dialogTitle: String, defaultName: String): File? {
     val chooser = JFileChooser().apply {
-        dialogTitle = "Save Sprite Sheet as PNG"
-        selectedFile = File("$defaultName.png")
-        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+        this.dialogTitle = dialogTitle
+        selectedFile = File(defaultName)
+        fileFilter = FileNameExtensionFilter("GIF Images", "gif")
     }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
-        }
-        val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
-        if (w > 0 && h > 0) {
-            val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-            bi.setRGB(0, 0, w, h, pixels, 0, w)
-            ImageIO.write(bi, "png", file)
-        }
+    if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+    return chooser.selectedFile.let {
+        if (!it.name.endsWith(".gif", ignoreCase = true)) File(it.parentFile, "${it.name}.gif") else it
     }
 }
 
