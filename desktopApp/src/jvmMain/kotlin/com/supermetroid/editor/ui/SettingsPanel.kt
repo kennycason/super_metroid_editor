@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,8 +46,10 @@ fun SettingsPopup(
     editorState: EditorState? = null,
     showRoomItemNames: Boolean = true,
     showRoomEnemyNames: Boolean = true,
+    showRoomFlatSlopeSurfaces: Boolean = true,
     onShowRoomItemNamesChange: (Boolean) -> Unit = {},
     onShowRoomEnemyNamesChange: (Boolean) -> Unit = {},
+    onShowRoomFlatSlopeSurfacesChange: (Boolean) -> Unit = {},
 ) {
     Popup(
         alignment = Alignment.TopEnd,
@@ -67,7 +70,10 @@ fun SettingsPopup(
             modifier = Modifier.width(380.dp).padding(top = 4.dp, end = 8.dp)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
@@ -112,8 +118,10 @@ fun SettingsPopup(
                         editorState = editorState,
                         showRoomItemNames = showRoomItemNames,
                         showRoomEnemyNames = showRoomEnemyNames,
+                        showRoomFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                         onShowRoomItemNamesChange = onShowRoomItemNamesChange,
                         onShowRoomEnemyNamesChange = onShowRoomEnemyNamesChange,
+                        onShowRoomFlatSlopeSurfacesChange = onShowRoomFlatSlopeSurfacesChange,
                     )
                     1 -> EmulatorSettingsTab(emulatorWorkspaceState, currentFontSize)
                 }
@@ -131,8 +139,10 @@ private fun GeneralSettingsTab(
     editorState: EditorState? = null,
     showRoomItemNames: Boolean,
     showRoomEnemyNames: Boolean,
+    showRoomFlatSlopeSurfaces: Boolean,
     onShowRoomItemNamesChange: (Boolean) -> Unit,
     onShowRoomEnemyNamesChange: (Boolean) -> Unit,
+    onShowRoomFlatSlopeSurfacesChange: (Boolean) -> Unit,
 ) {
     // ── Theme Section ──
     Text(
@@ -228,30 +238,13 @@ private fun GeneralSettingsTab(
         onCheckedChange = onShowRoomEnemyNamesChange,
         fontSize = currentFontSize,
     )
-
-    // ── Preview ──
-    Spacer(Modifier.height(2.dp))
-    Text(
-        "Preview",
-        fontSize = currentFontSize.detail,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
+    SettingsCheckboxRow(
+        label = "Show slopes for flat surfaces",
+        description = "When the Slope overlay is enabled, draw exposed flat solid edges too.",
+        checked = showRoomFlatSlopeSurfaces,
+        onCheckedChange = onShowRoomFlatSlopeSurfacesChange,
+        fontSize = currentFontSize,
     )
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            Text("Tab label text", fontSize = currentFontSize.tabLabel, color = MaterialTheme.colorScheme.onSurface)
-            Text("Body text — room names, lists", fontSize = currentFontSize.body, color = MaterialTheme.colorScheme.onSurface)
-            Text("Detail — hex values, coords", fontSize = currentFontSize.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Status bar", fontSize = currentFontSize.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
 
     // ── Export Section ──
     if (editorState != null) {

@@ -193,6 +193,7 @@ fun main() = application {
     val appSettings = remember { AppConfig.load() }
     var showRoomItemNames by remember { mutableStateOf(appSettings.roomEditorShowItemNames) }
     var showRoomEnemyNames by remember { mutableStateOf(appSettings.roomEditorShowEnemyNames) }
+    var showRoomFlatSlopeSurfaces by remember { mutableStateOf(appSettings.roomEditorShowFlatSlopeSurfaces) }
     val windowState = rememberWindowState(
         width = appSettings.window.width.dp,
         height = appSettings.window.height.dp,
@@ -380,6 +381,7 @@ fun main() = application {
                                     editorState = editorState,
                                     showRoomItemNames = showRoomItemNames,
                                     showRoomEnemyNames = showRoomEnemyNames,
+                                    showRoomFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                                     onShowRoomItemNamesChange = { enabled ->
                                         showRoomItemNames = enabled
                                         AppConfig.update { copy(roomEditorShowItemNames = enabled) }
@@ -387,6 +389,10 @@ fun main() = application {
                                     onShowRoomEnemyNamesChange = { enabled ->
                                         showRoomEnemyNames = enabled
                                         AppConfig.update { copy(roomEditorShowEnemyNames = enabled) }
+                                    },
+                                    onShowRoomFlatSlopeSurfacesChange = { enabled ->
+                                        showRoomFlatSlopeSurfaces = enabled
+                                        AppConfig.update { copy(roomEditorShowFlatSlopeSurfaces = enabled) }
                                     },
                                 )
                             }
@@ -805,6 +811,7 @@ fun main() = application {
                                             },
                                             showItemNames = showRoomItemNames,
                                             showEnemyNames = showRoomEnemyNames,
+                                            showFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     }

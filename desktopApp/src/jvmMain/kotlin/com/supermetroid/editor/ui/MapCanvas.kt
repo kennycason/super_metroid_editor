@@ -699,6 +699,7 @@ fun MapCanvas(
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     showItemNames: Boolean = true,
     showEnemyNames: Boolean = true,
+    showFlatSlopeSurfaces: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val zoomState = remember { mutableStateOf(1f) }
@@ -1127,10 +1128,13 @@ fun MapCanvas(
                                                     val activeOvs = overlayToggles.filter { it.value }.keys
                                                     val img = if (es != null && es.workingLevelData != null && rh != null) {
                                                         val edited = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                                        if (edited != null) buildCompositeImage(edited, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
-                                                        else buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                                                        if (edited != null) buildCompositeImage(edited, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
+                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                                        else buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
+                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                                     } else {
-                                                        buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens)
+                                                        buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
+                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                                     }
                                                     ImageIO.write(img, "PNG", file)
                                                 }
@@ -1244,9 +1248,10 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames) {
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames, showFlatSlopeSurfaces) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showEnemyNames = showEnemyNames)
+                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
+                                    showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                             }
                             
                             val hScrollState = rememberScrollState()
@@ -1283,13 +1288,15 @@ fun MapCanvas(
                             }
                             
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames, showFlatSlopeSurfaces) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
-                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens, layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showEnemyNames = showEnemyNames)
+                                        if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
+                                            layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
+                                            showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                     }
                                 }
                                 compositeImage
@@ -3601,6 +3608,46 @@ private fun drawSlopeOverlay(g2: java.awt.Graphics2D, px: Int, py: Int, bts: Int
     g2.stroke = java.awt.BasicStroke(1f)
 }
 
+private fun isFlatSurfaceBlock(blockType: Int, bts: Int): Boolean {
+    return blockType == 0x8 || (blockType == 0xE && bts == 0x00)
+}
+
+private fun drawFlatSurfaceOverlay(g2: java.awt.Graphics2D, data: RoomRenderData, color: java.awt.Color) {
+    val blocksWide = data.blocksWide
+    val blocksTall = data.blocksTall
+    if (blocksWide == 0 || blocksTall == 0 || data.blockTypes.isEmpty()) return
+
+    fun hasFlatSurfaceAt(x: Int, y: Int): Boolean {
+        if (x !in 0 until blocksWide || y !in 0 until blocksTall) return false
+        val idx = y * blocksWide + x
+        val bts = if (idx < data.btsData.size) data.btsData[idx].toInt() and 0xFF else 0
+        return idx < data.blockTypes.size && isFlatSurfaceBlock(data.blockTypes[idx], bts)
+    }
+
+    val lineColor = java.awt.Color(color.red, color.green, color.blue, 220)
+    val oldStroke = g2.stroke
+    g2.color = lineColor
+    g2.stroke = java.awt.BasicStroke(1.5f, java.awt.BasicStroke.CAP_SQUARE, java.awt.BasicStroke.JOIN_MITER)
+
+    for (by in 0 until blocksTall) {
+        for (bx in 0 until blocksWide) {
+            if (!hasFlatSurfaceAt(bx, by)) continue
+
+            val px = bx * 16
+            val py = by * 16
+            val right = px + 16
+            val bottom = py + 16
+
+            if (by > 0 && !hasFlatSurfaceAt(bx, by - 1)) g2.drawLine(px, py, right, py)
+            if (by < blocksTall - 1 && !hasFlatSurfaceAt(bx, by + 1)) g2.drawLine(px, bottom, right, bottom)
+            if (bx > 0 && !hasFlatSurfaceAt(bx - 1, by)) g2.drawLine(px, py, px, bottom)
+            if (bx < blocksWide - 1 && !hasFlatSurfaceAt(bx + 1, by)) g2.drawLine(right, py, right, bottom)
+        }
+    }
+
+    g2.stroke = oldStroke
+}
+
 private const val SCREEN_PX = 16 * 16  // 256 — one screen in pixels
 
 /** Enemy IDs whose sprites should be horizontally flipped when initParam != 0. */
@@ -3628,6 +3675,7 @@ private fun buildCompositeImage(
     customItems: List<CustomItemDef> = emptyList(),
     showItemNames: Boolean = true,
     showEnemyNames: Boolean = true,
+    showFlatSlopeSurfaces: Boolean = true,
 ): BufferedImage {
     val img = BufferedImage(data.width, data.height, BufferedImage.TYPE_INT_ARGB)
 
@@ -3747,6 +3795,20 @@ private fun buildCompositeImage(
     }
     val btsData = data.btsData
     val itemBlocks = data.itemBlocks
+
+    if (showFlatSlopeSurfaces && activeOverlays.contains(TileOverlay.SLOPE)) {
+        val slopeOverlay = TileOverlay.SLOPE
+        val flatColor = java.awt.Color(
+            ((slopeOverlay.color shr 16) and 0xFF).toInt(),
+            ((slopeOverlay.color shr 8) and 0xFF).toInt(),
+            (slopeOverlay.color and 0xFF).toInt(),
+            ((slopeOverlay.color shr 24) and 0xFF).toInt(),
+        )
+        val flatGraphics = g as java.awt.Graphics2D
+        flatGraphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        drawFlatSurfaceOverlay(flatGraphics, data, flatColor)
+    }
+
     for (by in 0 until blocksTall) {
         for (bx in 0 until blocksWide) {
             val idx = by * blocksWide + bx

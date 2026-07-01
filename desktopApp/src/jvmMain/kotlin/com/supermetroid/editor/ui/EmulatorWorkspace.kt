@@ -106,6 +106,7 @@ fun EmulatorWorkspace(
     editorState: EditorState,
     workspaceState: EmulatorWorkspaceState,
     onRoomSelected: (RoomInfo) -> Unit,
+    showFlatSlopeSurfaces: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -238,6 +239,7 @@ fun EmulatorWorkspace(
                         onMoveSamusHere = if (workspaceState.isRunning) { x, y ->
                             scope.launch { workspaceState.moveSamusTo(x, y) }
                         } else null,
+                        showFlatSlopeSurfaces = showFlatSlopeSurfaces,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

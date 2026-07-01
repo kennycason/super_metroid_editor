@@ -53,6 +53,7 @@ data class AppSettings(
     val emulatorWindowY: Float = 40f,
     val roomEditorShowItemNames: Boolean = true,
     val roomEditorShowEnemyNames: Boolean = true,
+    val roomEditorShowFlatSlopeSurfaces: Boolean = true,
 )
 
 object AppConfig {
