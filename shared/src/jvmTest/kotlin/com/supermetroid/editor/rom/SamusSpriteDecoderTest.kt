@@ -10,6 +10,26 @@ class SamusSpriteDecoderTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
+    private fun readU16(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+
+    private fun assertPaletteMatchesRomRow(
+        rom: ByteArray,
+        palette: IntArray,
+        rowPcOffset: Int,
+        label: String,
+    ) {
+        assertEquals(0x00000000, palette[0], "$label color 0 should be transparent in rendered sprites")
+        for (i in 1 until 16) {
+            val bgr555 = readU16(rom, rowPcOffset + i * 2)
+            assertEquals(
+                EnemySpriteGraphics.snesColorToArgb(bgr555),
+                palette[i],
+                "$label color $i should match ROM row at 0x${rowPcOffset.toString(16)}",
+            )
+        }
+    }
+
     @Test
     fun `animation count is 253`() {
         val rp = loadTestRom() ?: return
@@ -81,5 +101,31 @@ class SamusSpriteDecoderTest {
         val power = decoder.readPalette(SamusSpriteDecoder.SuitType.POWER)
         val gravity = decoder.readPalette(SamusSpriteDecoder.SuitType.GRAVITY)
         assertTrue(!power.contentEquals(gravity), "Power and Gravity palettes should differ")
+    }
+
+    @Test
+    fun `suit palettes use gameplay base palette rows`() {
+        val rp = loadTestRom() ?: return
+        val rom = rp.getRomData()
+        val decoder = SamusSpriteDecoder(rp)
+
+        assertPaletteMatchesRomRow(
+            rom = rom,
+            palette = decoder.readPalette(SamusSpriteDecoder.SuitType.POWER),
+            rowPcOffset = 0x0D9400,
+            label = "Power suit",
+        )
+        assertPaletteMatchesRomRow(
+            rom = rom,
+            palette = decoder.readPalette(SamusSpriteDecoder.SuitType.VARIA),
+            rowPcOffset = 0x0D9520,
+            label = "Varia suit",
+        )
+        assertPaletteMatchesRomRow(
+            rom = rom,
+            palette = decoder.readPalette(SamusSpriteDecoder.SuitType.GRAVITY),
+            rowPcOffset = 0x0D9800,
+            label = "Gravity suit",
+        )
     }
 }

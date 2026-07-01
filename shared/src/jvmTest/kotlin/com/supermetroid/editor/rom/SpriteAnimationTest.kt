@@ -232,6 +232,22 @@ class SpriteAnimationTest {
     }
 
     @Test
+    fun `render all Samus animation frames as bounded sprite sheet`() {
+        val rp = loadTestRom() ?: return
+        val decoder = SamusSpriteDecoder(rp)
+
+        val frames = decoder.buildAllAnimations(SamusSpriteDecoder.SuitType.POWER, renderSize = 64)
+            .flatMap { it.frames }
+        assertTrue(frames.isNotEmpty(), "Should build Samus frames for export")
+
+        val (pixels, w, h) = renderSpriteSheet(frames, columns = 16)
+        assertTrue(w > 0, "Sprite sheet width should be positive")
+        assertTrue(h > 0, "Sprite sheet height should be positive")
+        assertEquals(w * h, pixels.size)
+        assertTrue(w <= 16 * 66, "16-column 64px export sheet should stay bounded, got width=$w")
+    }
+
+    @Test
     fun `Samus group animations builds all variants`() {
         val rp = loadTestRom() ?: return
         val decoder = SamusSpriteDecoder(rp)

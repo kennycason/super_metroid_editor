@@ -54,10 +54,16 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     private val WEAPON_TILES_OFFSET = 0x30  // tile index
     private val WEAPON_TILES_SIZE = 0x100   // 8 tiles × 32 bytes
 
-    /** Suit palette addresses */
+    /**
+     * Base gameplay suit palette addresses.
+     *
+     * Verified from SM disassembly:
+     *   $91:DEBA Samus_LoadSuitPalette copies $9B:9400 / $9B:9520 / $9B:9800
+     *   depending on equipped suit bits.
+     */
     private val POWER_SUIT_PALETTE = 0x9B9400
-    private val VARIA_SUIT_PALETTE = 0x9B9820
-    private val GRAVITY_SUIT_PALETTE = 0x9B9C40
+    private val VARIA_SUIT_PALETTE = 0x9B9520
+    private val GRAVITY_SUIT_PALETTE = 0x9B9800
 
     // ─── Data classes ────────────────────────────────────────────────
 

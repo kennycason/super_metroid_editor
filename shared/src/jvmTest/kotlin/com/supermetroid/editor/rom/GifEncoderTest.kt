@@ -188,4 +188,40 @@ class GifEncoderTest {
         assertEquals('G'.code.toByte(), gif[0])
         assertEquals(0x3B.toByte(), gif.last())
     }
+
+    @Test
+    fun `encode Samus animation GIF roundtrip has visible sprite pixels`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val decoder = SamusSpriteDecoder(rp)
+        val animation = decoder.buildAnimation(9, SamusSpriteDecoder.SuitType.POWER, renderSize = 64) ?: return
+
+        val gifBytes = GifEncoder.encode(animation.frames.take(4))
+        val tmpFile = File.createTempFile("samus_animation", ".gif")
+        try {
+            tmpFile.writeBytes(gifBytes)
+            val reader = ImageIO.getImageReadersByFormatName("gif").next()
+            reader.input = ImageIO.createImageInputStream(tmpFile)
+
+            assertEquals(4, reader.getNumImages(true), "ImageIO should read the Samus GIF frames")
+
+            val img0 = reader.read(0)
+            var visible = 0
+            var white = 0
+            for (y in 0 until img0.height) {
+                for (x in 0 until img0.width) {
+                    val argb = img0.getRGB(x, y)
+                    if ((argb ushr 24) > 0) {
+                        visible++
+                        if ((argb and 0x00FFFFFF) == 0x00FFFFFF) white++
+                    }
+                }
+            }
+
+            assertTrue(visible > 100, "Decoded Samus GIF frame should contain visible pixels")
+            assertTrue(white < visible / 2, "Decoded Samus GIF frame should not be mostly white")
+            reader.dispose()
+        } finally {
+            tmpFile.delete()
+        }
+    }
 }

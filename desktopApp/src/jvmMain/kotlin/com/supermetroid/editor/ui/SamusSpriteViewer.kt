@@ -38,10 +38,10 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SamusSpriteDecoder
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
-import com.supermetroid.editor.rom.renderMultiAnimationSheet
 import com.supermetroid.editor.rom.renderSpriteSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -114,10 +114,24 @@ fun SamusSpriteViewer(
                 // Export All Samus Sprites button
                 Surface(
                     modifier = Modifier.clickable {
-                        scope.launch(Dispatchers.IO) {
+                        val file = choosePngFile(
+                            dialogTitle = "Save All Samus Sprites as Sprite Sheet",
+                            defaultName = "samus_all_sprites_${selectedSuit.name.lowercase()}.png",
+                        ) ?: return@clickable
+                        scope.launch {
                             exportStatus = "Building all sprites..."
-                            exportAllSamusSprites(decoder, selectedSuit)
-                            exportStatus = ""
+                            val result = runCatching {
+                                withContext(Dispatchers.Default) {
+                                    exportAllSamusSprites(decoder, selectedSuit, file)
+                                }
+                            }
+                            exportStatus = result.fold(
+                                onSuccess = { frameCount ->
+                                    if (frameCount > 0) "Exported $frameCount frames to ${file.name}"
+                                    else "No Samus sprites found to export"
+                                },
+                                onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" },
+                            )
                         }
                     },
                     color = Color(0xFF2A3A2A),
@@ -227,18 +241,57 @@ fun SamusSpriteViewer(
                     currentFrame = animFrame,
                     onFrameChanged = { animFrame = it },
                     onExportPng = { frame, idx ->
-                        scope.launch(Dispatchers.IO) {
-                            exportFramePng(frame, "samus_${currentGroup.name.lowercase()}_${currentAnimId}_frame$idx")
+                        val file = choosePngFile(
+                            dialogTitle = "Save Frame as PNG",
+                            defaultName = "samus_${exportSafeName(currentGroup.name)}_${currentAnimId}_frame$idx.png",
+                        )
+                        if (file != null) {
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) { exportFramePng(frame, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" },
+                                )
+                            }
                         }
                     },
                     onExportGif = { anim ->
-                        scope.launch(Dispatchers.IO) {
-                            exportAnimationGif(anim, "samus_${currentGroup.name.lowercase()}_${currentAnimId}")
+                        val file = chooseGifFile(
+                            dialogTitle = "Save Animation as GIF",
+                            defaultName = "samus_${exportSafeName(currentGroup.name)}_${currentAnimId}.gif",
+                        )
+                        if (file != null) {
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.Default) { exportAnimationGif(anim, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" },
+                                )
+                            }
                         }
                     },
                     onExportSheet = { anim ->
-                        scope.launch(Dispatchers.IO) {
-                            exportAnimationSheet(anim, "samus_${currentGroup.name.lowercase()}_${currentAnimId}_sheet")
+                        val file = choosePngFile(
+                            dialogTitle = "Save Sprite Sheet as PNG",
+                            defaultName = "samus_${exportSafeName(currentGroup.name)}_${currentAnimId}_sheet.png",
+                        )
+                        if (file != null) {
+                            scope.launch {
+                                exportStatus = "Exporting ${file.name}..."
+                                val result = runCatching {
+                                    withContext(Dispatchers.IO) { exportAnimationSheet(anim, file) }
+                                }
+                                exportStatus = result.fold(
+                                    onSuccess = { "Exported ${file.name}" },
+                                    onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" },
+                                )
+                            }
                         }
                     }
                 )
@@ -282,74 +335,74 @@ fun SamusSpriteViewer(
 
 // ─── Export helpers ──────────────────────────────────────────────────
 
-private fun exportFramePng(frame: SpriteAnimationFrame, defaultName: String) {
-    val chooser = JFileChooser().apply {
-        dialogTitle = "Save Frame as PNG"
-        selectedFile = File("$defaultName.png")
-        fileFilter = FileNameExtensionFilter("PNG Images", "png")
-    }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
-        }
-        val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
-        bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+private fun exportSafeName(value: String): String =
+    value.lowercase()
+        .replace(Regex("[^a-z0-9]+"), "_")
+        .trim('_')
+        .ifBlank { "sprite" }
+
+private fun exportFramePng(frame: SpriteAnimationFrame, file: File) {
+    val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+    bi.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+    ImageIO.write(bi, "png", file)
+}
+
+private fun exportAnimationGif(animation: SpriteAnimation, file: File) {
+    val gifBytes = GifEncoder.encode(animation.frames)
+    file.writeBytes(gifBytes)
+}
+
+private fun exportAnimationSheet(animation: SpriteAnimation, file: File) {
+    val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
+    if (w > 0 && h > 0) {
+        val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, w, h, pixels, 0, w)
         ImageIO.write(bi, "png", file)
     }
 }
 
-private fun exportAnimationGif(animation: SpriteAnimation, defaultName: String) {
+private fun choosePngFile(dialogTitle: String, defaultName: String): File? {
     val chooser = JFileChooser().apply {
-        dialogTitle = "Save Animation as GIF"
-        selectedFile = File("$defaultName.gif")
+        this.dialogTitle = dialogTitle
+        selectedFile = File(defaultName)
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+    return chooser.selectedFile.let {
+        if (!it.name.endsWith(".png", ignoreCase = true)) File(it.parentFile, "${it.name}.png") else it
+    }
+}
+
+private fun chooseGifFile(dialogTitle: String, defaultName: String): File? {
+    val chooser = JFileChooser().apply {
+        this.dialogTitle = dialogTitle
+        selectedFile = File(defaultName)
         fileFilter = FileNameExtensionFilter("GIF Images", "gif")
     }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".gif")) File(it.parentFile, "${it.name}.gif") else it
-        }
-        val gifBytes = GifEncoder.encode(animation.frames)
-        file.writeBytes(gifBytes)
+    if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+    return chooser.selectedFile.let {
+        if (!it.name.endsWith(".gif", ignoreCase = true)) File(it.parentFile, "${it.name}.gif") else it
     }
 }
 
-private fun exportAnimationSheet(animation: SpriteAnimation, defaultName: String) {
-    val chooser = JFileChooser().apply {
-        dialogTitle = "Save Sprite Sheet as PNG"
-        selectedFile = File("$defaultName.png")
-        fileFilter = FileNameExtensionFilter("PNG Images", "png")
-    }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
-        }
-        val (pixels, w, h) = renderSpriteSheet(animation.frames, columns = 8)
-        if (w > 0 && h > 0) {
-            val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-            bi.setRGB(0, 0, w, h, pixels, 0, w)
-            ImageIO.write(bi, "png", file)
-        }
-    }
-}
-
-private fun exportAllSamusSprites(decoder: SamusSpriteDecoder, suit: SamusSpriteDecoder.SuitType) {
-    val chooser = JFileChooser().apply {
-        dialogTitle = "Save All Samus Sprites as Sprite Sheet"
-        selectedFile = File("samus_all_sprites_${suit.name.lowercase()}.png")
-        fileFilter = FileNameExtensionFilter("PNG Images", "png")
-    }
-    if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
-        val file = chooser.selectedFile.let {
-            if (!it.name.endsWith(".png")) File(it.parentFile, "${it.name}.png") else it
-        }
-        val allAnimations = decoder.buildAllAnimations(suit, renderSize = 64)
-        if (allAnimations.isNotEmpty()) {
-            val (pixels, w, h) = renderMultiAnimationSheet(allAnimations)
-            if (w > 0 && h > 0) {
-                val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-                bi.setRGB(0, 0, w, h, pixels, 0, w)
-                ImageIO.write(bi, "png", file)
+private fun exportAllSamusSprites(
+    decoder: SamusSpriteDecoder,
+    suit: SamusSpriteDecoder.SuitType,
+    file: File,
+): Int {
+    val allFrames = decoder.buildAllAnimations(suit, renderSize = 64)
+        .flatMap { animation ->
+            animation.frames.mapIndexed { index, frame ->
+                frame.copy(label = "${animation.name} #${index + 1}")
             }
         }
+    if (allFrames.isEmpty()) return 0
+
+    val (pixels, w, h) = renderSpriteSheet(allFrames, columns = 16)
+    if (w > 0 && h > 0) {
+        val bi = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        bi.setRGB(0, 0, w, h, pixels, 0, w)
+        ImageIO.write(bi, "png", file)
     }
+    return allFrames.size
 }
