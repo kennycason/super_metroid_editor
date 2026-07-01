@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -68,6 +69,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -76,6 +78,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
+import java.awt.event.InputEvent
+import java.awt.event.MouseEvent
 import kotlin.math.abs
 
 private val IS_MAC = System.getProperty("os.name", "").lowercase().contains("mac")
@@ -299,12 +304,58 @@ fun SpritePixelEditor(
         }
 
         // ── Canvas + palette panel ──
+        val hScroll = rememberScrollState()
+        val vScroll = rememberScrollState()
+        val panCoroutineScope = rememberCoroutineScope()
+        var isPanning by remember { mutableStateOf(false) }
+        var lastPanX by remember { mutableStateOf(0f) }
+        var lastPanY by remember { mutableStateOf(0f) }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // Pixel canvas
             Box(
                 modifier = Modifier.weight(1f).fillMaxHeight()
-                    .verticalScroll(rememberScrollState())
-                    .horizontalScroll(rememberScrollState())
+                    .onPointerEvent(PointerEventType.Scroll, pass = PointerEventPass.Initial) { e ->
+                        if (isZoomModifierPressed(e.nativeEvent)) {
+                            val scrollDelta = e.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
+                            zoomLevel = zoomAfterScroll(
+                                currentZoom = zoomLevel.toFloat(),
+                                scrollDeltaY = scrollDelta.y,
+                                minZoom = 2f,
+                                maxZoom = 48f
+                            ).toInt().coerceIn(2, 48)
+                        }
+                    }
+                    .onPointerEvent(PointerEventType.Press) { e ->
+                        val ne = e.nativeEvent as? MouseEvent
+                        if (ne != null && ne.button == MouseEvent.BUTTON2) {
+                            isPanning = true
+                            val p = e.changes.first().position
+                            lastPanX = p.x; lastPanY = p.y
+                        }
+                    }
+                    .onPointerEvent(PointerEventType.Move) { e ->
+                        if (isPanning) {
+                            val pos = e.changes.first().position
+                            val ne = e.nativeEvent as? MouseEvent
+                            if (ne != null && (ne.modifiersEx and InputEvent.BUTTON2_DOWN_MASK) == 0) {
+                                isPanning = false
+                            } else {
+                                val dx = lastPanX - pos.x; val dy = lastPanY - pos.y
+                                lastPanX = pos.x; lastPanY = pos.y
+                                panCoroutineScope.launch {
+                                    hScroll.scrollTo((hScroll.value + dx.toInt()).coerceIn(0, hScroll.maxValue))
+                                    vScroll.scrollTo((vScroll.value + dy.toInt()).coerceIn(0, vScroll.maxValue))
+                                }
+                            }
+                        }
+                    }
+                    .onPointerEvent(PointerEventType.Release) { e ->
+                        val ne = e.nativeEvent as? MouseEvent
+                        if (ne == null || ne.button == MouseEvent.BUTTON2) isPanning = false
+                    }
+                    .onPointerEvent(PointerEventType.Exit) { isPanning = false }
+                    .verticalScroll(vScroll)
+                    .horizontalScroll(hScroll)
             ) {
                 val canvasW = imageWidth * zoomLevel
                 val canvasH = imageHeight * zoomLevel
@@ -316,17 +367,6 @@ fun SpritePixelEditor(
                     modifier = Modifier
                         .size((canvasW / density).dp, (canvasH / density).dp)
                         .pointerHoverIcon(PixelEditorCursors.forPixelTool(state.activeTool))
-                        .onPointerEvent(PointerEventType.Scroll) { e ->
-                            if (isZoomModifierPressed(e.nativeEvent)) {
-                                val scrollDelta = e.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
-                                zoomLevel = zoomAfterScroll(
-                                    currentZoom = zoomLevel.toFloat(),
-                                    scrollDeltaY = scrollDelta.y,
-                                    minZoom = 2f,
-                                    maxZoom = 48f
-                                ).toInt().coerceIn(2, 48)
-                            }
-                        }
                         .onPointerEvent(PointerEventType.Move) { e ->
                             val pos = e.changes.first().position
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)

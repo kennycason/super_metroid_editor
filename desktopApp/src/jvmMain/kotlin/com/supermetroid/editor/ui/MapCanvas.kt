@@ -95,6 +95,7 @@ import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import java.awt.event.MouseEvent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1296,9 +1297,25 @@ fun MapCanvas(
                             val editBitmap = remember(compositeForEdit) { compositeForEdit.toComposeImageBitmap() }
                             
                             LaunchedEffect(Unit) { mapFocusReq.requestFocus() }
+                            var canvasViewW by remember { mutableStateOf(0) }
+                            var canvasViewH by remember { mutableStateOf(0) }
+                            val scrollTargetX = editorState?.scrollTargetBlockX ?: -1
+                            val scrollTargetY = editorState?.scrollTargetBlockY ?: -1
+                            LaunchedEffect(scrollTargetX, scrollTargetY) {
+                                if (scrollTargetX >= 0 && scrollTargetY >= 0 && editorState != null) {
+                                    val tilePx = 16f * zoomLevel * density
+                                    val targetPxX = (scrollTargetX * tilePx).toInt()
+                                    val targetPxY = (scrollTargetY * tilePx).toInt()
+                                    hScrollState.scrollTo((targetPxX - canvasViewW / 2).coerceIn(0, hScrollState.maxValue))
+                                    vScrollState.scrollTo((targetPxY - canvasViewH / 2).coerceIn(0, vScrollState.maxValue))
+                                    editorState.scrollTargetBlockX = -1
+                                    editorState.scrollTargetBlockY = -1
+                                }
+                            }
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
+                                    .onSizeChanged { canvasViewW = it.width; canvasViewH = it.height }
                                     .then(
                                         if (editorState != null)
                                             Modifier.pointerHoverIcon(PixelEditorCursors.forEditorTool(editorState.activeTool))
@@ -1428,6 +1445,7 @@ fun MapCanvas(
                                         }
                                     }
                                     .onPointerEvent(PointerEventType.Move) { event ->
+                                        mapFocusReq.requestFocus()
                                         val pos = event.changes.first().position
                                         if (editorState != null) {
                                             val (bx, by) = pointerToBlock(pos.x, pos.y)
@@ -1437,6 +1455,10 @@ fun MapCanvas(
                                             }
                                         }
                                         if (isDragging) {
+                                            val ne = event.nativeEvent as? MouseEvent
+                                            if (ne != null && (ne.modifiersEx and java.awt.event.InputEvent.BUTTON2_DOWN_MASK) == 0) {
+                                                isDragging = false
+                                            }
                                             val dx = lastDragX - pos.x; val dy = lastDragY - pos.y; lastDragX = pos.x; lastDragY = pos.y
                                             coroutineScope.launch {
                                                 hScrollState.scrollTo((hScrollState.value + dx.toInt()).coerceIn(0, hScrollState.maxValue))
@@ -1457,6 +1479,7 @@ fun MapCanvas(
                                         mapFocusReq.requestFocus()
                                     }
                                     .onPointerEvent(PointerEventType.Exit) {
+                                        isDragging = false
                                         if (editorState != null) { editorState.hoverBlockX = -1; editorState.hoverBlockY = -1 }
                                     }
                                     .horizontalScroll(hScrollState)

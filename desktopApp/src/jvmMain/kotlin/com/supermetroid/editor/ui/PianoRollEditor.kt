@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -66,6 +67,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.layout.onSizeChanged
@@ -80,6 +82,8 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence.Song
 import com.supermetroid.editor.rom.NspcSequence.Note
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.launch
+import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -210,6 +214,11 @@ fun PianoRollEditor(
 ) {
     val textMeasurer = rememberTextMeasurer()
     val focusRequester = remember { FocusRequester() }
+    val scrollCoroutineScope = rememberCoroutineScope()
+
+    var isPanning by remember { mutableStateOf(false) }
+    var lastPanX by remember { mutableStateOf(0f) }
+    var lastPanY by remember { mutableStateOf(0f) }
 
     // View state
     var zoomIndex by remember { mutableStateOf(2) } // start at 4x
@@ -653,8 +662,16 @@ fun PianoRollEditor(
                             .onPointerEvent(PointerEventType.Scroll) { event ->
                                 val ne = event.nativeEvent as? MouseEvent
                                 val sd = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
-                                val pan = resolvePanScrollDelta(sd.x, sd.y, ne?.isShiftDown == true)
-                                if (pan.x != 0f) scrollTo(hScrollPx + PianoRollEditLogic.scrollPixels(pan.x))
+                                if (isZoomModifierPressed(ne)) {
+                                    if (sd.y < 0f) {
+                                        zoomIndex = (effectiveZoomIndex + 1).coerceAtMost(ZOOM_LEVELS.lastIndex)
+                                    } else if (sd.y > 0f) {
+                                        zoomIndex = (effectiveZoomIndex - 1).coerceAtLeast(0)
+                                    }
+                                } else {
+                                    val pan = resolvePanScrollDelta(sd.x, sd.y, ne?.isShiftDown == true)
+                                    if (pan.x != 0f) scrollTo(hScrollPx + PianoRollEditLogic.scrollPixels(pan.x))
+                                }
                             }
                     ) {
                         Canvas(
@@ -869,11 +886,52 @@ fun PianoRollEditor(
                                     else -> false
                                 }
                             }
-                            .onPointerEvent(PointerEventType.Scroll) { event ->
+                            .onPointerEvent(PointerEventType.Scroll, pass = PointerEventPass.Initial) { event ->
                                 val ne = event.nativeEvent as? MouseEvent
                                 val sd = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
-                                val pan = resolvePanScrollDelta(sd.x, sd.y, ne?.isShiftDown == true)
-                                if (pan.x != 0f) scrollTo(hScrollPx + PianoRollEditLogic.scrollPixels(pan.x))
+                                if (isZoomModifierPressed(ne)) {
+                                    if (sd.y < 0f) {
+                                        zoomIndex = (effectiveZoomIndex + 1).coerceAtMost(ZOOM_LEVELS.lastIndex)
+                                    } else if (sd.y > 0f) {
+                                        zoomIndex = (effectiveZoomIndex - 1).coerceAtLeast(0)
+                                    }
+                                } else {
+                                    val pan = resolvePanScrollDelta(sd.x, sd.y, ne?.isShiftDown == true)
+                                    if (pan.x != 0f) scrollTo(hScrollPx + PianoRollEditLogic.scrollPixels(pan.x))
+                                }
+                            }
+                            .onPointerEvent(PointerEventType.Press) { event ->
+                                val ne = event.nativeEvent as? MouseEvent
+                                if (ne != null && ne.button == MouseEvent.BUTTON2) {
+                                    isPanning = true
+                                    val p = event.changes.first().position
+                                    lastPanX = p.x; lastPanY = p.y
+                                }
+                            }
+                            .onPointerEvent(PointerEventType.Move) { event ->
+                                if (isPanning) {
+                                    val pos = event.changes.first().position
+                                    val ne = event.nativeEvent as? MouseEvent
+                                    if (ne != null && (ne.modifiersEx and InputEvent.BUTTON2_DOWN_MASK) == 0) {
+                                        isPanning = false
+                                    } else {
+                                        val dx = lastPanX - pos.x; val dy = lastPanY - pos.y
+                                        lastPanX = pos.x; lastPanY = pos.y
+                                        scrollTo(hScrollPx + dx)
+                                        scrollCoroutineScope.launch {
+                                            vScrollState.scrollTo(
+                                                (vScrollState.value + dy.toInt()).coerceIn(0, vScrollState.maxValue)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            .onPointerEvent(PointerEventType.Release) { event ->
+                                val ne = event.nativeEvent as? MouseEvent
+                                if (ne == null || ne.button == MouseEvent.BUTTON2) isPanning = false
+                            }
+                            .onPointerEvent(PointerEventType.Exit) {
+                                isPanning = false
                             }
                             .verticalScroll(vScrollState)
                     ) {

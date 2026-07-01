@@ -152,6 +152,10 @@ fun TilesetPreview(
                                 .onPointerEvent(PointerEventType.Move) { event ->
                                     val pos = event.changes.first().position
                                     if (isPanning) {
+                                        val ne = event.nativeEvent as? MouseEvent
+                                        if (ne != null && (ne.modifiersEx and java.awt.event.InputEvent.BUTTON2_DOWN_MASK) == 0) {
+                                            isPanning = false
+                                        }
                                         val dx = lastPanX - pos.x; val dy = lastPanY - pos.y
                                         lastPanX = pos.x; lastPanY = pos.y
                                         coroutineScope.launch {

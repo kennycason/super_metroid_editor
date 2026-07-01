@@ -209,7 +209,11 @@ fun ItemLocationPanel(
                                     bitmap = itemBitmap,
                                     location = location,
                                     isSelected = selectedRoom?.handle == location.room.handle,
-                                    onClick = { onRoomSelected(location.room) },
+                                    onClick = {
+                                        editorState.scrollTargetBlockX = location.plm.x
+                                        editorState.scrollTargetBlockY = location.plm.y
+                                        onRoomSelected(location.room)
+                                    },
                                 )
                             }
                         }
@@ -227,7 +231,19 @@ fun ItemLocationPanel(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             for (item in customItems) {
-                                CustomItemTile(bitmap = itemBitmap, item = item)
+                                val location = itemLocations.firstOrNull { it.itemName == item.name }
+                                CustomItemTile(
+                                    bitmap = itemBitmap,
+                                    item = item,
+                                    isSelected = location != null && selectedRoom?.handle == location.room.handle,
+                                    onClick = location?.let { loc ->
+                                        {
+                                            editorState.scrollTargetBlockX = loc.plm.x
+                                            editorState.scrollTargetBlockY = loc.plm.y
+                                            onRoomSelected(loc.room)
+                                        }
+                                    },
+                                )
                             }
                         }
                     }
@@ -238,6 +254,7 @@ fun ItemLocationPanel(
                     locations = energyTanks,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                 )
                 itemRows(
@@ -245,6 +262,7 @@ fun ItemLocationPanel(
                     locations = reserveTanks,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                 )
                 itemRows(
@@ -252,6 +270,7 @@ fun ItemLocationPanel(
                     locations = missiles,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                 )
                 itemRows(
@@ -259,6 +278,7 @@ fun ItemLocationPanel(
                     locations = superMissiles,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                 )
                 itemRows(
@@ -266,6 +286,7 @@ fun ItemLocationPanel(
                     locations = powerBombs,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                 )
                 itemRows(
@@ -273,6 +294,7 @@ fun ItemLocationPanel(
                     locations = otherItems,
                     selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
+                    editorState = editorState,
                     onRoomSelected = onRoomSelected,
                     skipWhenEmpty = true,
                 )
@@ -376,6 +398,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
     locations: List<ItemLocation>,
     selectedRoom: RoomInfo?,
     bitmap: ImageBitmap?,
+    editorState: EditorState,
     onRoomSelected: (RoomInfo) -> Unit,
     skipWhenEmpty: Boolean = false,
 ) {
@@ -402,7 +425,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
             location = location,
             index = index + 1,
             isSelected = selectedRoom?.handle == location.room.handle,
-            onClick = { onRoomSelected(location.room) },
+            onClick = {
+                editorState.scrollTargetBlockX = location.plm.x
+                editorState.scrollTargetBlockY = location.plm.y
+                onRoomSelected(location.room)
+            },
         )
     }
 }
@@ -411,10 +438,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
 private fun CustomItemTile(
     bitmap: ImageBitmap?,
     item: CustomItemDef,
+    isSelected: Boolean = false,
+    onClick: (() -> Unit)? = null,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(6.dp),
     ) {
         Row(

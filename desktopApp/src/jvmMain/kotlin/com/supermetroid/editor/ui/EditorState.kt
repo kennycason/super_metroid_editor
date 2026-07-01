@@ -408,6 +408,10 @@ class EditorState {
     var hoverBlockX by mutableStateOf(-1)
     var hoverBlockY by mutableStateOf(-1)
 
+    /** Target block coordinates to scroll to (set by item click, consumed by MapCanvas). */
+    var scrollTargetBlockX by mutableStateOf(-1)
+    var scrollTargetBlockY by mutableStateOf(-1)
+
     /** Tile info at hover position (metatile index, block type). */
     var hoverTileWord by mutableStateOf(0)
         private set
