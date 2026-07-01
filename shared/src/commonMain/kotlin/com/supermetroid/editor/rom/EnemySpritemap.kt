@@ -65,6 +65,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         val extendedTilemapsBehindOam: Boolean = false,
         val oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
         val oamTileNumberBase: Int = 0,
+        val oamPaletteRows: Map<Int, IntArray> = emptyMap(),
         val extendedOamOriginX: Int = 0,
         val extendedOamOriginY: Int = 0,
         val preserveExtendedChildDrawOrder: Boolean = false,
@@ -142,7 +143,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val tileNum: Int,
         val hFlip: Boolean,
         val vFlip: Boolean,
-        val is16x16: Boolean
+        val is16x16: Boolean,
+        val paletteRow: Int = 0
     )
 
     private data class TileDrawLayer(
@@ -398,7 +400,8 @@ class EnemySpritemap(private val romParser: RomParser) {
     fun renderSpritemap(
         spritemap: Spritemap,
         tileData: ByteArray,
-        palette: IntArray
+        palette: IntArray,
+        oamPaletteRows: Map<Int, IntArray> = emptyMap()
     ): AssembledSprite? {
         if (spritemap.entries.isEmpty()) return null
 
@@ -423,11 +426,12 @@ class EnemySpritemap(private val romParser: RomParser) {
 
         for (entry in spritemap.entries) {
             val localTile = entry.tileNum and 0xFF
+            val entryPalette = oamPaletteRows[entry.palRow] ?: palette
 
             if (entry.is16x16) {
-                render16x16Tile(pixels, w, h, minX, minY, entry, localTile, tileData, palette)
+                render16x16Tile(pixels, w, h, minX, minY, entry, localTile, tileData, entryPalette)
             } else {
-                render8x8Tile(pixels, w, h, minX, minY, entry, localTile, tileData, palette)
+                render8x8Tile(pixels, w, h, minX, minY, entry, localTile, tileData, entryPalette)
             }
         }
 
@@ -442,7 +446,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         return when (frame) {
-            is RenderableFrame.Oam -> renderSpritemap(frame.spritemap, tileData, palette)
+            is RenderableFrame.Oam -> renderSpritemap(frame.spritemap, tileData, palette, options.oamPaletteRows)
             is RenderableFrame.Extended -> renderExtendedSpritemap(
                 frame.spritemap,
                 tileData,
@@ -515,7 +519,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         fun renderLayer(layer: TileDrawLayer) {
             val data = if (layer.usesExtendedTilemapData) tilemapData else tileData
             for (cmd in layer.commands) {
-                renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette)
+                renderTileCommand(pixels, w, h, minX, minY, cmd, data, palette, options.oamPaletteRows)
             }
         }
 
@@ -578,7 +582,8 @@ class EnemySpritemap(private val romParser: RomParser) {
                 tileNum = oamTileNumber(entry, options),
                 hFlip = entry.hFlip,
                 vFlip = entry.vFlip,
-                is16x16 = entry.is16x16
+                is16x16 = entry.is16x16,
+                paletteRow = entry.palRow
             )
         }
     }
@@ -632,7 +637,8 @@ class EnemySpritemap(private val romParser: RomParser) {
                     tileNum = extendedTilemapTileNumber(tileWord, options),
                     hFlip = (tileWord shr 14) and 1 != 0,
                     vFlip = (tileWord shr 15) and 1 != 0,
-                    is16x16 = false
+                    is16x16 = false,
+                    paletteRow = 0
                 )
             }
         }
@@ -662,8 +668,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         originY: Int,
         cmd: TileDrawCommand,
         tileData: ByteArray,
-        palette: IntArray
+        palette: IntArray,
+        paletteRows: Map<Int, IntArray>
     ) {
+        val commandPalette = paletteRows[cmd.paletteRow] ?: palette
         if (cmd.is16x16) {
             val subTiles = intArrayOf(
                 cmd.tileNum, cmd.tileNum + 1,
@@ -687,11 +695,11 @@ class EnemySpritemap(private val romParser: RomParser) {
                         is16x16 = false
                     ),
                     tileData,
-                    palette
+                    commandPalette
                 )
             }
         } else {
-            render8x8TileCommand(pixels, w, h, originX, originY, cmd, tileData, palette)
+            render8x8TileCommand(pixels, w, h, originX, originY, cmd, tileData, commandPalette)
         }
     }
 

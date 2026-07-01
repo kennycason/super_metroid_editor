@@ -36,6 +36,15 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val MOTHER_BRAIN_HEAD_TILES_SIZE = 0x1000
         private const val MOTHER_BRAIN_LEGS_TILES_SIZE = 0x1000
         private const val CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES = 0x200
+        private const val TORIZO_SPECIES_ID = 0xEEFF
+        private const val TORIZO_ORBS_SPECIES_ID = 0xEF3F
+        private const val GOLD_TORIZO_SPECIES_ID = 0xEF7F
+        private const val GOLD_TORIZO_ORBS_SPECIES_ID = 0xEFBF
+        private const val TORIZO_ORB_PALETTE_SNES = 0xAA8687
+        private const val TORIZO_NORMAL_PALETTE_SNES = 0xAA8707
+        private const val TORIZO_NORMAL_PALETTE_2_SNES = 0xAA8727
+        private const val GOLD_TORIZO_PALETTE_SNES = 0xAA8787
+        private const val GOLD_TORIZO_PALETTE_2_SNES = 0xAA87A7
         private val DRAYGON_SPECIES_IDS = setOf(0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF)
         private val CROCOMIRE_SKELETON_VRAM_WORD_OFFSETS = intArrayOf(
             0x1600, 0x1700, 0x1800, 0x1900, 0x1E00, 0x1F00
@@ -198,6 +207,10 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
          *   memcpy(&target_palettes[...], RomPtrWithBank(ED->bank, ED->palette_ptr), 32);
          */
         fun readEnemyPalette(romParser: RomParser, speciesId: Int): IntArray? {
+            torizoDisplayPaletteAddress(speciesId)?.let { snesAddress ->
+                readPaletteAt(romParser, snesAddress)?.let { return it }
+            }
+
             val rom = romParser.getRomData()
             val headerPc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
             if (headerPc < 0 || headerPc + 0x0D > rom.size) return null
@@ -216,6 +229,57 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             }
             return pal
         }
+
+        private fun torizoDisplayPaletteAddress(speciesId: Int): Int? =
+            when (speciesId) {
+                TORIZO_SPECIES_ID -> TORIZO_NORMAL_PALETTE_SNES
+                GOLD_TORIZO_SPECIES_ID -> GOLD_TORIZO_PALETTE_SNES
+                TORIZO_ORBS_SPECIES_ID,
+                GOLD_TORIZO_ORBS_SPECIES_ID -> TORIZO_ORB_PALETTE_SNES
+                else -> null
+            }
+
+        private fun readPaletteAt(romParser: RomParser, snesAddress: Int): IntArray? {
+            val rom = romParser.getRomData()
+            val palPc = romParser.snesToPc(snesAddress)
+            if (palPc < 0 || palPc + 32 > rom.size) return null
+
+            val pal = IntArray(RomConstants.COLORS_PER_PALETTE)
+            pal[0] = 0x00000000
+            for (i in 1 until RomConstants.COLORS_PER_PALETTE) {
+                val bgr = readU16(rom, palPc + i * 2)
+                pal[i] = snesColorToArgb(bgr)
+            }
+            return pal
+        }
+
+        fun readEnemyPaletteRows(romParser: RomParser, speciesId: Int): Map<Int, IntArray> =
+            when (speciesId) {
+                TORIZO_SPECIES_ID -> buildPaletteRows(
+                    romParser,
+                    1 to TORIZO_NORMAL_PALETTE_SNES,
+                    2 to TORIZO_NORMAL_PALETTE_2_SNES
+                )
+                GOLD_TORIZO_SPECIES_ID -> buildPaletteRows(
+                    romParser,
+                    1 to GOLD_TORIZO_PALETTE_SNES,
+                    2 to GOLD_TORIZO_PALETTE_2_SNES
+                )
+                TORIZO_ORBS_SPECIES_ID,
+                GOLD_TORIZO_ORBS_SPECIES_ID -> buildPaletteRows(
+                    romParser,
+                    3 to TORIZO_ORB_PALETTE_SNES
+                )
+                else -> emptyMap()
+            }
+
+        private fun buildPaletteRows(
+            romParser: RomParser,
+            vararg rows: Pair<Int, Int>
+        ): Map<Int, IntArray> =
+            rows.mapNotNull { (row, snesAddress) ->
+                readPaletteAt(romParser, snesAddress)?.let { row to it }
+            }.toMap()
 
         /**
          * Read species header stats.

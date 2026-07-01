@@ -120,6 +120,8 @@ fun EnemySpriteViewer(
         EnemySpriteGraphics.readGraphicsBlock(rp, entry.speciesId)
     }
     val isMotherBrainBody = entry.speciesId == 0xEC7F
+    val usesSpecialAssembledPreview = BossPoseScanner.usesSpecialAssembledPreview(entry.speciesId)
+    val usesStaticAssembledPreviewOnly = BossPoseScanner.usesStaticAssembledPreviewOnly(entry.speciesId)
 
     val tileData = remember(entry.speciesId, refreshKey) {
         editorState.loadEnemyTileData(rp, entry.speciesId)
@@ -128,6 +130,13 @@ fun EnemySpriteViewer(
     val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
         val pal = palette ?: return@remember null
         val td = tileData ?: return@remember null
+        if (usesSpecialAssembledPreview) {
+            val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
+            val scanner = BossPoseScanner(rp)
+            val pose = scanner.scanPoses(entry.speciesId, minEntries = 3).firstOrNull() ?: return@remember null
+            return@remember scanner.renderPose(pose, renderTileData, pal)
+        }
+
         val smap = EnemySpritemap(rp)
         val defaultSmap = smap.findDefaultSpritemap(entry.speciesId) ?: return@remember null
         val result = smap.renderSpritemap(defaultSmap, td, pal) ?: return@remember null
@@ -306,7 +315,9 @@ fun EnemySpriteViewer(
         val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
             val pal = palette ?: return@remember null
             val td = tileData ?: return@remember null
-            if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
+            if (usesStaticAssembledPreviewOnly) {
+                null
+            } else if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
                 val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
                 val scanner = BossPoseScanner(rp)
                 val frames = scanner.scanPoses(entry.speciesId, minEntries = 3).mapNotNull { pose ->
@@ -400,8 +411,9 @@ fun EnemySpriteViewer(
 
         // Boss body poses (scan AI bank for large OAM spritemaps)
         // Show for species with known instruction lists OR enough tiles to be a boss
-        val isBoss = BossPoseScanner.hasKnownPoses(entry.speciesId) ||
-            (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true)
+        val isBoss = !usesStaticAssembledPreviewOnly &&
+            (BossPoseScanner.hasKnownPoses(entry.speciesId) ||
+                (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true))
         if (isBoss) {
             val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
                 val pal = palette ?: return@remember emptyList()

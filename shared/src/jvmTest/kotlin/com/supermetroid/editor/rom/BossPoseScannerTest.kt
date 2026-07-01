@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -166,19 +167,78 @@ class BossPoseScannerTest {
     fun `Torizo has compact body poses`() {
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
-        val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xEEFF) ?: return
-        val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xEEFF) ?: return
+        for (speciesId in listOf(0xEEFF, 0xEF7F)) {
+            val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: return
+            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return
 
-        val poses = scanner.scanPoses(0xEEFF, minEntries = 8)
-        assertTrue(poses.isNotEmpty(), "Torizo should have poses")
+            val poses = scanner.scanPoses(speciesId, minEntries = 8)
+            assertTrue(poses.isNotEmpty(), "Torizo species ${speciesId.toString(16)} should have poses")
+            assertTrue(poses.first().frame is EnemySpritemap.RenderableFrame.Extended,
+                "Torizo body poses should come from bank-AA extended spritemaps, not generic child OAM")
+            assertEquals(0xAAA4F0, poses.first().frame.snesAddress,
+                "First Torizo body pose should be the facing-screen extended spritemap")
+            assertTrue(poses.first().renderOptions.oamPaletteRows.keys.containsAll(listOf(1, 2)),
+                "Torizo body poses should render with both runtime sprite palette rows")
 
-        // Find compact poses (body within 100x100)
-        val compactPoses = poses.filter { pose ->
-            val rendered = scanner.renderPose(pose, tileData, palette)
-            rendered != null && rendered.width <= 100 && rendered.height <= 100
+            val firstRendered = scanner.renderPose(poses.first(), tileData, palette)
+            assertNotNull(firstRendered, "First Torizo body pose should render")
+            assertTrue(firstRendered!!.width <= 120 && firstRendered.height <= 120,
+                "First Torizo pose should be compact (${firstRendered.width}x${firstRendered.height})")
+
+            val compactPoses = poses.filter { pose ->
+                val rendered = scanner.renderPose(pose, tileData, palette)
+                rendered != null && rendered.width <= 120 && rendered.height <= 120
+            }
+            assertTrue(compactPoses.size >= 3,
+                "Torizo should have at least 3 compact body poses (found ${compactPoses.size})")
         }
-        assertTrue(compactPoses.size >= 3,
-            "Torizo should have at least 3 compact body poses (found ${compactPoses.size})")
+    }
+
+    @Test
+    fun `Torizo orb variants render projectile spritemaps`() {
+        val rp = loadTestRom() ?: return
+        val scanner = BossPoseScanner(rp)
+
+        for (speciesId in listOf(0xEF3F, 0xEFBF)) {
+            val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: return
+            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return
+            val poses = scanner.scanPoses(speciesId, minEntries = 3)
+
+            assertTrue(poses.isNotEmpty(), "Torizo orb species ${speciesId.toString(16)} should have projectile poses")
+            assertTrue(poses.first().entryCount <= 2,
+                "First orb pose should be a compact projectile, not Torizo body OAM")
+
+            val rendered = scanner.renderPose(poses.first(), tileData, palette)
+            assertNotNull(rendered, "First orb pose should render")
+            assertTrue(rendered!!.width <= 24 && rendered.height <= 24,
+                "First orb pose should be orb-sized (${rendered.width}x${rendered.height})")
+            assertTrue(rendered.pixels.count { (it ushr 24) > 0 } > 0,
+                "Orb pose should have visible pixels")
+        }
+    }
+
+    @Test
+    fun `Torizo variants use display-specific palettes`() {
+        val rp = loadTestRom() ?: return
+
+        val body = EnemySpriteGraphics.readEnemyPalette(rp, 0xEEFF) ?: return
+        val orbs = EnemySpriteGraphics.readEnemyPalette(rp, 0xEF3F) ?: return
+        val goldBody = EnemySpriteGraphics.readEnemyPalette(rp, 0xEF7F) ?: return
+
+        assertFalse(body.contentEquals(orbs),
+            "Bomb Torizo body should not use the orb projectile palette")
+        assertFalse(goldBody.contentEquals(body),
+            "Gold Torizo should use the gold runtime palette")
+        assertFalse(goldBody.contentEquals(orbs),
+            "Gold Torizo body should not use the orb projectile palette")
+    }
+
+    @Test
+    fun `Torizo corpse uses static assembled preview only`() {
+        assertFalse(BossPoseScanner.hasKnownPoses(0xED3F),
+            "Torizo corpse should not be sent through live Torizo pose scanning")
+        assertTrue(BossPoseScanner.usesStaticAssembledPreviewOnly(0xED3F),
+            "Torizo corpse should keep the good static default spritemap preview")
     }
 
     @Test

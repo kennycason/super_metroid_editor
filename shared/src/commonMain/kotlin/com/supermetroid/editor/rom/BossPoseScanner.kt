@@ -50,7 +50,15 @@ class BossPoseScanner(private val romParser: RomParser) {
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
         fun hasKnownPoses(speciesId: Int): Boolean =
-            speciesId == SPECIES_DRAYGON_BODY || KNOWN_INSTR_LISTS.containsKey(speciesId)
+            speciesId == SPECIES_DRAYGON_BODY ||
+                speciesId in TORIZO_POSE_SPECIES_IDS ||
+                KNOWN_INSTR_LISTS.containsKey(speciesId)
+
+        fun usesSpecialAssembledPreview(speciesId: Int): Boolean =
+            speciesId in TORIZO_POSE_SPECIES_IDS
+
+        fun usesStaticAssembledPreviewOnly(speciesId: Int): Boolean =
+            speciesId == SPECIES_TORIZO_CORPSE
 
         /**
          * Known instruction list addresses from the SM decompilation.
@@ -71,7 +79,15 @@ class BossPoseScanner(private val romParser: RomParser) {
         private const val SPECIES_DRAYGON_TAIL = 0xDEBF
         private const val SPECIES_DRAYGON_ARMS = 0xDEFF
         private const val SPECIES_BOTWOON = 0xF293
+        private const val SPECIES_TORIZO_CORPSE = 0xED3F
+        private const val SPECIES_TORIZO = 0xEEFF
+        private const val SPECIES_TORIZO_ORBS = 0xEF3F
+        private const val SPECIES_GOLD_TORIZO = 0xEF7F
+        private const val SPECIES_GOLD_TORIZO_ORBS = 0xEFBF
         private const val BOTWOON_BODY_SEGMENT_COUNT = 13
+        private val TORIZO_BODY_SPECIES_IDS = setOf(SPECIES_TORIZO, SPECIES_GOLD_TORIZO)
+        private val TORIZO_ORB_SPECIES_IDS = setOf(SPECIES_TORIZO_ORBS, SPECIES_GOLD_TORIZO_ORBS)
+        private val TORIZO_POSE_SPECIES_IDS = TORIZO_BODY_SPECIES_IDS + TORIZO_ORB_SPECIES_IDS
         private val DRAYGON_SPECIES_IDS = setOf(
             SPECIES_DRAYGON_BODY,
             SPECIES_DRAYGON_EYE,
@@ -85,6 +101,108 @@ class BossPoseScanner(private val romParser: RomParser) {
         private const val INSTRUCTION_COMMON_GOTO_Y = 0x80ED
         private const val INSTRUCTION_COMMON_SLEEP = 0x812F
         private val CROCOMIRE_SKELETON_INSTR_LISTS = setOf(0xE14A, 0xE158, 0xE1C6, 0xE1CC, 0xE1D2)
+
+        private data class ProjectilePoseSpec(
+            val snesAddress: Int,
+            val label: String,
+            val durationTicks: Int
+        )
+
+        private data class TorizoBodyPoseSpec(
+            val snesAddress: Int,
+            val label: String,
+            val durationTicks: Int = 4
+        )
+
+        private val TORIZO_BODY_POSES = listOf(
+            TorizoBodyPoseSpec(0xAAA4F0, "Facing Screen / Turning / Dodging", 0x18),
+            TorizoBodyPoseSpec(0xAAA4FA, "Walk Left Right Leg 1", 6),
+            TorizoBodyPoseSpec(0xAAA51C, "Walk Left Right Leg 2", 6),
+            TorizoBodyPoseSpec(0xAAA53E, "Walk Left Right Leg 3", 6),
+            TorizoBodyPoseSpec(0xAAA560, "Walk Left Right Leg 4", 6),
+            TorizoBodyPoseSpec(0xAAA582, "Walk Left Right Leg 5", 6),
+            TorizoBodyPoseSpec(0xAAA5A4, "Walk Left Left Leg 1", 6),
+            TorizoBodyPoseSpec(0xAAA5C6, "Walk Left Left Leg 2", 6),
+            TorizoBodyPoseSpec(0xAAA5E8, "Walk Left Left Leg 3", 6),
+            TorizoBodyPoseSpec(0xAAA60A, "Walk Left Left Leg 4", 6),
+            TorizoBodyPoseSpec(0xAAA62C, "Walk Left Left Leg 5", 6),
+            TorizoBodyPoseSpec(0xAAA64E, "Attack Left Right Foot", 6),
+            TorizoBodyPoseSpec(0xAAA6EA, "Attack Left Left Foot", 6),
+            TorizoBodyPoseSpec(0xAAA786, "Non-Orb Attack Left 1", 3),
+            TorizoBodyPoseSpec(0xAAA7A0, "Non-Orb Attack Left 2", 3),
+            TorizoBodyPoseSpec(0xAAA7C2, "Non-Orb Attack Left 3", 3),
+            TorizoBodyPoseSpec(0xAAA7E4, "Non-Orb Attack Left 4", 3),
+            TorizoBodyPoseSpec(0xAAA806, "Non-Orb Attack Left 5", 3),
+            TorizoBodyPoseSpec(0xAAA828, "Non-Orb Attack Left 6", 3),
+            TorizoBodyPoseSpec(0xAAAA12, "Stand / Sit Left 1", 8),
+            TorizoBodyPoseSpec(0xAAAA1C, "Stand / Sit Left 2", 8),
+            TorizoBodyPoseSpec(0xAAAA26, "Stand / Sit Left 3", 8),
+            TorizoBodyPoseSpec(0xAAAA30, "Stand / Sit Left 4", 8),
+            TorizoBodyPoseSpec(0xAAAA3A, "Stand / Sit Left 5", 8),
+            TorizoBodyPoseSpec(0xAAAA4C, "Stand / Sit Left 6", 8),
+            TorizoBodyPoseSpec(0xAAAA5E, "Stand / Sit Left 7", 8),
+            TorizoBodyPoseSpec(0xAAAA98, "Walk Right Left Leg 1", 6),
+            TorizoBodyPoseSpec(0xAAAABA, "Walk Right Left Leg 2", 6),
+            TorizoBodyPoseSpec(0xAAAADC, "Walk Right Left Leg 3", 6),
+            TorizoBodyPoseSpec(0xAAAAFE, "Walk Right Left Leg 4", 6),
+            TorizoBodyPoseSpec(0xAAAB20, "Walk Right Left Leg 5", 6),
+            TorizoBodyPoseSpec(0xAAAB42, "Walk Right Right Leg 1", 6),
+            TorizoBodyPoseSpec(0xAAAB64, "Walk Right Right Leg 2", 6),
+            TorizoBodyPoseSpec(0xAAAB86, "Walk Right Right Leg 3", 6),
+            TorizoBodyPoseSpec(0xAAABA8, "Walk Right Right Leg 4", 6),
+            TorizoBodyPoseSpec(0xAAABCA, "Walk Right Right Leg 5", 6),
+            TorizoBodyPoseSpec(0xAAABEC, "Attack Right Left Foot", 6),
+            TorizoBodyPoseSpec(0xAAAC88, "Attack Right Right Foot", 6),
+            TorizoBodyPoseSpec(0xAAAD24, "Non-Orb Attack Right Left Foot 1", 3),
+            TorizoBodyPoseSpec(0xAAAD3E, "Non-Orb Attack Right Left Foot 2", 3),
+            TorizoBodyPoseSpec(0xAAAD60, "Non-Orb Attack Right Left Foot 3", 3),
+            TorizoBodyPoseSpec(0xAAAD82, "Non-Orb Attack Right Left Foot 4", 3),
+            TorizoBodyPoseSpec(0xAAADA4, "Non-Orb Attack Right Left Foot 5", 3),
+            TorizoBodyPoseSpec(0xAAADC6, "Non-Orb Attack Right Left Foot 6", 3),
+            TorizoBodyPoseSpec(0xAAADE8, "Non-Orb Attack Right Left Foot 7", 3),
+            TorizoBodyPoseSpec(0xAAAE0A, "Non-Orb Attack Right Left Foot 8", 3),
+            TorizoBodyPoseSpec(0xAAAE2C, "Non-Orb Attack Right Left Foot 9", 3),
+            TorizoBodyPoseSpec(0xAAAE4E, "Non-Orb Attack Right Left Foot 10", 3),
+            TorizoBodyPoseSpec(0xAAAE70, "Non-Orb Attack Right Right Foot 1", 3),
+            TorizoBodyPoseSpec(0xAAAE8A, "Non-Orb Attack Right Right Foot 2", 3),
+            TorizoBodyPoseSpec(0xAAAEA4, "Non-Orb Attack Right Right Foot 3", 3),
+            TorizoBodyPoseSpec(0xAAAEBE, "Non-Orb Attack Right Right Foot 4", 3),
+            TorizoBodyPoseSpec(0xAAAED8, "Non-Orb Attack Right Right Foot 5", 3),
+            TorizoBodyPoseSpec(0xAAAEF2, "Non-Orb Attack Right Right Foot 6", 3),
+            TorizoBodyPoseSpec(0xAAAF14, "Non-Orb Attack Right Right Foot 7", 3),
+            TorizoBodyPoseSpec(0xAAAF36, "Non-Orb Attack Right Right Foot 8", 3),
+            TorizoBodyPoseSpec(0xAAAF58, "Non-Orb Attack Right Right Foot 9", 3),
+            TorizoBodyPoseSpec(0xAAAF7A, "Non-Orb Attack Right Right Foot 10", 3),
+            TorizoBodyPoseSpec(0xAAAF9C, "Stand / Sit Right 1", 8),
+            TorizoBodyPoseSpec(0xAAAFA6, "Stand / Sit Right 2", 8),
+            TorizoBodyPoseSpec(0xAAAFB0, "Stand / Sit Right 3", 8),
+            TorizoBodyPoseSpec(0xAAAFBA, "Stand / Sit Right 4", 8),
+            TorizoBodyPoseSpec(0xAAAFC4, "Stand / Sit Right 5", 8),
+            TorizoBodyPoseSpec(0xAAAFD6, "Stand / Sit Right 6", 8),
+            TorizoBodyPoseSpec(0xAAAFE8, "Stand / Sit Right 7", 8),
+            TorizoBodyPoseSpec(0xAAAFFA, "Jump / Fall Left 1", 4),
+            TorizoBodyPoseSpec(0xAAB014, "Jump / Fall Left 2", 4),
+            TorizoBodyPoseSpec(0xAAB02E, "Jump / Fall Left 3", 4),
+            TorizoBodyPoseSpec(0xAAB048, "Jump / Fall Right 1", 4),
+            TorizoBodyPoseSpec(0xAAB062, "Jump / Fall Right 2", 4),
+            TorizoBodyPoseSpec(0xAAB07C, "Jump / Fall Right 3", 4)
+        )
+
+        private val TORIZO_ORB_PROJECTILE_POSES = listOf(
+            ProjectilePoseSpec(0x8D8C70, "Orb Left", 0x55),
+            ProjectilePoseSpec(0x8D8C77, "Orb Right", 0x55)
+        )
+
+        private val GOLD_TORIZO_ORB_PROJECTILE_POSES = listOf(
+            ProjectilePoseSpec(0x8D8C70, "Orb Left", 0x55),
+            ProjectilePoseSpec(0x8D8C77, "Orb Right", 0x55),
+            ProjectilePoseSpec(0x8D8C7E, "Eye Beam 1", 4),
+            ProjectilePoseSpec(0x8D8C85, "Eye Beam 2", 5),
+            ProjectilePoseSpec(0x8D8C91, "Eye Beam 3", 6),
+            ProjectilePoseSpec(0x8D8CA7, "Eye Beam 4", 7),
+            ProjectilePoseSpec(0x8D8CB8, "Eye Beam 5", 8),
+            ProjectilePoseSpec(0x8D8CC9, "Eye Beam 6", 9)
+        )
 
         private val CROCOMIRE_BG2_Y_ADJUST_FRAMES = setOf(
             0xBFC4, 0xBFF6, 0xC028, 0xC05A,
@@ -348,6 +466,12 @@ class BossPoseScanner(private val romParser: RomParser) {
         }
         if (speciesId == SPECIES_BOTWOON) {
             return scanBotwoonCompositePoses(minEntries)
+        }
+        if (speciesId in TORIZO_ORB_SPECIES_IDS) {
+            return scanTorizoOrbProjectilePoses(speciesId)
+        }
+        if (speciesId in TORIZO_BODY_SPECIES_IDS) {
+            return scanTorizoBodyPoses(speciesId, minEntries)
         }
 
         // Strategy 1: Use known instruction lists from decompilation
@@ -676,6 +800,53 @@ class BossPoseScanner(private val romParser: RomParser) {
             usesDraygonBgTileData = true,
             compositeParts = parts
         )
+    }
+
+    private fun scanTorizoOrbProjectilePoses(speciesId: Int): List<BossPose> {
+        val specs = if (speciesId == SPECIES_GOLD_TORIZO_ORBS) {
+            GOLD_TORIZO_ORB_PROJECTILE_POSES
+        } else {
+            TORIZO_ORB_PROJECTILE_POSES
+        }
+        val renderOptions = EnemySpritemap.RenderOptions(
+            oamPaletteRows = EnemySpriteGraphics.readEnemyPaletteRows(romParser, speciesId)
+        )
+
+        return specs.mapNotNull { spec ->
+            val spritemap = smap.parseSpritemap(spec.snesAddress) ?: return@mapNotNull null
+            BossPose(
+                name = spec.label,
+                spritemap = spritemap,
+                entryCount = spritemap.entries.size,
+                frame = EnemySpritemap.RenderableFrame.Oam(spritemap),
+                renderOptions = renderOptions,
+                durationTicks = spec.durationTicks
+            )
+        }
+    }
+
+    private fun scanTorizoBodyPoses(speciesId: Int, minEntries: Int): List<BossPose> {
+        val renderOptions = EnemySpritemap.RenderOptions(
+            oamPaletteRows = EnemySpriteGraphics.readEnemyPaletteRows(romParser, speciesId)
+        )
+
+        return TORIZO_BODY_POSES.mapNotNull { spec ->
+            val frame = smap.parseRenderableFrame(spec.snesAddress) ?: return@mapNotNull null
+            val spritemap = smap.flattenRenderableFrame(frame)
+            val entryCount = renderableEntryCount(frame, spritemap)
+            if (entryCount < minEntries) return@mapNotNull null
+
+            BossPose(
+                name = spec.label,
+                spritemap = spritemap,
+                entryCount = entryCount,
+                frame = frame,
+                childCount = renderableChildCount(frame),
+                tilemapCount = renderableTilemapCount(frame),
+                renderOptions = renderOptions,
+                durationTicks = spec.durationTicks
+            )
+        }.distinctBy { it.frame.snesAddress }
     }
 
     /**
