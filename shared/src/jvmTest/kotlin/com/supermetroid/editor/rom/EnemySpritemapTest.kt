@@ -114,6 +114,46 @@ class EnemySpritemapTest {
     }
 
     @Test
+    fun `Space Pirate animations render extended spritemaps as full frames`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+
+        val pirates = mapOf(
+            0xF353 to 5, // Wall pirate climbing loop
+            0xF593 to 3, // Ninja pirate idle loop
+            0xF653 to 8  // Walking pirate stride loop
+        )
+
+        for ((speciesId, minFrames) in pirates) {
+            val frames = smap.findAnimationFrames(speciesId)
+            assertTrue(
+                frames.size >= minFrames,
+                "Pirate ${speciesId.toString(16)} should have at least $minFrames frames (has ${frames.size})"
+            )
+            assertTrue(
+                frames.first().renderableFrame is EnemySpritemap.RenderableFrame.Extended,
+                "Pirate ${speciesId.toString(16)} first frame should be an extended spritemap"
+            )
+            assertTrue(
+                frames.first().spritemap.entries.size >= 6,
+                "Pirate ${speciesId.toString(16)} first frame should flatten to a full body"
+            )
+
+            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return
+            val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: return
+            val animation = smap.buildAnimation(speciesId, tileData, palette, "Space Pirate")
+            assertNotNull(animation, "Pirate ${speciesId.toString(16)} should build an animation")
+            val rendered = animation!!.frames.first()
+            assertTrue(rendered.width >= 16, "Pirate ${speciesId.toString(16)} frame width should be full-sized")
+            assertTrue(rendered.height >= 24, "Pirate ${speciesId.toString(16)} frame height should be full-sized")
+            assertTrue(
+                rendered.pixels.count { (it ushr 24) > 0 } > 100,
+                "Pirate ${speciesId.toString(16)} frame should have substantial visible pixels"
+            )
+        }
+    }
+
+    @Test
     fun `spritemap OAM entry values are reasonable`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)

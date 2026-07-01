@@ -44,7 +44,8 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     data class AnimationFrame(
         val duration: Int,
-        val spritemap: Spritemap
+        val spritemap: Spritemap,
+        val renderableFrame: RenderableFrame = RenderableFrame.Oam(spritemap)
     )
 
     data class AssembledSprite(
@@ -1049,8 +1050,8 @@ class EnemySpritemap(private val romParser: RomParser) {
             if (word1 < 0x8000) continue
 
             val smapSnes = (aiBank shl 16) or word1
-            val smap = parseSpritemap(smapSnes)
-            if (smap != null && spritemapFitsTileData(smap, tileCount)) return smap
+            val (_, smap) = parseRenderableSpritemap(smapSnes) ?: continue
+            if (spritemapFitsTileData(smap, tileCount)) return smap
         }
 
         // Some enemies (e.g. Sidehopper) use a 2-level AI structure where handler
@@ -1088,18 +1089,25 @@ class EnemySpritemap(private val romParser: RomParser) {
             // Try word1 as spritemap (handler's param may be a spritemap pointer)
             if (word1 > 0 && word1 < 0x8000) {
                 val smapSnes = (aiBank shl 16) or word1
-                val smap = parseSpritemap(smapSnes)
-                if (smap != null && isPlausibleSpritemap(smap)) return smap
+                val (_, smap) = parseRenderableSpritemap(smapSnes) ?: continue
+                if (isPlausibleSpritemap(smap)) return smap
             }
             // Try word0 as spritemap
             if (word0 > 0) {
                 val smapSnes = (aiBank shl 16) or word0
-                val smap = parseSpritemap(smapSnes)
-                if (smap != null && isPlausibleSpritemap(smap)) return smap
+                val (_, smap) = parseRenderableSpritemap(smapSnes) ?: continue
+                if (isPlausibleSpritemap(smap)) return smap
             }
         }
 
         return null
+    }
+
+    private fun parseRenderableSpritemap(snesAddr: Int): Pair<RenderableFrame, Spritemap>? {
+        val frame = parseRenderableFrame(snesAddr) ?: return null
+        val flattened = flattenRenderableFrame(frame)
+        if (flattened.entries.isEmpty()) return null
+        return frame to flattened
     }
 
     /**
@@ -1158,7 +1166,7 @@ class EnemySpritemap(private val romParser: RomParser) {
         if (rawFrames.isEmpty()) return null
 
         val animFrames = rawFrames.mapNotNull { frame ->
-            val assembled = renderSpritemap(frame.spritemap, tileData, palette) ?: return@mapNotNull null
+            val assembled = renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return@mapNotNull null
             SpriteAnimationFrame(
                 pixels = assembled.pixels,
                 width = assembled.width,
@@ -1201,10 +1209,8 @@ class EnemySpritemap(private val romParser: RomParser) {
             seenPtrs.add(word1)
 
             val smapSnes = (aiBank shl 16) or word1
-            val smap = parseSpritemap(smapSnes)
-            if (smap != null) {
-                frames.add(AnimationFrame(word0, smap))
-            }
+            val (renderableFrame, smap) = parseRenderableSpritemap(smapSnes) ?: continue
+            frames.add(AnimationFrame(word0, smap, renderableFrame))
         }
         return frames
     }
