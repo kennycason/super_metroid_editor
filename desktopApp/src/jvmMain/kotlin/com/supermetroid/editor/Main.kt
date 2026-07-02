@@ -1,6 +1,7 @@
 package com.supermetroid.editor
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.key.Key
@@ -49,6 +52,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -111,6 +115,9 @@ import com.supermetroid.editor.ui.TilesetListPanel
 import com.supermetroid.editor.ui.TilesetPreview
 import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
+import com.supermetroid.editor.ui.rememberVerticalSelectionFocusRequester
+import com.supermetroid.editor.ui.requestVerticalSelectionFocus
+import com.supermetroid.editor.ui.verticalSelectionKeyNavigation
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
 import java.awt.Frame
@@ -405,6 +412,9 @@ fun main() = application {
                 var tilesetHeightInitialized by remember { mutableStateOf(false) }
                 var tilesetHeightDp by remember { mutableStateOf(400f) }
                 var leftTab by remember { mutableStateOf(0) }
+                var itemKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
+                var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
+                val mainContentFocusRequester = remember { FocusRequester() }
                 var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
                 val tilesetEditorState = remember { TilesetEditorState() }
                 val soundEditorState = remember { SoundEditorState() }
@@ -416,7 +426,41 @@ fun main() = application {
                 if (sampledRow >= 0 && leftTab == TAB_TILES) {
                     tilesetSubTab = 2
                 }
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
+                    if (leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
+                        requestVerticalSelectionFocus(mainContentFocusRequester)
+                    }
+                }
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusRequester(mainContentFocusRequester)
+                        .focusable()
+                        .onPreviewKeyEvent { keyEvent ->
+                            if (keyEvent.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when (leftTab) {
+                                TAB_ITEMS -> when (keyEvent.key) {
+                                    Key.DirectionUp -> itemKeyboardNavigator?.invoke(-1) ?: false
+                                    Key.DirectionDown -> itemKeyboardNavigator?.invoke(1) ?: false
+                                    else -> false
+                                }
+                                TAB_SOUND -> {
+                                    if (soundEditorState.isPianoRollOpen) {
+                                        false
+                                    } else {
+                                        when (keyEvent.key) {
+                                            Key.DirectionUp -> soundKeyboardNavigator?.invoke(-1) ?: false
+                                            Key.DirectionDown -> soundKeyboardNavigator?.invoke(1) ?: false
+                                            else -> false
+                                        }
+                                    }
+                                }
+                                else -> false
+                            }
+                        }
+                ) {
                     if (!tilesetHeightInitialized) {
                         tilesetHeightDp = (maxHeight.value * 0.65f).coerceIn(120f, 700f)
                         tilesetHeightInitialized = true
@@ -554,6 +598,7 @@ fun main() = application {
                                             if (romPath != null) saveLastRoom(romPath, room)
                                         },
                                         modifier = Modifier.fillMaxSize(),
+                                        onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
                                     )
                                 }
                                 TAB_TILES -> {
@@ -695,14 +740,24 @@ fun main() = application {
                                         romParser = romParser,
                                         editorState = editorState,
                                         soundEditorState = soundEditorState,
-                                        modifier = Modifier.fillMaxSize()
+                                        modifier = Modifier.fillMaxSize(),
+                                        onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
                                     )
                                 }
                                 TAB_SPRITES -> {
                                     val entries = com.supermetroid.editor.rom.EnemySpriteGraphics.EDITOR_ENEMIES
+                                    val spriteNavigationFocusRequester = rememberVerticalSelectionFocusRequester(
+                                        requestFocusKey = leftTab
+                                    )
                                     val grouped = entries.groupBy { it.category }
                                     Column(
                                         modifier = Modifier.fillMaxSize().padding(8.dp)
+                                            .verticalSelectionKeyNavigation(
+                                                focusRequester = spriteNavigationFocusRequester,
+                                                itemCount = entries.size + 1,
+                                                selectedIndex = selectedSpriteIdx + 1,
+                                                onSelectIndex = { index -> selectedSpriteIdx = index - 1 }
+                                            )
                                             .verticalScroll(rememberScrollState()),
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
@@ -713,7 +768,10 @@ fun main() = application {
                                         Spacer(Modifier.height(2.dp))
                                         Surface(
                                             modifier = Modifier.fillMaxWidth()
-                                                .clickable { selectedSpriteIdx = -1 },
+                                                .clickable {
+                                                    requestVerticalSelectionFocus(spriteNavigationFocusRequester)
+                                                    selectedSpriteIdx = -1
+                                                },
                                             color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.primaryContainer
                                                     else MaterialTheme.colorScheme.surface,
                                             shape = RoundedCornerShape(6.dp)
@@ -734,7 +792,10 @@ fun main() = application {
                                                 val idx = entries.indexOf(entry)
                                                 Surface(
                                                     modifier = Modifier.fillMaxWidth()
-                                                        .clickable { selectedSpriteIdx = idx },
+                                                        .clickable {
+                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
+                                                            selectedSpriteIdx = idx
+                                                        },
                                                     color = if (selectedSpriteIdx == idx) MaterialTheme.colorScheme.primaryContainer
                                                             else MaterialTheme.colorScheme.surface,
                                                     shape = RoundedCornerShape(6.dp)
@@ -809,6 +870,7 @@ fun main() = application {
                                                 val romPath = RomPreferences.getLastRomPath()
                                                 if (romPath != null) saveLastRoom(romPath, r)
                                             },
+                                            roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             showItemNames = showRoomItemNames,
                                             showEnemyNames = showRoomEnemyNames,
                                             showFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,

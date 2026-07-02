@@ -77,8 +77,19 @@ fun PatchListPanel(
     val patches = editorState.project.patches.filter { it.configType !in enemyBossTypes }
     val selectedId = editorState.selectedPatchId
     var searchQuery by remember { mutableStateOf("") }
+    val filtered = if (searchQuery.isBlank()) patches
+        else patches.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    val selectedIndex = filtered.indexOfFirst { it.id == selectedId }
+    val navigationFocusRequester = rememberVerticalSelectionFocusRequester()
 
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier.verticalSelectionKeyNavigation(
+            focusRequester = navigationFocusRequester,
+            itemCount = filtered.size,
+            selectedIndex = selectedIndex,
+            onSelectIndex = { index -> editorState.selectPatch(filtered[index].id) }
+        )
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -88,6 +99,7 @@ fun PatchListPanel(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(
                     onClick = {
+                        requestVerticalSelectionFocus(navigationFocusRequester)
                         val fd = FileDialog(null as java.awt.Frame?, "Import IPS Patch", FileDialog.LOAD)
                         fd.file = "*.ips"
                         fd.isVisible = true
@@ -117,7 +129,10 @@ fun PatchListPanel(
                     Text("IPS", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { editorState.addPatch("New Patch") },
+                    onClick = {
+                        requestVerticalSelectionFocus(navigationFocusRequester)
+                        editorState.addPatch("New Patch")
+                    },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                     modifier = Modifier.height(28.dp)
                 ) {
@@ -152,9 +167,6 @@ fun PatchListPanel(
 
         Divider()
 
-        val filtered = if (searchQuery.isBlank()) patches
-            else patches.filter { it.name.contains(searchQuery, ignoreCase = true) }
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -173,10 +185,19 @@ fun PatchListPanel(
                 PatchListItem(
                     patch = patch,
                     isSelected = patch.id == selectedId,
-                    onSelect = { editorState.selectPatch(patch.id) },
-                    onToggle = { editorState.togglePatch(patch.id) },
+                    onSelect = {
+                        requestVerticalSelectionFocus(navigationFocusRequester)
+                        editorState.selectPatch(patch.id)
+                    },
+                    onToggle = {
+                        requestVerticalSelectionFocus(navigationFocusRequester)
+                        editorState.togglePatch(patch.id)
+                    },
                     onDelete = if (isSystemPatch(patch.id)) null
-                               else {{ editorState.removePatch(patch.id) }}
+                               else {{
+                                   requestVerticalSelectionFocus(navigationFocusRequester)
+                                   editorState.removePatch(patch.id)
+                               }}
                 )
             }
         }
@@ -779,8 +800,8 @@ private fun ControllerConfigEditor(
 }
 
 private enum class PatchWriteViewMode {
-    Hex,
-    Asm,
+    HEX,
+    ASM,
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -790,9 +811,9 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
         mutableStateOf(writesToText(patch.writes))
     }
     var parseError by remember(patch.id) { mutableStateOf<String?>(null) }
-    var viewMode by remember(patch.id) { mutableStateOf(PatchWriteViewMode.Hex) }
+    var viewMode by remember(patch.id) { mutableStateOf(PatchWriteViewMode.ASM) }
     val asmText = remember(rawText, viewMode) {
-        if (viewMode != PatchWriteViewMode.Asm) {
+        if (viewMode != PatchWriteViewMode.ASM) {
             ""
         } else {
             val result = parseText(rawText)
@@ -805,7 +826,7 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
     }
 
     Column(modifier = modifier.padding(12.dp)) {
-        if (viewMode == PatchWriteViewMode.Hex) {
+        if (viewMode == PatchWriteViewMode.HEX) {
             Text(
                 "Format: one record per line — OFFSET: BB BB BB ...  (hex values, offset is PC file address)",
                 fontSize = 11.sp,
@@ -838,21 +859,21 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
             modifier = Modifier.fillMaxWidth()
         ) {
             FilterChip(
-                selected = viewMode == PatchWriteViewMode.Hex,
-                onClick = { viewMode = PatchWriteViewMode.Hex },
-                label = { Text("Hex", fontSize = 11.sp) },
+                selected = viewMode == PatchWriteViewMode.ASM,
+                onClick = { viewMode = PatchWriteViewMode.ASM },
+                label = { Text("ASM", fontSize = 11.sp) },
                 modifier = Modifier.height(32.dp)
             )
             FilterChip(
-                selected = viewMode == PatchWriteViewMode.Asm,
-                onClick = { viewMode = PatchWriteViewMode.Asm },
-                label = { Text("ASM", fontSize = 11.sp) },
+                selected = viewMode == PatchWriteViewMode.HEX,
+                onClick = { viewMode = PatchWriteViewMode.HEX },
+                label = { Text("Hex", fontSize = 11.sp) },
                 modifier = Modifier.height(32.dp)
             )
 
             Spacer(Modifier.weight(1f))
 
-            if (viewMode == PatchWriteViewMode.Hex) {
+            if (viewMode == PatchWriteViewMode.HEX) {
                 Button(
                     onClick = {
                         val result = parseText(rawText)
@@ -900,14 +921,14 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
             val verticalScrollState = rememberScrollState()
             val horizontalScrollState = rememberScrollState()
             BasicTextField(
-                value = if (viewMode == PatchWriteViewMode.Hex) rawText else asmText,
+                value = if (viewMode == PatchWriteViewMode.HEX) rawText else asmText,
                 onValueChange = {
-                    if (viewMode == PatchWriteViewMode.Hex) {
+                    if (viewMode == PatchWriteViewMode.HEX) {
                         rawText = it
                         parseError = null
                     }
                 },
-                readOnly = viewMode == PatchWriteViewMode.Asm,
+                readOnly = viewMode == PatchWriteViewMode.ASM,
                 textStyle = TextStyle(
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace,

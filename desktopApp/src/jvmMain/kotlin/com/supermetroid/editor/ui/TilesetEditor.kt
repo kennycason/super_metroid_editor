@@ -105,6 +105,10 @@ fun TilesetListPanel(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val tilesetId = editorState.editorTilesetId
+    val navigationFocusRequester = rememberVerticalSelectionFocusRequester(
+        enabled = romParser != null,
+        requestFocusKey = romParser
+    )
 
     fun loadTileset(id: Int) {
         if (romParser == null) return
@@ -128,7 +132,17 @@ fun TilesetListPanel(
         if (romParser != null && tilesetEditorState.gridData == null) loadTileset(tilesetId)
     }
 
-    Card(modifier = modifier, shape = androidx.compose.ui.graphics.RectangleShape, elevation = CardDefaults.cardElevation(2.dp)) {
+    Card(
+        modifier = modifier.verticalSelectionKeyNavigation(
+            focusRequester = navigationFocusRequester,
+            itemCount = TileGraphics.NUM_TILESETS,
+            selectedIndex = tilesetId,
+            enabled = romParser != null,
+            onSelectIndex = ::loadTileset
+        ),
+        shape = androidx.compose.ui.graphics.RectangleShape,
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Text(
                 "Tilesets",
@@ -149,7 +163,10 @@ fun TilesetListPanel(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { loadTileset(id) },
+                            .clickable {
+                                requestVerticalSelectionFocus(navigationFocusRequester)
+                                loadTileset(id)
+                            },
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                else Color.Transparent
                     ) {

@@ -22,7 +22,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
@@ -49,6 +54,8 @@ private data class ItemLocation(
     val area: Int,
 ) {
     val areaName: String get() = itemAreaName(area)
+    val navigationKey: String
+        get() = "${room.handle}:${plm.id}:${plm.x}:${plm.y}:${plm.param}:$itemName"
 }
 
 private data class ItemLocationDef(
@@ -117,6 +124,7 @@ fun ItemLocationPanel(
     editorState: EditorState,
     onRoomSelected: (RoomInfo) -> Unit,
     modifier: Modifier = Modifier,
+    onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val itemBitmap = remember {
@@ -152,9 +160,105 @@ fun ItemLocationPanel(
     val otherItems = remember(itemLocations, knownGroupedNames) {
         itemLocations.filter { it.itemName !in knownGroupedNames }.sortedWith(LOCATION_ITEM_SORT)
     }
+    val customLocations = remember(customItems, itemLocations) {
+        customItems.mapNotNull { item -> itemLocations.firstOrNull { it.itemName == item.name } }
+    }
+    val navigableLocations = remember(
+        majorLocations,
+        customLocations,
+        energyTanks,
+        reserveTanks,
+        missiles,
+        superMissiles,
+        powerBombs,
+        otherItems,
+    ) {
+        buildList {
+            addAll(majorLocations)
+            addAll(customLocations)
+            addAll(energyTanks)
+            addAll(reserveTanks)
+            addAll(missiles)
+            addAll(superMissiles)
+            addAll(powerBombs)
+            addAll(otherItems)
+        }
+    }
+    var selectedLocationKey by remember { mutableStateOf<String?>(null) }
+    val selectedRoomHandle = selectedRoom?.handle
+    val selectedLocationIndexByKey = navigableLocations.indexOfFirst { it.navigationKey == selectedLocationKey }
+    val selectedLocationIndex = if (selectedLocationIndexByKey >= 0) {
+        selectedLocationIndexByKey
+    } else {
+        navigableLocations.indexOfFirst { it.room.handle == selectedRoomHandle }
+    }
+    val navigationFocusRequester = rememberVerticalSelectionFocusRequester(
+        enabled = navigableLocations.isNotEmpty(),
+        requestFocusKey = romParser
+    )
+
+    fun selectLocation(location: ItemLocation) {
+        requestVerticalSelectionFocus(navigationFocusRequester)
+        selectedLocationKey = location.navigationKey
+        editorState.scrollTargetBlockX = location.plm.x
+        editorState.scrollTargetBlockY = location.plm.y
+        onRoomSelected(location.room)
+    }
+
+    fun isSelectedLocation(location: ItemLocation): Boolean {
+        val selectedKey = selectedLocationKey
+        return if (selectedKey != null) {
+            location.navigationKey == selectedKey
+        } else {
+            selectedRoomHandle == location.room.handle
+        }
+    }
+
+    LaunchedEffect(navigableLocations, selectedRoomHandle) {
+        if (selectedRoomHandle == null) {
+            selectedLocationKey = null
+            return@LaunchedEffect
+        }
+
+        val keyStillVisible = navigableLocations.any {
+            it.navigationKey == selectedLocationKey && it.room.handle == selectedRoomHandle
+        }
+        if (!keyStillVisible) {
+            selectedLocationKey = navigableLocations.firstOrNull {
+                it.room.handle == selectedRoomHandle
+            }?.navigationKey
+        }
+    }
+
+    DisposableEffect(navigableLocations, selectedLocationIndex) {
+        val navigator: (Int) -> Boolean = { delta ->
+            if (navigableLocations.isEmpty()) {
+                false
+            } else {
+                val step = if (delta < 0) -1 else 1
+                val nextIndex = if (selectedLocationIndex in navigableLocations.indices) {
+                    (selectedLocationIndex + step + navigableLocations.size) % navigableLocations.size
+                } else if (step < 0) {
+                    navigableLocations.lastIndex
+                } else {
+                    0
+                }
+                selectLocation(navigableLocations[nextIndex])
+                true
+            }
+        }
+        onKeyboardNavigatorChanged(navigator)
+        onDispose { onKeyboardNavigatorChanged(null) }
+    }
 
     Surface(
-        modifier = modifier,
+        modifier = modifier.verticalSelectionKeyNavigation(
+            focusRequester = navigationFocusRequester,
+            itemCount = navigableLocations.size,
+            selectedIndex = selectedLocationIndex,
+            enabled = navigableLocations.isNotEmpty(),
+            onSelectIndex = { index -> selectLocation(navigableLocations[index]) }
+        ),
         color = MaterialTheme.colorScheme.surface,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -208,12 +312,8 @@ fun ItemLocationPanel(
                                 MajorItemButton(
                                     bitmap = itemBitmap,
                                     location = location,
-                                    isSelected = selectedRoom?.handle == location.room.handle,
-                                    onClick = {
-                                        editorState.scrollTargetBlockX = location.plm.x
-                                        editorState.scrollTargetBlockY = location.plm.y
-                                        onRoomSelected(location.room)
-                                    },
+                                    isSelected = isSelectedLocation(location),
+                                    onClick = { selectLocation(location) },
                                 )
                             }
                         }
@@ -235,14 +335,8 @@ fun ItemLocationPanel(
                                 CustomItemTile(
                                     bitmap = itemBitmap,
                                     item = item,
-                                    isSelected = location != null && selectedRoom?.handle == location.room.handle,
-                                    onClick = location?.let { loc ->
-                                        {
-                                            editorState.scrollTargetBlockX = loc.plm.x
-                                            editorState.scrollTargetBlockY = loc.plm.y
-                                            onRoomSelected(loc.room)
-                                        }
-                                    },
+                                    isSelected = location != null && isSelectedLocation(location),
+                                    onClick = location?.let { loc -> { selectLocation(loc) } },
                                 )
                             }
                         }
@@ -252,50 +346,44 @@ fun ItemLocationPanel(
                 itemRows(
                     title = "Energy Tanks",
                     locations = energyTanks,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                 )
                 itemRows(
                     title = "Reserve Tanks",
                     locations = reserveTanks,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                 )
                 itemRows(
                     title = "Missiles",
                     locations = missiles,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                 )
                 itemRows(
                     title = "Super Missiles",
                     locations = superMissiles,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                 )
                 itemRows(
                     title = "Power Bombs",
                     locations = powerBombs,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                 )
                 itemRows(
                     title = "Other Items",
                     locations = otherItems,
-                    selectedRoom = selectedRoom,
                     bitmap = itemBitmap,
-                    editorState = editorState,
-                    onRoomSelected = onRoomSelected,
+                    isSelectedLocation = ::isSelectedLocation,
+                    onLocationSelected = ::selectLocation,
                     skipWhenEmpty = true,
                 )
             }
@@ -396,10 +484,9 @@ private fun EmptyItemSection(text: String) {
 private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
     title: String,
     locations: List<ItemLocation>,
-    selectedRoom: RoomInfo?,
     bitmap: ImageBitmap?,
-    editorState: EditorState,
-    onRoomSelected: (RoomInfo) -> Unit,
+    isSelectedLocation: (ItemLocation) -> Boolean,
+    onLocationSelected: (ItemLocation) -> Unit,
     skipWhenEmpty: Boolean = false,
 ) {
     if (skipWhenEmpty && locations.isEmpty()) return
@@ -424,12 +511,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemRows(
             bitmap = bitmap,
             location = location,
             index = index + 1,
-            isSelected = selectedRoom?.handle == location.room.handle,
-            onClick = {
-                editorState.scrollTargetBlockX = location.plm.x
-                editorState.scrollTargetBlockY = location.plm.y
-                onRoomSelected(location.room)
-            },
+            isSelected = isSelectedLocation(location),
+            onClick = { onLocationSelected(location) },
         )
     }
 }

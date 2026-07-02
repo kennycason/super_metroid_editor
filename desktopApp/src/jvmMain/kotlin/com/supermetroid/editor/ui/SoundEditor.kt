@@ -43,6 +43,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -170,23 +171,81 @@ fun SoundListPanel(
     romParser: RomParser?,
     editorState: EditorState,
     soundEditorState: SoundEditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val currentSamples = soundEditorState.samples
+    val isPianoRollEditing = soundEditorState.isPianoRollOpen && soundEditorState.editingSong != null
+    val navigationItemCount = when (selectedTab) {
+        0 -> if (romParser != null) SpcData.KNOWN_TRACKS.size else 0
+        1 -> currentSamples.size
+        else -> 0
+    }
+    val navigationSelectedIndex = when (selectedTab) {
+        0 -> SpcData.KNOWN_TRACKS.indexOfFirst { it.id == soundEditorState.selectedTrackId }
+        1 -> currentSamples.indexOfFirst { it.dirEntry.index == soundEditorState.selectedSampleIndex }
+        else -> -1
+    }
+
+    fun selectSoundIndex(index: Int) {
+        when (selectedTab) {
+            0 -> SpcData.KNOWN_TRACKS.getOrNull(index)?.let { soundEditorState.selectTrack(it) }
+            1 -> currentSamples.getOrNull(index)?.let { sample ->
+                scope.launch { soundEditorState.selectSample(sample) }
+            }
+        }
+    }
+
+    DisposableEffect(selectedTab, currentSamples, navigationItemCount, navigationSelectedIndex, isPianoRollEditing) {
+        if (isPianoRollEditing || navigationItemCount <= 0) {
+            onKeyboardNavigatorChanged(null)
+            onDispose { onKeyboardNavigatorChanged(null) }
+        } else {
+            val navigator: (Int) -> Boolean = { delta ->
+                val step = if (delta < 0) -1 else 1
+                val nextIndex = if (navigationSelectedIndex in 0 until navigationItemCount) {
+                    (navigationSelectedIndex + step + navigationItemCount) % navigationItemCount
+                } else if (step < 0) {
+                    navigationItemCount - 1
+                } else {
+                    0
+                }
+                selectSoundIndex(nextIndex)
+                true
+            }
+            onKeyboardNavigatorChanged(navigator)
+            onDispose { onKeyboardNavigatorChanged(null) }
+        }
+    }
 
     Column(modifier = modifier) {
         TabRow(selectedTabIndex = selectedTab, modifier = Modifier.fillMaxWidth().height(32.dp)) {
-            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, modifier = Modifier.height(32.dp)) {
+            Tab(selected = selectedTab == 0, onClick = {
+                selectedTab = 0
+            }, modifier = Modifier.height(32.dp)) {
                 Text("Tracks", fontSize = 12.sp)
             }
-            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, modifier = Modifier.height(32.dp)) {
+            Tab(selected = selectedTab == 1, onClick = {
+                selectedTab = 1
+            }, modifier = Modifier.height(32.dp)) {
                 Text("Samples", fontSize = 12.sp)
             }
         }
         key(selectedTab) {
             when (selectedTab) {
-                0 -> TrackListContent(romParser, editorState, soundEditorState, Modifier.fillMaxSize())
-                1 -> SampleListContent(romParser, soundEditorState, Modifier.fillMaxSize())
+                0 -> TrackListContent(
+                    romParser,
+                    editorState,
+                    soundEditorState,
+                    Modifier.fillMaxSize(),
+                )
+                1 -> SampleListContent(
+                    romParser,
+                    soundEditorState,
+                    Modifier.fillMaxSize(),
+                )
             }
         }
     }
@@ -197,7 +256,7 @@ private fun TrackListContent(
     romParser: RomParser?,
     editorState: EditorState,
     state: SoundEditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val musicEditVersion = editorState.musicEditVersion
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
@@ -209,7 +268,9 @@ private fun TrackListContent(
                 val isSel = state.selectedTrackId == track.id
                 val isEdited = musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { state.selectTrack(track) }
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        state.selectTrack(track)
+                    }
                         .padding(horizontal = 2.dp),
                     color = if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                     shape = RoundedCornerShape(3.dp)
@@ -257,7 +318,7 @@ private fun EditedMusicBadge() {
 private fun SampleListContent(
     romParser: RomParser?,
     state: SoundEditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -286,7 +347,9 @@ private fun SampleListContent(
             for (sample in currentSamples) {
                 val isSel = state.selectedSampleIndex == sample.dirEntry.index
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { scope.launch { state.selectSample(sample) } }
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        scope.launch { state.selectSample(sample) }
+                    }
                         .padding(horizontal = 2.dp),
                     color = if (isSel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                     shape = RoundedCornerShape(3.dp)
@@ -572,18 +635,6 @@ private fun SoundEditorActiveContent(
                 }
             }
 
-            if (waveform != null && waveform.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = { scope.launch { state.exportCurrentWav() } },
-                    contentPadding = PaddingValues(horizontal = 10.dp),
-                    modifier = Modifier.height(28.dp)
-                ) {
-                    Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text("Export WAV", fontSize = 10.sp)
-                }
-            }
-
             // Edit Track — visible when a track is selected
             if (track != null && romParser != null) {
                 Button(
@@ -595,6 +646,17 @@ private fun SoundEditorActiveContent(
                     Spacer(Modifier.width(2.dp))
                     Text("Edit Track", fontSize = 10.sp)
                 }
+            }
+
+            OutlinedButton(
+                onClick = { scope.launch { state.exportCurrentWav() } },
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.height(28.dp),
+                enabled = waveform != null && waveform.isNotEmpty() && !loading
+            ) {
+                Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("Export WAV", fontSize = 10.sp)
             }
 
             // Replace WAV — visible when a sample is selected

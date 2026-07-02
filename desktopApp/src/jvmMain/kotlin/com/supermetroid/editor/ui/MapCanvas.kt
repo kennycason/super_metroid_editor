@@ -697,6 +697,7 @@ fun MapCanvas(
     emulatorConnected: Boolean = false,
     onMoveSamusHere: ((x: Int, y: Int) -> Unit)? = null,
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
+    roomKeyboardNavigationEnabled: Boolean = true,
     showItemNames: Boolean = true,
     showEnemyNames: Boolean = true,
     showFlatSlopeSurfaces: Boolean = true,
@@ -750,7 +751,7 @@ fun MapCanvas(
                             if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(0, -step); true
-                            } else if (onRoomSelected != null && rooms.isNotEmpty()) {
+                            } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
                                 val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
                                 val newIdx = if (currentIdx > 0) currentIdx - 1 else rooms.lastIndex
                                 if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
@@ -761,7 +762,7 @@ fun MapCanvas(
                             if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
                                 val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
                                 editorState.shiftSelection(0, step); true
-                            } else if (onRoomSelected != null && rooms.isNotEmpty()) {
+                            } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
                                 val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
                                 val newIdx = if (currentIdx < rooms.lastIndex) currentIdx + 1 else 0
                                 if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
