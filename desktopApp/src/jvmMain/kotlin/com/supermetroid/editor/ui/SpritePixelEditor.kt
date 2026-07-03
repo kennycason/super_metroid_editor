@@ -68,7 +68,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -162,8 +162,8 @@ fun SpritePixelEditor(
     }
     val focusRequester = remember { FocusRequester() }
 
-    // Force recomposition when state changes
-    fun refreshVersion() { editVersion = state.editVersion }
+    // Force recomposition when state changes, including non-pixel state like active tool/cursor.
+    fun refreshVersion() { editVersion++ }
 
     fun stopDrawing(commit: Boolean = true): Boolean {
         val wasDrawing = isDrawing
@@ -172,6 +172,22 @@ fun SpritePixelEditor(
             state.commitPending()
         }
         return wasDrawing
+    }
+
+    fun setTool(tool: PixelTool) {
+        focusRequester.requestFocus()
+        if (tool != PixelTool.SELECT) {
+            state.cancelFloatingSelection()
+        }
+        state.activeTool = tool
+        refreshVersion()
+    }
+
+    fun applySelectionTransform(transform: Transform): Boolean {
+        stopDrawing(commit = false)
+        val changed = state.applyTransform(transform)
+        if (changed) refreshVersion()
+        return changed
     }
 
     LaunchedEffect(Unit) {
@@ -183,32 +199,31 @@ fun SpritePixelEditor(
             modifier = Modifier.fillMaxSize()
                 .focusRequester(focusRequester)
                 .focusable()
-                .onKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val ctrl = event.isCtrlPressed || event.isMetaPressed
                     val shift = event.isShiftPressed
                     when (event.key) {
-                        Key.P -> {
+                        Key.P, Key.B -> {
                             if (state.selActive && state.clipboardPixels == null) {
                                 state.captureSelection()
                             }
                             state.selActive = false
-                            state.activeTool = PixelTool.PENCIL
-                            refreshVersion(); true
+                            setTool(PixelTool.PENCIL)
+                            true
                         }
-                        Key.E -> { state.activeTool = PixelTool.ERASER; true }
-                        Key.F -> if (!ctrl) { state.activeTool = PixelTool.FILL; true } else false
-                        Key.I -> { state.activeTool = PixelTool.EYEDROPPER; true }
-                        Key.S -> if (!ctrl) { state.activeTool = PixelTool.SELECT; true } else false
-                        Key.H -> { state.applyTransform(Transform.FLIP_H); refreshVersion(); true }
+                        Key.E -> { setTool(PixelTool.ERASER); true }
+                        Key.F, Key.G -> if (!ctrl) { setTool(PixelTool.FILL); true } else false
+                        Key.I, Key.D -> { setTool(PixelTool.EYEDROPPER); true }
+                        Key.S -> if (!ctrl) { setTool(PixelTool.SELECT); true } else false
+                        Key.H -> applySelectionTransform(Transform.FLIP_H)
                         Key.V -> if (!ctrl) {
-                            state.applyTransform(Transform.FLIP_V); refreshVersion(); true
+                            applySelectionTransform(Transform.FLIP_V)
                         } else {
                             state.pasteClipboard(); refreshVersion(); true
                         }
                         Key.R -> if (!ctrl) {
-                            state.applyTransform(if (shift) Transform.ROTATE_CCW else Transform.ROTATE_CW)
-                            refreshVersion(); true
+                            applySelectionTransform(if (shift) Transform.ROTATE_CCW else Transform.ROTATE_CW)
                         } else false
                         Key.C -> if (ctrl) { state.captureSelection(); true } else false
                         Key.X -> if (ctrl) {
@@ -218,15 +233,41 @@ fun SpritePixelEditor(
                         Key.Y -> if (ctrl) { state.redo(); refreshVersion(); true } else false
                         Key.A -> if (ctrl) {
                             state.selActive = true; state.selX1 = 0; state.selY1 = 0
-                            state.selX2 = imageWidth - 1; state.selY2 = imageHeight - 1; true
+                            state.selX2 = imageWidth - 1; state.selY2 = imageHeight - 1
+                            refreshVersion(); true
                         } else false
                         Key.Delete, Key.Backspace -> {
-                            if (state.selActive) { state.deleteSelection(); refreshVersion(); true }
+                            if (state.floatingSelection != null) {
+                                state.cancelFloatingSelection(); refreshVersion(); true
+                            } else if (state.selActive) { state.deleteSelection(); refreshVersion(); true }
                             else false
                         }
+                        Key.Enter -> {
+                            if (state.floatingSelection != null) {
+                                state.commitFloatingSelection(); refreshVersion(); true
+                            } else false
+                        }
+                        Key.DirectionLeft -> {
+                            if (state.nudgeFloatingSelection(-1, 0)) { refreshVersion(); true } else false
+                        }
+                        Key.DirectionRight -> {
+                            if (state.nudgeFloatingSelection(1, 0)) { refreshVersion(); true } else false
+                        }
+                        Key.DirectionUp -> {
+                            if (state.nudgeFloatingSelection(0, -1)) { refreshVersion(); true } else false
+                        }
+                        Key.DirectionDown -> {
+                            if (state.nudgeFloatingSelection(0, 1)) { refreshVersion(); true } else false
+                        }
                         Key.Escape -> {
-                            state.selActive = false; state.clearClipboard()
-                            state.activeTool = PixelTool.PENCIL; true
+                            if (state.floatingSelection != null) {
+                                state.cancelFloatingSelection()
+                            } else {
+                                state.selActive = false
+                                state.clearClipboard()
+                                state.activeTool = PixelTool.PENCIL
+                            }
+                            refreshVersion(); true
                         }
                         Key.Equals -> { zoomLevel = (zoomLevel + 4).coerceAtMost(48); true }
                         Key.Minus  -> { zoomLevel = (zoomLevel - 4).coerceAtLeast(2);  true }
@@ -246,29 +287,29 @@ fun SpritePixelEditor(
                 Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Draw tools
-                FilterChip(selected = state.activeTool == PixelTool.PENCIL, onClick = { state.activeTool = PixelTool.PENCIL },
+                FilterChip(selected = state.activeTool == PixelTool.PENCIL, onClick = { setTool(PixelTool.PENCIL) },
                     label = { Icon(Icons.Default.Brush, "Pencil (P)", Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp))
-                FilterChip(selected = state.activeTool == PixelTool.ERASER, onClick = { state.activeTool = PixelTool.ERASER },
+                FilterChip(selected = state.activeTool == PixelTool.ERASER, onClick = { setTool(PixelTool.ERASER) },
                     label = { Icon(Icons.Default.Clear, "Eraser (E)", Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp))
-                FilterChip(selected = state.activeTool == PixelTool.FILL, onClick = { state.activeTool = PixelTool.FILL },
+                FilterChip(selected = state.activeTool == PixelTool.FILL, onClick = { setTool(PixelTool.FILL) },
                     label = { Icon(Icons.Default.FormatColorFill, "Fill (F)", Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp))
-                FilterChip(selected = state.activeTool == PixelTool.EYEDROPPER, onClick = { state.activeTool = PixelTool.EYEDROPPER },
+                FilterChip(selected = state.activeTool == PixelTool.EYEDROPPER, onClick = { setTool(PixelTool.EYEDROPPER) },
                     label = { Icon(Icons.Default.Colorize, "Eyedrop (I)", Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp))
-                FilterChip(selected = state.activeTool == PixelTool.SELECT, onClick = { state.activeTool = PixelTool.SELECT },
+                FilterChip(selected = state.activeTool == PixelTool.SELECT, onClick = { setTool(PixelTool.SELECT) },
                     label = { Icon(Icons.Default.Crop, "Select (S)", Modifier.size(14.dp)) },
                     modifier = Modifier.height(28.dp))
 
                 Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
-                // Transform buttons (apply to selection or full image)
-                SmallButton("Flip H", "H") { state.applyTransform(Transform.FLIP_H); refreshVersion() }
-                SmallButton("Flip V", "V") { state.applyTransform(Transform.FLIP_V); refreshVersion() }
-                SmallButton("↻", "R") { state.applyTransform(Transform.ROTATE_CW); refreshVersion() }
-                SmallButton("↺", "⇧R") { state.applyTransform(Transform.ROTATE_CCW); refreshVersion() }
+                // Transform buttons operate only on an active selection or its floating preview.
+                SmallButton("Flip H", "H", enabled = state.hasTransformTarget) { applySelectionTransform(Transform.FLIP_H) }
+                SmallButton("Flip V", "V", enabled = state.hasTransformTarget) { applySelectionTransform(Transform.FLIP_V) }
+                SmallButton("↻", "R", enabled = state.hasTransformTarget) { applySelectionTransform(Transform.ROTATE_CW) }
+                SmallButton("↺", "⇧R", enabled = state.hasTransformTarget) { applySelectionTransform(Transform.ROTATE_CCW) }
 
                 Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -340,6 +381,9 @@ fun SpritePixelEditor(
         var isPanning by remember { mutableStateOf(false) }
         var lastPanX by remember { mutableStateOf(0f) }
         var lastPanY by remember { mutableStateOf(0f) }
+        var isMovingFloatingSelection by remember { mutableStateOf(false) }
+        var floatingGrabX by remember { mutableStateOf(0) }
+        var floatingGrabY by remember { mutableStateOf(0) }
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // Pixel canvas
             Box(
@@ -402,6 +446,11 @@ fun SpritePixelEditor(
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)
                             val py = (pos.y / zoomLevel).toInt().coerceIn(0, imageHeight - 1)
                             hoverX = px; hoverY = py
+                            if (isMovingFloatingSelection) {
+                                state.moveFloatingSelectionTo(px - floatingGrabX, py - floatingGrabY)
+                                refreshVersion()
+                                return@onPointerEvent
+                            }
                             if (isDrawing && !isPrimaryPointerStillDown(e.nativeEvent)) {
                                 stopDrawing()
                                 refreshVersion()
@@ -423,6 +472,19 @@ fun SpritePixelEditor(
                             val pos = e.changes.first().position
                             val px = (pos.x / zoomLevel).toInt().coerceIn(0, imageWidth - 1)
                             val py = (pos.y / zoomLevel).toInt().coerceIn(0, imageHeight - 1)
+                            val floating = state.floatingSelection
+                            if (state.activeTool == PixelTool.SELECT && floating != null) {
+                                if (state.isInsideFloatingSelection(px, py)) {
+                                    isDrawing = false
+                                    isMovingFloatingSelection = true
+                                    floatingGrabX = px - floating.x
+                                    floatingGrabY = py - floating.y
+                                    refreshVersion()
+                                    return@onPointerEvent
+                                } else {
+                                    state.cancelFloatingSelection()
+                                }
+                            }
                             when (state.activeTool) {
                                 PixelTool.PENCIL -> {
                                     if (state.isStampMode) {
@@ -455,6 +517,7 @@ fun SpritePixelEditor(
                             refreshVersion()
                         }
                         .onPointerEvent(PointerEventType.Release) {
+                            isMovingFloatingSelection = false
                             val wasDrawing = stopDrawing()
                             // If selection is just a click (zero size), clear it
                             if (wasDrawing && state.activeTool == PixelTool.SELECT && state.selX1 == state.selX2 && state.selY1 == state.selY2) {
@@ -463,6 +526,7 @@ fun SpritePixelEditor(
                             refreshVersion()
                         }
                         .onPointerEvent(PointerEventType.Exit) {
+                            isMovingFloatingSelection = false
                             stopDrawing()
                             hoverX = -1; hoverY = -1
                             refreshVersion()
@@ -509,6 +573,39 @@ fun SpritePixelEditor(
                             drawLine(tgc, Offset(0f, y), Offset(canvasW.toFloat(), y), strokeWidth = 1.5f)
                             y += step
                         }
+                    }
+
+                    state.floatingSelection?.let { floating ->
+                        val fx = floating.x * zoomLevel.toFloat()
+                        val fy = floating.y * zoomLevel.toFloat()
+                        val fw = floating.width * zoomLevel.toFloat()
+                        val fh = floating.height * zoomLevel.toFloat()
+                        drawRect(
+                            Color(0x55333366),
+                            Offset(fx, fy),
+                            Size(fw, fh)
+                        )
+                        for (row in 0 until floating.height) {
+                            for (col in 0 until floating.width) {
+                                val imgX = floating.x + col
+                                val imgY = floating.y + row
+                                if (imgX !in 0 until imageWidth || imgY !in 0 until imageHeight) continue
+                                val argb = floating.pixels[row * floating.width + col]
+                                val alpha = (argb ushr 24) and 0xFF
+                                if (alpha == 0) continue
+                                drawRect(
+                                    Color(argb).copy(alpha = 0.9f),
+                                    Offset(imgX * zoomLevel.toFloat(), imgY * zoomLevel.toFloat()),
+                                    Size(zoomLevel.toFloat(), zoomLevel.toFloat())
+                                )
+                            }
+                        }
+                        drawRect(
+                            Color(0xFFFFD54F),
+                            Offset(fx, fy),
+                            Size(fw, fh),
+                            style = Stroke(2f)
+                        )
                     }
 
                     // Selection rect (dashed marching-ants style)
@@ -635,16 +732,17 @@ fun SpritePixelEditor(
                 Divider(color = Color(0xFF333355))
                 Text("Shortcuts", fontSize = 9.sp, color = Color(0xFF888888), fontWeight = FontWeight.Medium)
                 val shortcuts = listOf(
-                    "P" to "Pencil/Stamp",
+                    "B/P" to "Brush/Stamp",
                     "E" to "Eraser",
-                    "F" to "Fill",
-                    "I" to "Pick",
+                    "F/G" to "Fill",
+                    "I/D" to "Pick",
                     "S" to "Select",
                     "Del" to "Delete sel",
                     "H" to "Flip H",
                     "V" to "Flip V",
                     "R" to "Rot ↻",
                     "⇧R" to "Rot ↺",
+                    "Enter" to "Place",
                     "${MOD_KEY}+C" to "Copy",
                     "${MOD_KEY}+V" to "Paste",
                     "${MOD_KEY}+X" to "Cut",
@@ -849,18 +947,26 @@ private fun ReferenceControlButton(label: String, enabled: Boolean = true, onCli
 }
 
 @Composable
-private fun SmallButton(label: String, hint: String, onClick: () -> Unit) {
+private fun SmallButton(label: String, hint: String, enabled: Boolean = true, onClick: () -> Unit) {
     Surface(
-        modifier = Modifier.height(28.dp).clickable(onClick = onClick),
+        modifier = Modifier.height(28.dp).clickable(enabled = enabled, onClick = onClick),
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.secondaryContainer,
+        color = if (enabled) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         tonalElevation = 1.dp
     ) {
         Box(
             modifier = Modifier.padding(horizontal = 6.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text("$label ($hint)", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            Text(
+                "$label ($hint)",
+                fontSize = 8.sp,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                }
+            )
         }
     }
 }

@@ -442,7 +442,7 @@ class SpritePixelEditorStateTest {
     @Nested
     inner class Transforms {
         @Test
-        fun `flip horizontal reverses pixel columns`() {
+        fun `flip horizontal creates floating preview without editing pixels`() {
             // 2x2 in top-left: [red, green] / [blue, white]
             val pixels = IntArray(16)
             pixels[0] = red; pixels[1] = green; pixels[4] = blue; pixels[5] = white
@@ -450,16 +450,18 @@ class SpritePixelEditorStateTest {
 
             state.selActive = true
             state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 1
-            state.applyTransform(Transform.FLIP_H)
+            assertTrue(state.applyTransform(Transform.FLIP_H))
 
-            assertEquals(green, state.px(0, 0))
-            assertEquals(red, state.px(1, 0))
-            assertEquals(white, state.px(0, 1))
-            assertEquals(blue, state.px(1, 1))
+            assertEquals(red, state.px(0, 0), "Source pixels stay unchanged while previewing")
+            assertEquals(green, state.px(1, 0))
+            assertFalse(state.selActive)
+            assertNotNull(state.floatingSelection)
+            assertArrayEquals(intArrayOf(green, red, white, blue), state.floatingSelection!!.pixels)
+            assertFalse(state.undoStack.isNotEmpty(), "Preview should not create undo entries")
         }
 
         @Test
-        fun `flip vertical reverses pixel rows`() {
+        fun `commit floating transform writes replacement as one undoable edit`() {
             val pixels = IntArray(16)
             pixels[0] = red; pixels[1] = green; pixels[4] = blue; pixels[5] = white
             val state = SpritePixelEditorState(4, 4, pixels, listOf(transparent, red, green, blue, white))
@@ -467,15 +469,25 @@ class SpritePixelEditorStateTest {
             state.selActive = true
             state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 1
             state.applyTransform(Transform.FLIP_V)
+            assertTrue(state.commitFloatingSelection())
 
             assertEquals(blue, state.px(0, 0))
             assertEquals(white, state.px(1, 0))
             assertEquals(red, state.px(0, 1))
             assertEquals(green, state.px(1, 1))
+            assertNull(state.floatingSelection)
+            assertTrue(state.selActive)
+            assertEquals(1, state.undoStack.size)
+
+            state.undo()
+            assertEquals(red, state.px(0, 0))
+            assertEquals(green, state.px(1, 0))
+            assertEquals(blue, state.px(0, 1))
+            assertEquals(white, state.px(1, 1))
         }
 
         @Test
-        fun `rotate CW rotates 90 degrees clockwise`() {
+        fun `rotate CW preview can be moved before commit`() {
             val pixels = IntArray(16)
             pixels[0] = red; pixels[1] = green; pixels[4] = blue; pixels[5] = white
             val state = SpritePixelEditorState(4, 4, pixels, listOf(transparent, red, green, blue, white))
@@ -483,16 +495,49 @@ class SpritePixelEditorStateTest {
             state.selActive = true
             state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 1
             state.applyTransform(Transform.ROTATE_CW)
+            assertTrue(state.moveFloatingSelectionTo(2, 2))
 
-            // CW rotation: top-left gets bottom-left, top-right gets top-left, etc.
-            assertEquals(blue, state.px(0, 0))
-            assertEquals(red, state.px(1, 0))
-            assertEquals(white, state.px(0, 1))
-            assertEquals(green, state.px(1, 1))
+            assertEquals(red, state.px(0, 0), "Source is still untouched before commit")
+            assertTrue(state.commitFloatingSelection())
+            assertEquals(transparent, state.px(0, 0), "Commit clears the original selected area")
+            assertEquals(transparent, state.px(1, 0))
+            assertEquals(transparent, state.px(0, 1))
+            assertEquals(transparent, state.px(1, 1))
+            assertEquals(blue, state.px(2, 2))
+            assertEquals(red, state.px(3, 2))
+            assertEquals(white, state.px(2, 3))
+            assertEquals(green, state.px(3, 3))
         }
 
         @Test
-        fun `rotate CCW rotates 90 degrees counter-clockwise`() {
+        fun `rotate CCW preview preserves full rotated selection at image edge`() {
+            val pixels = IntArray(25)
+            pixels[1 * 5 + 3] = red
+            pixels[1 * 5 + 4] = green
+            pixels[2 * 5 + 3] = blue
+            pixels[2 * 5 + 4] = white
+            pixels[3 * 5 + 3] = red
+            pixels[3 * 5 + 4] = green
+            val state = SpritePixelEditorState(5, 5, pixels, listOf(transparent, red, green, blue, white))
+
+            state.selActive = true
+            state.selX1 = 3; state.selY1 = 1; state.selX2 = 4; state.selY2 = 3
+            assertTrue(state.applyTransform(Transform.ROTATE_CCW))
+
+            val floating = state.floatingSelection!!
+            assertEquals(2, floating.x, "Preview is clamped into bounds instead of clipping data")
+            assertEquals(1, floating.y)
+            assertEquals(3, floating.width)
+            assertEquals(2, floating.height)
+            assertArrayEquals(
+                intArrayOf(green, white, green, red, blue, red),
+                floating.pixels
+            )
+            assertEquals(red, state.px(3, 1), "Source is unchanged until commit")
+        }
+
+        @Test
+        fun `cancel floating transform restores original selection without edits`() {
             val pixels = IntArray(16)
             pixels[0] = red; pixels[1] = green; pixels[4] = blue; pixels[5] = white
             val state = SpritePixelEditorState(4, 4, pixels, listOf(transparent, red, green, blue, white))
@@ -500,28 +545,52 @@ class SpritePixelEditorStateTest {
             state.selActive = true
             state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 1
             state.applyTransform(Transform.ROTATE_CCW)
+            assertTrue(state.cancelFloatingSelection())
 
-            assertEquals(green, state.px(0, 0))
-            assertEquals(white, state.px(1, 0))
-            assertEquals(red, state.px(0, 1))
-            assertEquals(blue, state.px(1, 1))
+            assertNull(state.floatingSelection)
+            assertTrue(state.selActive)
+            assertEquals(0, state.selLeft())
+            assertEquals(0, state.selTop())
+            assertEquals(1, state.selRight())
+            assertEquals(1, state.selBottom())
+            assertEquals(red, state.px(0, 0))
+            assertEquals(green, state.px(1, 0))
+            assertEquals(blue, state.px(0, 1))
+            assertEquals(white, state.px(1, 1))
+            assertFalse(state.undoStack.isNotEmpty())
         }
 
         @Test
-        fun `transform is undoable`() {
+        fun `undo cancels floating transform before touching undo stack`() {
+            val pixels = IntArray(16)
+            pixels[0] = red; pixels[1] = green; pixels[4] = blue; pixels[5] = white
+            val state = SpritePixelEditorState(4, 4, pixels, listOf(transparent, red, green, blue, white))
+            state.selectedColorArgb = green
+            state.drawPixel(3, 3)
+            state.commitPending()
+
+            state.selActive = true
+            state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 1
+            state.applyTransform(Transform.ROTATE_CW)
+            state.undo()
+
+            assertNull(state.floatingSelection)
+            assertTrue(state.selActive)
+            assertEquals(green, state.px(3, 3), "Undo stack should remain untouched when canceling preview")
+            assertEquals(1, state.undoStack.size)
+        }
+
+        @Test
+        fun `transform requires active selection or floating preview`() {
             val pixels = IntArray(16)
             pixels[0] = red; pixels[1] = green
             val state = SpritePixelEditorState(4, 4, pixels, listOf(transparent, red, green))
 
-            state.selActive = true
-            state.selX1 = 0; state.selY1 = 0; state.selX2 = 1; state.selY2 = 0
-            state.applyTransform(Transform.FLIP_H)
-            assertEquals(green, state.px(0, 0))
-            assertEquals(red, state.px(1, 0))
-
-            state.undo()
+            assertFalse(state.applyTransform(Transform.FLIP_H))
+            assertNull(state.floatingSelection)
             assertEquals(red, state.px(0, 0))
             assertEquals(green, state.px(1, 0))
+            assertFalse(state.undoStack.isNotEmpty())
         }
     }
 

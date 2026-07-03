@@ -43,9 +43,9 @@ object PixelEditorCursors {
         renderIconCursor(Icons.Default.Clear, Point(CURSOR_SIZE / 2, CURSOR_SIZE / 2), "eraser")
     }
 
-    /** Fill / paint bucket cursor — hotspot at bottom-left pour point. */
+    /** Fill / paint bucket cursor — hotspot at bottom-right pour point. */
     val fill: PointerIcon get() = cache.getOrPut("fill") {
-        renderIconCursor(Icons.Default.FormatColorFill, Point(3, CURSOR_SIZE - 2), "fill")
+        renderIconCursor(Icons.Default.FormatColorFill, Point(CURSOR_SIZE - 4, CURSOR_SIZE - 2), "fill")
     }
 
     /** Eyedropper cursor — hotspot at bottom-left tip. */
