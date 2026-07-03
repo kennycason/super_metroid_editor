@@ -65,7 +65,7 @@ val ENEMY_DEFS = listOf(
     EnemyDef("dessgeega", "Dessgeega", 0xD9BF, 320, 80, "Hopper"),
 
     // ── Flyers ──
-    EnemyDef("skree", "Skree", 0xD7FF, 40, 16, "Flyer"),
+    EnemyDef("tripper", "Tripper", 0xD7FF, 20, 40, "Flyer"),
     EnemyDef("reo", "Reo", 0xD87F, 20, 40, "Flyer"),
     EnemyDef("waver", "Waver", 0xD63F, 100, 16, "Flyer"),
     EnemyDef("ripper", "Ripper", 0xD47F, 200, 5, "Flyer"),

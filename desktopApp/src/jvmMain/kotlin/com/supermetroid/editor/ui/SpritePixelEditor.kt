@@ -6,22 +6,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,6 +58,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -72,16 +73,21 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private val IS_MAC = System.getProperty("os.name", "").lowercase().contains("mac")
 private val MOD_KEY = if (IS_MAC) "Cmd" else "Ctrl"
@@ -106,10 +112,14 @@ fun SpritePixelEditor(
     /** Optional fixed 16-color palette (for 4bpp tile sheets). null = derive from image. */
     fixedPalette: IntArray? = null,
     /**
-     * Optional reference image shown in the right panel. Use this to display
+     * Optional reference image shown in a floating panel. Use this to display
      * the assembled/final sprite so the user can compare while editing raw tiles.
      */
     referenceImage: ImageBitmap? = null,
+    /** Optional assembled reference animation frames shown in the floating reference panel. */
+    referenceFrames: List<ImageBitmap> = emptyList(),
+    /** Optional live reference renderer for editors where raw pixels assemble into a separate preview. */
+    liveReferenceFrames: ((pixels: IntArray, width: Int, height: Int) -> List<ImageBitmap>)? = null,
     onApply: (pixels: IntArray) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
@@ -135,6 +145,21 @@ fun SpritePixelEditor(
     var showTileGrid by remember { mutableStateOf(fixedPalette != null) }
     var editVersion by remember { mutableStateOf(0) }
     var isDrawing by remember { mutableStateOf(false) }
+    val liveRenderedReferenceFrames = if (liveReferenceFrames != null) {
+        remember(label, editVersion, imageWidth, imageHeight) {
+            liveReferenceFrames(state.pixels.copyOf(), imageWidth, imageHeight)
+        }
+    } else {
+        emptyList()
+    }
+    val referencePreviewImage = liveRenderedReferenceFrames.firstOrNull()
+        ?: referenceImage
+        ?: referenceFrames.firstOrNull()
+    val popupFrames = liveRenderedReferenceFrames.ifEmpty { referenceFrames }
+    val referenceAvailable = referencePreviewImage != null
+    var showReferencePopup by remember(referenceAvailable) {
+        mutableStateOf(referenceAvailable)
+    }
     val focusRequester = remember { FocusRequester() }
 
     // Force recomposition when state changes
@@ -153,61 +178,62 @@ fun SpritePixelEditor(
         focusRequester.requestFocus()
     }
 
-    Column(
-        modifier = modifier.fillMaxSize().background(Color(0xFF1A1A2E))
-            .focusRequester(focusRequester)
-            .focusable()
-            .onKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                val ctrl = event.isCtrlPressed || event.isMetaPressed
-                val shift = event.isShiftPressed
-                when (event.key) {
-                    Key.P -> {
-                        if (state.selActive && state.clipboardPixels == null) {
-                            state.captureSelection()
+    Box(modifier = modifier.fillMaxSize().background(Color(0xFF1A1A2E))) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .focusRequester(focusRequester)
+                .focusable()
+                .onKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    val ctrl = event.isCtrlPressed || event.isMetaPressed
+                    val shift = event.isShiftPressed
+                    when (event.key) {
+                        Key.P -> {
+                            if (state.selActive && state.clipboardPixels == null) {
+                                state.captureSelection()
+                            }
+                            state.selActive = false
+                            state.activeTool = PixelTool.PENCIL
+                            refreshVersion(); true
                         }
-                        state.selActive = false
-                        state.activeTool = PixelTool.PENCIL
-                        refreshVersion(); true
+                        Key.E -> { state.activeTool = PixelTool.ERASER; true }
+                        Key.F -> if (!ctrl) { state.activeTool = PixelTool.FILL; true } else false
+                        Key.I -> { state.activeTool = PixelTool.EYEDROPPER; true }
+                        Key.S -> if (!ctrl) { state.activeTool = PixelTool.SELECT; true } else false
+                        Key.H -> { state.applyTransform(Transform.FLIP_H); refreshVersion(); true }
+                        Key.V -> if (!ctrl) {
+                            state.applyTransform(Transform.FLIP_V); refreshVersion(); true
+                        } else {
+                            state.pasteClipboard(); refreshVersion(); true
+                        }
+                        Key.R -> if (!ctrl) {
+                            state.applyTransform(if (shift) Transform.ROTATE_CCW else Transform.ROTATE_CW)
+                            refreshVersion(); true
+                        } else false
+                        Key.C -> if (ctrl) { state.captureSelection(); true } else false
+                        Key.X -> if (ctrl) {
+                            state.captureSelection(); state.deleteSelection(); refreshVersion(); true
+                        } else false
+                        Key.Z -> if (ctrl) { state.undo(); refreshVersion(); true } else false
+                        Key.Y -> if (ctrl) { state.redo(); refreshVersion(); true } else false
+                        Key.A -> if (ctrl) {
+                            state.selActive = true; state.selX1 = 0; state.selY1 = 0
+                            state.selX2 = imageWidth - 1; state.selY2 = imageHeight - 1; true
+                        } else false
+                        Key.Delete, Key.Backspace -> {
+                            if (state.selActive) { state.deleteSelection(); refreshVersion(); true }
+                            else false
+                        }
+                        Key.Escape -> {
+                            state.selActive = false; state.clearClipboard()
+                            state.activeTool = PixelTool.PENCIL; true
+                        }
+                        Key.Equals -> { zoomLevel = (zoomLevel + 4).coerceAtMost(48); true }
+                        Key.Minus  -> { zoomLevel = (zoomLevel - 4).coerceAtLeast(2);  true }
+                        else -> false
                     }
-                    Key.E -> { state.activeTool = PixelTool.ERASER; true }
-                    Key.F -> if (!ctrl) { state.activeTool = PixelTool.FILL; true } else false
-                    Key.I -> { state.activeTool = PixelTool.EYEDROPPER; true }
-                    Key.S -> if (!ctrl) { state.activeTool = PixelTool.SELECT; true } else false
-                    Key.H -> { state.applyTransform(Transform.FLIP_H); refreshVersion(); true }
-                    Key.V -> if (!ctrl) {
-                        state.applyTransform(Transform.FLIP_V); refreshVersion(); true
-                    } else {
-                        state.pasteClipboard(); refreshVersion(); true
-                    }
-                    Key.R -> if (!ctrl) {
-                        state.applyTransform(if (shift) Transform.ROTATE_CCW else Transform.ROTATE_CW)
-                        refreshVersion(); true
-                    } else false
-                    Key.C -> if (ctrl) { state.captureSelection(); true } else false
-                    Key.X -> if (ctrl) {
-                        state.captureSelection(); state.deleteSelection(); refreshVersion(); true
-                    } else false
-                    Key.Z -> if (ctrl) { state.undo(); refreshVersion(); true } else false
-                    Key.Y -> if (ctrl) { state.redo(); refreshVersion(); true } else false
-                    Key.A -> if (ctrl) {
-                        state.selActive = true; state.selX1 = 0; state.selY1 = 0
-                        state.selX2 = imageWidth - 1; state.selY2 = imageHeight - 1; true
-                    } else false
-                    Key.Delete, Key.Backspace -> {
-                        if (state.selActive) { state.deleteSelection(); refreshVersion(); true }
-                        else false
-                    }
-                    Key.Escape -> {
-                        state.selActive = false; state.clearClipboard()
-                        state.activeTool = PixelTool.PENCIL; true
-                    }
-                    Key.Equals -> { zoomLevel = (zoomLevel + 4).coerceAtMost(48); true }
-                    Key.Minus  -> { zoomLevel = (zoomLevel - 4).coerceAtLeast(2);  true }
-                    else -> false
                 }
-            }
-    ) {
+        ) {
         // ── Toolbar ──
         Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
             Row(
@@ -264,6 +290,10 @@ fun SpritePixelEditor(
                 if (fixedPalette != null) {
                     FilterChip(selected = showTileGrid, onClick = { showTileGrid = !showTileGrid },
                         label = { Text("8px Grid", fontSize = 9.sp) }, modifier = Modifier.height(28.dp))
+                }
+                if (referencePreviewImage != null) {
+                    FilterChip(selected = showReferencePopup, onClick = { showReferencePopup = !showReferencePopup },
+                        label = { Text("Ref", fontSize = 9.sp) }, modifier = Modifier.height(28.dp))
                 }
 
                 IconButton(onClick = { zoomLevel = (zoomLevel - 4).coerceAtLeast(2) },
@@ -640,28 +670,180 @@ fun SpritePixelEditor(
                     Text("(${state.selLeft()}, ${state.selTop()})", fontSize = 8.sp, color = Color(0xFF888888))
                 }
 
-                // Reference image — shows the assembled/final sprite for comparison
-                if (referenceImage != null) {
-                    Divider(color = Color(0xFF333355))
-                    Text("Reference", fontSize = 9.sp,
-                        color = Color(0xFF888888), fontWeight = FontWeight.Medium)
-                    Text("Assembled sprite", fontSize = 8.sp, color = Color(0xFF666688))
-                    Spacer(Modifier.height(4.dp))
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            bitmap = referenceImage,
-                            contentDescription = "Reference sprite preview",
-                            modifier = Modifier
-                                .sizeIn(maxWidth = 160.dp, maxHeight = 160.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .border(1.dp, Color(0xFF444466), RoundedCornerShape(4.dp))
-                        )
+            }
+        }
+        }
+        if (referencePreviewImage != null && showReferencePopup) {
+            FloatingReferenceImage(
+                image = referencePreviewImage,
+                animationFrames = popupFrames,
+                onClose = { showReferencePopup = false },
+                modifier = Modifier.align(Alignment.TopStart)
+            )
+        }
+    }
+}
+
+@Composable
+private fun FloatingReferenceImage(
+    image: ImageBitmap,
+    animationFrames: List<ImageBitmap>,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current.density
+    var offsetX by remember { mutableStateOf(18f) }
+    var offsetY by remember { mutableStateOf(58f) }
+    var panelWidthDp by remember { mutableStateOf(280f) }
+    var panelHeightDp by remember { mutableStateOf(240f) }
+    val frames = remember(image, animationFrames) {
+        animationFrames.takeIf { it.isNotEmpty() } ?: listOf(image)
+    }
+    var frameIndex by remember { mutableStateOf(0) }
+    var isPlaying by remember(frames.size) { mutableStateOf(frames.size > 1) }
+    var frameDelayMs by remember { mutableStateOf(120L) }
+
+    LaunchedEffect(frames.size) {
+        frameIndex = frameIndex.coerceIn(0, frames.lastIndex.coerceAtLeast(0))
+    }
+
+    LaunchedEffect(frames, isPlaying, frameDelayMs) {
+        if (!isPlaying || frames.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(frameDelayMs)
+            frameIndex = (frameIndex + 1) % frames.size
+        }
+    }
+
+    val activeImage = frames[frameIndex.coerceIn(0, frames.lastIndex)]
+
+    Surface(
+        modifier = modifier
+            .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+            .width(panelWidthDp.dp)
+            .height(panelHeightDp.dp),
+        color = Color(0xF20D0D1A),
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 10.dp,
+        tonalElevation = 4.dp
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(28.dp)
+                        .background(Color(0xFF22223A))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                offsetX += dragAmount.x
+                                offsetY += dragAmount.y
+                            }
+                        }
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        if (frames.size > 1) "Assembled ${frameIndex + 1}/${frames.size}" else "Assembled",
+                        fontSize = 10.sp,
+                        color = Color(0xFFCCCCDD),
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "Close",
+                        fontSize = 9.sp,
+                        color = Color(0xFFAAAACC),
+                        modifier = Modifier.clickable(onClick = onClose)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF151525))
+                        .border(1.dp, Color(0xFF444466), RoundedCornerShape(4.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        bitmap = activeImage,
+                        contentDescription = "Assembled sprite reference",
+                        modifier = Modifier.fillMaxSize().padding(6.dp),
+                        contentScale = ContentScale.Fit,
+                        filterQuality = FilterQuality.None
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp)
+                        .background(Color(0xFF22223A))
+                        .padding(start = 6.dp, end = 34.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ReferenceControlButton("<", enabled = frames.size > 1) {
+                        isPlaying = false
+                        frameIndex = if (frameIndex <= 0) frames.lastIndex else frameIndex - 1
+                    }
+                    ReferenceControlButton(if (isPlaying) "Pause" else "Play", enabled = frames.size > 1) {
+                        isPlaying = !isPlaying
+                    }
+                    ReferenceControlButton(">", enabled = frames.size > 1) {
+                        isPlaying = false
+                        frameIndex = (frameIndex + 1) % frames.size
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text("Speed", fontSize = 9.sp, color = Color(0xFF8888AA))
+                    ReferenceControlButton("-", enabled = frameDelayMs < 600L) {
+                        frameDelayMs = (frameDelayMs + 30L).coerceAtMost(600L)
+                    }
+                    Text("${frameDelayMs}ms", fontSize = 9.sp, color = Color(0xFFCCCCDD), modifier = Modifier.width(42.dp), textAlign = TextAlign.Center)
+                    ReferenceControlButton("+", enabled = frameDelayMs > 30L) {
+                        frameDelayMs = (frameDelayMs - 30L).coerceAtLeast(30L)
                     }
                 }
             }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(28.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            panelWidthDp = (panelWidthDp + dragAmount.x / density).coerceIn(240f, 560f)
+                            panelHeightDp = (panelHeightDp + dragAmount.y / density).coerceIn(160f, 560f)
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(Modifier.size(14.dp)) {
+                    drawLine(Color(0xFFAAAACC), Offset(size.width, 2f), Offset(2f, size.height), strokeWidth = 1.2f)
+                    drawLine(Color(0xFF777799), Offset(size.width, 7f), Offset(7f, size.height), strokeWidth = 1.2f)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReferenceControlButton(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .height(22.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(4.dp),
+        color = if (enabled) Color(0xFF333355) else Color(0xFF242436)
+    ) {
+        Box(Modifier.padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                fontSize = 9.sp,
+                color = if (enabled) Color(0xFFDDDDEE) else Color(0xFF777788)
+            )
         }
     }
 }

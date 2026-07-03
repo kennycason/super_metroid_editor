@@ -1843,7 +1843,7 @@ class RomParser(internal val romData: ByteArray) {
             0xD7BF to "Oum",
             0xD7DF to "Ripper II",
             0xD7FF to "Tripper",
-            0xD83F to "Skree (variant)",
+            0xD83F to "Suspensor Platform",
             0xD87F to "Reo",
             0xD89F to "Waver",
             0xD8BF to "Reo (variant)",

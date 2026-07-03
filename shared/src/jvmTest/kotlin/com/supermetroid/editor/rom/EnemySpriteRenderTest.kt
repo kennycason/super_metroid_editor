@@ -109,7 +109,7 @@ class EnemySpriteRenderTest {
             ExpectedStats("Zoomer", 0xDCFF, 15, 5),
             ExpectedStats("Zeela", 0xDC7F, 30, 10),
             ExpectedStats("Sidehopper", 0xD93F, 60, 20),
-            ExpectedStats("Skree", 0xD7FF, 20, 40),
+            ExpectedStats("Tripper", 0xD7FF, 20, 40),
             ExpectedStats("Cacatac", 0xCFFF, 60, 20),
         )
         for (e in expected) {

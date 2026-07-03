@@ -336,10 +336,13 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         /**
          * Build tile data for pose rendering when the game composes sprites from
          * multiple VRAM sources. Most enemies render directly from their raw enemy
-         * graphics; Crocomire's BG2 body also references room tileset $1B, while
-         * its enemy graphics are injected at physical room/VRAM tile $D0. Crocomire's
-         * OAM child spritemaps use those same physical tile IDs; SNES OBJ palette and
-         * name-table bits are not additional editor tile-index offsets.
+         * graphics. A few species need the same runtime tile placement/composition
+         * that the game builds before drawing:
+         *
+         * - Crocomire's BG2 body also references room tileset $1B, while its enemy
+         *   graphics are injected at physical room/VRAM tile $D0. Crocomire's OAM
+         *   child spritemaps use those same physical tile IDs; SNES OBJ palette and
+         *   name-table bits are not additional editor tile-index offsets.
          */
         fun loadEnemyRenderTileData(
             romParser: RomParser,
@@ -368,6 +371,19 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             val roomTileData = tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: rawEnemyTiles
             tileGraphics.injectRawTileData(CROCOMIRE_BG_ENEMY_TILE_BASE, rawEnemyTiles)
             return tileGraphics.extractRawTileData(0, TileGraphics.TOTAL_TILES) ?: roomTileData
+        }
+
+        /**
+         * Build tile data for ordinary OAM spritemaps rendered with low-8 tile
+         * numbers. Boss render buffers can require physical tile IDs and custom
+         * render options, so keep this path to standard spritemap-compatible fixes.
+         */
+        fun loadStandardOamRenderTileData(
+            romParser: RomParser,
+            speciesId: Int,
+            enemyTileData: ByteArray? = null
+        ): ByteArray? {
+            return enemyTileData ?: loadEnemyTileData(romParser, speciesId)
         }
 
         fun loadCrocomireRoomTileData(romParser: RomParser): ByteArray? {

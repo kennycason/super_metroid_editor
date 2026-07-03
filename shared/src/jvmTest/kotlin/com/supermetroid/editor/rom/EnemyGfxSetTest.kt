@@ -33,7 +33,7 @@ class EnemyGfxSetTest {
         val enemies = listOf(
             0xDCFF to "Zoomer",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xDC7F to "Zeela",
         )
 
@@ -56,7 +56,7 @@ class EnemyGfxSetTest {
             Triple(0xE4BF, "Phantoon", 2500),
             Triple(0xDCFF, "Zoomer", 15),
             Triple(0xD93F, "Sidehopper", 60),
-            Triple(0xD7FF, "Skree", 20),
+            Triple(0xD7FF, "Tripper", 20),
         )
 
         for ((speciesId, name, expectedHp) in expected) {
@@ -75,7 +75,7 @@ class EnemyGfxSetTest {
             0xDCFF to "Zoomer",
             0xDC7F to "Zeela",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xCFFF to "Cacatac",
         )
 

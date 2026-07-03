@@ -21,7 +21,7 @@ class SpriteRenderScaledTest {
         val enemies = mapOf(
             0xDCFF to "Zoomer",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xCFFF to "Cacatac",
         )
 

@@ -38,6 +38,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -79,7 +80,9 @@ fun EnemySpriteViewer(
     var editingWidth by remember { mutableStateOf(0) }
     var editingHeight by remember { mutableStateOf(0) }
     var editingPalette by remember { mutableStateOf<IntArray?>(null) }
-    var editingReference by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    var editingReference by remember { mutableStateOf<ImageBitmap?>(null) }
+    var editingReferenceFrames by remember { mutableStateOf<List<ImageBitmap>>(emptyList()) }
+    var editingTileData by remember { mutableStateOf<ByteArray?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
 
     // If pixel editor is open, show it full-screen
@@ -92,6 +95,25 @@ fun EnemySpriteViewer(
             imageHeight = editingHeight,
             fixedPalette = editingPalette,
             referenceImage = editingReference,
+            referenceFrames = editingReferenceFrames,
+            liveReferenceFrames = { pixels, width, height ->
+                val pal = editingPalette
+                val baseTileData = editingTileData
+                if (pal == null || baseTileData == null) {
+                    emptyList()
+                } else {
+                    enemyLiveReferenceFrames(
+                        rp = rp,
+                        speciesId = entry.speciesId,
+                        speciesName = entry.name,
+                        palette = pal,
+                        baseTileData = baseTileData,
+                        pixels = pixels,
+                        width = width,
+                        height = height
+                    )
+                }
+            },
             onApply = { pixels ->
                 editorState.applyEnemyTileSheetEdits(rp, entry.speciesId, pixels, editingWidth, editingHeight)
                 refreshKey++
@@ -100,6 +122,8 @@ fun EnemySpriteViewer(
                 editingPixels = null
                 editingPalette = null
                 editingReference = null
+                editingReferenceFrames = emptyList()
+                editingTileData = null
             },
             modifier = modifier
         )
@@ -138,8 +162,10 @@ fun EnemySpriteViewer(
         }
 
         val smap = EnemySpritemap(rp)
+        smap.renderSpecialEnemyPreview(entry.speciesId, td, pal)?.let { return@remember it }
         val defaultSmap = smap.findDefaultSpritemap(entry.speciesId) ?: return@remember null
-        val result = smap.renderSpritemap(defaultSmap, td, pal) ?: return@remember null
+        val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(rp, entry.speciesId, td) ?: td
+        val result = smap.renderSpritemap(defaultSmap, renderTileData, pal) ?: return@remember null
         val totalPixels = result.width * result.height
         val nonTransparent = result.pixels.count { (it ushr 24) > 0 }
         if (totalPixels > 64 && nonTransparent < totalPixels * 5 / 100) return@remember null
@@ -338,7 +364,9 @@ fun EnemySpriteViewer(
                 }
             } else {
                 val smap = EnemySpritemap(rp)
-                smap.buildAnimation(entry.speciesId, td, pal, entry.name)
+                smap.buildSpecialEnemyAnimation(entry.speciesId, td, pal, entry.name)?.let { return@remember it }
+                val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(rp, entry.speciesId, td) ?: td
+                smap.buildAnimation(entry.speciesId, renderTileData, pal, entry.name)
             }
         }
 
@@ -412,6 +440,7 @@ fun EnemySpriteViewer(
         // Boss body poses (scan AI bank for large OAM spritemaps)
         // Show for species with known instruction lists OR enough tiles to be a boss
         val isBoss = !usesStaticAssembledPreviewOnly &&
+            !EnemySpritemap.hasSpecialEnemyPreview(entry.speciesId) &&
             (BossPoseScanner.hasKnownPoses(entry.speciesId) ||
                 (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true))
         if (isBoss) {
@@ -636,11 +665,17 @@ fun EnemySpriteViewer(
                                             img.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
                                             img.toComposeImageBitmap()
                                         }
+                                        val refFrames = enemyAnimation?.frames
+                                            ?.takeIf { it.size > 1 }
+                                            ?.map(::enemyFrameToImageBitmap)
+                                            .orEmpty()
                                         editingPixels = pixels.copyOf()
                                         editingWidth = w
                                         editingHeight = h
                                         editingPalette = pal
-                                        editingReference = refBitmap
+                                        editingReference = refBitmap ?: refFrames.firstOrNull()
+                                        editingReferenceFrames = refFrames
+                                        editingTileData = tileData?.copyOf()
                                     },
                                     modifier = Modifier.height(28.dp),
                                     contentPadding = ButtonDefaults.ContentPadding.let {
@@ -648,6 +683,65 @@ fun EnemySpriteViewer(
                                     }
                                 ) {
                                     Text("Edit Tiles", fontSize = 10.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val file = chooseEnemyPngFile(
+                                            dialogTitle = "Export Tile Sheet PNG",
+                                            defaultName = "${enemyExportSafeName(entry.name)}_tiles.png"
+                                        ) ?: return@Button
+                                        scope.launch {
+                                            exportStatus = "Exporting ${file.name}..."
+                                            val result = runCatching {
+                                                withContext(Dispatchers.IO) {
+                                                    enemyExportPixelsPng(pixels, w, h, file)
+                                                }
+                                            }
+                                            exportStatus = result.fold(
+                                                onSuccess = { "Exported ${file.name}" },
+                                                onFailure = { err -> "Export failed: ${err.message ?: err::class.simpleName}" }
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = ButtonDefaults.ContentPadding.let {
+                                        androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                    }
+                                ) {
+                                    Text("Export PNG", fontSize = 10.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val file = chooseEnemyOpenPngFile("Import Tile Sheet PNG") ?: return@Button
+                                        scope.launch {
+                                            exportStatus = "Importing ${file.name}..."
+                                            val result = runCatching {
+                                                val importedPixels = withContext(Dispatchers.IO) {
+                                                    enemyImportPixelsPng(file, expectedWidth = w, expectedHeight = h)
+                                                }
+                                                editorState.applyEnemyTileSheetEdits(
+                                                    rp,
+                                                    entry.speciesId,
+                                                    importedPixels,
+                                                    w,
+                                                    h
+                                                )
+                                            }
+                                            exportStatus = result.fold(
+                                                onSuccess = {
+                                                    refreshKey++
+                                                    "Imported ${file.name}"
+                                                },
+                                                onFailure = { err -> "Import failed: ${err.message ?: err::class.simpleName}" }
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.height(28.dp),
+                                    contentPadding = ButtonDefaults.ContentPadding.let {
+                                        androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                                    }
+                                ) {
+                                    Text("Import PNG", fontSize = 10.sp)
                                 }
                                 if (hasCustom) {
                                     Button(
@@ -758,6 +852,83 @@ private fun enemyExportFramePng(frame: SpriteAnimationFrame, file: File) {
     ImageIO.write(bi, "png", file)
 }
 
+private fun enemyFrameToImageBitmap(frame: SpriteAnimationFrame): ImageBitmap {
+    val image = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+    image.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+    return image.toComposeImageBitmap()
+}
+
+private fun enemyAssembledToImageBitmap(sprite: EnemySpritemap.AssembledSprite): ImageBitmap {
+    val image = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
+    image.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
+    return image.toComposeImageBitmap()
+}
+
+private fun enemyLiveReferenceFrames(
+    rp: RomParser,
+    speciesId: Int,
+    speciesName: String,
+    palette: IntArray,
+    baseTileData: ByteArray,
+    pixels: IntArray,
+    width: Int,
+    height: Int
+): List<ImageBitmap> {
+    if (width <= 0 || height <= 0 || pixels.size != width * height) return emptyList()
+
+    val gfx = EnemySpriteGraphics(rp)
+    gfx.loadFromRaw(listOf(baseTileData))
+    gfx.importFromArgb(pixels, width, height, palette, cols = 16)
+    val editedTileData = gfx.getRawBlocks()?.firstOrNull() ?: return emptyList()
+
+    val smap = EnemySpritemap(rp)
+    val specialAnimationFrames = smap.buildSpecialEnemyAnimation(speciesId, editedTileData, palette, speciesName)
+        ?.frames
+        ?.takeIf { it.size > 1 }
+        ?.map(::enemyFrameToImageBitmap)
+    if (!specialAnimationFrames.isNullOrEmpty()) return specialAnimationFrames
+
+    smap.renderSpecialEnemyPreview(speciesId, editedTileData, palette)
+        ?.let { return listOf(enemyAssembledToImageBitmap(it)) }
+
+    if (BossPoseScanner.hasKnownPoses(speciesId)) {
+        val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, speciesId, editedTileData) ?: editedTileData
+        val scanner = BossPoseScanner(rp)
+        val poseFrames = scanner.scanPoses(speciesId, minEntries = 3).mapNotNull { pose ->
+            scanner.renderPose(pose, renderTileData, palette)?.let(::enemyAssembledToImageBitmap)
+        }
+        if (poseFrames.isNotEmpty()) return poseFrames
+    }
+
+    val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(rp, speciesId, editedTileData) ?: editedTileData
+    val animationFrames = smap.buildAnimation(speciesId, renderTileData, palette, speciesName)
+        ?.frames
+        ?.takeIf { it.size > 1 }
+        ?.map(::enemyFrameToImageBitmap)
+    if (!animationFrames.isNullOrEmpty()) return animationFrames
+
+    val defaultSmap = smap.findDefaultSpritemap(speciesId) ?: return emptyList()
+    val assembled = smap.renderSpritemap(defaultSmap, renderTileData, palette) ?: return emptyList()
+    return listOf(enemyAssembledToImageBitmap(assembled))
+}
+
+private fun enemyExportPixelsPng(pixels: IntArray, width: Int, height: Int, file: File) {
+    require(pixels.size == width * height) {
+        "Pixel buffer has ${pixels.size} pixels, expected ${width * height}"
+    }
+    val bi = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    bi.setRGB(0, 0, width, height, pixels, 0, width)
+    ImageIO.write(bi, "png", file)
+}
+
+private fun enemyImportPixelsPng(file: File, expectedWidth: Int, expectedHeight: Int): IntArray {
+    val image = ImageIO.read(file) ?: error("Could not read PNG")
+    if (image.width != expectedWidth || image.height != expectedHeight) {
+        error("Expected ${expectedWidth}x${expectedHeight}px, got ${image.width}x${image.height}px")
+    }
+    return image.getRGB(0, 0, expectedWidth, expectedHeight, null, 0, expectedWidth)
+}
+
 private fun enemyExportAnimationGif(animation: SpriteAnimation, file: File) {
     val gifBytes = GifEncoder.encode(animation.frames)
     file.writeBytes(gifBytes)
@@ -782,6 +953,14 @@ private fun chooseEnemyPngFile(dialogTitle: String, defaultName: String): File? 
     return chooser.selectedFile.let {
         if (!it.name.endsWith(".png", ignoreCase = true)) File(it.parentFile, "${it.name}.png") else it
     }
+}
+
+private fun chooseEnemyOpenPngFile(dialogTitle: String): File? {
+    val chooser = JFileChooser().apply {
+        this.dialogTitle = dialogTitle
+        fileFilter = FileNameExtensionFilter("PNG Images", "png")
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
 }
 
 private fun chooseEnemyGifFile(dialogTitle: String, defaultName: String): File? {

@@ -21,7 +21,7 @@ class SpriteRenderDiagnosticTest {
             0xDCFF to "Zoomer",
             0xDC7F to "Zeela",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xCFFF to "Cacatac",
         )
 
@@ -70,7 +70,7 @@ class SpriteRenderDiagnosticTest {
             0xDCFF to "Zoomer",
             0xDC7F to "Zeela",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xCFFF to "Cacatac",
         )
 

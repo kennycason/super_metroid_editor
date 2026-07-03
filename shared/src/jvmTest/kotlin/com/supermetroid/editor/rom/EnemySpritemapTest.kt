@@ -41,13 +41,13 @@ class EnemySpritemapTest {
     }
 
     @Test
-    fun `parse Skree spritemap via alternate instruction format`() {
+    fun `parse Tripper spritemap via alternate instruction format`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)
 
-        val skreeSmap = smap.findDefaultSpritemap(0xD7FF)
-        assertNotNull(skreeSmap, "Should find Skree spritemap")
-        assertEquals(4, skreeSmap!!.entries.size, "Skree spritemap should have 4 OAM entries")
+        val tripperSmap = smap.findDefaultSpritemap(0xD7FF)
+        assertNotNull(tripperSmap, "Should find Tripper spritemap")
+        assertEquals(4, tripperSmap!!.entries.size, "Tripper spritemap should have 4 OAM entries")
     }
 
     @Test
@@ -70,7 +70,7 @@ class EnemySpritemapTest {
             0xDCFF to "Zoomer",
             0xDC7F to "Zeela",
             0xD93F to "Sidehopper",
-            0xD7FF to "Skree",
+            0xD7FF to "Tripper",
             0xCFFF to "Cacatac",
         )
 

@@ -332,6 +332,36 @@ class EnemySpritemap(private val romParser: RomParser) {
         return parseAnimationFrames(rom, instrListPtr, aiBank, maxFrames)
     }
 
+    fun findSpecialPreviewSpritemap(speciesId: Int): Spritemap? =
+        when (speciesId) {
+            SUSPENSOR_PLATFORM_SPECIES_ID -> parseSpritemap(SUSPENSOR_PLATFORM_SPRITEMAP_ADDRS.first())
+            else -> null
+        }
+
+    fun renderSpecialEnemyPreview(
+        speciesId: Int,
+        tileData: ByteArray,
+        palette: IntArray
+    ): AssembledSprite? =
+        when (speciesId) {
+            METROID_SPECIES_ID -> renderMetroidFrame(tileData, palette, frameIndex = 0)
+            SUSPENSOR_PLATFORM_SPECIES_ID ->
+                findSpecialPreviewSpritemap(speciesId)?.let { renderSpritemap(it, tileData, palette) }
+            else -> null
+        }
+
+    fun buildSpecialEnemyAnimation(
+        speciesId: Int,
+        tileData: ByteArray,
+        palette: IntArray,
+        enemyName: String
+    ): SpriteAnimation? =
+        when (speciesId) {
+            METROID_SPECIES_ID -> buildMetroidAnimation(tileData, palette, enemyName)
+            SUSPENSOR_PLATFORM_SPECIES_ID -> buildSuspensorPlatformAnimation(tileData, palette, enemyName)
+            else -> null
+        }
+
     /**
      * Find the direction table address from the init function, if one exists.
      * Matches the specific pattern: `TAY; LDA $xxxx,y; STA $0F92,x`
@@ -817,8 +847,32 @@ class EnemySpritemap(private val romParser: RomParser) {
 
     private fun tilemapDestCol(dest: Int): Int = (tilemapDestOffset(dest) and 0x3F) / 2
 
-    private companion object {
-        const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
+    companion object {
+        fun hasSpecialEnemyPreview(speciesId: Int): Boolean =
+            speciesId == METROID_SPECIES_ID || speciesId == SUSPENSOR_PLATFORM_SPECIES_ID
+
+        private const val METROID_SPECIES_ID = 0xDD7F
+        private const val SUSPENSOR_PLATFORM_SPECIES_ID = 0xD83F
+        private const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
+
+        private val METROID_INSIDE_SPRITEMAP_ADDRS = intArrayOf(
+            0xA3F10D,
+            0xA3F137,
+            0xA3F157,
+            0xA3F181
+        )
+        private val METROID_SHELL_SPRITEMAP_ADDRS = intArrayOf(
+            0xA3F071,
+            0xA3F0A5,
+            0xA3F0D9
+        )
+        private val METROID_SHELL_FRAME_SEQUENCE = intArrayOf(0, 1, 2, 1)
+        private val SUSPENSOR_PLATFORM_SPRITEMAP_ADDRS = intArrayOf(
+            0xA3A021,
+            0xA3A02D,
+            0xA3A039,
+            0xA3A045
+        )
     }
 
     private fun readS16(data: ByteArray, offset: Int): Int {
@@ -1190,6 +1244,78 @@ class EnemySpritemap(private val romParser: RomParser) {
             frames = animFrames,
             loop = true
         )
+    }
+
+    private fun buildMetroidAnimation(
+        tileData: ByteArray,
+        palette: IntArray,
+        enemyName: String
+    ): SpriteAnimation? {
+        val insideFrames = metroidInsideFrames()
+        if (insideFrames.isEmpty()) return null
+
+        val frames = insideFrames.mapIndexedNotNull { idx, frame ->
+            val assembled = renderMetroidFrame(tileData, palette, idx, frame.spritemap) ?: return@mapIndexedNotNull null
+            SpriteAnimationFrame(
+                pixels = assembled.pixels,
+                width = assembled.width,
+                height = assembled.height,
+                durationTicks = frame.duration.takeIf { it > 0 } ?: 8,
+                label = "$enemyName Frame ${idx + 1}"
+            )
+        }
+        if (frames.isEmpty()) return null
+        return SpriteAnimation(enemyName, frames, loop = true)
+    }
+
+    private fun metroidInsideFrames(): List<AnimationFrame> {
+        val traced = findAnimationFrames(METROID_SPECIES_ID, maxFrames = 8)
+        if (traced.isNotEmpty()) return traced
+        val fallback = mutableListOf<AnimationFrame>()
+        for (addr in METROID_INSIDE_SPRITEMAP_ADDRS) {
+            val smap = parseSpritemap(addr) ?: continue
+            fallback.add(AnimationFrame(8, smap))
+        }
+        return fallback
+    }
+
+    private fun renderMetroidFrame(
+        tileData: ByteArray,
+        palette: IntArray,
+        frameIndex: Int,
+        inside: Spritemap? = metroidInsideFrames().getOrNull(frameIndex)?.spritemap
+    ): AssembledSprite? {
+        val insideSmap = inside ?: return null
+        val shellIndex = METROID_SHELL_FRAME_SEQUENCE[frameIndex % METROID_SHELL_FRAME_SEQUENCE.size]
+        val shellSmap = parseSpritemap(METROID_SHELL_SPRITEMAP_ADDRS[shellIndex])
+        val merged = if (shellSmap != null) {
+            Spritemap(insideSmap.entries + shellSmap.entries, insideSmap.snesAddress)
+        } else {
+            insideSmap
+        }
+        return renderSpritemap(merged, tileData, palette)
+    }
+
+    private fun buildSuspensorPlatformAnimation(
+        tileData: ByteArray,
+        palette: IntArray,
+        enemyName: String
+    ): SpriteAnimation? {
+        val frames = mutableListOf<SpriteAnimationFrame>()
+        for (idx in SUSPENSOR_PLATFORM_SPRITEMAP_ADDRS.indices) {
+            val addr = SUSPENSOR_PLATFORM_SPRITEMAP_ADDRS[idx]
+            val smap = parseSpritemap(addr) ?: continue
+            val assembled = renderSpritemap(smap, tileData, palette) ?: continue
+            frames.add(SpriteAnimationFrame(
+                pixels = assembled.pixels,
+                width = assembled.width,
+                height = assembled.height,
+                durationTicks = 10,
+                label = "$enemyName Frame ${idx + 1}"
+            ))
+        }
+        if (frames.isEmpty()) return null
+        return SpriteAnimation(enemyName, frames, loop = true)
     }
 
     private fun parseAnimationFrames(

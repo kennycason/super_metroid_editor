@@ -62,7 +62,7 @@ class EnemyHeaderTest {
         val rom = rp.getRomData()
 
         // Different enemies should have different Init AI pointers
-        val species = listOf(0xDCFF, 0xD93F, 0xD7FF) // Zoomer, Sidehopper, Skree
+        val species = listOf(0xDCFF, 0xD93F, 0xD7FF) // Zoomer, Sidehopper, Tripper
         val initPtrs = species.map { id ->
             val pc = rp.snesToPc(RomConstants.BANK_ENEMY_AI or id)
             readU16(rom, pc + 0x12)
