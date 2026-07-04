@@ -1206,13 +1206,7 @@ fun MapCanvas(
                             val roomHeader = remember(room, editVersion) {
                                 room?.let { r ->
                                     val rh = romParser.readRoomHeader(r.getRoomIdAsInt()) ?: return@let null
-                                    val key = rh.roomId.toString(16).uppercase().padStart(4, '0')
-                                    val hc = editorState?.project?.rooms?.get(key)?.roomHeaderChange
-                                    if (hc != null) rh.copy(
-                                        width = hc.width ?: rh.width,
-                                        height = hc.height ?: rh.height,
-                                        area = hc.area ?: rh.area,
-                                    ) else rh
+                                    editorState?.applyHeaderChanges(rh) ?: rh
                                 }
                             }
                             val scrollVer = editorState?.scrollVersion ?: 0

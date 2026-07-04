@@ -58,6 +58,27 @@ class TileGraphics(private val romParser: RomParser) {
     private var rawTileData: ByteArray? = null          // Combined 4bpp tile graphics (var + CRE)
     private var metatiles: Array<IntArray>? = null       // metatile[idx] = 4 sub-tile words
     private var cachedPalette: Array<IntArray>? = null   // 8 palettes × 16 ARGB colors
+    private var cachedDefinedMetatiles: Int = 0          // Entries actually present in the tile table
+
+    /**
+     * Number of metatile slots the loaded tileset's tile table actually
+     * defines (CRE + variable). Indices at or beyond this render as the
+     * zero-filled placeholder, so generators should avoid them.
+     */
+    fun definedMetatileCount(): Int = cachedDefinedMetatiles
+
+    /**
+     * True when [index] is undefined for the loaded tileset, or any of its
+     * sub-tiles draws a CRE "X block" character (0x3C6-0x3C9 dense X, 0x3FF
+     * sparse X) — vanilla's solid-but-invisible markers, only used where
+     * layer 2 hides them. Generators should skip these.
+     */
+    fun isPlaceholderMetatile(index: Int): Boolean {
+        val metas = metatiles ?: return true
+        if (index < 0 || index >= metas.size || index >= cachedDefinedMetatiles) return true
+        if (!cachedHasCre) return false  // Kraid tileset: chars 0x280+ are real graphics
+        return metas[index].any { (it and 0x3FF) in 0x3C6..0x3C9 || (it and 0x3FF) == 0x3FF }
+    }
 
     /**
      * Load a complete tileset (graphics + tile table + palette).
@@ -97,9 +118,11 @@ class TileGraphics(private val romParser: RomParser) {
         val varTableCoversAll = varTileTable.size >= METATILE_COUNT * 8
         if (varTableCoversAll) {
             metatiles = parseTileTableRaw(varTileTable)
+            cachedDefinedMetatiles = METATILE_COUNT
         } else {
             val creTileTable = romParser.decompressLZ2(CRE_TILE_TABLE_SNES)
             metatiles = parseTileTable(varTileTable, creTileTable)
+            cachedDefinedMetatiles = minOf((creTileTable.size + varTileTable.size) / 8, METATILE_COUNT)
         }
 
         // Graphics: variable tiles first, CRE overlays at offset 0x5000 (tiles 640-1023).

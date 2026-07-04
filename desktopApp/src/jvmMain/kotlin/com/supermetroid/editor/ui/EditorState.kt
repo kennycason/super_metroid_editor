@@ -26,8 +26,10 @@ import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
 import com.supermetroid.editor.procgen.BiomeRules
+import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
@@ -373,8 +375,10 @@ class EditorState {
         private set
     var currentRoomId: Int = 0
         private set
-    var currentTilesetId: Int = 0
+    var currentTilesetId by mutableStateOf(0)
         private set
+    /** The loaded room's tileset as stored in the ROM (before project overrides). */
+    private var romTilesetId: Int = 0
     /** Currently active room state index (0 = first conditional, last = default). */
     var currentStateIndex: Int = -1
         private set
@@ -662,9 +666,9 @@ class EditorState {
 
     /**
      * Read the palette for any tileset as BGR555 colors (128 = 8 rows × 16).
-     * Applies project override if present.
+     * Applies project override if present unless [includeOverride] is false.
      */
-    fun readTilesetPalette(tilesetId: Int, romParser: RomParser): IntArray? {
+    fun readTilesetPalette(tilesetId: Int, romParser: RomParser, includeOverride: Boolean = true): IntArray? {
         try {
             val romData = romParser.getRomData()
             val tablePC = romParser.snesToPc(0x8FE6A2)
@@ -680,7 +684,7 @@ class EditorState {
                 colors[i] = (raw[i * 2].toInt() and 0xFF) or
                         ((raw[i * 2 + 1].toInt() and 0xFF) shl 8)
             }
-            val b64 = project.customGfx.palettes[tilesetId.toString()]
+            val b64 = if (includeOverride) project.customGfx.palettes[tilesetId.toString()] else null
             if (b64 != null) {
                 try {
                     val overrideBytes = java.util.Base64.getDecoder().decode(b64)
@@ -2505,13 +2509,16 @@ class EditorState {
 
     fun loadRoom(roomId: Int, romParser: RomParser, room: com.supermetroid.editor.data.Room) {
         currentRoomId = roomId
-        currentTilesetId = room.tileset
+        romTilesetId = room.tileset
+        // A stored state-data change (e.g. from the biome generator or room
+        // properties panel) overrides the ROM tileset for editing/rendering.
+        currentTilesetId = project.rooms[project.roomKey(roomId)]?.stateDataChange?.tileset ?: room.tileset
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
         val tg = TileGraphics(romParser)
-        if (tg.loadTileset(room.tileset)) {
-            applyCustomGfxToTileGraphics(tg, room.tileset)
+        if (tg.loadTileset(currentTilesetId)) {
+            applyCustomGfxToTileGraphics(tg, currentTilesetId)
             tileGraphics = tg
         }
         var levelData = romParser.decompressLZ2(room.levelDataPtr)
@@ -3202,15 +3209,22 @@ class EditorState {
         editVersion++
     }
 
-    /** Return a copy of [room] with any project header changes (width, height, area, etc.) applied. */
+    /**
+     * Return a copy of [room] with any project header changes (width, height,
+     * area, etc.) and the state-data tileset override applied.
+     */
     fun applyHeaderChanges(room: com.supermetroid.editor.data.Room): com.supermetroid.editor.data.Room {
-        val hc = project.rooms[project.roomKey(room.roomId)]?.roomHeaderChange ?: return room
+        val edits = project.rooms[project.roomKey(room.roomId)] ?: return room
+        val hc = edits.roomHeaderChange
+        val tileset = edits.stateDataChange?.tileset ?: room.tileset
+        if (hc == null && tileset == room.tileset) return room
         return room.copy(
-            width = hc.width ?: room.width,
-            height = hc.height ?: room.height,
-            area = hc.area ?: room.area,
-            mapX = hc.mapX ?: room.mapX,
-            mapY = hc.mapY ?: room.mapY,
+            width = hc?.width ?: room.width,
+            height = hc?.height ?: room.height,
+            area = hc?.area ?: room.area,
+            mapX = hc?.mapX ?: room.mapX,
+            mapY = hc?.mapY ?: room.mapY,
+            tileset = tileset,
         )
     }
 
@@ -3314,6 +3328,64 @@ class EditorState {
         }
         applyBulkEdits("Generate biome (${rules.style.displayName}, seed $seed)", edits)
         return edits.size
+    }
+
+    /**
+     * Apply a [BiomeTheme] to the loaded room: switch its tileset (persisted
+     * as a state-data change for ROM export), install the theme's palette
+     * recolor as a tileset palette override, and set liquid/atmosphere FX.
+     * Reloads the room's TileGraphics so the canvas shows the new look
+     * immediately. Call before [generateBiome] so the generated layout is
+     * dressed with the theme tileset's vocabulary.
+     */
+    fun applyBiomeTheme(theme: BiomeTheme, romParser: RomParser) {
+        if (theme.tilesetId == null && theme.paletteEffectId == null && theme.fxType == null) return
+        val targetTileset = theme.tilesetId ?: currentTilesetId
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+
+        // Recolor from the vanilla palette so re-applying a theme is stable.
+        val effectId = theme.paletteEffectId
+        if (effectId != null) {
+            val effect = PaletteEffects.findEffect(effectId)
+            val colors = readTilesetPalette(targetTileset, romParser, includeOverride = false)
+            if (effect != null && colors != null) {
+                effect.apply(colors)
+                saveTilesetPaletteFromColors(targetTileset, colors)
+                setPaletteEffect("tileset:$targetTileset", effect.id)
+            }
+        }
+
+        if (theme.tilesetId != null) {
+            val existing = roomEdits.stateDataChange ?: StateDataChange()
+            val change = existing.copy(tileset = targetTileset.takeIf { it != romTilesetId })
+            roomEdits.stateDataChange = change.takeIf { it != StateDataChange() }
+            currentTilesetId = targetTileset
+        }
+        val tg = TileGraphics(romParser)
+        if (tg.loadTileset(currentTilesetId)) {
+            applyCustomGfxToTileGraphics(tg, currentTilesetId)
+            tileGraphics = tg
+        }
+
+        if (theme.fxType != null) {
+            val existing = roomEdits.fxChange ?: FxChange()
+            roomEdits.fxChange = if (theme.isLiquid) {
+                val heightPx = workingBlocksTall * 16
+                val surface = (heightPx * theme.liquidFraction).toInt()
+                    .coerceIn(0x20, maxOf(0x20, heightPx - 0x20))
+                existing.copy(
+                    fxType = theme.fxType,
+                    liquidSurfaceStart = surface, liquidSurfaceNew = surface,
+                    liquidSpeed = 0, liquidDelay = 0,
+                    fxBitA = 0x02, fxBitB = 0x02, fxBitC = 0,
+                )
+            } else {
+                existing.copy(fxType = theme.fxType, liquidSurfaceStart = 0xFFFF, liquidSurfaceNew = 0xFFFF)
+            }
+        }
+
+        dirty = true
+        editVersion++
     }
 
     private fun pushEditOperation(op: EditOperation) {

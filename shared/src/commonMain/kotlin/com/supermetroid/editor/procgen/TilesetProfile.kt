@@ -2,6 +2,7 @@ package com.supermetroid.editor.procgen
 
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.TileGraphics
 import kotlin.random.Random
 
 /**
@@ -88,6 +89,9 @@ class TilesetProfile private constructor(
          * every room in [rooms] that uses that tileset.
          */
         fun learn(romParser: RomParser, rooms: List<Room>, tilesetId: Int): TilesetProfile {
+            // Words referencing undefined or placeholder "X" metatiles render
+            // as junk (vanilla hides them behind layer 2) — skip them.
+            val tileGraphics = TileGraphics(romParser).takeIf { it.loadTileset(tilesetId) }
             val solidByMask = HashMap<Int, HashMap<Int, Int>>()
             val solidByMask4 = HashMap<Int, HashMap<Int, Int>>()
             val solidAll = HashMap<Int, Int>()
@@ -113,6 +117,7 @@ class TilesetProfile private constructor(
                 for (y in 0 until h) {
                     for (x in 0 until w) {
                         val word = grid.word(x, y)
+                        if (tileGraphics != null && tileGraphics.isPlaceholderMetatile(word and 0x3FF)) continue
                         val bts = grid.bts(x, y)
                         when (grid.resolvedType(x, y)) {
                             0x0 -> airCounts.merge(word, 1, Int::plus)

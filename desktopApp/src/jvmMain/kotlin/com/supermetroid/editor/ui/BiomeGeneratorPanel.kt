@@ -4,7 +4,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeStyle
+import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
@@ -44,9 +44,11 @@ import kotlin.random.Random
 
 /**
  * Generative biome builder panel: rolls a seeded rule card for the chosen
- * biome style, learns a tile vocabulary from every vanilla room that shares
- * the current room's tileset, and regenerates the current room's layout as a
- * single undoable operation. Doors and their frames are always preserved.
+ * structural style, picks a visual/atmospheric theme (tileset + optional
+ * recolor + FX), learns a tile vocabulary from every vanilla room sharing the
+ * theme's tileset, and regenerates the current room as one undoable layout
+ * operation. Doors and their frames are always preserved. Theme changes
+ * (tileset, palette, FX) persist on the room and are not part of undo.
  */
 @Composable
 fun BiomeGeneratorPanel(
@@ -56,20 +58,24 @@ fun BiomeGeneratorPanel(
     modifier: Modifier = Modifier,
 ) {
     var style by remember { mutableStateOf(BiomeStyle.CAVERN) }
+    var theme by remember { mutableStateOf(BiomeTheme.KEEP) }
     var seed by remember { mutableStateOf(Random.nextInt(0, 1_000_000).toLong()) }
     var seedText by remember { mutableStateOf(seed.toString()) }
     var status by remember { mutableStateOf<String?>(null) }
 
-    val tilesetId = editorState.editorTilesetId
     val roomLoaded = editorState.workingBlocksWide > 0 && editorState.workingBlocksTall > 0
+    val resolvedTheme = remember(theme, seed) { theme.resolve(seed) }
+    // Dress with the theme's tileset when set, else the loaded room's tileset.
+    val targetTilesetId = resolvedTheme.tilesetId ?: editorState.currentTilesetId
 
-    var profile by remember { mutableStateOf<TilesetProfile?>(null) }
-    LaunchedEffect(romParser, tilesetId) {
+    var profile by remember { mutableStateOf<Pair<Int, TilesetProfile>?>(null) }
+    LaunchedEffect(romParser, targetTilesetId) {
+        if (profile?.first == targetTilesetId) return@LaunchedEffect
         profile = null
         val rp = romParser ?: return@LaunchedEffect
         profile = withContext(Dispatchers.Default) {
             val headers = rooms.mapNotNull { rp.readRoomHeader(it.getRoomIdAsInt()) }
-            TilesetProfileCache.getOrLearn(rp, headers, tilesetId)
+            targetTilesetId to TilesetProfileCache.getOrLearn(rp, headers, targetTilesetId)
         }
     }
 
@@ -106,6 +112,35 @@ fun BiomeGeneratorPanel(
                     }
                 }
             }
+            var themeMenuOpen by remember { mutableStateOf(false) }
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.clickable { themeMenuOpen = true },
+            ) {
+                Text(
+                    theme.displayName,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+                DropdownMenu(expanded = themeMenuOpen, onDismissRequest = { themeMenuOpen = false }) {
+                    for (t in BiomeTheme.THEMES) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(t.displayName, fontSize = 11.sp)
+                                    Text(
+                                        t.blurb,
+                                        fontSize = 9.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            onClick = { theme = t; themeMenuOpen = false },
+                        )
+                    }
+                }
+            }
             OutlinedTextField(
                 value = seedText,
                 onValueChange = { text ->
@@ -133,8 +168,11 @@ fun BiomeGeneratorPanel(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         ) {
+            val themeLine = if (resolvedTheme.tilesetId != null) {
+                "\nTheme: ${resolvedTheme.displayName} — ${resolvedTheme.blurb}"
+            } else ""
             Text(
-                effectiveRules.describe(),
+                effectiveRules.describe() + themeLine,
                 fontSize = 10.sp,
                 lineHeight = 14.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -146,14 +184,19 @@ fun BiomeGeneratorPanel(
         LabeledSlider("Hazards", hazards) { hazards = it }
         LabeledSlider("Destructibles", destructibles) { destructibles = it }
 
-        val prof = profile
+        val prof = profile?.takeIf { it.first == targetTilesetId }?.second
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(
-                enabled = roomLoaded && prof != null,
+                enabled = roomLoaded && prof != null && romParser != null,
                 onClick = {
-                    if (prof == null) return@Button
+                    if (prof == null || romParser == null) return@Button
+                    editorState.applyBiomeTheme(resolvedTheme, romParser)
                     val applied = editorState.generateBiome(effectiveRules, prof, seed)
-                    status = if (applied > 0) "Rewrote $applied tiles (Ctrl+Z to undo)" else "No changes"
+                    status = buildString {
+                        append(if (applied > 0) "Rewrote $applied tiles" else "No layout changes")
+                        if (resolvedTheme.tilesetId != null) append(" as ${resolvedTheme.displayName}")
+                        append(" (Ctrl+Z undoes layout)")
+                    }
                 },
             ) {
                 Text("Generate room", fontSize = 11.sp)
@@ -162,7 +205,7 @@ fun BiomeGeneratorPanel(
                 when {
                     !roomLoaded -> "Load a room first"
                     prof == null -> "Learning tileset…"
-                    else -> "Learned from ${prof.roomsSampled} room(s), tileset $tilesetId"
+                    else -> "Learned from ${prof.roomsSampled} room(s), tileset $targetTilesetId"
                 },
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
