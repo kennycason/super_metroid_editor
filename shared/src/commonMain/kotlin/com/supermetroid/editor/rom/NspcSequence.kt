@@ -181,8 +181,9 @@ object NspcSequence {
         }
 
         var blockTick = 0
+        var anyFinished = false
 
-        while (blockTick < 80000) {
+        while (blockTick < 80000 && !anyFinished) {
             var anyActive = false
             for ((ch, st) in states.withIndex()) {
                 if (st.finished) continue
@@ -208,6 +209,7 @@ object NspcSequence {
                                 st.ptr = st.subroutineReturn
                             } else {
                                 st.finished = true
+                                anyFinished = true
                             }
                         }
                         b in 0x01..0x7F -> {

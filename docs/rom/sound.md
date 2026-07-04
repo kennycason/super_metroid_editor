@@ -182,6 +182,24 @@ imported BRR is larger than the original slot, it is trimmed to the original BRR
 and the final BRR block's end flag is forced on. It does not yet append a transfer block,
 patch DIR entries, relocate song-set transfer chains, or expand the ROM.
 
+## Track Import/Export Formats
+
+SMEDIT exposes import/export from the main track page next to **Export WAV**, and from the
+piano-roll editor toolbar:
+
+| Format | Extension | Direction | Purpose | Caveats |
+|--------|-----------|-----------|---------|---------|
+| MIDI | `.mid`, `.midi` | Import/export | Common editable interchange for DAWs and trackers | Loses SNES-specific command detail. Export maps SMEDIT instrument IDs to best-effort General MIDI programs for more plausible generic playback, and writes SMEDIT text metadata so reimport can restore the original Super Metroid instrument IDs. It still cannot carry BRR samples, ADSR, echo, pitch modulation, or DSP state. Import folds MIDI channels 9-16 into the 8 SNES voices, clamps pitch to Super Metroid's C1-B6 range, and reports ignored unsupported events before applying. |
+| SPC snapshot | `.spc` | Import/export | Native SNES SPC-700 snapshot for playback/testing | Export is a playable snapshot of the current editable song when native `libspc` is available, or a static ARAM image fallback. Import only becomes editable when compatible N-SPC sequence data can be found in SPC RAM; arbitrary SPC dumps may not map back to piano-roll data. |
+| SMEDIT N-SPC bundle | `.nspc` | Import/export | Lossless editable bundle for SMEDIT track round-trips | This is SMEDIT's native editable track bundle, not a universal SNES music standard. It preserves the parsed song, control commands, source play index, and instrument table bytes used by the editor. |
+| BRR sample | `.brr` inside ROM sample data | ROM patch path | Native compressed sample payload used by the SPC engine | Current WAV replacement still rewrites/trims the existing BRR footprint in place. Relocating BRR data and patching DIR entries remains future work. |
+
+Track imports are staged as a preview before replacing the current piano-roll song. The
+preview reports note count, active channel count, total ticks, tempo, encoded N-SPC byte
+estimate, budget overages, and format-specific warnings. **Apply** replaces the editable
+song and creates an undo point; **Cancel** leaves the open track unchanged. Reset always
+returns the open track to original ROM data and clears any pending import.
+
 ## SMEDIT Implementation Map
 
 | Area | File | Role |
@@ -189,6 +207,7 @@ patch DIR entries, relocate song-set transfer chains, or expand the ROM.
 | Track/sample browser UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditor.kt` | Track list, sample list, waveform view, Edit Track / Replace WAV actions |
 | Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
 | Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
+| Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |
 | Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
 | ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
 | N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
@@ -215,6 +234,10 @@ Current branch behavior: `PianoRollEditor` virtualizes the horizontal piano-roll
 The measured child stays viewport-sized, while draw code treats `hScrollPx` as the world
 offset and renders only visible ticks/notes. Zoom currently exposes `1x`, `2x`, `4x`, and
 `8x`, so Lower Norfair no longer asks Compose to measure an unrepresentable width.
+The N-SPC piano-roll parser also now ends synchronized song blocks when a participating
+channel reaches its block end marker, matching the preview parser and avoiding the old
+46,469-tick Lower Norfair stretch. Current Lower Norfair parses to about 7,397 ticks
+at tempo 27, which exports as roughly 2.3 minutes of MIDI instead of about 15 minutes.
 
 Current piano-roll editing behavior:
 

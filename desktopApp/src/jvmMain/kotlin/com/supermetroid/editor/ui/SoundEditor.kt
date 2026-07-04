@@ -460,6 +460,15 @@ fun SoundEditorCanvas(
                 }
             }
 
+            state.pendingTrackImport?.let { pending ->
+                PendingTrackImportPanel(
+                    pending = pending,
+                    onApply = { state.applyPendingTrackImport(editorState) },
+                    onCancel = { state.cancelPendingTrackImport() },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
+                )
+            }
+
             PianoRollEditor(
                 song = state.editingSong!!,
                 activeChannel = state.pianoRollChannel,
@@ -502,6 +511,18 @@ fun SoundEditorCanvas(
                     state.stopPlayback()
                     state.pianoRollPlaybackTick = 0
                 },
+                onImportMidi = {
+                    if (romParser != null) state.importPianoRollMidi(romParser, editorState)
+                },
+                onExportMidi = {
+                    state.exportPianoRollMidi()
+                },
+                onImportNative = {
+                    if (romParser != null) state.importPianoRollNative(romParser, editorState)
+                },
+                onExportNative = {
+                    if (romParser != null) state.exportPianoRollNative(romParser)
+                },
                 onDone = { state.closePianoRoll() },
                 onReset = { if (romParser != null) state.resetPianoRoll(romParser, editorState) },
                 onSeek = { tick -> state.pianoRollPlaybackTick = tick },
@@ -535,6 +556,61 @@ fun SoundEditorCanvas(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingTrackImportPanel(
+    pending: SoundEditorState.PendingTrackImport,
+    onApply: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(6.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Import preview: ${pending.fileName}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                pending.reportLines.take(3).forEach { line ->
+                    Text(
+                        line,
+                        fontSize = 9.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f)
+                    )
+                }
+            }
+            Button(
+                onClick = onApply,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Text("Apply", fontSize = 10.sp)
+            }
+            OutlinedButton(
+                onClick = onCancel,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Text("Cancel", fontSize = 10.sp)
             }
         }
     }
@@ -657,6 +733,30 @@ private fun SoundEditorActiveContent(
                 Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))
                 Text("Export WAV", fontSize = 10.sp)
+            }
+
+            if (track != null && romParser != null) {
+                OutlinedButton(
+                    onClick = { state.exportSelectedTrackMidi(romParser, editorState) },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp),
+                    enabled = !loading
+                ) {
+                    Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Export MIDI", fontSize = 10.sp)
+                }
+
+                OutlinedButton(
+                    onClick = { state.exportSelectedTrackNative(romParser, editorState) },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp),
+                    enabled = !loading
+                ) {
+                    Icon(Icons.Default.SaveAlt, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Export SPC", fontSize = 10.sp)
+                }
             }
 
             // Replace WAV — visible when a sample is selected

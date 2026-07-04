@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Undo
@@ -205,6 +206,10 @@ fun PianoRollEditor(
     onSongChanged: (Song) -> Unit,
     onPlay: () -> Unit,
     onStop: () -> Unit,
+    onImportMidi: () -> Unit = {},
+    onExportMidi: () -> Unit = {},
+    onImportNative: () -> Unit = {},
+    onExportNative: () -> Unit = {},
     onDone: () -> Unit,
     onReset: () -> Unit,
     onSeek: (Int) -> Unit = {},
@@ -478,6 +483,46 @@ fun PianoRollEditor(
                 Icon(Icons.Default.Undo, null, Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))
                 Text("Reset", fontSize = 10.sp)
+            }
+
+            OutlinedButton(
+                onClick = onImportMidi,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(Icons.Default.Add, "Import MIDI", Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("MIDI In", fontSize = 10.sp)
+            }
+
+            OutlinedButton(
+                onClick = onExportMidi,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(Icons.Default.SaveAlt, "Export MIDI", Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("MIDI Out", fontSize = 10.sp)
+            }
+
+            OutlinedButton(
+                onClick = onImportNative,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(Icons.Default.Add, "Import SPC or N-SPC", Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("SPC In", fontSize = 10.sp)
+            }
+
+            OutlinedButton(
+                onClick = onExportNative,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(Icons.Default.SaveAlt, "Export SPC or N-SPC", Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("SPC Out", fontSize = 10.sp)
             }
 
             Spacer(Modifier.width(8.dp))

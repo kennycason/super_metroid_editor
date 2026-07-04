@@ -83,7 +83,7 @@ Current branch behavior:
 - Modified native SPC playback uses `NspcSequence.encode(..., failOnOverflow = true)`. If the simplified encoder cannot fit the edited sequence before `$6C00`, or if native render is silent, Edit Track playback avoids corrupting the instrument table / playing silence.
 - Additive note edits use a hybrid fallback when native re-encode overflows: native original track playback plus software-rendered added notes. Edits that remove or change original notes still require full software fallback because the native original audio cannot subtract or move existing notes.
 - Selection/removal uses object identity because `NspcSequence.Note` is a data class and structural equality can collide on repeated notes.
-- Regression coverage lives in `PianoRollPreviewLogicTest`, `NspcSequenceTest`, and `NspcRendererTest`: additive overlay planning, duplicate note accounting, moved/deleted-note fallback detection, instrument-table patch bytes, PCM mix clipping, Lower Norfair one-note overflow refusal, and instrument metadata parsing.
+- Regression coverage lives in `PianoRollPreviewLogicTest`, `NspcSequenceTest`, and `NspcRendererTest`: additive overlay planning, duplicate note accounting, moved/deleted-note fallback detection, instrument-table patch bytes, PCM mix clipping, bounded Lower Norfair parsing/encoding, and instrument metadata parsing.
 
 ## Local Reference Codebases
 

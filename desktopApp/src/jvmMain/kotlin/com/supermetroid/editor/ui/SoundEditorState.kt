@@ -89,6 +89,8 @@ class SoundEditorState {
         private set
     var pianoRollOriginalFlattenedBytes by mutableStateOf(0)
         private set
+    var pendingTrackImport by mutableStateOf<PendingTrackImport?>(null)
+        private set
 
     /** Open the piano roll editor for the current track. */
     fun openPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
@@ -127,6 +129,7 @@ class SoundEditorState {
         song.isModified = hasPianoRollEdits(song)
         editingSong = song
         clearPianoRollHistory()
+        pendingTrackImport = null
         pianoRollChannel = 0
         pianoRollPlaybackTick = -1
         isPianoRollOpen = true
@@ -166,13 +169,23 @@ class SoundEditorState {
         pianoRollOriginalSequenceBytes = 0
         pianoRollOriginalFlattenedBytes = 0
         clearPianoRollHistory()
+        pendingTrackImport = null
     }
+
+    data class PendingTrackImport(
+        val label: String,
+        val fileName: String,
+        val song: NspcSequence.Song,
+        val instruments: List<NspcRenderer.InstrumentEntry>,
+        val reportLines: List<String>
+    )
 
     /** Reset piano roll to original track data. */
     fun resetPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
         val track = selectedTrack ?: return
         soundEditorLog.info { "[SPC-PIANO] Resetting to original track data" }
         stopPlayback()
+        pendingTrackImport = null
         val ram = buildSpcRamForTrack(romParser, track.songSet)
         val song = NspcSequence.parse(ram, track.playIndex)
         pianoRollInstruments = NspcRenderer.readInstrumentTable(ram)
@@ -190,6 +203,422 @@ class SoundEditorState {
         removePianoRollProjectEdit(editorState)
         statusMessage = "Reset to original"
     }
+
+    fun exportPianoRollMidi() {
+        val song = editingSong ?: run {
+            statusMessage = "Open Edit Track before exporting MIDI"
+            return
+        }
+        val track = selectedTrack
+        val file = chooseMusicSaveFile(
+            title = "Export MIDI",
+            defaultName = "${musicFileStem(track?.name ?: song.title.ifBlank { "track" })}.mid",
+            extension = "mid",
+            extraExtensions = setOf("midi")
+        ) ?: return
+
+        try {
+            MusicTrackInterchange.writeMidi(song, file, pianoRollInstruments)
+            statusMessage = "Exported MIDI: ${file.name}"
+            soundEditorLog.info { "[SPC-IMPORT] Exported MIDI ${file.absolutePath}" }
+        } catch (e: Exception) {
+            statusMessage = "MIDI export failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] MIDI export failed: ${e.message}" }
+        }
+    }
+
+    fun exportSelectedTrackMidi(romParser: RomParser, editorState: EditorState? = null) {
+        val data = resolveTrackInterchangeData(romParser, editorState) ?: return
+        val file = chooseMusicSaveFile(
+            title = "Export MIDI",
+            defaultName = "${musicFileStem(data.track.name)}.mid",
+            extension = "mid",
+            extraExtensions = setOf("midi")
+        ) ?: return
+
+        try {
+            MusicTrackInterchange.writeMidi(data.song, file, data.instruments)
+            statusMessage = "Exported MIDI: ${file.name}"
+            soundEditorLog.info { "[SPC-IMPORT] Exported selected track MIDI ${file.absolutePath}" }
+        } catch (e: Exception) {
+            statusMessage = "MIDI export failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] Selected track MIDI export failed: ${e.message}" }
+        }
+    }
+
+    fun exportSelectedTrackNative(romParser: RomParser, editorState: EditorState? = null) {
+        val data = resolveTrackInterchangeData(romParser, editorState) ?: return
+        val file = chooseMusicSaveFile(
+            title = "Export SPC or N-SPC",
+            defaultName = "${musicFileStem(data.track.name)}.spc",
+            extension = "spc",
+            extraExtensions = setOf("nspc")
+        ) ?: return
+
+        try {
+            if (file.extension.equals("nspc", ignoreCase = true)) {
+                MusicTrackInterchange.writeNspcTrack(
+                    data.song,
+                    data.instruments,
+                    data.track.songSet,
+                    data.track.playIndex,
+                    file
+                )
+                statusMessage = "Exported N-SPC track: ${file.name}"
+            } else {
+                val ram = buildTrackSpcSnapshotRam(
+                    romParser = romParser,
+                    track = data.track,
+                    song = data.song,
+                    instruments = data.instruments,
+                    originalSong = data.originalSong
+                )
+                val spc = buildSpcSnapshotBytes(ram, data.track.playIndex, data.track.name)
+                file.writeBytes(spc)
+                statusMessage = "Exported SPC snapshot: ${file.name}"
+            }
+            soundEditorLog.info { "[SPC-IMPORT] Exported selected native track ${file.absolutePath}" }
+        } catch (e: Exception) {
+            statusMessage = "Native export failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] Selected native export failed: ${e.message}" }
+        }
+    }
+
+    fun importPianoRollMidi(romParser: RomParser, editorState: EditorState? = null) {
+        selectedTrack ?: run {
+            statusMessage = "Select a track before importing MIDI"
+            return
+        }
+        if (!isPianoRollOpen || editingSong == null) {
+            openPianoRoll(romParser, editorState)
+        }
+        val file = chooseMusicLoadFile("Import MIDI") { name ->
+            name.endsWith(".mid", ignoreCase = true) || name.endsWith(".midi", ignoreCase = true)
+        } ?: return
+
+        try {
+            val imported = MusicTrackInterchange.readMidiWithReport(file)
+            stagePendingTrackImport(
+                label = "MIDI",
+                fileName = file.name,
+                song = imported.song,
+                instruments = emptyList(),
+                report = imported.report
+            )
+            statusMessage = "Review MIDI import report for ${file.name}"
+            soundEditorLog.info {
+                "[SPC-IMPORT] Imported MIDI ${file.absolutePath}: " +
+                    "${imported.song.channels.sumOf { it.notes.size }} notes"
+            }
+        } catch (e: Exception) {
+            statusMessage = "MIDI import failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] MIDI import failed: ${e.message}" }
+        }
+    }
+
+    fun exportPianoRollNative(romParser: RomParser) {
+        val song = editingSong ?: run {
+            statusMessage = "Open Edit Track before exporting native audio"
+            return
+        }
+        val track = selectedTrack ?: run {
+            statusMessage = "Select a track before exporting native audio"
+            return
+        }
+        val defaultName = "${musicFileStem(track.name)}.spc"
+        val file = chooseMusicSaveFile(
+            title = "Export SPC or N-SPC",
+            defaultName = defaultName,
+            extension = "spc",
+            extraExtensions = setOf("nspc")
+        ) ?: return
+
+        try {
+            if (file.extension.equals("nspc", ignoreCase = true)) {
+                MusicTrackInterchange.writeNspcTrack(song, pianoRollInstruments, track.songSet, track.playIndex, file)
+                statusMessage = "Exported N-SPC track: ${file.name}"
+            } else {
+                val ram = buildPianoRollSpcSnapshotRam(romParser, song)
+                val spc = buildSpcSnapshotBytes(ram, track.playIndex, track.name)
+                file.writeBytes(spc)
+                statusMessage = "Exported SPC snapshot: ${file.name}"
+            }
+            soundEditorLog.info { "[SPC-IMPORT] Exported native track ${file.absolutePath}" }
+        } catch (e: Exception) {
+            statusMessage = "Native export failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] Native export failed: ${e.message}" }
+        }
+    }
+
+    fun importPianoRollNative(romParser: RomParser, editorState: EditorState? = null) {
+        val track = selectedTrack ?: run {
+            statusMessage = "Select a track before importing native audio"
+            return
+        }
+        if (!isPianoRollOpen || editingSong == null) {
+            openPianoRoll(romParser, editorState)
+        }
+        val file = chooseMusicLoadFile("Import SPC or N-SPC") { name ->
+            name.endsWith(".spc", ignoreCase = true) || name.endsWith(".nspc", ignoreCase = true)
+        } ?: return
+
+        try {
+            val imported = MusicTrackInterchange.readNative(file, track.playIndex)
+            val source = if (imported.sourcePlayIndex >= 0 && imported.sourcePlayIndex != track.playIndex) {
+                " (source play ${imported.sourcePlayIndex})"
+            } else {
+                ""
+            }
+            stagePendingTrackImport(
+                label = "${imported.formatLabel}$source",
+                fileName = file.name,
+                song = imported.song,
+                instruments = imported.instruments,
+                report = imported.report
+            )
+            statusMessage = "Review ${imported.formatLabel} import report for ${file.name}"
+            soundEditorLog.info {
+                "[SPC-IMPORT] Imported ${imported.formatLabel} ${file.absolutePath}: " +
+                    "${imported.song.channels.sumOf { it.notes.size }} notes, " +
+                    "${imported.instruments.size} instruments"
+            }
+        } catch (e: Exception) {
+            statusMessage = "Native import failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] Native import failed: ${e.message}" }
+        }
+    }
+
+    fun applyPendingTrackImport(editorState: EditorState? = null) {
+        val pending = pendingTrackImport ?: return
+        applyImportedPianoRollSong(pending.song, pending.instruments, editorState, pending.label)
+        statusMessage = "Applied ${pending.label} import: ${pending.fileName}"
+        pendingTrackImport = null
+    }
+
+    fun cancelPendingTrackImport() {
+        val pending = pendingTrackImport ?: return
+        pendingTrackImport = null
+        statusMessage = "Cancelled ${pending.label} import"
+    }
+
+    private fun stagePendingTrackImport(
+        label: String,
+        fileName: String,
+        song: NspcSequence.Song,
+        instruments: List<NspcRenderer.InstrumentEntry>,
+        report: MusicTrackInterchange.InterchangeReport
+    ) {
+        pendingTrackImport = PendingTrackImport(
+            label = label,
+            fileName = fileName,
+            song = song,
+            instruments = instruments,
+            reportLines = buildImportReportLines(report)
+        )
+    }
+
+    private fun buildImportReportLines(report: MusicTrackInterchange.InterchangeReport): List<String> {
+        val lines = mutableListOf<String>()
+        lines += report.compactSummary()
+        lines += "tempo ${report.tempo}, editable N-SPC estimate ${report.encodedBytes} B"
+        if (pianoRollExportBudgetBytes > 0 && report.encodedBytes > pianoRollExportBudgetBytes) {
+            lines += "Over vanilla track budget by ${report.encodedBytes - pianoRollExportBudgetBytes} B; ROM export will require relocation or trimming."
+        }
+        if (pianoRollRelocationBudgetBytes > 0 && report.encodedBytes > pianoRollRelocationBudgetBytes) {
+            lines += "Over current relocation budget by ${report.encodedBytes - pianoRollRelocationBudgetBytes} B; export may fail or tail-trim."
+        }
+        if (report.activeChannels > 8) {
+            lines += "More than 8 active channels are not supported by SNES playback."
+        }
+        lines += report.warnings
+        return lines
+    }
+
+    private fun applyImportedPianoRollSong(
+        importedSong: NspcSequence.Song,
+        importedInstruments: List<NspcRenderer.InstrumentEntry>,
+        editorState: EditorState?,
+        label: String
+    ) {
+        val track = selectedTrack ?: return
+        stopPlayback()
+        recordPianoRollEdit("Import $label")
+        val nextSong = PianoRollPreviewLogic.deepCopySong(importedSong)
+        nextSong.title = track.name
+        nextSong.isModified = true
+        editingSong = nextSong
+        if (importedInstruments.isNotEmpty()) {
+            pianoRollInstruments = importedInstruments.map { it.copy() }
+        }
+        pianoRollPlaybackTick = 0
+        syncPianoRollProjectEdit(editorState)
+        soundEditorLog.info {
+            "[SPC-IMPORT] Applied $label to '${track.name}': " +
+                "${nextSong.channels.sumOf { it.notes.size }} notes, " +
+                "${pianoRollInstruments.size} instruments"
+        }
+    }
+
+    private fun buildPianoRollSpcSnapshotRam(
+        romParser: RomParser,
+        song: NspcSequence.Song
+    ): ByteArray {
+        val track = selectedTrack ?: error("No selected track")
+        return buildTrackSpcSnapshotRam(
+            romParser = romParser,
+            track = track,
+            song = song,
+            instruments = pianoRollInstruments,
+            originalSong = originalPianoRollSong
+        )
+    }
+
+    private fun buildTrackSpcSnapshotRam(
+        romParser: RomParser,
+        track: SpcData.TrackInfo,
+        song: NspcSequence.Song,
+        instruments: List<NspcRenderer.InstrumentEntry>,
+        originalSong: NspcSequence.Song?
+    ): ByteArray {
+        val baseRam = SpcData.buildInitialSpcRam(romParser)
+        val songBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
+        val ram = baseRam.copyOf()
+        SpcData.applyTransferBlocks(ram, songBlocks)
+
+        if (instruments.isNotEmpty()) {
+            PianoRollPreviewLogic.writeInstrumentEntries(ram, instruments)
+        }
+
+        val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(song, originalSong)?.hasDelta
+            ?: song.isModified
+        if (hasNoteDelta) {
+            val sequenceWrites = try {
+                relocatedSequencePatchForTrack(
+                    romParser = romParser,
+                    songBlocks = songBlocks,
+                    spcRam = ram,
+                    track = track,
+                    song = song
+                ).writes
+            } catch (e: Exception) {
+                soundEditorLog.warn(e) {
+                    "[SPC-IMPORT] Relocated SPC snapshot encode failed; trying direct encode: ${e.message}"
+                }
+                NspcSequence.encode(song, track.playIndex, ram, failOnOverflow = true)
+            }
+            applySpcWrites(ram, sequenceWrites)
+        }
+
+        return ram
+    }
+
+    private fun buildSpcSnapshotBytes(ram: ByteArray, playIndex: Int, title: String): ByteArray {
+        if (!NativeSpcEmulator.isAvailable()) {
+            soundEditorLog.warn { "[SPC-IMPORT] libspc unavailable; exporting static SPC RAM image" }
+            return NativeSpcEmulator.buildSpcFileImage(ram, title)
+        }
+        return try {
+            NativeSpcEmulator().use { emu ->
+                emu.loadFromRam(ram, emptyList(), playIndex)
+                emu.saveSpcSnapshot(title)
+            }
+        } catch (e: LinkageError) {
+            soundEditorLog.warn { "[SPC-IMPORT] Native SPC snapshot export unavailable; exporting static SPC RAM image: ${e.message}" }
+            NativeSpcEmulator.buildSpcFileImage(ram, title)
+        } catch (e: Exception) {
+            soundEditorLog.warn(e) {
+                "[SPC-IMPORT] Native SPC snapshot export failed; exporting static SPC RAM image: ${e.message}"
+            }
+            NativeSpcEmulator.buildSpcFileImage(ram, title)
+        }
+    }
+
+    private data class TrackInterchangeData(
+        val track: SpcData.TrackInfo,
+        val song: NspcSequence.Song,
+        val originalSong: NspcSequence.Song,
+        val instruments: List<NspcRenderer.InstrumentEntry>
+    )
+
+    private fun resolveTrackInterchangeData(
+        romParser: RomParser,
+        editorState: EditorState?
+    ): TrackInterchangeData? {
+        val track = selectedTrack ?: run {
+            statusMessage = "Select a track before exporting"
+            return null
+        }
+        return try {
+            val ram = buildSpcRamForTrack(romParser, track.songSet)
+            val originalSong = NspcSequence.parse(ram, track.playIndex).also {
+                it.title = track.name
+            }
+            val originalInstruments = NspcRenderer.readInstrumentTable(ram)
+            val savedEdit = editorState?.getMusicEdit(track.songSet, track.playIndex)
+            val song = savedEdit?.let { MusicEditConversion.toSong(it) } ?: originalSong
+            song.title = track.name
+            val savedInstruments = savedEdit
+                ?.let { MusicEditConversion.toInstrumentEntries(it) }
+                ?.takeIf { it.isNotEmpty() }
+            val instruments = if (savedInstruments != null) {
+                val patchedRam = ram.copyOf()
+                PianoRollPreviewLogic.writeInstrumentEntries(patchedRam, savedInstruments)
+                NspcRenderer.readInstrumentTable(patchedRam)
+            } else {
+                originalInstruments
+            }
+            TrackInterchangeData(track, song, originalSong, instruments)
+        } catch (e: Exception) {
+            statusMessage = "Track export setup failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] Failed to resolve track export data: ${e.message}" }
+            null
+        }
+    }
+
+    private fun applySpcWrites(ram: ByteArray, writes: Map<Int, ByteArray>) {
+        for ((addr, data) in writes) {
+            require(addr >= 0 && addr + data.size <= ram.size) {
+                "SPC write 0x${addr.toString(16)} overruns RAM"
+            }
+            data.copyInto(ram, addr)
+        }
+    }
+
+    private fun chooseMusicSaveFile(
+        title: String,
+        defaultName: String,
+        extension: String,
+        extraExtensions: Set<String> = emptySet()
+    ): File? {
+        val dialog = FileDialog(null as Frame?, title, FileDialog.SAVE)
+        dialog.file = defaultName
+        val allowedExtensions = setOf(extension.lowercase()) + extraExtensions.mapTo(mutableSetOf()) { it.lowercase() }
+        dialog.setFilenameFilter { _, name ->
+            allowedExtensions.any { name.endsWith(".$it", ignoreCase = true) }
+        }
+        dialog.isVisible = true
+
+        val dir = dialog.directory ?: return null
+        val fileName = dialog.file ?: return null
+        val normalized = if (fileName.contains('.')) fileName else "$fileName.$extension"
+        return File(dir, normalized)
+    }
+
+    private fun chooseMusicLoadFile(title: String, filter: (String) -> Boolean): File? {
+        val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD)
+        dialog.setFilenameFilter { _, name -> filter(name) }
+        dialog.isVisible = true
+
+        val dir = dialog.directory ?: return null
+        val fileName = dialog.file ?: return null
+        return File(dir, fileName)
+    }
+
+    private fun musicFileStem(name: String): String =
+        name.replace(Regex("[^a-zA-Z0-9_\\- ]"), "")
+            .trim()
+            .replace(Regex("\\s+"), "_")
+            .ifBlank { "track" }
 
     /** Start piano roll playback with tick tracking. */
     fun startPianoRollPlayback(wav: ShortArray) {

@@ -328,7 +328,7 @@ class NspcSequenceTest {
     }
 
     @Test
-    fun `Lower Norfair one note edit refuses native encode overflow`() {
+    fun `Lower Norfair parses a bounded editable loop`() {
         val parser = loadTestRom() ?: return
         val spcRam = SpcData.buildInitialSpcRam(parser)
         val blocks = SpcData.findSongSetTransferData(parser, 0x18)
@@ -336,7 +336,23 @@ class NspcSequenceTest {
 
         val song = NspcSequence.parse(spcRam, 5)
         val originalNotes = song.channels.sumOf { it.notes.size }
-        assertTrue(originalNotes > 4000, "Lower Norfair should parse as a large song, got $originalNotes notes")
+        val estimatedSeconds = song.totalTicks * 512.0 / song.tempo.coerceAtLeast(1) / 1000.0
+
+        assertTrue(originalNotes in 1000..2500, "Lower Norfair should parse one bounded editable loop, got $originalNotes notes")
+        assertTrue(
+            estimatedSeconds < 300.0,
+            "Lower Norfair editable loop should not export as a 15 minute MIDI; got ${"%.1f".format(estimatedSeconds)}s"
+        )
+    }
+
+    @Test
+    fun `Lower Norfair one note edit keeps native encode within sequence RAM`() {
+        val parser = loadTestRom() ?: return
+        val spcRam = SpcData.buildInitialSpcRam(parser)
+        val blocks = SpcData.findSongSetTransferData(parser, 0x18)
+        SpcData.applyTransferBlocks(spcRam, blocks)
+
+        val song = NspcSequence.parse(spcRam, 5)
 
         song.channels[0].notes += NspcSequence.Note(
             tick = 84,
@@ -347,12 +363,10 @@ class NspcSequenceTest {
             instrument = 0x1B
         )
 
-        val ex = assertThrows(IllegalStateException::class.java) {
-            NspcSequence.encode(song, 5, spcRam, failOnOverflow = true)
-        }
+        val writes = NspcSequence.encode(song, 5, spcRam, failOnOverflow = true)
         assertTrue(
-            ex.message?.contains("overflow into instrument table") == true,
-            "Expected instrument table overflow message, got: ${ex.message}"
+            writes.all { (addr, data) -> addr < 0x6C00 && addr + data.size <= 0x6C00 },
+            "Fail-fast encode must avoid writing into the instrument table"
         )
 
         val truncatedWrites = NspcSequence.encode(song, 5, spcRam, failOnOverflow = false)

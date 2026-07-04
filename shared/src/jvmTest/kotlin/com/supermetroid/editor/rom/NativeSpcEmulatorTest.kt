@@ -102,6 +102,31 @@ class NativeSpcEmulatorTest {
     }
 
     @Test
+    fun `save SPC snapshot returns importable SPC data when native state save symbols are unavailable`() {
+        Assumptions.assumeTrue(NativeSpcEmulator.isAvailable(), "libspc not available")
+        val parser = loadTestRom()
+        Assumptions.assumeTrue(parser != null, "Test ROM not found")
+        parser!!
+
+        val baseRam = SpcData.buildInitialSpcRam(parser)
+        val blocks = SpcData.findSongSetTransferData(parser, 0x03)
+
+        NativeSpcEmulator().use { emu ->
+            emu.loadFromRam(baseRam, blocks, playIndex = 5)
+            val spc = emu.saveSpcSnapshot("Snapshot Fallback")
+            val ram = NativeSpcEmulator.readSpcRam(spc)
+
+            assertTrue(spc.size >= 0x10200, "SPC snapshot should include header, RAM, DSP, and IPL regions")
+            assertTrue(ram.size == RomConstants.SPC_RAM_SIZE, "SPC snapshot should expose 64KB RAM")
+            assertTrue(
+                spc.decodeToString(0, "SNES-SPC700 Sound File Data v0.30".length)
+                    .startsWith("SNES-SPC700 Sound File Data v0.30"),
+                "SPC snapshot should have a standard SPC v0.30 signature"
+            )
+        }
+    }
+
+    @Test
     fun `title screen parse re-encode preserves native waveform envelope`() {
         Assumptions.assumeTrue(NativeSpcEmulator.isAvailable(), "libspc not available")
         val parser = loadTestRom()

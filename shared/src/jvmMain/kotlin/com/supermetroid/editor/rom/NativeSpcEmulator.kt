@@ -2,6 +2,7 @@ package com.supermetroid.editor.rom
 
 import com.sun.jna.Library
 import com.sun.jna.Native
+import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.supermetroid.editor.util.EditorLog
 import java.nio.ByteBuffer
@@ -20,6 +21,7 @@ class NativeSpcEmulator : AutoCloseable {
 
     private var spc: Pointer? = null
     private var filter: Pointer? = null
+    private var loadedRamSnapshot: ByteArray? = null
 
     companion object {
         const val SAMPLE_RATE = 32000
@@ -55,7 +57,85 @@ class NativeSpcEmulator : AutoCloseable {
             }
         }
 
+        private val stateSaveSymbolsAvailable: Boolean by lazy {
+            if (lib == null) {
+                false
+            } else {
+                try {
+                    val nativeLib = NativeLibrary.getInstance("spc")
+                    nativeLib.getFunction("spc_init_header")
+                    nativeLib.getFunction("spc_save_spc")
+                    true
+                } catch (_: LinkageError) {
+                    false
+                } catch (_: RuntimeException) {
+                    false
+                }
+            }
+        }
+
         fun isAvailable(): Boolean = lib != null
+
+        /**
+         * Build a standard .spc file image from a 64KB SPC RAM snapshot.
+         *
+         * The image uses Super Metroid's SPC engine entry point ($1500) and is
+         * suitable as an interchange/debug snapshot. Importers can always read
+         * the 64KB RAM back from offset $100 even if a player ignores ID666 tags.
+         */
+        fun buildSpcFileImage(baseRam: ByteArray, title: String = ""): ByteArray {
+            require(baseRam.size == RAM_SIZE) { "Base RAM must be exactly 64KB" }
+            val spcFile = ByteArray(SPC_FILE_SIZE)
+
+            val sig = "SNES-SPC700 Sound File Data v0.30"
+            for (i in sig.indices) spcFile[i] = sig[i].code.toByte()
+            spcFile[33] = 0x1A.toByte()
+            spcFile[34] = 0x1A.toByte()
+            spcFile[35] = 26
+            spcFile[36] = 30
+
+            // CPU registers: PC=$1500, SP=$CF, PSW=$02
+            spcFile[37] = 0x00 // PCL
+            spcFile[38] = 0x15 // PCH
+            spcFile[42] = 0x02 // PSW
+            spcFile[43] = 0xCF.toByte() // SP
+
+            if (title.isNotBlank()) {
+                writeId666Title(spcFile, title)
+            }
+
+            // RAM at offset 0x100
+            System.arraycopy(baseRam, 0, spcFile, 0x100, RAM_SIZE)
+
+            // Clear port/control registers
+            spcFile[0x100 + 0xF0] = 0x0A
+            spcFile[0x100 + 0xF1] = 0x80.toByte()
+            spcFile[0x100 + 0xF4] = 0
+            spcFile[0x100 + 0xF5] = 0
+            spcFile[0x100 + 0xF6] = 0
+            spcFile[0x100 + 0xF7] = 0
+
+            // DSP registers at 0x10100
+            spcFile[0x10100 + 0x5D] = 0x6C // DIR page
+            spcFile[0x10100 + 0x6C] = 0x20 // FLG: mute (engine clears when ready)
+
+            // IPL ROM at 0x101C0
+            System.arraycopy(IPL_ROM, 0, spcFile, 0x101C0, ROM_SIZE)
+
+            return spcFile
+        }
+
+        fun readSpcRam(spcFile: ByteArray): ByteArray {
+            val sig = "SNES-SPC700 Sound File Data v0.30".encodeToByteArray()
+            require(spcFile.size >= 0x100 + RAM_SIZE) { "SPC file is too small" }
+            require(spcFile.copyOfRange(0, sig.size).contentEquals(sig)) { "Not an SPC v0.30 file" }
+            return spcFile.copyOfRange(0x100, 0x100 + RAM_SIZE)
+        }
+
+        private fun writeId666Title(spcFile: ByteArray, title: String) {
+            val titleBytes = title.take(32).encodeToByteArray()
+            titleBytes.copyInto(spcFile, destinationOffset = 0x2E, endIndex = minOf(titleBytes.size, 32))
+        }
     }
 
     private interface SpcLib : Library {
@@ -69,6 +149,8 @@ class NativeSpcEmulator : AutoCloseable {
         fun spc_write_port(spc: Pointer, time: Int, port: Int, data: Int)
         fun spc_read_port(spc: Pointer, time: Int, port: Int): Int
         fun spc_mute_voices(spc: Pointer, mask: Int)
+        fun spc_init_header(spcOut: ByteArray)
+        fun spc_save_spc(spc: Pointer, spcOut: ByteArray)
 
         fun spc_filter_new(): Pointer?
         fun spc_filter_delete(filter: Pointer)
@@ -80,44 +162,6 @@ class NativeSpcEmulator : AutoCloseable {
      * Build an SPC file image from a 64KB RAM dump and load it into the emulator.
      * Starts at engine entry point $1500.
      */
-    private fun buildSpcImage(baseRam: ByteArray): ByteArray {
-        require(baseRam.size == RAM_SIZE) { "Base RAM must be exactly 64KB" }
-        val spcFile = ByteArray(SPC_FILE_SIZE)
-
-        val sig = "SNES-SPC700 Sound File Data v0.30"
-        for (i in sig.indices) spcFile[i] = sig[i].code.toByte()
-        spcFile[33] = 0x1A.toByte()
-        spcFile[34] = 0x1A.toByte()
-        spcFile[35] = 26
-        spcFile[36] = 30
-
-        // CPU registers: PC=$1500, SP=$CF, PSW=$02
-        spcFile[37] = 0x00 // PCL
-        spcFile[38] = 0x15 // PCH
-        spcFile[42] = 0x02 // PSW
-        spcFile[43] = 0xCF.toByte() // SP
-
-        // RAM at offset 0x100
-        System.arraycopy(baseRam, 0, spcFile, 0x100, RAM_SIZE)
-
-        // Clear port/control registers
-        spcFile[0x100 + 0xF0] = 0x0A
-        spcFile[0x100 + 0xF1] = 0x80.toByte()
-        spcFile[0x100 + 0xF4] = 0
-        spcFile[0x100 + 0xF5] = 0
-        spcFile[0x100 + 0xF6] = 0
-        spcFile[0x100 + 0xF7] = 0
-
-        // DSP registers at 0x10100
-        spcFile[0x10100 + 0x5D] = 0x6C // DIR page
-        spcFile[0x10100 + 0x6C] = 0x20 // FLG: mute (engine clears when ready)
-
-        // IPL ROM at 0x101C0
-        System.arraycopy(IPL_ROM, 0, spcFile, 0x101C0, ROM_SIZE)
-
-        return spcFile
-    }
-
     /**
      * Initialize the emulator with base engine RAM, pre-apply song set transfer
      * blocks, and send a play command for the given track ID.
@@ -145,7 +189,8 @@ class NativeSpcEmulator : AutoCloseable {
         } else {
             baseRam.copyOf().also { SpcData.applyTransferBlocks(it, songBlocks) }
         }
-        val spcImage = buildSpcImage(initialRam)
+        loadedRamSnapshot = initialRam.copyOf()
+        val spcImage = buildSpcFileImage(initialRam)
         val err = library.spc_load_spc(spcPtr, spcImage, spcImage.size.toLong())
         if (err != null) {
             close()
@@ -167,6 +212,28 @@ class NativeSpcEmulator : AutoCloseable {
         if (filterPtr != null) {
             library.spc_filter_clear(filterPtr)
             filter = filterPtr
+        }
+    }
+
+    fun saveSpcSnapshot(title: String = ""): ByteArray {
+        val library = lib ?: throw IllegalStateException("libspc not available")
+        val spcPtr = spc ?: throw IllegalStateException("Emulator not loaded")
+        val fallbackRam = loadedRamSnapshot ?: throw IllegalStateException("No loaded SPC RAM snapshot")
+        if (!stateSaveSymbolsAvailable) {
+            EditorLog.warn("[SPC-JNA] libspc state-save symbols unavailable; exporting static SPC image")
+            return buildSpcFileImage(fallbackRam, title)
+        }
+        val out = ByteArray(SPC_FILE_SIZE)
+        return try {
+            library.spc_init_header(out)
+            library.spc_save_spc(spcPtr, out)
+            if (title.isNotBlank()) {
+                writeId666Title(out, title)
+            }
+            out
+        } catch (e: LinkageError) {
+            EditorLog.warn("[SPC-JNA] libspc state-save call failed (${e.message}); exporting static SPC image")
+            buildSpcFileImage(fallbackRam, title)
         }
     }
 
@@ -225,5 +292,6 @@ class NativeSpcEmulator : AutoCloseable {
         filter = null
         spc?.let { library.spc_delete(it) }
         spc = null
+        loadedRamSnapshot = null
     }
 }
