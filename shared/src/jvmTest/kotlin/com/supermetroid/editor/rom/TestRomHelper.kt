@@ -9,6 +9,8 @@ import java.io.File
 object TestRomHelper {
     private val ROM_PATHS = listOf(
         "test-resources/Super Metroid (JU) [!].smc",
+        // Gradle runs module tests with the module dir as working dir
+        "../test-resources/Super Metroid (JU) [!].smc",
         "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
     )
 
@@ -25,5 +27,14 @@ object TestRomHelper {
     fun loadRomParser(): RomParser? {
         val bytes = loadRomBytes() ?: return null
         return RomParser(bytes)
+    }
+
+    /** Directory for diagnostic test output (test-resources if present, else build dir). */
+    fun outputDir(): File {
+        for (path in listOf("test-resources", "../test-resources")) {
+            val dir = File(path)
+            if (dir.isDirectory) return dir
+        }
+        return File("build/test-output").apply { mkdirs() }
     }
 }

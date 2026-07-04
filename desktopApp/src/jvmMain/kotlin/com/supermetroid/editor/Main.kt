@@ -68,6 +68,7 @@ import com.supermetroid.editor.data.RomPreferences
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.WindowConfig
+import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.ui.EditorTheme
@@ -75,6 +76,7 @@ import com.supermetroid.editor.ui.EditorThemeState
 import com.supermetroid.editor.ui.FontSize
 import com.supermetroid.editor.ui.LocalEditorTheme
 import com.supermetroid.editor.ui.SettingsPopup
+import com.supermetroid.editor.ui.BiomeGeneratorPanel
 import com.supermetroid.editor.ui.DraggableDividerHorizontal
 import com.supermetroid.editor.ui.DraggableDividerVertical
 import com.supermetroid.editor.ui.EditorState
@@ -140,6 +142,11 @@ private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
 
+private const val BOTTOM_TAB_TILESET = 0
+private const val BOTTOM_TAB_PATTERNS = 1
+private const val BOTTOM_TAB_ROOM_INFO = 2
+private const val BOTTOM_TAB_GENERATE = 3
+
 fun main() = application {
     val roomRepository = remember { RoomRepository() }
     val scope = rememberCoroutineScope()
@@ -182,6 +189,7 @@ fun main() = application {
         if (bootRomPath != null) {
             try {
                 romLoadInFlight = true
+                TilesetProfileCache.invalidate()
                 romParser = loadRomParser(bootRomPath)
                 romFileName = File(bootRomPath).nameWithoutExtension
                 RomPreferences.setLastRomPath(bootRomPath)
@@ -284,6 +292,7 @@ fun main() = application {
                                     scope.launch {
                                         romLoadInFlight = true
                                         try {
+                                            TilesetProfileCache.invalidate()
                                             romParser = loadRomParser(file.absolutePath)
                                             romFileName = file.nameWithoutExtension
                                             RomPreferences.setLastRomPath(file.absolutePath)
@@ -419,7 +428,7 @@ fun main() = application {
                 val tilesetEditorState = remember { TilesetEditorState() }
                 val soundEditorState = remember { SoundEditorState() }
                 val minimapEditorState = remember { MinimapEditorState() }
-                var bottomPaneTab by remember { mutableStateOf(0) } // 0 = Tileset, 1 = Patterns (in Rooms bottom pane)
+                var bottomPaneTab by remember { mutableStateOf(BOTTOM_TAB_TILESET) }
                 var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
                 // Auto-switch to Palette tab when user samples a tile
                 val sampledRow = editorState.sampledPaletteRow
@@ -531,34 +540,38 @@ fun main() = application {
                                             selectedTabIndex = bottomPaneTab,
                                             modifier = Modifier.fillMaxWidth().height(26.dp)
                                         ) {
-                                            Tab(selected = bottomPaneTab == 0, onClick = { bottomPaneTab = 0 },
+                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_TILESET, onClick = { bottomPaneTab = BOTTOM_TAB_TILESET },
                                                 modifier = Modifier.height(26.dp)) {
                                                 Text("Tileset", fontSize = fs.tabLabel)
                                             }
-                                            Tab(selected = bottomPaneTab == 1, onClick = {
-                                                bottomPaneTab = 1
+                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_PATTERNS, onClick = {
+                                                bottomPaneTab = BOTTOM_TAB_PATTERNS
                                                 editorState.seedBuiltInPatterns(romParser)
                                             }, modifier = Modifier.height(26.dp)) {
                                                 Text("Patterns", fontSize = fs.tabLabel)
                                             }
-                                            Tab(selected = bottomPaneTab == 2, onClick = { bottomPaneTab = 2 },
+                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_ROOM_INFO, onClick = { bottomPaneTab = BOTTOM_TAB_ROOM_INFO },
                                                 modifier = Modifier.height(26.dp)) {
                                                 Text("Room Info", fontSize = fs.tabLabel)
+                                            }
+                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_GENERATE, onClick = { bottomPaneTab = BOTTOM_TAB_GENERATE },
+                                                modifier = Modifier.height(26.dp)) {
+                                                Text("Generate", fontSize = fs.tabLabel)
                                             }
                                         }
                                         key(bottomPaneTab) {
                                         when (bottomPaneTab) {
-                                            0 -> TilesetPreview(
+                                            BOTTOM_TAB_TILESET -> TilesetPreview(
                                                 room = selectedRoom,
                                                 romParser = romParser,
                                                 editorState = editorState,
                                                 modifier = Modifier.fillMaxSize()
                                             )
-                                            1 -> PatternThumbnailList(
+                                            BOTTOM_TAB_PATTERNS -> PatternThumbnailList(
                                                 editorState = editorState,
                                                 modifier = Modifier.fillMaxSize()
                                             )
-                                            2 -> {
+                                            BOTTOM_TAB_ROOM_INFO -> {
                                                 val rp = romParser
                                                 val sr = selectedRoom
                                                 if (rp != null && sr != null) {
@@ -582,6 +595,12 @@ fun main() = application {
                                                     }
                                                 }
                                             }
+                                            BOTTOM_TAB_GENERATE -> BiomeGeneratorPanel(
+                                                editorState = editorState,
+                                                romParser = romParser,
+                                                rooms = rooms,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
                                         }
                                         }
                                     }

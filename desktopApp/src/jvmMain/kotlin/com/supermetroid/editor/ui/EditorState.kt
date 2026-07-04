@@ -24,6 +24,9 @@ import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.EnemyUpdate
 import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.RoomRepository
+import com.supermetroid.editor.procgen.BiomeGenerator
+import com.supermetroid.editor.procgen.BiomeRules
+import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
@@ -3263,21 +3266,63 @@ class EditorState {
             EditorTool.SAMPLE -> "Sample"
             EditorTool.SELECT -> "Select"
         }
-        val op = EditOperation(
-            desc, pendingEdits.toList(),
-            plmAdds = pendingPlmAdds.toList(),
-            plmRemoves = pendingPlmRemoves.toList()
+        pushEditOperation(
+            EditOperation(
+                desc, pendingEdits.toList(),
+                plmAdds = pendingPlmAdds.toList(),
+                plmRemoves = pendingPlmRemoves.toList(),
+            ),
         )
+        pendingEdits.clear()
+        pendingPositions.clear()
+        pendingPlmAdds.clear()
+        pendingPlmRemoves.clear()
+    }
+
+    /**
+     * Apply a batch of tile edits as a single undoable operation.
+     * Used by the biome generator to replace a whole room in one step.
+     */
+    fun applyBulkEdits(description: String, edits: List<TileEdit>) {
+        if (edits.isEmpty()) return
+        for (e in edits) {
+            writeBlockWord(e.blockX, e.blockY, e.newBlockWord)
+            writeBts(e.blockX, e.blockY, e.newBts)
+        }
+        pushEditOperation(EditOperation(description, edits))
+    }
+
+    /**
+     * Run the biome generator on the working room and apply the result as one
+     * undoable operation. Returns the number of tiles changed.
+     */
+    fun generateBiome(rules: BiomeRules, profile: TilesetProfile, seed: Long): Int {
+        val w = workingBlocksWide
+        val h = workingBlocksTall
+        if (w <= 0 || h <= 0) return 0
+
+        val n = w * h
+        val origWords = IntArray(n) { readBlockWord(it % w, it / w) }
+        val origBts = IntArray(n) { readBts(it % w, it / w) }
+        val result = BiomeGenerator(rules, profile, seed).generate(w, h, origWords, origBts)
+
+        val edits = ArrayList<TileEdit>()
+        for (i in 0 until n) {
+            if (result.words[i] != origWords[i] || result.bts[i] != origBts[i]) {
+                edits.add(TileEdit(i % w, i / w, origWords[i], result.words[i], origBts[i], result.bts[i]))
+            }
+        }
+        applyBulkEdits("Generate biome (${rules.style.displayName}, seed $seed)", edits)
+        return edits.size
+    }
+
+    private fun pushEditOperation(op: EditOperation) {
         undoStack.add(op)
         redoStack.clear()
         undoVersion++
         project.getOrCreateRoom(currentRoomId).operations.add(op)
         dirty = true
         editVersion++
-        pendingEdits.clear()
-        pendingPositions.clear()
-        pendingPlmAdds.clear()
-        pendingPlmRemoves.clear()
     }
 
     // ─── Undo / Redo ────────────────────────────────────────────

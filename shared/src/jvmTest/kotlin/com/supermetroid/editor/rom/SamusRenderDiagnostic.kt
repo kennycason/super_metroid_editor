@@ -18,7 +18,7 @@ class SamusRenderDiagnostic {
         val pixels = decoder.renderPose(pose, palette, size, size)
         val img = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
         img.setRGB(0, 0, size, size, pixels, 0, size)
-        ImageIO.write(img, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_test_pose.png"))
+        ImageIO.write(img, "png", File(TestRomHelper.outputDir(), "samus_test_pose.png"))
     }
 
     @Test
@@ -45,7 +45,7 @@ class SamusRenderDiagnostic {
             sheet.setRGB(col * tileSize, row * tileSize, tileSize, tileSize, pixels, 0, tileSize)
         }
 
-        ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_poses_sheet.png"))
+        ImageIO.write(sheet, "png", File(TestRomHelper.outputDir(), "samus_poses_sheet.png"))
     }
 
     @Test
@@ -66,7 +66,7 @@ class SamusRenderDiagnostic {
             sheet.setRGB(idx * tileSize, 0, tileSize, tileSize, pixels, 0, tileSize)
         }
 
-        ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_stand_variants.png"))
+        ImageIO.write(sheet, "png", File(TestRomHelper.outputDir(), "samus_stand_variants.png"))
     }
 
     @Test
@@ -91,6 +91,6 @@ class SamusRenderDiagnostic {
             sheet.setRGB(col * tileSize, row * tileSize, tileSize, tileSize, pixels, 0, tileSize)
         }
 
-        ImageIO.write(sheet, "png", File("/Users/kenny/code/super_metroid_dev/test-resources/samus_run_frames.png"))
+        ImageIO.write(sheet, "png", File(TestRomHelper.outputDir(), "samus_run_frames.png"))
     }
 }
