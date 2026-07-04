@@ -313,6 +313,16 @@ val SAMUS_PHYSICS_PATCH = SmPatch(
     configType = "samus_physics"
 )
 
+/** Config patch: generated pause-map room name display. */
+val ROOM_NAME_PAUSE_MAP_PATCH = SmPatch(
+    id = "config_room_name_pause_map",
+    name = "Room Name Pause Map",
+    description = "Draw the current room name on the pause map using SMEDIT room metadata and project overrides.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = "room_name_pause_map"
+)
+
 /** Legacy/superseded patch IDs — removed on seed to avoid duplicates from old configs. */
 internal val LEGACY_PATCH_IDS = setOf(
     "respin", "fast_doors", "no_fanfare", "blue_speed_air", "no_walljump_kick", "instant_stop",

@@ -29,6 +29,7 @@ import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
@@ -1410,6 +1411,60 @@ class EditorState {
         dirty = true; patchVersion++
     }
 
+    fun normalizedRoomNameOverrideKey(roomIdText: String): String? {
+        val trimmed = roomIdText.trim()
+        val hex = when {
+            trimmed.startsWith("0x", ignoreCase = true) -> trimmed.drop(2)
+            trimmed.startsWith('$') -> trimmed.drop(1)
+            else -> trimmed
+        }
+        val roomId = hex.toIntOrNull(16)?.takeIf { it in 0x0000..0xFFFF } ?: return null
+        return roomId.toString(16).uppercase().padStart(4, '0')
+    }
+
+    fun setRoomNameOverride(roomIdText: String, roomName: String, defaultName: String? = null): Boolean {
+        val key = normalizedRoomNameOverrideKey(roomIdText) ?: return false
+        val cleaned = roomName.replace('\r', ' ').replace('\n', ' ')
+        val matchingKeys = project.roomNameOverrides.keys
+            .filter { normalizedRoomNameOverrideKey(it) == key }
+        val shouldRemove = (defaultName == null && cleaned.isBlank()) ||
+            (defaultName != null && cleaned == defaultName)
+
+        var changed = false
+        for (existingKey in matchingKeys) {
+            if (existingKey != key || shouldRemove) {
+                project.roomNameOverrides.remove(existingKey)
+                changed = true
+            }
+        }
+
+        if (!shouldRemove) {
+            if (project.roomNameOverrides[key] != cleaned) {
+                project.roomNameOverrides[key] = cleaned
+                changed = true
+            }
+        }
+
+        if (changed) {
+            dirty = true
+            patchVersion++
+        }
+        return true
+    }
+
+    fun removeRoomNameOverride(roomIdText: String): Boolean {
+        val key = normalizedRoomNameOverrideKey(roomIdText) ?: return false
+        val matchingKeys = project.roomNameOverrides.keys
+            .filter { normalizedRoomNameOverrideKey(it) == key }
+        if (matchingKeys.isEmpty()) return true
+        for (existingKey in matchingKeys) {
+            project.roomNameOverrides.remove(existingKey)
+        }
+        dirty = true
+        patchVersion++
+        return true
+    }
+
     // ─── Pattern management ──────────────────────────────────────
 
     var patternVersion by mutableStateOf(0)
@@ -1986,7 +2041,7 @@ class EditorState {
         val ordered = mutableListOf<SmPatch>()
 
         // 1. GUI config patches (featured at top)
-        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
+        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
             if (guiPatch.id !in existingIds) {
                 ordered.add(SmPatch(
                     id = guiPatch.id,
@@ -3860,6 +3915,7 @@ class EditorState {
         var patchesApplied = 0
         val enabledCount = project.patches.count { it.enabled }
         val disabledCount = project.patches.size - enabledCount
+        val deferredGeneratedPatches = mutableListOf<SmPatch>()
         editorLog("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
         for (patch in project.patches) {
             if (!patch.enabled) continue
@@ -4030,6 +4086,9 @@ class EditorState {
                     slotCount++
                 }
                 editorLog("[EXPORT]   Controller config: $slotCount buttons remapped")
+            } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
+                deferredGeneratedPatches.add(patch)
+                editorLog("[EXPORT]   (deferred until fixed patch writes are applied)")
             } else if (patch.configType == "boss_defeated" || patch.configType == "hyper_beam") {
                 editorLog("[EXPORT]   (deferred to combined per-frame hook)")
             } else {
@@ -4054,6 +4113,31 @@ class EditorState {
                 }
             }
             patchesApplied++
+        }
+
+        for (patch in deferredGeneratedPatches) {
+            try {
+                val result = RoomNamePauseMapPatch.install(
+                    romData = romData,
+                    snesToPc = romParser::snesToPc,
+                    pcToSnes = romParser::pcToSnes,
+                    rooms = RoomRepository().getAllRooms(),
+                    overrides = project.roomNameOverrides,
+                    alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
+                        patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
+                    ),
+                )
+                editorLog(
+                    "[EXPORT]   Generated '${patch.name}': ${result.roomCount} room names, " +
+                        "${result.payloadSize} bytes at SNES $" +
+                        result.allocation.snesAddress.toString(16).uppercase().padStart(6, '0')
+                )
+            } catch (e: Exception) {
+                val message = "Export failed: ${patch.name} could not be written safely (${e.message})"
+                editorLog("ERROR: $message")
+                postStatus(message)
+                return null
+            }
         }
 
         val musicPatched = try {

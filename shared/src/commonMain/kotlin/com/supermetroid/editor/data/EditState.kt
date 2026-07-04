@@ -406,6 +406,7 @@ data class SmEditProject(
     val patterns: MutableList<TilePattern> = mutableListOf(),
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
+    val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
     var versionMajor: Int = 1,

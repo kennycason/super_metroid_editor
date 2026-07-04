@@ -51,7 +51,9 @@ import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.RomParser
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
@@ -303,6 +305,7 @@ fun PatchEditorCanvas(
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            RoomNamePauseMapPatch.CONFIG_TYPE -> RoomNamePauseMapConfig(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             "boss_defeated" -> BossDefeatedEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             "controller_config" -> ControllerConfigEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             else -> PatchHexEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
@@ -555,6 +558,284 @@ private fun CompactPatchField(
     value: String,
     widthDp: Int,
     onValueChange: (String) -> Unit,
+    monospace: Boolean = false,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = TextStyle(
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+        ),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = Modifier
+            .width(widthDp.dp)
+            .height(26.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun RoomNamePauseMapConfig(
+    patch: SmPatch,
+    editorState: EditorState,
+    modifier: Modifier
+) {
+    @Suppress("UNUSED_VARIABLE") val pv = editorState.patchVersion
+    val rooms = remember { RoomRepository().getAllRooms().sortedBy { it.getRoomIdAsInt() } }
+    val baseRoomIds = remember(rooms) { rooms.map { it.getRoomIdAsInt() }.toSet() }
+    val overrides = editorState.project.roomNameOverrides
+    val alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
+        patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
+    )
+    val customOverrides = overrides.entries
+        .mapNotNull { (rawKey, name) ->
+            val key = editorState.normalizedRoomNameOverrideKey(rawKey) ?: return@mapNotNull null
+            val roomId = key.toInt(16)
+            if (roomId in baseRoomIds || name.isBlank()) null else key to name
+        }
+        .distinctBy { it.first }
+        .sortedBy { it.first }
+    val overrideCount = overrides.keys
+        .mapNotNull { editorState.normalizedRoomNameOverrideKey(it) }
+        .distinct()
+        .size
+    var customRoomId by remember { mutableStateOf("") }
+    var customRoomName by remember { mutableStateOf("") }
+    var customError by remember { mutableStateOf<String?>(null) }
+
+    Column(modifier = modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+        Text(
+            "Draws the current room name on the pause map. Edits below are saved as project overrides; base room names stay unchanged.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(
+                "Rooms: ${rooms.size}",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                "Overrides: $overrideCount",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                if (patch.enabled) "Enabled" else "Disabled",
+                fontSize = 12.sp,
+                color = if (patch.enabled) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Alignment",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (option in RoomNamePauseMapPatch.RoomNameAlignment.entries) {
+                FilterChip(
+                    selected = alignment == option,
+                    onClick = {
+                        editorState.setPatchConfigData(
+                            patch.id,
+                            RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY,
+                            option.configValue,
+                        )
+                    },
+                    label = { Text(option.label, fontSize = 11.sp) },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        RoomNameHeaderRow()
+        Spacer(Modifier.height(4.dp))
+
+        for (room in rooms) {
+            val roomId = room.getRoomIdAsInt()
+            val key = roomId.toString(16).uppercase().padStart(4, '0')
+            val overrideName = overrides[key]
+            RoomNameOverrideRow(
+                roomIdText = key,
+                currentName = overrideName ?: room.name,
+                hasOverride = overrideName != null,
+                resetLabel = "Reset",
+                onNameChange = { editorState.setRoomNameOverride(key, it, room.name) },
+                onReset = { editorState.removeRoomNameOverride(key) },
+            )
+        }
+
+        if (customOverrides.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "Custom room IDs",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(4.dp))
+            for ((key, name) in customOverrides) {
+                RoomNameOverrideRow(
+                    roomIdText = key,
+                    currentName = name,
+                    hasOverride = true,
+                    resetLabel = "Remove",
+                    onNameChange = { editorState.setRoomNameOverride(key, it) },
+                    onReset = { editorState.removeRoomNameOverride(key) },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "Add custom room ID",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            RoomNameSmallField(
+                value = customRoomId,
+                onValueChange = {
+                    customRoomId = it.take(6)
+                    customError = null
+                },
+                widthDp = 76,
+                monospace = true,
+            )
+            RoomNameTextField(
+                value = customRoomName,
+                onValueChange = {
+                    customRoomName = it
+                    customError = null
+                },
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                onClick = {
+                    val validKey = editorState.normalizedRoomNameOverrideKey(customRoomId)
+                    when {
+                        validKey == null -> customError = "Invalid room ID"
+                        customRoomName.isBlank() -> customError = "Name required"
+                        else -> {
+                            editorState.setRoomNameOverride(validKey, customRoomName)
+                            customRoomId = ""
+                            customRoomName = ""
+                            customError = null
+                        }
+                    }
+                },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.height(30.dp)
+            ) {
+                Text("Add", fontSize = 11.sp)
+            }
+        }
+        customError?.let {
+            Spacer(Modifier.height(4.dp))
+            Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
+private fun RoomNameHeaderRow() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)
+    ) {
+        Text("Room ID", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(76.dp))
+        Text("Room name", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(64.dp))
+    }
+}
+
+@Composable
+private fun RoomNameOverrideRow(
+    roomIdText: String,
+    currentName: String,
+    hasOverride: Boolean,
+    resetLabel: String,
+    onNameChange: (String) -> Unit,
+    onReset: () -> Unit,
+) {
+    var nameText by remember(roomIdText, currentName) { mutableStateOf(currentName) }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+    ) {
+        Text(
+            roomIdText,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(76.dp)
+        )
+        RoomNameTextField(
+            value = nameText,
+            onValueChange = {
+                nameText = it
+                onNameChange(it)
+            },
+            modifier = Modifier.weight(1f),
+        )
+        Box(modifier = Modifier.width(64.dp)) {
+            if (hasOverride) {
+                OutlinedButton(
+                    onClick = onReset,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(26.dp)
+                ) {
+                    Text(resetLabel, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoomNameTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        textStyle = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = modifier
+            .height(26.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
+private fun RoomNameSmallField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    widthDp: Int,
     monospace: Boolean = false,
 ) {
     BasicTextField(
