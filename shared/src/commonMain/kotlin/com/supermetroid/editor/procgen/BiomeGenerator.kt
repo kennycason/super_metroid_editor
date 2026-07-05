@@ -39,7 +39,10 @@ class BiomeGenerator(
         val forceAir = doorSetup.forceAir
         val pockets = doorSetup.pockets
 
-        StructureAlgorithms.build(cells, width, height, rules, rng)
+        // Silhouette of the pre-generation room, used by REMIX to keep the
+        // original macro layout while re-rolling detail.
+        val originalSolid = BooleanArray(n) { isSilhouetteSolid((originalWords[it] shr 12) and 0xF) }
+        StructureAlgorithms.build(cells, width, height, rules, rng, originalSolid)
 
         for (y in 0 until height) for (x in 0 until width) {
             if (x < BiomeCell.BORDER || y < BiomeCell.BORDER ||
@@ -77,5 +80,15 @@ class BiomeGenerator(
             cells, width, height, preserved, originalWords, originalBts, profile, rules, rng,
         )
         return GeneratedLevel(width, height, dressed.words, dressed.bts, preserved)
+    }
+
+    private companion object {
+        /**
+         * Block types that read as open space in the room's visual silhouette.
+         * Destructibles (crumble/shot/bomb) count as solid: they are part of
+         * the structure even though Samus can pass through them.
+         */
+        fun isSilhouetteSolid(type: Int): Boolean =
+            type != 0x0 && type != 0x2 && type != 0x4 && type != 0x6 && type != 0x7 && type != 0x9
     }
 }

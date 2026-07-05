@@ -4,12 +4,27 @@ import kotlin.math.ceil
 import kotlin.random.Random
 
 internal object StructureAlgorithms {
-    fun build(cells: IntArray, width: Int, height: Int, rules: BiomeRules, rng: Random) {
+    fun build(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        rules: BiomeRules,
+        rng: Random,
+        originalSolid: BooleanArray? = null,
+    ) {
         when (rules.algorithm) {
             StructureAlgorithm.CAVE -> structureCave(cells, width, height, rules, rng)
             StructureAlgorithm.CHAMBERS -> structureChambers(cells, width, height, rng)
             StructureAlgorithm.VERTICAL -> structureVertical(cells, width, height, rules, rng)
             StructureAlgorithm.OPEN_GALLERY -> structureGallery(cells, width, height, rules, rng)
+            StructureAlgorithm.RECTILINEAR -> structureRectilinear(cells, width, height, rng)
+            StructureAlgorithm.SETTLEMENT -> structureSettlement(cells, width, height, rng)
+            StructureAlgorithm.REMIX ->
+                if (originalSolid != null && originalSolid.size >= cells.size) {
+                    structureRemix(cells, width, height, rules, rng, originalSolid)
+                } else {
+                    structureCave(cells, width, height, rules, rng)
+                }
         }
     }
 
@@ -83,6 +98,10 @@ internal object StructureAlgorithms {
             StructureAlgorithm.VERTICAL -> 12
             StructureAlgorithm.CHAMBERS -> 10
             StructureAlgorithm.CAVE -> if (rules.style == BiomeStyle.WARREN) 7 else 12
+            StructureAlgorithm.RECTILINEAR -> 8
+            // Building walls are 1 tile thick; keep small constructed pieces.
+            StructureAlgorithm.SETTLEMENT -> 4
+            StructureAlgorithm.REMIX -> 10
         }
         val seen = BooleanArray(cells.size)
         val queue = ArrayDeque<Int>()
@@ -233,6 +252,175 @@ internal object StructureAlgorithms {
                     cells[y * width + x] = BiomeCell.SOLID
                 }
             }
+        }
+        smooth(cells, width, height, rules)
+    }
+
+    /**
+     * Constructed facility: horizontal decks (flat-floored halls) stacked at a
+     * regular pitch, joined by rectangular connector shafts that alternate
+     * sides. Some hall segments widen upward into taller rooms; 1-wide bulkhead
+     * pillars with floor-level doorways break long halls up. No cellular
+     * smoothing, so every edge stays axis-aligned.
+     */
+    private fun structureRectilinear(cells: IntArray, width: Int, height: Int, rng: Random) {
+        cells.fill(BiomeCell.SOLID)
+        val left = BiomeCell.BORDER
+        val right = width - BiomeCell.BORDER
+        fun carve(x: Int, y: Int) {
+            if (x in left until right && y in BiomeCell.BORDER until height - BiomeCell.BORDER) {
+                cells[y * width + x] = BiomeCell.AIR
+            }
+        }
+        val hallH = rng.nextInt(3, 5)
+        val spacing = hallH + rng.nextInt(4, 8)
+        // Deck tops, collected bottom-up (decks[0] is the lowest hall).
+        val decks = ArrayList<Int>()
+        var top = height - BiomeCell.BORDER - hallH
+        while (top >= BiomeCell.BORDER + 1) {
+            decks.add(top)
+            top -= spacing
+        }
+        if (decks.isEmpty()) decks.add((height / 2 - hallH / 2).coerceAtLeast(BiomeCell.BORDER))
+
+        for (deckTop in decks) {
+            for (y in deckTop until deckTop + hallH) for (x in left until right) carve(x, y)
+            // Widen some segments upward into taller rooms.
+            var x = left
+            while (x < right) {
+                val segLen = rng.nextInt(8, 18)
+                if (rng.nextDouble() < 0.35) {
+                    val extra = rng.nextInt(2, 5)
+                    for (yy in (deckTop - extra).coerceAtLeast(BiomeCell.BORDER) until deckTop) {
+                        for (xx in x until minOf(x + segLen, right)) carve(xx, yy)
+                    }
+                }
+                x += segLen + rng.nextInt(2, 6)
+            }
+            // Bulkhead pillars: leave a doorway at the floor, solid above.
+            val doorway = (hallH - 1).coerceAtLeast(2)
+            var px = left + rng.nextInt(8, 14)
+            while (px < right - 4) {
+                if (rng.nextDouble() < 0.5) {
+                    for (y in (deckTop - 6).coerceAtLeast(BiomeCell.BORDER) until deckTop + hallH - doorway) {
+                        cells[y * width + px] = BiomeCell.SOLID
+                    }
+                }
+                px += rng.nextInt(9, 16)
+            }
+        }
+        // Connector shafts between adjacent decks, alternating sides.
+        val shaftW = rng.nextInt(3, 5)
+        for (i in 0 until decks.size - 1) {
+            val lowerTop = decks[i]
+            val upperTop = decks[i + 1]
+            val span = right - left - shaftW
+            if (span <= 0) continue
+            val base = if (i % 2 == 0) left + span / 5 else left + span * 4 / 5
+            val sx = (base + rng.nextInt(-4, 5)).coerceIn(left, left + span)
+            for (y in upperTop until lowerTop + hallH) for (x in sx until sx + shaftW) carve(x, y)
+        }
+    }
+
+    /**
+     * Inhabited settlement: a flat street along the bottom with hollow
+     * buildings rising from it — 1-thick walls, interior floors with stair
+     * gaps, a street-level doorway, and sometimes a roof hatch. Open sky above
+     * is left to the platform mutator for rooftop walkways.
+     */
+    private fun structureSettlement(cells: IntArray, width: Int, height: Int, rng: Random) {
+        cells.fill(BiomeCell.AIR)
+        val groundTop = height - BiomeCell.BORDER - rng.nextInt(2, 4)
+        for (y in groundTop until height) for (x in 0 until width) cells[y * width + x] = BiomeCell.SOLID
+        val maxBh = groundTop - BiomeCell.BORDER - 5
+        if (maxBh < 5) return
+        var x = BiomeCell.BORDER + rng.nextInt(2, 6)
+        while (x < width - BiomeCell.BORDER - 7) {
+            val bw = rng.nextInt(7, 15).coerceAtMost(width - BiomeCell.BORDER - x)
+            if (bw < 6) break
+            val bh = rng.nextInt(5, maxBh + 1)
+            buildBuilding(cells, width, x, groundTop, bw, bh, rng)
+            x += bw + rng.nextInt(4, 10)
+        }
+    }
+
+    private fun buildBuilding(
+        cells: IntArray,
+        width: Int,
+        x0: Int,
+        groundTop: Int,
+        bw: Int,
+        bh: Int,
+        rng: Random,
+    ) {
+        val top = groundTop - bh
+        val x1 = x0 + bw - 1
+        for (y in top until groundTop) for (x in x0..x1) {
+            val isWall = x == x0 || x == x1 || y == top
+            cells[y * width + x] = if (isWall) BiomeCell.SOLID else BiomeCell.AIR
+        }
+        // Interior floors with alternating 2-wide stair gaps.
+        var fy = groundTop - 5
+        var gapLeft = rng.nextBoolean()
+        while (fy > top + 2) {
+            for (x in x0 + 1 until x1) cells[fy * width + x] = BiomeCell.SOLID
+            val gapX = if (gapLeft) x0 + 1 else x1 - 2
+            cells[fy * width + gapX] = BiomeCell.AIR
+            cells[fy * width + gapX + 1] = BiomeCell.AIR
+            gapLeft = !gapLeft
+            fy -= rng.nextInt(4, 6)
+        }
+        // Street-level doorway on one side.
+        val doorX = if (rng.nextBoolean()) x0 else x1
+        for (dy in 1..3) cells[(groundTop - dy) * width + doorX] = BiomeCell.AIR
+        // Roof hatch for rooftop access.
+        if (rng.nextDouble() < 0.6 && x1 - 2 >= x0 + 2) {
+            val hx = rng.nextInt(x0 + 2, x1 - 2)
+            cells[top * width + hx] = BiomeCell.AIR
+            cells[top * width + hx + 1] = BiomeCell.AIR
+        }
+    }
+
+    /**
+     * Remix: reproduce the original room's macro silhouette from a coarse
+     * downsample, but re-roll every mixed-density region (platform clusters,
+     * ledges, rubble) so the room keeps its shape while all the detail moves.
+     */
+    private fun structureRemix(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        rules: BiomeRules,
+        rng: Random,
+        originalSolid: BooleanArray,
+    ) {
+        val c = 3
+        var cy0 = 0
+        while (cy0 < height) {
+            var cx0 = 0
+            while (cx0 < width) {
+                var solid = 0
+                var count = 0
+                for (y in cy0 until minOf(cy0 + c, height)) {
+                    for (x in cx0 until minOf(cx0 + c, width)) {
+                        count++
+                        if (originalSolid[y * width + x]) solid++
+                    }
+                }
+                val frac = solid.toDouble() / count
+                val p = when {
+                    frac >= 0.85 -> 0.98
+                    frac <= 0.15 -> 0.02
+                    else -> 0.25 + frac * 0.5
+                }
+                for (y in cy0 until minOf(cy0 + c, height)) {
+                    for (x in cx0 until minOf(cx0 + c, width)) {
+                        cells[y * width + x] = if (rng.nextDouble() < p) BiomeCell.SOLID else BiomeCell.AIR
+                    }
+                }
+                cx0 += c
+            }
+            cy0 += c
         }
         smooth(cells, width, height, rules)
     }

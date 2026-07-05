@@ -64,6 +64,9 @@ internal object BiomeMutators {
             StructureAlgorithm.VERTICAL -> 0.58
             StructureAlgorithm.CHAMBERS -> 0.42
             StructureAlgorithm.CAVE -> if (rules.style == BiomeStyle.WARREN) 0.28 else 0.36
+            StructureAlgorithm.RECTILINEAR -> 0.30
+            StructureAlgorithm.SETTLEMENT -> 0.55
+            StructureAlgorithm.REMIX -> 0.45
         }
         val maxPlatforms = (screenArea * 0.44).roundToInt().coerceAtLeast(2)
         val minPlatforms = if (rules.platformDensity > 0.20) 1 else 0
@@ -82,6 +85,8 @@ internal object BiomeMutators {
             val preferredMax = when (rules.algorithm) {
                 StructureAlgorithm.OPEN_GALLERY -> 11
                 StructureAlgorithm.VERTICAL -> 8
+                // Longer straight walkways suit the rooftop skyline.
+                StructureAlgorithm.SETTLEMENT -> 9
                 else -> 7
             }
             val maxLen = minOf(

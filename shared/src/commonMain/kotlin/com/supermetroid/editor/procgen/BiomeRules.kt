@@ -38,13 +38,21 @@ data class BiomeRules(
     fun describe(): String {
         val lines = mutableListOf<String>()
         lines += "${style.displayName} — ${style.blurb}"
-        val density = when {
-            fillChance < 0.42 -> "airy"
-            fillChance < 0.50 -> "balanced"
-            else -> "dense"
+        lines += when (algorithm) {
+            StructureAlgorithm.REMIX ->
+                "Terrain: rebuilt from this room's original silhouette"
+            StructureAlgorithm.RECTILINEAR, StructureAlgorithm.SETTLEMENT ->
+                "Terrain: constructed ${algorithm.name.lowercase().replace('_', ' ')}, straight edges"
+            else -> {
+                val density = when {
+                    fillChance < 0.42 -> "airy"
+                    fillChance < 0.50 -> "balanced"
+                    else -> "dense"
+                }
+                "Terrain: $density ${algorithm.name.lowercase().replace('_', ' ')}" +
+                    ", smoothing x$caIterations"
+            }
         }
-        lines += "Terrain: $density ${algorithm.name.lowercase().replace('_', ' ')}" +
-            ", smoothing x$caIterations"
         if (platformDensity > 0.05) {
             val amount = if (platformDensity > 0.5) "many" else "some"
             lines += "Platforms: $amount floating ledges in open spans"
@@ -103,6 +111,9 @@ data class BiomeRules(
                 BiomeStyle.RUINS -> StructureAlgorithm.CHAMBERS
                 BiomeStyle.SHAFT -> StructureAlgorithm.VERTICAL
                 BiomeStyle.GARDEN -> StructureAlgorithm.OPEN_GALLERY
+                BiomeStyle.FACILITY -> StructureAlgorithm.RECTILINEAR
+                BiomeStyle.SETTLEMENT -> StructureAlgorithm.SETTLEMENT
+                BiomeStyle.REMIX -> StructureAlgorithm.REMIX
                 BiomeStyle.SURPRISE -> StructureAlgorithm.values().toList().random(rng)
             }
 
@@ -112,10 +123,17 @@ data class BiomeRules(
                 BiomeStyle.RUINS -> rng.env(0.42, 0.50)
                 BiomeStyle.SHAFT -> rng.env(0.44, 0.52)
                 BiomeStyle.GARDEN -> rng.env(0.30, 0.38)
+                BiomeStyle.FACILITY, BiomeStyle.SETTLEMENT -> rng.env(0.42, 0.50)
+                BiomeStyle.REMIX -> rng.env(0.44, 0.52)
                 BiomeStyle.SURPRISE -> rng.env(0.35, 0.55)
             }
 
             val mutatorPool = BiomeMutator.values().toMutableList()
+            if (actualStyle.isConstructed) {
+                // No stalactites or rubble piles inside built structures.
+                mutatorPool.remove(BiomeMutator.CEILING_FANGS)
+                mutatorPool.remove(BiomeMutator.RUBBLE_PILES)
+            }
             val mutatorCount = if (wild) rng.nextInt(2, 5) else rng.nextInt(1, 4)
             val mutators = buildSet {
                 repeat(mutatorCount) {
@@ -137,11 +155,16 @@ data class BiomeRules(
                 platformDensity = when (actualStyle) {
                     BiomeStyle.GARDEN -> rng.env(0.5, 0.9)
                     BiomeStyle.SHAFT -> rng.env(0.4, 0.7)
+                    // Rooftop walkways over the street.
+                    BiomeStyle.SETTLEMENT -> rng.env(0.35, 0.65)
+                    BiomeStyle.FACILITY -> rng.env(0.15, 0.4)
+                    BiomeStyle.REMIX -> rng.env(0.2, 0.5)
                     else -> rng.env(0.1, 0.4)
                 },
                 hazardDensity = if (BiomeMutator.SPIKE_POCKETS in mutators) rng.env(0.2, 0.7) else 0.0,
                 destructibleDensity = rng.env(0.15, 0.5),
-                textureCohesion = rng.range(0.74, 0.94),
+                // Constructed biomes repeat the same plating for a machined look.
+                textureCohesion = if (actualStyle.isConstructed) rng.range(0.86, 0.97) else rng.range(0.74, 0.94),
                 mutators = mutators,
             )
         }

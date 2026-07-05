@@ -37,10 +37,12 @@ class BiomeGeneratorTest {
     fun `same seed produces identical rooms`() {
         val (words, bts) = syntheticRoom()
         val profile = TilesetProfile.synthetic()
-        val a = BiomeGenerator(rules(42), profile, 42).generate(48, 32, words, bts)
-        val b = BiomeGenerator(rules(42), profile, 42).generate(48, 32, words, bts)
-        assertTrue(a.words.contentEquals(b.words), "words must be deterministic")
-        assertTrue(a.bts.contentEquals(b.bts), "bts must be deterministic")
+        for (style in BiomeStyle.values()) {
+            val a = BiomeGenerator(rules(42, style), profile, 42).generate(48, 32, words, bts)
+            val b = BiomeGenerator(rules(42, style), profile, 42).generate(48, 32, words, bts)
+            assertTrue(a.words.contentEquals(b.words), "words must be deterministic ($style)")
+            assertTrue(a.bts.contentEquals(b.bts), "bts must be deterministic ($style)")
+        }
     }
 
     @Test
@@ -181,6 +183,80 @@ class BiomeGeneratorTest {
             }
         }
         return runs
+    }
+
+    @Test
+    fun `facility decks form long flat walkable floors`() {
+        val (words, bts) = syntheticRoom()
+        val profile = TilesetProfile.synthetic()
+        for (seed in longArrayOf(5, 77, 901)) {
+            val gen = BiomeGenerator(rules(seed, BiomeStyle.FACILITY), profile, seed)
+                .generate(48, 32, words, bts)
+            fun type(x: Int, y: Int) = (gen.words[y * 48 + x] shr 12) and 0xF
+            var flatRows = 0
+            for (y in 2 until 29) {
+                var best = 0
+                var run = 0
+                for (x in 2 until 46) {
+                    if (isPassableType(type(x, y)) && !isPassableType(type(x, y + 1))) {
+                        run++
+                        best = maxOf(best, run)
+                    } else {
+                        run = 0
+                    }
+                }
+                if (best >= 8) flatRows++
+            }
+            assertTrue(flatRows >= 2, "seed=$seed expected at least 2 long flat decks, got $flatRows")
+        }
+    }
+
+    @Test
+    fun `settlement builds a mostly solid street with structures above`() {
+        val (words, bts) = syntheticRoom()
+        val profile = TilesetProfile.synthetic()
+        for (seed in longArrayOf(9, 314, 5150)) {
+            val gen = BiomeGenerator(rules(seed, BiomeStyle.SETTLEMENT), profile, seed)
+                .generate(48, 32, words, bts)
+            fun type(x: Int, y: Int) = (gen.words[y * 48 + x] shr 12) and 0xF
+            val openStreet = (2 until 46).count { isPassableType(type(it, 29)) }
+            assertTrue(openStreet <= 4, "seed=$seed street row should be mostly solid, $openStreet open cells")
+            var built = 0
+            for (y in 4 until 27) for (x in 2 until 46) if (!isPassableType(type(x, y))) built++
+            assertTrue(built >= 30, "seed=$seed expected building structure above the street, got $built solid cells")
+        }
+    }
+
+    @Test
+    fun `remix keeps the original macro silhouette while re-rolling detail`() {
+        val w = 48
+        val h = 32
+        val (words, bts) = syntheticRoom(w, h)
+        // Give the room a distinctive silhouette: solid lower third.
+        val solid = (0x8 shl 12) or 0x120
+        for (y in 20 until 30) for (x in 2 until 46) words[y * w + x] = solid
+        val profile = TilesetProfile.synthetic()
+
+        fun silhouette(word: Int): Boolean {
+            val t = (word shr 12) and 0xF
+            return t != 0x0 && t != 0x2 && t != 0x4 && t != 0x6 && t != 0x7 && t != 0x9
+        }
+
+        val a = BiomeGenerator(rules(5, BiomeStyle.REMIX), profile, 5).generate(w, h, words, bts)
+        var agree = 0
+        var total = 0
+        for (i in words.indices) {
+            if (a.preserved[i]) continue
+            total++
+            if (silhouette(words[i]) == silhouette(a.words[i])) agree++
+        }
+        assertTrue(
+            agree.toDouble() / total >= 0.7,
+            "remix drifted too far from the original silhouette: $agree/$total"
+        )
+
+        val b = BiomeGenerator(rules(6, BiomeStyle.REMIX), profile, 6).generate(w, h, words, bts)
+        assertTrue(!a.words.contentEquals(b.words), "remix must re-roll detail between seeds")
     }
 
     // ─── ROM-backed tests (skip when the ROM is unavailable) ────────
