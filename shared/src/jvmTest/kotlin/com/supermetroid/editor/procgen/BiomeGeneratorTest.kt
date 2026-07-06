@@ -186,6 +186,45 @@ class BiomeGeneratorTest {
     }
 
     @Test
+    fun `pipe maze uses CRE pipe and joint solids`() {
+        val (words, bts) = syntheticRoom()
+        val profile = TilesetProfile.synthetic()
+        val rules = rules(2026, BiomeStyle.PIPE_MAZE)
+        val gen = BiomeGenerator(rules, profile, 2026).generate(48, 32, words, bts)
+
+        val mazeSolidMetatiles = gen.words.indices
+            .filter { !gen.preserved[it] && ((gen.words[it] shr 12) and 0xF) == 0x8 }
+            .map { gen.words[it] and 0x3FF }
+            .toSet()
+
+        assertTrue(0x05F in mazeSolidMetatiles, "pipe maze should use CRE joint tile 0x05F")
+        assertTrue(0x0BE in mazeSolidMetatiles, "pipe maze should use CRE pipe tile 0x0BE")
+        assertTrue(
+            mazeSolidMetatiles.all { it == 0x05F || it == 0x0BE },
+            "pipe maze solids should only use requested CRE tiles, got $mazeSolidMetatiles"
+        )
+    }
+
+    @Test
+    fun `pipe maze corridors stay mostly one tile wide`() {
+        val (words, bts) = syntheticRoom()
+        val profile = TilesetProfile.synthetic()
+        val rules = rules(5150, BiomeStyle.PIPE_MAZE)
+            .withMazeOverrides(branchDensity = 0.45, loopDensity = 0.05, hubSize = 0.0)
+        val gen = BiomeGenerator(rules, profile, 5150).generate(48, 32, words, bts)
+
+        var openTwoByTwos = 0
+        for (y in 2 until 29) for (x in 2 until 45) {
+            val cells = intArrayOf(y * 48 + x, y * 48 + x + 1, (y + 1) * 48 + x, (y + 1) * 48 + x + 1)
+            if (cells.all { isPassableType((gen.words[it] shr 12) and 0xF) }) openTwoByTwos++
+        }
+        assertTrue(
+            openTwoByTwos <= 16,
+            "pipe maze should not widen into broad rooms; found $openTwoByTwos open 2x2 blocks"
+        )
+    }
+
+    @Test
     fun `facility decks form long flat walkable floors`() {
         val (words, bts) = syntheticRoom()
         val profile = TilesetProfile.synthetic()

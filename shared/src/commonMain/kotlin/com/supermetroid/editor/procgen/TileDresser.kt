@@ -20,6 +20,7 @@ internal object TileDresser {
         val words = IntArray(n)
         val bts = IntArray(n)
         val chosen = IntArray(n) { -1 }
+        val pipeMaze = rules.algorithm == StructureAlgorithm.MAZE
         fun idx(x: Int, y: Int) = y * width + x
         fun inBounds(x: Int, y: Int) = x in 0 until width && y in 0 until height
 
@@ -36,9 +37,13 @@ internal object TileDresser {
                     bts[i] = 0
                 }
                 BiomeCell.SOLID -> {
-                    val mask = NeighborMask.fromStructureGrid(cells, width, height, x, y)
-                    val word = pickCoherentSolid(cells, chosen, width, height, x, y, mask, rules, rng)
-                        ?: profile.pickSolid(mask, rng)
+                    val word = if (pipeMaze) {
+                        pickMazePipeWall(cells, width, height, x, y)
+                    } else {
+                        val mask = NeighborMask.fromStructureGrid(cells, width, height, x, y)
+                        pickCoherentSolid(cells, chosen, width, height, x, y, mask, rules, rng)
+                            ?: profile.pickSolid(mask, rng)
+                    }
                     chosen[i] = word
                     words[i] = word
                     bts[i] = 0
@@ -66,6 +71,18 @@ internal object TileDresser {
         }
         camouflageHiddenShots(cells, words, bts, chosen, width, height, preserved, ::idx, ::inBounds)
         return DressedGrid(words, bts)
+    }
+
+    private fun pickMazePipeWall(cells: IntArray, width: Int, height: Int, x: Int, y: Int): Int {
+        fun isAir(nx: Int, ny: Int): Boolean =
+            nx in 0 until width && ny in 0 until height && cells[ny * width + nx] == BiomeCell.AIR
+        val openWest = isAir(x - 1, y)
+        val openEast = isAir(x + 1, y)
+        val openNorth = isAir(x, y - 1)
+        val openSouth = isAir(x, y + 1)
+        val verticalSideWall = (openWest || openEast) && !openNorth && !openSouth
+        // Level words only support H/V flips, so horizontal pipe runs need a dedicated metatile.
+        return if (verticalSideWall) CRE_VERTICAL_PIPE_WORD else CRE_PIPE_JOINT_WORD
     }
 
     private fun pickCoherentSolid(
@@ -121,4 +138,11 @@ internal object TileDresser {
             }
         }
     }
+
+    private const val CRE_PIPE_JOINT = 0x05F
+    private const val CRE_VERTICAL_PIPE = 0x0BE
+    private const val SOLID_TYPE = 0x8 shl 12
+
+    private const val CRE_PIPE_JOINT_WORD = SOLID_TYPE or CRE_PIPE_JOINT
+    private const val CRE_VERTICAL_PIPE_WORD = SOLID_TYPE or CRE_VERTICAL_PIPE
 }

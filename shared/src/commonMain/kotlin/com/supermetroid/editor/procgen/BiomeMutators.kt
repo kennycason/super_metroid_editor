@@ -64,6 +64,7 @@ internal object BiomeMutators {
             StructureAlgorithm.VERTICAL -> 0.58
             StructureAlgorithm.CHAMBERS -> 0.42
             StructureAlgorithm.CAVE -> if (rules.style == BiomeStyle.WARREN) 0.28 else 0.36
+            StructureAlgorithm.MAZE -> 0.0
             StructureAlgorithm.RECTILINEAR -> 0.30
             StructureAlgorithm.SETTLEMENT -> 0.55
             StructureAlgorithm.REMIX -> 0.45

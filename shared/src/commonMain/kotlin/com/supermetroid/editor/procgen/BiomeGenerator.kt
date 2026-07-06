@@ -42,7 +42,7 @@ class BiomeGenerator(
         // Silhouette of the pre-generation room, used by REMIX to keep the
         // original macro layout while re-rolling detail.
         val originalSolid = BooleanArray(n) { isSilhouetteSolid((originalWords[it] shr 12) and 0xF) }
-        StructureAlgorithms.build(cells, width, height, rules, rng, originalSolid)
+        StructureAlgorithms.build(cells, width, height, rules, rng, originalSolid, pockets)
 
         for (y in 0 until height) for (x in 0 until width) {
             if (x < BiomeCell.BORDER || y < BiomeCell.BORDER ||
@@ -53,10 +53,12 @@ class BiomeGenerator(
         }
         for (i in 0 until n) if (forceAir[i]) cells[i] = BiomeCell.AIR
 
+        val isMaze = rules.algorithm == StructureAlgorithm.MAZE
         val protectedCells = BooleanArray(n) { preserved[it] || forceAir[it] }
-        StructureAlgorithms.refine(cells, width, height, rules, protectedCells)
-
-        GridConnectivity.ensureConnected(cells, width, height, preserved, rng) { it == BiomeCell.AIR }
+        if (!isMaze) {
+            StructureAlgorithms.refine(cells, width, height, rules, protectedCells)
+            GridConnectivity.ensureConnected(cells, width, height, preserved, rng) { it == BiomeCell.AIR }
+        }
         for (p in pockets) {
             val floorY = p.y1 + 1
             if (floorY < height - 1) {
@@ -69,12 +71,14 @@ class BiomeGenerator(
         }
 
         val editable = BooleanArray(n) { !preserved[it] && !forceAir[it] }
-        BiomeMutators.applyAll(cells, width, height, rules, editable, rng)
+        if (!isMaze) {
+            BiomeMutators.applyAll(cells, width, height, rules, editable, rng)
 
-        GridConnectivity.ensureConnected(cells, width, height, preserved, rng) {
-            it == BiomeCell.AIR || it == BiomeCell.CRUMBLE || it == BiomeCell.SHOT_HIDDEN || it == BiomeCell.BOMB
+            GridConnectivity.ensureConnected(cells, width, height, preserved, rng) {
+                it == BiomeCell.AIR || it == BiomeCell.CRUMBLE || it == BiomeCell.SHOT_HIDDEN || it == BiomeCell.BOMB
+            }
+            BiomeMutators.removeFloatingDebris(cells, width, height, editable)
         }
-        BiomeMutators.removeFloatingDebris(cells, width, height, editable)
 
         val dressed = TileDresser.dress(
             cells, width, height, preserved, originalWords, originalBts, profile, rules, rng,

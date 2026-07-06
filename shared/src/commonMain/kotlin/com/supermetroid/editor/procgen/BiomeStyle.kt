@@ -21,6 +21,7 @@ enum class BiomeStyle(val displayName: String, val blurb: String) {
     FACILITY("Facility", "Machined decks and service shafts — straight halls, flat floors, bulkhead doorways"),
     SETTLEMENT("Settlement", "An inhabited outpost: a street of buildings with rooms, doorways, and rooftops"),
     REMIX("Remix room", "Keeps this room's original layout but re-rolls its platforms and details"),
+    PIPE_MAZE("Pipe maze", "One-tile corridors through CRE pipe walls, with dead ends and optional loops"),
     SURPRISE("Surprise me", "Randomized style with wilder rule mutations");
 
     /** Constructed styles suppress organic mutators and use uniform texturing. */
@@ -31,7 +32,7 @@ enum class BiomeStyle(val displayName: String, val blurb: String) {
  * Structural algorithms the generator can use for the solid/air macro layout.
  * Styles map to one of these plus parameter biases.
  */
-enum class StructureAlgorithm { CAVE, CHAMBERS, VERTICAL, OPEN_GALLERY, RECTILINEAR, SETTLEMENT, REMIX }
+enum class StructureAlgorithm { CAVE, CHAMBERS, VERTICAL, OPEN_GALLERY, MAZE, RECTILINEAR, SETTLEMENT, REMIX }
 
 /**
  * Optional rule "mutators" that add gameplay flavor on top of the base

@@ -35,6 +35,7 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeStyle
 import com.supermetroid.editor.procgen.BiomeTheme
+import com.supermetroid.editor.procgen.StructureAlgorithm
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
@@ -83,8 +84,15 @@ fun BiomeGeneratorPanel(
     var platforms by remember(baseRules) { mutableStateOf(baseRules.platformDensity.toFloat()) }
     var hazards by remember(baseRules) { mutableStateOf(baseRules.hazardDensity.toFloat()) }
     var destructibles by remember(baseRules) { mutableStateOf(baseRules.destructibleDensity.toFloat()) }
-    val effectiveRules = remember(baseRules, platforms, hazards, destructibles) {
-        baseRules.withOverrides(platforms.toDouble(), hazards.toDouble(), destructibles.toDouble())
+    var mazeBranches by remember(baseRules) { mutableStateOf(baseRules.mazeBranchDensity.toFloat()) }
+    var mazeLoops by remember(baseRules) { mutableStateOf(baseRules.mazeLoopDensity.toFloat()) }
+    var mazeHub by remember(baseRules) { mutableStateOf(baseRules.mazeHubSize.toFloat()) }
+    val effectiveRules = remember(baseRules, platforms, hazards, destructibles, mazeBranches, mazeLoops, mazeHub) {
+        if (baseRules.algorithm == StructureAlgorithm.MAZE) {
+            baseRules.withMazeOverrides(mazeBranches.toDouble(), mazeLoops.toDouble(), mazeHub.toDouble())
+        } else {
+            baseRules.withOverrides(platforms.toDouble(), hazards.toDouble(), destructibles.toDouble())
+        }
     }
 
     Column(
@@ -180,9 +188,15 @@ fun BiomeGeneratorPanel(
             )
         }
 
-        LabeledSlider("Platforms", platforms) { platforms = it }
-        LabeledSlider("Hazards", hazards) { hazards = it }
-        LabeledSlider("Destructibles", destructibles) { destructibles = it }
+        if (effectiveRules.algorithm == StructureAlgorithm.MAZE) {
+            LabeledSlider("Branches", mazeBranches) { mazeBranches = it }
+            LabeledSlider("Loops", mazeLoops) { mazeLoops = it }
+            LabeledSlider("Center hub", mazeHub) { mazeHub = it }
+        } else {
+            LabeledSlider("Platforms", platforms) { platforms = it }
+            LabeledSlider("Hazards", hazards) { hazards = it }
+            LabeledSlider("Destructibles", destructibles) { destructibles = it }
+        }
 
         val prof = profile?.takeIf { it.first == targetTilesetId }?.second
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

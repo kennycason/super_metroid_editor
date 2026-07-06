@@ -11,12 +11,14 @@ internal object StructureAlgorithms {
         rules: BiomeRules,
         rng: Random,
         originalSolid: BooleanArray? = null,
+        doorPockets: List<DoorPocket> = emptyList(),
     ) {
         when (rules.algorithm) {
             StructureAlgorithm.CAVE -> structureCave(cells, width, height, rules, rng)
             StructureAlgorithm.CHAMBERS -> structureChambers(cells, width, height, rng)
             StructureAlgorithm.VERTICAL -> structureVertical(cells, width, height, rules, rng)
             StructureAlgorithm.OPEN_GALLERY -> structureGallery(cells, width, height, rules, rng)
+            StructureAlgorithm.MAZE -> structureMaze(cells, width, height, rules, rng, doorPockets)
             StructureAlgorithm.RECTILINEAR -> structureRectilinear(cells, width, height, rng)
             StructureAlgorithm.SETTLEMENT -> structureSettlement(cells, width, height, rng)
             StructureAlgorithm.REMIX ->
@@ -98,6 +100,7 @@ internal object StructureAlgorithms {
             StructureAlgorithm.VERTICAL -> 12
             StructureAlgorithm.CHAMBERS -> 10
             StructureAlgorithm.CAVE -> if (rules.style == BiomeStyle.WARREN) 7 else 12
+            StructureAlgorithm.MAZE -> 4
             StructureAlgorithm.RECTILINEAR -> 8
             // Building walls are 1 tile thick; keep small constructed pieces.
             StructureAlgorithm.SETTLEMENT -> 4
@@ -254,6 +257,211 @@ internal object StructureAlgorithms {
             }
         }
         smooth(cells, width, height, rules)
+    }
+
+    private fun structureMaze(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        rules: BiomeRules,
+        rng: Random,
+        doorPockets: List<DoorPocket>,
+    ) {
+        cells.fill(BiomeCell.SOLID)
+        val left = BiomeCell.BORDER + 1
+        val top = BiomeCell.BORDER + 1
+        val right = width - BiomeCell.BORDER - 2
+        val bottom = height - BiomeCell.BORDER - 2
+        if (right - left < 4 || bottom - top < 4) {
+            carveSmallMazeFallback(cells, width, height, doorPockets)
+            return
+        }
+
+        val startX = if ((left and 1) == 0) left + 1 else left
+        val startY = if ((top and 1) == 0) top + 1 else top
+        val nodeXs = generateSequence(startX) { it + 2 }.takeWhile { it <= right }.toList()
+        val nodeYs = generateSequence(startY) { it + 2 }.takeWhile { it <= bottom }.toList()
+        if (nodeXs.isEmpty() || nodeYs.isEmpty()) {
+            carveSmallMazeFallback(cells, width, height, doorPockets)
+            return
+        }
+
+        fun idx(x: Int, y: Int) = y * width + x
+        fun carve(x: Int, y: Int) {
+            if (x in 1 until width - 1 && y in 1 until height - 1) cells[idx(x, y)] = BiomeCell.AIR
+        }
+        fun carvePath(x1: Int, y1: Int, x2: Int, y2: Int) {
+            var x = x1.coerceIn(1, width - 2)
+            var y = y1.coerceIn(1, height - 2)
+            val horizontalFirst = rng.nextBoolean()
+            fun stepX() {
+                while (x != x2) {
+                    carve(x, y)
+                    x += if (x2 > x) 1 else -1
+                }
+            }
+            fun stepY() {
+                while (y != y2) {
+                    carve(x, y)
+                    y += if (y2 > y) 1 else -1
+                }
+            }
+            if (horizontalFirst) {
+                stepX()
+                stepY()
+            } else {
+                stepY()
+                stepX()
+            }
+            carve(x, y)
+        }
+        fun nearestNode(x: Int, y: Int): Pair<Int, Int> {
+            var bestX = nodeXs.first()
+            var bestY = nodeYs.first()
+            var bestDist = Int.MAX_VALUE
+            for (ny in nodeYs) for (nx in nodeXs) {
+                val dist = kotlin.math.abs(nx - x) + kotlin.math.abs(ny - y)
+                if (dist < bestDist) {
+                    bestDist = dist
+                    bestX = nx
+                    bestY = ny
+                }
+            }
+            return bestX to bestY
+        }
+
+        val cols = nodeXs.size
+        val rows = nodeYs.size
+        val visited = BooleanArray(cols * rows)
+        fun nodeIndex(cx: Int, cy: Int) = cy * cols + cx
+        fun carveNode(cx: Int, cy: Int) = carve(nodeXs[cx], nodeYs[cy])
+
+        val stack = ArrayList<Int>()
+        val seedCx = (cols / 2 + rng.nextInt(-cols / 4, cols / 4 + 1)).coerceIn(0, cols - 1)
+        val seedCy = (rows / 2 + rng.nextInt(-rows / 4, rows / 4 + 1)).coerceIn(0, rows - 1)
+        visited[nodeIndex(seedCx, seedCy)] = true
+        carveNode(seedCx, seedCy)
+        stack.add(nodeIndex(seedCx, seedCy))
+
+        while (stack.isNotEmpty()) {
+            val stackPos = if (rng.nextDouble() < rules.mazeBranchDensity) rng.nextInt(stack.size) else stack.lastIndex
+            val current = stack[stackPos]
+            val cx = current % cols
+            val cy = current / cols
+            val neighbors = ArrayList<Pair<Int, Int>>()
+            for ((dx, dy) in CARDINAL_DIRS) {
+                val nx = cx + dx
+                val ny = cy + dy
+                if (nx in 0 until cols && ny in 0 until rows && !visited[nodeIndex(nx, ny)]) {
+                    neighbors.add(nx to ny)
+                }
+            }
+            if (neighbors.isEmpty()) {
+                stack.removeAt(stackPos)
+                continue
+            }
+            val (nx, ny) = neighbors[rng.nextInt(neighbors.size)]
+            visited[nodeIndex(nx, ny)] = true
+            carve((nodeXs[cx] + nodeXs[nx]) / 2, (nodeYs[cy] + nodeYs[ny]) / 2)
+            carveNode(nx, ny)
+            stack.add(nodeIndex(nx, ny))
+        }
+
+        for (cy in 0 until rows) for (cx in 0 until cols) {
+            if (cx + 1 < cols && rng.nextDouble() < rules.mazeLoopDensity) {
+                carve((nodeXs[cx] + nodeXs[cx + 1]) / 2, nodeYs[cy])
+            }
+            if (cy + 1 < rows && rng.nextDouble() < rules.mazeLoopDensity) {
+                carve(nodeXs[cx], (nodeYs[cy] + nodeYs[cy + 1]) / 2)
+            }
+        }
+
+        if (rules.mazeHubSize > 0.05 && width >= 64 && height >= 48) {
+            carveCentralHub(cells, width, height, rules, nodeXs, nodeYs, ::carve, ::carvePath, ::nearestNode)
+        }
+
+        for (p in doorPockets) {
+            val cx = ((p.x0 + p.x1) / 2).coerceIn(1, width - 2)
+            val cy = ((p.y0 + p.y1) / 2).coerceIn(1, height - 2)
+            val (tx, ty) = nearestNode(cx, cy)
+            carvePath(cx, cy, tx, ty)
+        }
+    }
+
+    private fun carveSmallMazeFallback(cells: IntArray, width: Int, height: Int, doorPockets: List<DoorPocket>) {
+        val cx = width / 2
+        val cy = height / 2
+        fun carve(x: Int, y: Int) {
+            if (x in 1 until width - 1 && y in 1 until height - 1) cells[y * width + x] = BiomeCell.AIR
+        }
+        for (x in 1 until width - 1) carve(x, cy)
+        for (y in 1 until height - 1) carve(cx, y)
+        for (p in doorPockets) {
+            val px = ((p.x0 + p.x1) / 2).coerceIn(1, width - 2)
+            val py = ((p.y0 + p.y1) / 2).coerceIn(1, height - 2)
+            var x = px
+            while (x != cx) {
+                carve(x, py)
+                x += if (cx > x) 1 else -1
+            }
+            var y = py
+            while (y != cy) {
+                carve(cx, y)
+                y += if (cy > y) 1 else -1
+            }
+            carve(cx, cy)
+        }
+    }
+
+    private fun carveCentralHub(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        rules: BiomeRules,
+        nodeXs: List<Int>,
+        nodeYs: List<Int>,
+        carve: (Int, Int) -> Unit,
+        carvePath: (Int, Int, Int, Int) -> Unit,
+        nearestNode: (Int, Int) -> Pair<Int, Int>,
+    ) {
+        fun idx(x: Int, y: Int) = y * width + x
+        val halfW = (4 + (rules.mazeHubSize * 6).toInt()).coerceIn(4, width / 5)
+        val halfH = (3 + (rules.mazeHubSize * 4).toInt()).coerceIn(3, height / 5)
+        val x0 = (width / 2 - halfW).coerceIn(BiomeCell.BORDER + 2, width - BiomeCell.BORDER - 6)
+        val x1 = (width / 2 + halfW).coerceIn(x0 + 5, width - BiomeCell.BORDER - 3)
+        val y0 = (height / 2 - halfH).coerceIn(BiomeCell.BORDER + 2, height - BiomeCell.BORDER - 6)
+        val y1 = (height / 2 + halfH).coerceIn(y0 + 5, height - BiomeCell.BORDER - 3)
+
+        for (y in y0..y1) for (x in x0..x1) {
+            val wall = x == x0 || x == x1 || y == y0 || y == y1
+            cells[idx(x, y)] = if (wall) BiomeCell.SOLID else BiomeCell.AIR
+        }
+
+        val midX = (x0 + x1) / 2
+        val midY = (y0 + y1) / 2
+        val offsets = if (rules.mazeHubSize > 0.55) intArrayOf(-2, 2) else intArrayOf(0)
+        val openings = ArrayList<Pair<Int, Int>>()
+        for (off in offsets) {
+            openings += (midX + off).coerceIn(x0 + 1, x1 - 1) to y0
+            openings += (midX + off).coerceIn(x0 + 1, x1 - 1) to y1
+            openings += x0 to (midY + off).coerceIn(y0 + 1, y1 - 1)
+            openings += x1 to (midY + off).coerceIn(y0 + 1, y1 - 1)
+        }
+        for ((ox, oy) in openings.distinct()) {
+            carve(ox, oy)
+            val outwardX = when (ox) {
+                x0 -> ox - 2
+                x1 -> ox + 2
+                else -> ox
+            }.coerceIn(nodeXs.first(), nodeXs.last())
+            val outwardY = when (oy) {
+                y0 -> oy - 2
+                y1 -> oy + 2
+                else -> oy
+            }.coerceIn(nodeYs.first(), nodeYs.last())
+            val (tx, ty) = nearestNode(outwardX, outwardY)
+            carvePath(ox, oy, tx, ty)
+        }
     }
 
     /**

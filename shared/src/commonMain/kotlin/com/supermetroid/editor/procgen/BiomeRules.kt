@@ -33,6 +33,12 @@ data class BiomeRules(
     val textureCohesion: Double,
     /** Active gameplay mutators for this rule card. */
     val mutators: Set<BiomeMutator>,
+    /** 0..1 chance that the maze frontier branches from an older corridor. */
+    val mazeBranchDensity: Double = 0.45,
+    /** 0..1 chance to carve extra links between adjacent maze corridors. */
+    val mazeLoopDensity: Double = 0.08,
+    /** 0..1 size of the optional central hub room/ring in pipe mazes. */
+    val mazeHubSize: Double = 0.55,
 ) {
     /** Human-readable rule card shown in the generator UI. */
     fun describe(): String {
@@ -43,6 +49,8 @@ data class BiomeRules(
                 "Terrain: rebuilt from this room's original silhouette"
             StructureAlgorithm.RECTILINEAR, StructureAlgorithm.SETTLEMENT ->
                 "Terrain: constructed ${algorithm.name.lowercase().replace('_', ' ')}, straight edges"
+            StructureAlgorithm.MAZE ->
+                "Terrain: one-tile pipe maze, ${(mazeLoopDensity * 100).toInt()}% loop bias"
             else -> {
                 val density = when {
                     fillChance < 0.42 -> "airy"
@@ -88,6 +96,17 @@ data class BiomeRules(
         )
     }
 
+    fun withMazeOverrides(branchDensity: Double, loopDensity: Double, hubSize: Double): BiomeRules =
+        copy(
+            platformDensity = 0.0,
+            hazardDensity = 0.0,
+            destructibleDensity = 0.0,
+            mutators = emptySet(),
+            mazeBranchDensity = branchDensity.coerceIn(0.0, 1.0),
+            mazeLoopDensity = loopDensity.coerceIn(0.0, 1.0),
+            mazeHubSize = hubSize.coerceIn(0.0, 1.0),
+        )
+
     companion object {
         /**
          * Roll a concrete rule card for [style] from [seed]. The same
@@ -111,6 +130,7 @@ data class BiomeRules(
                 BiomeStyle.RUINS -> StructureAlgorithm.CHAMBERS
                 BiomeStyle.SHAFT -> StructureAlgorithm.VERTICAL
                 BiomeStyle.GARDEN -> StructureAlgorithm.OPEN_GALLERY
+                BiomeStyle.PIPE_MAZE -> StructureAlgorithm.MAZE
                 BiomeStyle.FACILITY -> StructureAlgorithm.RECTILINEAR
                 BiomeStyle.SETTLEMENT -> StructureAlgorithm.SETTLEMENT
                 BiomeStyle.REMIX -> StructureAlgorithm.REMIX
@@ -123,6 +143,7 @@ data class BiomeRules(
                 BiomeStyle.RUINS -> rng.env(0.42, 0.50)
                 BiomeStyle.SHAFT -> rng.env(0.44, 0.52)
                 BiomeStyle.GARDEN -> rng.env(0.30, 0.38)
+                BiomeStyle.PIPE_MAZE -> rng.env(0.74, 0.82)
                 BiomeStyle.FACILITY, BiomeStyle.SETTLEMENT -> rng.env(0.42, 0.50)
                 BiomeStyle.REMIX -> rng.env(0.44, 0.52)
                 BiomeStyle.SURPRISE -> rng.env(0.35, 0.55)
@@ -155,17 +176,21 @@ data class BiomeRules(
                 platformDensity = when (actualStyle) {
                     BiomeStyle.GARDEN -> rng.env(0.5, 0.9)
                     BiomeStyle.SHAFT -> rng.env(0.4, 0.7)
+                    BiomeStyle.PIPE_MAZE -> 0.0
                     // Rooftop walkways over the street.
                     BiomeStyle.SETTLEMENT -> rng.env(0.35, 0.65)
                     BiomeStyle.FACILITY -> rng.env(0.15, 0.4)
                     BiomeStyle.REMIX -> rng.env(0.2, 0.5)
                     else -> rng.env(0.1, 0.4)
                 },
-                hazardDensity = if (BiomeMutator.SPIKE_POCKETS in mutators) rng.env(0.2, 0.7) else 0.0,
-                destructibleDensity = rng.env(0.15, 0.5),
+                hazardDensity = if (actualStyle != BiomeStyle.PIPE_MAZE && BiomeMutator.SPIKE_POCKETS in mutators) rng.env(0.2, 0.7) else 0.0,
+                destructibleDensity = if (actualStyle == BiomeStyle.PIPE_MAZE) 0.0 else rng.env(0.15, 0.5),
                 // Constructed biomes repeat the same plating for a machined look.
-                textureCohesion = if (actualStyle.isConstructed) rng.range(0.86, 0.97) else rng.range(0.74, 0.94),
-                mutators = mutators,
+                textureCohesion = if (actualStyle.isConstructed || actualStyle == BiomeStyle.PIPE_MAZE) rng.range(0.86, 0.97) else rng.range(0.74, 0.94),
+                mutators = if (actualStyle == BiomeStyle.PIPE_MAZE) emptySet() else mutators,
+                mazeBranchDensity = if (actualStyle == BiomeStyle.PIPE_MAZE) rng.env(0.25, 0.75) else 0.45,
+                mazeLoopDensity = if (actualStyle == BiomeStyle.PIPE_MAZE) rng.env(0.02, 0.18) else 0.08,
+                mazeHubSize = if (actualStyle == BiomeStyle.PIPE_MAZE) rng.env(0.35, 0.8) else 0.55,
             )
         }
     }
