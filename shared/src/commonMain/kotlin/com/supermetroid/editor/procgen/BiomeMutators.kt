@@ -68,6 +68,7 @@ internal object BiomeMutators {
             StructureAlgorithm.RECTILINEAR -> 0.30
             StructureAlgorithm.SETTLEMENT -> 0.55
             StructureAlgorithm.REMIX -> 0.45
+            StructureAlgorithm.WFC -> 0.0
         }
         val maxPlatforms = (screenArea * 0.44).roundToInt().coerceAtLeast(2)
         val minPlatforms = if (rules.platformDensity > 0.20) 1 else 0

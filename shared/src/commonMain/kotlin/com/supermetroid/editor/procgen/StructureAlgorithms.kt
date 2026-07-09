@@ -27,6 +27,7 @@ internal object StructureAlgorithms {
                 } else {
                     structureCave(cells, width, height, rules, rng)
                 }
+            StructureAlgorithm.WFC -> Unit
         }
     }
 
@@ -105,6 +106,7 @@ internal object StructureAlgorithms {
             // Building walls are 1 tile thick; keep small constructed pieces.
             StructureAlgorithm.SETTLEMENT -> 4
             StructureAlgorithm.REMIX -> 10
+            StructureAlgorithm.WFC -> 10
         }
         val seen = BooleanArray(cells.size)
         val queue = ArrayDeque<Int>()
@@ -376,7 +378,7 @@ internal object StructureAlgorithms {
             }
         }
 
-        if (rules.mazeHubSize > 0.05 && width >= 64 && height >= 48) {
+        if (rules.mazeEmptyCenter && rules.mazeHubSize > 0.05 && width >= 64 && height >= 48) {
             carveCentralHub(cells, width, height, rules, nodeXs, nodeYs, ::carve, ::carvePath, ::nearestNode)
         }
 

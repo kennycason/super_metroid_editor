@@ -115,7 +115,7 @@ The wall side is named relative to Samus.
 
 For `Up` movement, top ledge release should be checked before ceiling transition. If the toward-wall nudge finds floor contact, Spider should release immediately so vanilla morph owns the ledge.
 
-For `Down` movement, the main useful assist is the away-from-wall nudge into underside ceiling contact.
+For `Down` movement, the main useful assist is an away-and-up nudge into underside ceiling contact.
 
 ### Ceiling Corner Nudge Directions
 
@@ -141,14 +141,14 @@ Expected constraints:
 
 ## Activation Rules
 
-Spider should only activate from side wall contact.
+Spider should activate from intentional side wall contact, or from ceiling contact when pressing `Left` or `Right`.
 
 Expected behavior:
 
 - Left wall contact plus pressing `Left` attaches to the left wall.
 - Right wall contact plus pressing `Right` attaches to the right wall.
 - Floor-only contact never activates Spider.
-- Ceiling-only contact should not directly activate Spider from vanilla morph.
+- Ceiling-only contact plus holding `Left` or `Right` activates Spider from vanilla morph, so spring-ball jumps and horizontal rolls can cling to ceilings without using unmorph input.
 - In a 1-tile shaft, pressing `Left` chooses the left wall and pressing `Right` chooses the right wall.
 - Inactive falling morph should not attach to a wall from `Up` or `Down` alone.
 
@@ -269,7 +269,7 @@ Input:
 Expected result:
 
 - Enter `CornerRecover`.
-- Try the away-from-wall nudge.
+- Try the away-and-up nudge.
 - Probe toward the underside ceiling.
 - Enter `SpiderCeiling` if ceiling contact is found.
 
@@ -323,6 +323,7 @@ Expected result:
 - Fall in a 1-tile shaft and press `Left`: attach to left wall.
 - Fall in a 1-tile shaft and press `Right`: attach to right wall.
 - Fall in a 1-tile shaft and press `Up` or `Down` only: do not choose a wall.
+- Spring-ball jump or roll into a ceiling while holding `Left` or `Right`: attach to the ceiling.
 - On a wall, press `Up`: move up wall.
 - On a wall, press `Down`: move down wall.
 - On a wall, release D-pad: stop without detaching.

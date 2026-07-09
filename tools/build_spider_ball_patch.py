@@ -9,7 +9,8 @@ The behavior is inspired by Metroid II's spider ball, but adapted to Super
 Metroid's movement engine:
 
 * Vanilla morph movement owns floors, slopes, falling, and mockball.
-* Spider attaches only by pressing into a side wall.
+* Spider attaches by pressing into a side wall, or by pressing left/right into
+  a ceiling while airborne.
 * Wall movement uses up/down. Ceiling movement uses left/right.
 * Small bounded corner nudges help negotiate ledges and ceilings.
 * Jump releases the latch.
@@ -341,14 +342,31 @@ def build_spider_code() -> bytes:
     w.label("WrapperCheckAttachLeft")
     w.lda_abs(SPIDER_CONTACT)
     w.and_imm(0x0002)
-    w.branch(0xF0, "WrapperInactive")
+    w.branch(0xF0, "WrapperCheckAttachCeiling")
     w.lda_dp(DP_CONTROLLER_1_INPUT)
     w.and_abs(LEFT_BINDING)
-    w.branch(0xF0, "WrapperInactive")
+    w.branch(0xF0, "WrapperCheckAttachCeiling")
     w.lda_dp(DP_CONTROLLER_1_INPUT)
     w.and_abs(RIGHT_BINDING)
-    w.branch(0xD0, "WrapperInactive")
+    w.branch(0xD0, "WrapperCheckAttachCeiling")
     w.jsr_label("SetSpiderWallLeft")
+    w.plp()
+    w.rts()
+    w.label("WrapperCheckAttachCeiling")
+    w.lda_abs(SPIDER_CONTACT)
+    w.and_imm(0x0004)
+    w.branch(0xF0, "WrapperInactive")
+    w.lda_abs(SPIDER_CONTACT)
+    w.and_imm(0x0008)
+    w.branch(0xD0, "WrapperInactive")
+    w.lda_dp(DP_CONTROLLER_1_INPUT)
+    w.and_abs(LEFT_BINDING)
+    w.branch(0xD0, "WrapperAttachCeiling")
+    w.lda_dp(DP_CONTROLLER_1_INPUT)
+    w.and_abs(RIGHT_BINDING)
+    w.branch(0xF0, "WrapperInactive")
+    w.label("WrapperAttachCeiling")
+    w.jsr_label("SetSpiderCeiling")
     w.plp()
     w.rts()
     w.label("WrapperActive")
@@ -620,12 +638,16 @@ def build_spider_code() -> bytes:
     w.label("WallRightDownCorner")
     w.jsr_label("TryNudgeLeftForCeiling")
     w.branch(0xD0, "SetSpiderCeilingHandled")
+    w.jsr_label("TryNudgeLeftUpForCeiling")
+    w.branch(0xD0, "SetSpiderCeilingHandled")
     w.jsr_label("TryNudgeRightForFloor")
     w.branch_long(0xD0, "SpiderReleaseToOriginal")
     w.jmp_label("SpiderReleaseToOriginal")
 
     w.label("WallLeftDownCorner")
     w.jsr_label("TryNudgeRightForCeiling")
+    w.branch(0xD0, "SetSpiderCeilingHandled")
+    w.jsr_label("TryNudgeRightUpForCeiling")
     w.branch(0xD0, "SetSpiderCeilingHandled")
     w.jsr_label("TryNudgeLeftForFloor")
     w.branch_long(0xD0, "SpiderReleaseToOriginal")
@@ -787,6 +809,8 @@ def build_spider_code() -> bytes:
     emit_try_nudge(w, "TryNudgeLeftForFloor", ("StepLeft",), 0x0008)
     emit_try_nudge(w, "TryNudgeRightForCeiling", ("StepRight",), 0x0004)
     emit_try_nudge(w, "TryNudgeLeftForCeiling", ("StepLeft",), 0x0004)
+    emit_try_nudge(w, "TryNudgeRightUpForCeiling", ("StepRight", "StepUp"), 0x0004)
+    emit_try_nudge(w, "TryNudgeLeftUpForCeiling", ("StepLeft", "StepUp"), 0x0004)
     emit_try_nudge(w, "TryNudgeLeftDownForLeftWall", ("StepLeft", "StepDown"), 0x0002)
     emit_try_nudge(w, "TryNudgeRightDownForRightWall", ("StepRight", "StepDown"), 0x0001)
 

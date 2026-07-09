@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.StructureAlgorithm
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
+import com.supermetroid.editor.procgen.WfcOptions
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -58,7 +60,11 @@ fun BiomeGeneratorPanel(
     rooms: List<RoomInfo>,
     modifier: Modifier = Modifier,
 ) {
-    var style by remember { mutableStateOf(BiomeStyle.CAVERN) }
+    val styleChoices = remember {
+        listOf(BiomeStyle.PIPE_MAZE, BiomeStyle.WAVE_FUNCTION) +
+            BiomeStyle.values().filter { it != BiomeStyle.PIPE_MAZE && it != BiomeStyle.WAVE_FUNCTION }
+    }
+    var style by remember { mutableStateOf(BiomeStyle.PIPE_MAZE) }
     var theme by remember { mutableStateOf(BiomeTheme.KEEP) }
     var seed by remember { mutableStateOf(Random.nextInt(0, 1_000_000).toLong()) }
     var seedText by remember { mutableStateOf(seed.toString()) }
@@ -87,9 +93,26 @@ fun BiomeGeneratorPanel(
     var mazeBranches by remember(baseRules) { mutableStateOf(baseRules.mazeBranchDensity.toFloat()) }
     var mazeLoops by remember(baseRules) { mutableStateOf(baseRules.mazeLoopDensity.toFloat()) }
     var mazeHub by remember(baseRules) { mutableStateOf(baseRules.mazeHubSize.toFloat()) }
-    val effectiveRules = remember(baseRules, platforms, hazards, destructibles, mazeBranches, mazeLoops, mazeHub) {
+    var mazeEmptyCenter by remember(baseRules) { mutableStateOf(baseRules.mazeEmptyCenter) }
+    var wfcDetail by remember { mutableStateOf(0.55f) }
+    var wfcTunnelWidth by remember { mutableStateOf(2f) }
+    var wfcBendiness by remember { mutableStateOf(0.35f) }
+    var wfcBombs by remember { mutableStateOf(false) }
+    var wfcMissiles by remember { mutableStateOf(false) }
+    var wfcCrumble by remember { mutableStateOf(false) }
+    var wfcSpikes by remember { mutableStateOf(false) }
+    var keepLandingSiteShipClear by remember { mutableStateOf(true) }
+    val wfcTunnelTiles = (wfcTunnelWidth + 0.5f).toInt().coerceIn(1, 4)
+    val effectiveRules = remember(
+        baseRules, platforms, hazards, destructibles, mazeBranches, mazeLoops, mazeHub, mazeEmptyCenter,
+    ) {
         if (baseRules.algorithm == StructureAlgorithm.MAZE) {
-            baseRules.withMazeOverrides(mazeBranches.toDouble(), mazeLoops.toDouble(), mazeHub.toDouble())
+            baseRules.withMazeOverrides(
+                mazeBranches.toDouble(),
+                mazeLoops.toDouble(),
+                mazeHub.toDouble(),
+                mazeEmptyCenter,
+            )
         } else {
             baseRules.withOverrides(platforms.toDouble(), hazards.toDouble(), destructibles.toDouble())
         }
@@ -99,7 +122,11 @@ fun BiomeGeneratorPanel(
         modifier = modifier.padding(8.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             var styleMenuOpen by remember { mutableStateOf(false) }
             Surface(
                 shape = RoundedCornerShape(4.dp),
@@ -112,7 +139,7 @@ fun BiomeGeneratorPanel(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                 )
                 DropdownMenu(expanded = styleMenuOpen, onDismissRequest = { styleMenuOpen = false }) {
-                    for (s in BiomeStyle.values()) {
+                    for (s in styleChoices) {
                         DropdownMenuItem(
                             text = { Text(s.displayName, fontSize = 11.sp) },
                             onClick = { style = s; styleMenuOpen = false },
@@ -149,6 +176,13 @@ fun BiomeGeneratorPanel(
                     }
                 }
             }
+        }
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             OutlinedTextField(
                 value = seedText,
                 onValueChange = { text ->
@@ -158,7 +192,7 @@ fun BiomeGeneratorPanel(
                 label = { Text("Seed", fontSize = 9.sp) },
                 textStyle = TextStyle(fontSize = 11.sp),
                 singleLine = true,
-                modifier = Modifier.width(110.dp).height(52.dp),
+                modifier = Modifier.width(132.dp).height(52.dp),
             )
             OutlinedButton(
                 onClick = {
@@ -167,7 +201,7 @@ fun BiomeGeneratorPanel(
                 },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
             ) {
-                Text("🎲", fontSize = 12.sp)
+                Text("Random", fontSize = 11.sp)
             }
         }
 
@@ -191,11 +225,42 @@ fun BiomeGeneratorPanel(
         if (effectiveRules.algorithm == StructureAlgorithm.MAZE) {
             LabeledSlider("Branches", mazeBranches) { mazeBranches = it }
             LabeledSlider("Loops", mazeLoops) { mazeLoops = it }
-            LabeledSlider("Center hub", mazeHub) { mazeHub = it }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = mazeEmptyCenter, onCheckedChange = { mazeEmptyCenter = it })
+                Text("Empty center", fontSize = 10.sp)
+            }
+            if (mazeEmptyCenter) {
+                LabeledSlider("Center size", mazeHub) { mazeHub = it }
+            }
+        } else if (effectiveRules.algorithm == StructureAlgorithm.WFC) {
+            LabeledSlider("Sample detail", wfcDetail) { wfcDetail = it }
+            LabeledSlider(
+                "Tunnel width",
+                wfcTunnelWidth,
+                valueRange = 1f..4f,
+                steps = 2,
+                valueText = "${wfcTunnelTiles}t",
+            ) { wfcTunnelWidth = it }
+            LabeledSlider("Bendiness", wfcBendiness) { wfcBendiness = it }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CompactCheckbox("Bombs", wfcBombs) { wfcBombs = it }
+                CompactCheckbox("Missiles", wfcMissiles) { wfcMissiles = it }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CompactCheckbox("Crumble", wfcCrumble) { wfcCrumble = it }
+                CompactCheckbox("Spikes", wfcSpikes) { wfcSpikes = it }
+            }
         } else {
             LabeledSlider("Platforms", platforms) { platforms = it }
             LabeledSlider("Hazards", hazards) { hazards = it }
             LabeledSlider("Destructibles", destructibles) { destructibles = it }
+        }
+
+        if (editorState.currentRoomId == 0x91F8) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = keepLandingSiteShipClear, onCheckedChange = { keepLandingSiteShipClear = it })
+                Text("Keep Landing Site ship clear", fontSize = 10.sp)
+            }
         }
 
         val prof = profile?.takeIf { it.first == targetTilesetId }?.second
@@ -205,42 +270,127 @@ fun BiomeGeneratorPanel(
                 onClick = {
                     if (prof == null || romParser == null) return@Button
                     editorState.applyBiomeTheme(resolvedTheme, romParser)
-                    val applied = editorState.generateBiome(effectiveRules, prof, seed)
+                    val applied = editorState.generateBiome(
+                        effectiveRules,
+                        prof,
+                        seed,
+                        keepLandingSiteShipClear = keepLandingSiteShipClear,
+                        romParser = romParser,
+                        wfcOptions = WfcOptions(
+                            morphAmount = wfcDetail.toDouble(),
+                            tunnelWidth = wfcTunnelTiles,
+                            tunnelBendiness = wfcBendiness.toDouble(),
+                            allowBombs = wfcBombs,
+                            allowMissiles = wfcMissiles,
+                            allowCrumble = wfcCrumble,
+                            allowSpikes = wfcSpikes,
+                        ),
+                    )
                     status = buildString {
                         append(if (applied > 0) "Rewrote $applied tiles" else "No layout changes")
                         if (resolvedTheme.tilesetId != null) append(" as ${resolvedTheme.displayName}")
-                        append(" (Ctrl+Z undoes layout)")
+                        append(" (scrolls reset, Ctrl+Z undoes)")
                     }
                 },
             ) {
                 Text("Generate room", fontSize = 11.sp)
             }
-            Text(
-                when {
-                    !roomLoaded -> "Load a room first"
-                    prof == null -> "Learning tileset…"
-                    else -> "Learned from ${prof.roomsSampled} room(s), tileset $targetTilesetId"
+            OutlinedButton(
+                enabled = prof != null && romParser != null,
+                onClick = {
+                    if (romParser == null) return@OutlinedButton
+                    val result = editorState.generateBiomeForAllRooms(
+                        effectiveRules,
+                        resolvedTheme,
+                        seed,
+                        romParser,
+                        wfcOptions = WfcOptions(
+                            morphAmount = wfcDetail.toDouble(),
+                            tunnelWidth = wfcTunnelTiles,
+                            tunnelBendiness = wfcBendiness.toDouble(),
+                            allowBombs = wfcBombs,
+                            allowMissiles = wfcMissiles,
+                            allowCrumble = wfcCrumble,
+                            allowSpikes = wfcSpikes,
+                        ),
+                    )
+                    status = "Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles"
                 },
-                fontSize = 9.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            ) {
+                Text("Apply all", fontSize = 11.sp)
+            }
         }
+        Text(
+            when {
+                !roomLoaded -> "Load a room first"
+                prof == null -> "Learning tileset..."
+                else -> "Learned from ${prof.roomsSampled} room(s), tileset $targetTilesetId"
+            },
+            fontSize = 9.sp,
+            lineHeight = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+        )
         status?.let {
             Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                enabled = roomLoaded && romParser != null,
+                onClick = {
+                    val rp = romParser ?: return@OutlinedButton
+                    status = if (editorState.resetCurrentRoomToOriginal(rp)) {
+                        "Reset room to original ROM state"
+                    } else {
+                        "Could not reset room"
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Reset room", fontSize = 11.sp)
+            }
+            OutlinedButton(
+                enabled = romParser != null,
+                onClick = {
+                    val rp = romParser ?: return@OutlinedButton
+                    val result = editorState.resetGeneratedBiomeRooms(rp)
+                    status = "Reset generated edits in ${result.generatedRooms} rooms"
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Reset all", fontSize = 11.sp)
+            }
         }
     }
 }
 
 @Composable
-private fun LabeledSlider(label: String, value: Float, onChange: (Float) -> Unit) {
+private fun LabeledSlider(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    steps: Int = 0,
+    valueText: String = "${(value * 100).toInt()}%",
+    onChange: (Float) -> Unit,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 10.sp, modifier = Modifier.width(84.dp))
+        Text(label, fontSize = 10.sp, modifier = Modifier.width(96.dp))
         Slider(
             value = value,
             onValueChange = onChange,
-            valueRange = 0f..1f,
+            valueRange = valueRange,
+            steps = steps,
             modifier = Modifier.weight(1f).height(24.dp),
         )
-        Text("${(value * 100).toInt()}%", fontSize = 9.sp, modifier = Modifier.width(32.dp))
+        Text(valueText, fontSize = 9.sp, modifier = Modifier.width(38.dp))
+    }
+}
+
+@Composable
+private fun CompactCheckbox(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(118.dp)) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Text(label, fontSize = 10.sp)
     }
 }

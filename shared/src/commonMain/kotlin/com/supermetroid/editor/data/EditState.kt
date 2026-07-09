@@ -30,6 +30,10 @@ data class EditOperation(
     val enemyRemoves: List<EnemyChange> = emptyList(),
     val enemyUpdates: List<EnemyUpdate> = emptyList(),
     val scrollEdits: List<ScrollChange> = emptyList(),
+    val stateDataBefore: StateDataChange? = null,
+    val stateDataAfter: StateDataChange? = null,
+    val fxBefore: FxChange? = null,
+    val fxAfter: FxChange? = null,
 )
 
 @Serializable

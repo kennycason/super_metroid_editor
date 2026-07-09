@@ -8,8 +8,18 @@ internal data class DoorSetup(
     val pockets: List<DoorPocket>,
 )
 
+private data class DoorGroup(
+    val cells: List<Int>,
+    val minX: Int,
+    val minY: Int,
+    val maxX: Int,
+    val maxY: Int,
+) {
+    val vertical: Boolean get() = maxX - minX < maxY - minY + 2
+}
+
 internal object DoorPreservation {
-    fun setup(originalWords: IntArray, width: Int, height: Int): DoorSetup {
+    fun setup(originalWords: IntArray, originalBts: IntArray, width: Int, height: Int): DoorSetup {
         val n = width * height
         val preserved = BooleanArray(n)
         val forceAir = BooleanArray(n)
@@ -18,14 +28,11 @@ internal object DoorPreservation {
 
         val doorCells = ArrayList<Int>()
         for (i in 0 until n) if (((originalWords[i] shr 12) and 0xF) == 0x9) doorCells.add(i)
-        for (i in doorCells) {
-            val dx = i % width
-            val dy = i / width
-            for (yy in dy - 1..dy + 1) for (xx in dx - 1..dx + 1) {
-                if (inBounds(xx, yy)) preserved[idx(xx, yy)] = true
-            }
+        val groups = buildDoorGroups(doorCells, width, height)
+        for (group in groups) {
+            markDoorPreservation(group, originalWords, originalBts, width, height, preserved)
         }
-        val pockets = buildDoorPockets(doorCells, width, height)
+        val pockets = buildDoorPockets(groups, width, height)
         for (p in pockets) {
             for (y in p.y0..p.y1) for (x in p.x0..p.x1) {
                 if (inBounds(x, y) && !preserved[idx(x, y)]) forceAir[idx(x, y)] = true
@@ -34,20 +41,63 @@ internal object DoorPreservation {
         return DoorSetup(preserved, forceAir, pockets)
     }
 
-    /** Group door cells into contiguous doors and carve an inward pocket per door. */
-    private fun buildDoorPockets(doorCells: List<Int>, width: Int, height: Int): List<DoorPocket> {
-        if (doorCells.isEmpty()) return emptyList()
+    private fun markDoorPreservation(
+        group: DoorGroup,
+        originalWords: IntArray,
+        originalBts: IntArray,
+        width: Int,
+        height: Int,
+        preserved: BooleanArray,
+    ) {
+        fun idx(x: Int, y: Int) = y * width + x
+        fun mark(x: Int, y: Int) {
+            if (x in 0 until width && y in 0 until height) preserved[idx(x, y)] = true
+        }
+        fun markFixture(x: Int, y: Int) {
+            if (x !in 0 until width || y !in 0 until height) return
+            val i = idx(x, y)
+            val type = (originalWords[i] shr 12) and 0xF
+            if (isDoorFixtureType(type) || originalBts.getOrElse(i) { 0 } != 0) preserved[i] = true
+        }
+        fun markRect(x0: Int, y0: Int, x1: Int, y1: Int, keep: (Int, Int) -> Boolean) {
+            for (y in y0..y1) for (x in x0..x1) {
+                if (keep(x, y)) markFixture(x, y)
+            }
+        }
+
+        // Door fixtures are more than the type-9 door cells: vanilla rooms
+        // often use adjacent cap/pipe tiles with BTS or flips that must remain
+        // verbatim for the door to look and behave correctly.
+        for (cell in group.cells) mark(cell % width, cell / width)
+        if (group.vertical) {
+            markRect(
+                group.minX - DOOR_FIXTURE_DEPTH,
+                group.minY - DOOR_FIXTURE_MARGIN,
+                group.maxX + DOOR_FIXTURE_DEPTH,
+                group.maxY + DOOR_FIXTURE_MARGIN,
+            ) { _, y -> y < group.minY || y > group.maxY }
+        } else {
+            markRect(
+                group.minX - DOOR_FIXTURE_MARGIN,
+                group.minY - DOOR_FIXTURE_DEPTH,
+                group.maxX + DOOR_FIXTURE_MARGIN,
+                group.maxY + DOOR_FIXTURE_DEPTH,
+            ) { x, _ -> x < group.minX || x > group.maxX }
+        }
+    }
+
+    private fun buildDoorGroups(doorCells: List<Int>, width: Int, height: Int): List<DoorGroup> {
         val remaining = doorCells.toMutableSet()
-        val pockets = ArrayList<DoorPocket>()
+        val groups = ArrayList<DoorGroup>()
         while (remaining.isNotEmpty()) {
             val start = remaining.first()
-            val group = ArrayList<Int>()
+            val cells = ArrayList<Int>()
             val queue = ArrayDeque<Int>()
             queue.add(start)
             remaining.remove(start)
             while (queue.isNotEmpty()) {
                 val c = queue.removeFirst()
-                group.add(c)
+                cells.add(c)
                 val cx = c % width
                 val cy = c / width
                 for ((dx, dy) in listOf(0 to -1, 0 to 1, -1 to 0, 1 to 0)) {
@@ -61,25 +111,42 @@ internal object DoorPreservation {
             var maxX = 0
             var minY = height
             var maxY = 0
-            for (c in group) {
+            for (c in cells) {
                 minX = minOf(minX, c % width)
                 maxX = maxOf(maxX, c % width)
                 minY = minOf(minY, c / width)
                 maxY = maxOf(maxY, c / width)
             }
-            val depth = 6
-            val pocket = when {
-                minX <= width - maxX && maxX - minX < maxY - minY + 2 && minX < width / 2 ->
-                    DoorPocket(maxX + 1, minY, maxX + depth, maxY)
-                maxX - minX < maxY - minY + 2 && minX >= width / 2 ->
-                    DoorPocket(minX - depth, minY, minX - 1, maxY)
-                minY < height / 2 ->
-                    DoorPocket(minX, maxY + 1, maxX, maxY + depth - 1)
-                else ->
-                    DoorPocket(minX, minY - depth + 1, maxX, minY - 1)
+            groups.add(DoorGroup(cells, minX, minY, maxX, maxY))
+        }
+        return groups
+    }
+
+    /** Carve candidate pockets from each door group toward the room maze. */
+    private fun buildDoorPockets(groups: List<DoorGroup>, width: Int, height: Int): List<DoorPocket> {
+        if (groups.isEmpty()) return emptyList()
+        val pockets = ArrayList<DoorPocket>()
+        for (group in groups) {
+            val depth = DOOR_CLEARANCE
+            if (group.vertical) {
+                val nearLeftEdge = group.minX <= depth
+                val nearRightEdge = group.maxX >= width - depth - 1
+                if (!nearRightEdge) pockets.add(DoorPocket(group.maxX + 1, group.minY, group.maxX + depth, group.maxY))
+                if (!nearLeftEdge) pockets.add(DoorPocket(group.minX - depth, group.minY, group.minX - 1, group.maxY))
+            } else {
+                val nearTopEdge = group.minY <= depth
+                val nearBottomEdge = group.maxY >= height - depth - 1
+                if (!nearBottomEdge) pockets.add(DoorPocket(group.minX, group.maxY + 1, group.maxX, group.maxY + depth - 1))
+                if (!nearTopEdge) pockets.add(DoorPocket(group.minX, group.minY - depth + 1, group.maxX, group.minY - 1))
             }
-            pockets.add(pocket)
         }
         return pockets
     }
+
+    private const val DOOR_FIXTURE_DEPTH = 8
+    private const val DOOR_FIXTURE_MARGIN = 3
+    private const val DOOR_CLEARANCE = 3
+
+    private fun isDoorFixtureType(type: Int): Boolean =
+        type != 0x0 && type != 0x2 && type != 0x4 && type != 0x7
 }
