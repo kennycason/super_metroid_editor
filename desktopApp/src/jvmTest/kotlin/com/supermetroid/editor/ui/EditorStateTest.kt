@@ -3,6 +3,8 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.TilePattern
+import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
@@ -78,6 +80,37 @@ class EditorStateTest {
 
             assertFalse(state.project.customGfx.palettes.containsKey("0"))
             assertFalse(state.project.customGfx.paletteEffects.containsKey("tileset:0"))
+        }
+    }
+
+    @Nested
+    inner class EnemySprites {
+        @Test
+        fun `applyEnemyTileSheetEdits encodes pixels against custom enemy palette`() {
+            val romParser = TestRomHelper.loadRomParser() ?: return
+            val speciesId = 0xDCFF // Zoomer
+            val romPalette = EnemySpriteGraphics.readEnemyPalette(romParser, speciesId) ?: return
+            val targetColor = romPalette[15]
+            if ((1 until romPalette.size).any { it != 15 && romPalette[it] == targetColor }) return
+
+            val customPalette = romPalette.copyOf()
+            customPalette[1] = targetColor
+            customPalette[15] = romPalette[1]
+            state.applyEnemyPalette(speciesId, customPalette)
+
+            val rawBefore = state.loadEnemyTileData(romParser, speciesId) ?: return
+            val gfx = EnemySpriteGraphics(romParser)
+            gfx.loadFromRaw(listOf(rawBefore))
+            val (_, width, height) = gfx.renderSheet(customPalette, cols = 16) ?: return
+
+            val pixels = IntArray(width * height)
+            pixels[0] = customPalette[1]
+            state.applyEnemyTileSheetEdits(romParser, speciesId, pixels, width, height)
+
+            val rawAfter = state.loadEnemyTileData(romParser, speciesId) ?: return
+            val decoded = EnemySpriteGraphics(romParser)
+            decoded.loadFromRaw(listOf(rawAfter))
+            assertEquals(1, decoded.readPixelIndex(globalTile = 0, px = 0, py = 0))
         }
     }
 

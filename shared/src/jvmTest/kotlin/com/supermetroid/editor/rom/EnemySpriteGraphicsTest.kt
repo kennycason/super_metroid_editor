@@ -121,6 +121,38 @@ class EnemySpriteGraphicsTest {
     }
 
     @Test
+    fun `validateEnemyTileEdit accepts ROM-sized raw enemy tile data`() {
+        val parser = loadTestRom() ?: return
+        val speciesId = 0xDCFF // Zoomer
+        val raw = EnemySpriteGraphics.loadEnemyTileData(parser, speciesId) ?: return
+
+        val validation = EnemySpriteGraphics.validateEnemyTileEdit(parser, speciesId, raw)
+
+        assertTrue(validation.isExportable, validation.errors.joinToString("; "))
+        assertEquals(raw.size, validation.expectedSize, "Raw data should match the species tileDataSize")
+        assertEquals(raw.size / EnemySpriteGraphics.BYTES_PER_TILE, validation.tileCount)
+        assertNotNull(validation.pcAddress, "Exportable validation should resolve a PC write address")
+        assertNotNull(validation.snesAddress, "Exportable validation should resolve a SNES GRAPHADR")
+    }
+
+    @Test
+    fun `validateEnemyTileEdit rejects raw enemy tile data with wrong size`() {
+        val parser = loadTestRom() ?: return
+        val speciesId = 0xDCFF // Zoomer
+        val raw = EnemySpriteGraphics.loadEnemyTileData(parser, speciesId) ?: return
+        assertTrue(raw.size > EnemySpriteGraphics.BYTES_PER_TILE)
+        val truncated = raw.copyOf(raw.size - EnemySpriteGraphics.BYTES_PER_TILE)
+
+        val validation = EnemySpriteGraphics.validateEnemyTileEdit(parser, speciesId, truncated)
+
+        assertFalse(validation.isExportable)
+        assertTrue(
+            validation.errors.any { it.contains("expects") },
+            "Wrong-size tile edits should report the expected tileDataSize"
+        )
+    }
+
+    @Test
     fun `pixel writePixelIndex and readPixelIndex are consistent for all 16 palette indices`() {
         val parser = loadTestRom() ?: return
         val gfx = EnemySpriteGraphics(parser)

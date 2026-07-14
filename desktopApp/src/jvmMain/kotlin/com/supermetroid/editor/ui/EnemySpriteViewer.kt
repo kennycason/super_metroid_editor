@@ -150,6 +150,9 @@ fun EnemySpriteViewer(
     val tileData = remember(entry.speciesId, refreshKey) {
         editorState.loadEnemyTileData(rp, entry.speciesId)
     }
+    val tileValidation = remember(entry.speciesId, refreshKey, tileData) {
+        tileData?.let { EnemySpriteGraphics.validateEnemyTileEdit(rp, entry.speciesId, it) }
+    }
 
     val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
         val pal = palette ?: return@remember null
@@ -377,7 +380,7 @@ fun EnemySpriteViewer(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Animation (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
+                    Text("Animation Preview (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -466,7 +469,7 @@ fun EnemySpriteViewer(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Body Poses (${bossPoses.size} found)", fontSize = 14.sp,
+                        Text("Body Pose Preview (${bossPoses.size} found)", fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                         Divider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -570,7 +573,7 @@ fun EnemySpriteViewer(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Sprite [Assembled]", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    Text("Sprite Preview [Assembled]", fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface)
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -653,6 +656,19 @@ fun EnemySpriteViewer(
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
+                            if (!isMotherBrainBody && tileValidation != null) {
+                                Surface(
+                                    color = if (tileValidation.isExportable) Color(0xFF2F5C48) else Color(0xFF663333),
+                                    shape = RoundedCornerShape(3.dp)
+                                ) {
+                                    Text(
+                                        if (tileValidation.isExportable) "ROM-EXPORT" else "EXPORT BLOCKED",
+                                        fontSize = 7.sp,
+                                        color = if (tileValidation.isExportable) Color(0xFFA8F0C8) else Color(0xFFFFB4A8),
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
                         }
                         if (!isMotherBrainBody) {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -708,7 +724,7 @@ fun EnemySpriteViewer(
                                         androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                                     }
                                 ) {
-                                    Text("Export PNG", fontSize = 10.sp)
+                                    Text("Export Tile PNG", fontSize = 9.sp)
                                 }
                                 Button(
                                     onClick = {
@@ -741,7 +757,7 @@ fun EnemySpriteViewer(
                                         androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 0.dp)
                                     }
                                 ) {
-                                    Text("Import PNG", fontSize = 10.sp)
+                                    Text("Import Tile PNG", fontSize = 9.sp)
                                 }
                                 if (hasCustom) {
                                     Button(
@@ -788,6 +804,26 @@ fun EnemySpriteViewer(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
                             lineHeight = 13.sp
                         )
+                    } else if (tileValidation != null) {
+                        val statusColor = if (tileValidation.isExportable) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        }
+                        val address = tileValidation.snesAddress?.let(::enemyFormatSnesAddress) ?: "unknown GRAPHADR"
+                        val expectedSize = tileValidation.expectedSize?.let { "$it bytes" } ?: "unknown size"
+                        Text(
+                            "Raw 4bpp source: ${tileValidation.actualSize} bytes (${tileValidation.tileCount} tiles), expected $expectedSize at $address.",
+                            fontSize = 10.sp,
+                            color = statusColor,
+                            lineHeight = 13.sp
+                        )
+                        tileValidation.errors.take(2).forEach { message ->
+                            Text("Export issue: $message", fontSize = 10.sp, color = MaterialTheme.colorScheme.error, lineHeight = 13.sp)
+                        }
+                        tileValidation.warnings.take(1).forEach { message ->
+                            Text("Note: $message", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f), lineHeight = 13.sp)
+                        }
                     }
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
 
@@ -845,6 +881,10 @@ private fun enemyExportSafeName(value: String): String =
         .replace(Regex("[^a-z0-9]+"), "_")
         .trim('_')
         .ifBlank { "enemy" }
+
+private fun enemyFormatSnesAddress(address: Int): String =
+    "\$${(address ushr 16).toString(16).uppercase().padStart(2, '0')}:" +
+        (address and 0xFFFF).toString(16).uppercase().padStart(4, '0')
 
 private fun enemyExportFramePng(frame: SpriteAnimationFrame, file: File) {
     val bi = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)

@@ -43,10 +43,14 @@ This file captures the current SMILE/local-reference audit so the next work can 
 
 ## Current Work Item
 
-Implement the first major tileset/metatile composer pass:
+Continue enemy sprite correctness and export hardening:
 
-- Add durable project storage for variable tile-table and shared CRE tile-table overrides.
-- Add `TileGraphics` APIs to mutate/export metatile table words.
-- Add a composer UI for TL/TR/BL/BR tile index, palette, priority, and flips.
-- Export changed tile tables to ROM when the recompressed table fits the original allocation.
-- Leave relocation/ROM expansion for a follow-up unless the existing export infrastructure already makes it low-risk.
+- Treat raw 4bpp tile sheets as the canonical edit/reimport unit for ordinary enemy graphics.
+- Keep assembled PNG/GIF exports as visual/reference output unless a future reverse-mapper can safely recover OAM placement, flips, frame selection, and runtime tile sources.
+- Validate ordinary enemy custom tile blocks against species `tileDataSize`, GRAPHADR, and ROM bounds before export.
+- Continue hardening special boss cases where graphics are compressed, DMA-composed, or split across room/runtime tile sources.
+
+## Recent Progress
+
+- First tileset/metatile composer pass is implemented and has manual notes in `docs/project/metatile_composer_test_notes.md`.
+- Enemy tile-sheet export hardening has manual notes in `docs/project/enemy_sprite_hardening_test_notes.md`.

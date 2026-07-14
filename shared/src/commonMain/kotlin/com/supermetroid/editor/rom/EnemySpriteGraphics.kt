@@ -12,6 +12,20 @@ package com.supermetroid.editor.rom
  *
  * Tile block addresses confirmed via PhantoonSpriteInvestigateTest (room $CD13 enemy GFX set).
  */
+data class EnemyTileEditValidation(
+    val speciesId: Int,
+    val actualSize: Int,
+    val expectedSize: Int?,
+    val tileCount: Int,
+    val pcAddress: Int?,
+    val snesAddress: Int?,
+    val errors: List<String>,
+    val warnings: List<String>,
+) {
+    val isExportable: Boolean get() = errors.isEmpty()
+    val expectedTileCount: Int? get() = expectedSize?.div(EnemySpriteGraphics.BYTES_PER_TILE)
+}
+
 class EnemySpriteGraphics(private val romParser: RomParser) {
 
     companion object {
@@ -331,6 +345,59 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             val rom = romParser.getRomData()
             if (block.pcAddress + tileDataSize > rom.size) return null
             return rom.copyOfRange(block.pcAddress, block.pcAddress + tileDataSize)
+        }
+
+        fun validateEnemyTileEdit(
+            romParser: RomParser,
+            speciesId: Int,
+            rawBytes: ByteArray
+        ): EnemyTileEditValidation {
+            val errors = mutableListOf<String>()
+            val warnings = mutableListOf<String>()
+            val rom = romParser.getRomData()
+            val stats = readSpeciesStats(romParser, speciesId)
+            val expectedSize = stats?.first
+            val block = readGraphicsBlock(romParser, speciesId)
+
+            if (stats == null) {
+                errors += "Could not read enemy species stats."
+            } else {
+                if (expectedSize == null || expectedSize <= 0) {
+                    errors += "Species tileDataSize is not a positive byte count."
+                } else if (rawBytes.size != expectedSize) {
+                    errors += "Raw tile data is ${rawBytes.size} bytes; species expects $expectedSize bytes."
+                }
+                if (expectedSize != null && expectedSize % BYTES_PER_TILE != 0) {
+                    warnings += "Species tileDataSize includes ${expectedSize % BYTES_PER_TILE} trailing non-tile bytes."
+                }
+            }
+
+            if (rawBytes.isEmpty()) {
+                errors += "Raw tile data is empty."
+            }
+            if (rawBytes.size % BYTES_PER_TILE != 0) {
+                warnings += "Raw tile data includes ${rawBytes.size % BYTES_PER_TILE} trailing non-tile bytes."
+            }
+
+            if (block == null) {
+                errors += "Could not resolve enemy GRAPHADR."
+            } else {
+                val endExclusive = block.pcAddress.toLong() + rawBytes.size.toLong()
+                if (block.pcAddress < 0 || endExclusive > rom.size.toLong()) {
+                    errors += "Writing ${rawBytes.size} bytes at PC 0x${block.pcAddress.toString(16)} would exceed ROM bounds."
+                }
+            }
+
+            return EnemyTileEditValidation(
+                speciesId = speciesId,
+                actualSize = rawBytes.size,
+                expectedSize = expectedSize,
+                tileCount = rawBytes.size / BYTES_PER_TILE,
+                pcAddress = block?.pcAddress,
+                snesAddress = block?.snesAddress,
+                errors = errors,
+                warnings = warnings
+            )
         }
 
         /**

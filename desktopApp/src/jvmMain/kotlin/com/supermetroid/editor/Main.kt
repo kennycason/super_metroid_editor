@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -69,8 +70,10 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.procgen.TilesetProfileCache
+import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomValidator
+import com.supermetroid.editor.ui.AppOutlinedTextField
 import com.supermetroid.editor.ui.EditorTheme
 import com.supermetroid.editor.ui.EditorThemeState
 import com.supermetroid.editor.ui.FontSize
@@ -146,6 +149,43 @@ private const val BOTTOM_TAB_TILESET = 0
 private const val BOTTOM_TAB_PATTERNS = 1
 private const val BOTTOM_TAB_ROOM_INFO = 2
 private const val BOTTOM_TAB_GENERATE = 3
+
+private enum class SpriteSortMode(val label: String) {
+    DEFAULT("Default"),
+    NAME("A-Z"),
+    SPECIES_ID("ID"),
+}
+
+private fun spriteMatchesQuery(
+    entry: EnemySpriteGraphics.Companion.EnemySpriteEntry,
+    query: String
+): Boolean {
+    val trimmed = query.trim()
+    if (trimmed.isEmpty()) return true
+
+    val lower = trimmed.lowercase()
+    val compact = lower.filter { it.isLetterOrDigit() }.removePrefix("0x")
+    val speciesHex = entry.speciesId.toString(16).padStart(4, '0').lowercase()
+    return entry.name.lowercase().contains(lower) ||
+        entry.category.lowercase().contains(lower) ||
+        speciesHex.contains(compact) ||
+        "a0$speciesHex".contains(compact)
+}
+
+private fun samusMatchesSpriteQuery(query: String): Boolean {
+    val lower = query.trim().lowercase()
+    return lower.isEmpty() || "samus".contains(lower) || "player".contains(lower)
+}
+
+private fun sortSpriteEntries(
+    entries: List<EnemySpriteGraphics.Companion.EnemySpriteEntry>,
+    mode: SpriteSortMode
+): List<EnemySpriteGraphics.Companion.EnemySpriteEntry> =
+    when (mode) {
+        SpriteSortMode.DEFAULT -> entries
+        SpriteSortMode.NAME -> entries.sortedWith(compareBy({ it.name.lowercase() }, { it.speciesId }))
+        SpriteSortMode.SPECIES_ID -> entries.sortedBy { it.speciesId }
+    }
 
 fun main() = application {
     val roomRepository = remember { RoomRepository() }
@@ -425,6 +465,8 @@ fun main() = application {
                 var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 val mainContentFocusRequester = remember { FocusRequester() }
                 var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
+                var spriteSearchQuery by remember { mutableStateOf("") }
+                var spriteSortMode by remember { mutableStateOf(SpriteSortMode.DEFAULT) }
                 val tilesetEditorState = remember { TilesetEditorState() }
                 val soundEditorState = remember { SoundEditorState() }
                 val minimapEditorState = remember { MinimapEditorState() }
@@ -764,51 +806,154 @@ fun main() = application {
                                     )
                                 }
                                 TAB_SPRITES -> {
-                                    val entries = com.supermetroid.editor.rom.EnemySpriteGraphics.EDITOR_ENEMIES
+                                    val entries = EnemySpriteGraphics.EDITOR_ENEMIES
                                     val spriteNavigationFocusRequester = rememberVerticalSelectionFocusRequester(
                                         requestFocusKey = leftTab
                                     )
-                                    val grouped = entries.groupBy { it.category }
+                                    val indexBySpecies = remember(entries) {
+                                        entries.mapIndexed { index, entry -> entry.speciesId to index }.toMap()
+                                    }
+                                    val categories = remember(entries) { entries.map { it.category }.distinct() }
+                                    val showSamus = samusMatchesSpriteQuery(spriteSearchQuery)
+                                    val visibleGroups = remember(entries, categories, spriteSearchQuery, spriteSortMode) {
+                                        val filtered = entries.filter { spriteMatchesQuery(it, spriteSearchQuery) }
+                                        categories.mapNotNull { category ->
+                                            val items = sortSpriteEntries(
+                                                filtered.filter { it.category == category },
+                                                spriteSortMode
+                                            )
+                                            if (items.isEmpty()) null else category to items
+                                        }
+                                    }
+                                    val visibleSelectionKeys = remember(showSamus, visibleGroups, indexBySpecies) {
+                                        buildList {
+                                            if (showSamus) add(-1)
+                                            visibleGroups.forEach { (_, items) ->
+                                                items.forEach { entry ->
+                                                    indexBySpecies[entry.speciesId]?.let(::add)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    val selectedVisibleIndex = visibleSelectionKeys.indexOf(selectedSpriteIdx)
+                                    LaunchedEffect(leftTab, visibleSelectionKeys) {
+                                        if (
+                                            leftTab == TAB_SPRITES &&
+                                            visibleSelectionKeys.isNotEmpty() &&
+                                            selectedSpriteIdx !in visibleSelectionKeys
+                                        ) {
+                                            selectedSpriteIdx = visibleSelectionKeys.first()
+                                        }
+                                    }
                                     Column(
                                         modifier = Modifier.fillMaxSize().padding(8.dp)
                                             .verticalSelectionKeyNavigation(
                                                 focusRequester = spriteNavigationFocusRequester,
-                                                itemCount = entries.size + 1,
-                                                selectedIndex = selectedSpriteIdx + 1,
-                                                onSelectIndex = { index -> selectedSpriteIdx = index - 1 }
+                                                itemCount = visibleSelectionKeys.size,
+                                                selectedIndex = selectedVisibleIndex,
+                                                onSelectIndex = { index ->
+                                                    visibleSelectionKeys.getOrNull(index)?.let { selectedSpriteIdx = it }
+                                                }
                                             )
                                             .verticalScroll(rememberScrollState()),
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        // Samus at the top
-                                        Text("Player", fontSize = fs.body,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface)
-                                        Spacer(Modifier.height(2.dp))
-                                        Surface(
+                                        AppOutlinedTextField(
+                                            value = spriteSearchQuery,
+                                            onValueChange = { spriteSearchQuery = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = "Search sprites",
+                                            singleLine = true,
+                                            fontSize = fs.body
+                                        )
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
                                             modifier = Modifier.fillMaxWidth()
-                                                .clickable {
-                                                    requestVerticalSelectionFocus(spriteNavigationFocusRequester)
-                                                    selectedSpriteIdx = -1
-                                                },
-                                            color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.primaryContainer
-                                                    else MaterialTheme.colorScheme.surface,
-                                            shape = RoundedCornerShape(6.dp)
                                         ) {
-                                            Text("Samus", fontSize = fs.body,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                                color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.onPrimaryContainer
-                                                        else MaterialTheme.colorScheme.onSurface)
+                                            SpriteSortMode.values().forEach { mode ->
+                                                val selected = spriteSortMode == mode
+                                                val colors = if (selected) {
+                                                    ButtonDefaults.buttonColors(
+                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                                    )
+                                                } else {
+                                                    ButtonDefaults.outlinedButtonColors()
+                                                }
+                                                val buttonModifier = Modifier.height(28.dp)
+                                                val contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                                                if (selected) {
+                                                    Button(
+                                                        onClick = {
+                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
+                                                            spriteSortMode = mode
+                                                        },
+                                                        modifier = buttonModifier,
+                                                        contentPadding = contentPadding,
+                                                        colors = colors
+                                                    ) {
+                                                        Text(mode.label, fontSize = fs.detail)
+                                                    }
+                                                } else {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
+                                                            spriteSortMode = mode
+                                                        },
+                                                        modifier = buttonModifier,
+                                                        contentPadding = contentPadding,
+                                                        colors = colors
+                                                    ) {
+                                                        Text(mode.label, fontSize = fs.detail)
+                                                    }
+                                                }
+                                            }
                                         }
-                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            "${visibleSelectionKeys.size}/${entries.size + 1} sprites",
+                                            fontSize = fs.detail,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(Modifier.height(4.dp))
 
-                                        for ((category, items) in grouped) {
+                                        // Samus at the top
+                                        if (showSamus) {
+                                            Text("Player", fontSize = fs.body,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface)
+                                            Spacer(Modifier.height(2.dp))
+                                            Surface(
+                                                modifier = Modifier.fillMaxWidth()
+                                                    .clickable {
+                                                        requestVerticalSelectionFocus(spriteNavigationFocusRequester)
+                                                        selectedSpriteIdx = -1
+                                                    },
+                                                color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.primaryContainer
+                                                        else MaterialTheme.colorScheme.surface,
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text("Samus", fontSize = fs.body,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                                    color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.onPrimaryContainer
+                                                            else MaterialTheme.colorScheme.onSurface)
+                                            }
+                                            Spacer(Modifier.height(8.dp))
+                                        }
+
+                                        if (!showSamus && visibleGroups.isEmpty()) {
+                                            Text("No sprites match this search.", fontSize = fs.body,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+
+                                        for ((category, items) in visibleGroups) {
                                             Text(category, fontSize = fs.body,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onSurface)
                                             Spacer(Modifier.height(2.dp))
                                             for (entry in items) {
-                                                val idx = entries.indexOf(entry)
+                                                val idx = indexBySpecies[entry.speciesId] ?: continue
                                                 Surface(
                                                     modifier = Modifier.fillMaxWidth()
                                                         .clickable {

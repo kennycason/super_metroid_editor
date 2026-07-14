@@ -933,7 +933,7 @@ class EditorState {
         w: Int,
         h: Int
     ) {
-        val palette = com.supermetroid.editor.rom.EnemySpriteGraphics.readEnemyPalette(romParser, speciesId) ?: return
+        val palette = loadEnemyPalette(romParser, speciesId) ?: return
         val tileData = loadEnemyTileData(romParser, speciesId) ?: return
         val gfx = com.supermetroid.editor.rom.EnemySpriteGraphics(romParser)
         gfx.loadFromRaw(listOf(tileData))
@@ -6237,24 +6237,26 @@ class EditorState {
             val speciesId = speciesHex.toIntOrNull(16) ?: continue
             try {
                 val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                val block = com.supermetroid.editor.rom.EnemySpriteGraphics.readGraphicsBlock(romParser, speciesId)
-                val stats = com.supermetroid.editor.rom.EnemySpriteGraphics.readSpeciesStats(romParser, speciesId)
-                if (block == null || stats == null) {
-                    editorLog("[EXPORT] WARN: Enemy $speciesHex: could not resolve GRAPHADR or stats — skipped")
+                val validation = com.supermetroid.editor.rom.EnemySpriteGraphics.validateEnemyTileEdit(
+                    romParser = romParser,
+                    speciesId = speciesId,
+                    rawBytes = rawBytes
+                )
+                if (!validation.isExportable) {
+                    validation.errors.forEach { reason ->
+                        editorLog("[EXPORT] WARN: Enemy $speciesHex: $reason")
+                    }
+                    editorLog("[EXPORT] WARN: Enemy $speciesHex sprite tile patch skipped")
                     continue
                 }
-                val tileDataSize = stats.first
-                if (rawBytes.size != tileDataSize) {
-                    editorLog("[EXPORT] WARN: Enemy $speciesHex: raw size ${rawBytes.size} != expected tileDataSize $tileDataSize — skipped")
-                    continue
+                validation.warnings.forEach { reason ->
+                    editorLog("[EXPORT] INFO: Enemy $speciesHex: $reason")
                 }
-                if (block.pcAddress + tileDataSize > romData.size) {
-                    editorLog("[EXPORT] WARN: Enemy $speciesHex: write would exceed ROM bounds — skipped")
-                    continue
-                }
-                System.arraycopy(rawBytes, 0, romData, block.pcAddress, rawBytes.size)
+                val pcAddress = validation.pcAddress ?: continue
+                val snesAddress = validation.snesAddress ?: 0
+                System.arraycopy(rawBytes, 0, romData, pcAddress, rawBytes.size)
                 gfxPatched++
-                editorLog("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${block.pcAddress.toString(16)} (SNES \$${block.snesAddress.toString(16).uppercase()})")
+                editorLog("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${pcAddress.toString(16)} (SNES \$${snesAddress.toString(16).uppercase()})")
             } catch (e: Exception) {
                 editorLog("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
             }
