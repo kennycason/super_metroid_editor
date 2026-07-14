@@ -12,6 +12,7 @@ import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.ScrollChange
 import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.SmEditProject
@@ -325,12 +326,35 @@ internal fun buildBgDataWithClonedDoorDependentTransfer(
 
 data class FloatingMapSelection(val x: Int, val y: Int)
 
+data class EffectiveSaveStationSpawn(
+    val area: Int,
+    val saveIndex: Int,
+    val roomId: Int,
+    val doorPtr: Int,
+    val scrollX: Int,
+    val scrollY: Int,
+    val samusY: Int,
+    val samusX: Int,
+    val pcOffset: Int?,
+    val source: String,
+) {
+    val samusXSigned: Int get() = samusX.toSigned16()
+    val samusYSigned: Int get() = samusY.toSigned16()
+}
+
 private data class MapSelectionBounds(
     val minX: Int,
     val minY: Int,
     val maxX: Int,
     val maxY: Int,
 )
+
+private fun Int.toSigned16(): Int {
+    val v = this and 0xFFFF
+    return if (v >= 0x8000) v - 0x10000 else v
+}
+
+private fun Int.toUnsigned16(): Int = this and 0xFFFF
 
 // ─── Editor State ───────────────────────────────────────────────
 
@@ -392,6 +416,11 @@ class EditorState {
     /** The loaded room's tileset as stored in the ROM (before project overrides). */
     private var romTilesetId: Int = 0
     private var currentBgScrolling: Int = 0
+    private var currentArea: Int = 0
+    private var currentIncomingDoorPtrs: List<Int> = emptyList()
+    private var currentAreaRomSaveEntries: Map<Int, RomParser.Companion.SaveEntry> = emptyMap()
+    private var currentAreaSaveEntryCount: Int = 0
+    private var vanillaSaveIndicesByArea: Map<Int, Set<Int>> = emptyMap()
     /** Currently active room state index (0 = first conditional, last = default). */
     var currentStateIndex: Int = -1
         private set
@@ -2520,6 +2549,11 @@ class EditorState {
         floatingSelection = null
         activeRoomLayer = RoomEditLayer.LAYER1
         currentBgScrolling = 0
+        currentArea = 0
+        currentIncomingDoorPtrs = emptyList()
+        currentAreaRomSaveEntries = emptyMap()
+        currentAreaSaveEntryCount = 0
+        vanillaSaveIndicesByArea = emptyMap()
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         spriteSheetGfx = null
@@ -2586,6 +2620,16 @@ class EditorState {
         val stateDataChange = project.rooms[project.roomKey(roomId)]?.stateDataChange
         currentTilesetId = stateDataChange?.tileset ?: room.tileset
         currentBgScrolling = stateDataChange?.bgScrolling ?: room.bgScrolling
+        currentArea = project.rooms[project.roomKey(roomId)]?.roomHeaderChange?.area ?: room.area
+        refreshVanillaSaveIndices(romParser)
+        currentIncomingDoorPtrs = romParser.findDoorsLeadingTo(roomId)
+            .map { it.doorDefPtr }
+            .filter { it != 0 }
+            .distinct()
+        currentAreaSaveEntryCount = romParser.saveEntryCount(currentArea)
+        currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(0x10))
+            .mapNotNull { idx -> romParser.readSaveEntry(currentArea, idx)?.let { idx to it } }
+            .toMap()
         if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
         mapSelStart = null
         mapSelEnd = null
@@ -2942,6 +2986,9 @@ class EditorState {
                     val addChange = PlmChange("add", plmId, tx, ty, actualParam)
                     project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
                     pendingPlmAdds.add(addChange)
+                    if (plmId == 0xB76F) {
+                        ensureAutoSaveStationSpawn(tx, ty, actualParam and 0xFF)
+                    }
                 }
             }
         }
@@ -3063,6 +3110,153 @@ class EditorState {
             false
         }
 
+    private fun refreshVanillaSaveIndices(romParser: RomParser) {
+        if (vanillaSaveIndicesByArea.isNotEmpty()) return
+        val byArea = mutableMapOf<Int, MutableSet<Int>>()
+        val repository = RoomRepository()
+        for (info in repository.getAllRooms()) {
+            val room = romParser.readRoomHeader(info.getRoomIdAsInt()) ?: continue
+            val plms = romParser.parsePlmSet(room.plmSetPtr)
+            for (plm in plms) {
+                if (plm.id == 0xB76F) {
+                    byArea.getOrPut(room.area) { mutableSetOf() }.add(plm.param and 0xFF)
+                }
+            }
+        }
+        vanillaSaveIndicesByArea = byArea.mapValues { it.value.toSet() }
+    }
+
+    private fun saveSpawnOverride(area: Int, saveIndex: Int): SaveStationSpawnChange? {
+        project.rooms[project.roomKey(currentRoomId)]?.saveStationSpawns
+            ?.lastOrNull { it.area == area && it.saveIndex == saveIndex }
+            ?.let { return it }
+        return project.rooms.values
+            .asSequence()
+            .flatMap { it.saveStationSpawns.asSequence() }
+            .lastOrNull { it.area == area && it.saveIndex == saveIndex }
+    }
+
+    fun effectiveSaveStationSpawn(area: Int, saveIndex: Int, romParser: RomParser): EffectiveSaveStationSpawn? {
+        val override = saveSpawnOverride(area, saveIndex)
+        val romEntry = romParser.readSaveEntry(area, saveIndex)
+        if (override != null) {
+            return EffectiveSaveStationSpawn(
+                area = override.area,
+                saveIndex = override.saveIndex,
+                roomId = override.roomId,
+                doorPtr = override.doorPtr,
+                scrollX = override.scrollX,
+                scrollY = override.scrollY,
+                samusY = override.samusY,
+                samusX = override.samusX,
+                pcOffset = romEntry?.pcOffset,
+                source = if (override.autoDerived) "Auto" else "Override",
+            )
+        }
+        return romEntry?.let {
+            EffectiveSaveStationSpawn(
+                area = area,
+                saveIndex = saveIndex,
+                roomId = it.roomId,
+                doorPtr = it.doorPtr,
+                scrollX = it.scrollX,
+                scrollY = it.scrollY,
+                samusY = it.samusY,
+                samusX = it.samusX,
+                pcOffset = it.pcOffset,
+                source = "ROM",
+            )
+        }
+    }
+
+    private fun deriveSaveStationSpawn(x: Int, y: Int, saveIndex: Int): SaveStationSpawnChange {
+        val scrollX = (x / 16) * 256
+        val scrollY = (y / 16) * 256
+        val existing = currentAreaRomSaveEntries[saveIndex]?.takeIf { it.roomId == currentRoomId }
+        val doorPtr = existing?.doorPtr
+            ?: currentIncomingDoorPtrs.firstOrNull()
+            ?: doorEntries.firstOrNull { it.doorDefPtr != 0 }?.doorDefPtr
+            ?: 0
+        return SaveStationSpawnChange(
+            area = currentArea,
+            saveIndex = saveIndex,
+            roomId = currentRoomId,
+            doorPtr = doorPtr,
+            scrollX = scrollX.toUnsigned16(),
+            scrollY = scrollY.toUnsigned16(),
+            samusY = (y * 16 - scrollY - 24).toUnsigned16(),
+            samusX = (x * 16 - scrollX - 112).toUnsigned16(),
+            autoDerived = true,
+        )
+    }
+
+    private fun upsertSaveStationSpawn(change: SaveStationSpawnChange) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.saveStationSpawns.removeAll { it.area == change.area && it.saveIndex == change.saveIndex }
+        roomEdits.saveStationSpawns.add(change)
+        dirty = true
+        editVersion++
+    }
+
+    private fun ensureAutoSaveStationSpawn(x: Int, y: Int, saveIndex: Int) {
+        val existing = saveSpawnOverride(currentArea, saveIndex)
+        if (existing != null && !existing.autoDerived) return
+        upsertSaveStationSpawn(deriveSaveStationSpawn(x, y, saveIndex))
+    }
+
+    private fun cleanupSaveStationSpawnIfUnreferenced(saveIndex: Int) {
+        if (_workingPlms.any { it.id == 0xB76F && (it.param and 0xFF) == saveIndex }) return
+        val roomEdits = project.rooms[project.roomKey(currentRoomId)] ?: return
+        val removed = roomEdits.saveStationSpawns.removeAll {
+            it.area == currentArea && it.saveIndex == saveIndex
+        }
+        if (removed) {
+            dirty = true
+            editVersion++
+        }
+    }
+
+    fun resetSaveStationSpawnToAuto(plm: RomParser.PlmEntry) {
+        if (plm.id != 0xB76F) return
+        upsertSaveStationSpawn(deriveSaveStationSpawn(plm.x, plm.y, plm.param and 0xFF))
+    }
+
+    fun updateSaveStationSpawnPosition(area: Int, saveIndex: Int, samusX: Int, samusY: Int, romParser: RomParser) {
+        val base = effectiveSaveStationSpawn(area, saveIndex, romParser) ?: return
+        upsertSaveStationSpawn(
+            SaveStationSpawnChange(
+                area = area,
+                saveIndex = saveIndex,
+                roomId = base.roomId,
+                doorPtr = base.doorPtr,
+                scrollX = base.scrollX,
+                scrollY = base.scrollY,
+                samusY = samusY.toUnsigned16(),
+                samusX = samusX.toUnsigned16(),
+                autoDerived = false,
+            ),
+        )
+    }
+
+    fun updateSaveStationSpawnScroll(area: Int, saveIndex: Int, scrollX: Int, scrollY: Int, romParser: RomParser) {
+        val base = effectiveSaveStationSpawn(area, saveIndex, romParser) ?: return
+        upsertSaveStationSpawn(
+            SaveStationSpawnChange(
+                area = area,
+                saveIndex = saveIndex,
+                roomId = base.roomId,
+                doorPtr = base.doorPtr,
+                scrollX = scrollX.toUnsigned16(),
+                scrollY = scrollY.toUnsigned16(),
+                samusY = base.samusY,
+                samusX = base.samusX,
+                autoDerived = false,
+            ),
+        )
+    }
+
+    fun activeRoomAreaForEditing(): Int = currentArea
+
     private fun autoAssignParam(plmId: Int, param: Int): Int = when {
         param == 0 && isEditorItemPlm(plmId) -> {
             val usedIndices = mutableSetOf<Int>()
@@ -3096,6 +3290,12 @@ class EditorState {
         }
         plmId == 0xB76F && param == 0x8000 -> {
             val usedSaveIndices = mutableSetOf<Int>()
+            usedSaveIndices.addAll(vanillaSaveIndicesByArea[currentArea].orEmpty())
+            for (roomEdits in project.rooms.values) {
+                for (spawn in roomEdits.saveStationSpawns) {
+                    if (spawn.area == currentArea) usedSaveIndices.add(spawn.saveIndex)
+                }
+            }
             for (plm in _workingPlms) {
                 if (plm.id == 0xB76F) usedSaveIndices.add(plm.param and 0xFF)
             }
@@ -3104,8 +3304,13 @@ class EditorState {
                     if (change.action == "add" && change.plmId == 0xB76F) usedSaveIndices.add(change.param and 0xFF)
                 }
             }
+            val maxSaveIndex = (currentAreaSaveEntryCount - 1).coerceIn(0, 0x0F)
             var idx = 0
-            while (idx in usedSaveIndices && idx <= 0x0F) idx++
+            while (idx in usedSaveIndices && idx <= maxSaveIndex) idx++
+            if (idx > maxSaveIndex) {
+                editorLog("WARN: no unused AreaSave slot for area $currentArea; reusing save index $maxSaveIndex")
+                idx = maxSaveIndex
+            }
             0x8000 or idx
         }
         else -> param
@@ -3125,6 +3330,9 @@ class EditorState {
         _workingPlms.add(RomParser.PlmEntry(plmId, x, y, actualParam))
         val addChange = PlmChange("add", plmId, x, y, actualParam)
         project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
+        if (plmId == 0xB76F) {
+            ensureAutoSaveStationSpawn(x, y, actualParam and 0xFF)
+        }
 
         val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
         val op = EditOperation("Add $name ($x,$y)", plmAdds = listOf(addChange), plmRemoves = removedChanges)
@@ -3176,6 +3384,9 @@ class EditorState {
         _workingPlms.removeAll { it.x == x && it.y == y && it.id == plmId }
         val changes = removed.map { PlmChange("remove", it.id, it.x, it.y, it.param) }
         for (c in changes) project.getOrCreateRoom(currentRoomId).plmChanges.add(c)
+        for (old in removed) {
+            if (old.id == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(old.param and 0xFF)
+        }
 
         val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
         val op = EditOperation("Remove $name ($x,$y)", plmRemoves = changes)
@@ -4273,11 +4484,13 @@ class EditorState {
         for (plm in op.plmAdds) {
             _workingPlms.removeAll { it.id == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param }
             roomEdits.plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
+            if (plm.plmId == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(plm.param and 0xFF)
         }
         // Undo PLM removes (reverse = re-add them)
         for (plm in op.plmRemoves) {
             _workingPlms.add(RomParser.PlmEntry(plm.plmId, plm.x, plm.y, plm.param))
             roomEdits.plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
+            if (plm.plmId == 0xB76F) ensureAutoSaveStationSpawn(plm.x, plm.y, plm.param and 0xFF)
         }
 
         // Undo enemy adds
@@ -4340,11 +4553,13 @@ class EditorState {
         for (plm in op.plmAdds) {
             _workingPlms.add(RomParser.PlmEntry(plm.plmId, plm.x, plm.y, plm.param))
             roomEdits.plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
+            if (plm.plmId == 0xB76F) ensureAutoSaveStationSpawn(plm.x, plm.y, plm.param and 0xFF)
         }
         // Redo PLM removes
         for (plm in op.plmRemoves) {
             _workingPlms.removeAll { it.id == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param }
             roomEdits.plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
+            if (plm.plmId == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(plm.param and 0xFF)
         }
 
         // Redo enemy adds
@@ -5307,9 +5522,10 @@ class EditorState {
             val hasStateEdits = roomEdits.stateDataChange != null
             val hasHeaderEdits = roomEdits.roomHeaderChange != null
             val hasCustomScrollCmds = roomEdits.customScrollCommands.isNotEmpty()
+            val hasSaveStationSpawnEdits = roomEdits.saveStationSpawns.isNotEmpty()
             if (!hasTileEdits && !hasPlmEdits && !hasDoorEdits && !hasEnemyEdits &&
                 !hasScrollEdits && !hasFxEdits && !hasStateEdits && !hasHeaderEdits &&
-                !hasCustomScrollCmds) continue
+                !hasCustomScrollCmds && !hasSaveStationSpawnEdits) continue
             val roomId = roomKey.toIntOrNull(16) ?: continue
             val room = romParser.readRoomHeader(roomId) ?: continue
 
@@ -6185,6 +6401,38 @@ class EditorState {
                     }
                 }
                 roomsPatched.add(roomKey)
+            }
+
+            if (hasSaveStationSpawnEdits) {
+                fun writeAreaSaveU16(offset: Int, value: Int) {
+                    if (offset + 1 >= romData.size) return
+                    romData[offset] = (value and 0xFF).toByte()
+                    romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+                }
+
+                for (spawn in roomEdits.saveStationSpawns) {
+                    val romEntry = romParser.readSaveEntry(spawn.area, spawn.saveIndex)
+                    if (romEntry == null) {
+                        editorLog(
+                            "WARN: Room 0x$roomKey save station ${spawn.area}:${spawn.saveIndex} " +
+                                "has no writable AreaSave entry; skipped",
+                        )
+                        continue
+                    }
+                    val off = romEntry.pcOffset
+                    writeAreaSaveU16(off, spawn.roomId)
+                    writeAreaSaveU16(off + 2, spawn.doorPtr)
+                    writeAreaSaveU16(off + 6, spawn.scrollX)
+                    writeAreaSaveU16(off + 8, spawn.scrollY)
+                    writeAreaSaveU16(off + 10, spawn.samusY)
+                    writeAreaSaveU16(off + 12, spawn.samusX)
+                    editorLog(
+                        "Room 0x$roomKey: patched AreaSave area=${spawn.area} index=${spawn.saveIndex} " +
+                            "room=0x${spawn.roomId.toString(16)} door=0x${spawn.doorPtr.toString(16)} " +
+                            "scroll=(${spawn.scrollX},${spawn.scrollY}) samus=(${spawn.samusX.toSigned16()},${spawn.samusY.toSigned16()})",
+                    )
+                    roomsPatched.add(roomKey)
+                }
             }
         }
         // Apply custom tileset graphics

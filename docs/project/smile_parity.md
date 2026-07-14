@@ -75,7 +75,7 @@ SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are
 | Music/song selector | Parity |
 | Enemy AI pointer editor | Parity (we also have custom ASM embedding) |
 | Enemy graphics/layer priority | Parity |
-| Save station spawn display | Parity (read-only; SMILE also limited) |
+| Save station spawn editing | Beyond SMILE for existing AreaSave slots; table expansion/conflict UI still pending |
 | Mapshot / save as PNG | Parity |
 
 ---
@@ -92,7 +92,7 @@ SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are
 
 | Feature | SMILE | SMEDIT | Impact |
 |---------|-------|--------|--------|
-| **Layer 2/BG Scrolling Editor** | Parallax modes, BG data pointers, BG tileset selection | Can override bgScrolling value but no visual editor | Medium |
+| **Layer 2/BG Scrolling Hardening** | Parallax modes, BG data pointers, BG tileset selection | Embedded L2 editing exists; BG pointer/transfer workflows still partial | Medium |
 | **Validation Suite** | PLM scanner, door validator, item bitflag checker | Not available | Medium |
 | **Samus Pose/Animation Editor** | Per-equipment animation poses | Not available | Low-Medium |
 | **Hotkey Configuration** | Custom keyboard shortcuts | Fixed shortcuts | Low |

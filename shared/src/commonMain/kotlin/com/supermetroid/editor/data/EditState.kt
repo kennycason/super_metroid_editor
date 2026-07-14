@@ -72,6 +72,24 @@ data class ScrollCommand(
 )
 
 /**
+ * Override for one AreaSave table entry. Save station PLMs reference these by
+ * area + saveIndex. Coordinates are stored as raw 16-bit values, matching ROM
+ * encoding; Samus X may intentionally be negative in two's-complement form.
+ */
+@Serializable
+data class SaveStationSpawnChange(
+    val area: Int,
+    val saveIndex: Int,
+    val roomId: Int,
+    val doorPtr: Int,
+    val scrollX: Int,
+    val scrollY: Int,
+    val samusY: Int,
+    val samusX: Int,
+    val autoDerived: Boolean = false,
+)
+
+/**
  * A door property change: modify one field of a door entry.
  */
 @Serializable
@@ -189,12 +207,14 @@ data class RoomEdits(
     /** Custom scroll command data keyed by a unique command ID (e.g. "cmd_0", "cmd_1").
      *  Each entry is a list of (screenIndex, scrollValue) pairs.
      *  On export, each is written to free space in $8F and the PLM param is set to the address. */
-    val customScrollCommands: MutableMap<String, MutableList<ScrollCommand>> = mutableMapOf()
+    val customScrollCommands: MutableMap<String, MutableList<ScrollCommand>> = mutableMapOf(),
+    val saveStationSpawns: MutableList<SaveStationSpawnChange> = mutableListOf(),
 ) {
     val hasEdits: Boolean get() =
         operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
         enemyChanges.isNotEmpty() || scrollChanges.isNotEmpty() || fxChange != null ||
-        stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty()
+        stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty() ||
+        saveStationSpawns.isNotEmpty()
 }
 
 /**

@@ -1256,6 +1256,24 @@ fun MapCanvas(
                             }
                             val rWidthScreens = roomHeader?.width ?: 0
                             val rHeightScreens = roomHeader?.height ?: 0
+                            val activeRoomArea = editorState?.activeRoomAreaForEditing() ?: roomHeader?.area ?: 0
+                            val saveSpawnMarkers = remember(roomHeader, editVersion, activeRoomArea) {
+                                val es = editorState
+                                val rh = roomHeader
+                                if (es == null || rh == null) emptyList()
+                                else es.workingPlms
+                                    .filter { it.id == 0xB76F }
+                                    .mapNotNull { plm ->
+                                        val saveIndex = plm.param and 0xFF
+                                        val spawn = es.effectiveSaveStationSpawn(activeRoomArea, saveIndex, romParser) ?: return@mapNotNull null
+                                        SaveSpawnMarker(
+                                            x = spawn.scrollX + spawn.samusXSigned + 112,
+                                            y = spawn.scrollY + spawn.samusYSigned + 24,
+                                            label = "S$saveIndex",
+                                            source = spawn.source,
+                                        )
+                                    }
+                            }
 
                             // Layer 3 FX overlay data + fxType for animation
                             val layer3Info = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER3)) {
@@ -1668,6 +1686,48 @@ fun MapCanvas(
                                                         strokeWidth = 2f
                                                     )
                                                 }
+                                            }
+                                        }
+                                    }
+                                    if (activeOverlays.contains(TileOverlay.ITEMS) && saveSpawnMarkers.isNotEmpty()) {
+                                        Canvas(
+                                            modifier = Modifier
+                                                .requiredWidth((data.width * zoomLevel).dp)
+                                                .requiredHeight((data.height * zoomLevel).dp)
+                                        ) {
+                                            val scaleX = size.width / data.width
+                                            val scaleY = size.height / data.height
+                                            for (marker in saveSpawnMarkers) {
+                                                val x = marker.x * scaleX
+                                                val y = marker.y * scaleY
+                                                if (x < 0f || y < 0f || x > size.width || y > size.height) continue
+                                                val color = when (marker.source) {
+                                                    "ROM" -> Color(0xFF44CCFF)
+                                                    "Auto" -> Color(0xFF66DD88)
+                                                    else -> Color(0xFFFFDD44)
+                                                }
+                                                drawCircle(
+                                                    color = Color.Black.copy(alpha = 0.75f),
+                                                    radius = 7f,
+                                                    center = androidx.compose.ui.geometry.Offset(x, y),
+                                                )
+                                                drawCircle(
+                                                    color = color.copy(alpha = 0.9f),
+                                                    radius = 5f,
+                                                    center = androidx.compose.ui.geometry.Offset(x, y),
+                                                )
+                                                drawLine(
+                                                    color = Color.White,
+                                                    start = androidx.compose.ui.geometry.Offset(x - 9f, y),
+                                                    end = androidx.compose.ui.geometry.Offset(x + 9f, y),
+                                                    strokeWidth = 1.5f,
+                                                )
+                                                drawLine(
+                                                    color = Color.White,
+                                                    start = androidx.compose.ui.geometry.Offset(x, y - 9f),
+                                                    end = androidx.compose.ui.geometry.Offset(x, y + 9f),
+                                                    strokeWidth = 1.5f,
+                                                )
                                             }
                                         }
                                     }
@@ -2653,14 +2713,14 @@ fun MapCanvas(
                                                     // Save station spawn details
                                                     if (plm.id == 0xB76F && romParser != null) {
                                                         val saveIdx = plm.param and 0xFF
-                                                        val area = roomHeader?.area ?: 0
-                                                        val saveEntry = romParser.readSaveEntry(area, saveIdx)
+                                                        val area = editorState.activeRoomAreaForEditing()
+                                                        val saveEntry = editorState.effectiveSaveStationSpawn(area, saveIdx, romParser)
                                                         if (saveEntry != null) {
                                                             val detailColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                                            Text("Save #$saveIdx (Area $area)", fontSize = 9.sp, color = detailColor)
+                                                            Text("Save #$saveIdx (Area $area, ${saveEntry.source})", fontSize = 9.sp, color = detailColor)
                                                             Row {
                                                                 Text("Spawn: ", fontSize = 9.sp, color = detailColor)
-                                                                Text("X=${saveEntry.samusX} Y=${saveEntry.samusY}", fontSize = 9.sp,
+                                                                Text("X=${saveEntry.samusXSigned} Y=${saveEntry.samusYSigned}", fontSize = 9.sp,
                                                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                                                     color = MaterialTheme.colorScheme.onSurface)
                                                             }
@@ -2675,6 +2735,87 @@ fun MapCanvas(
                                                                 Text("\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = 9.sp,
                                                                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                                                     color = MaterialTheme.colorScheme.onSurface)
+                                                            }
+                                                            var spawnXText by remember(area, saveIdx, saveEntry.samusX, saveEntry.source) {
+                                                                mutableStateOf(saveEntry.samusXSigned.toString())
+                                                            }
+                                                            var spawnYText by remember(area, saveIdx, saveEntry.samusY, saveEntry.source) {
+                                                                mutableStateOf(saveEntry.samusYSigned.toString())
+                                                            }
+                                                            var scrollXText by remember(area, saveIdx, saveEntry.scrollX, saveEntry.source) {
+                                                                mutableStateOf(saveEntry.scrollX.toString())
+                                                            }
+                                                            var scrollYText by remember(area, saveIdx, saveEntry.scrollY, saveEntry.source) {
+                                                                mutableStateOf(saveEntry.scrollY.toString())
+                                                            }
+                                                            Row(
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.padding(top = 3.dp)
+                                                            ) {
+                                                                AppOutlinedTextField(
+                                                                    value = spawnXText,
+                                                                    onValueChange = { spawnXText = it },
+                                                                    label = "Samus X",
+                                                                    singleLine = true,
+                                                                    fontSize = 9.sp,
+                                                                    modifier = Modifier.width(66.dp)
+                                                                )
+                                                                AppOutlinedTextField(
+                                                                    value = spawnYText,
+                                                                    onValueChange = { spawnYText = it },
+                                                                    label = "Y",
+                                                                    singleLine = true,
+                                                                    fontSize = 9.sp,
+                                                                    modifier = Modifier.width(54.dp)
+                                                                )
+                                                            }
+                                                            Row(
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.padding(top = 3.dp)
+                                                            ) {
+                                                                AppOutlinedTextField(
+                                                                    value = scrollXText,
+                                                                    onValueChange = { scrollXText = it },
+                                                                    label = "Scroll X",
+                                                                    singleLine = true,
+                                                                    fontSize = 9.sp,
+                                                                    modifier = Modifier.width(66.dp)
+                                                                )
+                                                                AppOutlinedTextField(
+                                                                    value = scrollYText,
+                                                                    onValueChange = { scrollYText = it },
+                                                                    label = "Y",
+                                                                    singleLine = true,
+                                                                    fontSize = 9.sp,
+                                                                    modifier = Modifier.width(54.dp)
+                                                                )
+                                                            }
+                                                            Row(
+                                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                modifier = Modifier.padding(top = 3.dp)
+                                                            ) {
+                                                                TextButton(
+                                                                    onClick = {
+                                                                        val sx = parseFlexibleInt(spawnXText)
+                                                                        val sy = parseFlexibleInt(spawnYText)
+                                                                        val scx = parseFlexibleInt(scrollXText)
+                                                                        val scy = parseFlexibleInt(scrollYText)
+                                                                        if (sx != null && sy != null) {
+                                                                            editorState.updateSaveStationSpawnPosition(area, saveIdx, sx, sy, romParser)
+                                                                        }
+                                                                        if (scx != null && scy != null) {
+                                                                            editorState.updateSaveStationSpawnScroll(area, saveIdx, scx, scy, romParser)
+                                                                        }
+                                                                    },
+                                                                    modifier = Modifier.height(26.dp)
+                                                                ) { Text("Apply Spawn", fontSize = 9.sp) }
+                                                                TextButton(
+                                                                    onClick = { editorState.resetSaveStationSpawnToAuto(plm) },
+                                                                    modifier = Modifier.height(26.dp)
+                                                                ) { Text("Reset Auto", fontSize = 9.sp) }
                                                             }
                                                         }
                                                     }
@@ -3533,6 +3674,23 @@ internal fun richOverlayLabel(overlay: TileOverlay, bts: Int): String = when (ov
     TileOverlay.BOMB -> if (bts in 0x04..0x07) "B!" else "B"
     else -> overlay.shortLabel
 }
+
+private fun parseFlexibleInt(text: String): Int? {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return null
+    return when {
+        trimmed.startsWith("$") -> trimmed.drop(1).toIntOrNull(16)
+        trimmed.startsWith("0x", ignoreCase = true) -> trimmed.drop(2).toIntOrNull(16)
+        else -> trimmed.toIntOrNull()
+    }
+}
+
+private data class SaveSpawnMarker(
+    val x: Int,
+    val y: Int,
+    val label: String,
+    val source: String,
+)
 
 /**
  * Draw a speed booster arrow overlay — a right-pointing chevron/arrow

@@ -1214,6 +1214,72 @@ class EditorStateTest {
         }
     }
 
+    @Nested
+    inner class SaveStationSpawns {
+        @Test
+        fun `adding save station creates auto-derived spawn override`() {
+            state.setRoomIdForTest(0x93D5)
+
+            state.addPlm(0xB76F, 5, 11, 0x8000)
+
+            val roomEdits = state.project.rooms[state.project.roomKey(0x93D5)]
+            assertNotNull(roomEdits)
+            val spawn = roomEdits!!.saveStationSpawns.single()
+            assertEquals(0, spawn.area)
+            assertEquals(0, spawn.saveIndex)
+            assertEquals(0x93D5, spawn.roomId)
+            assertEquals(0xFFE0, spawn.samusX)
+            assertEquals(152, spawn.samusY)
+            assertTrue(spawn.autoDerived)
+        }
+
+        @Test
+        fun `removing save station cleans generated spawn override`() {
+            state.setRoomIdForTest(0x93D5)
+            state.addPlm(0xB76F, 5, 11, 0x8000)
+
+            state.removePlm(5, 11, 0xB76F)
+
+            val roomEdits = state.project.rooms[state.project.roomKey(0x93D5)]
+            assertNotNull(roomEdits)
+            assertTrue(roomEdits!!.saveStationSpawns.isEmpty())
+        }
+
+        @Test
+        fun `reset save station spawn replaces manual override with auto-derived values`() {
+            val romParser = TestRomHelper.loadRomParser() ?: return
+            state.setRoomIdForTest(0x93D5)
+            state.addPlm(0xB76F, 5, 11, 0x8000)
+
+            state.updateSaveStationSpawnPosition(area = 0, saveIndex = 0, samusX = 12, samusY = 34, romParser)
+            var spawn = state.project.rooms[state.project.roomKey(0x93D5)]!!.saveStationSpawns.single()
+            assertEquals(12, spawn.samusX)
+            assertEquals(34, spawn.samusY)
+            assertFalse(spawn.autoDerived)
+
+            state.resetSaveStationSpawnToAuto(state.workingPlms.single { it.id == 0xB76F })
+
+            spawn = state.project.rooms[state.project.roomKey(0x93D5)]!!.saveStationSpawns.single()
+            assertEquals(0xFFE0, spawn.samusX)
+            assertEquals(152, spawn.samusY)
+            assertTrue(spawn.autoDerived)
+        }
+
+        @Test
+        fun `removing save station cleans manual spawn override`() {
+            val romParser = TestRomHelper.loadRomParser() ?: return
+            state.setRoomIdForTest(0x93D5)
+            state.addPlm(0xB76F, 5, 11, 0x8000)
+            state.updateSaveStationSpawnPosition(area = 0, saveIndex = 0, samusX = 12, samusY = 34, romParser)
+
+            state.removePlm(5, 11, 0xB76F)
+
+            val roomEdits = state.project.rooms[state.project.roomKey(0x93D5)]
+            assertNotNull(roomEdits)
+            assertTrue(roomEdits!!.saveStationSpawns.isEmpty())
+        }
+    }
+
     // ── Gate pattern removal ──────────────────────────────────────
 
     @Nested

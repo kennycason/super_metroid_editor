@@ -2,7 +2,7 @@
 
 **See also:** `smile_parity.md` for complete SMILE vs SMEDIT feature comparison.
 **See also:** `plan.md` for detailed implementation notes per feature.
-**Last updated:** 2026-05-25
+**Last updated:** 2026-07-13
 
 ---
 
@@ -24,10 +24,12 @@
 - Room Resize — Level data + BTS + L2 resize with scroll/door ASM remapping
 - Room Shifting Tool — Selection + arrow keys, Ctrl for screen-step
 - Multi-State Room Editing — State selector, switching, per-state enemies/PLMs/scrolls
+- Layer 2 Editing — Embedded L2 paint/sample/resize plus room-map zoom shortcuts
 - Scroll Trigger PLM Editor — Visual screen grid for scroll commands
 - Door Cloning Tool — Auto-detect direction from screen edge
 - Space Utilization Monitor — Per-section byte counts in Room Info
 - Auto-Repointing Engine — Level data, PLMs, scroll data, door ASM auto-relocate
+- Save Station Spawn Editing — Auto-derived AreaSave overrides, manual X/Y/scroll editing, export to existing slots
 
 ### Text & Data
 - In-Game Text Editor — Intro story (6 parts), area names (7), escape messages (2), UI messages (9), item pickup names (19)
@@ -37,7 +39,6 @@
 
 ### Infrastructure
 - Enemy/Boss promoted to top-level tabs
-- Save Station Spawn Display — Read-only in tile properties
 - TestRomHelper migration — 73 test files, eliminated hardcoded ROM paths
 - FlowRow tab navigation — Tabs wrap when column is narrow
 - Minimap Room Move — Buffer-based with Apply/Cancel
@@ -53,7 +54,7 @@
 | 1 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
 | 2 | **New Room Creation** | Medium | Allocate room header in $8F, door table, level data, enemy/PLM/scroll pointers. Auto-repointing foundation already exists. |
 | 3 | **Room JSON Import** | Small | Export done; import creates RoomEdits from JSON file. |
-| 4 | **Save Station Spawn Editing** | Small | Currently display-only. Need writable fields + export to AreaSave table. |
+| 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing writes existing slots; table expansion and collision resolution remain. |
 | 5 | **SMART XML Interop** | Medium | Export rooms in SMART XML format. Plugs into Map Randomizer ecosystem — no other modern editor has this. |
 
 ### Tier 2: Medium Impact
@@ -62,7 +63,7 @@
 |---|---------|--------|-----|
 | 6 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |
 | 7 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
-| 8 | **Layer 2/BG Scrolling Editor** | Medium | Parallax mode selector + BG data pointer editing. |
+| 8 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
 | 9 | **Validation Suite** | Medium | PLM index scanner, door validator, item bitflag checker, GFX limit warnings. |
 | 10 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
 | 11 | **Room Graph Discovery** | Small | Trace door connections from save stations, find orphaned/disconnected rooms. |

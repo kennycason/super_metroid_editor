@@ -1007,12 +1007,28 @@ class RomParser(internal val romData: ByteArray) {
         )
     }
 
-    /** Read a save entry for a given area and save index. */
-    fun readSaveEntry(area: Int, saveIndex: Int): SaveEntry? {
+    private fun areaSavePointer(area: Int): Int? {
         if (area !in 0..7) return null
         val ptrOff = SAVE_TABLE_PTR_PC + area * 2
         if (ptrOff + 1 >= romData.size) return null
-        val areaPtr = (romData[ptrOff].toInt() and 0xFF) or ((romData[ptrOff + 1].toInt() and 0xFF) shl 8)
+        return (romData[ptrOff].toInt() and 0xFF) or ((romData[ptrOff + 1].toInt() and 0xFF) shl 8)
+    }
+
+    fun saveEntryCount(area: Int): Int {
+        val areaPtr = areaSavePointer(area) ?: return 0
+        val nextPtr = (0..7)
+            .mapNotNull { areaSavePointer(it) }
+            .filter { it > areaPtr }
+            .minOrNull()
+            ?: return 16
+        val bytes = nextPtr - areaPtr
+        return if (bytes > 0) bytes / SAVE_ENTRY_SIZE else 0
+    }
+
+    /** Read a save entry for a given area and save index. */
+    fun readSaveEntry(area: Int, saveIndex: Int): SaveEntry? {
+        if (saveIndex < 0 || saveIndex >= saveEntryCount(area)) return null
+        val areaPtr = areaSavePointer(area) ?: return null
         val areaBase = snesToPc(0x800000 or areaPtr)
         val entryOff = areaBase + saveIndex * SAVE_ENTRY_SIZE
         if (entryOff + SAVE_ENTRY_SIZE > romData.size) return null

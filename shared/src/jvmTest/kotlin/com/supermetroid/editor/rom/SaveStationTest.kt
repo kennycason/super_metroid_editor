@@ -2,6 +2,7 @@ package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -32,6 +33,18 @@ class SaveStationTest {
             val entry = rp.readSaveEntry(area, 0)
             assertNotNull(entry, "Area $area should have at least one save entry")
             assertTrue(entry!!.roomId > 0, "Area $area save 0: Room ID should be non-zero")
+        }
+    }
+
+    @Test
+    fun `save entry reads are bounded to each area table`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+
+        for (area in 0..6) {
+            val count = rp.saveEntryCount(area)
+            assertTrue(count > 0, "Area $area should expose at least one save entry")
+            assertNotNull(rp.readSaveEntry(area, count - 1), "Area $area last save entry should be readable")
+            assertNull(rp.readSaveEntry(area, count), "Area $area should not read into the next area table")
         }
     }
 
