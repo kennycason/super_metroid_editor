@@ -17,7 +17,7 @@ Use these checks after opening a known-good Super Metroid ROM and a normal `.sme
 6. Confirm the large composer preview updates immediately as fields change.
 7. Use `Pick` to open the visual 8x8 tile picker, choose a different tile, and confirm the preview updates immediately.
 8. Change the palette row and confirm the picker redraws tiles using that same palette.
-9. Use the picker filters (`All`, `Area`, `CRE`) and confirm selected tile labels match the source.
+9. Use the picker filters (`All`, `Area 000-27F`, `CRE 280-3FF`) and confirm selected tile labels match the source.
 10. Click `Apply`.
 11. Confirm the full tileset grid and toolbar preview update after Apply.
 12. Close the composer and confirm the toolbar preview stays in sync.
@@ -39,6 +39,7 @@ Use these checks after opening a known-good Super Metroid ROM and a normal `.sme
 4. Confirm the same CRE metatile reflects the shared-table change there too.
 5. Use `Revert Common Metatiles (CRE)` and confirm it returns to ROM defaults.
 6. Pick an Area tile while editing a shared CRE metatile and confirm the warning appears.
+7. Open Kraid tileset `27` and confirm the picker labels all tiles as Area/no-CRE rather than showing a usable CRE range.
 
 ## ROM Export
 

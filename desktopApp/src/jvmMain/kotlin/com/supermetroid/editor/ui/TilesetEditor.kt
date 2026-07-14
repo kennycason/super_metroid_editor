@@ -758,14 +758,10 @@ private fun MetatileComposer(
             img.toComposeImageBitmap()
         }
     }
-    val tableScope = if (tileGraphics.isCreMetatileIndex(metatileIndex)) {
-        "Shared CRE metatile table"
-    } else {
-        "Tileset ${editorState.editorTilesetId} variable metatile table"
-    }
-    val selectedTileSource = tileSourceLabel(tileGraphics, selectedSubtile.tileNum)
+    val tableScope = tileGraphics.metatileTableSourceLabel(metatileIndex)
+    val selectedTileSource = tileGraphics.tileSourceLabel(selectedSubtile.tileNum)
     val creReferencesAreaTile = tileGraphics.isCreMetatileIndex(metatileIndex) &&
-            selectedSubtile.tileNum < tileGraphics.getCreOffset()
+            tileGraphics.tileSource(selectedSubtile.tileNum) == TileGraphics.TileSource.AREA
     val hasTableOverride = if (tileGraphics.isCreMetatileIndex(metatileIndex)) {
         editorState.hasCustomCreTileTable()
     } else {
@@ -794,6 +790,13 @@ private fun MetatileComposer(
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (!tileGraphics.isCreMetatileIndex(metatileIndex)) {
+                    Text(
+                        "tileset ${editorState.editorTilesetId}",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
                 if (hasTableOverride) {
                     Text("●", fontSize = 9.sp, color = Color(0xFF66BB6A))
                 }
@@ -920,7 +923,7 @@ private fun MetatileComposer(
                     Text(
                         selectedTileSource,
                         fontSize = 9.sp,
-                        color = if (selectedTileSource == "CRE") Color(0xFF42A5F5) else Color(0xFF66BB6A)
+                        color = tileSourceColor(tileGraphics, selectedSubtile.tileNum)
                     )
                     FilterChip(
                         selected = showTilePicker,
@@ -1026,7 +1029,7 @@ private fun SubtileSelector(
         ) {
             Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = fg)
             Text(
-                "${tileSourceLabel(tileGraphics, subtile.tileNum)} ${subtile.tileNum}  pal ${subtile.palette}",
+                "${tileGraphics.tileSourceLabel(subtile.tileNum)} ${subtile.tileNum}  pal ${subtile.palette}",
                 fontSize = 9.sp,
                 color = fg
             )
@@ -1098,18 +1101,18 @@ private fun VisualTilePicker(
                 FilterChip(
                     selected = scope == TilePickerScope.AREA,
                     onClick = { scope = TilePickerScope.AREA },
-                    label = { Text("Area", fontSize = 9.sp) },
+                    label = { Text("Area ${tileRangeLabel(0, creOffset)}", fontSize = 9.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
                     selected = scope == TilePickerScope.CRE,
                     enabled = hasCreTiles,
                     onClick = { scope = TilePickerScope.CRE },
-                    label = { Text("CRE", fontSize = 9.sp) },
+                    label = { Text(if (hasCreTiles) "CRE ${tileRangeLabel(creOffset, TileGraphics.TOTAL_TILES - creOffset)}" else "CRE none", fontSize = 9.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 Text(
-                    "${startTile.toString(16).uppercase().padStart(3, '0')}-${(startTile + tileCount - 1).toString(16).uppercase().padStart(3, '0')}",
+                    tileRangeLabel(startTile, tileCount),
                     fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1188,9 +1191,16 @@ private fun tilePickerImage(
     return img
 }
 
-private fun tileSourceLabel(tileGraphics: TileGraphics, tileNum: Int): String {
-    if (tileNum !in 0 until TileGraphics.TOTAL_TILES) return "Invalid"
-    return if (tileNum >= tileGraphics.getCreOffset()) "CRE" else "Area"
+private fun tileSourceColor(tileGraphics: TileGraphics, tileNum: Int): Color = when (tileGraphics.tileSource(tileNum)) {
+    TileGraphics.TileSource.CRE -> Color(0xFF42A5F5)
+    TileGraphics.TileSource.AREA -> Color(0xFF66BB6A)
+    TileGraphics.TileSource.INVALID -> Color(0xFFE57373)
+}
+
+private fun tileRangeLabel(startTile: Int, tileCount: Int): String {
+    if (tileCount <= 0) return "none"
+    val endTile = startTile + tileCount - 1
+    return "${startTile.toString(16).uppercase().padStart(3, '0')}-${endTile.toString(16).uppercase().padStart(3, '0')}"
 }
 
 // ─── Toolbar tile info (inline, horizontal) ────────────────────────────

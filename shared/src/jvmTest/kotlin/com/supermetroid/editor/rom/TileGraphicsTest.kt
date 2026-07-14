@@ -227,6 +227,17 @@ class TileGraphicsTest {
         }
 
         @Test
+        fun `metatile table source identifies CRE variable and invalid slots`() {
+            val g = gfx ?: return
+            g.loadTileset(0)
+
+            assertEquals(TileGraphics.MetatileTableSource.CRE, g.metatileTableSource(0))
+            assertEquals(TileGraphics.MetatileTableSource.VARIABLE, g.metatileTableSource(g.variableMetatileStart()))
+            assertEquals(TileGraphics.MetatileTableSource.INVALID, g.metatileTableSource(TileGraphics.METATILE_COUNT))
+            assertEquals("Shared CRE metatile table", g.metatileTableSourceLabel(0))
+        }
+
+        @Test
         fun `setMetatileWords updates raw variable tile table`() {
             val g = gfx ?: return
             g.invalidateCache()
@@ -279,6 +290,53 @@ class TileGraphicsTest {
             } finally {
                 g.invalidateCache()
             }
+        }
+
+        @Test
+        fun `custom variable metatile table round trips through fresh loader`() {
+            val rp = romParser ?: return
+            val g = TileGraphics(rp)
+            assertTrue(g.loadTileset(0))
+            val metatileIndex = g.variableMetatileStart() + 3
+            val edited = intArrayOf(
+                TileGraphics.encodeMetatileWord(tileNum = 0x022, palette = 1, priority = false, hFlip = false, vFlip = false),
+                TileGraphics.encodeMetatileWord(tileNum = 0x023, palette = 2, priority = true, hFlip = true, vFlip = false),
+                TileGraphics.encodeMetatileWord(tileNum = 0x024, palette = 3, priority = false, hFlip = false, vFlip = true),
+                TileGraphics.encodeMetatileWord(tileNum = 0x025, palette = 4, priority = true, hFlip = true, vFlip = true),
+            )
+
+            assertTrue(g.setMetatileWords(metatileIndex, edited))
+            val rawTable = g.getRawVarTileTable()
+            assertNotNull(rawTable)
+
+            val fresh = TileGraphics(rp)
+            assertTrue(fresh.loadTileset(0))
+            assertTrue(fresh.applyCustomVarTileTable(rawTable!!))
+            assertArrayEquals(edited, fresh.getMetatileWords(metatileIndex))
+        }
+
+        @Test
+        fun `custom CRE metatile table round trips through fresh loader`() {
+            val rp = romParser ?: return
+            val g = TileGraphics(rp)
+            assertTrue(g.loadTileset(0))
+            val metatileIndex = 2
+            assertTrue(g.isCreMetatileIndex(metatileIndex))
+            val edited = intArrayOf(
+                TileGraphics.encodeMetatileWord(tileNum = TileGraphics.CRE_TILE_START, palette = 0, priority = false, hFlip = false, vFlip = false),
+                TileGraphics.encodeMetatileWord(tileNum = TileGraphics.CRE_TILE_START + 1, palette = 1, priority = true, hFlip = false, vFlip = true),
+                TileGraphics.encodeMetatileWord(tileNum = TileGraphics.CRE_TILE_START + 2, palette = 2, priority = false, hFlip = true, vFlip = false),
+                TileGraphics.encodeMetatileWord(tileNum = TileGraphics.CRE_TILE_START + 3, palette = 3, priority = true, hFlip = true, vFlip = true),
+            )
+
+            assertTrue(g.setMetatileWords(metatileIndex, edited))
+            val rawTable = g.getRawCreTileTable()
+            assertNotNull(rawTable)
+
+            val fresh = TileGraphics(rp)
+            assertTrue(fresh.loadTileset(0))
+            assertTrue(fresh.applyCustomCreTileTable(rawTable!!))
+            assertArrayEquals(edited, fresh.getMetatileWords(metatileIndex))
         }
 
         @Test
@@ -485,6 +543,22 @@ class TileGraphicsTest {
             assertEquals(640, g.getCreOffset())
             assertEquals(640, g.getVarTileCount())
             assertEquals(384, g.getCreTileCount())
+        }
+
+        @Test
+        fun `tile source classification respects normal and Kraid CRE split`() {
+            val g = gfx ?: return
+            g.loadTileset(0)
+            assertEquals(TileGraphics.TileSource.AREA, g.tileSource(0))
+            assertEquals(TileGraphics.TileSource.AREA, g.tileSource(g.getCreOffset() - 1))
+            assertEquals(TileGraphics.TileSource.CRE, g.tileSource(g.getCreOffset()))
+            assertEquals(TileGraphics.TileSource.INVALID, g.tileSource(TileGraphics.TOTAL_TILES))
+
+            g.invalidateCache()
+            g.loadTileset(TileGraphics.KRAID_TILESET)
+            assertEquals(TileGraphics.TileSource.AREA, g.tileSource(TileGraphics.CRE_TILE_START))
+            assertEquals(TileGraphics.TileSource.AREA, g.tileSource(TileGraphics.TOTAL_TILES - 1))
+            assertEquals("Area", g.tileSourceLabel(TileGraphics.CRE_TILE_START))
         }
 
         @Test

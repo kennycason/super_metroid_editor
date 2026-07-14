@@ -32,6 +32,10 @@ data class MetatileSubtile(
 )
 
 class TileGraphics(private val romParser: RomParser) {
+    enum class TileSource { AREA, CRE, INVALID }
+
+    enum class MetatileTableSource { VARIABLE, CRE, INVALID }
+
     
     companion object {
         // Tileset pointer table: SNES $8F:E6A2, 29 entries × 9 bytes
@@ -441,6 +445,30 @@ class TileGraphics(private val romParser: RomParser) {
 
     /** Number of CRE tiles. */
     fun getCreTileCount(): Int = TOTAL_TILES - getCreOffset()
+
+    fun tileSource(tileNum: Int): TileSource = when {
+        tileNum !in 0 until TOTAL_TILES -> TileSource.INVALID
+        tileNum >= getCreOffset() -> TileSource.CRE
+        else -> TileSource.AREA
+    }
+
+    fun tileSourceLabel(tileNum: Int): String = when (tileSource(tileNum)) {
+        TileSource.AREA -> "Area"
+        TileSource.CRE -> "CRE"
+        TileSource.INVALID -> "Invalid"
+    }
+
+    fun metatileTableSource(index: Int): MetatileTableSource = when {
+        isCreMetatileIndex(index) -> MetatileTableSource.CRE
+        isVariableMetatileIndex(index) -> MetatileTableSource.VARIABLE
+        else -> MetatileTableSource.INVALID
+    }
+
+    fun metatileTableSourceLabel(index: Int): String = when (metatileTableSource(index)) {
+        MetatileTableSource.CRE -> "Shared CRE metatile table"
+        MetatileTableSource.VARIABLE -> "Tileset-local variable metatile table"
+        MetatileTableSource.INVALID -> "Undefined metatile slot"
+    }
 
     /**
      * Overwrite raw 4bpp tile data at a given tile index.
