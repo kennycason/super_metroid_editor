@@ -259,6 +259,8 @@ data class SmPatch(
 data class TilesetGfxData(
     val varGfx: MutableMap<String, String> = mutableMapOf(),         // key = tilesetId, value = base64 raw 4bpp
     var creGfx: String? = null,                                       // base64 raw 4bpp, shared
+    val tileTables: MutableMap<String, String> = mutableMapOf(),      // key = tilesetId, value = base64 raw variable metatile table
+    var creTileTable: String? = null,                                  // base64 raw CRE metatile table, shared
     val enemyGfx: MutableMap<String, String> = mutableMapOf(),       // key = speciesId hex, value = base64 PNG bytes
     val spriteTileBlocks: MutableMap<String, String> = mutableMapOf(), // key = "boss:N" (e.g. "phantoon:0"), value = base64 raw 4bpp
     val palettes: MutableMap<String, String> = mutableMapOf(),        // key = tilesetId, value = base64 BGR555 (256 bytes raw)

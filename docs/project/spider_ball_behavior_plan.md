@@ -125,6 +125,8 @@ Ceiling exits should mirror the wall behavior.
 |---------------|----------|-------------|-----------------|
 | `SpiderCeiling` | `Left` | Down/left or left/down probe | Left wall contact means transition to `SpiderWallLeft` |
 | `SpiderCeiling` | `Right` | Down/right or right/down probe | Right wall contact means transition to `SpiderWallRight` |
+| `SpiderCeiling` | `Left` | Left/up fallback | Right wall contact means transition to `SpiderWallRight` for climbing up an outside ledge |
+| `SpiderCeiling` | `Right` | Right/up fallback | Left wall contact means transition to `SpiderWallLeft` for climbing up an outside ledge |
 
 The exact order may need tuning against Super Metroid's collision helpers. The important rule is that the nudge must only commit when the matching wall contact is found.
 
@@ -287,6 +289,7 @@ Expected result:
 - Try the matching ceiling corner nudge.
 - Probe for the matching wall.
 - Enter `SpiderWallLeft` or `SpiderWallRight` if wall contact is found.
+- If the downward nudge misses, try a compact upward fallback so ceiling edges can turn onto walls above the ceiling.
 
 ### Ceiling Edge
 
@@ -334,6 +337,7 @@ Expected result:
 - Move down a wall around underside ledge: use a bounded away-from-wall nudge if needed, then transition to ceiling instead of falling.
 - On ceiling, press `Left`: move left.
 - On ceiling, press `Right`: move right.
+- Move from a ceiling edge onto a wall that continues upward: transition to wall instead of detaching.
 - Move across a plain ceiling edge with no continuation: detach and fall as vanilla morph.
 
 ## Non-Goals For First Stable Pass

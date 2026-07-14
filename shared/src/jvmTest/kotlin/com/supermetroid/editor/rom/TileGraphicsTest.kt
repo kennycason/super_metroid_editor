@@ -191,12 +191,94 @@ class TileGraphicsTest {
         }
 
         @Test
+        fun `renderMetatileWords matches renderMetatile for current definition`() {
+            val g = gfx ?: return
+            g.loadTileset(0)
+            val words = g.getMetatileWords(100) ?: return
+
+            assertArrayEquals(g.renderMetatile(100), g.renderMetatileWords(words))
+        }
+
+        @Test
         fun `getMetatileWords returns 4 sub-tile words`() {
             val g = gfx ?: return
             g.loadTileset(0)
             val words = g.getMetatileWords(0)
             assertNotNull(words)
             assertEquals(4, words!!.size)
+        }
+
+        @Test
+        fun `metatile word encode decode preserves tile palette priority and flips`() {
+            val word = TileGraphics.encodeMetatileWord(
+                tileNum = 0x123,
+                palette = 5,
+                priority = true,
+                hFlip = true,
+                vFlip = false,
+            )
+            val subtile = TileGraphics.decodeMetatileWord(word)
+
+            assertEquals(0x123, subtile.tileNum)
+            assertEquals(5, subtile.palette)
+            assertTrue(subtile.priority)
+            assertTrue(subtile.hFlip)
+            assertFalse(subtile.vFlip)
+        }
+
+        @Test
+        fun `setMetatileWords updates raw variable tile table`() {
+            val g = gfx ?: return
+            g.invalidateCache()
+            g.loadTileset(0)
+            try {
+                val metatileIndex = maxOf(g.variableMetatileStart(), 0)
+                val edited = g.getMetatileWords(metatileIndex)!!.copyOf()
+                edited[0] = TileGraphics.encodeMetatileWord(
+                    tileNum = 0x22,
+                    palette = 3,
+                    priority = true,
+                    hFlip = false,
+                    vFlip = true,
+                )
+
+                assertTrue(g.setMetatileWords(metatileIndex, edited))
+                assertArrayEquals(edited, g.getMetatileWords(metatileIndex))
+
+                val rawTable = g.getRawVarTileTable()
+                assertNotNull(rawTable)
+                val lo = rawTable!![0].toInt() and 0xFF
+                val hi = rawTable[1].toInt() and 0xFF
+                assertEquals(edited[0], (hi shl 8) or lo)
+            } finally {
+                g.invalidateCache()
+            }
+        }
+
+        @Test
+        fun `applyCustomVarTileTable updates loaded metatile definitions`() {
+            val g = gfx ?: return
+            g.invalidateCache()
+            g.loadTileset(0)
+            try {
+                val rawTable = g.getRawVarTileTable() ?: return
+                val newWord = TileGraphics.encodeMetatileWord(
+                    tileNum = 0x44,
+                    palette = 2,
+                    priority = false,
+                    hFlip = true,
+                    vFlip = true,
+                )
+                rawTable[0] = (newWord and 0xFF).toByte()
+                rawTable[1] = ((newWord shr 8) and 0xFF).toByte()
+
+                assertTrue(g.applyCustomVarTileTable(rawTable))
+                val words = g.getMetatileWords(g.variableMetatileStart())
+                assertNotNull(words)
+                assertEquals(newWord, words!![0])
+            } finally {
+                g.invalidateCache()
+            }
         }
 
         @Test

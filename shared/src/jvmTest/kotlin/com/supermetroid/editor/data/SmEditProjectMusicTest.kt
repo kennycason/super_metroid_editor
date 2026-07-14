@@ -56,4 +56,17 @@ class SmEditProjectMusicTest {
 
         assertTrue(decoded.musicEdits.isEmpty())
     }
+
+    @Test
+    fun `metatile table overrides survive project json round trip`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc")
+        project.customGfx.tileTables["3"] = "AAECAwQFBgc="
+        project.customGfx.creTileTable = "CAcGBQQDAgE="
+
+        val encoded = json.encodeToString(SmEditProject.serializer(), project)
+        val decoded = json.decodeFromString(SmEditProject.serializer(), encoded)
+
+        assertEquals("AAECAwQFBgc=", decoded.customGfx.tileTables["3"])
+        assertEquals("CAcGBQQDAgE=", decoded.customGfx.creTileTable)
+    }
 }

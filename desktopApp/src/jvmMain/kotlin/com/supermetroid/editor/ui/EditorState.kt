@@ -520,7 +520,7 @@ class EditorState {
         return true
     }
 
-    /** Apply any project-stored custom graphics and palette to a TileGraphics instance. */
+    /** Apply any project-stored custom graphics, metatile tables, and palette to a TileGraphics instance. */
     internal fun applyCustomGfxToTileGraphics(tg: TileGraphics, tilesetId: Int) {
         val gfxData = project.customGfx
         val varB64 = gfxData.varGfx[tilesetId.toString()]
@@ -531,6 +531,16 @@ class EditorState {
         val creB64 = gfxData.creGfx
         if (creB64 != null) {
             try { tg.applyCustomCreGfx(java.util.Base64.getDecoder().decode(creB64)) }
+            catch (_: Exception) {}
+        }
+        val tableB64 = gfxData.tileTables[tilesetId.toString()]
+        if (tableB64 != null) {
+            try { tg.applyCustomVarTileTable(java.util.Base64.getDecoder().decode(tableB64)) }
+            catch (_: Exception) {}
+        }
+        val creTableB64 = gfxData.creTileTable
+        if (creTableB64 != null) {
+            try { tg.applyCustomCreTileTable(java.util.Base64.getDecoder().decode(creTableB64)) }
             catch (_: Exception) {}
         }
         applyCustomPaletteToTileGraphics(tg, tilesetId)
@@ -578,6 +588,8 @@ class EditorState {
     fun hasCurrentTilesetOverrides(): Boolean =
         hasCustomVarGfx() ||
                 hasCustomCreGfx() ||
+                hasCustomVarTileTable() ||
+                hasCustomCreTileTable() ||
                 hasCustomPalette(editorTilesetId) ||
                 project.customGfx.paletteEffects.containsKey("tileset:$editorTilesetId")
 
@@ -585,6 +597,8 @@ class EditorState {
         areaTiles: Boolean,
         commonTiles: Boolean,
         palette: Boolean,
+        areaMetatiles: Boolean = false,
+        commonMetatiles: Boolean = false,
     ): Boolean {
         var changed = false
         val tilesetKey = editorTilesetId.toString()
@@ -593,6 +607,13 @@ class EditorState {
         }
         if (commonTiles && project.customGfx.creGfx != null) {
             project.customGfx.creGfx = null
+            changed = true
+        }
+        if (areaMetatiles && project.customGfx.tileTables.remove(tilesetKey) != null) {
+            changed = true
+        }
+        if (commonMetatiles && project.customGfx.creTileTable != null) {
+            project.customGfx.creTileTable = null
             changed = true
         }
         if (palette) {
@@ -778,6 +799,37 @@ class EditorState {
     /** Check whether custom graphics exist for the current tileset. */
     fun hasCustomVarGfx(): Boolean = project.customGfx.varGfx.containsKey(editorTilesetId.toString())
     fun hasCustomCreGfx(): Boolean = project.customGfx.creGfx != null
+    fun hasCustomVarTileTable(): Boolean = project.customGfx.tileTables.containsKey(editorTilesetId.toString())
+    fun hasCustomCreTileTable(): Boolean = project.customGfx.creTileTable != null
+
+    fun saveCurrentMetatileTableOverride(): Boolean {
+        val tg = editorTileGraphics ?: return false
+        val selected = editorSelectedMetatile
+        if (selected !in 0 until TileGraphics.METATILE_COUNT) return false
+        if (!tg.isCreMetatileIndex(selected) && !tg.isVariableMetatileIndex(selected)) return false
+
+        val raw = if (tg.isCreMetatileIndex(selected)) {
+            tg.getRawCreTileTable() ?: return false
+        } else {
+            tg.getRawVarTileTable() ?: return false
+        }
+        val b64 = java.util.Base64.getEncoder().encodeToString(raw)
+        if (tg.isCreMetatileIndex(selected)) {
+            project.customGfx.creTileTable = b64
+        } else {
+            project.customGfx.tileTables[editorTilesetId.toString()] = b64
+        }
+        dirty = true
+        return true
+    }
+
+    fun setCurrentMetatileWords(words: IntArray): Boolean {
+        val tg = editorTileGraphics ?: return false
+        val selected = editorSelectedMetatile
+        if (!tg.isCreMetatileIndex(selected) && !tg.isVariableMetatileIndex(selected)) return false
+        if (!tg.setMetatileWords(selected, words)) return false
+        return saveCurrentMetatileTableOverride()
+    }
 
     // ── Enemy / Boss sprite graphics ──────────────────────────────────────────
 
@@ -6035,6 +6087,56 @@ class EditorState {
                     editorLog("WARN: Compressed tileset $tsId gfx (${compressed.size}) exceeds original ($origSize) — skipped")
                 }
             } catch (e: Exception) { editorLog("WARN: Tileset $tsId gfx patch failed: ${e.message}") }
+        }
+
+        // Custom shared CRE metatile table (raw 4-word metatile entries -> LZ5 compress -> write in-place)
+        val creTableB64 = gfxData.creTileTable
+        if (creTableB64 != null) {
+            try {
+                val rawCreTable = java.util.Base64.getDecoder().decode(creTableB64)
+                if (rawCreTable.isEmpty() || rawCreTable.size % 8 != 0) {
+                    editorLog("WARN: CRE metatile table has ${rawCreTable.size} bytes (expected non-empty multiple of 8) — skipped")
+                } else {
+                    val compressed = lz5Compress(rawCreTable)
+                    val creTablePc = romParser.snesToPc(TileGraphics.CRE_TILE_TABLE_SNES)
+                    val (_, origSize) = romParser.decompressLZ2WithSize(TileGraphics.CRE_TILE_TABLE_SNES)
+                    if (compressed.size <= origSize) {
+                        System.arraycopy(compressed, 0, romData, creTablePc, compressed.size)
+                        for (i in compressed.size until origSize) romData[creTablePc + i] = 0xFF.toByte()
+                        gfxPatched++
+                        editorLog("Patched CRE metatile table in-place (${compressed.size}/$origSize bytes)")
+                    } else {
+                        editorLog("WARN: Compressed CRE metatile table (${compressed.size}) exceeds original ($origSize) — skipped")
+                    }
+                }
+            } catch (e: Exception) { editorLog("WARN: CRE metatile table patch failed: ${e.message}") }
+        }
+
+        // Custom variable (URE) metatile tables per tileset
+        for ((tsIdStr, tableB64) in gfxData.tileTables) {
+            val tsId = tsIdStr.toIntOrNull() ?: continue
+            try {
+                val rawTable = java.util.Base64.getDecoder().decode(tableB64)
+                if (rawTable.isEmpty() || rawTable.size % 8 != 0) {
+                    editorLog("WARN: Tileset $tsId metatile table has ${rawTable.size} bytes (expected non-empty multiple of 8) — skipped")
+                    continue
+                }
+                val compressed = lz5Compress(rawTable)
+                val entryOffset = tablePC + tsId * 9
+                val tableSnes = (romData[entryOffset].toInt() and 0xFF) or
+                        ((romData[entryOffset + 1].toInt() and 0xFF) shl 8) or
+                        ((romData[entryOffset + 2].toInt() and 0xFF) shl 16)
+                val tablePc = romParser.snesToPc(tableSnes)
+                val (_, origSize) = romParser.decompressLZ2WithSize(tableSnes)
+                if (compressed.size <= origSize) {
+                    System.arraycopy(compressed, 0, romData, tablePc, compressed.size)
+                    for (i in compressed.size until origSize) romData[tablePc + i] = 0xFF.toByte()
+                    gfxPatched++
+                    editorLog("Patched tileset $tsId metatile table in-place (${compressed.size}/$origSize bytes)")
+                } else {
+                    editorLog("WARN: Compressed tileset $tsId metatile table (${compressed.size}) exceeds original ($origSize) — skipped")
+                }
+            } catch (e: Exception) { editorLog("WARN: Tileset $tsId metatile table patch failed: ${e.message}") }
         }
 
         // Custom palette overrides per tileset (raw BGR555 → LZ5 compress → write in-place)

@@ -23,6 +23,14 @@ package com.supermetroid.editor.rom
  *   - SNESLab wiki: https://sneslab.net/wiki/LZ5
  *   - Metroid Construction: room_data_format
  */
+data class MetatileSubtile(
+    val tileNum: Int,
+    val palette: Int,
+    val priority: Boolean,
+    val hFlip: Boolean,
+    val vFlip: Boolean,
+)
+
 class TileGraphics(private val romParser: RomParser) {
     
     companion object {
@@ -50,6 +58,29 @@ class TileGraphics(private val romParser: RomParser) {
 
         // Standard CRE graphics placement offset (tiles 640-1023)
         private const val CRE_GFX_OFFSET = 0x5000  // 640 tiles × 32 bytes
+
+        fun encodeMetatileWord(
+            tileNum: Int,
+            palette: Int,
+            priority: Boolean = false,
+            hFlip: Boolean = false,
+            vFlip: Boolean = false,
+        ): Int {
+            return (tileNum.coerceIn(0, TOTAL_TILES - 1) and 0x03FF) or
+                ((palette.coerceIn(0, 7) and 7) shl 10) or
+                (if (priority) 0x2000 else 0) or
+                (if (hFlip) 0x4000 else 0) or
+                (if (vFlip) 0x8000 else 0)
+        }
+
+        fun decodeMetatileWord(word: Int): MetatileSubtile =
+            MetatileSubtile(
+                tileNum = word and 0x03FF,
+                palette = (word shr 10) and 7,
+                priority = (word and 0x2000) != 0,
+                hFlip = (word and 0x4000) != 0,
+                vFlip = (word and 0x8000) != 0,
+            )
     }
 
     // Cached data per tileset
@@ -59,6 +90,9 @@ class TileGraphics(private val romParser: RomParser) {
     private var metatiles: Array<IntArray>? = null       // metatile[idx] = 4 sub-tile words
     private var cachedPalette: Array<IntArray>? = null   // 8 palettes × 16 ARGB colors
     private var cachedDefinedMetatiles: Int = 0          // Entries actually present in the tile table
+    private var cachedCreTableMetatileCount: Int = 0
+    private var cachedVarTableStartMetatile: Int = 0
+    private var cachedVarTableMetatileCount: Int = 0
 
     /**
      * Number of metatile slots the loaded tileset's tile table actually
@@ -119,10 +153,16 @@ class TileGraphics(private val romParser: RomParser) {
         if (varTableCoversAll) {
             metatiles = parseTileTableRaw(varTileTable)
             cachedDefinedMetatiles = METATILE_COUNT
+            cachedCreTableMetatileCount = 0
+            cachedVarTableStartMetatile = 0
+            cachedVarTableMetatileCount = METATILE_COUNT
         } else {
             val creTileTable = romParser.decompressLZ2(CRE_TILE_TABLE_SNES)
             metatiles = parseTileTable(varTileTable, creTileTable)
             cachedDefinedMetatiles = minOf((creTileTable.size + varTileTable.size) / 8, METATILE_COUNT)
+            cachedCreTableMetatileCount = minOf(creTileTable.size / 8, METATILE_COUNT)
+            cachedVarTableStartMetatile = cachedCreTableMetatileCount
+            cachedVarTableMetatileCount = minOf(varTileTable.size / 8, METATILE_COUNT - cachedVarTableStartMetatile)
         }
 
         // Graphics: variable tiles first, CRE overlays at offset 0x5000 (tiles 640-1023).
@@ -165,30 +205,32 @@ class TileGraphics(private val romParser: RomParser) {
      */
     fun renderMetatile(metatileIndex: Int): IntArray? {
         val metas = metatiles ?: return null
-        val pal = cachedPalette ?: return null
-        if (rawTileData == null) return null
-        
         if (metatileIndex < 0 || metatileIndex >= metas.size) return null
-        
-        val meta = metas[metatileIndex]
+        return renderMetatileWords(metas[metatileIndex])
+    }
+
+    fun renderMetatileWords(words: IntArray): IntArray? {
+        val pal = cachedPalette ?: return null
+        if (rawTileData == null || words.size != 4) return null
+
         val pixels = IntArray(16 * 16)
-        
+
         // 4 sub-tiles: TL(0), TR(1), BL(2), BR(3)
         for (quadrant in 0..3) {
-            val word = meta[quadrant]
+            val word = words[quadrant]
             val tileNum = word and 0x03FF
             val paletteIdx = (word shr 10) and 7
             val hFlip = (word shr 14) and 1
             val vFlip = (word shr 15) and 1
-            
+
             if (tileNum >= TOTAL_TILES) continue
-            
+
             val baseX = if (quadrant % 2 == 0) 0 else 8
             val baseY = if (quadrant < 2) 0 else 8
-            
+
             // Decode this 8x8 tile with its specific palette
             val subTilePixels = decode4bppTileWithPalette(tileNum, pal, paletteIdx)
-            
+
             for (py in 0 until 8) {
                 for (px in 0 until 8) {
                     val sx = if (hFlip != 0) 7 - px else px
@@ -199,7 +241,7 @@ class TileGraphics(private val romParser: RomParser) {
                 }
             }
         }
-        
+
         return pixels
     }
     
@@ -515,6 +557,44 @@ class TileGraphics(private val romParser: RomParser) {
         return metas[metatileIndex].copyOf()
     }
 
+    fun setMetatileWords(metatileIndex: Int, words: IntArray): Boolean {
+        val metas = metatiles ?: return false
+        if (metatileIndex !in metas.indices || words.size != 4) return false
+        metas[metatileIndex] = IntArray(4) { words[it] and 0xFFFF }
+        return true
+    }
+
+    fun setMetatileWord(metatileIndex: Int, quadrant: Int, word: Int): Boolean {
+        val metas = metatiles ?: return false
+        if (metatileIndex !in metas.indices || quadrant !in 0..3) return false
+        metas[metatileIndex][quadrant] = word and 0xFFFF
+        return true
+    }
+
+    fun variableMetatileStart(): Int = cachedVarTableStartMetatile
+
+    fun variableMetatileCount(): Int = cachedVarTableMetatileCount
+
+    fun creMetatileCount(): Int = cachedCreTableMetatileCount
+
+    fun isCreMetatileIndex(index: Int): Boolean =
+        cachedHasCre && index in 0 until cachedCreTableMetatileCount
+
+    fun isVariableMetatileIndex(index: Int): Boolean =
+        index in cachedVarTableStartMetatile until (cachedVarTableStartMetatile + cachedVarTableMetatileCount)
+
+    fun getRawVarTileTable(): ByteArray? =
+        exportTileTableRange(cachedVarTableStartMetatile, cachedVarTableMetatileCount)
+
+    fun getRawCreTileTable(): ByteArray? =
+        if (cachedCreTableMetatileCount > 0) exportTileTableRange(0, cachedCreTableMetatileCount) else null
+
+    fun applyCustomVarTileTable(rawTable: ByteArray): Boolean =
+        applyTileTableRange(rawTable, cachedVarTableStartMetatile, cachedVarTableMetatileCount)
+
+    fun applyCustomCreTileTable(rawTable: ByteArray): Boolean =
+        if (cachedCreTableMetatileCount > 0) applyTileTableRange(rawTable, 0, cachedCreTableMetatileCount) else false
+
     /**
      * Read palette index (0-15) at a pixel in the 16x16 metatile.
      * screenPx, screenPy in 0..15. Maps to correct 8x8 sub-tile and accounts for flips.
@@ -683,6 +763,41 @@ class TileGraphics(private val romParser: RomParser) {
             }
         }
         return result
+    }
+
+    private fun exportTileTableRange(startMetatile: Int, metatileCount: Int): ByteArray? {
+        val metas = metatiles ?: return null
+        if (startMetatile < 0 || metatileCount <= 0 || startMetatile + metatileCount > metas.size) return null
+        val out = ByteArray(metatileCount * 8)
+        for (i in 0 until metatileCount) {
+            val words = metas[startMetatile + i]
+            val offset = i * 8
+            for (q in 0..3) {
+                val word = words[q] and 0xFFFF
+                out[offset + q * 2] = (word and 0xFF).toByte()
+                out[offset + q * 2 + 1] = ((word shr 8) and 0xFF).toByte()
+            }
+        }
+        return out
+    }
+
+    private fun applyTileTableRange(rawTable: ByteArray, startMetatile: Int, maxMetatiles: Int): Boolean {
+        val metas = metatiles ?: return false
+        if (rawTable.isEmpty() || rawTable.size % 8 != 0 || startMetatile < 0 || maxMetatiles <= 0) return false
+        val count = minOf(rawTable.size / 8, maxMetatiles, metas.size - startMetatile)
+        if (count <= 0) return false
+        for (i in 0 until count) {
+            val offset = i * 8
+            val words = IntArray(4)
+            for (q in 0..3) {
+                val lo = rawTable[offset + q * 2].toInt() and 0xFF
+                val hi = rawTable[offset + q * 2 + 1].toInt() and 0xFF
+                words[q] = (hi shl 8) or lo
+            }
+            metas[startMetatile + i] = words
+        }
+        cachedDefinedMetatiles = maxOf(cachedDefinedMetatiles, startMetatile + count)
+        return true
     }
     
     /**
