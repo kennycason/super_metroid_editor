@@ -718,7 +718,7 @@ fun MapCanvas(
         TileOverlay.LIQUID to true,
     ) }
     val overlayCount = overlayToggles.values.count { it }
-    
+
     val mapFocusReq = remember { FocusRequester() }
     Card(
         modifier = modifier,
@@ -729,102 +729,116 @@ fun MapCanvas(
             .focusRequester(mapFocusReq)
             .focusable()
             .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyDown && editorState != null) {
-                    when (keyEvent.key) {
-                        Key.H -> { editorState.flipOrCaptureH(); true }
-                        Key.C -> {
-                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
-                                editorState.copyMapSelectionToBrush(); true
-                            } else false
-                        }
-                        Key.V -> {
-                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
-                                val bx = editorState.hoverBlockX.takeIf { it >= 0 } ?: editorState.floatingSelection?.x ?: 0
-                                val by = editorState.hoverBlockY.takeIf { it >= 0 } ?: editorState.floatingSelection?.y ?: 0
-                                editorState.beginFloatingSelectionFromBrushAt(bx, by); true
-                            } else {
-                                editorState.flipOrCaptureV(); true
-                            }
-                        }
-                        Key.R -> { editorState.rotateOrCapture(); true }
-                        Key.DirectionUp -> {
-                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
-                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
-                                editorState.shiftSelection(0, -step); true
-                            } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
-                                val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
-                                val newIdx = if (currentIdx > 0) currentIdx - 1 else rooms.lastIndex
-                                if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
-                                true
-                            } else false
-                        }
-                        Key.DirectionDown -> {
-                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
-                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
-                                editorState.shiftSelection(0, step); true
-                            } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
-                                val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
-                                val newIdx = if (currentIdx < rooms.lastIndex) currentIdx + 1 else 0
-                                if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
-                                true
-                            } else false
-                        }
-                        Key.DirectionLeft -> {
-                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
-                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
-                                editorState.shiftSelection(-step, 0); true
-                            } else false
-                        }
-                        Key.DirectionRight -> {
-                            if (editorState.floatingSelection != null || (editorState.mapSelStart != null && editorState.mapSelEnd != null)) {
-                                val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
-                                editorState.shiftSelection(step, 0); true
-                            } else false
-                        }
-                        Key.Z -> {
-                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
-                                if (keyEvent.isShiftPressed) editorState.redo() else editorState.undo()
-                                true
-                            } else false
-                        }
-                        Key.Y -> {
-                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
-                                editorState.redo(); true
-                            } else false
-                        }
-                        Key.S -> {
-                            if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
-                                editorState.saveProject(romParser); true
-                            } else { editorState.activeTool = EditorTool.SELECT; true }
-                        }
-                        Key.P -> {
-                            if (editorState.mapSelStart != null && editorState.mapSelEnd != null) {
-                                editorState.beginFloatingSelectionFromMapSelection()
-                            } else {
-                                editorState.cancelFloatingSelection()
-                                editorState.activeTool = EditorTool.PAINT
-                            }; true
-                        }
-                        Key.F -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.FILL; true }
-                        Key.E -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.ERASE; true }
-                        Key.I -> { editorState.cancelFloatingSelection(); editorState.activeTool = EditorTool.SAMPLE; true }
-                        Key.Enter -> {
-                            if (editorState.floatingSelection != null) {
-                                editorState.commitFloatingSelection(); true
-                            } else if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
-                                editorState.beginFloatingSelectionFromMapSelection(); true
-                            } else false
-                        }
-                        Key.Escape -> {
-                            if (editorState.cancelFloatingSelection()) {
-                                true
-                            } else if (editorState.activeTool == EditorTool.SELECT && editorState.mapSelStart != null) {
-                                editorState.mapSelStart = null; editorState.mapSelEnd = null; true
-                            } else false
-                        }
-                        else -> false
+                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (keyEvent.key) {
+                    Key.Equals -> {
+                        zoomState.value = (zoomLevel * EditorColors.ZOOM_FACTOR).coerceIn(0.25f, 4f)
+                        true
                     }
-                } else false
+                    Key.Minus -> {
+                        zoomState.value = (zoomLevel / EditorColors.ZOOM_FACTOR).coerceIn(0.25f, 4f)
+                        true
+                    }
+                    else -> {
+                        val es = editorState ?: return@onPreviewKeyEvent false
+                        when (keyEvent.key) {
+                            Key.H -> { es.flipOrCaptureH(); true }
+                            Key.C -> {
+                                if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                    es.copyMapSelectionToBrush(); true
+                                } else false
+                            }
+                            Key.V -> {
+                                if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                    val bx = es.hoverBlockX.takeIf { it >= 0 } ?: es.floatingSelection?.x ?: 0
+                                    val by = es.hoverBlockY.takeIf { it >= 0 } ?: es.floatingSelection?.y ?: 0
+                                    es.beginFloatingSelectionFromBrushAt(bx, by); true
+                                } else {
+                                    es.flipOrCaptureV(); true
+                                }
+                            }
+                            Key.R -> { es.rotateOrCapture(); true }
+                            Key.DirectionUp -> {
+                                if (es.floatingSelection != null || (es.mapSelStart != null && es.mapSelEnd != null)) {
+                                    val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                    es.shiftSelection(0, -step); true
+                                } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
+                                    val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
+                                    val newIdx = if (currentIdx > 0) currentIdx - 1 else rooms.lastIndex
+                                    if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
+                                    true
+                                } else false
+                            }
+                            Key.DirectionDown -> {
+                                if (es.floatingSelection != null || (es.mapSelStart != null && es.mapSelEnd != null)) {
+                                    val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                    es.shiftSelection(0, step); true
+                                } else if (roomKeyboardNavigationEnabled && onRoomSelected != null && rooms.isNotEmpty()) {
+                                    val currentIdx = rooms.indexOfFirst { it.handle == room?.handle }
+                                    val newIdx = if (currentIdx < rooms.lastIndex) currentIdx + 1 else 0
+                                    if (newIdx in rooms.indices) onRoomSelected(rooms[newIdx])
+                                    true
+                                } else false
+                            }
+                            Key.DirectionLeft -> {
+                                if (es.floatingSelection != null || (es.mapSelStart != null && es.mapSelEnd != null)) {
+                                    val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                    es.shiftSelection(-step, 0); true
+                                } else false
+                            }
+                            Key.DirectionRight -> {
+                                if (es.floatingSelection != null || (es.mapSelStart != null && es.mapSelEnd != null)) {
+                                    val step = if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) 16 else 1
+                                    es.shiftSelection(step, 0); true
+                                } else false
+                            }
+                            Key.Z -> {
+                                if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                    if (keyEvent.isShiftPressed) es.redo() else es.undo()
+                                    true
+                                } else false
+                            }
+                            Key.Y -> {
+                                if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                    es.redo(); true
+                                } else false
+                            }
+                            Key.S -> {
+                                if (keyEvent.isCtrlPressed || keyEvent.isMetaPressed) {
+                                    es.saveProject(romParser); true
+                                } else {
+                                    es.activeTool = EditorTool.SELECT; true
+                                }
+                            }
+                            Key.P -> {
+                                if (es.mapSelStart != null && es.mapSelEnd != null) {
+                                    es.beginFloatingSelectionFromMapSelection()
+                                } else {
+                                    es.cancelFloatingSelection()
+                                    es.activeTool = EditorTool.PAINT
+                                }; true
+                            }
+                            Key.F -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.FILL; true }
+                            Key.E -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.ERASE; true }
+                            Key.I -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.SAMPLE; true }
+                            Key.Enter -> {
+                                if (es.floatingSelection != null) {
+                                    es.commitFloatingSelection(); true
+                                } else if (es.activeTool == EditorTool.SELECT && es.mapSelStart != null) {
+                                    es.beginFloatingSelectionFromMapSelection(); true
+                                } else false
+                            }
+                            Key.Escape -> {
+                                if (es.cancelFloatingSelection()) {
+                                    true
+                                } else if (es.activeTool == EditorTool.SELECT && es.mapSelStart != null) {
+                                    es.mapSelStart = null; es.mapSelEnd = null; true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    }
+                }
             }
         ) {
             if (room != null && romParser != null) {
@@ -866,9 +880,9 @@ fun MapCanvas(
                         isLoading = false
                     }
                 }
-                
+
                 val editVersion = editorState?.editVersion ?: 0
-                
+
                 // ─── Compact toolbar ─────────────────────────────
                 FlowRow(
                     modifier = Modifier
@@ -887,7 +901,7 @@ fun MapCanvas(
                         steps = 14,
                         modifier = Modifier.width(80.dp).height(28.dp)
                     )
-                    
+
                     // Grid toggle
                     FilterChip(
                         selected = showGrid,
@@ -914,7 +928,7 @@ fun MapCanvas(
                     }
 
                     Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                    
+
                     // Tile Meta multi-select dropdown (trigger: icon like map + label, same color as map square)
                     val firstOverlay = overlayToggles.entries.firstOrNull { it.value }?.key
                     val triggerBg = firstOverlay?.let { Color(it.color.toInt()) } ?: MaterialTheme.colorScheme.surfaceVariant
@@ -975,11 +989,33 @@ fun MapCanvas(
                             }
                         }
                     }
-                    
+
                     // ─── Editor tools ─────────────────────────────
                     if (editorState != null) {
                         Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                        
+
+                        val canEditLayer2 = editorState.canEditEmbeddedLayer2()
+                        FilterChip(
+                            selected = editorState.activeRoomLayer == RoomEditLayer.LAYER1,
+                            onClick = {
+                                editorState.activeRoomLayer = RoomEditLayer.LAYER1
+                                mapFocusReq.requestFocus()
+                            },
+                            label = { Text("L1", fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        FilterChip(
+                            selected = editorState.activeRoomLayer == RoomEditLayer.LAYER2,
+                            enabled = canEditLayer2,
+                            onClick = {
+                                if (canEditLayer2) editorState.activeRoomLayer = RoomEditLayer.LAYER2
+                                mapFocusReq.requestFocus()
+                            },
+                            label = { Text("L2", fontSize = 11.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                        Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+
                         // Tool selection with icons
                         FilterChip(
                             selected = editorState.activeTool == EditorTool.SELECT,
@@ -1019,9 +1055,9 @@ fun MapCanvas(
                             label = { Icon(Icons.Default.Colorize, contentDescription = "Sample (I)", modifier = Modifier.size(14.dp)) },
                             modifier = Modifier.height(28.dp)
                         )
-                        
+
                         Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
-                        
+
                         // Undo / Redo with icons
                         @Suppress("UNUSED_VARIABLE") val uv = editorState.undoVersion
                         IconButton(
@@ -1045,7 +1081,7 @@ fun MapCanvas(
                                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
                         }
 
-                        
+
                         Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 
                         // Flip / Rotate buttons
@@ -1198,7 +1234,10 @@ fun MapCanvas(
                             // Use effective dimensions from EditorState (updates immediately on resize)
                             val effectiveBlocksWide = editorState?.workingBlocksWide ?: data.blocksWide
                             val effectiveBlocksTall = editorState?.workingBlocksTall ?: data.blocksTall
-                            val activeOverlays = overlayToggles.filter { it.value }.keys
+                            val activeOverlays = (
+                                overlayToggles.filter { it.value }.keys +
+                                    if (editorState?.activeRoomLayer == RoomEditLayer.LAYER2) setOf(TileOverlay.LAYER2) else emptySet()
+                                ).toSet()
                             val customItems = remember(editorState?.patchVersion, editorState?.project?.patches) {
                                 editorState?.enabledCustomItems().orEmpty()
                             }
@@ -1235,7 +1274,7 @@ fun MapCanvas(
                             val layer3Data = layer3Info?.first
 
                             // Layer 2 BG overlay data
-                            val layer2Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER2)) {
+                            val layer2Data = remember(roomHeader, activeOverlays.contains(TileOverlay.LAYER2), editVersion) {
                                 if (!activeOverlays.contains(TileOverlay.LAYER2) || roomHeader == null || romParser == null) null
                                 else {
                                     val renderer = MapRenderer(romParser, editorState?.tileGraphics)
@@ -1248,16 +1287,16 @@ fun MapCanvas(
                                     layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
                                     showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                             }
-                            
+
                             val hScrollState = rememberScrollState()
                             val vScrollState = rememberScrollState()
                             val coroutineScope = rememberCoroutineScope()
                             var isDragging by remember { mutableStateOf(false) }
                             var lastDragX by remember { mutableStateOf(0f) }
                             var lastDragY by remember { mutableStateOf(0f) }
-                            
+
                             var isPainting by remember { mutableStateOf(false) }
-                            
+
                             // Right-click properties popup state
                             var propsBlockX by remember { mutableStateOf(-1) }
                             var propsBlockY by remember { mutableStateOf(-1) }
@@ -1271,7 +1310,7 @@ fun MapCanvas(
                             var contextMenuOffset by remember { mutableStateOf(DpOffset.Zero) }
                             var showSavePatternDialog by remember { mutableStateOf(false) }
                             val density = LocalDensity.current.density
-                            
+
                             fun pointerToBlock(posX: Float, posY: Float): Pair<Int, Int> {
                                 // Pointer & scroll are in physical pixels; layout uses dp.
                                 // Tile display size in pointer units = 16 * zoom * density.
@@ -1281,7 +1320,7 @@ fun MapCanvas(
                                     ((posY + vScrollState.value) / tilePx).toInt()
                                 )
                             }
-                            
+
                             // Re-render from working data (reacts to editVersion from EditorState)
                             val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames, showFlatSlopeSurfaces) {
                                 val es = editorState
@@ -1297,7 +1336,7 @@ fun MapCanvas(
                                 compositeImage
                             }
                             val editBitmap = remember(compositeForEdit) { compositeForEdit.toComposeImageBitmap() }
-                            
+
                             LaunchedEffect(Unit) { mapFocusReq.requestFocus() }
                             var canvasViewW by remember { mutableStateOf(0) }
                             var canvasViewH by remember { mutableStateOf(0) }
@@ -1362,10 +1401,10 @@ fun MapCanvas(
                                             val hasMultiSel = ss != null && se != null &&
                                                 (kotlin.math.abs(ss.first - se.first) > 0 || kotlin.math.abs(ss.second - se.second) > 0)
 
-                                            if (hasMultiSel) {
+                                            if (hasMultiSel && editorState.activeRoomLayer == RoomEditLayer.LAYER1) {
                                                 contextMenuOffset = DpOffset((pos.x / density).dp, (pos.y / density).dp)
                                                 contextMenuExpanded = true
-                                            } else {
+                                            } else if (editorState.activeRoomLayer == RoomEditLayer.LAYER1) {
                                                 if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
                                                     val word = editorState.readBlockWord(bx, by)
                                                     propsBlockX = bx; propsBlockY = by
@@ -1431,7 +1470,8 @@ fun MapCanvas(
                                             isPainting = false
                                             val ss = editorState?.mapSelStart
                                             val se = editorState?.mapSelEnd
-                                            if (ss != null && se != null && ss == se && editorState != null) {
+                                            if (ss != null && se != null && ss == se && editorState != null &&
+                                                editorState.activeRoomLayer == RoomEditLayer.LAYER1) {
                                                 val bx = ss.first; val by = ss.second
                                                 if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
                                                     val word = editorState.readBlockWord(bx, by)
@@ -3775,15 +3815,15 @@ private fun buildCompositeImage(
             y += SCREEN_PX
         }
     }
-    
+
     if (activeOverlays.isEmpty()) {
         g.dispose()
         return img
     }
-    
+
     val blocksWide = data.blocksWide
     val blocksTall = data.blocksTall
-    
+
     if (blocksWide == 0 || blocksTall == 0 || data.blockTypes.isEmpty()) {
         g.dispose()
         return img
@@ -3808,12 +3848,12 @@ private fun buildCompositeImage(
         for (bx in 0 until blocksWide) {
             val idx = by * blocksWide + bx
             if (idx >= data.blockTypes.size) continue
-            
+
             val blockType = data.blockTypes[idx]
             val bts = if (idx < btsData.size) btsData[idx].toInt() and 0xFF else 0
             val px = bx * 16
             val py = by * 16
-            
+
             val matchingOverlays = mutableListOf<TileOverlay>()
             if (activeOverlays.contains(TileOverlay.SOLID) && blockType == 0x8) matchingOverlays.add(TileOverlay.SOLID)
             if (activeOverlays.contains(TileOverlay.SLOPE) && blockType == 0x1) matchingOverlays.add(TileOverlay.SLOPE)
@@ -3837,7 +3877,7 @@ private fun buildCompositeImage(
             if (activeOverlays.contains(TileOverlay.GRAPPLE) && blockType == 0xE) matchingOverlays.add(TileOverlay.GRAPPLE)
             if (activeOverlays.contains(TileOverlay.TREADMILL) && blockType == 0x3) matchingOverlays.add(TileOverlay.TREADMILL)
             if (activeOverlays.contains(TileOverlay.ITEMS) && itemBlocks.contains(idx)) matchingOverlays.add(TileOverlay.ITEMS)
-            
+
             // Overlay icons: 1/4 tile size (8×8 in a 16×16 tile), bottom-right quadrant
             val iconSize = 8
             var iconX = px + 16 - iconSize
@@ -3880,7 +3920,7 @@ private fun buildCompositeImage(
             }
         }
     }
-    
+
     // Draw item / station / gate / door cap labels (positioned at PLM block coordinates)
     if (activeOverlays.contains(TileOverlay.ITEMS) && data.plmEntries.isNotEmpty()) {
         val g2 = g as java.awt.Graphics2D

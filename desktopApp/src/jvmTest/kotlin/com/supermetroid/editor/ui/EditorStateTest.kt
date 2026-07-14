@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.TestRomHelper
@@ -34,6 +35,61 @@ class EditorStateTest {
         val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
         val idx = by * 4 + bx
         data[2 + layer1Size + idx] = bts.toByte()
+    }
+
+    private fun writeLayer2Word(bx: Int, by: Int, word: Int) {
+        val data = state.workingLevelData!!
+        val totalTiles = 4 * 4
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val idx = by * 4 + bx
+        val offset = 2 + layer1Size + totalTiles + idx * 2
+        data[offset] = (word and 0xFF).toByte()
+        data[offset + 1] = ((word shr 8) and 0xFF).toByte()
+    }
+
+    @Nested
+    inner class Layer2Editing {
+        @Test
+        fun `paint edits embedded layer 2 without changing layer 1`() {
+            state.initTestLevel(blocksWide = 4, blocksTall = 4, includeLayer2 = true)
+            writeWord(0, 0, 0x8001)
+            writeLayer2Word(0, 0, 0x0020)
+
+            state.activeRoomLayer = RoomEditLayer.LAYER2
+            state.setBrushForTest(TileBrush.single(0x123).copy(hFlip = true, vFlip = true))
+            state.beginStroke()
+            assertTrue(state.paintAt(0, 0))
+            state.endStroke()
+
+            assertEquals(0x0D23, state.readLayer2BlockWord(0, 0))
+            assertEquals(0x8001, state.readBlockWord(0, 0))
+            val edit = state.undoStack.last().edits.single()
+            assertEquals(TILE_EDIT_LAYER_2, edit.layer)
+            assertEquals(0x0020, edit.oldBlockWord)
+            assertEquals(0x0D23, edit.newBlockWord)
+        }
+
+        @Test
+        fun `undo redo and sample use embedded layer 2 words`() {
+            state.initTestLevel(blocksWide = 4, blocksTall = 4, includeLayer2 = true)
+            writeLayer2Word(1, 0, 0x0456)
+
+            state.activeRoomLayer = RoomEditLayer.LAYER2
+            state.setBrushForTest(TileBrush.single(0x077))
+            state.beginStroke()
+            assertTrue(state.paintAt(1, 0))
+            state.endStroke()
+            assertEquals(0x0077, state.readLayer2BlockWord(1, 0))
+
+            assertTrue(state.undo())
+            assertEquals(0x0456, state.readLayer2BlockWord(1, 0))
+            assertTrue(state.redo())
+            assertEquals(0x0077, state.readLayer2BlockWord(1, 0))
+
+            state.sampleTile(1, 0)
+            assertEquals(0x077, state.brush!!.primaryIndex)
+            assertEquals(0x8, state.brush!!.blockType)
+        }
     }
 
     // ── Toggle flip ──────────────────────────────────────────────

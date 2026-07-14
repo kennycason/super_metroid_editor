@@ -63,3 +63,8 @@ data class TileBrush(
 }
 
 enum class EditorTool { PAINT, FILL, SAMPLE, SELECT, ERASE }
+
+enum class RoomEditLayer {
+    LAYER1,
+    LAYER2,
+}

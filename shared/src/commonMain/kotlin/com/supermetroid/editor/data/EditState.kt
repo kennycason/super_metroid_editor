@@ -2,9 +2,14 @@ package com.supermetroid.editor.data
 
 import kotlinx.serialization.Serializable
 
+const val TILE_EDIT_LAYER_1 = 1
+const val TILE_EDIT_LAYER_2 = 2
+
 /**
  * A single tile edit: records what one block changed from/to.
  * The block word is the full 16-bit value (metatile index + flip + block type).
+ * Layer 1 edits also carry BTS; embedded Layer 2 edits ignore BTS and store
+ * only metatile + flip bits in the block word.
  */
 @Serializable
 data class TileEdit(
@@ -13,7 +18,8 @@ data class TileEdit(
     val oldBlockWord: Int,   // previous 16-bit block word
     val newBlockWord: Int,   // new 16-bit block word
     val oldBts: Int = 0,     // previous BTS byte
-    val newBts: Int = 0      // new BTS byte
+    val newBts: Int = 0,     // new BTS byte
+    val layer: Int = TILE_EDIT_LAYER_1
 )
 
 /**

@@ -17,6 +17,8 @@ import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.StateDataChange
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_1
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.data.PatternCell
@@ -339,6 +341,7 @@ class EditorState {
         internal set
 
     var activeTool by mutableStateOf(EditorTool.SELECT)
+    var activeRoomLayer by mutableStateOf(RoomEditLayer.LAYER1)
 
     /** Map selection rectangle in block coordinates (inclusive). */
     var mapSelStart by mutableStateOf<Pair<Int, Int>?>(null)
@@ -388,6 +391,7 @@ class EditorState {
         private set
     /** The loaded room's tileset as stored in the ROM (before project overrides). */
     private var romTilesetId: Int = 0
+    private var currentBgScrolling: Int = 0
     /** Currently active room state index (0 = first conditional, last = default). */
     var currentStateIndex: Int = -1
         private set
@@ -2304,18 +2308,20 @@ class EditorState {
     /** Update hover info when mouse moves on map. */
     fun updateHover(bx: Int, by: Int) {
         hoverBlockX = bx; hoverBlockY = by
-        hoverTileWord = if (bx >= 0 && by >= 0) readBlockWord(bx, by) else 0
+        hoverTileWord = if (bx >= 0 && by >= 0) {
+            if (activeRoomLayer == RoomEditLayer.LAYER2) readLayer2BlockWord(bx, by) else readBlockWord(bx, by)
+        } else 0
     }
 
     /** Sample (eyedropper): pick the tile at (bx, by) from the map as the current brush. */
     fun sampleTile(bx: Int, by: Int, gridCols: Int = 32) {
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return
-        val word = readBlockWord(bx, by)
+        val word = if (activeRoomLayer == RoomEditLayer.LAYER2) readLayer2BlockWord(bx, by) else readBlockWord(bx, by)
         val metatileIdx = word and 0x3FF
         val hf = (word shr 10) and 1 != 0
         val vf = (word shr 11) and 1 != 0
-        val bt = (word shr 12) and 0xF
-        val sampledBts = readBts(bx, by)
+        val bt = if (activeRoomLayer == RoomEditLayer.LAYER2) 0x8 else (word shr 12) and 0xF
+        val sampledBts = if (activeRoomLayer == RoomEditLayer.LAYER2) 0 else readBts(bx, by)
         val btsMap = if (sampledBts != 0) mapOf(0L to sampledBts) else emptyMap()
         brush = TileBrush(tiles = listOf(listOf(metatileIdx)), blockType = bt, hFlip = hf, vFlip = vf, btsOverrides = btsMap)
         floatingSelection = null
@@ -2512,6 +2518,8 @@ class EditorState {
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
+        activeRoomLayer = RoomEditLayer.LAYER1
+        currentBgScrolling = 0
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         spriteSheetGfx = null
@@ -2544,10 +2552,10 @@ class EditorState {
         patternVersion++
     }
 
-    internal fun initTestLevel(blocksWide: Int, blocksTall: Int) {
+    internal fun initTestLevel(blocksWide: Int, blocksTall: Int, includeLayer2: Boolean = false) {
         val totalTiles = blocksWide * blocksTall
         val layer1Bytes = totalTiles * 2
-        val data = ByteArray(2 + layer1Bytes + totalTiles).also {
+        val data = ByteArray(2 + layer1Bytes + totalTiles + if (includeLayer2) layer1Bytes else 0).also {
             it[0] = (layer1Bytes and 0xFF).toByte()
             it[1] = ((layer1Bytes shr 8) and 0xFF).toByte()
         }
@@ -2555,6 +2563,8 @@ class EditorState {
         workingLevelData = data
         workingBlocksWide = blocksWide
         workingBlocksTall = blocksTall
+        currentBgScrolling = 0
+        activeRoomLayer = RoomEditLayer.LAYER1
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
@@ -2573,7 +2583,10 @@ class EditorState {
         romTilesetId = room.tileset
         // A stored state-data change (e.g. from the biome generator or room
         // properties panel) overrides the ROM tileset for editing/rendering.
-        currentTilesetId = project.rooms[project.roomKey(roomId)]?.stateDataChange?.tileset ?: room.tileset
+        val stateDataChange = project.rooms[project.roomKey(roomId)]?.stateDataChange
+        currentTilesetId = stateDataChange?.tileset ?: room.tileset
+        currentBgScrolling = stateDataChange?.bgScrolling ?: room.bgScrolling
+        if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
@@ -2598,6 +2611,7 @@ class EditorState {
         workingLevelData = levelData.copyOf()
         workingBlocksWide = effectiveWidth * 16
         workingBlocksTall = effectiveHeight * 16
+        if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
 
         // Build metatile → block type presets by scanning room data
         val typeCounts = mutableMapOf<Int, MutableMap<Int, Int>>()
@@ -2670,8 +2684,7 @@ class EditorState {
                 var count = 0
                 for (op in savedRoom.operations) {
                     for (edit in op.edits) {
-                        writeBlockWord(edit.blockX, edit.blockY, edit.newBlockWord)
-                        writeBts(edit.blockX, edit.blockY, edit.newBts)
+                        applyTileEdit(edit, useNew = true)
                         count++
                     }
                     undoStack.add(op)
@@ -2799,6 +2812,28 @@ class EditorState {
         return data[btsOffset].toInt() and 0xFF
     }
 
+    private fun embeddedLayer2StartOffset(data: ByteArray): Int? {
+        if (currentBgScrolling != 0 || workingBlocksWide <= 0 || workingBlocksTall <= 0 || data.size < 2) return null
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val totalBlocks = workingBlocksWide * workingBlocksTall
+        val start = 2 + layer1Size + totalBlocks
+        val end = start + totalBlocks * 2
+        return if (end <= data.size) start else null
+    }
+
+    fun canEditEmbeddedLayer2(): Boolean =
+        workingLevelData?.let { embeddedLayer2StartOffset(it) != null } == true
+
+    fun readLayer2BlockWord(bx: Int, by: Int): Int {
+        val data = workingLevelData ?: return 0
+        if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return 0
+        val start = embeddedLayer2StartOffset(data) ?: return 0
+        val idx = by * workingBlocksWide + bx
+        val offset = start + idx * 2
+        if (offset + 1 >= data.size) return 0
+        return ((data[offset + 1].toInt() and 0xFF) shl 8) or (data[offset].toInt() and 0xFF)
+    }
+
     private fun readOriginalBlockWord(bx: Int, by: Int): Int {
         val data = originalLevelData ?: return 0
         val idx = by * workingBlocksWide + bx
@@ -2833,6 +2868,29 @@ class EditorState {
         data[offset + 1] = ((word shr 8) and 0xFF).toByte()
     }
 
+    private fun writeLayer2BlockWord(bx: Int, by: Int, word: Int) {
+        val data = workingLevelData ?: return
+        if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return
+        val start = embeddedLayer2StartOffset(data) ?: return
+        val idx = by * workingBlocksWide + bx
+        val offset = start + idx * 2
+        if (offset + 1 >= data.size) return
+        val layer2Word = word and 0x0FFF
+        data[offset] = (layer2Word and 0xFF).toByte()
+        data[offset + 1] = ((layer2Word shr 8) and 0xFF).toByte()
+    }
+
+    private fun applyTileEdit(edit: TileEdit, useNew: Boolean) {
+        val word = if (useNew) edit.newBlockWord else edit.oldBlockWord
+        val bts = if (useNew) edit.newBts else edit.oldBts
+        if (edit.layer == TILE_EDIT_LAYER_2) {
+            writeLayer2BlockWord(edit.blockX, edit.blockY, word)
+        } else {
+            writeBlockWord(edit.blockX, edit.blockY, word)
+            writeBts(edit.blockX, edit.blockY, bts)
+        }
+    }
+
     // ─── Paint / Erase / Fill ───────────────────────────────────
 
     fun beginStroke() {
@@ -2844,6 +2902,7 @@ class EditorState {
 
     /** Paint the full brush at map position (bx, by). Returns true if anything changed. */
     fun paintAt(bx: Int, by: Int): Boolean {
+        if (activeRoomLayer == RoomEditLayer.LAYER2) return paintLayer2At(bx, by)
         val b = brush ?: return false
         var changed = false
         for (r in 0 until b.rows) {
@@ -2890,10 +2949,49 @@ class EditorState {
         return changed
     }
 
+    private fun paintLayer2At(bx: Int, by: Int): Boolean {
+        val b = brush ?: return false
+        if (!canEditEmbeddedLayer2()) return false
+        var changed = false
+        for (r in 0 until b.rows) {
+            for (c in 0 until b.cols) {
+                val cellKey = (r.toLong() shl 32) or (c.toLong() and 0xFFFFFFFFL)
+                if (cellKey in b.skipCells) continue
+                val tx = bx + if (b.hFlip) (b.cols - 1 - c) else c
+                val ty = by + if (b.vFlip) (b.rows - 1 - r) else r
+                if (tx < 0 || ty < 0 || tx >= workingBlocksWide || ty >= workingBlocksTall) continue
+                val key = (tx.toLong() shl 32) or (ty.toLong() and 0xFFFFFFFFL)
+                if (pendingPositions.contains(key)) continue
+                val oldWord = readLayer2BlockWord(tx, ty)
+                val newWord = b.blockWordAt(r, c) and 0x0FFF
+                if (oldWord == newWord) continue
+                writeLayer2BlockWord(tx, ty, newWord)
+                pendingEdits.add(
+                    TileEdit(tx, ty, oldWord, newWord, layer = TILE_EDIT_LAYER_2),
+                )
+                pendingPositions.add(key)
+                changed = true
+            }
+        }
+        if (changed) editVersion++
+        return changed
+    }
+
     fun eraseAt(bx: Int, by: Int): Boolean {
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return false
         val key = (bx.toLong() shl 32) or (by.toLong() and 0xFFFFFFFFL)
         if (pendingPositions.contains(key)) return false
+        if (activeRoomLayer == RoomEditLayer.LAYER2) {
+            if (!canEditEmbeddedLayer2()) return false
+            val oldWord = readLayer2BlockWord(bx, by)
+            val newWord = 0
+            if (oldWord == newWord) return false
+            writeLayer2BlockWord(bx, by, newWord)
+            pendingEdits.add(TileEdit(bx, by, oldWord, newWord, layer = TILE_EDIT_LAYER_2))
+            pendingPositions.add(key)
+            editVersion++
+            return true
+        }
         val oldWord = readBlockWord(bx, by)
         val oldBts = readBts(bx, by)
         val newWord = RomConstants.AIR_TILE_WORD
@@ -3277,8 +3375,10 @@ class EditorState {
     fun applyHeaderChanges(room: com.supermetroid.editor.data.Room): com.supermetroid.editor.data.Room {
         val edits = project.rooms[project.roomKey(room.roomId)] ?: return room
         val hc = edits.roomHeaderChange
-        val tileset = edits.stateDataChange?.tileset ?: room.tileset
-        if (hc == null && tileset == room.tileset) return room
+        val sd = edits.stateDataChange
+        val tileset = sd?.tileset ?: room.tileset
+        val bgScrolling = sd?.bgScrolling ?: room.bgScrolling
+        if (hc == null && tileset == room.tileset && bgScrolling == room.bgScrolling) return room
         return room.copy(
             width = hc?.width ?: room.width,
             height = hc?.height ?: room.height,
@@ -3286,6 +3386,7 @@ class EditorState {
             mapX = hc?.mapX ?: room.mapX,
             mapY = hc?.mapY ?: room.mapY,
             tileset = tileset,
+            bgScrolling = bgScrolling,
         )
     }
 
@@ -3294,6 +3395,8 @@ class EditorState {
     fun setStateDataChange(change: StateDataChange) {
         val roomEdits = project.getOrCreateRoom(currentRoomId)
         roomEdits.stateDataChange = change
+        change.bgScrolling?.let { currentBgScrolling = it }
+        if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
         dirty = true
         editVersion++
     }
@@ -3303,6 +3406,7 @@ class EditorState {
         val b = brush ?: return false
         if (b.cols != 1 || b.rows != 1) return false  // fill only works with 1×1 brush
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return false
+        if (activeRoomLayer == RoomEditLayer.LAYER2) return floodFillLayer2(bx, by, b)
         val targetWord = readBlockWord(bx, by)
         val newWord = b.blockWordAt(0, 0)
         val newBts = b.btsAt(0, 0)
@@ -3332,12 +3436,41 @@ class EditorState {
         return changed
     }
 
+    private fun floodFillLayer2(bx: Int, by: Int, b: TileBrush): Boolean {
+        if (!canEditEmbeddedLayer2()) return false
+        val targetWord = readLayer2BlockWord(bx, by)
+        val newWord = b.blockWordAt(0, 0) and 0x0FFF
+        if (targetWord == newWord) return false
+
+        val visited = mutableSetOf<Long>()
+        val queue = ArrayDeque<Pair<Int, Int>>()
+        queue.add(Pair(bx, by))
+        var changed = false
+        while (queue.isNotEmpty()) {
+            val (cx, cy) = queue.removeFirst()
+            if (cx < 0 || cy < 0 || cx >= workingBlocksWide || cy >= workingBlocksTall) continue
+            val key = (cx.toLong() shl 32) or (cy.toLong() and 0xFFFFFFFFL)
+            if (visited.contains(key)) continue
+            visited.add(key)
+            if (readLayer2BlockWord(cx, cy) != targetWord) continue
+            writeLayer2BlockWord(cx, cy, newWord)
+            pendingEdits.add(TileEdit(cx, cy, targetWord, newWord, layer = TILE_EDIT_LAYER_2))
+            changed = true
+            queue.add(Pair(cx - 1, cy))
+            queue.add(Pair(cx + 1, cy))
+            queue.add(Pair(cx, cy - 1))
+            queue.add(Pair(cx, cy + 1))
+        }
+        return changed
+    }
+
     fun endStroke() {
         if (pendingEdits.isEmpty() && pendingPlmAdds.isEmpty()) return
-        val desc = if (floatingSelection != null) "Place selection ${pendingEdits.size} tile(s)" else when (activeTool) {
-            EditorTool.PAINT -> "Paint ${pendingEdits.size} tile(s)"
-            EditorTool.FILL -> "Fill ${pendingEdits.size} tile(s)"
-            EditorTool.ERASE -> "Erase ${pendingEdits.size} tile(s)"
+        val layerLabel = if (pendingEdits.any { it.layer == TILE_EDIT_LAYER_2 }) "Layer 2 " else ""
+        val desc = if (floatingSelection != null) "${layerLabel}Place selection ${pendingEdits.size} tile(s)" else when (activeTool) {
+            EditorTool.PAINT -> "${layerLabel}Paint ${pendingEdits.size} tile(s)"
+            EditorTool.FILL -> "${layerLabel}Fill ${pendingEdits.size} tile(s)"
+            EditorTool.ERASE -> "${layerLabel}Erase ${pendingEdits.size} tile(s)"
             EditorTool.SAMPLE -> "Sample"
             EditorTool.SELECT -> "Select"
         }
@@ -3361,8 +3494,7 @@ class EditorState {
     fun applyBulkEdits(description: String, edits: List<TileEdit>) {
         if (edits.isEmpty()) return
         for (e in edits) {
-            writeBlockWord(e.blockX, e.blockY, e.newBlockWord)
-            writeBts(e.blockX, e.blockY, e.newBts)
+            applyTileEdit(e, useNew = true)
         }
         pushEditOperation(EditOperation(description, edits))
     }
@@ -3586,6 +3718,7 @@ class EditorState {
         if (roomEdits != null) {
             for (op in roomEdits.operations) {
                 for (edit in op.edits) {
+                    if (edit.layer != TILE_EDIT_LAYER_1) continue
                     if (edit.blockX !in 0 until width || edit.blockY !in 0 until height) continue
                     val i = edit.blockY * width + edit.blockX
                     words[i] = edit.newBlockWord
@@ -3963,8 +4096,7 @@ class EditorState {
         if (edits.isEmpty() && scrollEdits.isEmpty() && scrollPlmRemoves.isEmpty()) return
 
         for (e in edits) {
-            writeBlockWord(e.blockX, e.blockY, e.newBlockWord)
-            writeBts(e.blockX, e.blockY, e.newBts)
+            applyTileEdit(e, useNew = true)
         }
 
         val roomEdits = project.getOrCreateRoom(currentRoomId)
@@ -4129,8 +4261,7 @@ class EditorState {
 
         // Undo tile edits
         for (edit in op.edits.reversed()) {
-            writeBlockWord(edit.blockX, edit.blockY, edit.oldBlockWord)
-            writeBts(edit.blockX, edit.blockY, edit.oldBts)
+            applyTileEdit(edit, useNew = false)
         }
         if (roomEdits.operations.isNotEmpty() && roomEdits.operations.last() == op) {
             roomEdits.operations.removeAt(roomEdits.operations.lastIndex)
@@ -4201,8 +4332,7 @@ class EditorState {
 
         // Redo tile edits
         for (edit in op.edits) {
-            writeBlockWord(edit.blockX, edit.blockY, edit.newBlockWord)
-            writeBts(edit.blockX, edit.blockY, edit.newBts)
+            applyTileEdit(edit, useNew = true)
         }
         if (op.edits.isNotEmpty()) roomEdits.operations.add(op)
 
@@ -5229,8 +5359,23 @@ class EditorState {
                         originalData.copyOf()
                     }
                     val layer1Size = (editedData[0].toInt() and 0xFF) or ((editedData[1].toInt() and 0xFF) shl 8)
+                    val totalBlocks = bw * effectiveHeight * 16
+                    val layer2Start = 2 + layer1Size + totalBlocks
+                    val hasEmbeddedLayer2 = layer2Start + totalBlocks * 2 <= editedData.size &&
+                        (roomEdits.stateDataChange?.bgScrolling ?: room.bgScrolling) == 0
                     for (op in roomEdits.operations) for (edit in op.edits) {
-                        val idx = edit.blockY * bw + edit.blockX; val off = 2 + idx * 2
+                        val idx = edit.blockY * bw + edit.blockX
+                        if (idx < 0 || idx >= totalBlocks) continue
+                        if (edit.layer == TILE_EDIT_LAYER_2) {
+                            if (hasEmbeddedLayer2) {
+                                val off = layer2Start + idx * 2
+                                val word = edit.newBlockWord and 0x0FFF
+                                editedData[off] = (word and 0xFF).toByte()
+                                editedData[off + 1] = ((word shr 8) and 0xFF).toByte()
+                            }
+                            continue
+                        }
+                        val off = 2 + idx * 2
                         if (off + 1 < editedData.size) {
                             editedData[off] = (edit.newBlockWord and 0xFF).toByte()
                             editedData[off + 1] = ((edit.newBlockWord shr 8) and 0xFF).toByte()
