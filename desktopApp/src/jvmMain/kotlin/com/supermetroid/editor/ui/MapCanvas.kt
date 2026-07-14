@@ -2792,10 +2792,12 @@ fun MapCanvas(
                                                                     modifier = Modifier.width(54.dp)
                                                                 )
                                                             }
-                                                            Row(
+                                                            FlowRow(
                                                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                                verticalAlignment = Alignment.CenterVertically,
-                                                                modifier = Modifier.padding(top = 3.dp)
+                                                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(top = 4.dp)
                                                             ) {
                                                                 TextButton(
                                                                     onClick = {
@@ -2810,11 +2812,13 @@ fun MapCanvas(
                                                                             editorState.updateSaveStationSpawnScroll(area, saveIdx, scx, scy, romParser)
                                                                         }
                                                                     },
-                                                                    modifier = Modifier.height(26.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                                    modifier = Modifier.heightIn(min = 30.dp)
                                                                 ) { Text("Apply Spawn", fontSize = 9.sp) }
                                                                 TextButton(
                                                                     onClick = { editorState.resetSaveStationSpawnToAuto(plm) },
-                                                                    modifier = Modifier.height(26.dp)
+                                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                                    modifier = Modifier.heightIn(min = 30.dp)
                                                                 ) { Text("Reset Auto", fontSize = 9.sp) }
                                                             }
                                                         }
