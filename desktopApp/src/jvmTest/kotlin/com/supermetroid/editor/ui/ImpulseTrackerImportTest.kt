@@ -1,7 +1,10 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
+import com.supermetroid.editor.rom.SpcData
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -33,7 +36,7 @@ class ImpulseTrackerImportTest {
         assertEquals((36 + 104).coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX), note.noteValue)
         assertEquals(15, note.velocity)
         assertEquals(0x18, note.instrument)
-        assertTrue(result.report.warnings.any { it.contains("instruments/samples") })
+        assertTrue(result.report.warnings.any { it.contains("instrument/sample") })
         assertTrue(result.report.warnings.any { it.contains("tempo command") })
     }
 
@@ -66,6 +69,32 @@ class ImpulseTrackerImportTest {
         assertEquals(8363, sample.c5Speed)
         assertTrue(parsed.warnings.any { it.contains("active sample") })
         assertTrue(parsed.warnings.any { it.contains("16-bit") })
+    }
+
+    @Test
+    fun `it import builds custom native payload for decoded mono samples`() {
+        val file = File(tempDir, "sampled.it")
+        file.writeBytes(simpleItModule(withSampleHeader = true))
+
+        val result = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+
+        assertNotNull(result.nativePayload)
+        assertEquals(0, result.song.channels[0].notes.single().instrument)
+        assertEquals(42, result.instruments.size)
+        assertTrue(result.report.warnings.any { it.contains("Built custom IT native payload") })
+
+        val ram = ByteArray(0x10000)
+        SpcData.applyTransferBlocks(ram, result.nativePayload!!.blocks)
+        val parsed = NspcSequence.parse(ram, 5)
+        assertEquals(1, parsed.channels[0].notes.size)
+        val instruments = NspcRenderer.readInstrumentTable(ram)
+        assertEquals(0, instruments[0].srcn)
+        val sampleStart = readU16(ram, 0x6D00)
+        val sampleLoop = readU16(ram, 0x6D02)
+        assertEquals(0x6E00, sampleStart)
+        assertTrue(sampleLoop >= sampleStart)
+        val decoded = SpcData.decodeBrr(ram, sampleStart, maxSamples = 64)
+        assertTrue(decoded.any { it.toInt() != 0 })
     }
 
     @Test
@@ -134,7 +163,7 @@ class ImpulseTrackerImportTest {
         writeU32(finalOut, 0)
         finalOut.write(patternBytes.toByteArray())
         if (withSampleHeader) {
-            finalOut.write(ByteArray(64))
+            finalOut.write(testSamplePcm16())
         }
         return finalOut.toByteArray()
     }
@@ -145,6 +174,7 @@ class ImpulseTrackerImportTest {
         data[offset + 0x11] = 64
         data[offset + 0x12] = 0x13 // associated, 16-bit, looped
         data[offset + 0x13] = 64
+        data[offset + 0x2E] = 0x01 // signed PCM
         writeU32(data, offset + 0x30, 32)
         writeU32(data, offset + 0x34, 8)
         writeU32(data, offset + 0x38, 24)
@@ -175,4 +205,18 @@ class ImpulseTrackerImportTest {
         out.write((value ushr 16) and 0xFF)
         out.write((value ushr 24) and 0xFF)
     }
+
+    private fun testSamplePcm16(): ByteArray {
+        val out = ByteArray(64)
+        for (i in 0 until 32) {
+            val phase = if (i < 16) i else 31 - i
+            val value = ((phase - 8) * 1800).coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            out[i * 2] = (value and 0xFF).toByte()
+            out[i * 2 + 1] = ((value ushr 8) and 0xFF).toByte()
+        }
+        return out
+    }
+
+    private fun readU16(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
 }

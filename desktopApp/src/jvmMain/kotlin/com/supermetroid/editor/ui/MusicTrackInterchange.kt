@@ -251,6 +251,26 @@ internal object MusicTrackInterchange {
         file.writeBytes(out.toByteArray())
     }
 
+    fun writeRawTransferBlocks(blocks: List<SpcData.TransferBlock>, file: File) {
+        require(blocks.isNotEmpty()) { "Raw N-SPC export requires at least one transfer block" }
+        val out = ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
+        for (block in blocks) {
+            require(block.data.isNotEmpty()) { "Raw N-SPC export contains an empty transfer block" }
+            require(block.data.size <= 0xFFFF) { "Raw N-SPC block is too large: ${block.data.size} bytes" }
+            require(block.destAddr in 0 until RomConstants.SPC_RAM_SIZE) {
+                "Raw N-SPC block destination is outside SPC RAM: 0x${block.destAddr.toString(16)}"
+            }
+            require(block.destAddr + block.data.size <= RomConstants.SPC_RAM_SIZE) {
+                "Raw N-SPC block overruns SPC RAM: 0x${block.destAddr.toString(16)} size ${block.data.size}"
+            }
+            out.writeU16(block.data.size)
+            out.writeU16(block.destAddr)
+            out.write(block.data)
+        }
+        out.writeU16(0)
+        file.writeBytes(out.toByteArray())
+    }
+
     fun readNative(file: File, selectedPlayIndex: Int): NativeTrack {
         val data = file.readBytes()
         return when {

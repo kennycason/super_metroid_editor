@@ -269,21 +269,30 @@ class SoundEditorState {
 
         try {
             if (file.extension.equals("nspc", ignoreCase = true)) {
-                MusicTrackInterchange.writeNspcTrack(
-                    data.song,
-                    data.instruments,
-                    data.track.songSet,
-                    data.track.playIndex,
-                    file
-                )
-                statusMessage = "Exported N-SPC track: ${file.name}"
+                if (data.nativePayload != null) {
+                    MusicTrackInterchange.writeRawTransferBlocks(
+                        MusicEditConversion.toTransferBlocks(data.nativePayload),
+                        file
+                    )
+                    statusMessage = "Exported raw N-SPC payload: ${file.name}"
+                } else {
+                    MusicTrackInterchange.writeNspcTrack(
+                        data.song,
+                        data.instruments,
+                        data.track.songSet,
+                        data.track.playIndex,
+                        file
+                    )
+                    statusMessage = "Exported N-SPC track: ${file.name}"
+                }
             } else {
                 val ram = buildTrackSpcSnapshotRam(
                     romParser = romParser,
                     track = data.track,
                     song = data.song,
                     instruments = data.instruments,
-                    originalSong = data.originalSong
+                    originalSong = data.originalSong,
+                    nativePayload = data.nativePayload
                 )
                 val spc = buildSpcSnapshotBytes(ram, data.track.playIndex, data.track.name)
                 file.writeBytes(spc)
@@ -341,13 +350,14 @@ class SoundEditorState {
         } ?: return
 
         try {
-            val imported = ImpulseTrackerImport.read(file)
+            val imported = ImpulseTrackerImport.read(file, targetPlayIndex = selectedTrack?.playIndex)
             stagePendingTrackImport(
                 label = "IT",
                 fileName = file.name,
                 song = imported.song,
                 instruments = imported.instruments,
-                report = imported.report
+                report = imported.report,
+                nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
             )
             statusMessage = "Review IT import report for ${file.name}"
             soundEditorLog.info {
@@ -379,8 +389,17 @@ class SoundEditorState {
 
         try {
             if (file.extension.equals("nspc", ignoreCase = true)) {
-                MusicTrackInterchange.writeNspcTrack(song, pianoRollInstruments, track.songSet, track.playIndex, file)
-                statusMessage = "Exported N-SPC track: ${file.name}"
+                val nativePayload = matchingNativePayload(song)
+                if (nativePayload != null) {
+                    MusicTrackInterchange.writeRawTransferBlocks(
+                        MusicEditConversion.toTransferBlocks(nativePayload),
+                        file
+                    )
+                    statusMessage = "Exported raw N-SPC payload: ${file.name}"
+                } else {
+                    MusicTrackInterchange.writeNspcTrack(song, pianoRollInstruments, track.songSet, track.playIndex, file)
+                    statusMessage = "Exported N-SPC track: ${file.name}"
+                }
             } else {
                 val ram = buildPianoRollSpcSnapshotRam(romParser, song)
                 val spc = buildSpcSnapshotBytes(ram, track.playIndex, track.name)
@@ -521,7 +540,8 @@ class SoundEditorState {
             track = track,
             song = song,
             instruments = pianoRollInstruments,
-            originalSong = originalPianoRollSong
+            originalSong = originalPianoRollSong,
+            nativePayload = matchingNativePayload(song)
         )
     }
 
@@ -530,12 +550,18 @@ class SoundEditorState {
         track: SpcData.TrackInfo,
         song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>,
-        originalSong: NspcSequence.Song?
+        originalSong: NspcSequence.Song?,
+        nativePayload: MusicNativePayloadEdit? = null
     ): ByteArray {
         val baseRam = SpcData.buildInitialSpcRam(romParser)
         val songBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
         val ram = baseRam.copyOf()
         SpcData.applyTransferBlocks(ram, songBlocks)
+
+        if (nativePayload != null) {
+            SpcData.applyTransferBlocks(ram, MusicEditConversion.toTransferBlocks(nativePayload))
+            return ram
+        }
 
         if (instruments.isNotEmpty()) {
             PianoRollPreviewLogic.writeInstrumentEntries(ram, instruments)
@@ -589,7 +615,8 @@ class SoundEditorState {
         val track: SpcData.TrackInfo,
         val song: NspcSequence.Song,
         val originalSong: NspcSequence.Song,
-        val instruments: List<NspcRenderer.InstrumentEntry>
+        val instruments: List<NspcRenderer.InstrumentEntry>,
+        val nativePayload: MusicNativePayloadEdit? = null
     )
 
     private fun resolveTrackInterchangeData(
@@ -619,7 +646,7 @@ class SoundEditorState {
             } else {
                 originalInstruments
             }
-            TrackInterchangeData(track, song, originalSong, instruments)
+            TrackInterchangeData(track, song, originalSong, instruments, savedEdit?.nativePayload)
         } catch (e: Exception) {
             statusMessage = "Track export setup failed: ${e.message}"
             soundEditorLog.error(e) { "[SPC-IMPORT] Failed to resolve track export data: ${e.message}" }
@@ -879,6 +906,9 @@ class SoundEditorState {
         val track = selectedTrack
         return withContext(Dispatchers.Default) {
             val ram = buildSpcRamForTrack(romParser, currentSongSet.coerceAtLeast(0))
+            matchingNativePayload(song)?.let {
+                SpcData.applyTransferBlocks(ram, MusicEditConversion.toTransferBlocks(it))
+            }
             applyPianoRollInstrumentEdits(ram)
 
             val deltaPlan = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)
@@ -952,6 +982,7 @@ class SoundEditorState {
             return null
         }
 
+        val nativePayload = matchingNativePayload(song)
         val instrumentWrites = pianoRollInstrumentPatchWrites()
         val noteDeltaPlan = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)
         val hasNoteDelta = noteDeltaPlan?.hasDelta ?: song.isModified
@@ -967,8 +998,24 @@ class SoundEditorState {
                 val baseRam = SpcData.buildInitialSpcRam(romParser)
                 val songBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
                 soundEditorLog.info { "[SPC-PIANO] SPC RAM built: ${songBlocks.size} song transfer blocks" }
-
-                if (!hasRenderableEdits) {
+                if (nativePayload != null) {
+                    soundEditorLog.info { "[SPC-PIANO] Rendering native payload import via SPC emulator" }
+                    val payloadBlocks = MusicEditConversion.toTransferBlocks(nativePayload)
+                    NativeSpcEmulator().use { emu ->
+                        emu.loadFromRam(baseRam, songBlocks + payloadBlocks, track.playIndex)
+                        val mono = emu.renderMono(60)
+                        val peak = if (mono.isNotEmpty()) mono.maxOf { kotlin.math.abs(it.toInt()) } else 0
+                        soundEditorLog.info {
+                            "[SPC-PIANO] Native payload render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak"
+                        }
+                        if (peak < 200) {
+                            soundEditorLog.warn { "[SPC-PIANO] Native payload render was silent; using fallback preview renderer" }
+                            null
+                        } else {
+                            mono
+                        }
+                    }
+                } else if (!hasRenderableEdits) {
                     soundEditorLog.info { "[SPC-PIANO] Rendering ORIGINAL track (unmodified) via native SPC emulator" }
                     NativeSpcEmulator().use { emu ->
                         emu.loadFromRam(baseRam, songBlocks, track.playIndex)
@@ -1471,6 +1518,38 @@ class SoundEditorState {
         val songBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
         val editedRam = baseRam.copyOf()
         SpcData.applyTransferBlocks(editedRam, songBlocks)
+
+        val nativePayload = edit.nativePayload
+        if (nativePayload != null && NativeSpcEmulator.isAvailable()) {
+            try {
+                val payloadBlocks = MusicEditConversion.toTransferBlocks(nativePayload)
+                NativeSpcEmulator().use { emu ->
+                    emu.loadFromRam(baseRam, songBlocks + payloadBlocks, track.playIndex)
+                    val nativeSr = NativeSpcEmulator.SAMPLE_RATE
+                    var mono = emu.renderMono(120)
+                    mono = trimNativeTrackPreview(mono, nativeSr)
+                    val peak = if (mono.isNotEmpty()) mono.maxOf { abs(it.toInt()) } else 0
+                    if (peak > 200) {
+                        soundEditorLog.info {
+                            "[SPC] Saved native payload preview for ${track.name}: ${mono.size} samples, peak=$peak"
+                        }
+                        return if (sampleRate != nativeSr && mono.isNotEmpty()) {
+                            resampleLinear(mono, nativeSr, sampleRate)
+                        } else {
+                            mono
+                        }
+                    }
+                    soundEditorLog.warn {
+                        "[SPC] Saved native payload preview was silent for ${track.name}; using editable fallback"
+                    }
+                }
+            } catch (e: Exception) {
+                soundEditorLog.warn(e) {
+                    "[SPC] Saved native payload preview failed for ${track.name}: ${e.message}"
+                }
+            }
+            SpcData.applyTransferBlocks(editedRam, MusicEditConversion.toTransferBlocks(nativePayload))
+        }
 
         val editedSong = MusicEditConversion.toSong(edit)
         val originalSong = NspcSequence.parse(editedRam, track.playIndex)

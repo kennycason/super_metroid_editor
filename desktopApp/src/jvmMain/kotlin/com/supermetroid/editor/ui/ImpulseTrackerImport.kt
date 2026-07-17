@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
+import com.supermetroid.editor.rom.SpcData
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -18,11 +19,21 @@ internal object ImpulseTrackerImport {
     private const val SAMPLE_FLAG_STEREO = 0x04
     private const val SAMPLE_FLAG_COMPRESSED = 0x08
     private const val SAMPLE_FLAG_LOOP = 0x10
+    private const val SAMPLE_CVT_SIGNED = 0x01
+    private const val SAMPLE_CVT_BIG_ENDIAN = 0x02
+    private const val SAMPLE_CVT_DELTA = 0x04
+    private const val SEQUENCE_ADDR = 0x582C
+    private const val INSTRUMENT_TABLE_ADDR = 0x6C00
+    private const val SAMPLE_DIRECTORY_ADDR = 0x6D00
+    private const val SAMPLE_DATA_ADDR = 0x6E00
+    private const val MAX_CUSTOM_SAMPLES = 40
+    private const val MAX_INSTRUMENTS = 42
 
     data class Result(
         val song: NspcSequence.Song,
         val instruments: List<NspcRenderer.InstrumentEntry> = emptyList(),
-        val report: MusicTrackInterchange.InterchangeReport
+        val report: MusicTrackInterchange.InterchangeReport,
+        val nativePayload: MusicTrackInterchange.NativePayload? = null
     )
 
     data class Module(
@@ -53,7 +64,8 @@ internal object ImpulseTrackerImport {
         val loopStart: Int,
         val loopEnd: Int,
         val c5Speed: Int,
-        val samplePointer: Int
+        val samplePointer: Int,
+        val pcm: ShortArray? = null
     ) {
         val associated: Boolean get() = (flags and SAMPLE_FLAG_ASSOCIATED) != 0 && length > 0
         val is16Bit: Boolean get() = (flags and SAMPLE_FLAG_16_BIT) != 0
@@ -77,19 +89,37 @@ internal object ImpulseTrackerImport {
         val value: Int = -1
     )
 
-    fun read(file: File): Result {
+    fun read(file: File, targetPlayIndex: Int? = null): Result {
         val module = parse(file.readBytes())
         val warnings = module.warnings.toMutableList()
-        val song = convertToSong(module, file.nameWithoutExtension, warnings)
+        var customPlan = buildCustomSamplePlan(module, warnings)
+        var song = convertToSong(module, file.nameWithoutExtension, warnings, customPlan?.instrumentBySample)
+        var instruments = customPlan?.instruments ?: emptyList()
+        val nativePayload = if (targetPlayIndex != null && customPlan != null) {
+            buildNativePayload(song, customPlan, targetPlayIndex, file.name, warnings)
+        } else {
+            if (targetPlayIndex == null && customPlan != null) {
+                warnings += "IT samples were decoded, but no target play index was supplied, so custom BRR native payload blocks were not built."
+            }
+            null
+        }
+
+        if (customPlan != null && nativePayload == null) {
+            song = convertToSong(module, file.nameWithoutExtension, warnings)
+            instruments = emptyList()
+        }
+
         require(song.channels.any { it.notes.isNotEmpty() }) { "IT file contains no importable note events" }
         return Result(
             song = song,
+            instruments = instruments,
             report = MusicTrackInterchange.reportForSong(
                 formatLabel = FORMAT_LABEL,
                 fileName = file.name,
                 song = song,
                 warnings = warnings.distinct()
-            )
+            ),
+            nativePayload = nativePayload
         )
     }
 
@@ -133,9 +163,9 @@ internal object ImpulseTrackerImport {
             val sixteenBit = samples.count { it.associated && it.is16Bit }
             val looped = samples.count { it.associated && it.isLooped }
             warnings += if (activeSamples > 0) {
-                "IT has $activeSamples active sample(s) ($compressed compressed, $stereo stereo, $sixteenBit 16-bit, $looped looped); custom BRR sample import is not wired yet, so notes were mapped to Super Metroid instrument slots."
+                "IT has $activeSamples active sample(s) ($compressed compressed, $stereo stereo, $sixteenBit 16-bit, $looped looped)."
             } else {
-                "IT instruments/samples were not imported as custom BRR data yet; notes were mapped to Super Metroid instrument slots."
+                "IT has instrument/sample tables but no active embedded sample data."
             }
         }
         return Module(
@@ -172,22 +202,101 @@ internal object ImpulseTrackerImport {
         val flags = input.u8At(offset + 0x12)
         val length = input.u32At(offset + 0x30).coerceAtLeast(0)
         val samplePointer = input.u32At(offset + 0x48).coerceAtLeast(0)
-        if ((flags and SAMPLE_FLAG_ASSOCIATED) != 0 && length > 0 && samplePointer !in 0 until input.size) {
+        val associated = (flags and SAMPLE_FLAG_ASSOCIATED) != 0 && length > 0
+        if (associated && samplePointer !in 0 until input.size) {
             warnings += "Sample ${sampleIndex + 1} points outside the IT file and cannot be converted."
+        }
+        val sampleName = input.stringAt(offset + 0x14, 26).ifBlank { "Sample ${sampleIndex + 1}" }
+        val convertFlags = input.u8At(offset + 0x2E)
+        val pcm = if (associated && samplePointer in 0 until input.size) {
+            decodeSamplePcm(
+                input = input,
+                sampleIndex = sampleIndex + 1,
+                sampleName = sampleName,
+                flags = flags,
+                convertFlags = convertFlags,
+                length = length,
+                samplePointer = samplePointer,
+                warnings = warnings
+            )
+        } else {
+            null
         }
         return Sample(
             index = sampleIndex + 1,
-            name = input.stringAt(offset + 0x14, 26).ifBlank { "Sample ${sampleIndex + 1}" },
+            name = sampleName,
             flags = flags,
-            convertFlags = input.u8At(offset + 0x2E),
+            convertFlags = convertFlags,
             defaultVolume = input.u8At(offset + 0x13),
             globalVolume = input.u8At(offset + 0x11),
             length = length,
             loopStart = input.u32At(offset + 0x34).coerceAtLeast(0),
             loopEnd = input.u32At(offset + 0x38).coerceAtLeast(0),
             c5Speed = input.u32At(offset + 0x3C).coerceAtLeast(1),
-            samplePointer = samplePointer
+            samplePointer = samplePointer,
+            pcm = pcm
         )
+    }
+
+    private fun decodeSamplePcm(
+        input: LeReader,
+        sampleIndex: Int,
+        sampleName: String,
+        flags: Int,
+        convertFlags: Int,
+        length: Int,
+        samplePointer: Int,
+        warnings: MutableList<String>
+    ): ShortArray? {
+        val isCompressed = (flags and SAMPLE_FLAG_COMPRESSED) != 0
+        val isStereo = (flags and SAMPLE_FLAG_STEREO) != 0
+        val is16Bit = (flags and SAMPLE_FLAG_16_BIT) != 0
+        if (isCompressed) {
+            warnings += "Sample $sampleIndex '$sampleName' is IT-compressed; compressed IT sample decoding is not implemented yet, so custom BRR payload export was disabled."
+            return null
+        }
+        if (isStereo) {
+            warnings += "Sample $sampleIndex '$sampleName' is stereo; stereo IT sample conversion is not implemented yet, so custom BRR payload export was disabled."
+            return null
+        }
+
+        val bytesPerSample = if (is16Bit) 2 else 1
+        val byteLength = length * bytesPerSample
+        if (samplePointer + byteLength > input.size) {
+            warnings += "Sample $sampleIndex '$sampleName' data overruns the IT file and cannot be converted."
+            return null
+        }
+
+        val signed = (convertFlags and SAMPLE_CVT_SIGNED) != 0
+        val bigEndian = (convertFlags and SAMPLE_CVT_BIG_ENDIAN) != 0
+        val delta = (convertFlags and SAMPLE_CVT_DELTA) != 0
+        val out = ShortArray(length)
+        var accumulator = 0
+        for (i in 0 until length) {
+            val offset = samplePointer + i * bytesPerSample
+            var raw = if (is16Bit) {
+                if (bigEndian) {
+                    (input.u8At(offset) shl 8) or input.u8At(offset + 1)
+                } else {
+                    input.u8At(offset) or (input.u8At(offset + 1) shl 8)
+                }
+            } else {
+                input.u8At(offset)
+            }
+            if (delta) {
+                val mask = if (is16Bit) 0xFFFF else 0xFF
+                accumulator = (accumulator + raw) and mask
+                raw = accumulator
+            }
+            val sample = if (is16Bit) {
+                if (signed) raw.toShort().toInt() else raw - 0x8000
+            } else {
+                val signed8 = if (signed) raw.toByte().toInt() else raw - 0x80
+                signed8 shl 8
+            }
+            out[i] = sample.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+        }
+        return out
     }
 
     private fun parsePattern(
@@ -289,7 +398,8 @@ internal object ImpulseTrackerImport {
     private fun convertToSong(
         module: Module,
         fallbackTitle: String,
-        warnings: MutableList<String>
+        warnings: MutableList<String>,
+        customInstrumentBySample: Map<Int, Int>? = null
     ): NspcSequence.Song {
         val song = NspcSequence.Song(
             tempo = itTempoToNspc(module.initialTempo),
@@ -361,7 +471,9 @@ internal object ImpulseTrackerImport {
                     if (row.row >= patternRows) continue
                     val rowTick = tick + rowTickOffsets[row.row.coerceIn(0, pattern.rows)]
                     if (row.instrument > 0 && active[channelIndex] != null && row.note < 0) {
-                        active[channelIndex] = active[channelIndex]?.copy(instrument = mapItInstrument(row.instrument, module))
+                        active[channelIndex] = active[channelIndex]?.copy(
+                            instrument = mapItInstrument(row.instrument, module, customInstrumentBySample)
+                        )
                     }
                     when {
                         row.note in 1..119 -> {
@@ -374,7 +486,7 @@ internal object ImpulseTrackerImport {
                                     module.channelVolumes.getOrElse(channelIndex) { 64 },
                                     module.globalVolume
                                 ),
-                                instrument = mapItInstrument(row.instrument, module)
+                                instrument = mapItInstrument(row.instrument, module, customInstrumentBySample)
                             )
                         }
                         row.note == IT_NOTE_OFF || row.note == IT_NOTE_CUT || row.note == IT_NOTE_FADE -> {
@@ -434,13 +546,194 @@ internal object ImpulseTrackerImport {
         return ((scaled * 15) / (64 * 64 * 128)).coerceIn(1, 15)
     }
 
-    private fun mapItInstrument(instrument: Int, module: Module): Int {
+    private data class CustomSamplePlan(
+        val samples: List<Sample>,
+        val instrumentBySample: Map<Int, Int>,
+        val instruments: List<NspcRenderer.InstrumentEntry>,
+        val brrBySample: Map<Int, ByteArray>,
+        val loopBlockBySample: Map<Int, Int>
+    )
+
+    private fun buildCustomSamplePlan(module: Module, warnings: MutableList<String>): CustomSamplePlan? {
+        if (module.usesInstruments && module.instrumentCount > 0) {
+            warnings += "IT instrument-mode sample maps/envelopes are not imported yet; notes were mapped to Super Metroid instrument slots."
+            return null
+        }
+        val usedSamples = collectUsedSampleIndexes(module)
+        if (usedSamples.isEmpty()) return null
+        val sampleByIndex = module.samples.associateBy { it.index }
+        val missing = usedSamples.filter { sampleByIndex[it]?.pcm == null }
+        if (missing.isNotEmpty()) {
+            warnings += "Custom BRR payload was not built because used IT sample(s) ${missing.joinToString()} could not be decoded."
+            return null
+        }
+        if (usedSamples.size > MAX_CUSTOM_SAMPLES) {
+            warnings += "Custom BRR payload was not built because ${usedSamples.size} used samples exceed the SNES sample directory limit of $MAX_CUSTOM_SAMPLES."
+            return null
+        }
+
+        val orderedSamples = usedSamples.mapNotNull { sampleByIndex[it] }
+        val instrumentBySample = orderedSamples.mapIndexed { slot, sample -> sample.index to slot }.toMap()
+        val brrBySample = linkedMapOf<Int, ByteArray>()
+        val loopBlockBySample = linkedMapOf<Int, Int>()
+        for (sample in orderedSamples) {
+            val pcm = sample.pcm ?: continue
+            val loopStart = if (sample.isLooped) sample.loopStart.coerceIn(0, pcm.size - 1) else -1
+            val loopEnd = if (sample.isLooped) sample.loopEnd.coerceIn(loopStart + 1, pcm.size) else pcm.size
+            val encodedPcm = if (sample.isLooped && loopStart >= 0 && loopEnd in 1..pcm.size) {
+                pcm.copyOf(loopEnd)
+            } else {
+                pcm
+            }
+            val loopBlock = if (sample.isLooped && loopStart >= 0) loopStart / 16 else -1
+            val brr = SpcData.encodeBrr(encodedPcm, loopBlock = loopBlock)
+            if (brr.isEmpty()) {
+                warnings += "Sample ${sample.index} '${sample.name}' encoded to empty BRR data and was ignored."
+                return null
+            }
+            brrBySample[sample.index] = brr
+            loopBlockBySample[sample.index] = loopBlock
+        }
+
+        val instruments = MutableList(MAX_INSTRUMENTS) { index ->
+            NspcRenderer.InstrumentEntry(
+                srcn = 0,
+                adsr1 = 0x8F,
+                adsr2 = 0xE0,
+                gain = 0x7F,
+                pitchAdj = 0x1000,
+                index = index,
+                tableAddr = INSTRUMENT_TABLE_ADDR + index * 6
+            )
+        }
+        for ((sampleIndex, instrumentIndex) in instrumentBySample) {
+            val sample = sampleByIndex.getValue(sampleIndex)
+            instruments[instrumentIndex] = instruments[instrumentIndex].copy(
+                srcn = instrumentIndex,
+                adsr1 = 0x8F,
+                adsr2 = 0xE0,
+                gain = sample.defaultVolume.coerceIn(0, 64) * 2,
+                pitchAdj = 0x1000
+            )
+        }
+        warnings += "Decoded ${orderedSamples.size} IT sample(s) for custom BRR payload export."
+        warnings += "IT sample tuning/envelopes are approximated; exact tracker envelopes and vibrato are not converted yet."
+        return CustomSamplePlan(orderedSamples, instrumentBySample, instruments, brrBySample, loopBlockBySample)
+    }
+
+    private fun buildNativePayload(
+        song: NspcSequence.Song,
+        plan: CustomSamplePlan,
+        targetPlayIndex: Int,
+        sourceFileName: String,
+        warnings: MutableList<String>
+    ): MusicTrackInterchange.NativePayload? {
+        val encodedBytes = NspcSequence.encodedSequenceSize(song)
+        val sequenceBudget = INSTRUMENT_TABLE_ADDR - SEQUENCE_ADDR
+        if (encodedBytes > sequenceBudget) {
+            warnings += "Custom BRR payload was not built because the imported sequence needs $encodedBytes bytes and only $sequenceBudget bytes are available before the instrument table."
+            return null
+        }
+
+        val sequenceWrites = try {
+            NspcSequence.encode(
+                song = song,
+                playIndex = targetPlayIndex,
+                spcRam = ByteArray(0x10000),
+                failOnOverflow = true,
+                conductorAddrOverride = SEQUENCE_ADDR,
+                sequenceEndAddr = INSTRUMENT_TABLE_ADDR
+            )
+        } catch (e: Exception) {
+            warnings += "Custom BRR payload was not built because N-SPC sequence encoding failed: ${e.message}"
+            return null
+        }
+
+        val instrumentTable = ByteArray(MAX_INSTRUMENTS * 6)
+        for (entry in plan.instruments) {
+            val offset = entry.index * 6
+            if (offset + 5 >= instrumentTable.size) continue
+            val bytes = PianoRollPreviewLogic.instrumentBytes(entry)
+            bytes.copyInto(instrumentTable, offset)
+        }
+
+        val sampleDirectory = ByteArray(MAX_CUSTOM_SAMPLES * 4)
+        val sampleDataBlocks = mutableListOf<SpcData.TransferBlock>()
+        var sampleAddr = SAMPLE_DATA_ADDR
+        for ((slot, sample) in plan.samples.withIndex()) {
+            val brr = plan.brrBySample.getValue(sample.index)
+            if (sampleAddr + brr.size > 0x10000) {
+                warnings += "Custom BRR payload was not built because converted sample data exceeds SPC RAM."
+                return null
+            }
+            val loopBlock = plan.loopBlockBySample[sample.index] ?: -1
+            val loopAddr = if (loopBlock >= 0) sampleAddr + loopBlock * 9 else sampleAddr
+            writeLe16(sampleDirectory, slot * 4, sampleAddr)
+            writeLe16(sampleDirectory, slot * 4 + 2, loopAddr.coerceIn(sampleAddr, sampleAddr + brr.size - 1))
+            sampleDataBlocks += SpcData.TransferBlock(sampleAddr, brr)
+            sampleAddr += brr.size
+        }
+
+        val blocks = mutableListOf<SpcData.TransferBlock>()
+        for ((addr, data) in sequenceWrites.toSortedMap()) {
+            blocks += SpcData.TransferBlock(addr, data)
+        }
+        blocks += SpcData.TransferBlock(INSTRUMENT_TABLE_ADDR, instrumentTable)
+        blocks += SpcData.TransferBlock(SAMPLE_DIRECTORY_ADDR, sampleDirectory)
+        blocks += sampleDataBlocks
+
+        warnings += "Built custom IT native payload: ${plan.samples.size} BRR sample(s), ${blocks.size} transfer block(s), ${blocks.sumOf { it.data.size }} bytes."
+        return MusicTrackInterchange.NativePayload(
+            blocks = blocks,
+            sourcePlayIndex = targetPlayIndex,
+            sourceFileName = sourceFileName,
+            formatLabel = "Impulse Tracker"
+        )
+    }
+
+    private fun collectUsedSampleIndexes(module: Module): List<Int> {
+        val used = linkedSetOf<Int>()
+        for (order in module.orders) {
+            if (order == 0xFF) break
+            if (order == 0xFE) continue
+            val pattern = module.patterns.getOrNull(order) ?: continue
+            val breakRow = pattern.channels
+                .flatten()
+                .filter { it.command > 0 && ('A'.code + it.command - 1).toChar() == 'C' }
+                .minOfOrNull { it.row + 1 }
+                ?.coerceIn(0, pattern.rows)
+                ?: pattern.rows
+            for (channel in pattern.channels) {
+                for (row in channel) {
+                    if (row.row >= breakRow || row.note !in 1..119) continue
+                    val sampleIndex = when {
+                        row.instrument > 0 -> row.instrument
+                        else -> module.samples.firstOrNull { it.associated }?.index ?: 1
+                    }
+                    used += sampleIndex
+                }
+            }
+        }
+        return used.toList()
+    }
+
+    private fun mapItInstrument(
+        instrument: Int,
+        module: Module,
+        customInstrumentBySample: Map<Int, Int>? = null
+    ): Int {
         val sourceIndex = when {
             instrument > 0 -> instrument
             module.samples.firstOrNull { it.associated } != null -> module.samples.first { it.associated }.index
             else -> 1
         }
+        customInstrumentBySample?.get(sourceIndex)?.let { return it }
         return 0x18 + ((sourceIndex - 1) % 0x0E)
+    }
+
+    private fun writeLe16(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = (value and 0xFF).toByte()
+        data[offset + 1] = ((value ushr 8) and 0xFF).toByte()
     }
 
     private fun buildRowTickOffsets(
