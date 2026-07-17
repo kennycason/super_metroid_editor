@@ -576,7 +576,7 @@ internal object MusicTrackInterchange {
     private fun midiToNspcUnchecked(midiNote: Int): Int =
         midiNote - 24 + NspcSequence.NOTE_MIN
 
-    private fun reportForSong(
+    internal fun reportForSong(
         formatLabel: String,
         fileName: String,
         song: NspcSequence.Song,

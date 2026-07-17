@@ -514,6 +514,9 @@ fun SoundEditorCanvas(
                 onImportMidi = {
                     if (romParser != null) state.importPianoRollMidi(romParser, editorState)
                 },
+                onImportImpulseTracker = {
+                    if (romParser != null) state.importPianoRollImpulseTracker(romParser, editorState)
+                },
                 onExportMidi = {
                     state.exportPianoRollMidi()
                 },

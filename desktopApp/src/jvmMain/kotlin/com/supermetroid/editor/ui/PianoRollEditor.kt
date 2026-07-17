@@ -207,6 +207,7 @@ fun PianoRollEditor(
     onPlay: () -> Unit,
     onStop: () -> Unit,
     onImportMidi: () -> Unit = {},
+    onImportImpulseTracker: () -> Unit = {},
     onExportMidi: () -> Unit = {},
     onImportNative: () -> Unit = {},
     onExportNative: () -> Unit = {},
@@ -493,6 +494,16 @@ fun PianoRollEditor(
                 Icon(Icons.Default.Add, "Import MIDI", Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))
                 Text("MIDI In", fontSize = 10.sp)
+            }
+
+            OutlinedButton(
+                onClick = onImportImpulseTracker,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(Icons.Default.Add, "Import Impulse Tracker module", Modifier.size(14.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("IT In", fontSize = 10.sp)
             }
 
             OutlinedButton(

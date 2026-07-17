@@ -30,13 +30,29 @@ The native payload is preserved only while the applied song and instruments stil
 
 ## Current workflow for `.it`
 
-Use mITroid or another N-SPC conversion tool outside SMEDIT:
+SMEDIT now has a first-pass `IT In` importer in the piano roll. It parses Impulse Tracker module headers/orders/packed patterns and converts importable notes from the first 8 tracker channels into editable SMEDIT/N-SPC piano-roll notes.
+
+Current `IT In` behavior:
+
+- Imports note timing, note pitch, note-off/cut/fade stops, volume-column note velocity, initial speed, and initial/first tempo.
+- Maps IT instruments into existing Super Metroid instrument slots.
+- Stages an import report before applying, like MIDI and N-SPC import.
+- Saves/applies as editable piano-roll sequence data, not as a native raw payload.
+
+Current `IT In` limitations:
+
+- Does not import IT samples as custom BRR sample data yet.
+- Does not import IT instruments as a custom Super Metroid sample directory/instrument table yet.
+- Does not preserve most tracker effects yet; the first pass warns for unsupported/partial timing behavior.
+- Ignores channels above the SNES 8-voice limit.
+
+For full custom sample-bank replacement, use mITroid or another N-SPC conversion tool outside SMEDIT:
 
 1. Author or adapt an 8-channel `.it` module.
 2. Convert it with mITroid using the Super Metroid profile.
 3. Import the generated raw `.nspc` through `N-SPC In`.
 
-Direct `.it` import inside SMEDIT is still future work. The likely path is to port or vendor the non-UI mITroid conversion core, then wrap it with SMEDIT validation and project storage.
+The longer-term path is to extend SMEDIT's clean Kotlin `.it` importer with BRR sample conversion, sample directory allocation, instrument table generation, and native transfer-block payload export.
 
 ## External reference findings
 

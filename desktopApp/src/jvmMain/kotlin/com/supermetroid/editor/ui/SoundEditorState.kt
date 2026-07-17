@@ -328,6 +328,38 @@ class SoundEditorState {
         }
     }
 
+    fun importPianoRollImpulseTracker(romParser: RomParser, editorState: EditorState? = null) {
+        selectedTrack ?: run {
+            statusMessage = "Select a track before importing IT"
+            return
+        }
+        if (!isPianoRollOpen || editingSong == null) {
+            openPianoRoll(romParser, editorState)
+        }
+        val file = chooseMusicLoadFile("Import Impulse Tracker") { name ->
+            name.endsWith(".it", ignoreCase = true)
+        } ?: return
+
+        try {
+            val imported = ImpulseTrackerImport.read(file)
+            stagePendingTrackImport(
+                label = "IT",
+                fileName = file.name,
+                song = imported.song,
+                instruments = imported.instruments,
+                report = imported.report
+            )
+            statusMessage = "Review IT import report for ${file.name}"
+            soundEditorLog.info {
+                "[SPC-IMPORT] Imported IT ${file.absolutePath}: " +
+                    "${imported.song.channels.sumOf { it.notes.size }} notes"
+            }
+        } catch (e: Exception) {
+            statusMessage = "IT import failed: ${e.message}"
+            soundEditorLog.error(e) { "[SPC-IMPORT] IT import failed: ${e.message}" }
+        }
+    }
+
     fun exportPianoRollNative(romParser: RomParser) {
         val song = editingSong ?: run {
             statusMessage = "Open Edit Track before exporting native audio"
