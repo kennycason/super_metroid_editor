@@ -24,6 +24,7 @@ kotlin {
         withJava()
         testRuns["test"].executionTask.configure {
             useJUnitPlatform()
+            systemProperty("smedit.realItFixture", System.getProperty("smedit.realItFixture", ""))
         }
     }
     

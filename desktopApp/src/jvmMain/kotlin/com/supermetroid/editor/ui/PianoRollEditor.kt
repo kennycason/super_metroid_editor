@@ -8,6 +8,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
@@ -35,6 +38,8 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -60,6 +65,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -124,6 +130,47 @@ private val PLAYBACK_CURSOR = Color(0xFFFFFFFF)
 // Zoom levels: index 0 = most zoomed out, higher = more zoomed in
 private val ZOOM_LEVELS = floatArrayOf(2.0f, 1.0f, 0.5f, 0.25f)
 private val ZOOM_LABELS = arrayOf("1x", "2x", "4x", "8x")
+
+private data class ToolbarMenuAction(
+    val label: String,
+    val onClick: () -> Unit
+)
+
+@Composable
+private fun ToolbarMenuButton(
+    label: String,
+    icon: ImageVector,
+    contentDescription: String,
+    actions: List<ToolbarMenuAction>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            modifier = Modifier.height(28.dp)
+        ) {
+            Icon(icon, contentDescription, Modifier.size(14.dp))
+            Spacer(Modifier.width(2.dp))
+            Text(label, fontSize = 10.sp)
+            Icon(Icons.Default.ArrowDropDown, null, Modifier.size(14.dp))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            actions.forEach { action ->
+                DropdownMenuItem(
+                    text = { Text(action.label, fontSize = 12.sp) },
+                    onClick = {
+                        expanded = false
+                        action.onClick()
+                    }
+                )
+            }
+        }
+    }
+}
 private const val BASE_NOTE_HEIGHT = 20f  // base note height at zoom index 0
 private const val NOTE_RESIZE_HANDLE_PX = 7f
 private const val NOTE_TICK_STEP = 12
@@ -186,7 +233,7 @@ private fun hex(value: Int, digits: Int = 2): String =
 private fun hexOrUnknown(value: Int, digits: Int = 4): String =
     if (value >= 0) hex(value, digits) else "unknown"
 
-@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PianoRollEditor(
     song: Song,
@@ -433,240 +480,229 @@ fun PianoRollEditor(
 
     Column(modifier = modifier) {
         // Toolbar
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
         ) {
-            Button(
-                onClick = onPlay,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp),
-                enabled = !isPlaying
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.PlayArrow, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Play", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onStop,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Stop, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Stop", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = {
-                    val removed = song.channels[activeChannel].notes.size
-                    mutateSong(historyLabel = "Clear channel") {
-                        song.channels[activeChannel].notes.clear()
-                        clearSelection()
-                    }
-                    pianoRollLog.info { "[SPC-PIANO-EDIT] Clear channel ch=${activeChannel + 1} removed=$removed" }
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Delete, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Clear Ch", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onReset,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Undo, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Reset", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onImportMidi,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Add, "Import MIDI", Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("MIDI In", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onImportImpulseTracker,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Add, "Import Impulse Tracker module", Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("IT In", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onExportMidi,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.SaveAlt, "Export MIDI", Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("MIDI Out", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onImportNative,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.Add, "Import SPC, N-SPC, or raw mITroid N-SPC", Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("N-SPC In", fontSize = 10.sp)
-            }
-
-            OutlinedButton(
-                onClick = onExportNative,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Icon(Icons.Default.SaveAlt, "Export SPC or N-SPC", Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("N-SPC Out", fontSize = 10.sp)
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            OutlinedButton(
-                onClick = { undoMusicEdit() },
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(28.dp),
-                enabled = canUndo
-            ) {
-                Icon(Icons.Default.Undo, "Undo music edit", Modifier.size(15.dp))
-            }
-            OutlinedButton(
-                onClick = { redoMusicEdit() },
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(28.dp),
-                enabled = canRedo
-            ) {
-                Icon(Icons.Default.Redo, "Redo music edit", Modifier.size(15.dp))
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            FilterChip(
-                selected = activeTool == PianoRollTool.Select,
-                onClick = {
-                    activeTool = PianoRollTool.Select
-                    focusRequester.requestFocus()
-                },
-                label = { Icon(Icons.Default.SelectAll, "Select (S)", Modifier.size(14.dp)) },
-                modifier = Modifier.height(28.dp)
-            )
-            FilterChip(
-                selected = activeTool == PianoRollTool.Paint,
-                onClick = {
-                    activeTool = PianoRollTool.Paint
-                    focusRequester.requestFocus()
-                },
-                label = { Icon(Icons.Default.Brush, "Paint (P)", Modifier.size(14.dp)) },
-                modifier = Modifier.height(28.dp)
-            )
-            FilterChip(
-                selected = activeTool == PianoRollTool.Erase,
-                onClick = {
-                    activeTool = PianoRollTool.Erase
-                    focusRequester.requestFocus()
-                },
-                label = { Icon(Icons.Default.Clear, "Erase (E)", Modifier.size(14.dp)) },
-                modifier = Modifier.height(28.dp)
-            )
-
-            Spacer(Modifier.width(8.dp))
-
-            // Channel selector
-            for (ch in 0 until 8) {
-                val hasNotes = song.channels[ch].notes.isNotEmpty()
-                val isActive = ch == activeChannel
-                Surface(
-                    modifier = Modifier.height(24.dp).clickable {
-                        selectedChannel = ch
-                        onActiveChannelChanged(ch)
-                    },
-                    color = if (isActive) CHANNEL_COLORS[ch].copy(alpha = 0.8f)
-                    else if (hasNotes) CHANNEL_COLORS[ch].copy(alpha = 0.2f)
-                    else Color.Transparent,
-                    shape = RoundedCornerShape(4.dp),
-                    border = BorderStroke(1.dp,
-                        if (isActive) CHANNEL_COLORS[ch]
-                        else if (hasNotes) CHANNEL_COLORS[ch].copy(alpha = 0.4f)
-                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                Button(
+                    onClick = onPlay,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp),
+                    enabled = !isPlaying
                 ) {
-                    Text(
-                        "${ch + 1}",
-                        fontSize = 9.sp,
-                        color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                    Icon(Icons.Default.PlayArrow, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Play", fontSize = 10.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onStop,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Default.Stop, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Stop", fontSize = 10.sp)
                 }
             }
 
-            Spacer(Modifier.width(4.dp))
-
-            // Show all toggle
-            Surface(
-                modifier = Modifier.height(24.dp).clickable { showAllChannels = !showAllChannels },
-                color = if (showAllChannels) Color(0xFF3A3A5A) else Color.Transparent,
-                shape = RoundedCornerShape(4.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("All", fontSize = 9.sp,
-                    color = if (showAllChannels) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                OutlinedButton(
+                    onClick = {
+                        val removed = song.channels[activeChannel].notes.size
+                        mutateSong(historyLabel = "Clear channel") {
+                            song.channels[activeChannel].notes.clear()
+                            clearSelection()
+                        }
+                        pianoRollLog.info { "[SPC-PIANO-EDIT] Clear channel ch=${activeChannel + 1} removed=$removed" }
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Default.Delete, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Clear Ch", fontSize = 10.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onReset,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Default.Undo, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Reset", fontSize = 10.sp)
+                }
             }
 
-            Spacer(Modifier.weight(1f))
+            ToolbarMenuButton(
+                label = "Import",
+                icon = Icons.Default.Add,
+                contentDescription = "Import music",
+                actions = listOf(
+                    ToolbarMenuAction("MIDI (.mid, .midi)", onImportMidi),
+                    ToolbarMenuAction("Impulse Tracker (.it)", onImportImpulseTracker),
+                    ToolbarMenuAction("SPC / N-SPC (.spc, .nspc)", onImportNative)
+                )
+            )
 
-            // Zoom +/- controls
-            OutlinedButton(
-                onClick = { zoomIndex = (effectiveZoomIndex - 1).coerceAtLeast(0) },
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(24.dp),
-                enabled = effectiveZoomIndex > 0
+            ToolbarMenuButton(
+                label = "Export",
+                icon = Icons.Default.SaveAlt,
+                contentDescription = "Export music",
+                actions = listOf(
+                    ToolbarMenuAction("MIDI (.mid)", onExportMidi),
+                    ToolbarMenuAction("SPC / N-SPC (.spc, .nspc)", onExportNative)
+                )
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Remove, null, Modifier.size(14.dp))
+                OutlinedButton(
+                    onClick = { undoMusicEdit() },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(28.dp),
+                    enabled = canUndo
+                ) {
+                    Icon(Icons.Default.Undo, "Undo music edit", Modifier.size(15.dp))
+                }
+                OutlinedButton(
+                    onClick = { redoMusicEdit() },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(28.dp),
+                    enabled = canRedo
+                ) {
+                    Icon(Icons.Default.Redo, "Redo music edit", Modifier.size(15.dp))
+                }
             }
-            Text(ZOOM_LABELS[effectiveZoomIndex], fontSize = 9.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(24.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            OutlinedButton(
-                onClick = { zoomIndex = (effectiveZoomIndex + 1).coerceAtMost(ZOOM_LEVELS.lastIndex) },
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(24.dp),
-                enabled = effectiveZoomIndex < ZOOM_LEVELS.lastIndex
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, null, Modifier.size(14.dp))
+                FilterChip(
+                    selected = activeTool == PianoRollTool.Select,
+                    onClick = {
+                        activeTool = PianoRollTool.Select
+                        focusRequester.requestFocus()
+                    },
+                    label = { Icon(Icons.Default.SelectAll, "Select (S)", Modifier.size(14.dp)) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTool == PianoRollTool.Paint,
+                    onClick = {
+                        activeTool = PianoRollTool.Paint
+                        focusRequester.requestFocus()
+                    },
+                    label = { Icon(Icons.Default.Brush, "Paint (P)", Modifier.size(14.dp)) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTool == PianoRollTool.Erase,
+                    onClick = {
+                        activeTool = PianoRollTool.Erase
+                        focusRequester.requestFocus()
+                    },
+                    label = { Icon(Icons.Default.Clear, "Erase (E)", Modifier.size(14.dp)) },
+                    modifier = Modifier.height(28.dp)
+                )
             }
 
-            Spacer(Modifier.width(8.dp))
-
-            Text("Tempo: ${song.tempo}", fontSize = 9.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-            Spacer(Modifier.width(8.dp))
-
-            Button(
-                onClick = onDone,
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                modifier = Modifier.height(28.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
-                Spacer(Modifier.width(2.dp))
-                Text("Done", fontSize = 10.sp)
+                for (ch in 0 until 8) {
+                    val hasNotes = song.channels[ch].notes.isNotEmpty()
+                    val isActive = ch == activeChannel
+                    Surface(
+                        modifier = Modifier.height(24.dp).clickable {
+                            selectedChannel = ch
+                            onActiveChannelChanged(ch)
+                        },
+                        color = if (isActive) CHANNEL_COLORS[ch].copy(alpha = 0.8f)
+                        else if (hasNotes) CHANNEL_COLORS[ch].copy(alpha = 0.2f)
+                        else Color.Transparent,
+                        shape = RoundedCornerShape(4.dp),
+                        border = BorderStroke(1.dp,
+                            if (isActive) CHANNEL_COLORS[ch]
+                            else if (hasNotes) CHANNEL_COLORS[ch].copy(alpha = 0.4f)
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            "${ch + 1}",
+                            fontSize = 9.sp,
+                            color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier.height(24.dp).clickable { showAllChannels = !showAllChannels },
+                    color = if (showAllChannels) Color(0xFF3A3A5A) else Color.Transparent,
+                    shape = RoundedCornerShape(4.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                ) {
+                    Text("All", fontSize = 9.sp,
+                        color = if (showAllChannels) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = { zoomIndex = (effectiveZoomIndex - 1).coerceAtLeast(0) },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(24.dp),
+                    enabled = effectiveZoomIndex > 0
+                ) {
+                    Icon(Icons.Default.Remove, null, Modifier.size(14.dp))
+                }
+                Text(ZOOM_LABELS[effectiveZoomIndex], fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(24.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                OutlinedButton(
+                    onClick = { zoomIndex = (effectiveZoomIndex + 1).coerceAtMost(ZOOM_LEVELS.lastIndex) },
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(24.dp),
+                    enabled = effectiveZoomIndex < ZOOM_LEVELS.lastIndex
+                ) {
+                    Icon(Icons.Default.Add, null, Modifier.size(14.dp))
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Tempo: ${song.tempo}", fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                Button(
+                    onClick = onDone,
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Icon(Icons.Default.MusicNote, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text("Done", fontSize = 10.sp)
+                }
             }
         }
 

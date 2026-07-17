@@ -1,6 +1,6 @@
 # Music Import Native Payload Testing
 
-This pass adds first-class raw N-SPC transfer-chain import for mITroid-style output. It does not yet run mITroid or parse `.it` files directly inside SMEDIT.
+This pass tracks SMEDIT music import/export hardening: raw N-SPC transfer-chain import for mITroid-style output, first-pass Impulse Tracker `.it` import, and the piano-roll toolbar Import/Export menus.
 
 ## What to test
 
@@ -8,7 +8,7 @@ This pass adds first-class raw N-SPC transfer-chain import for mITroid-style out
 2. Open SMEDIT, load a project, and go to the Sounds tab.
 3. Select the target track you want to replace.
 4. Open `Edit Track`.
-5. Click `N-SPC In`.
+5. Open the `Import` dropdown and choose `SPC / N-SPC (.spc, .nspc)`.
 6. Choose the raw `.nspc` file.
 7. Confirm the import preview says `Raw N-SPC`.
 8. Apply the import.
@@ -30,12 +30,13 @@ The native payload is preserved only while the applied song and instruments stil
 
 ## Current workflow for `.it`
 
-SMEDIT now has a first-pass `IT In` importer in the piano roll. It parses Impulse Tracker module headers/orders/packed patterns and converts importable notes from the first 8 tracker channels into editable SMEDIT/N-SPC piano-roll notes.
+SMEDIT now has a first-pass `Impulse Tracker (.it)` importer in the piano-roll `Import` dropdown. It parses Impulse Tracker module headers, sample headers, orders, and packed patterns, then converts importable notes from the first 8 tracker channels into editable SMEDIT/N-SPC piano-roll notes.
 
 Current `IT In` behavior:
 
-- Imports note timing, note pitch, note-off/cut/fade stops, volume-column note velocity, initial speed, and initial/first tempo.
+- Imports note timing, note pitch, note-off/cut/fade stops, volume-column/channel/global-volume note velocity, initial speed, speed-adjusted row timing, and tempo commands where possible.
 - Maps IT instruments into existing Super Metroid instrument slots.
+- Reports active IT sample metadata, including compressed/stereo/16-bit/looped counts, so unsupported custom sample cases are visible before apply.
 - Stages an import report before applying, like MIDI and N-SPC import.
 - Saves/applies as editable piano-roll sequence data, not as a native raw payload.
 
@@ -43,14 +44,28 @@ Current `IT In` limitations:
 
 - Does not import IT samples as custom BRR sample data yet.
 - Does not import IT instruments as a custom Super Metroid sample directory/instrument table yet.
-- Does not preserve most tracker effects yet; the first pass warns for unsupported/partial timing behavior.
+- Does not preserve most tracker effects yet; unsupported effect commands are reported.
 - Ignores channels above the SNES 8-voice limit.
 
 For full custom sample-bank replacement, use mITroid or another N-SPC conversion tool outside SMEDIT:
 
 1. Author or adapt an 8-channel `.it` module.
 2. Convert it with mITroid using the Super Metroid profile.
-3. Import the generated raw `.nspc` through `N-SPC In`.
+3. Import the generated raw `.nspc` through `Import` -> `SPC / N-SPC (.spc, .nspc)`.
+
+## Real `.it` fixture
+
+For a real-world smoke test, this pass downloaded:
+
+`~/Downloads/ModArchive - antartica rainforests - giants.it`
+
+Source: Mod Archive module ID `213016`, "antartica rainforests" / `giants.it`. This is a stress fixture with 63 tracker channels, so it is useful for confirming that SMEDIT imports playable first-8-channel data and reports ignored channels above the SNES voice limit.
+
+Optional regression command:
+
+```bash
+./gradlew --no-daemon -Dsmedit.realItFixture="$HOME/Downloads/ModArchive - antartica rainforests - giants.it" :desktopApp:jvmTest --tests com.supermetroid.editor.ui.ImpulseTrackerImportTest.real\ world\ impulse\ tracker\ fixture\ imports\ when\ supplied
+```
 
 The longer-term path is to extend SMEDIT's clean Kotlin `.it` importer with BRR sample conversion, sample directory allocation, instrument table generation, and native transfer-block payload export.
 

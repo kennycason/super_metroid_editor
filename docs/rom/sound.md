@@ -185,11 +185,12 @@ patch DIR entries, relocate song-set transfer chains, or expand the ROM.
 ## Track Import/Export Formats
 
 SMEDIT exposes import/export from the main track page next to **Export WAV**, and from the
-piano-roll editor toolbar:
+piano-roll editor toolbar `Import` and `Export` dropdowns:
 
 | Format | Extension | Direction | Purpose | Caveats |
 |--------|-----------|-----------|---------|---------|
 | MIDI | `.mid`, `.midi` | Import/export | Common editable interchange for DAWs and trackers | Loses SNES-specific command detail. Export maps SMEDIT instrument IDs to best-effort General MIDI programs for more plausible generic playback, and writes SMEDIT text metadata so reimport can restore the original Super Metroid instrument IDs. It still cannot carry BRR samples, ADSR, echo, pitch modulation, or DSP state. Import folds MIDI channels 9-16 into the 8 SNES voices, clamps pitch to Super Metroid's C1-B6 range, and reports ignored unsupported events before applying. |
+| Impulse Tracker | `.it` | Import | Tracker module import path used by mITroid-style workflows | Current importer parses IT headers, sample metadata, orders, packed patterns, speed-adjusted note timing, tempo commands, note stops, and first-8-channel note data. It maps instruments to existing Super Metroid instrument slots and reports active sample blockers, but does not yet convert IT PCM samples to BRR or allocate custom sample-directory/instrument-table transfer blocks. |
 | SPC snapshot | `.spc` | Import/export | Native SNES SPC-700 snapshot for playback/testing | Export is a playable snapshot of the current editable song when native `libspc` is available, or a static ARAM image fallback. Import only becomes editable when compatible N-SPC sequence data can be found in SPC RAM; arbitrary SPC dumps may not map back to piano-roll data. |
 | SMEDIT N-SPC bundle | `.nspc` | Import/export | Lossless editable bundle for SMEDIT track round-trips | This is SMEDIT's native editable track bundle, not a universal SNES music standard. It preserves the parsed song, control commands, source play index, and instrument table bytes used by the editor. |
 | BRR sample | `.brr` inside ROM sample data | ROM patch path | Native compressed sample payload used by the SPC engine | Current WAV replacement still rewrites/trims the existing BRR footprint in place. Relocating BRR data and patching DIR entries remains future work. |

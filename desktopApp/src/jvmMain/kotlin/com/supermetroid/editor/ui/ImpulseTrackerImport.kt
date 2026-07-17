@@ -12,6 +12,12 @@ internal object ImpulseTrackerImport {
     private const val IT_NOTE_FADE = 253
     private const val ROW_CHANNEL_LIMIT = 64
     private const val EDITOR_CHANNEL_LIMIT = 8
+    private const val IT_FLAG_USE_INSTRUMENTS = 0x04
+    private const val SAMPLE_FLAG_ASSOCIATED = 0x01
+    private const val SAMPLE_FLAG_16_BIT = 0x02
+    private const val SAMPLE_FLAG_STEREO = 0x04
+    private const val SAMPLE_FLAG_COMPRESSED = 0x08
+    private const val SAMPLE_FLAG_LOOP = 0x10
 
     data class Result(
         val song: NspcSequence.Song,
@@ -25,11 +31,36 @@ internal object ImpulseTrackerImport {
         val initialSpeed: Int,
         val initialTempo: Int,
         val globalVolume: Int,
+        val flags: Int,
+        val channelVolumes: List<Int>,
         val instrumentCount: Int,
         val sampleCount: Int,
+        val samples: List<Sample>,
         val patterns: List<Pattern>,
         val warnings: List<String>
-    )
+    ) {
+        val usesInstruments: Boolean get() = (flags and IT_FLAG_USE_INSTRUMENTS) != 0
+    }
+
+    data class Sample(
+        val index: Int,
+        val name: String,
+        val flags: Int,
+        val convertFlags: Int,
+        val defaultVolume: Int,
+        val globalVolume: Int,
+        val length: Int,
+        val loopStart: Int,
+        val loopEnd: Int,
+        val c5Speed: Int,
+        val samplePointer: Int
+    ) {
+        val associated: Boolean get() = (flags and SAMPLE_FLAG_ASSOCIATED) != 0 && length > 0
+        val is16Bit: Boolean get() = (flags and SAMPLE_FLAG_16_BIT) != 0
+        val isStereo: Boolean get() = (flags and SAMPLE_FLAG_STEREO) != 0
+        val isCompressed: Boolean get() = (flags and SAMPLE_FLAG_COMPRESSED) != 0
+        val isLooped: Boolean get() = (flags and SAMPLE_FLAG_LOOP) != 0 && loopEnd > loopStart
+    }
 
     data class Pattern(
         val rows: Int,
@@ -70,9 +101,11 @@ internal object ImpulseTrackerImport {
         val instrumentCount = input.u16At(0x22)
         val sampleCount = input.u16At(0x24)
         val patternCount = input.u16At(0x26)
+        val flags = input.u16At(0x2C)
         val globalVolume = input.u8At(0x30)
         val initialSpeed = input.u8At(0x32).coerceAtLeast(1)
         val initialTempo = input.u8At(0x33).coerceAtLeast(1)
+        val channelVolumes = input.bytesAt(0x80, ROW_CHANNEL_LIMIT).map { it.toInt() and 0xFF }
         val ordersStart = 0xC0
         val instrumentTableStart = ordersStart + orderCount
         val sampleTableStart = instrumentTableStart + instrumentCount * 4
@@ -80,8 +113,12 @@ internal object ImpulseTrackerImport {
         require(patternTableStart + patternCount * 4 <= data.size) { "IT header tables overrun file data" }
 
         val orders = input.bytesAt(ordersStart, orderCount).map { it.toInt() and 0xFF }
+        val sampleOffsets = List(sampleCount) { index -> input.u32At(sampleTableStart + index * 4) }
         val patternOffsets = List(patternCount) { index -> input.u32At(patternTableStart + index * 4) }
         val warnings = mutableListOf<String>()
+        val samples = sampleOffsets.mapIndexedNotNull { index, offset ->
+            parseSample(input, offset, index, warnings)
+        }
         val patterns = patternOffsets.mapIndexed { index, offset ->
             parsePattern(input, offset, index, warnings)
         }
@@ -90,7 +127,16 @@ internal object ImpulseTrackerImport {
             warnings += "IT order list contains no playable patterns."
         }
         if (instrumentCount > 0 || sampleCount > 0) {
-            warnings += "IT instruments/samples were not imported as custom BRR data yet; notes were mapped to Super Metroid instrument slots."
+            val activeSamples = samples.count { it.associated }
+            val compressed = samples.count { it.associated && it.isCompressed }
+            val stereo = samples.count { it.associated && it.isStereo }
+            val sixteenBit = samples.count { it.associated && it.is16Bit }
+            val looped = samples.count { it.associated && it.isLooped }
+            warnings += if (activeSamples > 0) {
+                "IT has $activeSamples active sample(s) ($compressed compressed, $stereo stereo, $sixteenBit 16-bit, $looped looped); custom BRR sample import is not wired yet, so notes were mapped to Super Metroid instrument slots."
+            } else {
+                "IT instruments/samples were not imported as custom BRR data yet; notes were mapped to Super Metroid instrument slots."
+            }
         }
         return Module(
             name = name,
@@ -98,10 +144,49 @@ internal object ImpulseTrackerImport {
             initialSpeed = initialSpeed,
             initialTempo = initialTempo,
             globalVolume = globalVolume,
+            flags = flags,
+            channelVolumes = channelVolumes,
             instrumentCount = instrumentCount,
             sampleCount = sampleCount,
+            samples = samples,
             patterns = patterns,
             warnings = warnings
+        )
+    }
+
+    private fun parseSample(
+        input: LeReader,
+        offset: Int,
+        sampleIndex: Int,
+        warnings: MutableList<String>
+    ): Sample? {
+        if (offset == 0) return null
+        if (offset + 0x50 > input.size) {
+            warnings += "Sample ${sampleIndex + 1} header overruns file data and was ignored."
+            return null
+        }
+        if (input.stringAt(offset, 4) != "IMPS") {
+            warnings += "Sample ${sampleIndex + 1} header is not an IT sample header and was ignored."
+            return null
+        }
+        val flags = input.u8At(offset + 0x12)
+        val length = input.u32At(offset + 0x30).coerceAtLeast(0)
+        val samplePointer = input.u32At(offset + 0x48).coerceAtLeast(0)
+        if ((flags and SAMPLE_FLAG_ASSOCIATED) != 0 && length > 0 && samplePointer !in 0 until input.size) {
+            warnings += "Sample ${sampleIndex + 1} points outside the IT file and cannot be converted."
+        }
+        return Sample(
+            index = sampleIndex + 1,
+            name = input.stringAt(offset + 0x14, 26).ifBlank { "Sample ${sampleIndex + 1}" },
+            flags = flags,
+            convertFlags = input.u8At(offset + 0x2E),
+            defaultVolume = input.u8At(offset + 0x13),
+            globalVolume = input.u8At(offset + 0x11),
+            length = length,
+            loopStart = input.u32At(offset + 0x34).coerceAtLeast(0),
+            loopEnd = input.u32At(offset + 0x38).coerceAtLeast(0),
+            c5Speed = input.u32At(offset + 0x3C).coerceAtLeast(1),
+            samplePointer = samplePointer
         )
     }
 
@@ -214,7 +299,7 @@ internal object ImpulseTrackerImport {
         val active = arrayOfNulls<ActiveNote>(EDITOR_CHANNEL_LIMIT)
         var tick = 0
         var skippedOrders = 0
-        val rowTicks = module.initialSpeed.coerceIn(1, 0x7F)
+        var currentSpeed = module.initialSpeed.coerceIn(1, 0x7F)
 
         for (order in module.orders) {
             when (order) {
@@ -232,46 +317,76 @@ internal object ImpulseTrackerImport {
             val tempoEvents = mutableListOf<Pair<Int, Int>>()
             val speedEvents = mutableListOf<Pair<Int, Int>>()
             val patternBreakRows = mutableListOf<Int>()
+            val unsupportedEffects = mutableMapOf<Char, Int>()
             for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
                 for (row in pattern.channels[channelIndex]) {
                     if (row.command > 0) {
                         val commandLetter = 'A'.code + row.command - 1
                         when (commandLetter.toChar()) {
-                            'T' -> tempoEvents += row.row to row.value
-                            'A' -> speedEvents += row.row to row.value
-                            'C' -> patternBreakRows += row.row
-                        }
-                    }
-                    if (row.instrument > 0 && active[channelIndex] != null && row.note < 0) {
-                        active[channelIndex] = active[channelIndex]?.copy(instrument = mapItInstrument(row.instrument))
-                    }
-                    when {
-                        row.note in 1..119 -> {
-                            finishActive(song, active, channelIndex, tick + row.row * rowTicks)
-                            active[channelIndex] = ActiveNote(
-                                startTick = tick + row.row * rowTicks,
-                                noteValue = itNoteToNspc(row.note),
-                                velocity = itVolumeToVelocity(row.volume),
-                                instrument = mapItInstrument(row.instrument)
-                            )
-                        }
-                        row.note == IT_NOTE_OFF || row.note == IT_NOTE_CUT || row.note == IT_NOTE_FADE -> {
-                            finishActive(song, active, channelIndex, tick + row.row * rowTicks)
+                            'T' -> if (row.value > 0) tempoEvents += row.row to row.value
+                            'A' -> if (row.value > 0) speedEvents += row.row to row.value
+                            'C' -> patternBreakRows += row.row + 1
+                            'B' -> unsupportedEffects.merge('B', 1, Int::plus)
+                            else -> unsupportedEffects.merge(commandLetter.toChar(), 1, Int::plus)
                         }
                     }
                 }
             }
-            tempoEvents.minByOrNull { it.first }?.let { (_, tempo) ->
+
+            val rowTickOffsets = buildRowTickOffsets(pattern.rows, currentSpeed, speedEvents)
+            val patternRows = patternBreakRows.minOrNull()?.coerceIn(0, pattern.rows) ?: pattern.rows
+
+            for ((rowIndex, tempo) in tempoEvents.sortedBy { it.first }) {
+                if (rowIndex >= patternRows) continue
                 val convertedTempo = itTempoToNspc(tempo)
-                song.tempo = convertedTempo
-                song.channels[0].commands += NspcSequence.ControlCommand(0, 0xE7, intArrayOf(convertedTempo))
-                warnings += "IT tempo command was imported as the initial SM tempo; later tempo changes are not preserved yet."
+                val tempoTick = tick + rowTickOffsets[rowIndex.coerceIn(0, pattern.rows)]
+                song.channels[0].commands += NspcSequence.ControlCommand(tempoTick, 0xE7, intArrayOf(convertedTempo))
+                if (tempoTick == 0 || song.tempo == itTempoToNspc(module.initialTempo)) {
+                    song.tempo = convertedTempo
+                }
+            }
+            if (tempoEvents.isNotEmpty()) {
+                warnings += "IT tempo commands were imported as Super Metroid tempo commands; playback may still differ for effect-heavy tracks."
             }
             if (speedEvents.isNotEmpty()) {
-                warnings += "IT speed commands were detected; first-pass import uses the initial speed for all rows."
+                warnings += "IT speed commands were used to place editable notes, but Super Metroid playback does not preserve speed changes directly."
             }
-            val patternRows = patternBreakRows.minOrNull()?.coerceIn(0, pattern.rows) ?: pattern.rows
-            tick += patternRows * rowTicks
+            if (unsupportedEffects.isNotEmpty()) {
+                val summary = unsupportedEffects.entries.sortedBy { it.key }.joinToString { "${it.key}xx=${it.value}" }
+                warnings += "Unsupported IT effects were ignored: $summary."
+            }
+
+            for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
+                for (row in pattern.channels[channelIndex]) {
+                    if (row.row >= patternRows) continue
+                    val rowTick = tick + rowTickOffsets[row.row.coerceIn(0, pattern.rows)]
+                    if (row.instrument > 0 && active[channelIndex] != null && row.note < 0) {
+                        active[channelIndex] = active[channelIndex]?.copy(instrument = mapItInstrument(row.instrument, module))
+                    }
+                    when {
+                        row.note in 1..119 -> {
+                            finishActive(song, active, channelIndex, rowTick)
+                            active[channelIndex] = ActiveNote(
+                                startTick = rowTick,
+                                noteValue = itNoteToNspc(row.note),
+                                velocity = itVolumeToVelocity(
+                                    row.volume,
+                                    module.channelVolumes.getOrElse(channelIndex) { 64 },
+                                    module.globalVolume
+                                ),
+                                instrument = mapItInstrument(row.instrument, module)
+                            )
+                        }
+                        row.note == IT_NOTE_OFF || row.note == IT_NOTE_CUT || row.note == IT_NOTE_FADE -> {
+                            finishActive(song, active, channelIndex, rowTick)
+                        }
+                    }
+                }
+            }
+            tick += rowTickOffsets[patternRows]
+            speedEvents.filter { it.first < patternRows }
+                .maxByOrNull { it.first }
+                ?.let { (_, speed) -> currentSpeed = speed.coerceIn(1, 0x7F) }
         }
         for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
             finishActive(song, active, channelIndex, tick)
@@ -311,13 +426,42 @@ internal object ImpulseTrackerImport {
     private fun itTempoToNspc(tempo: Int): Int =
         (tempo.coerceAtLeast(1) / 4.85).roundToInt().coerceIn(1, 255)
 
-    private fun itVolumeToVelocity(volume: Int): Int {
-        val source = if (volume in 0..64) volume else 64
-        return ((source.coerceIn(0, 64) * 15) / 64).coerceIn(1, 15)
+    private fun itVolumeToVelocity(volume: Int, channelVolume: Int, globalVolume: Int): Int {
+        val rowVolume = if (volume in 0..64) volume else 64
+        val scaled = rowVolume.coerceIn(0, 64) *
+            channelVolume.coerceIn(0, 64) *
+            globalVolume.coerceIn(0, 128)
+        return ((scaled * 15) / (64 * 64 * 128)).coerceIn(1, 15)
     }
 
-    private fun mapItInstrument(instrument: Int): Int =
-        if (instrument > 0) 0x18 + ((instrument - 1) % 0x0E) else 0x18
+    private fun mapItInstrument(instrument: Int, module: Module): Int {
+        val sourceIndex = when {
+            instrument > 0 -> instrument
+            module.samples.firstOrNull { it.associated } != null -> module.samples.first { it.associated }.index
+            else -> 1
+        }
+        return 0x18 + ((sourceIndex - 1) % 0x0E)
+    }
+
+    private fun buildRowTickOffsets(
+        rows: Int,
+        initialSpeed: Int,
+        speedEvents: List<Pair<Int, Int>>
+    ): IntArray {
+        val offsets = IntArray(rows + 1)
+        val speedByRow = speedEvents
+            .filter { (row, speed) -> row in 0 until rows && speed > 0 }
+            .groupBy({ it.first }, { it.second })
+        var speed = initialSpeed.coerceIn(1, 0x7F)
+        var tick = 0
+        for (row in 0 until rows) {
+            offsets[row] = tick
+            speedByRow[row]?.lastOrNull()?.let { speed = it.coerceIn(1, 0x7F) }
+            tick += speed
+        }
+        offsets[rows] = tick
+        return offsets
+    }
 
     private data class ActiveNote(
         val startTick: Int,
