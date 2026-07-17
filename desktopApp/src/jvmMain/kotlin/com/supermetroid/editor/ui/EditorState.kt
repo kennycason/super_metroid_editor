@@ -2142,7 +2142,7 @@ class EditorState {
         val ordered = mutableListOf<SmPatch>()
 
         // 1. GUI config patches (featured at top)
-        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
+        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
             if (guiPatch.id !in existingIds) {
                 ordered.add(SmPatch(
                     id = guiPatch.id,
@@ -5350,6 +5350,43 @@ class EditorState {
                     modCount++
                 }
                 editorLog("[EXPORT]   Samus physics: $modCount values modified")
+            } else if (patch.configType == BOMB_CONFIG_TYPE) {
+                val data = patch.configData
+                val defaults = readBombsRomDefaults(romParser)
+                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
+                    .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
+                val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
+                    .coerceIn(1, 9999)
+                val cooldownFrames = (
+                    data?.get(BOMB_COOLDOWN_FRAMES_KEY)
+                        ?: calculateBombCooldownForConfig(
+                            maxActiveBombs = maxActive,
+                            fuseFrames = fuseFrames,
+                            baseCooldownFrames = defaults.cooldownFrames,
+                        )
+                    ).coerceIn(0, 255)
+                val explosionDelay = (data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay)
+                    .coerceIn(1, 255)
+
+                fun writeByte(offset: Int, value: Int) {
+                    if (offset < romData.size) romData[offset] = (value and 0xFF).toByte()
+                }
+
+                fun writeWord(offset: Int, value: Int) {
+                    if (offset + 1 < romData.size) {
+                        romData[offset] = (value and 0xFF).toByte()
+                        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+                    }
+                }
+
+                writeWord(BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
+                writeByte(BOMB_COOLDOWN_PC, cooldownFrames)
+                writeWord(BOMB_FUSE_TIMER_PC, fuseFrames)
+                writeWord(BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay)
+                editorLog(
+                    "[EXPORT]   Bombs: maxActive=$maxActive, fuse=$fuseFrames frames, " +
+                        "cooldown=$cooldownFrames frames, explosionDelay=$explosionDelay"
+                )
             } else if (patch.configType == "controller_config") {
                 val data = patch.configData ?: continue
                 var slotCount = 0

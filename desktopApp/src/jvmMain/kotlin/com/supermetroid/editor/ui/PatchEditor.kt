@@ -305,6 +305,7 @@ fun PatchEditorCanvas(
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            BOMB_CONFIG_TYPE -> BombsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             RoomNamePauseMapPatch.CONFIG_TYPE -> RoomNamePauseMapConfig(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             "boss_defeated" -> BossDefeatedEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             "controller_config" -> ControllerConfigEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())

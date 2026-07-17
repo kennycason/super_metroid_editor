@@ -313,6 +313,16 @@ val SAMUS_PHYSICS_PATCH = SmPatch(
     configType = "samus_physics"
 )
 
+/** Config patch: Bomb behavior. Stores active bomb cap and timing values in configData. */
+val BOMBS_PATCH = SmPatch(
+    id = "config_bombs",
+    name = "Bombs",
+    description = "Control active normal bomb count, lay cooldown, bomb fuse timing, and explosion animation timing.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = BOMB_CONFIG_TYPE
+)
+
 /** Config patch: generated pause-map room name display. */
 val ROOM_NAME_PAUSE_MAP_PATCH = SmPatch(
     id = "config_room_name_pause_map",

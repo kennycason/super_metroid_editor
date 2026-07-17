@@ -139982,6 +139982,34 @@
                     "x": 71,
                     "y": 76,
                     "param": 113
+                },
+                {
+                    "action": "add",
+                    "plmId": 61159,
+                    "x": 71,
+                    "y": 76,
+                    "param": 111
+                },
+                {
+                    "action": "remove",
+                    "plmId": 61159,
+                    "x": 71,
+                    "y": 76,
+                    "param": 111
+                },
+                {
+                    "action": "add",
+                    "plmId": 61159,
+                    "x": 71,
+                    "y": 76,
+                    "param": 111
+                },
+                {
+                    "action": "remove",
+                    "plmId": 61159,
+                    "x": 71,
+                    "y": 76,
+                    "param": 111
                 }
             ],
             "doorChanges": [
@@ -201310,6 +201338,24 @@
             "configType": null,
             "configValue": null,
             "configData": null,
+            "customItems": [
+            ]
+        },
+        {
+            "id": "config_bombs",
+            "name": "Bombs",
+            "description": "Control active normal bomb count, bomb fuse timing, and explosion animation timing.",
+            "enabled": true,
+            "writes": [
+            ],
+            "configType": "bombs",
+            "configValue": null,
+            "configData": {
+                "max_active_bombs": 5,
+                "fuse_frames": 30,
+                "explosion_frame_delay": 1,
+                "cooldown_frames": 5
+            },
             "customItems": [
             ]
         },
