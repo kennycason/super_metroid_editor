@@ -3,11 +3,14 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.MusicChannelEdit
 import com.supermetroid.editor.data.MusicCommandEdit
 import com.supermetroid.editor.data.MusicInstrumentEdit
+import com.supermetroid.editor.data.MusicNativePayloadEdit
 import com.supermetroid.editor.data.MusicNoteEdit
 import com.supermetroid.editor.data.MusicTrackEdit
+import com.supermetroid.editor.data.MusicTransferBlockEdit
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.SpcData
+import java.util.Base64
 
 internal object MusicEditConversion {
     fun key(songSet: Int, playIndex: Int): String = MusicTrackEdit.key(songSet, playIndex)
@@ -15,7 +18,8 @@ internal object MusicEditConversion {
     fun toProjectEdit(
         track: SpcData.TrackInfo,
         song: NspcSequence.Song,
-        instruments: List<NspcRenderer.InstrumentEntry>
+        instruments: List<NspcRenderer.InstrumentEntry>,
+        nativePayload: MusicNativePayloadEdit? = null
     ): MusicTrackEdit {
         val channels = MutableList(8) { ch ->
             val source = song.channels.getOrNull(ch)
@@ -56,7 +60,8 @@ internal object MusicEditConversion {
                     gain = it.gain,
                     pitchAdj = it.pitchAdj
                 )
-            }.toMutableList()
+            }.toMutableList(),
+            nativePayload = nativePayload
         )
     }
 
@@ -97,4 +102,29 @@ internal object MusicEditConversion {
                 tableAddr = it.tableAddr
             )
         }
+
+    fun toProjectNativePayload(payload: MusicTrackInterchange.NativePayload): MusicNativePayloadEdit {
+        val encoder = Base64.getEncoder()
+        return MusicNativePayloadEdit(
+            formatLabel = payload.formatLabel,
+            sourceFileName = payload.sourceFileName,
+            sourcePlayIndex = payload.sourcePlayIndex,
+            blocks = payload.blocks.map {
+                MusicTransferBlockEdit(
+                    destAddr = it.destAddr,
+                    dataBase64 = encoder.encodeToString(it.data)
+                )
+            }.toMutableList()
+        )
+    }
+
+    fun toTransferBlocks(payload: MusicNativePayloadEdit): List<SpcData.TransferBlock> {
+        val decoder = Base64.getDecoder()
+        return payload.blocks.map {
+            SpcData.TransferBlock(
+                destAddr = it.destAddr and 0xFFFF,
+                data = decoder.decode(it.dataBase64)
+            )
+        }
+    }
 }

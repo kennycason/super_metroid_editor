@@ -265,6 +265,75 @@ class MusicEditExportTest {
     }
 
     @Test
+    fun `export remaps native music payload source play index to selected track`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidNativePayload.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val songSet = 0x03
+        val sourcePlayIndex = 5
+        val targetPlayIndex = 6
+        val originalRam = SpcData.buildInitialSpcRam(parser).also {
+            SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(parser, songSet))
+        }
+        val originalSourcePointer = readSpcU16(originalRam, MusicSequenceBudget.SONG_TABLE_BASE + sourcePlayIndex * 2)
+
+        val song = NspcSequence.Song(tempo = 38, title = "Native Payload")
+        song.channels[0].notes += NspcSequence.Note(
+            tick = 0,
+            duration = 48,
+            noteValue = NspcSequence.NOTE_MIN + 7,
+            velocity = 15,
+            quantize = 7,
+            instrument = 0
+        )
+        val writes = NspcSequence.encode(
+            song = song,
+            playIndex = sourcePlayIndex,
+            spcRam = ByteArray(0x10000),
+            failOnOverflow = true,
+            conductorAddrOverride = 0x7000,
+            sequenceEndAddr = 0x7400
+        )
+        val payload = MusicEditConversion.toProjectNativePayload(
+            MusicTrackInterchange.NativePayload(
+                blocks = writes.toSortedMap().map { (addr, data) -> SpcData.TransferBlock(addr, data) },
+                sourcePlayIndex = sourcePlayIndex,
+                sourceFileName = "musicdata.nspc",
+                formatLabel = "Raw N-SPC"
+            )
+        )
+
+        val track = SpcData.TrackInfo(songSet = songSet, playIndex = targetPlayIndex, name = "Title Screen (After Button)", area = "Menu")
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+        state.setMusicEdit(
+            MusicEditConversion.key(songSet, targetPlayIndex),
+            MusicEditConversion.toProjectEdit(track, song, emptyList(), payload)
+        )
+
+        val exportedPath = state.exportToRom(parser)
+
+        assertNotNull(exportedPath)
+        val exportedParser = RomParser(File(exportedPath!!).readBytes())
+        val exportedRam = SpcData.buildInitialSpcRam(exportedParser).also {
+            SpcData.applyTransferBlocks(it, SpcData.findSongSetTransferData(exportedParser, songSet))
+        }
+        assertEquals(
+            originalSourcePointer,
+            readSpcU16(exportedRam, MusicSequenceBudget.SONG_TABLE_BASE + sourcePlayIndex * 2),
+            "native payload export should not overwrite the source play index pointer"
+        )
+        val exportedSong = NspcSequence.parse(exportedRam, targetPlayIndex)
+        assertEquals(38, exportedSong.tempo)
+        assertEquals(NspcSequence.NOTE_MIN + 7, exportedSong.channels[0].notes.single().noteValue)
+    }
+
+    @Test
     fun `export trims tail to fit multiple relocated title edits`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")

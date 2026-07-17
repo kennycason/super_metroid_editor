@@ -32,6 +32,14 @@ class SmEditProjectMusicTest {
             ),
             instruments = mutableListOf(
                 MusicInstrumentEdit(index = 2, tableAddr = 0x6C0C, srcn = 4, adsr1 = 0x8F, adsr2 = 0xE4, gain = 0x7F, pitchAdj = 0x1234)
+            ),
+            nativePayload = MusicNativePayloadEdit(
+                formatLabel = "Raw N-SPC",
+                sourceFileName = "musicdata.nspc",
+                sourcePlayIndex = 5,
+                blocks = mutableListOf(
+                    MusicTransferBlockEdit(destAddr = 0x5830, dataBase64 = "AQIDBA==")
+                )
             )
         )
 
@@ -45,6 +53,10 @@ class SmEditProjectMusicTest {
         assertEquals(0x94, edit.channels.single().notes.single().noteValue)
         assertEquals(listOf(27), edit.channels.single().commands.single().params)
         assertEquals(0x1234, edit.instruments.single().pitchAdj)
+        assertEquals("Raw N-SPC", edit.nativePayload?.formatLabel)
+        assertEquals("musicdata.nspc", edit.nativePayload?.sourceFileName)
+        assertEquals(0x5830, edit.nativePayload?.blocks?.single()?.destAddr)
+        assertEquals("AQIDBA==", edit.nativePayload?.blocks?.single()?.dataBase64)
     }
 
     @Test

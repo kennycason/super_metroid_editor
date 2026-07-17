@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayOutputStream
 import java.io.File
 import javax.sound.midi.MetaMessage
 import javax.sound.midi.MidiEvent
@@ -229,6 +230,43 @@ class MusicTrackInterchangeTest {
         assertTrue(imported.instruments.isNotEmpty())
     }
 
+    @Test
+    fun `raw nspc transfer import parses mITroid-style native payload`() {
+        val sourcePlayIndex = 5
+        val selectedPlayIndex = 6
+        val song = NspcSequence.Song(tempo = 44, title = "Raw Fixture")
+        song.channels[0].notes += NspcSequence.Note(
+            tick = 0,
+            duration = 48,
+            noteValue = NspcSequence.NOTE_MIN + 19,
+            velocity = 13,
+            quantize = 7,
+            instrument = 1
+        )
+        val writes = NspcSequence.encode(
+            song = song,
+            playIndex = sourcePlayIndex,
+            spcRam = ByteArray(0x10000),
+            failOnOverflow = true,
+            conductorAddrOverride = 0x5830,
+            sequenceEndAddr = 0x6000
+        )
+
+        val file = File(tempDir, "musicdata.nspc")
+        file.writeBytes(rawTransferChain(writes, includeMitroidEntry = true))
+        val imported = MusicTrackInterchange.readNative(file, selectedPlayIndex = selectedPlayIndex)
+
+        assertEquals("Raw N-SPC", imported.formatLabel)
+        assertEquals(sourcePlayIndex, imported.sourcePlayIndex)
+        assertEquals(sourcePlayIndex, imported.nativePayload?.sourcePlayIndex)
+        assertEquals("musicdata.nspc", imported.nativePayload?.sourceFileName)
+        assertTrue(imported.nativePayload?.blocks?.isNotEmpty() == true)
+        assertTrue(imported.report.warnings.any { it.contains("native payload") })
+        assertEquals(44, imported.song.tempo)
+        assertEquals(1, imported.song.channels[0].notes.size)
+        assertEquals(NspcSequence.NOTE_MIN + 19, imported.song.channels[0].notes.single().noteValue)
+    }
+
     private fun short(command: Int, channel: Int, data1: Int, data2: Int): ShortMessage =
         ShortMessage().also { it.setMessage(command, channel, data1, data2) }
 
@@ -245,5 +283,24 @@ class MusicTrackInterchangeTest {
                 message?.takeIf { it.command == ShortMessage.PROGRAM_CHANGE }?.data1
             }
         }
+    }
+
+    private fun rawTransferChain(writes: Map<Int, ByteArray>, includeMitroidEntry: Boolean): ByteArray {
+        val out = ByteArrayOutputStream()
+        for ((addr, data) in writes.toSortedMap()) {
+            writeU16(out, data.size)
+            writeU16(out, addr)
+            out.write(data)
+        }
+        writeU16(out, 0)
+        if (includeMitroidEntry) {
+            writeU16(out, 0x1500)
+        }
+        return out.toByteArray()
+    }
+
+    private fun writeU16(out: ByteArrayOutputStream, value: Int) {
+        out.write(value and 0xFF)
+        out.write((value ushr 8) and 0xFF)
     }
 }

@@ -510,9 +510,9 @@ fun PianoRollEditor(
                 contentPadding = PaddingValues(horizontal = 8.dp),
                 modifier = Modifier.height(28.dp)
             ) {
-                Icon(Icons.Default.Add, "Import SPC or N-SPC", Modifier.size(14.dp))
+                Icon(Icons.Default.Add, "Import SPC, N-SPC, or raw mITroid N-SPC", Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))
-                Text("SPC In", fontSize = 10.sp)
+                Text("N-SPC In", fontSize = 10.sp)
             }
 
             OutlinedButton(
@@ -522,7 +522,7 @@ fun PianoRollEditor(
             ) {
                 Icon(Icons.Default.SaveAlt, "Export SPC or N-SPC", Modifier.size(14.dp))
                 Spacer(Modifier.width(2.dp))
-                Text("SPC Out", fontSize = 10.sp)
+                Text("N-SPC Out", fontSize = 10.sp)
             }
 
             Spacer(Modifier.width(8.dp))

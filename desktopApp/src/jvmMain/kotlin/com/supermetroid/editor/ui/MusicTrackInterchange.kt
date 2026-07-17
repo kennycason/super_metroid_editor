@@ -3,6 +3,8 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.rom.NativeSpcEmulator
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
+import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.SpcData
 import java.io.ByteArrayOutputStream
 import java.io.File
 import javax.sound.midi.MetaMessage
@@ -28,7 +30,15 @@ internal object MusicTrackInterchange {
         val instruments: List<NspcRenderer.InstrumentEntry> = emptyList(),
         val sourcePlayIndex: Int = -1,
         val formatLabel: String = "N-SPC",
-        val report: InterchangeReport = reportForSong("N-SPC", "", song)
+        val report: InterchangeReport = reportForSong("N-SPC", "", song),
+        val nativePayload: NativePayload? = null
+    )
+
+    data class NativePayload(
+        val blocks: List<SpcData.TransferBlock>,
+        val sourcePlayIndex: Int,
+        val sourceFileName: String,
+        val formatLabel: String
     )
 
     data class MidiReadResult(
@@ -248,6 +258,8 @@ internal object MusicTrackInterchange {
                 readNspcTrack(data, file)
             file.extension.equals("spc", ignoreCase = true) ->
                 readSpcTrack(data, selectedPlayIndex, file)
+            file.extension.equals("nspc", ignoreCase = true) ->
+                readRawNspcTransferTrack(data, selectedPlayIndex, file)
             else ->
                 throw IllegalArgumentException("Unsupported native track file: ${file.name}")
         }
@@ -334,6 +346,64 @@ internal object MusicTrackInterchange {
         }
         throw IllegalArgumentException("No compatible N-SPC song was found in ${file.name}")
     }
+
+    private fun readRawNspcTransferTrack(data: ByteArray, selectedPlayIndex: Int, file: File): NativeTrack {
+        val blocks = parseRawTransferBlocks(data, file.name)
+        val ram = ByteArray(RomConstants.SPC_RAM_SIZE)
+        SpcData.applyTransferBlocks(ram, blocks)
+        val candidates = (listOf(selectedPlayIndex, 5) + (0..31)).filter { it >= 0 }.distinct()
+        for (playIndex in candidates) {
+            val song = NspcSequence.parse(ram, playIndex)
+            val noteCount = song.channels.sumOf { it.notes.size }
+            if (noteCount > 0) {
+                song.title = file.nameWithoutExtension
+                song.isModified = true
+                val warnings = listOf(
+                    "Raw N-SPC transfer data was imported as a native payload; ROM export will preserve its transfer blocks.",
+                    "If you edit this song in the piano roll after applying it, SMEDIT will switch back to editable sequence export."
+                )
+                return NativeTrack(
+                    song = song,
+                    instruments = NspcRenderer.readInstrumentTable(ram),
+                    sourcePlayIndex = playIndex,
+                    formatLabel = "Raw N-SPC",
+                    report = reportForSong("Raw N-SPC", file.name, song, warnings),
+                    nativePayload = NativePayload(
+                        blocks = blocks,
+                        sourcePlayIndex = playIndex,
+                        sourceFileName = file.name,
+                        formatLabel = "Raw N-SPC"
+                    )
+                )
+            }
+        }
+        throw IllegalArgumentException("No compatible N-SPC song table entry was found in raw transfer data: ${file.name}")
+    }
+
+    internal fun parseRawTransferBlocks(data: ByteArray, fileName: String = "raw.nspc"): List<SpcData.TransferBlock> {
+        val blocks = mutableListOf<SpcData.TransferBlock>()
+        var pos = 0
+        while (true) {
+            require(pos + 2 <= data.size) { "Raw N-SPC transfer chain has no terminator: $fileName" }
+            val size = readU16(data, pos)
+            pos += 2
+            if (size == 0) break
+            require(pos + 2 <= data.size) { "Raw N-SPC block is missing a destination address: $fileName" }
+            val dest = readU16(data, pos)
+            pos += 2
+            require(dest + size <= RomConstants.SPC_RAM_SIZE) {
+                "Raw N-SPC block exceeds SPC RAM at 0x${dest.toString(16).padStart(4, '0')}: $fileName"
+            }
+            require(pos + size <= data.size) { "Raw N-SPC block overruns file data: $fileName" }
+            blocks += SpcData.TransferBlock(dest, data.copyOfRange(pos, pos + size))
+            pos += size
+        }
+        require(blocks.isNotEmpty()) { "Raw N-SPC transfer chain contains no blocks: $fileName" }
+        return blocks
+    }
+
+    private fun readU16(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
 
     private data class MidiProgramMapping(
         val gmProgram: Int

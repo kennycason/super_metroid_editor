@@ -4780,6 +4780,22 @@ class EditorState {
             ).toMutableList()
 
             for ((key, edit) in edits) {
+                val nativePayload = edit.nativePayload
+                if (nativePayload != null) {
+                    val nativeWrites = nativeMusicPayloadWrites(edit)
+                    require(nativeWrites.isNotEmpty()) { "native music payload $key produced no SPC writes" }
+                    val owner = "native music payload '$key' (${edit.trackName})"
+                    mergeSpcWrites(accumulatedWrites, owner, nativeWrites, rejectAnyOverlap = true)
+                    val totalBytes = nativeWrites.values.sumOf { it.size }
+                    patched++
+                    editorLog(
+                        "[EXPORT] Native music payload '$key' ${edit.trackName}: " +
+                            "${nativeWrites.size} SPC write records, $totalBytes payload bytes, " +
+                            "sourcePlayIndex=${nativePayload.sourcePlayIndex}"
+                    )
+                    continue
+                }
+
                 val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
                 val editedSong = MusicEditConversion.toSong(edit)
                 val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
@@ -4914,6 +4930,79 @@ class EditorState {
                 }
             }
         }
+    }
+
+    private fun nativeMusicPayloadWrites(edit: MusicTrackEdit): Map<Int, ByteArray> {
+        val payload = edit.nativePayload ?: return emptyMap()
+        val blocks = MusicEditConversion.toTransferBlocks(payload)
+        val sourcePlayIndex = payload.sourcePlayIndex.takeIf { it >= 0 } ?: edit.playIndex
+        val sourceEntry = MusicSequenceBudget.SONG_TABLE_BASE + sourcePlayIndex * 2
+        val targetEntry = MusicSequenceBudget.SONG_TABLE_BASE + edit.playIndex * 2
+        val bytesByAddr = java.util.TreeMap<Int, Int>()
+        var sawSourceEntry = false
+
+        fun putByte(addr: Int, value: Int) {
+            require(addr in 0 until RomConstants.SPC_RAM_SIZE) {
+                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} writes outside SPC RAM at " +
+                    "0x${addr.toString(16).padStart(4, '0')}"
+            }
+            bytesByAddr[addr] = value and 0xFF
+        }
+
+        for (block in blocks) {
+            val dest = block.destAddr and 0xFFFF
+            require(dest + block.data.size <= RomConstants.SPC_RAM_SIZE) {
+                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} has out-of-bounds block " +
+                    "0x${dest.toString(16).padStart(4, '0')}.." +
+                    "0x${(dest + block.data.size - 1).toString(16).padStart(4, '0')}"
+            }
+            for (i in block.data.indices) {
+                val addr = dest + i
+                val value = block.data[i].toInt() and 0xFF
+                if (addr == sourceEntry || addr == sourceEntry + 1) {
+                    sawSourceEntry = true
+                    val offset = addr - sourceEntry
+                    putByte(targetEntry + offset, value)
+                    if (sourceEntry == targetEntry) {
+                        continue
+                    }
+                } else {
+                    putByte(addr, value)
+                }
+            }
+        }
+
+        require(sawSourceEntry) {
+            "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} did not include its source " +
+                "song-table entry for play index $sourcePlayIndex"
+        }
+        return compactSpcWriteBytes(bytesByAddr)
+    }
+
+    private fun compactSpcWriteBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> {
+        val writes = linkedMapOf<Int, ByteArray>()
+        var runStart = -1
+        val runBytes = mutableListOf<Int>()
+        var previousAddr = -1
+
+        fun flushRun() {
+            if (runStart >= 0) {
+                writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
+                runBytes.clear()
+                runStart = -1
+            }
+        }
+
+        for ((addr, value) in bytesByAddr) {
+            if (runStart < 0 || addr != previousAddr + 1) {
+                flushRun()
+                runStart = addr
+            }
+            runBytes += value
+            previousAddr = addr
+        }
+        flushRun()
+        return writes
     }
 
     private fun mergeSpcWrites(

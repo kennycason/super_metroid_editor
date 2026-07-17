@@ -406,6 +406,20 @@ data class MusicInstrumentEdit(
     val pitchAdj: Int,
 )
 
+@Serializable
+data class MusicTransferBlockEdit(
+    val destAddr: Int,
+    val dataBase64: String,
+)
+
+@Serializable
+data class MusicNativePayloadEdit(
+    val formatLabel: String = "",
+    val sourceFileName: String = "",
+    val sourcePlayIndex: Int = -1,
+    val blocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
+)
+
 /**
  * A saved piano-roll edit for one song set/play index.
  */
@@ -417,6 +431,7 @@ data class MusicTrackEdit(
     val tempo: Int,
     val channels: MutableList<MusicChannelEdit> = mutableListOf(),
     val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
+    val nativePayload: MusicNativePayloadEdit? = null,
 ) {
     companion object {
         fun key(songSet: Int, playIndex: Int): String =

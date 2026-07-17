@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.supermetroid.editor.data.MusicNativePayloadEdit
 import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.rom.NativeSpcEmulator
 import com.supermetroid.editor.rom.NspcRenderer
@@ -91,6 +92,9 @@ class SoundEditorState {
         private set
     var pendingTrackImport by mutableStateOf<PendingTrackImport?>(null)
         private set
+    private var pianoRollNativePayloadCandidate: MusicNativePayloadEdit? = null
+    private var pianoRollNativePayloadSong: NspcSequence.Song? = null
+    private var pianoRollNativePayloadInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
 
     /** Open the piano roll editor for the current track. */
     fun openPianoRoll(romParser: RomParser, editorState: EditorState? = null) {
@@ -121,7 +125,11 @@ class SoundEditorState {
             ?.let { MusicEditConversion.toInstrumentEntries(it) }
             ?.takeIf { it.isNotEmpty() }
         pianoRollInstruments = if (savedInstruments != null) {
-            rebuildInstrumentMetadata(romParser, savedInstruments)
+            if (savedEdit.nativePayload != null) {
+                savedInstruments
+            } else {
+                rebuildInstrumentMetadata(romParser, savedInstruments)
+            }
         } else {
             originalInstruments
         }
@@ -130,6 +138,7 @@ class SoundEditorState {
         editingSong = song
         clearPianoRollHistory()
         pendingTrackImport = null
+        setNativePayloadCandidate(savedEdit?.nativePayload, song, pianoRollInstruments)
         pianoRollChannel = 0
         pianoRollPlaybackTick = -1
         isPianoRollOpen = true
@@ -170,6 +179,7 @@ class SoundEditorState {
         pianoRollOriginalFlattenedBytes = 0
         clearPianoRollHistory()
         pendingTrackImport = null
+        clearNativePayloadCandidate()
     }
 
     data class PendingTrackImport(
@@ -177,7 +187,8 @@ class SoundEditorState {
         val fileName: String,
         val song: NspcSequence.Song,
         val instruments: List<NspcRenderer.InstrumentEntry>,
-        val reportLines: List<String>
+        val reportLines: List<String>,
+        val nativePayload: MusicNativePayloadEdit? = null
     )
 
     /** Reset piano roll to original track data. */
@@ -201,6 +212,7 @@ class SoundEditorState {
         clearPianoRollHistory()
         pianoRollPlaybackTick = 0
         removePianoRollProjectEdit(editorState)
+        clearNativePayloadCandidate()
         statusMessage = "Reset to original"
     }
 
@@ -374,7 +386,8 @@ class SoundEditorState {
                 fileName = file.name,
                 song = imported.song,
                 instruments = imported.instruments,
-                report = imported.report
+                report = imported.report,
+                nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
             )
             statusMessage = "Review ${imported.formatLabel} import report for ${file.name}"
             soundEditorLog.info {
@@ -406,14 +419,16 @@ class SoundEditorState {
         fileName: String,
         song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>,
-        report: MusicTrackInterchange.InterchangeReport
+        report: MusicTrackInterchange.InterchangeReport,
+        nativePayload: MusicNativePayloadEdit? = null
     ) {
         pendingTrackImport = PendingTrackImport(
             label = label,
             fileName = fileName,
             song = song,
             instruments = instruments,
-            reportLines = buildImportReportLines(report)
+            reportLines = buildImportReportLines(report),
+            nativePayload = nativePayload
         )
     }
 
@@ -450,6 +465,11 @@ class SoundEditorState {
         if (importedInstruments.isNotEmpty()) {
             pianoRollInstruments = importedInstruments.map { it.copy() }
         }
+        setNativePayloadCandidate(
+            pendingTrackImport?.nativePayload,
+            nextSong,
+            pianoRollInstruments
+        )
         pianoRollPlaybackTick = 0
         syncPianoRollProjectEdit(editorState)
         soundEditorLog.info {
@@ -756,6 +776,30 @@ class SoundEditorState {
         return hasNoteDelta || hasInstrumentDelta
     }
 
+    private fun setNativePayloadCandidate(
+        payload: MusicNativePayloadEdit?,
+        song: NspcSequence.Song,
+        instruments: List<NspcRenderer.InstrumentEntry>
+    ) {
+        pianoRollNativePayloadCandidate = payload?.copy(blocks = payload.blocks.toMutableList())
+        pianoRollNativePayloadSong = payload?.let { PianoRollPreviewLogic.deepCopySong(song) }
+        pianoRollNativePayloadInstruments = if (payload != null) instruments.map { it.copy() } else emptyList()
+    }
+
+    private fun clearNativePayloadCandidate() {
+        pianoRollNativePayloadCandidate = null
+        pianoRollNativePayloadSong = null
+        pianoRollNativePayloadInstruments = emptyList()
+    }
+
+    private fun matchingNativePayload(song: NspcSequence.Song): MusicNativePayloadEdit? {
+        val payload = pianoRollNativePayloadCandidate ?: return null
+        val baselineSong = pianoRollNativePayloadSong ?: return null
+        if (song != baselineSong) return null
+        if (pianoRollInstruments != pianoRollNativePayloadInstruments) return null
+        return payload.copy(blocks = payload.blocks.toMutableList())
+    }
+
     fun syncPianoRollProjectEdit(editorState: EditorState?) {
         val projectState = editorState ?: return
         val track = selectedTrack ?: return
@@ -769,7 +813,13 @@ class SoundEditorState {
             return
         }
 
-        projectState.setMusicEdit(key, MusicEditConversion.toProjectEdit(track, song, pianoRollInstruments))
+        val nativePayload = matchingNativePayload(song)
+        if (pianoRollNativePayloadCandidate != null && nativePayload == null) {
+            soundEditorLog.info {
+                "[SPC-PIANO-SAVE] Native payload no longer matches piano-roll state; saving editable sequence for key=$key"
+            }
+        }
+        projectState.setMusicEdit(key, MusicEditConversion.toProjectEdit(track, song, pianoRollInstruments, nativePayload))
         soundEditorLog.info { "[SPC-PIANO-SAVE] Staged project music edit key=$key (${track.name})" }
     }
 
@@ -1079,6 +1129,8 @@ class SoundEditorState {
         currentLoopStart = -1
         isPianoRollOpen = false
         editingSong = null
+        pendingTrackImport = null
+        clearNativePayloadCandidate()
         statusMessage = "Track: ${track.name}"
         autoPlayEnabled = shouldAutoPlay
         if (clearSamples) {
