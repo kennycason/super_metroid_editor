@@ -35,20 +35,23 @@ SMEDIT now has an `Impulse Tracker (.it)` importer in the piano-roll `Import` dr
 Current `IT In` behavior:
 
 - Imports note timing, note pitch, note-off/cut/fade stops, volume-column/channel/global-volume note velocity, initial speed, speed-adjusted row timing, and tempo commands where possible.
+- Parses all 64 IT pattern channels, then deduplicates and voice-packs them into Super Metroid's 8 available music voices.
 - Converts supported embedded IT samples into BRR and builds native transfer payload blocks for the target play index.
 - Writes a self-contained native payload with N-SPC sequence data, instrument table bytes, sample directory entries, and BRR sample data.
 - Maps IT sample-mode instruments to generated Super Metroid instrument table entries when the native payload is valid.
+- Resolves IT instrument-mode note/sample keyboard maps before choosing BRR sample slots.
 - Reports active IT sample metadata, including compressed/stereo/16-bit/looped counts, so unsupported custom sample cases are visible before apply.
 - Stages an import report before applying, like MIDI and N-SPC import.
 - Saves both the editable piano-roll interpretation and the native payload while notes/instruments remain unchanged.
 
 Current `IT In` limitations:
 
-- Custom BRR payloads currently require sample-mode IT modules with embedded mono, uncompressed PCM samples.
-- IT-compressed samples, stereo samples, and instrument-mode sample maps/envelopes are reported and fall back to editable sequence import without custom BRR payload blocks.
+- Custom BRR payloads currently require embedded mono, uncompressed PCM samples that fit in SPC RAM.
+- IT-compressed samples, stereo samples, missing/invalid instrument headers, and over-budget sample payloads are reported and fall back to editable sequence import without custom BRR payload blocks.
+- IT instrument note/sample maps are imported, but volume envelopes, NNAs, duplicate-note behavior, and most tracker playback rules are approximated.
 - Sample tuning, ADSR/envelope behavior, vibrato, and tracker effect playback are approximated.
 - Does not preserve most tracker effects yet; unsupported effect commands are reported.
-- Ignores channels above the SNES 8-voice limit.
+- Voice packing is a lossy reduction when a tracker module has more than 8 simultaneous notes; dropped duplicates/overlaps are reported.
 
 For full custom sample-bank replacement, use mITroid or another N-SPC conversion tool outside SMEDIT:
 
@@ -64,13 +67,21 @@ For a real-world smoke test, this pass downloaded:
 
 Source: Mod Archive module ID `213016`, "antartica rainforests" / `giants.it`. This is a stress fixture with 63 tracker channels, so it is useful for confirming that SMEDIT imports playable first-8-channel data and reports ignored channels above the SNES voice limit.
 
+It is also useful for native payload validation because it is IT instrument mode and uses far more than 8 tracker channels. The importer should now voice-pack the broader channel set instead of reducing the song to the repetitive first-8-channel pulse pattern.
+
 Optional regression command:
 
 ```bash
 ./gradlew --no-daemon -Dsmedit.realItFixture="$HOME/Downloads/ModArchive - antartica rainforests - giants.it" :desktopApp:jvmTest --tests com.supermetroid.editor.ui.ImpulseTrackerImportTest.real\ world\ impulse\ tracker\ fixture\ imports\ when\ supplied
 ```
 
-The next longer-term path is to add IT compressed-sample decoding, instrument-mode sample maps/envelopes, better pitch/tuning conversion, and more tracker effect translation.
+Optional native payload regression command:
+
+```bash
+./gradlew --no-daemon -Dsmedit.realItNativeFixture="$HOME/Downloads/ModArchive - antartica rainforests - giants.it" :desktopApp:jvmTest --tests com.supermetroid.editor.ui.ImpulseTrackerImportTest.real\ world\ impulse\ tracker\ native\ payload\ fixture\ imports\ when\ supplied
+```
+
+The next longer-term path is to add IT compressed-sample decoding, better pitch/tuning conversion, envelope/NNA handling, and more tracker effect translation.
 
 ## External reference findings
 
@@ -87,4 +98,4 @@ The next longer-term path is to add IT compressed-sample decoding, instrument-mo
 - Reopening a project with a raw native payload should keep `Raw N-SPC` export behavior as long as no further piano-roll edits are made.
 - Applying a supported `.it` import should report `Built custom IT native payload`, then playback/export should use the imported BRR samples as long as no further piano-roll edits are made.
 - Exporting `.nspc` from a still-matching supported `.it` or raw native import should produce raw transfer blocks that preserve custom samples; exporting `.nspc` from an ordinary editable track still produces the SMEDIT editable bundle.
-- Applying a compressed, stereo, or instrument-mode `.it` should still import visible notes, but should report why custom BRR payload export was disabled.
+- Applying a compressed, stereo, invalid-instrument-header, or over-budget `.it` should still import visible notes, but should report why custom BRR payload export was disabled.

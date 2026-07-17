@@ -41,16 +41,16 @@ class ImpulseTrackerImportTest {
     }
 
     @Test
-    fun `it parser ignores channels above the snes voice limit`() {
+    fun `it parser voice packs channels above the snes voice limit`() {
         val file = File(tempDir, "wide.it")
         file.writeBytes(simpleItModule(channel = 9))
 
-        val failure = runCatching { ImpulseTrackerImport.read(file) }.exceptionOrNull()
+        val result = ImpulseTrackerImport.read(file)
 
-        assertTrue(failure is IllegalArgumentException)
-        assertTrue(failure?.message?.contains("no importable note events") == true)
+        assertEquals(1, result.report.noteCount)
+        assertEquals(1, result.report.activeChannels)
         val parsed = ImpulseTrackerImport.parse(file.readBytes())
-        assertTrue(parsed.warnings.any { it.contains("channels above 8") })
+        assertEquals(1, parsed.patterns.single().channels[8].count { it.note in 0..119 })
     }
 
     @Test
@@ -98,6 +98,26 @@ class ImpulseTrackerImportTest {
     }
 
     @Test
+    fun `it import resolves instrument mode keyboard maps to samples`() {
+        val file = File(tempDir, "instrument-mode.it")
+        file.writeBytes(instrumentMappedItModule())
+
+        val result = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+
+        assertNotNull(result.nativePayload)
+        val note = result.song.channels[0].notes.single()
+        assertEquals((48 + 104).coerceIn(NspcSequence.NOTE_MIN, NspcSequence.NOTE_MAX), note.noteValue)
+        assertEquals(0, note.instrument)
+        assertTrue(result.report.warnings.any { it.contains("IT instrument note/sample maps were imported") })
+        assertTrue(result.report.warnings.none { it.contains("instrument-mode sample maps/envelopes are not imported yet") })
+
+        val ram = ByteArray(0x10000)
+        SpcData.applyTransferBlocks(ram, result.nativePayload!!.blocks)
+        val parsed = NspcSequence.parse(ram, 5)
+        assertEquals(note.noteValue, parsed.channels[0].notes.single().noteValue)
+    }
+
+    @Test
     fun `real world impulse tracker fixture imports when supplied`() {
         val path = System.getProperty("smedit.realItFixture")?.trim().orEmpty()
         assumeTrue(path.isNotEmpty(), "Set -Dsmedit.realItFixture=/path/to/file.it to run this smoke test")
@@ -109,6 +129,24 @@ class ImpulseTrackerImportTest {
         assertEquals("Impulse Tracker", result.report.formatLabel)
         assertTrue(result.report.noteCount > 0)
         assertTrue(result.report.activeChannels in 1..8)
+    }
+
+    @Test
+    fun `real world impulse tracker native payload fixture imports when supplied`() {
+        val path = System.getProperty("smedit.realItNativeFixture")?.trim().orEmpty()
+        assumeTrue(path.isNotEmpty(), "Set -Dsmedit.realItNativeFixture=/path/to/file.it to run this smoke test")
+        val file = File(path)
+        assumeTrue(file.isFile, "Real IT native fixture does not exist: $path")
+
+        val result = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+
+        assertNotNull(result.nativePayload, result.report.warnings.joinToString("\n"))
+        assertTrue(result.report.noteCount > 0)
+        assertTrue(
+            result.song.channels.flatMap { it.notes }.map { it.noteValue }.distinct().size > 4,
+            "Expected real fixture import to preserve more than repeated C/C# pulses"
+        )
+        assertTrue(result.report.warnings.any { it.contains("Built custom IT native payload") })
     }
 
     private fun simpleItModule(
@@ -166,6 +204,74 @@ class ImpulseTrackerImportTest {
             finalOut.write(testSamplePcm16())
         }
         return finalOut.toByteArray()
+    }
+
+    private fun instrumentMappedItModule(): ByteArray {
+        val patternBytes = ByteArrayOutputStream()
+        val channelVariable = 0x80 or 1
+        patternBytes.write(channelVariable)
+        patternBytes.write(0x07) // note, instrument, volume
+        patternBytes.write(36)   // IT note before instrument keyboard mapping
+        patternBytes.write(1)    // instrument
+        patternBytes.write(64)   // volume
+        patternBytes.write(0)    // end row 0
+        patternBytes.write(0)    // end row 1
+        patternBytes.write(channelVariable)
+        patternBytes.write(0x01) // note only
+        patternBytes.write(255)  // note off
+        patternBytes.write(0)    // end row 2
+        repeat(5) { patternBytes.write(0) }
+
+        val instrumentHeaderOffset = 0xC0 + 1 + 4 + 4 + 4
+        val sampleHeaderOffset = instrumentHeaderOffset + 0x230
+        val patternOffset = sampleHeaderOffset + 0x50
+        val sampleDataOffset = patternOffset + 8 + patternBytes.size()
+        val out = ByteArrayOutputStream()
+        out.write(ByteArray(patternOffset))
+        val data = out.toByteArray()
+        "IMPM".encodeToByteArray().copyInto(data, 0)
+        "Instrument IT".encodeToByteArray().copyInto(data, 4)
+        writeU16(data, 0x20, 1) // orders
+        writeU16(data, 0x22, 1) // instruments
+        writeU16(data, 0x24, 1) // samples
+        writeU16(data, 0x26, 1) // patterns
+        writeU16(data, 0x2C, 0x04) // use instruments
+        data[0x30] = 128.toByte()
+        data[0x31] = 48
+        data[0x32] = 6
+        data[0x33] = 125.toByte()
+        repeat(64) { data[0x80 + it] = 64 }
+        data[0xC0] = 0
+        writeU32(data, 0xC1, instrumentHeaderOffset)
+        writeU32(data, 0xC1 + 4, sampleHeaderOffset)
+        writeU32(data, 0xC1 + 8, patternOffset)
+        writeInstrumentHeader(data, instrumentHeaderOffset, mappedInputNote = 36, mappedOutputNote = 48, sampleIndex = 1)
+        writeSampleHeader(data, sampleHeaderOffset, sampleDataOffset)
+
+        val finalOut = ByteArrayOutputStream()
+        finalOut.write(data)
+        writeU16(finalOut, patternBytes.size())
+        writeU16(finalOut, 8)
+        writeU32(finalOut, 0)
+        finalOut.write(patternBytes.toByteArray())
+        finalOut.write(testSamplePcm16())
+        return finalOut.toByteArray()
+    }
+
+    private fun writeInstrumentHeader(
+        data: ByteArray,
+        offset: Int,
+        mappedInputNote: Int,
+        mappedOutputNote: Int,
+        sampleIndex: Int
+    ) {
+        "IMPI".encodeToByteArray().copyInto(data, offset)
+        "Mapped Instrument".encodeToByteArray().copyInto(data, offset + 0x20)
+        for (note in 0 until 120) {
+            data[offset + 0x40 + note * 2] = note.toByte()
+            data[offset + 0x40 + note * 2 + 1] = sampleIndex.toByte()
+        }
+        data[offset + 0x40 + mappedInputNote * 2] = mappedOutputNote.toByte()
     }
 
     private fun writeSampleHeader(data: ByteArray, offset: Int, sampleDataOffset: Int) {

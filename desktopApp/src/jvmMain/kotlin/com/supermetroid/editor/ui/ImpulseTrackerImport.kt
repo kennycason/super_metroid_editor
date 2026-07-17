@@ -46,11 +46,22 @@ internal object ImpulseTrackerImport {
         val channelVolumes: List<Int>,
         val instrumentCount: Int,
         val sampleCount: Int,
+        val instruments: List<Instrument>,
         val samples: List<Sample>,
         val patterns: List<Pattern>,
         val warnings: List<String>
     ) {
         val usesInstruments: Boolean get() = (flags and IT_FLAG_USE_INSTRUMENTS) != 0
+    }
+
+    data class Instrument(
+        val index: Int,
+        val name: String,
+        val noteMap: IntArray,
+        val sampleMap: IntArray
+    ) {
+        fun mappedNoteFor(note: Int): Int = noteMap.getOrElse(note.coerceIn(0, 119)) { note }.coerceIn(0, 119)
+        fun sampleFor(note: Int): Int = sampleMap.getOrElse(note.coerceIn(0, 119)) { 0 }
     }
 
     data class Sample(
@@ -92,10 +103,11 @@ internal object ImpulseTrackerImport {
     fun read(file: File, targetPlayIndex: Int? = null): Result {
         val module = parse(file.readBytes())
         val warnings = module.warnings.toMutableList()
-        var customPlan = buildCustomSamplePlan(module, warnings)
-        var song = convertToSong(module, file.nameWithoutExtension, warnings, customPlan?.instrumentBySample)
+        val sourceImport = convertToSourceImport(module, file.nameWithoutExtension, warnings)
+        var customPlan = buildCustomSamplePlan(module, warnings, sourceImport.usedSampleIndexes)
+        var song = remapSongInstruments(sourceImport.song, module, customPlan?.instrumentBySample)
         var instruments = customPlan?.instruments ?: emptyList()
-        val nativePayload = if (targetPlayIndex != null && customPlan != null) {
+        val nativeBuild = if (targetPlayIndex != null && customPlan != null) {
             buildNativePayload(song, customPlan, targetPlayIndex, file.name, warnings)
         } else {
             if (targetPlayIndex == null && customPlan != null) {
@@ -103,9 +115,13 @@ internal object ImpulseTrackerImport {
             }
             null
         }
+        val nativePayload = nativeBuild?.payload
+        if (nativeBuild != null) {
+            song = nativeBuild.song
+        }
 
         if (customPlan != null && nativePayload == null) {
-            song = convertToSong(module, file.nameWithoutExtension, warnings)
+            song = remapSongInstruments(sourceImport.song, module)
             instruments = emptyList()
         }
 
@@ -143,14 +159,18 @@ internal object ImpulseTrackerImport {
         require(patternTableStart + patternCount * 4 <= data.size) { "IT header tables overrun file data" }
 
         val orders = input.bytesAt(ordersStart, orderCount).map { it.toInt() and 0xFF }
+        val instrumentOffsets = List(instrumentCount) { index -> input.u32At(instrumentTableStart + index * 4) }
         val sampleOffsets = List(sampleCount) { index -> input.u32At(sampleTableStart + index * 4) }
         val patternOffsets = List(patternCount) { index -> input.u32At(patternTableStart + index * 4) }
         val warnings = mutableListOf<String>()
+        val instruments = instrumentOffsets.mapIndexedNotNull { index, offset ->
+            parseInstrument(input, offset, index, warnings)
+        }
         val samples = sampleOffsets.mapIndexedNotNull { index, offset ->
             parseSample(input, offset, index, warnings)
         }
         val patterns = patternOffsets.mapIndexed { index, offset ->
-            parsePattern(input, offset, index, warnings)
+            parsePattern(input, offset, index)
         }
 
         if (orders.count { it != 0xFF && it != 0xFE } == 0) {
@@ -178,9 +198,41 @@ internal object ImpulseTrackerImport {
             channelVolumes = channelVolumes,
             instrumentCount = instrumentCount,
             sampleCount = sampleCount,
+            instruments = instruments,
             samples = samples,
             patterns = patterns,
             warnings = warnings
+        )
+    }
+
+    private fun parseInstrument(
+        input: LeReader,
+        offset: Int,
+        instrumentIndex: Int,
+        warnings: MutableList<String>
+    ): Instrument? {
+        if (offset == 0) return null
+        if (offset + 0x130 > input.size) {
+            warnings += "Instrument ${instrumentIndex + 1} header overruns file data and was ignored."
+            return null
+        }
+        if (input.stringAt(offset, 4) != "IMPI") {
+            warnings += "Instrument ${instrumentIndex + 1} header is not an IT instrument header and was ignored."
+            return null
+        }
+
+        val noteMap = IntArray(120)
+        val sampleMap = IntArray(120)
+        for (note in 0 until 120) {
+            val tableOffset = offset + 0x40 + note * 2
+            noteMap[note] = input.u8At(tableOffset).coerceIn(0, 119)
+            sampleMap[note] = input.u8At(tableOffset + 1)
+        }
+        return Instrument(
+            index = instrumentIndex + 1,
+            name = input.stringAt(offset + 0x20, 26).ifBlank { "Instrument ${instrumentIndex + 1}" },
+            noteMap = noteMap,
+            sampleMap = sampleMap
         )
     }
 
@@ -302,11 +354,10 @@ internal object ImpulseTrackerImport {
     private fun parsePattern(
         input: LeReader,
         offset: Int,
-        patternIndex: Int,
-        warnings: MutableList<String>
+        patternIndex: Int
     ): Pattern {
         if (offset == 0) {
-            return Pattern(rows = 64, channels = List(EDITOR_CHANNEL_LIMIT) { emptyList() })
+            return Pattern(rows = 64, channels = List(ROW_CHANNEL_LIMIT) { emptyList() })
         }
         require(offset + 8 <= input.size) { "IT pattern $patternIndex header overruns file data" }
         val packedLength = input.u16At(offset)
@@ -315,7 +366,7 @@ internal object ImpulseTrackerImport {
         val dataEnd = (dataStart + packedLength).coerceAtMost(input.size)
         require(dataStart <= dataEnd) { "IT pattern $patternIndex has invalid packed data length" }
 
-        val channels = List(EDITOR_CHANNEL_LIMIT) { mutableListOf<Row>() }
+        val channels = List(ROW_CHANNEL_LIMIT) { mutableListOf<Row>() }
         val masks = IntArray(ROW_CHANNEL_LIMIT) { 0 }
         val lastNote = IntArray(ROW_CHANNEL_LIMIT) { -1 }
         val lastInstrument = IntArray(ROW_CHANNEL_LIMIT) { -1 }
@@ -324,7 +375,6 @@ internal object ImpulseTrackerImport {
         val lastValue = IntArray(ROW_CHANNEL_LIMIT) { -1 }
         var pos = dataStart
         var rowIndex = 0
-        var ignoredHighChannelEvents = 0
 
         while (pos < dataEnd && rowIndex < rows) {
             val channelVariable = input.u8At(pos++)
@@ -375,41 +425,41 @@ internal object ImpulseTrackerImport {
                 value = lastValue[channel]
             }
 
-            if (channel < EDITOR_CHANNEL_LIMIT) {
-                channels[channel] += Row(
-                    row = rowIndex,
-                    channel = channel,
-                    note = note,
-                    instrument = instrument,
-                    volume = volume,
-                    command = command,
-                    value = value
-                )
-            } else {
-                ignoredHighChannelEvents++
-            }
-        }
-        if (ignoredHighChannelEvents > 0) {
-            warnings += "Pattern $patternIndex used channels above 8; $ignoredHighChannelEvents event(s) were ignored."
+            channels[channel] += Row(
+                row = rowIndex,
+                channel = channel,
+                note = note,
+                instrument = instrument,
+                volume = volume,
+                command = command,
+                value = value
+            )
         }
         return Pattern(rows = rows, channels = channels)
     }
 
-    private fun convertToSong(
+    private data class SourceImport(
+        val song: NspcSequence.Song,
+        val usedSampleIndexes: List<Int>,
+        val sourceChannelCount: Int,
+        val droppedDuplicateNotes: Int,
+        val droppedOverlapNotes: Int
+    )
+
+    private fun convertToSourceImport(
         module: Module,
         fallbackTitle: String,
-        warnings: MutableList<String>,
-        customInstrumentBySample: Map<Int, Int>? = null
-    ): NspcSequence.Song {
-        val song = NspcSequence.Song(
-            tempo = itTempoToNspc(module.initialTempo),
-            title = module.name.ifBlank { fallbackTitle },
-            isModified = true
-        )
-        val active = arrayOfNulls<ActiveNote>(EDITOR_CHANNEL_LIMIT)
+        warnings: MutableList<String>
+    ): SourceImport {
+        val sourceChannels = Array(ROW_CHANNEL_LIMIT) { mutableListOf<NspcSequence.Note>() }
+        val tempoCommands = mutableListOf<NspcSequence.ControlCommand>()
+        val active = arrayOfNulls<ActiveNote>(ROW_CHANNEL_LIMIT)
+        val currentInstrument = IntArray(ROW_CHANNEL_LIMIT) { -1 }
         var tick = 0
         var skippedOrders = 0
         var currentSpeed = module.initialSpeed.coerceIn(1, 0x7F)
+        val initialConvertedTempo = itTempoToNspc(module.initialTempo)
+        var songTempo = initialConvertedTempo
 
         for (order in module.orders) {
             when (order) {
@@ -428,7 +478,7 @@ internal object ImpulseTrackerImport {
             val speedEvents = mutableListOf<Pair<Int, Int>>()
             val patternBreakRows = mutableListOf<Int>()
             val unsupportedEffects = mutableMapOf<Char, Int>()
-            for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
+            for (channelIndex in 0 until ROW_CHANNEL_LIMIT) {
                 for (row in pattern.channels[channelIndex]) {
                     if (row.command > 0) {
                         val commandLetter = 'A'.code + row.command - 1
@@ -450,9 +500,9 @@ internal object ImpulseTrackerImport {
                 if (rowIndex >= patternRows) continue
                 val convertedTempo = itTempoToNspc(tempo)
                 val tempoTick = tick + rowTickOffsets[rowIndex.coerceIn(0, pattern.rows)]
-                song.channels[0].commands += NspcSequence.ControlCommand(tempoTick, 0xE7, intArrayOf(convertedTempo))
-                if (tempoTick == 0 || song.tempo == itTempoToNspc(module.initialTempo)) {
-                    song.tempo = convertedTempo
+                tempoCommands += NspcSequence.ControlCommand(tempoTick, 0xE7, intArrayOf(convertedTempo))
+                if (tempoTick == 0 || songTempo == initialConvertedTempo) {
+                    songTempo = convertedTempo
                 }
             }
             if (tempoEvents.isNotEmpty()) {
@@ -466,31 +516,38 @@ internal object ImpulseTrackerImport {
                 warnings += "Unsupported IT effects were ignored: $summary."
             }
 
-            for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
+            for (channelIndex in 0 until ROW_CHANNEL_LIMIT) {
                 for (row in pattern.channels[channelIndex]) {
                     if (row.row >= patternRows) continue
                     val rowTick = tick + rowTickOffsets[row.row.coerceIn(0, pattern.rows)]
+                    if (row.instrument > 0) {
+                        currentInstrument[channelIndex] = row.instrument
+                    }
+                    val sourceInstrument = if (row.instrument > 0) row.instrument else currentInstrument[channelIndex]
                     if (row.instrument > 0 && active[channelIndex] != null && row.note < 0) {
+                        val activeNote = active[channelIndex] ?: continue
                         active[channelIndex] = active[channelIndex]?.copy(
-                            instrument = mapItInstrument(row.instrument, module, customInstrumentBySample)
+                            instrument = resolveItPlayback(row.instrument, activeNote.sourceNote, module).sampleIndex
                         )
                     }
                     when {
-                        row.note in 1..119 -> {
-                            finishActive(song, active, channelIndex, rowTick)
+                        row.note in 0..119 -> {
+                            finishActive(sourceChannels, active, channelIndex, rowTick)
+                            val playback = resolveItPlayback(sourceInstrument, row.note, module)
                             active[channelIndex] = ActiveNote(
                                 startTick = rowTick,
-                                noteValue = itNoteToNspc(row.note),
+                                sourceNote = row.note,
+                                noteValue = itNoteToNspc(playback.note),
                                 velocity = itVolumeToVelocity(
                                     row.volume,
                                     module.channelVolumes.getOrElse(channelIndex) { 64 },
                                     module.globalVolume
                                 ),
-                                instrument = mapItInstrument(row.instrument, module, customInstrumentBySample)
+                                instrument = playback.sampleIndex
                             )
                         }
                         row.note == IT_NOTE_OFF || row.note == IT_NOTE_CUT || row.note == IT_NOTE_FADE -> {
-                            finishActive(song, active, channelIndex, rowTick)
+                            finishActive(sourceChannels, active, channelIndex, rowTick)
                         }
                     }
                 }
@@ -500,28 +557,51 @@ internal object ImpulseTrackerImport {
                 .maxByOrNull { it.first }
                 ?.let { (_, speed) -> currentSpeed = speed.coerceIn(1, 0x7F) }
         }
-        for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
-            finishActive(song, active, channelIndex, tick)
+        for (channelIndex in 0 until ROW_CHANNEL_LIMIT) {
+            finishActive(sourceChannels, active, channelIndex, tick)
         }
         if (skippedOrders > 0) {
             warnings += "$skippedOrders IT order separator(s) were skipped."
         }
-        for (channel in song.channels) {
-            channel.notes.sortWith(compareBy<NspcSequence.Note> { it.tick }.thenBy { it.noteValue })
-            channel.commands.sortBy { it.tick }
+
+        val sourceChannelCount = sourceChannels.count { it.isNotEmpty() }
+        val packed = packSourceChannels(
+            sourceChannels = sourceChannels,
+            tempo = songTempo,
+            title = module.name.ifBlank { fallbackTitle },
+            tempoCommands = tempoCommands
+        )
+        if (sourceChannelCount > EDITOR_CHANNEL_LIMIT) {
+            warnings += "IT used $sourceChannelCount note channel(s); imported notes were voice-packed into ${EDITOR_CHANNEL_LIMIT} SNES channels."
         }
-        return song
+        if (packed.droppedDuplicateNotes > 0) {
+            warnings += "Voice packing removed ${packed.droppedDuplicateNotes} simultaneous duplicate note(s)."
+        }
+        if (packed.droppedOverlapNotes > 0) {
+            warnings += "Voice packing dropped ${packed.droppedOverlapNotes} overlapping note(s) that exceeded the 8-voice SNES limit."
+        }
+        return SourceImport(
+            song = packed.song,
+            usedSampleIndexes = packed.song.channels
+                .flatMap { it.notes }
+                .map { it.instrument }
+                .filter { it > 0 }
+                .distinct(),
+            sourceChannelCount = sourceChannelCount,
+            droppedDuplicateNotes = packed.droppedDuplicateNotes,
+            droppedOverlapNotes = packed.droppedOverlapNotes
+        )
     }
 
     private fun finishActive(
-        song: NspcSequence.Song,
+        sourceChannels: Array<MutableList<NspcSequence.Note>>,
         active: Array<ActiveNote?>,
         channelIndex: Int,
         endTick: Int
     ) {
         val note = active[channelIndex] ?: return
         val duration = (endTick - note.startTick).coerceAtLeast(1)
-        song.channels[channelIndex].notes += NspcSequence.Note(
+        sourceChannels[channelIndex] += NspcSequence.Note(
             tick = note.startTick,
             duration = duration,
             noteValue = note.noteValue,
@@ -530,6 +610,96 @@ internal object ImpulseTrackerImport {
             instrument = note.instrument
         )
         active[channelIndex] = null
+    }
+
+    private data class PackedSong(
+        val song: NspcSequence.Song,
+        val droppedDuplicateNotes: Int,
+        val droppedOverlapNotes: Int
+    )
+
+    private fun packSourceChannels(
+        sourceChannels: Array<MutableList<NspcSequence.Note>>,
+        tempo: Int,
+        title: String,
+        tempoCommands: List<NspcSequence.ControlCommand>
+    ): PackedSong {
+        val channelPriorities = sourceChannels.map { notes ->
+            val uniquePitches = notes.mapTo(mutableSetOf()) { it.noteValue }.size
+            val uniqueSamples = notes.mapTo(mutableSetOf()) { it.instrument }.size
+            uniquePitches * 10_000 + uniqueSamples * 1_000 + notes.size.coerceAtMost(2_000)
+        }
+        val deduped = mutableListOf<Pair<NspcSequence.Note, Int>>()
+        var droppedDuplicates = 0
+        for ((_, notesAtTick) in sourceChannels
+            .flatMapIndexed { channel, notes -> notes.map { it to channel } }
+            .groupBy { it.first.tick }
+            .toSortedMap()
+        ) {
+            val seen = mutableSetOf<String>()
+            val sortedAtTick = notesAtTick.sortedWith(
+                compareByDescending<Pair<NspcSequence.Note, Int>> { (note, channel) ->
+                    channelPriorities[channel] + note.velocity * 100 + note.duration.coerceAtMost(127)
+                }.thenBy { it.second }
+            )
+            for ((note, channel) in sortedAtTick) {
+                val key = "${note.noteValue}:${note.instrument}:${note.duration}"
+                if (!seen.add(key)) {
+                    droppedDuplicates++
+                    continue
+                }
+                deduped += note to channel
+            }
+        }
+
+        val song = NspcSequence.Song(tempo = tempo, title = title, isModified = true)
+        song.channels[0].commands += tempoCommands.map { it.copy(params = it.params.copyOf()) }
+        val channelEndTick = IntArray(EDITOR_CHANNEL_LIMIT) { 0 }
+        val channelLoad = IntArray(EDITOR_CHANNEL_LIMIT) { 0 }
+        var droppedOverlaps = 0
+        for ((note, _) in deduped.sortedWith(
+            compareBy<Pair<NspcSequence.Note, Int>> { it.first.tick }
+                .thenByDescending { (note, channel) ->
+                    channelPriorities[channel] + note.velocity * 100 + note.duration.coerceAtMost(127)
+                }
+                .thenBy { it.second }
+        )) {
+            val freeChannels = (0 until EDITOR_CHANNEL_LIMIT).filter { channelEndTick[it] <= note.tick }
+            if (freeChannels.isEmpty()) {
+                droppedOverlaps++
+                continue
+            }
+            val targetChannel = freeChannels.minWith(compareBy<Int> { channelLoad[it] }.thenBy { it })
+            song.channels[targetChannel].notes += note.copy()
+            channelEndTick[targetChannel] = note.endTick
+            channelLoad[targetChannel]++
+        }
+        for (channel in song.channels) {
+            channel.notes.sortWith(compareBy<NspcSequence.Note> { it.tick }.thenBy { it.noteValue })
+            channel.commands.sortBy { it.tick }
+        }
+        return PackedSong(song, droppedDuplicates, droppedOverlaps)
+    }
+
+    private fun remapSongInstruments(
+        sourceSong: NspcSequence.Song,
+        module: Module,
+        customInstrumentBySample: Map<Int, Int>? = null
+    ): NspcSequence.Song {
+        val out = NspcSequence.Song(
+            tempo = sourceSong.tempo,
+            title = sourceSong.title,
+            isModified = sourceSong.isModified
+        )
+        for (channelIndex in 0 until EDITOR_CHANNEL_LIMIT) {
+            out.channels[channelIndex].notes += sourceSong.channels[channelIndex].notes.map { note ->
+                note.copy(instrument = mapItInstrument(note.instrument, module, customInstrumentBySample))
+            }
+            out.channels[channelIndex].commands += sourceSong.channels[channelIndex].commands.map {
+                it.copy(params = it.params.copyOf())
+            }
+        }
+        return out
     }
 
     private fun itNoteToNspc(note: Int): Int =
@@ -554,12 +724,15 @@ internal object ImpulseTrackerImport {
         val loopBlockBySample: Map<Int, Int>
     )
 
-    private fun buildCustomSamplePlan(module: Module, warnings: MutableList<String>): CustomSamplePlan? {
-        if (module.usesInstruments && module.instrumentCount > 0) {
-            warnings += "IT instrument-mode sample maps/envelopes are not imported yet; notes were mapped to Super Metroid instrument slots."
+    private fun buildCustomSamplePlan(
+        module: Module,
+        warnings: MutableList<String>,
+        usedSamples: List<Int>
+    ): CustomSamplePlan? {
+        if (module.usesInstruments && module.instrumentCount > 0 && module.instruments.isEmpty()) {
+            warnings += "Custom BRR payload was not built because IT instrument headers could not be decoded."
             return null
         }
-        val usedSamples = collectUsedSampleIndexes(module)
         if (usedSamples.isEmpty()) return null
         val sampleByIndex = module.samples.associateBy { it.index }
         val missing = usedSamples.filter { sampleByIndex[it]?.pcm == null }
@@ -617,9 +790,17 @@ internal object ImpulseTrackerImport {
             )
         }
         warnings += "Decoded ${orderedSamples.size} IT sample(s) for custom BRR payload export."
+        if (module.usesInstruments) {
+            warnings += "IT instrument note/sample maps were imported; envelopes, NNAs, and duplicate-note behavior are approximated."
+        }
         warnings += "IT sample tuning/envelopes are approximated; exact tracker envelopes and vibrato are not converted yet."
         return CustomSamplePlan(orderedSamples, instrumentBySample, instruments, brrBySample, loopBlockBySample)
     }
+
+    private data class NativePayloadBuild(
+        val song: NspcSequence.Song,
+        val payload: MusicTrackInterchange.NativePayload
+    )
 
     private fun buildNativePayload(
         song: NspcSequence.Song,
@@ -627,17 +808,21 @@ internal object ImpulseTrackerImport {
         targetPlayIndex: Int,
         sourceFileName: String,
         warnings: MutableList<String>
-    ): MusicTrackInterchange.NativePayload? {
-        val encodedBytes = NspcSequence.encodedSequenceSize(song)
+    ): NativePayloadBuild? {
         val sequenceBudget = INSTRUMENT_TABLE_ADDR - SEQUENCE_ADDR
-        if (encodedBytes > sequenceBudget) {
-            warnings += "Custom BRR payload was not built because the imported sequence needs $encodedBytes bytes and only $sequenceBudget bytes are available before the instrument table."
+        val fit = try {
+            MusicSequenceBudget.fitSongToEncodedBudget(song, sequenceBudget)
+        } catch (e: Exception) {
+            warnings += "Custom BRR payload was not built because the imported sequence could not fit before the instrument table: ${e.message}"
             return null
+        }
+        if (fit.trimmed) {
+            warnings += "Custom IT native payload tail-trimmed ${fit.removedNotes} notes and ${fit.removedCommands} commands after tick ${fit.cutoffTick} to fit ${fit.encodedBytes}/${fit.budgetBytes} sequence bytes."
         }
 
         val sequenceWrites = try {
             NspcSequence.encode(
-                song = song,
+                song = fit.song,
                 playIndex = targetPlayIndex,
                 spcRam = ByteArray(0x10000),
                 failOnOverflow = true,
@@ -683,47 +868,53 @@ internal object ImpulseTrackerImport {
         blocks += sampleDataBlocks
 
         warnings += "Built custom IT native payload: ${plan.samples.size} BRR sample(s), ${blocks.size} transfer block(s), ${blocks.sumOf { it.data.size }} bytes."
-        return MusicTrackInterchange.NativePayload(
-            blocks = blocks,
-            sourcePlayIndex = targetPlayIndex,
-            sourceFileName = sourceFileName,
-            formatLabel = "Impulse Tracker"
+        return NativePayloadBuild(
+            song = fit.song,
+            payload = MusicTrackInterchange.NativePayload(
+                blocks = blocks,
+                sourcePlayIndex = targetPlayIndex,
+                sourceFileName = sourceFileName,
+                formatLabel = "Impulse Tracker"
+            )
         )
     }
 
-    private fun collectUsedSampleIndexes(module: Module): List<Int> {
-        val used = linkedSetOf<Int>()
-        for (order in module.orders) {
-            if (order == 0xFF) break
-            if (order == 0xFE) continue
-            val pattern = module.patterns.getOrNull(order) ?: continue
-            val breakRow = pattern.channels
-                .flatten()
-                .filter { it.command > 0 && ('A'.code + it.command - 1).toChar() == 'C' }
-                .minOfOrNull { it.row + 1 }
-                ?.coerceIn(0, pattern.rows)
-                ?: pattern.rows
-            for (channel in pattern.channels) {
-                for (row in channel) {
-                    if (row.row >= breakRow || row.note !in 1..119) continue
-                    val sampleIndex = when {
-                        row.instrument > 0 -> row.instrument
-                        else -> module.samples.firstOrNull { it.associated }?.index ?: 1
-                    }
-                    used += sampleIndex
+    private data class ItPlayback(
+        val note: Int,
+        val sampleIndex: Int
+    )
+
+    private fun resolveItPlayback(instrument: Int, note: Int, module: Module): ItPlayback {
+        if (module.usesInstruments) {
+            val mappedInstrument = module.instruments.firstOrNull { it.index == instrument }
+            if (mappedInstrument != null) {
+                val mappedSample = mappedInstrument.sampleFor(note)
+                if (mappedSample > 0) {
+                    return ItPlayback(
+                        note = mappedInstrument.mappedNoteFor(note),
+                        sampleIndex = mappedSample
+                    )
                 }
             }
+            val fallbackSample = module.samples.firstOrNull { it.associated }?.index ?: 1
+            return ItPlayback(note = note, sampleIndex = fallbackSample)
         }
-        return used.toList()
+
+        val sampleIndex = when {
+            instrument > 0 -> instrument
+            module.samples.firstOrNull { it.associated } != null -> module.samples.first { it.associated }.index
+            else -> 1
+        }
+        return ItPlayback(note = note, sampleIndex = sampleIndex)
     }
 
     private fun mapItInstrument(
-        instrument: Int,
+        sampleIndex: Int,
         module: Module,
         customInstrumentBySample: Map<Int, Int>? = null
     ): Int {
         val sourceIndex = when {
-            instrument > 0 -> instrument
+            sampleIndex > 0 -> sampleIndex
             module.samples.firstOrNull { it.associated } != null -> module.samples.first { it.associated }.index
             else -> 1
         }
@@ -758,6 +949,7 @@ internal object ImpulseTrackerImport {
 
     private data class ActiveNote(
         val startTick: Int,
+        val sourceNote: Int,
         val noteValue: Int,
         val velocity: Int,
         val instrument: Int
