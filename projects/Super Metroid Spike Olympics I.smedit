@@ -140010,6 +140010,20 @@
                     "x": 71,
                     "y": 76,
                     "param": 111
+                },
+                {
+                    "action": "add",
+                    "plmId": 61147,
+                    "x": 69,
+                    "y": 68,
+                    "param": 111
+                },
+                {
+                    "action": "remove",
+                    "plmId": 61147,
+                    "x": 69,
+                    "y": 68,
+                    "param": 111
                 }
             ],
             "doorChanges": [
@@ -201338,6 +201352,21 @@
             "configType": null,
             "configValue": null,
             "configData": null,
+            "customItems": [
+            ]
+        },
+        {
+            "id": "config_fanfares",
+            "name": "Fanfares",
+            "description": "Control item fanfare box duration and room-music resume timing.",
+            "enabled": true,
+            "writes": [
+            ],
+            "configType": "fanfares",
+            "configValue": null,
+            "configData": {
+                "item_fanfare_frames": 16
+            },
             "customItems": [
             ]
         },

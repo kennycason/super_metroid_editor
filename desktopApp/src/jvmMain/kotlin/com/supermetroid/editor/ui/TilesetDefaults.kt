@@ -323,6 +323,16 @@ val BOMBS_PATCH = SmPatch(
     configType = BOMB_CONFIG_TYPE
 )
 
+/** Config patch: Item fanfare/message timing. Stores frame count in configData. */
+val FANFARE_PATCH = SmPatch(
+    id = "config_fanfares",
+    name = "Fanfares",
+    description = "Control item fanfare box duration and room-music resume timing.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = FANFARE_CONFIG_TYPE
+)
+
 /** Config patch: generated pause-map room name display. */
 val ROOM_NAME_PAUSE_MAP_PATCH = SmPatch(
     id = "config_room_name_pause_map",

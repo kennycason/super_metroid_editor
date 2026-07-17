@@ -2142,7 +2142,7 @@ class EditorState {
         val ordered = mutableListOf<SmPatch>()
 
         // 1. GUI config patches (featured at top)
-        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
+        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, FANFARE_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
             if (guiPatch.id !in existingIds) {
                 ordered.add(SmPatch(
                     id = guiPatch.id,
@@ -5386,6 +5386,27 @@ class EditorState {
                 editorLog(
                     "[EXPORT]   Bombs: maxActive=$maxActive, fuse=$fuseFrames frames, " +
                         "cooldown=$cooldownFrames frames, explosionDelay=$explosionDelay"
+                )
+            } else if (patch.configType == FANFARE_CONFIG_TYPE) {
+                val data = patch.configData
+                val defaults = readFanfareRomDefaults(romParser)
+                val frames = (data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames)
+                    .coerceIn(FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES)
+
+                fun writeWord(offset: Int, value: Int) {
+                    if (offset + 1 < romData.size) {
+                        romData[offset] = (value and 0xFF).toByte()
+                        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+                    }
+                }
+
+                writeWord(FANFARE_MESSAGE_BOX_WAIT_PC, frames)
+                for (offset in FANFARE_MUSIC_RESUME_DELAY_PCS) {
+                    writeWord(offset, frames)
+                }
+                editorLog(
+                    "[EXPORT]   Fanfares: item box/music resume delay=$frames frames, " +
+                        "${FANFARE_MUSIC_RESUME_DELAY_PCS.size + 1} values modified"
                 )
             } else if (patch.configType == "controller_config") {
                 val data = patch.configData ?: continue
