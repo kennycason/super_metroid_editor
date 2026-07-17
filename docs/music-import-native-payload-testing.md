@@ -40,6 +40,7 @@ Current `IT In` behavior:
 - Writes a self-contained native payload with N-SPC sequence data, instrument table bytes, sample directory entries, and BRR sample data.
 - Maps IT sample-mode instruments to generated Super Metroid instrument table entries when the native payload is valid.
 - Resolves IT instrument-mode note/sample keyboard maps before choosing BRR sample slots.
+- Generates Super Metroid instrument table pitch bytes from IT sample C5 speed, matching mITroid's byte formula, and uses default `GAIN=0x7F` for instruments without convertible volume envelopes.
 - Reports active IT sample metadata, including compressed/stereo/16-bit/looped counts, so unsupported custom sample cases are visible before apply.
 - Stages an import report before applying, like MIDI and N-SPC import.
 - Saves both the editable piano-roll interpretation and the native payload while notes/instruments remain unchanged.
@@ -48,8 +49,8 @@ Current `IT In` limitations:
 
 - Custom BRR payloads currently require embedded mono, uncompressed PCM samples that fit in SPC RAM.
 - IT-compressed samples, stereo samples, missing/invalid instrument headers, and over-budget sample payloads are reported and fall back to editable sequence import without custom BRR payload blocks.
-- IT instrument note/sample maps are imported, but volume envelopes, NNAs, duplicate-note behavior, and most tracker playback rules are approximated.
-- Sample tuning, ADSR/envelope behavior, vibrato, and tracker effect playback are approximated.
+- IT instrument note/sample maps and basic volume-envelope ADSR conversion are imported, but NNAs, duplicate-note behavior, and most tracker playback rules are approximated.
+- Sample resampling/BRR encoding does not yet exactly match mITroid/BRRtools, so timbre can still differ even when note data and C5 pitch bytes are correct.
 - Does not preserve most tracker effects yet; unsupported effect commands are reported.
 - Voice packing is a lossy reduction when a tracker module has more than 8 simultaneous notes; dropped duplicates/overlaps are reported.
 

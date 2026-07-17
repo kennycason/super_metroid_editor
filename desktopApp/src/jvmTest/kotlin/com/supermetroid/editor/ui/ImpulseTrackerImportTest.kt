@@ -89,6 +89,10 @@ class ImpulseTrackerImportTest {
         assertEquals(1, parsed.channels[0].notes.size)
         val instruments = NspcRenderer.readInstrumentTable(ram)
         assertEquals(0, instruments[0].srcn)
+        assertEquals(0, instruments[0].adsr1)
+        assertEquals(0, instruments[0].adsr2)
+        assertEquals(0x7F, instruments[0].gain)
+        assertEquals(0xFE01, instruments[0].pitchAdj)
         val sampleStart = readU16(ram, 0x6D00)
         val sampleLoop = readU16(ram, 0x6D02)
         assertEquals(0x6E00, sampleStart)
@@ -145,6 +149,10 @@ class ImpulseTrackerImportTest {
         assertTrue(
             result.song.channels.flatMap { it.notes }.map { it.noteValue }.distinct().size > 4,
             "Expected real fixture import to preserve more than repeated C/C# pulses"
+        )
+        assertTrue(
+            result.instruments.any { it.pitchAdj != 0 && it.pitchAdj != 0x1000 },
+            "Expected imported IT samples to use C5-derived pitch adjustment"
         )
         assertTrue(result.report.warnings.any { it.contains("Built custom IT native payload") })
     }

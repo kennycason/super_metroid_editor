@@ -28,6 +28,18 @@ internal object ImpulseTrackerImport {
     private const val SAMPLE_DATA_ADDR = 0x6E00
     private const val MAX_CUSTOM_SAMPLES = 40
     private const val MAX_INSTRUMENTS = 42
+    private const val MITROID_C5_DIVISOR = 4186
+
+    private val ATTACK_TABLE_MS = intArrayOf(4100, 2500, 1500, 1000, 640, 380, 260, 160, 96, 64, 40, 24, 16, 10, 6, 0)
+    private val DECAY_TABLE_MS = intArrayOf(1200, 740, 440, 290, 180, 110, 74, 37)
+    private val SUSTAIN_TABLE_MS = intArrayOf(
+        65535, 38000, 28000, 24000, 19000, 14000, 12000, 9400,
+        7100, 5900, 4700, 3500, 2900, 2400, 1800, 1500,
+        1200, 880, 740, 590, 440, 370, 290, 220,
+        180, 150, 110, 92, 74, 55, 37, 18
+    )
+    private val DECAY_MULTIPLIER = doubleArrayOf(0.724, 0.518, 0.378, 0.263, 0.181, 0.110, 0.052, 0.0)
+    private val SUSTAIN_MULTIPLIER = doubleArrayOf(0.407, 0.623, 0.768, 0.876, 0.962, 1.032, 1.095, 1.149)
 
     data class Result(
         val song: NspcSequence.Song,
@@ -57,12 +69,24 @@ internal object ImpulseTrackerImport {
     data class Instrument(
         val index: Int,
         val name: String,
+        val fileName: String,
+        val fadeOut: Int,
+        val globalVolume: Int,
+        val defaultPan: Int,
+        val useEnvelope: Boolean,
+        val sustainLoop: Boolean,
+        val envelopeNodes: List<EnvelopeNode>,
         val noteMap: IntArray,
         val sampleMap: IntArray
     ) {
         fun mappedNoteFor(note: Int): Int = noteMap.getOrElse(note.coerceIn(0, 119)) { note }.coerceIn(0, 119)
         fun sampleFor(note: Int): Int = sampleMap.getOrElse(note.coerceIn(0, 119)) { 0 }
     }
+
+    data class EnvelopeNode(
+        val volume: Int,
+        val ticks: Int
+    )
 
     data class Sample(
         val index: Int,
@@ -231,9 +255,31 @@ internal object ImpulseTrackerImport {
         return Instrument(
             index = instrumentIndex + 1,
             name = input.stringAt(offset + 0x20, 26).ifBlank { "Instrument ${instrumentIndex + 1}" },
+            fileName = input.stringAt(offset + 0x04, 12),
+            fadeOut = input.u16At(offset + 0x14),
+            globalVolume = input.u8At(offset + 0x18),
+            defaultPan = input.u8At(offset + 0x19),
+            useEnvelope = offset + 0x131 < input.size && (input.u8At(offset + 0x130) and 0x01) != 0,
+            sustainLoop = offset + 0x131 < input.size && (input.u8At(offset + 0x130) and 0x04) != 0,
+            envelopeNodes = parseEnvelopeNodes(input, offset),
             noteMap = noteMap,
             sampleMap = sampleMap
         )
+    }
+
+    private fun parseEnvelopeNodes(input: LeReader, instrumentOffset: Int): List<EnvelopeNode> {
+        if (instrumentOffset + 0x136 > input.size) return emptyList()
+        val nodeCount = input.u8At(instrumentOffset + 0x131).coerceIn(0, 25)
+        val nodes = mutableListOf<EnvelopeNode>()
+        for (nodeIndex in 0 until nodeCount) {
+            val nodeOffset = instrumentOffset + 0x136 + nodeIndex * 3
+            if (nodeOffset + 2 >= input.size) break
+            nodes += EnvelopeNode(
+                volume = input.u8At(nodeOffset),
+                ticks = input.u16At(nodeOffset + 1)
+            )
+        }
+        return nodes
     }
 
     private fun parseSample(
@@ -781,12 +827,14 @@ internal object ImpulseTrackerImport {
         }
         for ((sampleIndex, instrumentIndex) in instrumentBySample) {
             val sample = sampleByIndex.getValue(sampleIndex)
+            val sourceInstrument = sourceInstrumentForSample(module, sample.index)
+            val envelope = sourceInstrument?.let { buildMitroidEnvelope(it, module) }
             instruments[instrumentIndex] = instruments[instrumentIndex].copy(
                 srcn = instrumentIndex,
-                adsr1 = 0x8F,
-                adsr2 = 0xE0,
-                gain = sample.defaultVolume.coerceIn(0, 64) * 2,
-                pitchAdj = 0x1000
+                adsr1 = envelope?.first ?: 0,
+                adsr2 = envelope?.second ?: 0,
+                gain = if (envelope != null) 0 else 0x7F,
+                pitchAdj = itC5SpeedToPitchAdjustment(sample.c5Speed)
             )
         }
         warnings += "Decoded ${orderedSamples.size} IT sample(s) for custom BRR payload export."
@@ -795,6 +843,62 @@ internal object ImpulseTrackerImport {
         }
         warnings += "IT sample tuning/envelopes are approximated; exact tracker envelopes and vibrato are not converted yet."
         return CustomSamplePlan(orderedSamples, instrumentBySample, instruments, brrBySample, loopBlockBySample)
+    }
+
+    private fun sourceInstrumentForSample(module: Module, sampleIndex: Int): Instrument? =
+        module.instruments.firstOrNull { it.sampleFor(60) == sampleIndex }
+            ?: module.instruments.firstOrNull { instrument ->
+                instrument.sampleMap.any { it == sampleIndex }
+            }
+
+    private fun buildMitroidEnvelope(instrument: Instrument, module: Module): Pair<Int, Int>? {
+        val nodes = instrument.envelopeNodes
+        if (!instrument.useEnvelope || nodes.size <= 3) return null
+        val attackTicks = nodes[1].ticks - nodes[0].ticks
+        val decayTicks = nodes[2].ticks - nodes[1].ticks
+        var sustainTicks = nodes[3].ticks - nodes[2].ticks
+        val sustainLevel = (nodes[2].volume / 8.0).roundToInt() - 1
+        if (sustainLevel !in 0..7) return null
+
+        val itTempo = itTempoToNspc(module.initialTempo) * 4.8
+        val millisPerTick = 2500.0 / itTempo.coerceAtLeast(1.0)
+        val attack = if (attackTicks == 1) {
+            0x0F
+        } else {
+            findClosest(ATTACK_TABLE_MS, attackTicks * millisPerTick, 1.0)
+        }
+        val decay = findClosest(DECAY_TABLE_MS, decayTicks * millisPerTick, DECAY_MULTIPLIER[sustainLevel])
+        val actualDecayTicks = ((DECAY_TABLE_MS[decay] * DECAY_MULTIPLIER[sustainLevel]) / millisPerTick).roundToInt()
+        sustainTicks += decayTicks - actualDecayTicks
+        val sustainRate = if (instrument.sustainLoop) {
+            0
+        } else {
+            findClosest(SUSTAIN_TABLE_MS, sustainTicks * millisPerTick, SUSTAIN_MULTIPLIER[sustainLevel])
+        }
+        val adsr1 = 0x80 or (decay shl 4) or attack
+        val adsr2 = (sustainLevel shl 5) or sustainRate
+        return adsr1.coerceIn(0, 255) to adsr2.coerceIn(0, 255)
+    }
+
+    private fun findClosest(table: IntArray, value: Double, multiplier: Double): Int {
+        var diff = Double.MAX_VALUE
+        for (index in table.indices) {
+            val newDiff = kotlin.math.abs(table[index] * multiplier - value)
+            if (newDiff < diff) {
+                diff = newDiff
+            } else {
+                return index - 1
+            }
+        }
+        return table.lastIndex
+    }
+
+    private fun itC5SpeedToPitchAdjustment(c5Speed: Int): Int {
+        if (c5Speed <= 0) return 0
+        val mult = c5Speed / MITROID_C5_DIVISOR
+        val mod = c5Speed % MITROID_C5_DIVISOR
+        val sub = (255.0 * (mod.toDouble() / MITROID_C5_DIVISOR.toDouble())).roundToInt()
+        return ((sub.coerceIn(0, 255) shl 8) or mult.coerceIn(0, 255)) and 0xFFFF
     }
 
     private data class NativePayloadBuild(
