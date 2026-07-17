@@ -1,6 +1,6 @@
 # SMEDIT Parity And Hardening Backlog
 
-Last updated: 2026-07-13
+Last updated: 2026-07-16
 
 This file captures the current SMILE/local-reference audit so the next work can resume without redoing the full review.
 
@@ -18,8 +18,8 @@ This file captures the current SMILE/local-reference audit so the next work can 
    - Prefer raw 4bpp tile-sheet import/export over legacy PNG sprite replacement for ROM-critical paths.
    - Add regression fixtures for sidehopper, pirates, bosses, palette variants, and DMA transfer edge cases.
 4. Validation expansion.
-   - Existing validator covers doors, duplicate item bits, enemy GFX slot pressure, and room dimensions.
-   - Next checks should include PLM terminators/counts, scroll pointer bounds, room-state pointer consistency, compressed data fit/relocation failures, and graphics table fit.
+   - Validator covers doors, duplicate item bits, enemy GFX slot pressure, room dimensions, PLM set terminators/bounds, AreaSave override conflicts, graphics/metatile/tileset-palette export fit, enemy tile edit exportability, and sprite palette payloads.
+   - Next checks should include scroll pointer bounds, room-state pointer consistency, room graph consistency, JSON import conflicts, and richer export blocker UX.
 5. Spider Ball behavior hardening.
    - Keep spider code out of ground/slope ownership.
    - Preserve jump, wall-jump, morph tunnel, slope, and moving-platform behavior from the documented acceptance list.
@@ -58,3 +58,4 @@ Next up after the current save-station slice:
 - Enemy tile-sheet export hardening has manual notes in `docs/project/enemy_sprite_hardening_test_notes.md`.
 - Embedded Layer 2 editing has manual notes in `docs/project/layer2_editing_test_notes.md`.
 - Save station spawn editing has manual notes in `docs/project/save_station_spawn_test_notes.md`.
+- Validation expansion has manual notes in `docs/project/validation_suite_test_notes.md`.

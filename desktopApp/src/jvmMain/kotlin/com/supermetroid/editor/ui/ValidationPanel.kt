@@ -63,6 +63,16 @@ fun ValidationPopup(
                     fontWeight = FontWeight.SemiBold,
                     color = if (errors > 0) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    if (errors > 0) {
+                        "Fix errors before exporting a release ROM. Warnings should be reviewed before playtesting."
+                    } else {
+                        "No export-blocking errors found. Review warnings before playtesting."
+                    },
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
 
                 Spacer(Modifier.height(8.dp))
 

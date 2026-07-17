@@ -380,7 +380,7 @@ fun main() = application {
                                     if (parser != null) {
                                         val start = System.currentTimeMillis()
                                         val roomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
-                                        validationIssues = RomValidator.validate(parser, roomIds)
+                                        validationIssues = RomValidator.validate(parser, roomIds, editorState.project)
                                         validationTimeMs = System.currentTimeMillis() - start
                                         validationOpen = true
                                     }

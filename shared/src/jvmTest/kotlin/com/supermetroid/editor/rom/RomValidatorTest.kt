@@ -1,6 +1,8 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.RoomRepository
+import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
@@ -8,6 +10,7 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import java.io.File
+import java.util.Base64
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class RomValidatorTest {
@@ -112,6 +115,134 @@ class RomValidatorTest {
             val issues = RomValidator.checkRoomDimensions(rooms)
             println("Dimension issues: ${issues.size}")
             for (i in issues) println("  ${i.roomName}: ${i.message}")
+        }
+    }
+
+    @Nested
+    inner class PlmValidation {
+        @Test
+        fun `vanilla ROM PLM sets have terminators`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val issues = RomValidator.checkPlmSets(parser, rooms)
+            val terminatorErrors = issues.filter {
+                it.severity == RomValidator.Severity.ERROR && it.message.contains("terminator")
+            }
+            assertEquals(0, terminatorErrors.size, "Vanilla ROM should not have unterminated PLM sets")
+        }
+    }
+
+    @Nested
+    inner class ProjectValidation {
+        @Test
+        fun `project save station validation catches duplicate slots and missing AreaSave entry`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val project = SmEditProject(romPath = "test.smc")
+            val firstRoom = allRoomIds.first()
+            val secondRoom = allRoomIds.drop(1).first()
+
+            project.getOrCreateRoom(firstRoom).saveStationSpawns.add(
+                SaveStationSpawnChange(
+                    area = 0,
+                    saveIndex = 0,
+                    roomId = firstRoom,
+                    doorPtr = 0,
+                    scrollX = 0,
+                    scrollY = 0,
+                    samusY = 0,
+                    samusX = 0,
+                )
+            )
+            project.getOrCreateRoom(secondRoom).saveStationSpawns.add(
+                SaveStationSpawnChange(
+                    area = 0,
+                    saveIndex = 0,
+                    roomId = secondRoom,
+                    doorPtr = 0,
+                    scrollX = 0,
+                    scrollY = 0,
+                    samusY = 0,
+                    samusX = 0,
+                )
+            )
+            project.getOrCreateRoom(0x91F8).saveStationSpawns.add(
+                SaveStationSpawnChange(
+                    area = 0,
+                    saveIndex = parser.saveEntryCount(0),
+                    roomId = 0x91F8,
+                    doorPtr = 0,
+                    scrollX = 0,
+                    scrollY = 0,
+                    samusY = 0,
+                    samusX = 0,
+                )
+            )
+
+            val issues = RomValidator.checkProjectSaveStationSpawns(parser, project, rooms)
+            assertTrue(
+                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("edited by 2 rooms") },
+                "Duplicate AreaSave slot should be an error"
+            )
+            assertTrue(
+                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("has no writable AreaSave slot") },
+                "Out-of-range AreaSave slot should be an error"
+            )
+        }
+
+        @Test
+        fun `project graphics validation catches malformed metatile override`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            project.customGfx.tileTables["0"] = "!!!!"
+
+            val issues = RomValidator.checkProjectGraphicsExportFit(parser, project)
+
+            assertTrue(
+                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("invalid base64") },
+                "Malformed custom metatile table should be reported"
+            )
+        }
+
+        @Test
+        fun `project enemy tile validation catches wrong raw tile size`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            project.customGfx.spriteTileBlocks["enemy:DCFF"] = Base64.getEncoder().encodeToString(ByteArray(32))
+
+            val issues = RomValidator.checkProjectEnemyTileEdits(parser, project)
+
+            assertTrue(
+                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("cannot export") },
+                "Wrong-sized raw enemy tile edit should block export"
+            )
+        }
+
+        @Test
+        fun `project sprite palette validation catches wrong raw palette sizes`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            project.customGfx.spritePalettes["samus_power"] = Base64.getEncoder().encodeToString(ByteArray(32))
+            project.customGfx.spritePalettes["enemy_pal:DCFF"] = Base64.getEncoder().encodeToString(ByteArray(16))
+
+            val issues = RomValidator.checkProjectSpritePalettes(parser, project)
+
+            assertTrue(
+                issues.any {
+                    it.severity == RomValidator.Severity.ERROR &&
+                        it.message.contains("Power Suit") &&
+                        it.message.contains("expected 1056")
+                },
+                "Wrong-sized fixed sprite palette should be reported"
+            )
+            assertTrue(
+                issues.any {
+                    it.severity == RomValidator.Severity.ERROR &&
+                        it.message.contains("Enemy DCFF palette") &&
+                        it.message.contains("expected 32")
+                },
+                "Wrong-sized enemy sprite palette should be reported"
+            )
         }
     }
 }
