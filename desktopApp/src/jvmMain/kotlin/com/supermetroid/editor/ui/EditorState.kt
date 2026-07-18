@@ -3715,6 +3715,7 @@ class EditorState {
         val generatedRooms: Int,
         val skippedRooms: Int,
         val changedTiles: Int,
+        val manualSkippedRooms: Int = 0,
     )
 
     /**
@@ -3775,10 +3776,12 @@ class EditorState {
         val wfcSampleCache = mutableMapOf<Pair<Int, Int>, List<WfcSample>>()
         var generated = 0
         var skipped = 0
+        var manualSkipped = 0
         var changedTiles = 0
 
         for (roomInfo in roomInfos.sortedBy { it.getRoomIdAsInt() }) {
             val roomId = roomInfo.getRoomIdAsInt()
+            val roomKey = project.roomKey(roomId)
             val romRoom = headersById[roomId]
             if (romRoom == null) {
                 skipped++
@@ -3788,10 +3791,15 @@ class EditorState {
                 skipped++
                 continue
             }
+            if (hasManualBiomeBlockingEdits(project.rooms[roomKey])) {
+                skipped++
+                manualSkipped++
+                continue
+            }
 
-            val stripped = stripGeneratedBiomeEdits(project.rooms[project.roomKey(roomId)])
+            val stripped = stripGeneratedBiomeEdits(project.rooms[roomKey])
             val effectiveRoom = applyHeaderChanges(romRoom)
-            val targetTileset = theme.tilesetId ?: project.rooms[project.roomKey(roomId)]?.stateDataChange?.tileset ?: effectiveRoom.tileset
+            val targetTileset = theme.tilesetId ?: project.rooms[roomKey]?.stateDataChange?.tileset ?: effectiveRoom.tileset
             val profile = TilesetProfileCache.getOrLearn(romParser, headers, targetTileset)
             val grids = buildEffectiveRoomGrids(romParser, romRoom, effectiveRoom)
             if (grids == null) {
@@ -3873,8 +3881,11 @@ class EditorState {
         if (activeRoom != null) loadRoom(currentRoomId, romParser, activeRoom)
         dirty = true
         editVersion++
-        editorLog("Generated biome for $generated rooms ($changedTiles tile edits), skipped $skipped rooms")
-        return BulkBiomeResult(generated, skipped, changedTiles)
+        editorLog(
+            "Generated biome for $generated rooms ($changedTiles tile edits), skipped $skipped rooms" +
+                if (manualSkipped > 0) " ($manualSkipped with manual edits)" else ""
+        )
+        return BulkBiomeResult(generated, skipped, changedTiles, manualSkipped)
     }
 
     fun resetGeneratedBiomeRooms(romParser: RomParser): BulkBiomeResult {
@@ -4017,6 +4028,34 @@ class EditorState {
         op.description.startsWith(GENERATED_BIOME_PREFIX) ||
             op.description.startsWith("Generate biome (")
 
+    private fun hasManualBiomeBlockingEdits(roomEdits: com.supermetroid.editor.data.RoomEdits?): Boolean {
+        if (roomEdits == null) return false
+        val generatedOps = roomEdits.operations.filter { isGeneratedBiomeOperation(it) }
+        if (roomEdits.operations.any { !isGeneratedBiomeOperation(it) }) return true
+        if (roomEdits.doorChanges.isNotEmpty() ||
+            roomEdits.enemyChanges.isNotEmpty() ||
+            roomEdits.roomHeaderChange != null ||
+            roomEdits.customScrollCommands.isNotEmpty() ||
+            roomEdits.saveStationSpawns.isNotEmpty()
+        ) {
+            return true
+        }
+
+        val generatedScrollChanges = generatedOps.flatMap { it.scrollEdits }
+        if (roomEdits.scrollChanges.any { it !in generatedScrollChanges }) return true
+
+        val generatedPlmChanges = generatedOps.flatMap { it.plmAdds + it.plmRemoves }
+        if (roomEdits.plmChanges.any { it !in generatedPlmChanges }) return true
+
+        val generatedStateChanges = generatedOps.mapNotNull { it.stateDataAfter }
+        if (roomEdits.stateDataChange != null && roomEdits.stateDataChange !in generatedStateChanges) return true
+
+        val generatedFxChanges = generatedOps.mapNotNull { it.fxAfter }
+        if (roomEdits.fxChange != null && roomEdits.fxChange !in generatedFxChanges) return true
+
+        return false
+    }
+
     private fun prepareBulkTheme(theme: BiomeTheme, romParser: RomParser) {
         val targetTileset = theme.tilesetId ?: return
         val effectId = theme.paletteEffectId ?: return
@@ -4075,6 +4114,7 @@ class EditorState {
         if (roomId == 0x91F8) {
             addLandingSiteShipProtection(preserveRects, forceAirRects)
         }
+        addElevatorProtectionForRoom(preserveRects, forceAirRects, romParser, roomId, width, height)
         preserveRects.addAll(buildDoorCapPreserveRectsForRoom(romParser, roomId, width, height, effectivePlmsForBiomeRoom(roomId, romParser)))
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
@@ -4191,6 +4231,14 @@ class EditorState {
         if (keepLandingSiteShipClear && currentRoomId == 0x91F8) {
             addLandingSiteShipProtection(preserveRects, forceAirRects)
         }
+        addElevatorProtectionForRoom(
+            preserveRects,
+            forceAirRects,
+            romParser,
+            currentRoomId,
+            workingBlocksWide,
+            workingBlocksTall,
+        )
         preserveRects.addAll(
             buildDoorCapPreserveRectsForRoom(
                 romParser,
@@ -4221,6 +4269,77 @@ class EditorState {
         // and clear only a tight 3-tile cushion around it.
         preserveRects.add(BiomeGenerationRect(58, 60, 84, 73))
         forceAirRects.add(BiomeGenerationRect(55, 57, 87, 76))
+    }
+
+    private fun addElevatorProtectionForRoom(
+        preserveRects: MutableList<BiomeGenerationRect>,
+        forceAirRects: MutableList<BiomeGenerationRect>,
+        romParser: RomParser?,
+        roomId: Int,
+        width: Int,
+        height: Int,
+    ) {
+        if (romParser == null || roomId == 0 || width <= 0 || height <= 0) return
+        val incomingElevators = romParser.findDoorsLeadingTo(roomId).filter { it.isElevator }
+        for (door in incomingElevators) {
+            addElevatorProtectionForDoor(preserveRects, forceAirRects, door, width, height)
+        }
+    }
+
+    private fun addElevatorProtectionForDoor(
+        preserveRects: MutableList<BiomeGenerationRect>,
+        forceAirRects: MutableList<BiomeGenerationRect>,
+        door: RomParser.DoorEntry,
+        width: Int,
+        height: Int,
+    ) {
+        val screenX0 = door.screenX * 16
+        val screenY0 = door.screenY * 16
+        if (screenX0 !in 0 until width || screenY0 !in 0 until height) return
+
+        val centerLeftX = screenX0 + 7
+        val centerRightX = screenX0 + 8
+        val centerTopY = screenY0 + 7
+        val centerBottomY = screenY0 + 8
+
+        fun addPreserve(rect: BiomeGenerationRect) {
+            if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
+                preserveRects.add(rect)
+            }
+        }
+        fun addForceAir(rect: BiomeGenerationRect) {
+            if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
+                forceAirRects.add(rect)
+            }
+        }
+
+        when (door.direction and 0x03) {
+            2 -> {
+                // Elevator entering from the top edge: preserve the top door strip,
+                // then keep the 2-tile-wide shaft below it open for Samus.
+                val doorY = screenY0
+                addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
+                addForceAir(BiomeGenerationRect(centerLeftX, doorY + 1, centerRightX, doorY + 4))
+            }
+            3 -> {
+                // Elevator entering from the bottom edge. Vanilla bottom elevator
+                // rooms have their lower type-9 strip on the screen's bottom row,
+                // with the standing space immediately above it.
+                val doorY = minOf(screenY0 + 15, height - 1)
+                addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
+                addForceAir(BiomeGenerationRect(centerLeftX, doorY - 4, centerRightX, doorY - 1))
+            }
+            0 -> {
+                val doorX = screenX0
+                addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
+                addForceAir(BiomeGenerationRect(doorX + 1, centerTopY, doorX + 3, centerBottomY))
+            }
+            1 -> {
+                val doorX = minOf(screenX0 + 15, width - 1)
+                addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
+                addForceAir(BiomeGenerationRect(doorX - 3, centerTopY, doorX - 1, centerBottomY))
+            }
+        }
     }
 
     private fun buildWfcSamples(romParser: RomParser, sourceRoomId: Int, sourceTilesetId: Int): List<WfcSample> {
@@ -4623,7 +4742,9 @@ class EditorState {
     // ─── Project file I/O ───────────────────────────────────────
 
     private val json = Json {
-        prettyPrint = true
+        // Project files can contain hundreds of thousands of generated tile edits.
+        // Keep saves compact; use jq or an editor formatter when human-readable JSON is needed.
+        prettyPrint = false
         ignoreUnknownKeys = true
         coerceInputValues = true
         encodeDefaults = true

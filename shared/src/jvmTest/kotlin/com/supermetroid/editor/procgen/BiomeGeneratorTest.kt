@@ -152,6 +152,63 @@ class BiomeGeneratorTest {
     }
 
     @Test
+    fun `pipe maze preserves bottom elevator strip and clears standing space`() {
+        val w = 32
+        val h = 24
+        val (words, bts) = syntheticRoom(w, h)
+        val profile = TilesetProfile.synthetic()
+        val platformY = 21
+        val platformCells = (11..20).map { x ->
+            val i = platformY * w + x
+            words[i] = if (x in 15..16) {
+                (0x9 shl 12) or 0x0FF
+            } else {
+                (0x8 shl 12) or 0x3B0
+            }
+            bts[i] = 0x21
+            i
+        }
+        for (y in platformY - 4 until platformY) {
+            for (x in 15..16) {
+                val i = y * w + x
+                words[i] = (0xB shl 12) or 0x2C0
+            }
+        }
+
+        val options = BiomeGenerationOptions(
+            preserveRects = listOf(BiomeGenerationRect(11, platformY, 20, platformY)),
+            forceAirRects = listOf(BiomeGenerationRect(15, platformY - 4, 16, platformY - 1)),
+        )
+        val gen = BiomeGenerator(rules(4242, BiomeStyle.PIPE_MAZE), profile, 4242, options)
+            .generate(w, h, words, bts)
+
+        for (i in platformCells) {
+            assertEquals(words[i], gen.words[i], "elevator platform word $i must be preserved")
+            assertEquals(bts[i], gen.bts[i], "elevator platform BTS $i must be preserved")
+            assertTrue(gen.preserved[i], "elevator platform cell $i must be flagged preserved")
+        }
+        assertPassableRect(
+            gen,
+            w,
+            x0 = 15,
+            y0 = platformY - 3,
+            width = 2,
+            height = 3,
+            label = "bottom elevator standing space",
+        )
+        for (y in platformY - 4 until platformY) {
+            for (x in 15..16) {
+                val i = y * w + x
+                assertTrue(!gen.preserved[i], "elevator clearance cell ($x,$y) should not be preserved")
+                assertTrue(
+                    ((gen.words[i] shr 12) and 0xF) !in setOf(0x5, 0xB, 0xD),
+                    "elevator clearance cell ($x,$y) should not keep crumble or extension collision"
+                )
+            }
+        }
+    }
+
+    @Test
     fun `wave function uses learned sample tiles and keeps original doors connected`() {
         val w = 48
         val h = 32
@@ -477,12 +534,12 @@ class BiomeGeneratorTest {
     }
 
     @Test
-    fun `pipe maze preserves original non-slope special collision tiles`() {
+    fun `pipe maze preserves original non-slope non-crumble special collision tiles`() {
         val w = 64
         val h = 40
         val (words, bts) = syntheticRoom(w, h)
         val profile = TilesetProfile.synthetic()
-        val collisionTypes = listOf(0x3, 0xA, 0xB, 0xC, 0xE, 0xF)
+        val collisionTypes = listOf(0x3, 0xA, 0xC, 0xE, 0xF)
         val protectedCells = collisionTypes.mapIndexedTo(ArrayList()) { offset, type ->
             val x = 12 + offset * 3
             val y = 8 + (offset % 3) * 6
@@ -513,7 +570,7 @@ class BiomeGeneratorTest {
     }
 
     @Test
-    fun `pipe maze clears original slopes from generated maze cells`() {
+    fun `pipe maze clears original slopes and crumbles from generated maze cells`() {
         val w = 64
         val h = 40
         val seed = 97531L
@@ -556,6 +613,38 @@ class BiomeGeneratorTest {
                 i !in used && i + w !in used && wall(i) && wall(i + w)
             }?.let { x -> y * w + x }
         }
+        used.add(wallVAnchor)
+        used.add(wallVAnchor + w)
+        val openCrumbleHAnchor = (2 until h - 2).firstNotNullOf { y ->
+            (2 until w - 3).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + 1 !in used && open(i) && open(i + 1)
+            }?.let { x -> y * w + x }
+        }
+        used.add(openCrumbleHAnchor)
+        used.add(openCrumbleHAnchor + 1)
+        val openCrumbleVAnchor = (2 until h - 3).firstNotNullOf { y ->
+            (2 until w - 2).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + w !in used && open(i) && open(i + w)
+            }?.let { x -> y * w + x }
+        }
+        used.add(openCrumbleVAnchor)
+        used.add(openCrumbleVAnchor + w)
+        val wallCrumbleHAnchor = (2 until h - 2).firstNotNullOf { y ->
+            (2 until w - 3).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + 1 !in used && wall(i) && wall(i + 1)
+            }?.let { x -> y * w + x }
+        }
+        used.add(wallCrumbleHAnchor)
+        used.add(wallCrumbleHAnchor + 1)
+        val wallCrumbleVAnchor = (2 until h - 3).firstNotNullOf { y ->
+            (2 until w - 2).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + w !in used && wall(i) && wall(i + w)
+            }?.let { x -> y * w + x }
+        }
 
         val (words, bts) = syntheticRoom(w, h)
         words[hAnchor] = (0x1 shl 12) or 0x2A0
@@ -566,6 +655,14 @@ class BiomeGeneratorTest {
         words[wallHAnchor + 1] = (0x5 shl 12) or 0x2A5
         words[wallVAnchor] = (0x1 shl 12) or 0x2A6
         words[wallVAnchor + w] = (0xD shl 12) or 0x2A7
+        words[openCrumbleHAnchor] = (0xB shl 12) or 0x2A8
+        words[openCrumbleHAnchor + 1] = (0x5 shl 12) or 0x2A9
+        words[openCrumbleVAnchor] = (0xB shl 12) or 0x2AA
+        words[openCrumbleVAnchor + w] = (0xD shl 12) or 0x2AB
+        words[wallCrumbleHAnchor] = (0xB shl 12) or 0x2AC
+        words[wallCrumbleHAnchor + 1] = (0x5 shl 12) or 0x2AD
+        words[wallCrumbleVAnchor] = (0xB shl 12) or 0x2AE
+        words[wallCrumbleVAnchor + w] = (0xD shl 12) or 0x2AF
         bts[hAnchor] = 0x01
         bts[hAnchor + 1] = 0x02
         bts[vAnchor] = 0x03
@@ -574,12 +671,32 @@ class BiomeGeneratorTest {
         bts[wallHAnchor + 1] = 0x06
         bts[wallVAnchor] = 0x07
         bts[wallVAnchor + w] = 0x08
+        bts[openCrumbleHAnchor] = 0x09
+        bts[openCrumbleHAnchor + 1] = 0x0A
+        bts[openCrumbleVAnchor] = 0x0B
+        bts[openCrumbleVAnchor + w] = 0x0C
+        bts[wallCrumbleHAnchor] = 0x0D
+        bts[wallCrumbleHAnchor + 1] = 0x0E
+        bts[wallCrumbleVAnchor] = 0x0F
+        bts[wallCrumbleVAnchor + w] = 0x10
 
         val gen = BiomeGenerator(rules(seed, BiomeStyle.PIPE_MAZE), profile, seed)
             .generate(w, h, words, bts)
 
         val openSlopeCells = listOf(hAnchor, hAnchor + 1, vAnchor, vAnchor + w)
         val wallSlopeCells = listOf(wallHAnchor, wallHAnchor + 1, wallVAnchor, wallVAnchor + w)
+        val openCrumbleCells = listOf(
+            openCrumbleHAnchor,
+            openCrumbleHAnchor + 1,
+            openCrumbleVAnchor,
+            openCrumbleVAnchor + w,
+        )
+        val wallCrumbleCells = listOf(
+            wallCrumbleHAnchor,
+            wallCrumbleHAnchor + 1,
+            wallCrumbleVAnchor,
+            wallCrumbleVAnchor + w,
+        )
         for (i in openSlopeCells) {
             val generatedType = (gen.words[i] shr 12) and 0xF
             assertTrue(!gen.preserved[i], "slope path cell $i should not stay preserved")
@@ -590,6 +707,17 @@ class BiomeGeneratorTest {
             val generatedType = (gen.words[i] shr 12) and 0xF
             assertTrue(!gen.preserved[i], "slope wall cell $i should not stay preserved")
             assertEquals(0x8, generatedType, "slope wall cell $i should be dressed as a normal maze wall")
+        }
+        for (i in openCrumbleCells) {
+            val generatedType = (gen.words[i] shr 12) and 0xF
+            assertTrue(!gen.preserved[i], "crumble path cell $i should not stay preserved")
+            assertTrue(isPassableType(generatedType), "crumble path cell $i should be cleared to passable space")
+            assertTrue(generatedType !in setOf(0x5, 0xB, 0xD), "crumble path cell $i should not keep crumble or extension type")
+        }
+        for (i in wallCrumbleCells) {
+            val generatedType = (gen.words[i] shr 12) and 0xF
+            assertTrue(!gen.preserved[i], "crumble wall cell $i should not stay preserved")
+            assertEquals(0x8, generatedType, "crumble wall cell $i should be dressed as a normal maze wall")
         }
     }
 

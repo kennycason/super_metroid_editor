@@ -364,8 +364,11 @@ fun BiomeGeneratorPanel(
             title = { Text("Generate all rooms?") },
             text = {
                 Text(
-                    "This will replace generated biome edits across supported rooms using the current style, theme, and seed." +
-                        if (omitSpecialRooms) " Utility and boss rooms will be skipped." else ""
+                    buildString {
+                        append("This will replace generated biome edits across supported rooms using the current style, theme, and seed.")
+                        if (omitSpecialRooms) append(" Utility and boss rooms will be skipped.")
+                        append(" Rooms with manual edits will be skipped; use Generate room for those.")
+                    }
                 )
             },
             confirmButton = {
@@ -381,7 +384,10 @@ fun BiomeGeneratorPanel(
                             wfcOptions = currentWfcOptions(),
                             omitSpecialRooms = omitSpecialRooms,
                         )
-                        status = "Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles"
+                        status = buildString {
+                            append("Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles")
+                            if (result.manualSkippedRooms > 0) append(" (${result.manualSkippedRooms} manual)")
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) {

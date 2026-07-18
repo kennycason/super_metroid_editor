@@ -48,7 +48,7 @@ class ScrollSystemTest {
 
     @Test
     fun `dump Parlor scroll data - Spike Olympics ROM`() {
-        val rp = loadRom("projects/Super Metroid Spike Olympics I.smc") ?: run {
+        val rp = loadRom("projects/Super Metroid Spike Olympics I/Super Metroid Spike Olympics I.smc") ?: run {
             println("SKIP: Spike Olympics ROM not found")
             return
         }
@@ -57,7 +57,7 @@ class ScrollSystemTest {
 
     @Test
     fun `dump Parlor scroll data - Spike Olympics EDITED ROM`() {
-        val rp = loadRom("projects/Super Metroid Spike Olympics I_edited.smc") ?: run {
+        val rp = loadRom("projects/Super Metroid Spike Olympics I/Super Metroid Spike Olympics I_edited.smc") ?: run {
             println("SKIP: Spike Olympics edited ROM not found")
             return
         }

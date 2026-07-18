@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeStyle
 import com.supermetroid.editor.procgen.BiomeTheme
+import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
@@ -125,6 +126,72 @@ class RoomExportTest {
 
         assertTrue(reset.generatedRooms > 20, "reset should remove generated room records")
         assertTrue(es.project.rooms.isEmpty(), "generated edits should reset back to a clean project")
+    }
+
+    @Test
+    fun `apply all skips rooms with manual edits`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val roomId = 0x92FD
+        val room = rp.readRoomHeader(roomId) ?: return
+        val es = EditorState()
+        es.loadRoom(roomId, rp, room)
+
+        val oldWord = es.readBlockWord(8, 8)
+        val oldBts = es.readBts(8, 8)
+        es.applyBulkEdits(
+            "Manual test edit",
+            listOf(TileEdit(8, 8, oldWord, oldWord xor 0x0001, oldBts, oldBts)),
+        )
+
+        val result = es.generateBiomeForAllRooms(
+            BiomeRules.roll(BiomeStyle.PIPE_MAZE, 98765L),
+            BiomeTheme.KEEP,
+            98765L,
+            rp,
+            omitSpecialRooms = false,
+        )
+
+        assertTrue(result.manualSkippedRooms >= 1, "bulk generation should report manual-edited skips")
+        val roomEdits = es.project.rooms[es.project.roomKey(roomId)]
+        assertTrue(roomEdits != null, "manual-edited room should remain in project")
+        val ops = roomEdits!!.operations
+        assertEquals(1, ops.size, "manual-edited room should not receive a generated biome operation")
+        assertEquals("Manual test edit", ops.single().description)
+        assertFalse(
+            ops.any { it.description.startsWith("Generated biome:") || it.description.startsWith("Generate biome (") },
+            "manual-edited room should be skipped by Generate All"
+        )
+    }
+
+    @Test
+    fun `generate room keeps bottom elevator standing space open`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val roomId = 0x9938 // Elevator To Green Brinstar
+        val room = rp.readRoomHeader(roomId) ?: return
+        val es = EditorState()
+        es.loadRoom(roomId, rp, room)
+
+        val bottomDoorLeft = es.readBlockWord(7, 15)
+        val bottomDoorRight = es.readBlockWord(8, 15)
+        val changed = es.generateBiome(
+            BiomeRules.roll(BiomeStyle.PIPE_MAZE, 424242L),
+            TilesetProfile.synthetic(),
+            424242L,
+            romParser = rp,
+        )
+
+        assertTrue(changed > 0, "room generation should change some non-protected tiles")
+        assertEquals(bottomDoorLeft, es.readBlockWord(7, 15), "bottom elevator left door tile must be preserved")
+        assertEquals(bottomDoorRight, es.readBlockWord(8, 15), "bottom elevator right door tile must be preserved")
+        for (y in 12..14) {
+            for (x in 7..8) {
+                val type = (es.readBlockWord(x, y) shr 12) and 0xF
+                assertTrue(
+                    type in setOf(0x0, 0x2, 0x4, 0x7, 0x9, 0xB, 0xC, 0xF),
+                    "bottom elevator standing cell ($x,$y) must be passable, got type 0x${type.toString(16)}"
+                )
+            }
+        }
     }
 
     @Test

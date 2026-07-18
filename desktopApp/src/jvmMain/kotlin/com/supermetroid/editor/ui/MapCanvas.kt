@@ -118,6 +118,10 @@ import java.awt.RenderingHints
 import javax.imageio.ImageIO
 
 private val mapCanvasLog = KotlinLogging.logger {}
+private const val ROOM_MIN_ZOOM = 0.25f
+private const val ROOM_MAX_ZOOM = 4f
+private const val ROOM_ZOOM_EPSILON = 0.0005f
+private val inMemoryRoomZooms = mutableStateMapOf<Int, Float>()
 
 private fun mapCanvasLogLine(message: Any? = "") {
     val text = message?.toString() ?: ""
@@ -127,6 +131,34 @@ private fun mapCanvasLogLine(message: Any? = "") {
         else -> mapCanvasLog.info { text }
     }
 }
+
+internal fun fitRoomZoomForViewport(
+    viewportWidthPx: Int,
+    viewportHeightPx: Int,
+    density: Float,
+    contentWidthPx: Int,
+    contentHeightPx: Int,
+    minZoom: Float = ROOM_MIN_ZOOM,
+    maxZoom: Float = ROOM_MAX_ZOOM,
+): Float? {
+    if (viewportWidthPx <= 0 || viewportHeightPx <= 0 || density <= 0f ||
+        contentWidthPx <= 0 || contentHeightPx <= 0
+    ) {
+        return null
+    }
+    val viewportWidthDp = viewportWidthPx / density
+    val viewportHeightDp = viewportHeightPx / density
+    val fitWidth = viewportWidthDp / contentWidthPx
+    val fitHeight = viewportHeightDp / contentHeightPx
+    return minOf(fitWidth, fitHeight).coerceIn(minZoom, maxZoom)
+}
+
+internal fun shouldSaveRoomZoom(
+    hasSavedZoom: Boolean,
+    zoomLevel: Float,
+    fitZoom: Float,
+): Boolean =
+    hasSavedZoom || kotlin.math.abs(zoomLevel - fitZoom) > ROOM_ZOOM_EPSILON
 
 internal fun originalScrollTriggersAt(
     originalPlms: List<RomParser.PlmEntry>,
@@ -705,7 +737,8 @@ fun MapCanvas(
 ) {
     val zoomState = remember { mutableStateOf(1f) }
     val zoomLevel = zoomState.value
-    AttachMacPinchZoom(LocalSwingWindow.current, zoomState, minZoom = 0.25f, maxZoom = 4f)
+    AttachMacPinchZoom(LocalSwingWindow.current, zoomState, minZoom = ROOM_MIN_ZOOM, maxZoom = ROOM_MAX_ZOOM)
+    var zoomInitializedRoomId by remember { mutableStateOf<Int?>(null) }
     var showGrid by remember { mutableStateOf(true) }
     var showShortChargeRuler by remember { mutableStateOf(false) }
     var shortChargeStutters by remember { mutableStateOf(0) }
@@ -732,11 +765,11 @@ fun MapCanvas(
                 if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (keyEvent.key) {
                     Key.Equals -> {
-                        zoomState.value = (zoomLevel * EditorColors.ZOOM_FACTOR).coerceIn(0.25f, 4f)
+                        zoomState.value = (zoomLevel * EditorColors.ZOOM_FACTOR).coerceIn(ROOM_MIN_ZOOM, ROOM_MAX_ZOOM)
                         true
                     }
                     Key.Minus -> {
-                        zoomState.value = (zoomLevel / EditorColors.ZOOM_FACTOR).coerceIn(0.25f, 4f)
+                        zoomState.value = (zoomLevel / EditorColors.ZOOM_FACTOR).coerceIn(ROOM_MIN_ZOOM, ROOM_MAX_ZOOM)
                         true
                     }
                     else -> {
@@ -897,7 +930,7 @@ fun MapCanvas(
                     Slider(
                         value = zoomLevel,
                         onValueChange = { zoomState.value = it; mapFocusReq.requestFocus() },
-                        valueRange = 0.25f..4f,
+                        valueRange = ROOM_MIN_ZOOM..ROOM_MAX_ZOOM,
                         steps = 14,
                         modifier = Modifier.width(80.dp).height(28.dp)
                     )
@@ -1231,6 +1264,7 @@ fun MapCanvas(
                         }
                         renderData != null -> {
                             val data = renderData!!
+                            val currentRoomId = room.getRoomIdAsInt()
                             // Use effective dimensions from EditorState (updates immediately on resize)
                             val effectiveBlocksWide = editorState?.workingBlocksWide ?: data.blocksWide
                             val effectiveBlocksTall = editorState?.workingBlocksTall ?: data.blocksTall
@@ -1309,6 +1343,34 @@ fun MapCanvas(
                             val hScrollState = rememberScrollState()
                             val vScrollState = rememberScrollState()
                             val coroutineScope = rememberCoroutineScope()
+                            var canvasViewW by remember { mutableStateOf(0) }
+                            var canvasViewH by remember { mutableStateOf(0) }
+                            val fitZoom = fitRoomZoomForViewport(
+                                viewportWidthPx = canvasViewW,
+                                viewportHeightPx = canvasViewH,
+                                density = LocalDensity.current.density,
+                                contentWidthPx = data.width,
+                                contentHeightPx = data.height,
+                            )
+                            LaunchedEffect(currentRoomId, fitZoom, data.width, data.height) {
+                                val targetFit = fitZoom ?: return@LaunchedEffect
+                                val savedZoom = inMemoryRoomZooms[currentRoomId]
+                                val switchingRooms = zoomInitializedRoomId != currentRoomId
+                                zoomState.value = (savedZoom ?: targetFit).coerceIn(ROOM_MIN_ZOOM, ROOM_MAX_ZOOM)
+                                zoomInitializedRoomId = currentRoomId
+                                if (switchingRooms || savedZoom == null) {
+                                    hScrollState.scrollTo(0)
+                                    vScrollState.scrollTo(0)
+                                }
+                            }
+                            LaunchedEffect(currentRoomId, zoomLevel, fitZoom, zoomInitializedRoomId) {
+                                val targetFit = fitZoom ?: return@LaunchedEffect
+                                if (zoomInitializedRoomId != currentRoomId) return@LaunchedEffect
+                                val hasSavedZoom = inMemoryRoomZooms.containsKey(currentRoomId)
+                                if (shouldSaveRoomZoom(hasSavedZoom, zoomLevel, targetFit)) {
+                                    inMemoryRoomZooms[currentRoomId] = zoomLevel.coerceIn(ROOM_MIN_ZOOM, ROOM_MAX_ZOOM)
+                                }
+                            }
                             var isDragging by remember { mutableStateOf(false) }
                             var lastDragX by remember { mutableStateOf(0f) }
                             var lastDragY by remember { mutableStateOf(0f) }
@@ -1356,8 +1418,6 @@ fun MapCanvas(
                             val editBitmap = remember(compositeForEdit) { compositeForEdit.toComposeImageBitmap() }
 
                             LaunchedEffect(Unit) { mapFocusReq.requestFocus() }
-                            var canvasViewW by remember { mutableStateOf(0) }
-                            var canvasViewH by remember { mutableStateOf(0) }
                             val scrollTargetX = editorState?.scrollTargetBlockX ?: -1
                             val scrollTargetY = editorState?.scrollTargetBlockY ?: -1
                             LaunchedEffect(scrollTargetX, scrollTargetY) {
@@ -1388,7 +1448,12 @@ fun MapCanvas(
                                             val mousePos = event.changes.first().position
                                             val contentXBefore = (hScrollState.value + mousePos.x) / zoomLevel
                                             val contentYBefore = (vScrollState.value + mousePos.y) / zoomLevel
-                                            val newZoom = zoomAfterScroll(zoomLevel, sd.y, minZoom = 0.25f, maxZoom = 4f)
+                                            val newZoom = zoomAfterScroll(
+                                                zoomLevel,
+                                                sd.y,
+                                                minZoom = ROOM_MIN_ZOOM,
+                                                maxZoom = ROOM_MAX_ZOOM,
+                                            )
                                             zoomState.value = newZoom
                                             coroutineScope.launch {
                                                 val newScrollX = (contentXBefore * newZoom - mousePos.x).toInt().coerceAtLeast(0)

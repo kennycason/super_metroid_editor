@@ -55,8 +55,11 @@ class BiomeGenerator(
         val forceAir = doorSetup.forceAir
         val pockets = doorSetup.pockets
         val explicitPreserve = BooleanArray(n)
-        applyRects(forceAir, width, height, options.forceAirRects)
+        val explicitForceAir = BooleanArray(n)
+        applyRects(explicitForceAir, width, height, options.forceAirRects)
+        for (i in 0 until n) if (explicitForceAir[i]) forceAir[i] = true
         applyRects(explicitPreserve, width, height, options.preserveRects)
+        for (i in 0 until n) if (explicitForceAir[i] && !explicitPreserve[i]) preserved[i] = false
         for (i in 0 until n) if (explicitPreserve[i]) preserved[i] = true
         if (isMaze) {
             preserveOriginalMazeCollision(originalWords, width, preserved, forceAir)
@@ -205,8 +208,7 @@ class BiomeGenerator(
         }
 
         fun isMazeProtectedCollisionType(type: Int): Boolean =
-            type == 0x3 || type == 0xA || type == 0xB ||
-                type == 0xC || type == 0xE || type == 0xF
+            type == 0x3 || type == 0xA || type == 0xC || type == 0xE || type == 0xF
 
         fun preserveOriginalMazeCollision(
             originalWords: IntArray,
