@@ -2,14 +2,24 @@
 # Launch the editor with the libretro backend and auto-start a session.
 #
 # Usage:
-#   ./tools/run_libretro.sh                    # use default ROM path
-#   ./tools/run_libretro.sh /path/to/rom.sfc   # explicit ROM
+#   ./tools/run_libretro.sh                              # use default ROM path
+#   ./tools/run_libretro.sh /path/to/rom.sfc             # explicit ROM
+#   ./tools/run_libretro.sh /path/to/rom.sfc replay.smreplay
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 
 ROM="${1:-custom_integrations/SuperMetroid-Snes/rom.sfc}"
+REPLAY="${2:-}"
+if [[ "$ROM" != /* ]]; then
+    ROM="$ROOT/$ROM"
+fi
+if [[ -n "$REPLAY" && "$REPLAY" != /* ]]; then
+    REPLAY="$ROOT/$REPLAY"
+fi
 CORE_SEARCH_DIRS=(
+    ./tools/snes9x/libretro
     /usr/lib/libretro
     /usr/lib64/libretro
     /usr/local/lib/libretro
@@ -25,11 +35,11 @@ if [[ ! -f "$ROM" ]]; then
     exit 1
 fi
 
-# Check for libretro core
+# Check for libretro core (|| true: head may close the pipe before find exits)
 CORE=$(
     find "${CORE_SEARCH_DIRS[@]}" 2>/dev/null \
         \( -name 'snes9x_libretro.so' -o -name 'bsnes_libretro.so' -o -name 'mesen-s_libretro.so' \) \
-        | head -1
+        | head -1 || true
 )
 
 if [[ -z "${SMEDIT_LIBRETRO_CORE:-}" && -z "$CORE" ]]; then
@@ -48,6 +58,9 @@ export SMEDIT_EMULATOR_BACKEND=libretro
 export SMEDIT_ROM_PATH="$ROM"
 export SMEDIT_OPEN_EMU=1
 export SMEDIT_AUTO_START=1
+if [[ -n "$REPLAY" ]]; then
+    export SMEDIT_REPLAY_PATH="$REPLAY"
+fi
 
 # Preload system libstdc++ to prevent symbol conflicts between
 # the libretro core's C++ iostream and Compose/Skia's bundled natives.

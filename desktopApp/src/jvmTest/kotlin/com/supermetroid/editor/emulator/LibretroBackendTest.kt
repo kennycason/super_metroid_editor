@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.zip.GZIPOutputStream
+import kotlin.io.path.createTempFile
+import kotlin.io.path.writeBytes
 
 class LibretroBackendTest {
 
@@ -78,6 +81,24 @@ class LibretroBackendTest {
         // Just verify it doesn't crash; actual discovery depends on system
         val cores = LibretroCoreDiscovery.listCores()
         assertNotNull(cores)
+    }
+
+    @Test
+    fun `readLibretroStateFile decompresses legacy gzip states`() {
+        val payload = "legacy-state-bytes".toByteArray()
+        val file = createTempFile(suffix = ".state").toFile()
+        GZIPOutputStream(file.outputStream()).use { it.write(payload) }
+
+        assertEquals(payload.toList(), readLibretroStateFile(file).toList())
+    }
+
+    @Test
+    fun `readLibretroStateFile preserves raw states`() {
+        val payload = byteArrayOf(1, 2, 3, 4)
+        val file = createTempFile(suffix = ".state")
+        file.writeBytes(payload)
+
+        assertEquals(payload.toList(), readLibretroStateFile(file.toFile()).toList())
     }
 
     @Test

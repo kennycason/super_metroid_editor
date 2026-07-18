@@ -8,8 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.zip.GZIPInputStream
 
 /**
  * EmulatorBackend implementation using an in-process libretro SNES core.
@@ -19,7 +21,7 @@ import java.util.concurrent.Executors
 class LibretroBackend(
     private val audioEnabledOverride: Boolean? = null,
     stateDirOverride: File? = null,
-) : EmulatorBackend {
+) : EmulatorBackend, RecordingBackend {
 
     override val name: String = "libretro"
     override var isConnected: Boolean = false
@@ -40,6 +42,7 @@ class LibretroBackend(
         get() = audio?.hasHeadroom() ?: true
 
     private var core: LibretroCore? = null
+    private var frameStepper: LibretroEmulatorFrameStepper? = null
     private var audio: LibretroAudioOutput? = null
     private val emuThread = Executors.newSingleThreadExecutor { r ->
         Thread(r, "libretro-emu").apply { isDaemon = true }
@@ -49,6 +52,10 @@ class LibretroBackend(
     private var frameCounter = 0
     private var currentRomPath: String? = null
     private var frameImage: BufferedImage? = null
+    private val recordingSession = AttemptRecordingSession(
+        recordingsDirProvider = { File(stateDir, "recordings") },
+    )
+    private var replaySession: AttemptReplaySession? = null
 
     private var stateDir: File = (stateDirOverride
         ?: File(File(File(System.getProperty("user.home"), ".smedit"), "states"), "libretro")).apply { mkdirs() }
@@ -78,6 +85,7 @@ class LibretroBackend(
             }
             val sysInfo = onEmuThread { c.getSystemInfo() }
             core = c
+            frameStepper = LibretroEmulatorFrameStepper(c)
             audio = startedAudio
             isConnected = true
             return EmulatorCapabilities(
@@ -85,6 +93,7 @@ class LibretroBackend(
                 supportsFrames = true,
                 supportsMemoryAccess = true,
                 supportsSaveStates = true,
+                supportsRecording = true,
             )
         } catch (e: Exception) {
             runCatching { startedAudio?.close() }
@@ -95,9 +104,12 @@ class LibretroBackend(
 
     override suspend fun disconnect() {
         sessionActive = false
+        recordingSession.clear()
+        replaySession = null
         currentRomPath = null
         runCatching { onEmuThread { core?.close() } }
         core = null
+        frameStepper = null
         audio?.close()
         audio = null
         frameHolder.clear()
@@ -113,7 +125,7 @@ class LibretroBackend(
             ?.let { stateName ->
                 val stateFile = File(stateDir, "$stateName.state")
                 if (stateFile.isFile) {
-                    withContext(Dispatchers.IO) { stateFile.readBytes() }
+                    withContext(Dispatchers.IO) { readLibretroStateFile(stateFile) }
                 } else {
                     null
                 }
@@ -140,6 +152,7 @@ class LibretroBackend(
 
     override suspend fun closeSession(): StepResult {
         sessionActive = false
+        recordingSession.clear()
         onEmuThread { core?.unloadGame() }
         frameHolder.clear()
         frameImage = null
@@ -150,14 +163,23 @@ class LibretroBackend(
     }
 
     override suspend fun step(input: EmulatorInput): StepResult {
+        if (replaySession != null) {
+            return stepReplay(repeat = input.repeat, includeFrame = input.includeFrame)
+        }
         val c = core ?: throw IllegalStateException("Not connected")
+        val stepper = frameStepper ?: throw IllegalStateException("Frame stepper unavailable")
         if (!sessionActive) throw IllegalStateException("No active session")
         val repeat = input.repeat.coerceAtLeast(1)
 
         val capture = onEmuThread {
-            c.setInput(0, input.buttons)
+            val inputBits = SnesInputBits.fromButtonList(input.buttons)
             repeat(repeat) {
-                c.run()
+                if (recordingSession.isActive) {
+                    recordingSession.recordFrame(stepper, inputBits)
+                } else {
+                    c.setInput(0, input.buttons)
+                    c.run()
+                }
             }
             captureStep(c, includeFrame = input.includeFrame)
         }
@@ -188,7 +210,7 @@ class LibretroBackend(
         val stateFile = File(stateDir, "$name.state")
         if (!stateFile.isFile) throw IllegalStateException("State not found: $name")
 
-        val data = withContext(Dispatchers.IO) { stateFile.readBytes() }
+        val data = withContext(Dispatchers.IO) { readLibretroStateFile(stateFile) }
         val romPath = currentRomPath ?: throw IllegalStateException("No ROM loaded for libretro state restore")
         val capture = onEmuThread {
             if (!c.isGameLoaded()) {
@@ -226,13 +248,109 @@ class LibretroBackend(
         onEmuThread { c.writeWram(address, data) }
     }
 
+    override suspend fun setRecording(active: Boolean): StepResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        val stepper = frameStepper ?: throw IllegalStateException("Frame stepper unavailable")
+        if (!sessionActive) throw IllegalStateException("No active session")
+        if (active && replaySession != null) throw IllegalStateException("Stop replay before recording")
+        return if (active) startRecording(c, stepper) else stopRecording(c, stepper)
+    }
+
+    override suspend fun startReplay(bundle: LoadedReplayBundle): StepResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        val stepper = frameStepper ?: throw IllegalStateException("Frame stepper unavailable")
+        if (!sessionActive) throw IllegalStateException("No active session")
+        if (recordingSession.isActive) throw IllegalStateException("Stop recording before replay")
+        replaySession = null
+
+        val romPath = currentRomPath ?: throw IllegalStateException("No ROM loaded for replay")
+        val actualRomHash = withContext(Dispatchers.IO) { Sha256.hex(File(romPath).readBytes()) }
+        if (actualRomHash != bundle.log.romHash) {
+            throw IllegalStateException(
+                "ROM hash mismatch. Load the same Super Metroid ROM used for this replay.",
+            )
+        }
+
+        val capture = onEmuThread {
+            if (!c.isGameLoaded()) {
+                val loaded = c.loadGame(romPath)
+                check(loaded) { "Failed to load ROM: $romPath" }
+            }
+            c.unserializeState(bundle.initialState)
+            captureStep(c, includeFrame = true)
+        }
+
+        val session = AttemptReplaySession(
+            frames = bundle.log.frames,
+            title = bundle.title,
+        )
+        onEmuThread { session.primeStepper(stepper) }
+        replaySession = session
+        frameCounter = bundle.log.frames.firstOrNull()?.frameNumber?.minus(1)?.toInt()?.coerceAtLeast(0) ?: 0
+        pushFrame(capture.snapshot.frame)
+        audio?.writeSamples(capture.audioSamples)
+
+        return buildStepResult(
+            capture.snapshot,
+            "Replay: ${bundle.title} (${bundle.log.frameCount} frames)",
+        )
+    }
+
+    suspend fun stepReplay(repeat: Int = 1, includeFrame: Boolean = true): StepResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        val stepper = frameStepper ?: throw IllegalStateException("Frame stepper unavailable")
+        val session = replaySession ?: throw IllegalStateException("Replay is not active")
+        if (!sessionActive) throw IllegalStateException("No active session")
+
+        val capture = onEmuThread {
+            var lastCapture: StepCapture? = null
+            val steps = repeat.coerceAtLeast(1)
+            val ran = session.runSteps(stepper, steps)
+            frameCounter += ran
+            val showFrame = includeFrame && ran > 0
+            lastCapture = captureStep(c, includeFrame = showFrame)
+            lastCapture ?: captureStep(c, includeFrame = includeFrame)
+        }
+
+        val finished = session.finished
+        val replayEvent = if (finished) ReplayEvent.Finished else ReplayEvent.None
+        if (finished) {
+            replaySession = null
+        }
+
+        pushFrame(capture.snapshot.frame)
+        audio?.writeSamples(capture.audioSamples)
+
+        val message = when (replayEvent) {
+            ReplayEvent.Finished -> "Replay finished — human control restored"
+            else -> null
+        }
+        return buildStepResult(capture.snapshot, message, replayEvent = replayEvent)
+    }
+
+    override suspend fun stopReplay(): StepResult {
+        val c = core ?: throw IllegalStateException("Not connected")
+        val title = replaySession?.title
+        replaySession = null
+        val snapshot = onEmuThread { c.captureRuntimeSnapshot(includeFrame = true) }
+        pushFrame(snapshot.frame)
+        return buildStepResult(
+            snapshot,
+            title?.let { "Replay stopped — human control restored" },
+            replayEvent = ReplayEvent.Stopped,
+        )
+    }
+
     override fun close() {
         sessionActive = false
+        recordingSession.clear()
+        replaySession = null
         currentRomPath = null
         core?.let { c ->
             try { emuThread.submit { c.close() }.get() } catch (_: Exception) {}
         }
         core = null
+        frameStepper = null
         audio?.close()
         audio = null
         frameHolder.clear()
@@ -247,6 +365,38 @@ class LibretroBackend(
         val snapshot: LibretroCore.RuntimeSnapshot,
         val audioSamples: ShortArray,
     )
+
+    private suspend fun startRecording(c: LibretroCore, stepper: LibretroEmulatorFrameStepper): StepResult {
+        if (recordingSession.isActive) {
+            val snapshot = onEmuThread { c.captureRuntimeSnapshot(includeFrame = false) }
+            return buildStepResult(snapshot, "Recording already active")
+        }
+        val romPath = currentRomPath ?: throw IllegalStateException("No ROM loaded for recording")
+        val romHash = withContext(Dispatchers.IO) { Sha256.hex(File(romPath).readBytes()) }
+        val nextFrameNumber = frameCounter.toLong() + 1
+        val logFile = onEmuThread {
+            recordingSession.start(stepper, romHash, nextFrameNumber)
+        }
+        val snapshot = onEmuThread { c.captureRuntimeSnapshot(includeFrame = false) }
+        return buildStepResult(snapshot, "Recording started: ${logFile.name}")
+    }
+
+    private suspend fun stopRecording(c: LibretroCore, stepper: LibretroEmulatorFrameStepper): StepResult {
+        if (!recordingSession.isActive) {
+            val snapshot = onEmuThread { c.captureRuntimeSnapshot(includeFrame = false) }
+            return buildStepResult(snapshot, "Recording is not active")
+        }
+        val stopResult = onEmuThread { recordingSession.stop(stepper) }
+        val snapshot = onEmuThread { c.captureRuntimeSnapshot(includeFrame = false) }
+        val bundleMessage = stopResult.bundleFile?.name?.let { " Bundle: $it" }.orEmpty()
+        return buildStepResult(
+            snapshot,
+            "Recording saved: ${stopResult.logFile.name} (${stopResult.log.frameCount} frames).$bundleMessage",
+        ).copy(
+            recordingPath = stopResult.logFile.absolutePath,
+            replayBundlePath = stopResult.bundleFile?.absolutePath,
+        )
+    }
 
     private fun captureStep(c: LibretroCore, includeFrame: Boolean): StepCapture {
         return StepCapture(
@@ -292,14 +442,27 @@ class LibretroBackend(
         )
     }
 
-    private fun buildStepResult(snapshot: LibretroCore.RuntimeSnapshot, message: String? = null): StepResult {
+    private fun buildStepResult(
+        snapshot: LibretroCore.RuntimeSnapshot,
+        message: String? = null,
+        replayEvent: ReplayEvent = ReplayEvent.None,
+    ): StepResult {
+        val replay = replaySession
         return StepResult(
             session = SessionState(
                 active = sessionActive,
                 paused = !sessionActive,
                 frameCounter = frameCounter,
+                recording = recordingSession.isActive,
+                replaying = replay != null,
+                replayPaused = false,
+                replayFrameIndex = replay?.index ?: 0,
+                replayFrameCount = replay?.frameCount ?: 0,
+                replayTitle = replay?.title,
             ),
-            snapshot = buildSnapshot(snapshot),
+            snapshot = buildSnapshot(snapshot).copy(recordedFrames = recordingSession.frameCount),
+            recordingPath = recordingSession.activeLogPath,
+            replayEvent = replayEvent,
             message = message,
         )
     }
@@ -318,3 +481,14 @@ class LibretroBackend(
         }
     }
 }
+
+internal fun readLibretroStateFile(file: File): ByteArray {
+    val bytes = file.readBytes()
+    if (bytes.size < 2 || bytes[0] != GZIP_MAGIC_0 || bytes[1] != GZIP_MAGIC_1) {
+        return bytes
+    }
+    return GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes() }
+}
+
+private const val GZIP_MAGIC_0: Byte = 0x1f
+private const val GZIP_MAGIC_1: Byte = 0x8b.toByte()

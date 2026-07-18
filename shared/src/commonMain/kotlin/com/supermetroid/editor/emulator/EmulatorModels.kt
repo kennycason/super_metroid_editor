@@ -30,6 +30,11 @@ data class SessionState(
     val currentState: String? = null,
     val frameCounter: Int = 0,
     val recording: Boolean = false,
+    val replaying: Boolean = false,
+    val replayPaused: Boolean = false,
+    val replayFrameIndex: Int = 0,
+    val replayFrameCount: Int = 0,
+    val replayTitle: String? = null,
     val controlMode: String = "manual",
     val selectedModel: String? = null,
     val playerCount: Int = 1,
@@ -44,12 +49,21 @@ data class EmulatorInput(
 )
 
 @Serializable
+enum class ReplayEvent {
+    None,
+    Finished,
+    Stopped,
+}
+
+@Serializable
 data class StepResult(
     val session: SessionState = SessionState(),
     val snapshot: GameSnapshot = GameSnapshot(),
     val states: List<StateInfo> = emptyList(),
     val models: List<ModelInfo> = emptyList(),
     val recordingPath: String? = null,
+    val replayBundlePath: String? = null,
+    val replayEvent: ReplayEvent = ReplayEvent.None,
     val message: String? = null,
 )
 

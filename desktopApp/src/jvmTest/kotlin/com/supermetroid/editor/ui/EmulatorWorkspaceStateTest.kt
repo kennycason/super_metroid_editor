@@ -60,6 +60,22 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
+    fun `refreshInventory replaces missing selected state with ZebesStart`() = runBlocking {
+        val backend = FakeBackend()
+        backend.connectResult = EmulatorCapabilities(backendName = "fake")
+        backend.listStatesResult = listOf(
+            StateInfo("ZebesStart", "/repo/custom_integrations/SuperMetroid-Snes/ZebesStart.state"),
+            StateInfo("Start", "/repo/custom_integrations/SuperMetroid-Snes/Start.state"),
+        )
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+
+        state.selectedStateName = "slot_0"
+        state.connectBridge()
+
+        assertEquals("ZebesStart", state.selectedStateName)
+    }
+
+    @Test
     fun `resetToSessionStart reloads the original boot state`() = runBlocking {
         val backend = FakeBackend()
         backend.connectResult = EmulatorCapabilities(

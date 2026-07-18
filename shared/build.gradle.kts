@@ -152,3 +152,17 @@ kotlin {
 tasks.named("jvmProcessResources") {
     dependsOn(buildNativeSpc)
 }
+
+tasks.register<JavaExec>("verifyReplay") {
+    description = "Verify a .smreplay bundle replays deterministically"
+    group = "verification"
+    dependsOn("jvmMainClasses", rootProject.tasks.named("buildLibretroCore"))
+    mainClass.set("com.supermetroid.editor.emulator.ReplayVerifyKt")
+    val jvmTarget = kotlin.targets.getByName("jvm")
+    val mainCompilation = jvmTarget.compilations.getByName("main")
+    classpath = mainCompilation.output.allOutputs + mainCompilation.runtimeDependencyFiles!!
+    workingDir = rootProject.projectDir
+    listOf("SMEDIT_VERIFY_REPLAY", "SMEDIT_ROM_PATH", "SMEDIT_LIBRETRO_CORE").forEach { key ->
+        System.getenv(key)?.let { environment(key, it) }
+    }
+}
