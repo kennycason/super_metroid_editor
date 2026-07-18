@@ -45,6 +45,7 @@ import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpcData
@@ -3761,6 +3762,7 @@ class EditorState {
         seed: Long,
         romParser: RomParser,
         wfcOptions: WfcOptions = WfcOptions(),
+        omitSpecialRooms: Boolean = true,
     ): BulkBiomeResult {
         val repository = RoomRepository()
         val roomInfos = repository.getAllRooms()
@@ -3782,7 +3784,7 @@ class EditorState {
                 skipped++
                 continue
             }
-            if (shouldSkipBulkBiomeRoom(roomInfo, romRoom)) {
+            if (omitSpecialRooms && shouldSkipBulkBiomeRoom(roomInfo, romRoom)) {
                 skipped++
                 continue
             }
@@ -4152,6 +4154,14 @@ class EditorState {
         val excluded = listOf(
             "save",
             "savestation",
+            "station",
+            "recharge",
+            "refill",
+            "healthrefill",
+            "energycharge",
+            "missilestation",
+            "maproom",
+            "premap",
             "boss",
             "kraid",
             "phantoon",
@@ -4163,6 +4173,9 @@ class EditorState {
             "botwoon",
             "motherbrain",
             "goldentorizo",
+            "ceres",
+            "escape",
+            "statue",
         )
         return excluded.any { it in haystack }
     }
@@ -6615,6 +6628,17 @@ class EditorState {
 
         // Custom variable (URE) graphics per tileset
         val tablePC = romParser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
+        fun writeUInt24(pcOffset: Int, value: Int) {
+            romData[pcOffset] = (value and 0xFF).toByte()
+            romData[pcOffset + 1] = ((value shr 8) and 0xFF).toByte()
+            romData[pcOffset + 2] = ((value shr 16) and 0xFF).toByte()
+        }
+        val tilesetPaletteAllocator = RomFreeSpaceAllocator(
+            romData = romData,
+            snesToPc = romParser::snesToPc,
+            pcToSnes = romParser::pcToSnes,
+            guardBytes = 2,
+        )
         for ((tsIdStr, varB64) in gfxData.varGfx) {
             val tsId = tsIdStr.toIntOrNull() ?: continue
             try {
@@ -6687,7 +6711,9 @@ class EditorState {
             } catch (e: Exception) { editorLog("WARN: Tileset $tsId metatile table patch failed: ${e.message}") }
         }
 
-        // Custom palette overrides per tileset (raw BGR555 → LZ5 compress → write in-place)
+        // Custom palette overrides per tileset (raw BGR555 -> LZ5 compress).
+        // Randomized palettes often compress larger than vanilla, so relocate
+        // them and update the tileset table when an in-place write will not fit.
         for ((tsIdStr, palB64) in gfxData.palettes) {
             val tsId = tsIdStr.toIntOrNull() ?: continue
             try {
@@ -6706,7 +6732,30 @@ class EditorState {
                     gfxPatched++
                     editorLog("Patched tileset $tsId palette in-place (${compressed.size}/$origSize bytes)")
                 } else {
-                    editorLog("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) — skipped")
+                    val origBank = (palSnes shr 16) and 0xFF
+                    val banksToTry = (listOf(origBank) + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
+                        .distinct()
+                        .filter { bank ->
+                            val bankStart = runCatching { romParser.snesToPc((bank shl 16) or 0x8000) }.getOrNull()
+                            val bankEnd = runCatching { romParser.snesToPc((bank shl 16) or 0xFFFF) + 1 }.getOrNull()
+                            bankStart != null && bankEnd != null && bankStart >= 0 && bankEnd <= romData.size
+                        }
+                    val allocation = tilesetPaletteAllocator.allocate(
+                        bytes = compressed,
+                        banks = banksToTry,
+                        label = "tileset $tsId palette",
+                    )
+                    if (allocation != null) {
+                        writeUInt24(entryOffset + 6, allocation.snesAddress)
+                        for (i in palPc until palPc + origSize) romData[i] = 0xFF.toByte()
+                        gfxPatched++
+                        editorLog(
+                            "Relocated tileset $tsId palette \$${palSnes.toString(16)} -> " +
+                                "\$${allocation.snesAddress.toString(16)} (${compressed.size}/$origSize bytes)"
+                        )
+                    } else {
+                        editorLog("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) and no free space was found — skipped")
+                    }
                 }
             } catch (e: Exception) { editorLog("WARN: Tileset $tsId palette patch failed: ${e.message}") }
         }

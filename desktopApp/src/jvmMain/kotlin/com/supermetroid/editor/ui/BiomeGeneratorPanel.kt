@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -21,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -69,6 +72,9 @@ fun BiomeGeneratorPanel(
     var seed by remember { mutableStateOf(Random.nextInt(0, 1_000_000).toLong()) }
     var seedText by remember { mutableStateOf(seed.toString()) }
     var status by remember { mutableStateOf<String?>(null) }
+    var confirmGenerateAll by remember { mutableStateOf(false) }
+    var confirmRevertAll by remember { mutableStateOf(false) }
+    var omitSpecialRooms by remember { mutableStateOf(true) }
 
     val roomLoaded = editorState.workingBlocksWide > 0 && editorState.workingBlocksTall > 0
     val resolvedTheme = remember(theme, seed) { theme.resolve(seed) }
@@ -117,6 +123,15 @@ fun BiomeGeneratorPanel(
             baseRules.withOverrides(platforms.toDouble(), hazards.toDouble(), destructibles.toDouble())
         }
     }
+    fun currentWfcOptions() = WfcOptions(
+        morphAmount = wfcDetail.toDouble(),
+        tunnelWidth = wfcTunnelTiles,
+        tunnelBendiness = wfcBendiness.toDouble(),
+        allowBombs = wfcBombs,
+        allowMissiles = wfcMissiles,
+        allowCrumble = wfcCrumble,
+        allowSpikes = wfcSpikes,
+    )
 
     Column(
         modifier = modifier.padding(8.dp).verticalScroll(rememberScrollState()),
@@ -264,61 +279,53 @@ fun BiomeGeneratorPanel(
         }
 
         val prof = profile?.takeIf { it.first == targetTilesetId }?.second
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(
-                enabled = roomLoaded && prof != null && romParser != null,
-                onClick = {
-                    if (prof == null || romParser == null) return@Button
-                    editorState.applyBiomeTheme(resolvedTheme, romParser)
-                    val applied = editorState.generateBiome(
-                        effectiveRules,
-                        prof,
-                        seed,
-                        keepLandingSiteShipClear = keepLandingSiteShipClear,
-                        romParser = romParser,
-                        wfcOptions = WfcOptions(
-                            morphAmount = wfcDetail.toDouble(),
-                            tunnelWidth = wfcTunnelTiles,
-                            tunnelBendiness = wfcBendiness.toDouble(),
-                            allowBombs = wfcBombs,
-                            allowMissiles = wfcMissiles,
-                            allowCrumble = wfcCrumble,
-                            allowSpikes = wfcSpikes,
-                        ),
-                    )
-                    status = buildString {
-                        append(if (applied > 0) "Rewrote $applied tiles" else "No layout changes")
-                        if (resolvedTheme.tilesetId != null) append(" as ${resolvedTheme.displayName}")
-                        append(" (scrolls reset, Ctrl+Z undoes)")
-                    }
-                },
-            ) {
-                Text("Generate room", fontSize = 11.sp)
-            }
+        Button(
+            enabled = roomLoaded && prof != null && romParser != null,
+            onClick = {
+                if (prof == null || romParser == null) return@Button
+                editorState.applyBiomeTheme(resolvedTheme, romParser)
+                val applied = editorState.generateBiome(
+                    effectiveRules,
+                    prof,
+                    seed,
+                    keepLandingSiteShipClear = keepLandingSiteShipClear,
+                    romParser = romParser,
+                    wfcOptions = currentWfcOptions(),
+                )
+                status = buildString {
+                    append(if (applied > 0) "Rewrote $applied tiles" else "No layout changes")
+                    if (resolvedTheme.tilesetId != null) append(" as ${resolvedTheme.displayName}")
+                    append(" (scrolls reset, Ctrl+Z undoes)")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Generate room", fontSize = 11.sp)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = omitSpecialRooms, onCheckedChange = { omitSpecialRooms = it })
+            Text("Omit utility and boss rooms", fontSize = 10.sp)
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             OutlinedButton(
                 enabled = prof != null && romParser != null,
-                onClick = {
-                    if (romParser == null) return@OutlinedButton
-                    val result = editorState.generateBiomeForAllRooms(
-                        effectiveRules,
-                        resolvedTheme,
-                        seed,
-                        romParser,
-                        wfcOptions = WfcOptions(
-                            morphAmount = wfcDetail.toDouble(),
-                            tunnelWidth = wfcTunnelTiles,
-                            tunnelBendiness = wfcBendiness.toDouble(),
-                            allowBombs = wfcBombs,
-                            allowMissiles = wfcMissiles,
-                            allowCrumble = wfcCrumble,
-                            allowSpikes = wfcSpikes,
-                        ),
-                    )
-                    status = "Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles"
-                },
+                onClick = { confirmGenerateAll = true },
+                modifier = Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
             ) {
-                Text("Apply all", fontSize = 11.sp)
+                Text("Generate all", fontSize = 11.sp)
+            }
+            OutlinedButton(
+                enabled = romParser != null,
+                onClick = { confirmRevertAll = true },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            ) {
+                Text("Revert all", fontSize = 11.sp)
             }
         }
         Text(
@@ -335,33 +342,86 @@ fun BiomeGeneratorPanel(
         status?.let {
             Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(
-                enabled = roomLoaded && romParser != null,
-                onClick = {
-                    val rp = romParser ?: return@OutlinedButton
-                    status = if (editorState.resetCurrentRoomToOriginal(rp)) {
-                        "Reset room to original ROM state"
-                    } else {
-                        "Could not reset room"
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Reset room", fontSize = 11.sp)
-            }
-            OutlinedButton(
-                enabled = romParser != null,
-                onClick = {
-                    val rp = romParser ?: return@OutlinedButton
-                    val result = editorState.resetGeneratedBiomeRooms(rp)
-                    status = "Reset generated edits in ${result.generatedRooms} rooms"
-                },
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Reset all", fontSize = 11.sp)
-            }
+        OutlinedButton(
+            enabled = roomLoaded && romParser != null,
+            onClick = {
+                val rp = romParser ?: return@OutlinedButton
+                status = if (editorState.resetCurrentRoomToOriginal(rp)) {
+                    "Reset room to original ROM state"
+                } else {
+                    "Could not reset room"
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Reset room", fontSize = 11.sp)
         }
+    }
+
+    if (confirmGenerateAll) {
+        AlertDialog(
+            onDismissRequest = { confirmGenerateAll = false },
+            title = { Text("Generate all rooms?") },
+            text = {
+                Text(
+                    "This will replace generated biome edits across supported rooms using the current style, theme, and seed." +
+                        if (omitSpecialRooms) " Utility and boss rooms will be skipped." else ""
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmGenerateAll = false
+                        val rp = romParser ?: return@Button
+                        val result = editorState.generateBiomeForAllRooms(
+                            effectiveRules,
+                            resolvedTheme,
+                            seed,
+                            rp,
+                            wfcOptions = currentWfcOptions(),
+                            omitSpecialRooms = omitSpecialRooms,
+                        )
+                        status = "Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles"
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text("Generate all")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmGenerateAll = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (confirmRevertAll) {
+        AlertDialog(
+            onDismissRequest = { confirmRevertAll = false },
+            title = { Text("Revert all generated rooms?") },
+            text = {
+                Text("This will remove generated biome edits from every room in the project.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmRevertAll = false
+                        val rp = romParser ?: return@Button
+                        val result = editorState.resetGeneratedBiomeRooms(rp)
+                        status = "Reverted generated edits in ${result.generatedRooms} rooms"
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text("Revert all")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRevertAll = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

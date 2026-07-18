@@ -154,7 +154,7 @@ internal object GridConnectivity {
             carveTunnelByIndex(
                 cells, width, height,
                 bestA % width, bestA / width, bestB % width, bestB / width,
-                tunnelThickness, tunnelBendiness, rng, canCarve,
+                tunnelThickness, tunnelBendiness, rng, canCarve, passable,
             )
         }
     }
@@ -205,6 +205,7 @@ internal object GridConnectivity {
         bendiness: Double,
         rng: Random,
         canCarve: (Int) -> Boolean,
+        passable: (Int) -> Boolean,
     ) {
         fun carve(x: Int, y: Int) {
             for (ty in y until y + thickness) for (tx in x until x + thickness) {
@@ -214,6 +215,45 @@ internal object GridConnectivity {
                 }
             }
         }
+        fun carveRouted(): Boolean {
+            if (x1 !in 0 until width || y1 !in 0 until height ||
+                x2 !in 0 until width || y2 !in 0 until height
+            ) {
+                return false
+            }
+            val start = y1 * width + x1
+            val target = y2 * width + x2
+            val previous = IntArray(cells.size) { -2 }
+            val queue = ArrayDeque<Int>()
+            val dirs = mutableListOf(0 to -1, 0 to 1, -1 to 0, 1 to 0).also { it.shuffle(rng) }
+            previous[start] = -1
+            queue.add(start)
+            while (queue.isNotEmpty() && previous[target] == -2) {
+                val c = queue.removeFirst()
+                val cx = c % width
+                val cy = c / width
+                for ((dx, dy) in dirs) {
+                    val nx = cx + dx
+                    val ny = cy + dy
+                    if (nx !in 0 until width || ny !in 0 until height) continue
+                    val ni = ny * width + nx
+                    if (ni != target && (nx !in 1 until width - 1 || ny !in 1 until height - 1)) continue
+                    if (previous[ni] != -2) continue
+                    if (ni != target && !passable(ni) && !canCarve(ni)) continue
+                    previous[ni] = c
+                    queue.add(ni)
+                }
+            }
+            if (previous[target] == -2) return false
+            var c = target
+            while (c >= 0) {
+                carve(c % width, c / width)
+                c = previous[c]
+            }
+            return true
+        }
+        if (carveRouted()) return
+
         if (bendiness > 0.05) {
             var x = x1
             var y = y1

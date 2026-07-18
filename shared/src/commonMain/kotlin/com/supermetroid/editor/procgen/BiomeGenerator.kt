@@ -49,12 +49,18 @@ class BiomeGenerator(
         fun idx(x: Int, y: Int) = y * width + x
         fun inBounds(x: Int, y: Int) = x in 0 until width && y in 0 until height
 
+        val isMaze = rules.algorithm == StructureAlgorithm.MAZE
         val doorSetup = DoorPreservation.setup(originalWords, originalBts, width, height)
         val preserved = doorSetup.preserved
         val forceAir = doorSetup.forceAir
         val pockets = doorSetup.pockets
+        val explicitPreserve = BooleanArray(n)
         applyRects(forceAir, width, height, options.forceAirRects)
-        applyRects(preserved, width, height, options.preserveRects)
+        applyRects(explicitPreserve, width, height, options.preserveRects)
+        for (i in 0 until n) if (explicitPreserve[i]) preserved[i] = true
+        if (isMaze) {
+            preserveOriginalMazeCollision(originalWords, width, preserved, forceAir)
+        }
 
         if (rules.algorithm == StructureAlgorithm.WFC) {
             return WaveFunctionCollapseGenerator(
@@ -80,9 +86,11 @@ class BiomeGenerator(
         }
         for (i in 0 until n) if (forceAir[i]) cells[i] = BiomeCell.AIR
 
-        val isMaze = rules.algorithm == StructureAlgorithm.MAZE
         fun preservedOriginalPassable(i: Int): Boolean =
-            preserved[i] && isGameplayPassableType((originalWords[i] shr 12) and 0xF)
+            preserved[i] && isGameplayPassableType(resolvedBlockType(originalWords, width, i))
+
+        fun generatedOrPreservedPassable(i: Int): Boolean =
+            (cells[i] == BiomeCell.AIR && !preserved[i]) || preservedOriginalPassable(i)
 
         val protectedCells = BooleanArray(n) { preserved[it] || forceAir[it] }
         if (!isMaze) {
@@ -95,7 +103,7 @@ class BiomeGenerator(
                 rng,
                 tunnelThickness = 2,
                 canCarve = { !preserved[it] },
-                passable = { cells[it] == BiomeCell.AIR || preservedOriginalPassable(it) },
+                passable = ::generatedOrPreservedPassable,
             )
         }
         for (p in pockets) {
@@ -117,7 +125,7 @@ class BiomeGenerator(
                 rng,
                 tunnelThickness = 1,
                 canCarve = { !preserved[it] },
-                passable = { cells[it] == BiomeCell.AIR || preservedOriginalPassable(it) },
+                passable = ::generatedOrPreservedPassable,
                 required = { ((originalWords[it] shr 12) and 0xF) == 0x9 },
             )
         }
@@ -137,10 +145,11 @@ class BiomeGenerator(
                 tunnelThickness = 2,
                 canCarve = { !preserved[it] },
                 passable = {
-                    cells[it] == BiomeCell.AIR ||
-                        cells[it] == BiomeCell.CRUMBLE ||
-                        cells[it] == BiomeCell.SHOT_HIDDEN ||
-                        cells[it] == BiomeCell.BOMB ||
+                    (!preserved[it] &&
+                        (cells[it] == BiomeCell.AIR ||
+                            cells[it] == BiomeCell.CRUMBLE ||
+                            cells[it] == BiomeCell.SHOT_HIDDEN ||
+                            cells[it] == BiomeCell.BOMB)) ||
                         preservedOriginalPassable(it)
                 },
             )
@@ -176,6 +185,44 @@ class BiomeGenerator(
             type == 0x0 || type == 0x2 || type == 0x4 || type == 0x7 ||
                 type == 0x9 || type == 0xB || type == 0xC || type == 0xF
 
+        fun resolvedBlockType(words: IntArray, width: Int, index: Int): Int {
+            var cursor = index
+            repeat(32) {
+                val type = (words[cursor] shr 12) and 0xF
+                when (type) {
+                    0x5 -> {
+                        if (cursor % width == 0) return 0x8
+                        cursor -= 1
+                    }
+                    0xD -> {
+                        if (cursor < width) return 0x8
+                        cursor -= width
+                    }
+                    else -> return type
+                }
+            }
+            return (words[index] shr 12) and 0xF
+        }
+
+        fun isMazeProtectedCollisionType(type: Int): Boolean =
+            type == 0x3 || type == 0xA || type == 0xB ||
+                type == 0xC || type == 0xE || type == 0xF
+
+        fun preserveOriginalMazeCollision(
+            originalWords: IntArray,
+            width: Int,
+            preserved: BooleanArray,
+            forceAir: BooleanArray,
+        ) {
+            for (i in preserved.indices) {
+                if (!preserved[i] && !forceAir[i] &&
+                    isMazeProtectedCollisionType(resolvedBlockType(originalWords, width, i))
+                ) {
+                    preserved[i] = true
+                }
+            }
+        }
+
         fun applyRects(mask: BooleanArray, width: Int, height: Int, rects: List<BiomeGenerationRect>) {
             for (rect in rects) {
                 val x0 = rect.x0.coerceIn(0, width - 1)
@@ -198,7 +245,7 @@ class BiomeGenerator(
             tunnelThickness: Int,
         ) {
             val passableCells = IntArray(words.size) { i ->
-                if (isGameplayPassableType((words[i] shr 12) and 0xF)) BiomeCell.AIR else BiomeCell.SOLID
+                if (isGameplayPassableType(resolvedBlockType(words, width, i))) BiomeCell.AIR else BiomeCell.SOLID
             }
             GridConnectivity.ensureConnectedByIndex(
                 passableCells,

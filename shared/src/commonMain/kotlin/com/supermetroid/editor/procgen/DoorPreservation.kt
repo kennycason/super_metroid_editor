@@ -129,15 +129,21 @@ internal object DoorPreservation {
         for (group in groups) {
             val depth = DOOR_CLEARANCE
             if (group.vertical) {
+                val centerY = (group.minY + group.maxY) / 2
+                val y0 = minOf(group.minY, centerY - 1)
+                val y1 = maxOf(group.maxY, centerY + 1)
                 val nearLeftEdge = group.minX <= depth
                 val nearRightEdge = group.maxX >= width - depth - 1
-                if (!nearRightEdge) pockets.add(DoorPocket(group.maxX + 1, group.minY, group.maxX + depth, group.maxY))
-                if (!nearLeftEdge) pockets.add(DoorPocket(group.minX - depth, group.minY, group.minX - 1, group.maxY))
+                if (!nearRightEdge) pockets.add(DoorPocket(group.maxX + 1, y0, group.maxX + depth, y1))
+                if (!nearLeftEdge) pockets.add(DoorPocket(group.minX - depth, y0, group.minX - 1, y1))
             } else {
+                val centerX = (group.minX + group.maxX) / 2
+                val x0 = minOf(group.minX, centerX - 1)
+                val x1 = maxOf(group.maxX, centerX + 1)
                 val nearTopEdge = group.minY <= depth
                 val nearBottomEdge = group.maxY >= height - depth - 1
-                if (!nearBottomEdge) pockets.add(DoorPocket(group.minX, group.maxY + 1, group.maxX, group.maxY + depth - 1))
-                if (!nearTopEdge) pockets.add(DoorPocket(group.minX, group.minY - depth + 1, group.maxX, group.minY - 1))
+                if (!nearBottomEdge) pockets.add(DoorPocket(x0, group.maxY + 1, x1, group.maxY + depth))
+                if (!nearTopEdge) pockets.add(DoorPocket(x0, group.minY - depth, x1, group.minY - 1))
             }
         }
         return pockets

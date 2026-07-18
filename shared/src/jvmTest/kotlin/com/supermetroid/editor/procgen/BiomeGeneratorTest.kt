@@ -477,6 +477,242 @@ class BiomeGeneratorTest {
     }
 
     @Test
+    fun `pipe maze preserves original non-slope special collision tiles`() {
+        val w = 64
+        val h = 40
+        val (words, bts) = syntheticRoom(w, h)
+        val profile = TilesetProfile.synthetic()
+        val collisionTypes = listOf(0x3, 0xA, 0xB, 0xC, 0xE, 0xF)
+        val protectedCells = collisionTypes.mapIndexedTo(ArrayList()) { offset, type ->
+            val x = 12 + offset * 3
+            val y = 8 + (offset % 3) * 6
+            val i = y * w + x
+            words[i] = (type shl 12) or (0x220 + offset)
+            bts[i] = 0x40 + offset
+            i
+        }
+        val spikeAnchor = 26 * w + 28
+        words[spikeAnchor] = (0xA shl 12) or 0x260
+        words[spikeAnchor + 1] = (0x5 shl 12) or 0x261
+        words[spikeAnchor + w] = (0xD shl 12) or 0x262
+        bts[spikeAnchor] = 0x50
+        bts[spikeAnchor + 1] = 0x51
+        bts[spikeAnchor + w] = 0x52
+        protectedCells.add(spikeAnchor)
+        protectedCells.add(spikeAnchor + 1)
+        protectedCells.add(spikeAnchor + w)
+
+        val gen = BiomeGenerator(rules(13579, BiomeStyle.PIPE_MAZE), profile, 13579)
+            .generate(w, h, words, bts)
+
+        for (i in protectedCells) {
+            assertEquals(words[i], gen.words[i], "collidable word $i must remain unchanged")
+            assertEquals(bts[i], gen.bts[i], "collidable BTS $i must remain unchanged")
+            assertTrue(gen.preserved[i], "collidable tile $i must be flagged preserved")
+        }
+    }
+
+    @Test
+    fun `pipe maze clears original slopes from generated maze cells`() {
+        val w = 64
+        val h = 40
+        val seed = 97531L
+        val (baseWords, baseBts) = syntheticRoom(w, h)
+        val profile = TilesetProfile.synthetic()
+        val base = BiomeGenerator(rules(seed, BiomeStyle.PIPE_MAZE), profile, seed)
+            .generate(w, h, baseWords, baseBts)
+
+        fun type(i: Int) = (base.words[i] shr 12) and 0xF
+        fun open(i: Int) = !base.preserved[i] && isPassableType(type(i))
+        fun wall(i: Int) = !base.preserved[i] && !isPassableType(type(i))
+        val used = mutableSetOf<Int>()
+        val hAnchor = (2 until h - 2).firstNotNullOf { y ->
+            (2 until w - 3).firstOrNull { x ->
+                val i = y * w + x
+                open(i) && open(i + 1)
+            }?.let { x -> y * w + x }
+        }
+        used.add(hAnchor)
+        used.add(hAnchor + 1)
+        val vAnchor = (2 until h - 3).firstNotNullOf { y ->
+            (2 until w - 2).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + w !in used && open(i) && open(i + w)
+            }?.let { x -> y * w + x }
+        }
+        used.add(vAnchor)
+        used.add(vAnchor + w)
+        val wallHAnchor = (2 until h - 2).firstNotNullOf { y ->
+            (2 until w - 3).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + 1 !in used && wall(i) && wall(i + 1)
+            }?.let { x -> y * w + x }
+        }
+        used.add(wallHAnchor)
+        used.add(wallHAnchor + 1)
+        val wallVAnchor = (2 until h - 3).firstNotNullOf { y ->
+            (2 until w - 2).firstOrNull { x ->
+                val i = y * w + x
+                i !in used && i + w !in used && wall(i) && wall(i + w)
+            }?.let { x -> y * w + x }
+        }
+
+        val (words, bts) = syntheticRoom(w, h)
+        words[hAnchor] = (0x1 shl 12) or 0x2A0
+        words[hAnchor + 1] = (0x5 shl 12) or 0x2A1
+        words[vAnchor] = (0x1 shl 12) or 0x2A2
+        words[vAnchor + w] = (0xD shl 12) or 0x2A3
+        words[wallHAnchor] = (0x1 shl 12) or 0x2A4
+        words[wallHAnchor + 1] = (0x5 shl 12) or 0x2A5
+        words[wallVAnchor] = (0x1 shl 12) or 0x2A6
+        words[wallVAnchor + w] = (0xD shl 12) or 0x2A7
+        bts[hAnchor] = 0x01
+        bts[hAnchor + 1] = 0x02
+        bts[vAnchor] = 0x03
+        bts[vAnchor + w] = 0x04
+        bts[wallHAnchor] = 0x05
+        bts[wallHAnchor + 1] = 0x06
+        bts[wallVAnchor] = 0x07
+        bts[wallVAnchor + w] = 0x08
+
+        val gen = BiomeGenerator(rules(seed, BiomeStyle.PIPE_MAZE), profile, seed)
+            .generate(w, h, words, bts)
+
+        val openSlopeCells = listOf(hAnchor, hAnchor + 1, vAnchor, vAnchor + w)
+        val wallSlopeCells = listOf(wallHAnchor, wallHAnchor + 1, wallVAnchor, wallVAnchor + w)
+        for (i in openSlopeCells) {
+            val generatedType = (gen.words[i] shr 12) and 0xF
+            assertTrue(!gen.preserved[i], "slope path cell $i should not stay preserved")
+            assertTrue(isPassableType(generatedType), "slope path cell $i should be cleared to passable space")
+            assertTrue(generatedType !in setOf(0x1, 0x5, 0xD), "slope path cell $i should not keep slope or extension type")
+        }
+        for (i in wallSlopeCells) {
+            val generatedType = (gen.words[i] shr 12) and 0xF
+            assertTrue(!gen.preserved[i], "slope wall cell $i should not stay preserved")
+            assertEquals(0x8, generatedType, "slope wall cell $i should be dressed as a normal maze wall")
+        }
+    }
+
+    @Test
+    fun `pipe maze keeps a three by three opening in front of edge doors`() {
+        val w = 64
+        val h = 40
+        val (words, bts) = syntheticRoom(w, h)
+        addRightDoor(words, w, h)
+        addTopDoor(words, w)
+        addBottomDoor(words, w, h)
+        val profile = TilesetProfile.synthetic()
+
+        val gen = BiomeGenerator(rules(24601, BiomeStyle.PIPE_MAZE), profile, 24601)
+            .generate(w, h, words, bts)
+
+        val sideDoorTop = h / 2 - 2
+        assertPassableRect(gen, w, x0 = 2, y0 = sideDoorTop, width = 3, height = 3, label = "left door")
+        assertPassableRect(gen, w, x0 = w - 5, y0 = sideDoorTop, width = 3, height = 3, label = "right door")
+        val topDoorLeft = w / 2 - 2
+        assertPassableRect(gen, w, x0 = topDoorLeft, y0 = 2, width = 3, height = 3, label = "top door")
+        assertPassableRect(gen, w, x0 = topDoorLeft, y0 = h - 5, width = 3, height = 3, label = "bottom door")
+        assertDoorGroupsConnected(gen, words, w, h, "four-door pipe maze")
+    }
+
+    @Test
+    fun `connectivity tunnels route around protected collision barriers`() {
+        val w = 64
+        val h = 40
+        val cells = IntArray(w * h) { BiomeCell.SOLID }
+        val protected = BooleanArray(w * h)
+        fun idx(x: Int, y: Int) = y * w + x
+        cells[idx(5, 20)] = BiomeCell.AIR
+        cells[idx(58, 20)] = BiomeCell.AIR
+        for (y in 5..34) {
+            if (y == 8) continue
+            protected[idx(32, y)] = true
+        }
+
+        GridConnectivity.ensureConnectedByIndex(
+            cells,
+            w,
+            h,
+            kotlin.random.Random(2026),
+            tunnelThickness = 1,
+            canCarve = { !protected[it] },
+            passable = { cells[it] == BiomeCell.AIR },
+        )
+
+        assertTrue(connected(cells, w, idx(5, 20), idx(58, 20)), "path must route through the barrier gap")
+        for (y in 5..34) {
+            if (y == 8) continue
+            assertEquals(BiomeCell.SOLID, cells[idx(32, y)], "protected barrier cell (32,$y) must remain solid")
+        }
+    }
+
+    private fun addRightDoor(words: IntArray, w: Int, h: Int) {
+        val solid = (0x8 shl 12) or 0x120
+        val doorTop = h / 2 - 2
+        for (dy in 0 until 4) {
+            words[(doorTop + dy) * w + (w - 1)] = solid
+            words[(doorTop + dy) * w + (w - 2)] = (0x9 shl 12) or 0x040
+        }
+    }
+
+    private fun addTopDoor(words: IntArray, w: Int) {
+        val solid = (0x8 shl 12) or 0x120
+        val left = w / 2 - 2
+        for (dx in 0 until 4) {
+            words[dx + left] = solid
+            words[w + left + dx] = (0x9 shl 12) or 0x040
+        }
+    }
+
+    private fun addBottomDoor(words: IntArray, w: Int, h: Int) {
+        val solid = (0x8 shl 12) or 0x120
+        val left = w / 2 - 2
+        for (dx in 0 until 4) {
+            words[(h - 1) * w + left + dx] = solid
+            words[(h - 2) * w + left + dx] = (0x9 shl 12) or 0x040
+        }
+    }
+
+    private fun assertPassableRect(
+        gen: BiomeGenerator.GeneratedLevel,
+        w: Int,
+        x0: Int,
+        y0: Int,
+        width: Int,
+        height: Int,
+        label: String,
+    ) {
+        for (y in y0 until y0 + height) for (x in x0 until x0 + width) {
+            val type = (gen.words[y * w + x] shr 12) and 0xF
+            assertTrue(isPassableType(type), "$label opening cell ($x,$y) must be passable")
+        }
+    }
+
+    private fun connected(cells: IntArray, w: Int, start: Int, target: Int): Boolean {
+        val seen = BooleanArray(cells.size)
+        val queue = ArrayDeque<Int>()
+        seen[start] = true
+        queue.add(start)
+        while (queue.isNotEmpty()) {
+            val c = queue.removeFirst()
+            if (c == target) return true
+            val x = c % w
+            val y = c / w
+            for ((dx, dy) in listOf(0 to -1, 0 to 1, -1 to 0, 1 to 0)) {
+                val nx = x + dx
+                val ny = y + dy
+                if (nx !in 0 until w || ny !in 0 until cells.size / w) continue
+                val ni = ny * w + nx
+                if (!seen[ni] && cells[ni] == BiomeCell.AIR) {
+                    seen[ni] = true
+                    queue.add(ni)
+                }
+            }
+        }
+        return false
+    }
+
+    @Test
     fun `facility decks form long flat walkable floors`() {
         val (words, bts) = syntheticRoom()
         val profile = TilesetProfile.synthetic()
