@@ -66,6 +66,7 @@ import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.awt.image.BufferedImage
 import kotlin.math.abs
@@ -391,6 +392,8 @@ fun SoundEditorCanvas(
         if (state.selectedTrack != null && romParser != null) {
             try {
                 state.loadTrackSamples(romParser, editorState)
+            } catch (_: CancellationException) {
+                // Track/sample-rate changes cancel stale renders when the composable restarts.
             } catch (e: Exception) {
                 soundEditorUiLog.error(e) { "[SPC] Track load error in LaunchedEffect: ${e.message}" }
             }
@@ -624,7 +627,10 @@ private fun PendingTrackImportPanel(
                         contentPadding = PaddingValues(horizontal = 10.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Text("Apply Fitted", fontSize = 10.sp)
+                        Text(
+                            if (it.usesStockInstrumentFallback) "Apply Stock Fit" else "Apply Fitted",
+                            fontSize = 10.sp
+                        )
                     }
                 }
                 OutlinedButton(

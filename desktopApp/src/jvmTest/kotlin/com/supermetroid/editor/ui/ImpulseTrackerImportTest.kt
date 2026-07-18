@@ -2,9 +2,12 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
+import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -125,6 +128,58 @@ class ImpulseTrackerImportTest {
     }
 
     @Test
+    fun `it import maps virtual sample filename to existing spc srcn`() {
+        val file = File(tempDir, "virtual-sample.it")
+        file.writeBytes(simpleItModule(withSampleHeader = true, sampleFileName = ">24"))
+
+        val result = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+
+        assertNotNull(result.nativePayload)
+        assertEquals(0, result.song.channels[0].notes.single().instrument)
+        val instrumentBlock = result.nativePayload!!.blocks.single { it.destAddr == 0x6C00 }
+        assertEquals(6, instrumentBlock.data.size)
+        assertEquals(24, instrumentBlock.data[0].toInt() and 0xFF)
+        assertFalse(result.nativePayload.blocks.any { it.destAddr in 0x6D00 until 0x6DA0 })
+        assertFalse(result.nativePayload.blocks.any { it.destAddr >= 0x6E00 })
+        assertTrue(result.report.warnings.any { it.contains("virtual sample") })
+    }
+
+    @Test
+    fun `it import auto downsamples custom samples to fit native payload budget`() {
+        val file = File(tempDir, "sample-fit.it")
+        file.writeBytes(simpleItModule(withSampleHeader = true))
+        val fullQuality = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+        val fullPayload = fullQuality.nativePayload!!
+        val fullChainBytes = MusicTransferChainBudget.serializedTransferChainSize(fullPayload.blocks)
+        val fullSampleBytes = fullPayload.blocks.filter { it.destAddr >= 0x6E00 }.sumOf { it.data.size }
+
+        val fitted = ImpulseTrackerImport.read(
+            file = file,
+            targetPlayIndex = 5,
+            maxNativePayloadChainBytes = fullChainBytes - 1
+        )
+
+        val fittedPayload = fitted.nativePayload!!
+        val fittedChainBytes = MusicTransferChainBudget.serializedTransferChainSize(fittedPayload.blocks)
+        val fittedSampleBytes = fittedPayload.blocks.filter { it.destAddr >= 0x6E00 }.sumOf { it.data.size }
+        assertTrue(fittedChainBytes <= fullChainBytes - 1)
+        assertTrue(fittedSampleBytes < fullSampleBytes)
+        assertTrue(fitted.report.warnings.any { it.contains("Auto-fit downsampled custom IT samples 2x") })
+    }
+
+    @Test
+    fun `it import maps virtual instrument filename directly to existing sm instrument`() {
+        val file = File(tempDir, "virtual-instrument.it")
+        file.writeBytes(instrumentMappedItModule(instrumentFileName = ">24"))
+
+        val result = ImpulseTrackerImport.read(file, targetPlayIndex = 5)
+
+        assertNull(result.nativePayload)
+        assertTrue(result.instruments.isEmpty())
+        assertEquals(24, result.song.channels[0].notes.single().instrument)
+    }
+
+    @Test
     fun `real world impulse tracker fixture imports when supplied`() {
         val path = System.getProperty("smedit.realItFixture")?.trim().orEmpty()
         assumeTrue(path.isNotEmpty(), "Set -Dsmedit.realItFixture=/path/to/file.it to run this smoke test")
@@ -160,9 +215,47 @@ class ImpulseTrackerImportTest {
         assertTrue(result.report.warnings.any { it.contains("Built custom IT native payload") })
     }
 
+    @Test
+    fun `real world impulse tracker native payload budget fixture imports when supplied`() {
+        val itPath = System.getProperty("smedit.realItBudgetFixture")?.trim().orEmpty()
+        val romPath = System.getProperty("smedit.realRomFixture")?.trim().orEmpty()
+        assumeTrue(itPath.isNotEmpty(), "Set -Dsmedit.realItBudgetFixture=/path/to/file.it to run this smoke test")
+        assumeTrue(romPath.isNotEmpty(), "Set -Dsmedit.realRomFixture=/path/to/rom.smc to run this smoke test")
+        val file = File(itPath)
+        val rom = File(romPath)
+        assumeTrue(file.isFile, "Real IT fixture does not exist: $itPath")
+        assumeTrue(rom.isFile, "Real ROM fixture does not exist: $romPath")
+        val songSet = System.getProperty("smedit.realItBudgetSongSet")?.toIntOrNull(16) ?: 0x03
+        val playIndex = System.getProperty("smedit.realItBudgetPlayIndex")?.toIntOrNull(16) ?: 0x05
+        val parser = RomParser.loadRom(rom.absolutePath)
+        val ram = SpcData.buildInitialSpcRam(parser)
+        SpcData.applyTransferBlocks(ram, SpcData.findSongSetTransferData(parser, songSet))
+        val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
+        val maxPayloadBytes = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES -
+            MusicTransferChainBudget.serializedTransferChainSize(originalBlocks) + 2
+
+        val result = ImpulseTrackerImport.read(
+            file = file,
+            targetPlayIndex = playIndex,
+            baseInstruments = NspcRenderer.readInstrumentTable(ram),
+            maxNativePayloadChainBytes = maxPayloadBytes
+        )
+
+        assertNotNull(result.nativePayload, result.report.warnings.joinToString("\n"))
+        val chainBytes = MusicTransferChainBudget.serializedTransferChainSize(result.nativePayload!!.blocks)
+        println("realItBudget payloadChain=$chainBytes maxPayload=$maxPayloadBytes warnings=${result.report.warnings}")
+        assertTrue(result.report.noteCount > 0)
+        assertTrue(
+            chainBytes <= maxPayloadBytes,
+            "Expected auto-fit native payload to fit $maxPayloadBytes B, got $chainBytes B:\n" +
+                result.report.warnings.joinToString("\n")
+        )
+    }
+
     private fun simpleItModule(
         channel: Int = 1,
-        withSampleHeader: Boolean = false
+        withSampleHeader: Boolean = false,
+        sampleFileName: String = ""
     ): ByteArray {
         val patternBytes = ByteArrayOutputStream()
         val channelVariable = 0x80 or channel
@@ -201,7 +294,7 @@ class ImpulseTrackerImportTest {
         data[0xC0] = 0
         if (withSampleHeader) {
             writeU32(data, 0xC1 + 4, sampleHeaderOffset)
-            writeSampleHeader(data, sampleHeaderOffset, sampleDataOffset)
+            writeSampleHeader(data, sampleHeaderOffset, sampleDataOffset, fileName = sampleFileName)
         }
         writeU32(data, 0xC1 + 8, patternOffset)
 
@@ -217,7 +310,7 @@ class ImpulseTrackerImportTest {
         return finalOut.toByteArray()
     }
 
-    private fun instrumentMappedItModule(): ByteArray {
+    private fun instrumentMappedItModule(instrumentFileName: String = ""): ByteArray {
         val patternBytes = ByteArrayOutputStream()
         val channelVariable = 0x80 or 1
         patternBytes.write(channelVariable)
@@ -256,7 +349,14 @@ class ImpulseTrackerImportTest {
         writeU32(data, 0xC1, instrumentHeaderOffset)
         writeU32(data, 0xC1 + 4, sampleHeaderOffset)
         writeU32(data, 0xC1 + 8, patternOffset)
-        writeInstrumentHeader(data, instrumentHeaderOffset, mappedInputNote = 36, mappedOutputNote = 48, sampleIndex = 1)
+        writeInstrumentHeader(
+            data,
+            instrumentHeaderOffset,
+            mappedInputNote = 36,
+            mappedOutputNote = 48,
+            sampleIndex = 1,
+            fileName = instrumentFileName
+        )
         writeSampleHeader(data, sampleHeaderOffset, sampleDataOffset)
 
         val finalOut = ByteArrayOutputStream()
@@ -274,9 +374,11 @@ class ImpulseTrackerImportTest {
         offset: Int,
         mappedInputNote: Int,
         mappedOutputNote: Int,
-        sampleIndex: Int
+        sampleIndex: Int,
+        fileName: String = ""
     ) {
         "IMPI".encodeToByteArray().copyInto(data, offset)
+        fileName.encodeToByteArray().copyInto(data, offset + 0x04, endIndex = minOf(fileName.length, 12))
         "Mapped Instrument".encodeToByteArray().copyInto(data, offset + 0x20)
         for (note in 0 until 120) {
             data[offset + 0x40 + note * 2] = note.toByte()
@@ -285,8 +387,14 @@ class ImpulseTrackerImportTest {
         data[offset + 0x40 + mappedInputNote * 2] = mappedOutputNote.toByte()
     }
 
-    private fun writeSampleHeader(data: ByteArray, offset: Int, sampleDataOffset: Int) {
+    private fun writeSampleHeader(
+        data: ByteArray,
+        offset: Int,
+        sampleDataOffset: Int,
+        fileName: String = ""
+    ) {
         "IMPS".encodeToByteArray().copyInto(data, offset)
+        fileName.encodeToByteArray().copyInto(data, offset + 0x04, endIndex = minOf(fileName.length, 12))
         "Lead Sample".encodeToByteArray().copyInto(data, offset + 0x14)
         data[offset + 0x11] = 64
         data[offset + 0x12] = 0x13 // associated, 16-bit, looped

@@ -36,6 +36,13 @@ internal object PianoRollPlaybackTiming {
     fun tickToMillis(tick: Int, tempo: Int): Long =
         (tick.coerceAtLeast(0) * tickMillis(tempo)).roundToLong()
 
+    fun playbackTickAtMillis(positionMillis: Long, tempo: Int, maxTick: Int): Int {
+        val tickMs = tickMillis(tempo)
+        if (tickMs <= 0.0) return 0
+        return (positionMillis / tickMs).toInt()
+            .coerceIn(0, maxTick.coerceAtLeast(0))
+    }
+
     fun previewSeconds(song: NspcSequence.Song): Int {
         val durationSeconds = song.totalTicks * tickMillis(song.tempo) / 1000.0
         return ceil(durationSeconds + PREVIEW_PAD_SECONDS).toInt()
@@ -218,7 +225,8 @@ class SoundEditorState {
         val label: String,
         val song: NspcSequence.Song,
         val instruments: List<NspcRenderer.InstrumentEntry>,
-        val summary: String
+        val summary: String,
+        val usesStockInstrumentFallback: Boolean = false
     )
 
     /** Reset piano roll to original track data. */
@@ -385,7 +393,19 @@ class SoundEditorState {
 
         try {
             val track = selectedTrack ?: return
-            val imported = ImpulseTrackerImport.read(file, targetPlayIndex = track.playIndex)
+            val originalBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
+            val maxNativePayloadChainBytes = if (originalBlocks.isNotEmpty()) {
+                MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES -
+                    MusicTransferChainBudget.serializedTransferChainSize(originalBlocks) + 2
+            } else {
+                null
+            }
+            val imported = ImpulseTrackerImport.read(
+                file = file,
+                targetPlayIndex = track.playIndex,
+                baseInstruments = originalPianoRollInstruments,
+                maxNativePayloadChainBytes = maxNativePayloadChainBytes
+            )
             val nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
             stagePendingTrackImport(
                 romParser = romParser,
@@ -556,6 +576,7 @@ class SoundEditorState {
         )
         val reportLines = buildImportReportLines(report).toMutableList()
         val safetyLines = buildList {
+            addAll(importDecision.reportLines)
             importDecision.blockReason?.let { add("Apply blocked: $it") }
             importDecision.fittedImport?.let { add(it.summary) }
         }
@@ -576,7 +597,8 @@ class SoundEditorState {
 
     private data class PendingImportDecision(
         val blockReason: String? = null,
-        val fittedImport: FittedTrackImport? = null
+        val fittedImport: FittedTrackImport? = null,
+        val reportLines: List<String> = emptyList()
     )
 
     private fun buildPendingImportDecision(
@@ -597,6 +619,12 @@ class SoundEditorState {
                     payload = nativePayload,
                     targetPlayIndex = track.playIndex
                 )
+                val nativeBudgetLine = if (assessment.canExportToRom) {
+                    "Native payload ROM chain ${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B; " +
+                        "${assessment.maxChainBytes - assessment.relocatedChainBytes} B free."
+                } else {
+                    "Native payload ROM chain ${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B."
+                }
                 if (!assessment.canExportToRom) {
                     val fallbackInstruments = editableFallbackInstruments.ifEmpty {
                         originalPianoRollInstruments
@@ -605,7 +633,7 @@ class SoundEditorState {
                         buildFittedEditableImport(
                             song = it,
                             instruments = fallbackInstruments,
-                            label = "$label fitted",
+                            label = "$label stock fit",
                             includeNativeDropWarning = true
                         )
                     }
@@ -617,14 +645,22 @@ class SoundEditorState {
                         } else {
                             "$reason; no editable fitted fallback is available"
                         },
-                        fittedImport = fallback
+                        fittedImport = fallback,
+                        reportLines = listOf(nativeBudgetLine)
                     )
                 }
+                return PendingImportDecision(reportLines = listOf(nativeBudgetLine))
             }
         }
 
         if (nativePayload == null && pianoRollRelocationBudgetBytes > 0) {
             val encodedBytes = NspcSequence.encodedSequenceSize(song)
+            val editableBudgetLine = if (encodedBytes <= pianoRollRelocationBudgetBytes) {
+                "Editable relocation fit ${encodedBytes}/${pianoRollRelocationBudgetBytes} B; " +
+                    "${pianoRollRelocationBudgetBytes - encodedBytes} B free."
+            } else {
+                "Editable relocation fit ${encodedBytes}/${pianoRollRelocationBudgetBytes} B."
+            }
             if (encodedBytes > pianoRollRelocationBudgetBytes) {
                 val fitted = buildFittedEditableImport(
                     song = song,
@@ -636,9 +672,11 @@ class SoundEditorState {
                     "($encodedBytes/$pianoRollRelocationBudgetBytes B)"
                 return PendingImportDecision(
                     blockReason = if (fitted != null) reason else "$reason; it could not be trimmed safely",
-                    fittedImport = fitted
+                    fittedImport = fitted,
+                    reportLines = listOf(editableBudgetLine)
                 )
             }
+            return PendingImportDecision(reportLines = listOf(editableBudgetLine))
         }
 
         return PendingImportDecision()
@@ -668,7 +706,8 @@ class SoundEditorState {
             "Apply Fitted will fit editable notes at ${fit.encodedBytes}/${fit.budgetBytes} B."
         }
         val summary = if (includeNativeDropWarning) {
-            "$action Custom sample payload will be dropped; built-in/fallback instruments will be used."
+            action.replace("Apply Fitted", "Apply Stock Fit") +
+                " Custom sample payload will be dropped; built-in/fallback instruments will be used."
         } else {
             action
         }
@@ -676,7 +715,8 @@ class SoundEditorState {
             label = label,
             song = fittedSong,
             instruments = copiedInstruments,
-            summary = summary
+            summary = summary,
+            usesStockInstrumentFallback = includeNativeDropWarning
         )
     }
 
@@ -932,14 +972,12 @@ class SoundEditorState {
         if (pianoRollTickMs <= 0.0) {
             pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
         }
-        val tick = (player.positionMillis() / pianoRollTickMs).toInt()
         val maxTick = song.totalTicks
-        pianoRollPlaybackTick = if (maxTick > 0 && tick > maxTick) {
-            stopPlayback()
-            -1
-        } else {
-            tick.coerceIn(0, maxTick.coerceAtLeast(0))
-        }
+        pianoRollPlaybackTick = PianoRollPlaybackTiming.playbackTickAtMillis(
+            positionMillis = player.positionMillis(),
+            tempo = song.tempo,
+            maxTick = maxTick
+        )
     }
 
     fun seekPianoRollToTick(tick: Int) {

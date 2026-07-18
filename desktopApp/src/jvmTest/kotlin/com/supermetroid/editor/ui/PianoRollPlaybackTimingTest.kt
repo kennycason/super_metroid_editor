@@ -23,6 +23,16 @@ class PianoRollPlaybackTimingTest {
     }
 
     @Test
+    fun `playback tick clamps visually without owning audio completion`() {
+        val afterSongEnd = PianoRollPlaybackTiming.tickToMillis(7000, tempo = 29)
+
+        assertEquals(
+            6312,
+            PianoRollPlaybackTiming.playbackTickAtMillis(afterSongEnd, tempo = 29, maxTick = 6312)
+        )
+    }
+
+    @Test
     fun `very short previews keep a usable minimum`() {
         val song = NspcSequence.Song(tempo = 60)
         song.channels[0].notes += NspcSequence.Note(

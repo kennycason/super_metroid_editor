@@ -37,18 +37,23 @@ Current `IT In` behavior:
 - Imports note timing, note pitch, note-off/cut/fade stops, volume-column/channel/global-volume note velocity, initial speed, speed-adjusted row timing, and tempo commands where possible.
 - Parses all 64 IT pattern channels, then deduplicates and voice-packs them into Super Metroid's 8 available music voices.
 - Converts supported embedded IT samples into BRR and builds native transfer payload blocks for the target play index.
-- Writes a self-contained native payload with N-SPC sequence data, instrument table bytes, sample directory entries, and BRR sample data.
+- Auto-fits custom IT sample payloads to the target track's ROM export budget by trying progressively smaller sample data when full-quality BRR data would exceed the one-bank transfer-chain limit.
+- Writes native payload blocks with N-SPC sequence data, only the generated instrument entries, only the generated sample directory entries, and generated BRR sample data.
 - Maps IT sample-mode instruments to generated Super Metroid instrument table entries when the native payload is valid.
 - Resolves IT instrument-mode note/sample keyboard maps before choosing BRR sample slots.
+- Supports mITroid-style virtual references in IT sample/instrument filename fields:
+  - `>24` uses existing Super Metroid SPC sample/instrument index 24 directly.
+  - `<3` reuses another IT sample/instrument mapping.
 - Generates Super Metroid instrument table pitch bytes from IT sample C5 speed, matching mITroid's byte formula, and uses default `GAIN=0x7F` for instruments without convertible volume envelopes.
 - Reports active IT sample metadata, including compressed/stereo/16-bit/looped counts, so unsupported custom sample cases are visible before apply.
-- Stages an import report before applying, like MIDI and N-SPC import.
+- Stages an import report before applying, like MIDI and N-SPC import. Native imports also show the estimated one-bank transfer-chain budget before Apply is enabled.
+- Uses the normal `Apply` button for imports that preserve custom IT BRR/sample payloads. If a native payload still cannot fit, the fallback button is labeled `Apply Stock Fit`; that path intentionally drops custom IT samples and uses built-in/fallback Super Metroid instruments.
 - Saves both the editable piano-roll interpretation and the native payload while notes/instruments remain unchanged.
 
 Current `IT In` limitations:
 
-- Custom BRR payloads currently require embedded mono, uncompressed PCM samples that fit in SPC RAM.
-- IT-compressed samples, stereo samples, missing/invalid instrument headers, and over-budget sample payloads are reported and fall back to editable sequence import without custom BRR payload blocks.
+- Custom BRR payloads currently require embedded mono, uncompressed PCM samples that fit in SPC RAM and the target ROM transfer-chain budget after any auto-fit downsampling.
+- IT-compressed samples, stereo samples, missing/invalid instrument headers, and sample payloads that remain over budget after auto-fit are reported and fall back to editable sequence import without custom BRR payload blocks.
 - IT instrument note/sample maps and basic volume-envelope ADSR conversion are imported, but NNAs, duplicate-note behavior, and most tracker playback rules are approximated.
 - Sample resampling/BRR encoding does not yet exactly match mITroid/BRRtools, so timbre can still differ even when note data and C5 pitch bytes are correct.
 - Does not preserve most tracker effects yet; unsupported effect commands are reported.
@@ -82,6 +87,17 @@ Optional native payload regression command:
 ./gradlew --no-daemon -Dsmedit.realItNativeFixture="$HOME/Downloads/ModArchive - antartica rainforests - giants.it" :desktopApp:jvmTest --tests com.supermetroid.editor.ui.ImpulseTrackerImportTest.real\ world\ impulse\ tracker\ native\ payload\ fixture\ imports\ when\ supplied
 ```
 
+Optional native payload budget regression command against the local Spike Olympics ROM:
+
+```bash
+./gradlew --no-daemon -Pkotlin.incremental=false \
+  -Dsmedit.realItBudgetFixture="$HOME/Downloads/ModArchive - antartica rainforests - giants.it" \
+  -Dsmedit.realRomFixture="$HOME/Dropbox/emulator/snes/Super Metroid/Super Metroid Spike Olympics I.smc" \
+  -Dsmedit.realItBudgetSongSet=03 \
+  -Dsmedit.realItBudgetPlayIndex=05 \
+  :desktopApp:jvmTest --tests com.supermetroid.editor.ui.ImpulseTrackerImportTest.real\ world\ impulse\ tracker\ native\ payload\ budget\ fixture\ imports\ when\ supplied
+```
+
 The next longer-term path is to add IT compressed-sample decoding, better pitch/tuning conversion, envelope/NNA handling, and more tracker effect translation.
 
 ## External reference findings
@@ -99,4 +115,7 @@ The next longer-term path is to add IT compressed-sample decoding, better pitch/
 - Reopening a project with a raw native payload should keep `Raw N-SPC` export behavior as long as no further piano-roll edits are made.
 - Applying a supported `.it` import should report `Built custom IT native payload`, then playback/export should use the imported BRR samples as long as no further piano-roll edits are made.
 - Exporting `.nspc` from a still-matching supported `.it` or raw native import should produce raw transfer blocks that preserve custom samples; exporting `.nspc` from an ordinary editable track still produces the SMEDIT editable bundle.
-- Applying a compressed, stereo, invalid-instrument-header, or over-budget `.it` should still import visible notes, but should report why custom BRR payload export was disabled.
+- Applying a supported `.it` that would exceed the target ROM transfer-chain budget at full quality should report `Auto-fit downsampled custom IT samples ...` and keep the normal `Apply` button enabled when the reduced native payload fits.
+- Applying a compressed, stereo, invalid-instrument-header, or still-over-budget `.it` should still import visible notes, but should report why custom BRR payload export was disabled. In that case, `Apply Stock Fit` is expected to sound like Super Metroid stock instruments rather than the original IT samples.
+- Edit-mode playback should continue until the rendered audio clip completes. The piano-roll cursor may stop visually at the last parsed editable tick for looped/effect-driven native previews, but it should no longer stop audio early.
+- For IT files authored with mITroid virtual references, sample filename `>24` should avoid writing BRR sample data and should leave vanilla sample-directory entries intact while the generated instrument points at SRCN 24. Instrument filename `>24` should use vanilla Super Metroid instrument 24 directly.
