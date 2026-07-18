@@ -20,9 +20,28 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioInputStream
 import javax.sound.sampled.AudioSystem
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 private val soundEditorLog = KotlinLogging.logger {}
+
+internal object PianoRollPlaybackTiming {
+    private const val PREVIEW_PAD_SECONDS = 2
+    private const val MAX_PREVIEW_SECONDS = 240
+
+    fun tickMillis(tempo: Int): Double =
+        512.0 / tempo.coerceAtLeast(1)
+
+    fun tickToMillis(tick: Int, tempo: Int): Long =
+        (tick.coerceAtLeast(0) * tickMillis(tempo)).roundToLong()
+
+    fun previewSeconds(song: NspcSequence.Song): Int {
+        val durationSeconds = song.totalTicks * tickMillis(song.tempo) / 1000.0
+        return ceil(durationSeconds + PREVIEW_PAD_SECONDS).toInt()
+            .coerceIn(5, MAX_PREVIEW_SECONDS)
+    }
+}
 
 class SoundEditorState {
     private val player = SoundPlayer()
@@ -188,7 +207,18 @@ class SoundEditorState {
         val song: NspcSequence.Song,
         val instruments: List<NspcRenderer.InstrumentEntry>,
         val reportLines: List<String>,
-        val nativePayload: MusicNativePayloadEdit? = null
+        val nativePayload: MusicNativePayloadEdit? = null,
+        val applyBlockedReason: String? = null,
+        val fittedImport: FittedTrackImport? = null
+    ) {
+        val canApply: Boolean get() = applyBlockedReason == null
+    }
+
+    data class FittedTrackImport(
+        val label: String,
+        val song: NspcSequence.Song,
+        val instruments: List<NspcRenderer.InstrumentEntry>,
+        val summary: String
     )
 
     /** Reset piano roll to original track data. */
@@ -318,13 +348,17 @@ class SoundEditorState {
         } ?: return
 
         try {
+            val track = selectedTrack ?: return
             val imported = MusicTrackInterchange.readMidiWithReport(file)
             stagePendingTrackImport(
+                romParser = romParser,
+                track = track,
                 label = "MIDI",
                 fileName = file.name,
                 song = imported.song,
                 instruments = emptyList(),
-                report = imported.report
+                report = imported.report,
+                nativePayload = null
             )
             statusMessage = "Review MIDI import report for ${file.name}"
             soundEditorLog.info {
@@ -350,14 +384,20 @@ class SoundEditorState {
         } ?: return
 
         try {
-            val imported = ImpulseTrackerImport.read(file, targetPlayIndex = selectedTrack?.playIndex)
+            val track = selectedTrack ?: return
+            val imported = ImpulseTrackerImport.read(file, targetPlayIndex = track.playIndex)
+            val nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
             stagePendingTrackImport(
+                romParser = romParser,
+                track = track,
                 label = "IT",
                 fileName = file.name,
                 song = imported.song,
                 instruments = imported.instruments,
                 report = imported.report,
-                nativePayload = imported.nativePayload?.let { MusicEditConversion.toProjectNativePayload(it) }
+                nativePayload = nativePayload,
+                editableFallbackSong = imported.editableFallbackSong,
+                editableFallbackInstruments = imported.editableFallbackInstruments
             )
             statusMessage = "Review IT import report for ${file.name}"
             soundEditorLog.info {
@@ -433,6 +473,8 @@ class SoundEditorState {
                 ""
             }
             stagePendingTrackImport(
+                romParser = romParser,
+                track = track,
                 label = "${imported.formatLabel}$source",
                 fileName = file.name,
                 song = imported.song,
@@ -454,8 +496,33 @@ class SoundEditorState {
 
     fun applyPendingTrackImport(editorState: EditorState? = null) {
         val pending = pendingTrackImport ?: return
-        applyImportedPianoRollSong(pending.song, pending.instruments, editorState, pending.label)
+        val blocked = pending.applyBlockedReason
+        if (blocked != null) {
+            statusMessage = "Import blocked: $blocked"
+            return
+        }
+        applyImportedPianoRollSong(
+            importedSong = pending.song,
+            importedInstruments = pending.instruments,
+            nativePayload = pending.nativePayload,
+            editorState = editorState,
+            label = pending.label
+        )
         statusMessage = "Applied ${pending.label} import: ${pending.fileName}"
+        pendingTrackImport = null
+    }
+
+    fun applyPendingTrackImportFitted(editorState: EditorState? = null) {
+        val pending = pendingTrackImport ?: return
+        val fitted = pending.fittedImport ?: return
+        applyImportedPianoRollSong(
+            importedSong = fitted.song,
+            importedInstruments = fitted.instruments,
+            nativePayload = null,
+            editorState = editorState,
+            label = fitted.label
+        )
+        statusMessage = "Applied fitted ${pending.label} import: ${pending.fileName}"
         pendingTrackImport = null
     }
 
@@ -466,20 +533,150 @@ class SoundEditorState {
     }
 
     private fun stagePendingTrackImport(
+        romParser: RomParser? = null,
+        track: SpcData.TrackInfo? = selectedTrack,
         label: String,
         fileName: String,
         song: NspcSequence.Song,
         instruments: List<NspcRenderer.InstrumentEntry>,
         report: MusicTrackInterchange.InterchangeReport,
-        nativePayload: MusicNativePayloadEdit? = null
+        nativePayload: MusicNativePayloadEdit? = null,
+        editableFallbackSong: NspcSequence.Song? = null,
+        editableFallbackInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
     ) {
+        val importDecision = buildPendingImportDecision(
+            romParser = romParser,
+            track = track,
+            label = label,
+            song = song,
+            instruments = instruments,
+            nativePayload = nativePayload,
+            editableFallbackSong = editableFallbackSong,
+            editableFallbackInstruments = editableFallbackInstruments
+        )
+        val reportLines = buildImportReportLines(report).toMutableList()
+        val safetyLines = buildList {
+            importDecision.blockReason?.let { add("Apply blocked: $it") }
+            importDecision.fittedImport?.let { add(it.summary) }
+        }
+        if (safetyLines.isNotEmpty()) {
+            reportLines.addAll(minOf(2, reportLines.size), safetyLines)
+        }
         pendingTrackImport = PendingTrackImport(
             label = label,
             fileName = fileName,
             song = song,
             instruments = instruments,
-            reportLines = buildImportReportLines(report),
-            nativePayload = nativePayload
+            reportLines = reportLines.distinct(),
+            nativePayload = nativePayload,
+            applyBlockedReason = importDecision.blockReason,
+            fittedImport = importDecision.fittedImport
+        )
+    }
+
+    private data class PendingImportDecision(
+        val blockReason: String? = null,
+        val fittedImport: FittedTrackImport? = null
+    )
+
+    private fun buildPendingImportDecision(
+        romParser: RomParser?,
+        track: SpcData.TrackInfo?,
+        label: String,
+        song: NspcSequence.Song,
+        instruments: List<NspcRenderer.InstrumentEntry>,
+        nativePayload: MusicNativePayloadEdit?,
+        editableFallbackSong: NspcSequence.Song?,
+        editableFallbackInstruments: List<NspcRenderer.InstrumentEntry>
+    ): PendingImportDecision {
+        if (nativePayload != null && romParser != null && track != null) {
+            val originalBlocks = SpcData.findSongSetTransferData(romParser, track.songSet)
+            if (originalBlocks.isNotEmpty()) {
+                val assessment = MusicTransferChainBudget.assessNativePayloadRomExport(
+                    originalBlocks = originalBlocks,
+                    payload = nativePayload,
+                    targetPlayIndex = track.playIndex
+                )
+                if (!assessment.canExportToRom) {
+                    val fallbackInstruments = editableFallbackInstruments.ifEmpty {
+                        originalPianoRollInstruments
+                    }
+                    val fallback = editableFallbackSong?.let {
+                        buildFittedEditableImport(
+                            song = it,
+                            instruments = fallbackInstruments,
+                            label = "$label fitted",
+                            includeNativeDropWarning = true
+                        )
+                    }
+                    val reason = "native/custom-sample payload is ${assessment.overByBytes} B over the one-bank ROM export limit " +
+                        "(${assessment.relocatedChainBytes}/${assessment.maxChainBytes} B)"
+                    return PendingImportDecision(
+                        blockReason = if (fallback != null) {
+                            reason
+                        } else {
+                            "$reason; no editable fitted fallback is available"
+                        },
+                        fittedImport = fallback
+                    )
+                }
+            }
+        }
+
+        if (nativePayload == null && pianoRollRelocationBudgetBytes > 0) {
+            val encodedBytes = NspcSequence.encodedSequenceSize(song)
+            if (encodedBytes > pianoRollRelocationBudgetBytes) {
+                val fitted = buildFittedEditableImport(
+                    song = song,
+                    instruments = instruments,
+                    label = "$label fitted",
+                    includeNativeDropWarning = false
+                )
+                val reason = "editable sequence is ${encodedBytes - pianoRollRelocationBudgetBytes} B over the current relocation budget " +
+                    "($encodedBytes/$pianoRollRelocationBudgetBytes B)"
+                return PendingImportDecision(
+                    blockReason = if (fitted != null) reason else "$reason; it could not be trimmed safely",
+                    fittedImport = fitted
+                )
+            }
+        }
+
+        return PendingImportDecision()
+    }
+
+    private fun buildFittedEditableImport(
+        song: NspcSequence.Song,
+        instruments: List<NspcRenderer.InstrumentEntry>,
+        label: String,
+        includeNativeDropWarning: Boolean
+    ): FittedTrackImport? {
+        val budgetBytes = pianoRollRelocationBudgetBytes
+        if (budgetBytes <= 0) return null
+        val fit = try {
+            MusicSequenceBudget.fitSongToEncodedBudget(song, budgetBytes)
+        } catch (e: Exception) {
+            soundEditorLog.warn(e) { "[SPC-IMPORT] Could not build fitted import: ${e.message}" }
+            return null
+        }
+        val fittedSong = PianoRollPreviewLogic.deepCopySong(fit.song)
+        fittedSong.isModified = true
+        val copiedInstruments = instruments.map { it.copy() }
+        val action = if (fit.trimmed) {
+            "Apply Fitted will trim ${fit.removedNotes} notes and ${fit.removedCommands} commands after tick " +
+                "${fit.cutoffTick} to fit ${fit.encodedBytes}/${fit.budgetBytes} B."
+        } else {
+            "Apply Fitted will fit editable notes at ${fit.encodedBytes}/${fit.budgetBytes} B."
+        }
+        val summary = if (includeNativeDropWarning) {
+            "$action Custom sample payload will be dropped; built-in/fallback instruments will be used."
+        } else {
+            action
+        }
+        return FittedTrackImport(
+            label = label,
+            song = fittedSong,
+            instruments = copiedInstruments,
+            summary = summary
         )
     }
 
@@ -491,7 +688,7 @@ class SoundEditorState {
             lines += "Over vanilla track budget by ${report.encodedBytes - pianoRollExportBudgetBytes} B; ROM export will require relocation or trimming."
         }
         if (pianoRollRelocationBudgetBytes > 0 && report.encodedBytes > pianoRollRelocationBudgetBytes) {
-            lines += "Over current relocation budget by ${report.encodedBytes - pianoRollRelocationBudgetBytes} B; export may fail or tail-trim."
+            lines += "Over current relocation budget by ${report.encodedBytes - pianoRollRelocationBudgetBytes} B; use Apply Fitted to trim before applying."
         }
         if (report.activeChannels > 8) {
             lines += "More than 8 active channels are not supported by SNES playback."
@@ -503,6 +700,7 @@ class SoundEditorState {
     private fun applyImportedPianoRollSong(
         importedSong: NspcSequence.Song,
         importedInstruments: List<NspcRenderer.InstrumentEntry>,
+        nativePayload: MusicNativePayloadEdit?,
         editorState: EditorState?,
         label: String
     ) {
@@ -517,7 +715,7 @@ class SoundEditorState {
             pianoRollInstruments = importedInstruments.map { it.copy() }
         }
         setNativePayloadCandidate(
-            pendingTrackImport?.nativePayload,
+            nativePayload,
             nextSong,
             pianoRollInstruments
         )
@@ -703,16 +901,21 @@ class SoundEditorState {
     fun startPianoRollPlayback(wav: ShortArray) {
         val song = editingSong ?: return
         val preview = normalizePreviewPcm(wav, extraGain = EDIT_TRACK_PREVIEW_GAIN)
-        pianoRollTickMs = 512.0 / song.tempo.coerceAtLeast(1)
+        pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
         pianoRollPlayStartMs = System.currentTimeMillis()
         pianoRollPlaybackTick = 0
         val peak = if (wav.isNotEmpty()) wav.maxOf { kotlin.math.abs(it.toInt()) } else 0
         val previewPeak = if (preview.isNotEmpty()) preview.maxOf { kotlin.math.abs(it.toInt()) } else 0
         soundEditorLog.info {
             "[SPC-PIANO] Starting playback: ${preview.size} samples (${preview.size / 32000}s), " +
-                "tempo=${song.tempo}, tickMs=${"%.1f".format(pianoRollTickMs)}, peak=$peak, previewPeak=$previewPeak"
+                "tempo=${song.tempo}, ticks=${song.totalTicks}, tickMs=${"%.1f".format(pianoRollTickMs)}, " +
+                "peak=$peak, previewPeak=$previewPeak"
         }
-        player.onComplete = { isPlaying = false; playbackPosition = 0f }
+        player.onComplete = {
+            isPlaying = false
+            playbackPosition = 0f
+            pianoRollPlaybackTick = -1
+        }
         player.play(preview, NativeSpcEmulator.SAMPLE_RATE)
         isPlaying = true
         statusMessage = "Playing edit preview..."
@@ -721,14 +924,39 @@ class SoundEditorState {
     /** Update piano roll playback tick based on elapsed time. */
     fun updatePianoRollTick() {
         if (!isPlaying || pianoRollPlaybackTick < 0) return
-        val elapsedMs = System.currentTimeMillis() - pianoRollPlayStartMs
-        val tick = (elapsedMs / pianoRollTickMs).toInt()
-        val maxTick = editingSong?.totalTicks ?: 0
-        pianoRollPlaybackTick = if (tick > maxTick) {
+        val song = editingSong ?: return
+        if (!player.isActive()) {
+            isPlaying = false
+            return
+        }
+        if (pianoRollTickMs <= 0.0) {
+            pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
+        }
+        val tick = (player.positionMillis() / pianoRollTickMs).toInt()
+        val maxTick = song.totalTicks
+        pianoRollPlaybackTick = if (maxTick > 0 && tick > maxTick) {
             stopPlayback()
             -1
         } else {
-            tick
+            tick.coerceIn(0, maxTick.coerceAtLeast(0))
+        }
+    }
+
+    fun seekPianoRollToTick(tick: Int) {
+        val song = editingSong ?: run {
+            pianoRollPlaybackTick = tick.coerceAtLeast(0)
+            return
+        }
+        if (pianoRollTickMs <= 0.0) {
+            pianoRollTickMs = PianoRollPlaybackTiming.tickMillis(song.tempo)
+        }
+        val clampedTick = tick.coerceIn(0, song.totalTicks.coerceAtLeast(0))
+        val seekMs = PianoRollPlaybackTiming.tickToMillis(clampedTick, song.tempo)
+        pianoRollPlaybackTick = clampedTick
+        pianoRollPlayStartMs = System.currentTimeMillis() - seekMs
+        if (player.isActive()) {
+            player.seekMillis(seekMs)
+            playbackPosition = player.positionFraction()
         }
     }
 
@@ -987,10 +1215,12 @@ class SoundEditorState {
         val noteDeltaPlan = PianoRollPreviewLogic.deltaOverlayPlan(song, originalPianoRollSong)
         val hasNoteDelta = noteDeltaPlan?.hasDelta ?: song.isModified
         val hasRenderableEdits = hasNoteDelta || instrumentWrites.isNotEmpty()
+        val previewSeconds = PianoRollPlaybackTiming.previewSeconds(song)
         soundEditorLog.info {
             "[SPC-PIANO] renderEditedSong: track='${track.name}', songSet=0x${track.songSet.toString(16)}, " +
                 "playIndex=${track.playIndex}, modified=${song.isModified}, noteDelta=$hasNoteDelta, " +
-                "instrumentEdits=${instrumentWrites.size}, notes=${song.channels.sumOf { it.notes.size }}, ticks=${song.totalTicks}"
+                "instrumentEdits=${instrumentWrites.size}, notes=${song.channels.sumOf { it.notes.size }}, " +
+                "ticks=${song.totalTicks}, previewSeconds=$previewSeconds"
         }
 
         return withContext(Dispatchers.Default) {
@@ -1003,7 +1233,7 @@ class SoundEditorState {
                     val payloadBlocks = MusicEditConversion.toTransferBlocks(nativePayload)
                     NativeSpcEmulator().use { emu ->
                         emu.loadFromRam(baseRam, songBlocks + payloadBlocks, track.playIndex)
-                        val mono = emu.renderMono(60)
+                        val mono = emu.renderMono(previewSeconds)
                         val peak = if (mono.isNotEmpty()) mono.maxOf { kotlin.math.abs(it.toInt()) } else 0
                         soundEditorLog.info {
                             "[SPC-PIANO] Native payload render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak"
@@ -1019,7 +1249,7 @@ class SoundEditorState {
                     soundEditorLog.info { "[SPC-PIANO] Rendering ORIGINAL track (unmodified) via native SPC emulator" }
                     NativeSpcEmulator().use { emu ->
                         emu.loadFromRam(baseRam, songBlocks, track.playIndex)
-                        val mono = emu.renderMono(60)
+                        val mono = emu.renderMono(previewSeconds)
                         val peak = if (mono.isNotEmpty()) mono.maxOf { kotlin.math.abs(it.toInt()) } else 0
                         soundEditorLog.info { "[SPC-PIANO] Native render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak" }
                         mono
@@ -1074,7 +1304,7 @@ class SoundEditorState {
                     soundEditorLog.info { "[SPC-PIANO] Loading native SPC: ${songBlocks.size} song blocks + ${patchBlocks.size} patch blocks" }
                     NativeSpcEmulator().use { emu ->
                         emu.loadFromRam(baseRam, songBlocks + patchBlocks, track.playIndex)
-                        val mono = emu.renderMono(60)
+                        val mono = emu.renderMono(previewSeconds)
                         val peak = if (mono.isNotEmpty()) mono.maxOf { kotlin.math.abs(it.toInt()) } else 0
                         soundEditorLog.info { "[SPC-PIANO] Native render OK: ${mono.size} samples (${mono.size / 32000}s), peak=$peak" }
                         if (peak < 200) {

@@ -177,6 +177,9 @@ fun FloatingEmulatorWindow(
                     val patchedPath = editorState.exportToRom(rp)
                     if (patchedPath != null) {
                         workspaceState.updateRomPath(patchedPath)
+                    } else {
+                        workspaceState.setStatus("Export failed; emulator was not restarted.")
+                        return@LaunchedEffect
                     }
                 }
                 workspaceState.startSession()
@@ -499,6 +502,9 @@ fun FloatingEmulatorWindow(
                                         val patchedPath = editorState.exportToRom(rp)
                                         if (patchedPath != null) {
                                             workspaceState.updateRomPath(patchedPath)
+                                        } else {
+                                            workspaceState.setStatus("Export failed; emulator was not started.")
+                                            return@launch
                                         }
                                     }
                                     // Don't auto-load save state on fresh start
@@ -558,6 +564,9 @@ fun FloatingEmulatorWindow(
                                         val patchedPath = editorState.exportToRom(rp)
                                         if (patchedPath != null) {
                                             workspaceState.updateRomPath(patchedPath)
+                                        } else {
+                                            workspaceState.setStatus("Export failed; emulator was not restarted.")
+                                            return@launch
                                         }
                                     }
                                     workspaceState.startSession()

@@ -80,6 +80,9 @@ class ImpulseTrackerImportTest {
 
         assertNotNull(result.nativePayload)
         assertEquals(0, result.song.channels[0].notes.single().instrument)
+        assertNotNull(result.editableFallbackSong)
+        assertEquals(0x18, result.editableFallbackSong!!.channels[0].notes.single().instrument)
+        assertTrue(result.editableFallbackInstruments.isEmpty())
         assertEquals(42, result.instruments.size)
         assertTrue(result.report.warnings.any { it.contains("Built custom IT native payload") })
 

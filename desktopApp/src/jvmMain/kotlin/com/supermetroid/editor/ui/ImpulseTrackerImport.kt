@@ -45,7 +45,9 @@ internal object ImpulseTrackerImport {
         val song: NspcSequence.Song,
         val instruments: List<NspcRenderer.InstrumentEntry> = emptyList(),
         val report: MusicTrackInterchange.InterchangeReport,
-        val nativePayload: MusicTrackInterchange.NativePayload? = null
+        val nativePayload: MusicTrackInterchange.NativePayload? = null,
+        val editableFallbackSong: NspcSequence.Song? = null,
+        val editableFallbackInstruments: List<NspcRenderer.InstrumentEntry> = emptyList()
     )
 
     data class Module(
@@ -144,8 +146,14 @@ internal object ImpulseTrackerImport {
             song = nativeBuild.song
         }
 
+        val editableFallbackSong = if (customPlan != null) {
+            remapSongInstruments(sourceImport.song, module)
+        } else {
+            null
+        }
+
         if (customPlan != null && nativePayload == null) {
-            song = remapSongInstruments(sourceImport.song, module)
+            song = editableFallbackSong ?: remapSongInstruments(sourceImport.song, module)
             instruments = emptyList()
         }
 
@@ -159,7 +167,9 @@ internal object ImpulseTrackerImport {
                 song = song,
                 warnings = warnings.distinct()
             ),
-            nativePayload = nativePayload
+            nativePayload = nativePayload,
+            editableFallbackSong = editableFallbackSong,
+            editableFallbackInstruments = emptyList()
         )
     }
 

@@ -15,12 +15,14 @@ private val soundPlayerLog = KotlinLogging.logger {}
 class SoundPlayer {
     private var clip: Clip? = null
     private var totalFrames: Long = 0
+    private var currentSampleRate: Int = 32000
     var onComplete: (() -> Unit)? = null
 
     fun play(pcmSamples: ShortArray, sampleRate: Int = 32000, loop: Boolean = false, startFrame: Long = 0) {
         stop()
         if (pcmSamples.isEmpty()) return
 
+        currentSampleRate = sampleRate
         val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
         val byteData = pcmToBytes(pcmSamples)
 
@@ -32,7 +34,12 @@ class SoundPlayer {
                 newClip.framePosition = startFrame.toInt().coerceIn(0, newClip.frameLength - 1)
             }
             newClip.addLineListener { event ->
-                if (event.type == LineEvent.Type.STOP && !loop && clip === newClip) {
+                if (
+                    event.type == LineEvent.Type.STOP &&
+                    !loop &&
+                    clip === newClip &&
+                    newClip.framePosition >= newClip.frameLength - 1
+                ) {
                     onComplete?.invoke()
                 }
             }
@@ -64,6 +71,20 @@ class SoundPlayer {
         val c = clip ?: return
         val frame = (fraction * totalFrames).toInt().coerceIn(0, c.frameLength - 1)
         c.framePosition = frame
+    }
+
+    fun positionMillis(): Long {
+        val c = clip ?: return 0L
+        if (currentSampleRate <= 0) return 0L
+        return c.framePosition.toLong() * 1000L / currentSampleRate
+    }
+
+    fun seekMillis(milliseconds: Long) {
+        val c = clip ?: return
+        if (currentSampleRate <= 0 || c.frameLength <= 0) return
+        val frame = (milliseconds * currentSampleRate / 1000L)
+            .coerceIn(0L, c.frameLength.toLong() - 1L)
+        c.framePosition = frame.toInt()
     }
 }
 

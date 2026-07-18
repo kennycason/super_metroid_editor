@@ -5152,6 +5152,14 @@ class EditorState {
         requiredBytes: Int
     ): Int {
         require(requiredBytes > 0) { "music transfer chain must not be empty" }
+        val maxLoRomBankBytes = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
+        if (requiredBytes > maxLoRomBankBytes) {
+            error(
+                "music transfer chain needs $requiredBytes bytes, but one LoROM bank can hold at most " +
+                    "$maxLoRomBankBytes bytes. Large native IT/custom-sample imports can preview and export raw .nspc, " +
+                    "but cannot be ROM-exported yet without a smaller payload or a future multi-bank/compact exporter"
+            )
+        }
         val preferredBanks = listOf(0xB8, 0xCE, 0x85, 0x83, 0x89)
         val fallbackBanks = (0x80..0xFF).filterNot { it in preferredBanks }
         for (bank in preferredBanks + fallbackBanks) {

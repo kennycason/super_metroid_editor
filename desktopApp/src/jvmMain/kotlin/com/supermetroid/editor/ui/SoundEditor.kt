@@ -464,6 +464,7 @@ fun SoundEditorCanvas(
                 PendingTrackImportPanel(
                     pending = pending,
                     onApply = { state.applyPendingTrackImport(editorState) },
+                    onApplyFitted = { state.applyPendingTrackImportFitted(editorState) },
                     onCancel = { state.cancelPendingTrackImport() },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)
                 )
@@ -528,7 +529,7 @@ fun SoundEditorCanvas(
                 },
                 onDone = { state.closePianoRoll() },
                 onReset = { if (romParser != null) state.resetPianoRoll(romParser, editorState) },
-                onSeek = { tick -> state.pianoRollPlaybackTick = tick },
+                onSeek = { tick -> state.seekPianoRollToTick(tick) },
                 isPlaying = state.isPlaying,
                 playbackTick = state.pianoRollPlaybackTick,
                 modifier = Modifier.fillMaxWidth().weight(1f)
@@ -568,52 +569,71 @@ fun SoundEditorCanvas(
 private fun PendingTrackImportPanel(
     pending: SoundEditorState.PendingTrackImport,
     onApply: () -> Unit,
+    onApplyFitted: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val blocked = pending.applyBlockedReason != null
+    val reportTextColor = if (blocked) {
+        MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.82f)
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f)
+    }
     Surface(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        color = if (blocked) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = if (blocked) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
         shape = RoundedCornerShape(6.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
     ) {
-        Row(
+        Column(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Import preview: ${pending.fileName}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            pending.reportLines.take(if (blocked) 5 else 3).forEach { line ->
                 Text(
-                    "Import preview: ${pending.fileName}",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    line,
+                    fontSize = 9.sp,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    color = reportTextColor
                 )
-                pending.reportLines.take(3).forEach { line ->
-                    Text(
-                        line,
-                        fontSize = 9.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f)
-                    )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onApply,
+                    enabled = pending.canApply,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Apply", fontSize = 10.sp)
                 }
-            }
-            Button(
-                onClick = onApply,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Text("Apply", fontSize = 10.sp)
-            }
-            OutlinedButton(
-                onClick = onCancel,
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.height(28.dp)
-            ) {
-                Text("Cancel", fontSize = 10.sp)
+                pending.fittedImport?.let {
+                    Button(
+                        onClick = onApplyFitted,
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Text("Apply Fitted", fontSize = 10.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = onCancel,
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("Cancel", fontSize = 10.sp)
+                }
             }
         }
     }

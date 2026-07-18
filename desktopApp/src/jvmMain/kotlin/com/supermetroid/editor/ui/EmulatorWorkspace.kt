@@ -140,6 +140,9 @@ fun EmulatorWorkspace(
                     val patchedPath = editorState.exportToRom(rp)
                     if (patchedPath != null) {
                         workspaceState.updateRomPath(patchedPath)
+                    } else {
+                        workspaceState.setStatus("Export failed; emulator was not restarted.")
+                        return@LaunchedEffect
                     }
                 }
                 workspaceState.startSession()
@@ -278,6 +281,9 @@ fun EmulatorWorkspace(
                                             val patchedPath = editorState.exportToRom(rp)
                                             if (patchedPath != null) {
                                                 workspaceState.updateRomPath(patchedPath)
+                                            } else {
+                                                workspaceState.setStatus("Export failed; emulator was not started.")
+                                                return@launch
                                             }
                                         }
                                         workspaceState.startSession()
