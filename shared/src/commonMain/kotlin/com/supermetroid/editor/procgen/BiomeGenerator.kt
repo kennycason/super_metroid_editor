@@ -59,7 +59,11 @@ class BiomeGenerator(
         applyRects(explicitForceAir, width, height, options.forceAirRects)
         for (i in 0 until n) if (explicitForceAir[i]) forceAir[i] = true
         applyRects(explicitPreserve, width, height, options.preserveRects)
-        for (i in 0 until n) if (explicitForceAir[i] && !explicitPreserve[i]) preserved[i] = false
+        for (i in 0 until n) {
+            if (explicitForceAir[i] && !explicitPreserve[i] && ((originalWords[i] shr 12) and 0xF) != 0x9) {
+                preserved[i] = false
+            }
+        }
         for (i in 0 until n) if (explicitPreserve[i]) preserved[i] = true
         if (isMaze) {
             preserveOriginalMazeCollision(originalWords, width, preserved, forceAir)
@@ -172,10 +176,18 @@ class BiomeGenerator(
             rng,
             tunnelThickness = if (isMaze) 1 else 2,
         )
+        for (i in 0 until n) {
+            if (forceAir[i] && !preserved[i]) {
+                dressed.words[i] = FORCED_AIR_WORD
+                dressed.bts[i] = 0
+            }
+        }
         return GeneratedLevel(width, height, dressed.words, dressed.bts, preserved)
     }
 
     private companion object {
+        private const val FORCED_AIR_WORD = 0x00FF
+
         /**
          * Block types that read as open space in the room's visual silhouette.
          * Destructibles (crumble/shot/bomb) count as solid: they are part of

@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.RoomExportData
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeStyle
@@ -171,6 +172,10 @@ class RoomExportTest {
         val es = EditorState()
         es.loadRoom(roomId, rp, room)
 
+        val elevatorDoor = rp.findDoorsLeadingTo(roomId).single { it.isElevator }
+        val clearanceBefore = elevatorClearanceSnapshot(es, elevatorDoor, room.width * 16, room.height * 16)
+        val topDoorLeft = es.readBlockWord(7, 10)
+        val topDoorRight = es.readBlockWord(8, 10)
         val bottomDoorLeft = es.readBlockWord(7, 15)
         val bottomDoorRight = es.readBlockWord(8, 15)
         val changed = es.generateBiome(
@@ -181,17 +186,52 @@ class RoomExportTest {
         )
 
         assertTrue(changed > 0, "room generation should change some non-protected tiles")
+        assertEquals(topDoorLeft, es.readBlockWord(7, 10), "top elevator left trigger tile must be preserved")
+        assertEquals(topDoorRight, es.readBlockWord(8, 10), "top elevator right trigger tile must be preserved")
         assertEquals(bottomDoorLeft, es.readBlockWord(7, 15), "bottom elevator left door tile must be preserved")
         assertEquals(bottomDoorRight, es.readBlockWord(8, 15), "bottom elevator right door tile must be preserved")
-        for (y in 12..14) {
-            for (x in 7..8) {
-                val type = (es.readBlockWord(x, y) shr 12) and 0xF
-                assertTrue(
-                    type in setOf(0x0, 0x2, 0x4, 0x7, 0x9, 0xB, 0xC, 0xF),
-                    "bottom elevator standing cell ($x,$y) must be passable, got type 0x${type.toString(16)}"
+        assertGreenBrinstarElevatorShaftClear(es)
+        assertElevatorClearance(
+            es,
+            clearanceBefore,
+            "bottom elevator",
+        )
+    }
+
+    @Test
+    fun `generate room keeps every elevator endpoint clear`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val roomInfos = RoomRepository().getAllRooms()
+        var checked = 0
+
+        for (info in roomInfos) {
+            val roomId = info.getRoomIdAsInt()
+            val incomingElevators = rp.findDoorsLeadingTo(roomId).filter { it.isElevator }
+            if (incomingElevators.isEmpty()) continue
+            val room = rp.readRoomHeader(roomId) ?: continue
+            val es = EditorState()
+            es.loadRoom(roomId, rp, room)
+            val clearancesBefore = incomingElevators.associateWith { door ->
+                elevatorClearanceSnapshot(es, door, room.width * 16, room.height * 16)
+            }
+            es.generateBiome(
+                BiomeRules.roll(BiomeStyle.PIPE_MAZE, 424242L + roomId),
+                TilesetProfile.synthetic(),
+                424242L + roomId,
+                romParser = rp,
+            )
+
+            for (door in incomingElevators) {
+                checked++
+                assertElevatorClearance(
+                    es,
+                    clearancesBefore.getValue(door),
+                    "room 0x${roomId.toString(16).uppercase()} ${info.name}",
                 )
             }
         }
+
+        assertTrue(checked >= 14, "test ROM should expose every vanilla elevator endpoint")
     }
 
     @Test
@@ -249,6 +289,98 @@ class RoomExportTest {
             targetRawPalette.contentEquals(exportedRawPalette),
             "exported ROM should decompress to the saved randomized palette",
         )
+    }
+
+    private data class ElevatorCellBefore(
+        val word: Int,
+        val bts: Int,
+    )
+
+    private fun assertGreenBrinstarElevatorShaftClear(es: EditorState) {
+        for (y in 5..14) {
+            for (x in 6..9) {
+                val originalType9Trigger = x in 7..8 && y == 10
+                if (originalType9Trigger) continue
+                assertEquals(0x00FF, es.readBlockWord(x, y), "Green Brinstar elevator shaft cell ($x,$y) must be blank air")
+                assertEquals(0, es.readBts(x, y), "Green Brinstar elevator shaft cell ($x,$y) must clear BTS")
+            }
+        }
+    }
+
+    private fun assertElevatorClearance(
+        es: EditorState,
+        cellsBefore: Map<Pair<Int, Int>, ElevatorCellBefore>,
+        label: String,
+    ) {
+        for ((cell, before) in cellsBefore) {
+            val (x, y) = cell
+            val word = es.readBlockWord(x, y)
+            val bts = es.readBts(x, y)
+            val originalType = (before.word shr 12) and 0xF
+            if (originalType == 0x9) {
+                assertEquals(before.word, word, "$label elevator tile ($x,$y) must be preserved")
+                assertEquals(before.bts, bts, "$label elevator tile ($x,$y) BTS must be preserved")
+            } else {
+                assertEquals(0x00FF, word, "$label elevator clearance cell ($x,$y) must be blank air")
+                assertEquals(0, bts, "$label elevator clearance cell ($x,$y) must clear BTS")
+            }
+        }
+    }
+
+    private fun elevatorClearanceSnapshot(
+        es: EditorState,
+        door: RomParser.DoorEntry,
+        width: Int,
+        height: Int,
+    ): Map<Pair<Int, Int>, ElevatorCellBefore> {
+        return elevatorClearanceCells(door, width, height).associateWith { (x, y) ->
+            ElevatorCellBefore(
+                word = es.readBlockWord(x, y),
+                bts = es.readBts(x, y),
+            )
+        }
+    }
+
+    private fun elevatorClearanceCells(
+        door: RomParser.DoorEntry,
+        width: Int,
+        height: Int,
+    ): List<Pair<Int, Int>> {
+        val screenX0 = door.screenX * 16
+        val screenY0 = door.screenY * 16
+        val centerLeftX = screenX0 + 7
+        val centerRightX = screenX0 + 8
+        val centerTopY = screenY0 + 7
+        val centerBottomY = screenY0 + 8
+        val verticalClearLeftX = centerLeftX - 1
+        val verticalClearRightX = centerRightX + 1
+        val horizontalClearTopY = centerTopY - 1
+        val horizontalClearBottomY = centerBottomY + 1
+        val elevatorClearanceDepth = 5
+
+        fun cells(xRange: IntRange, yRange: IntRange): List<Pair<Int, Int>> =
+            yRange.flatMap { y -> xRange.map { x -> x to y } }
+                .filter { (x, y) -> x in 0 until width && y in 0 until height }
+
+        return when (door.direction and 0x03) {
+            2 -> cells(
+                verticalClearLeftX..verticalClearRightX,
+                (screenY0 + 1)..(screenY0 + elevatorClearanceDepth),
+            )
+            3 -> {
+                val doorY = minOf(screenY0 + 15, height - 1)
+                cells(verticalClearLeftX..verticalClearRightX, (doorY - elevatorClearanceDepth) until doorY)
+            }
+            0 -> cells(
+                (screenX0 + 1)..(screenX0 + elevatorClearanceDepth),
+                horizontalClearTopY..horizontalClearBottomY,
+            )
+            1 -> {
+                val doorX = minOf(screenX0 + 15, width - 1)
+                cells((doorX - elevatorClearanceDepth) until doorX, horizontalClearTopY..horizontalClearBottomY)
+            }
+            else -> emptyList()
+        }
     }
 
     private fun readTilesetPalettePointer(parser: RomParser, tilesetId: Int): Int {

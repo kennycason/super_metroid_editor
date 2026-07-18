@@ -168,16 +168,22 @@ class BiomeGeneratorTest {
             bts[i] = 0x21
             i
         }
-        for (y in platformY - 4 until platformY) {
-            for (x in 15..16) {
+        for (y in platformY - 5 until platformY) {
+            for (x in 14..17) {
                 val i = y * w + x
                 words[i] = (0xB shl 12) or 0x2C0
             }
         }
+        val topElevatorStrip = (15..16).map { x ->
+            val i = (platformY - 5) * w + x
+            words[i] = (0x9 shl 12) or 0x0FF
+            bts[i] = 0x02
+            i
+        }
 
         val options = BiomeGenerationOptions(
             preserveRects = listOf(BiomeGenerationRect(11, platformY, 20, platformY)),
-            forceAirRects = listOf(BiomeGenerationRect(15, platformY - 4, 16, platformY - 1)),
+            forceAirRects = listOf(BiomeGenerationRect(14, platformY - 5, 17, platformY - 1)),
         )
         val gen = BiomeGenerator(rules(4242, BiomeStyle.PIPE_MAZE), profile, 4242, options)
             .generate(w, h, words, bts)
@@ -187,19 +193,27 @@ class BiomeGeneratorTest {
             assertEquals(bts[i], gen.bts[i], "elevator platform BTS $i must be preserved")
             assertTrue(gen.preserved[i], "elevator platform cell $i must be flagged preserved")
         }
+        for (i in topElevatorStrip) {
+            assertEquals(words[i], gen.words[i], "elevator top word $i must be preserved")
+            assertEquals(bts[i], gen.bts[i], "elevator top BTS $i must be preserved")
+            assertTrue(gen.preserved[i], "elevator top cell $i must be flagged preserved")
+        }
         assertPassableRect(
             gen,
             w,
-            x0 = 15,
-            y0 = platformY - 3,
-            width = 2,
-            height = 3,
+            x0 = 14,
+            y0 = platformY - 5,
+            width = 4,
+            height = 5,
             label = "bottom elevator standing space",
         )
-        for (y in platformY - 4 until platformY) {
-            for (x in 15..16) {
+        for (y in platformY - 5 until platformY) {
+            for (x in 14..17) {
                 val i = y * w + x
+                if (i in topElevatorStrip) continue
                 assertTrue(!gen.preserved[i], "elevator clearance cell ($x,$y) should not be preserved")
+                assertEquals(0, (gen.words[i] shr 12) and 0xF, "elevator clearance cell ($x,$y) should be air")
+                assertEquals(0, gen.bts[i], "elevator clearance cell ($x,$y) should clear BTS")
                 assertTrue(
                     ((gen.words[i] shr 12) and 0xF) !in setOf(0x5, 0xB, 0xD),
                     "elevator clearance cell ($x,$y) should not keep crumble or extension collision"

@@ -15,7 +15,7 @@ private data class DoorGroup(
     val maxX: Int,
     val maxY: Int,
 ) {
-    val vertical: Boolean get() = maxX - minX < maxY - minY + 2
+    val vertical: Boolean get() = maxY - minY > maxX - minX
 }
 
 internal object DoorPreservation {
@@ -138,8 +138,8 @@ internal object DoorPreservation {
                 if (!nearLeftEdge) pockets.add(DoorPocket(group.minX - depth, y0, group.minX - 1, y1))
             } else {
                 val centerX = (group.minX + group.maxX) / 2
-                val x0 = minOf(group.minX, centerX - 1)
-                val x1 = maxOf(group.maxX, centerX + 1)
+                val x0 = minOf(group.minX, centerX - 1) - HORIZONTAL_DOOR_CLEARANCE_MARGIN
+                val x1 = maxOf(group.maxX, centerX + 1) + HORIZONTAL_DOOR_CLEARANCE_MARGIN
                 val nearTopEdge = group.minY <= depth
                 val nearBottomEdge = group.maxY >= height - depth - 1
                 if (!nearBottomEdge) pockets.add(DoorPocket(x0, group.maxY + 1, x1, group.maxY + depth))
@@ -151,7 +151,8 @@ internal object DoorPreservation {
 
     private const val DOOR_FIXTURE_DEPTH = 8
     private const val DOOR_FIXTURE_MARGIN = 3
-    private const val DOOR_CLEARANCE = 3
+    private const val DOOR_CLEARANCE = 5
+    private const val HORIZONTAL_DOOR_CLEARANCE_MARGIN = 1
 
     private fun isDoorFixtureType(type: Int): Boolean =
         type != 0x0 && type != 0x2 && type != 0x4 && type != 0x7

@@ -4301,6 +4301,11 @@ class EditorState {
         val centerRightX = screenX0 + 8
         val centerTopY = screenY0 + 7
         val centerBottomY = screenY0 + 8
+        val verticalClearLeftX = centerLeftX - 1
+        val verticalClearRightX = centerRightX + 1
+        val horizontalClearTopY = centerTopY - 1
+        val horizontalClearBottomY = centerBottomY + 1
+        val elevatorClearanceDepth = 5
 
         fun addPreserve(rect: BiomeGenerationRect) {
             if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
@@ -4316,10 +4321,17 @@ class EditorState {
         when (door.direction and 0x03) {
             2 -> {
                 // Elevator entering from the top edge: preserve the top door strip,
-                // then keep the 2-tile-wide shaft below it open for Samus.
+                // then keep a wider shaft below it open for Samus.
                 val doorY = screenY0
                 addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addForceAir(BiomeGenerationRect(centerLeftX, doorY + 1, centerRightX, doorY + 4))
+                addForceAir(
+                    BiomeGenerationRect(
+                        verticalClearLeftX,
+                        doorY + 1,
+                        verticalClearRightX,
+                        doorY + elevatorClearanceDepth,
+                    )
+                )
             }
             3 -> {
                 // Elevator entering from the bottom edge. Vanilla bottom elevator
@@ -4327,17 +4339,38 @@ class EditorState {
                 // with the standing space immediately above it.
                 val doorY = minOf(screenY0 + 15, height - 1)
                 addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addForceAir(BiomeGenerationRect(centerLeftX, doorY - 4, centerRightX, doorY - 1))
+                addForceAir(
+                    BiomeGenerationRect(
+                        verticalClearLeftX,
+                        doorY - elevatorClearanceDepth,
+                        verticalClearRightX,
+                        doorY - 1,
+                    )
+                )
             }
             0 -> {
                 val doorX = screenX0
                 addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addForceAir(BiomeGenerationRect(doorX + 1, centerTopY, doorX + 3, centerBottomY))
+                addForceAir(
+                    BiomeGenerationRect(
+                        doorX + 1,
+                        horizontalClearTopY,
+                        doorX + elevatorClearanceDepth,
+                        horizontalClearBottomY,
+                    )
+                )
             }
             1 -> {
                 val doorX = minOf(screenX0 + 15, width - 1)
                 addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addForceAir(BiomeGenerationRect(doorX - 3, centerTopY, doorX - 1, centerBottomY))
+                addForceAir(
+                    BiomeGenerationRect(
+                        doorX - elevatorClearanceDepth,
+                        horizontalClearTopY,
+                        doorX - 1,
+                        horizontalClearBottomY,
+                    )
+                )
             }
         }
     }
