@@ -425,6 +425,112 @@ class RoomExportTest {
     }
 
     @Test
+    fun `spore crocomire and botwoon behavior export writes direct and mirrored fields`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidMoreBossBehavior.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val sporePatch = state.findOrCreateConfigPatch(SPORE_SPAWN_CONFIG_TYPE)
+        assertFalse(sporePatch.enabled, "spore spawn behavior starts disabled in a new project")
+        state.setPatchConfigData(sporePatch.id, "fight_max_x_radius", 0x0055)
+        state.setPatchConfigData(sporePatch.id, "death_arrival_tolerance", 0x000C)
+        assertTrue(sporePatch.enabled, "editing spore spawn behavior should enable the patch for export")
+
+        val crocomirePatch = state.findOrCreateConfigPatch(CROCOMIRE_CONFIG_TYPE)
+        assertFalse(crocomirePatch.enabled, "crocomire behavior starts disabled in a new project")
+        state.setPatchConfigData(crocomirePatch.id, "charged_steps_back", 0x0004)
+        state.setPatchConfigData(crocomirePatch.id, "offscreen_bg_scroll", 0x0120)
+        assertTrue(crocomirePatch.enabled, "editing crocomire behavior should enable the patch for export")
+
+        val botwoonPatch = state.findOrCreateConfigPatch(BOTWOON_CONFIG_TYPE)
+        assertFalse(botwoonPatch.enabled, "botwoon behavior starts disabled in a new project")
+        state.setPatchConfigData(botwoonPatch.id, "spit_timer", 0x0040)
+        state.setPatchConfigData(botwoonPatch.id, "fall_ground_y", 0x00D0)
+        assertTrue(botwoonPatch.enabled, "editing botwoon behavior should enable the patch for export")
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun word(snesAddress: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
+
+        assertEquals(0x0055, word(0xA5E6D7), "Spore Spawn fight max X radius should be patched")
+        for (addr in listOf(0xA5EC27, 0xA5EC37)) {
+            assertEquals(0x000C, word(addr), "Mirrored Spore Spawn death tolerance should be patched at ${addr.toString(16)}")
+        }
+        assertEquals(0x0004, word(0xA48698), "Crocomire charged steps back should be patched")
+        for (addr in listOf(0xA48BE1, 0xA48BE9)) {
+            assertEquals(0x0120, word(addr), "Mirrored Crocomire offscreen BG scroll should be patched at ${addr.toString(16)}")
+        }
+        assertEquals(0x0040, word(0xB39923), "Botwoon spit timer should be patched")
+        for (addr in listOf(0xB39A87, 0xB39A8C)) {
+            assertEquals(0x00D0, word(addr), "Mirrored Botwoon fall ground Y should be patched at ${addr.toString(16)}")
+        }
+    }
+
+    @Test
+    fun `torizo and mother brain behavior export writes direct and mirrored fields`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidFinalBossBehavior.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val torizoPatch = state.findOrCreateConfigPatch(TORIZO_CONFIG_TYPE)
+        assertFalse(torizoPatch.enabled, "torizo behavior starts disabled in a new project")
+        state.setPatchConfigData(torizoPatch.id, "low_health_drool_threshold", 0x0120)
+        state.setPatchConfigData(torizoPatch.id, "fall_reset_y_speed", 0x0110)
+        state.setPatchConfigData(torizoPatch.id, "golden_forward_jump_distance", 0x0080)
+        assertTrue(torizoPatch.enabled, "editing torizo behavior should enable the patch for export")
+
+        val motherBrainPatch = state.findOrCreateConfigPatch(MOTHER_BRAIN_CONFIG_TYPE)
+        assertFalse(motherBrainPatch.enabled, "mother brain behavior starts disabled in a new project")
+        state.setPatchConfigData(motherBrainPatch.id, "attack_cooldown", 0x0050)
+        state.setPatchConfigData(motherBrainPatch.id, "max_active_bombs", 0x0002)
+        state.setPatchConfigData(motherBrainPatch.id, "phase1_samus_x_gate", 0xFFFF)
+        state.setPatchConfigData(motherBrainPatch.id, "rainbow_initial_width", 0x0300)
+        state.setPatchConfigData(motherBrainPatch.id, "escape_door_explosion_interval", 0x0006)
+        assertTrue(motherBrainPatch.enabled, "editing mother brain behavior should enable the patch for export")
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun word(snesAddress: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
+
+        for (addr in listOf(0xAAC35F, 0xAAC636, 0xAAC70B)) {
+            assertEquals(0x0120, word(addr), "Mirrored Torizo low-health threshold should be patched at ${addr.toString(16)}")
+        }
+        for (addr in listOf(0xAAC7B8, 0xAAC81F, 0xAAC86D, 0xAAD64F)) {
+            assertEquals(0x0110, word(addr), "Mirrored Torizo fall reset Y speed should be patched at ${addr.toString(16)}")
+        }
+        assertEquals(0x0080, word(0xAAD4BB), "Golden Torizo forward jump distance should be patched")
+        assertEquals(0x0FFF, word(0xA987F5), "Mother Brain Samus X gate should be clamped during export")
+        assertEquals(0x0050, word(0xA9B65B), "Mother Brain attack cooldown should be patched")
+        for (addr in listOf(0xA9B6BE, 0xA9B71D)) {
+            assertEquals(0x0002, word(addr), "Mirrored Mother Brain active bomb gate should be patched at ${addr.toString(16)}")
+        }
+        for (addr in listOf(0xA9B995, 0xA9BA77)) {
+            assertEquals(0x0300, word(addr), "Mirrored Mother Brain rainbow width should be patched at ${addr.toString(16)}")
+        }
+        assertEquals(0x0006, word(0xA9B350), "Mother Brain escape door explosion interval should be patched")
+    }
+
+    @Test
     fun `boss tab config edits enable all boss config patches`() {
         val state = EditorState()
         val keysByConfig = mapOf(
@@ -434,6 +540,11 @@ class RoomExportTest {
             KRAID_CONFIG_TYPE to "intro_delay",
             RIDLEY_CONFIG_TYPE to "norfair_tail_damage",
             DRAYGON_CONFIG_TYPE to "goop_count",
+            SPORE_SPAWN_CONFIG_TYPE to "fight_max_x_radius",
+            CROCOMIRE_CONFIG_TYPE to "charged_steps_back",
+            BOTWOON_CONFIG_TYPE to "spit_timer",
+            TORIZO_CONFIG_TYPE to "low_health_drool_threshold",
+            MOTHER_BRAIN_CONFIG_TYPE to "attack_cooldown",
         )
 
         for ((configType, key) in keysByConfig) {

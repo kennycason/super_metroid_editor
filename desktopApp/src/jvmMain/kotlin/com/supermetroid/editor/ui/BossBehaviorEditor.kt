@@ -42,6 +42,11 @@ import com.supermetroid.editor.rom.RomParser
 
 const val RIDLEY_CONFIG_TYPE = "ridley"
 const val DRAYGON_CONFIG_TYPE = "draygon"
+const val SPORE_SPAWN_CONFIG_TYPE = "spore_spawn"
+const val CROCOMIRE_CONFIG_TYPE = "crocomire"
+const val BOTWOON_CONFIG_TYPE = "botwoon"
+const val TORIZO_CONFIG_TYPE = "torizo"
+const val MOTHER_BRAIN_CONFIG_TYPE = "mother_brain"
 
 data class BossBehaviorField(
     val key: String,
@@ -51,6 +56,8 @@ data class BossBehaviorField(
     val unit: String = "",
     val signed: Boolean = false,
     val hex: Boolean = false,
+    val minValue: Int? = null,
+    val maxValue: Int? = null,
     val writeSnesAddresses: List<Int> = listOf(snesAddress),
 )
 
@@ -78,6 +85,8 @@ private fun bossBehaviorField(
     unit: String = "",
     signed: Boolean = false,
     hex: Boolean = false,
+    minValue: Int? = null,
+    maxValue: Int? = null,
     vararg additionalWriteAddresses: Int,
 ): BossBehaviorField =
     BossBehaviorField(
@@ -88,8 +97,78 @@ private fun bossBehaviorField(
         unit = unit,
         signed = signed,
         hex = hex,
+        minValue = minValue,
+        maxValue = maxValue,
         writeSnesAddresses = (listOf(snesAddress) + additionalWriteAddresses.toList()).distinct(),
     )
+
+private fun BossBehaviorField.logicalDefaultValue(): Int =
+    if (signed && defaultValue > 32767) defaultValue - 65536 else defaultValue
+
+private fun BossBehaviorField.logicalValue(storedValue: Int): Int {
+    val word = storedValue and 0xFFFF
+    return if (signed && word > 32767) word - 65536 else word
+}
+
+private fun BossBehaviorField.storedValue(logicalValue: Int): Int =
+    if (signed && logicalValue < 0) logicalValue + 65536 else logicalValue
+
+private fun BossBehaviorField.logicalMinValue(): Int =
+    minValue ?: when {
+        signed -> -32768
+        else -> 0
+    }
+
+private fun BossBehaviorField.logicalMaxValue(): Int {
+    val inferred = when {
+        maxValue != null -> maxValue
+        signed -> 32767
+        hex -> 65535
+        unit == "hp" -> 32767
+        unit == "frames" -> 32767
+        unit == "px" -> 4095
+        unit == "missiles" -> 999
+        unit == "damage" -> 9999
+        unit == "px/frame" -> 255
+        unit == "subpx/frame" -> 32767
+        unit == "speed" -> 32767
+        else -> 65535
+    }
+    return maxOf(inferred, logicalDefaultValue())
+}
+
+internal fun coerceBossBehaviorValue(field: BossBehaviorField, storedValue: Int): Int {
+    val min = field.logicalMinValue()
+    val max = field.logicalMaxValue()
+    val logical = field.logicalValue(storedValue).coerceIn(min, max)
+    return field.storedValue(logical).coerceIn(0, 65535)
+}
+
+private fun formatBossBehaviorSnesAddress(snesAddress: Int): String {
+    val bank = (snesAddress ushr 16) and 0xFF
+    val offset = snesAddress and 0xFFFF
+    return "$" + bank.toString(16).uppercase().padStart(2, '0') +
+        ":" + offset.toString(16).uppercase().padStart(4, '0')
+}
+
+private fun BossBehaviorField.rangeText(): String {
+    val min = logicalMinValue()
+    val max = logicalMaxValue()
+    return if (hex && min >= 0) {
+        val lo = min.toString(16).uppercase().padStart(4, '0')
+        val hi = max.toString(16).uppercase().padStart(4, '0')
+        "\$$lo..\$$hi"
+    } else {
+        "$min..$max"
+    }
+}
+
+private fun BossBehaviorField.metadataText(): String {
+    val source = formatBossBehaviorSnesAddress(snesAddress)
+    val mirrors = writeSnesAddresses.size - 1
+    val mirrorText = if (mirrors > 0) " +$mirrors mirror" + if (mirrors == 1) "" else "s" else ""
+    return "$source$mirrorText | ${rangeText()}"
+}
 
 val RIDLEY_BEHAVIOR = BossBehaviorDefinition(
     configType = RIDLEY_CONFIG_TYPE,
@@ -372,7 +451,472 @@ val DRAYGON_BEHAVIOR = BossBehaviorDefinition(
     ),
 )
 
-val BOSS_BEHAVIOR_DEFINITIONS: List<BossBehaviorDefinition> = listOf(RIDLEY_BEHAVIOR, DRAYGON_BEHAVIOR)
+val SPORE_SPAWN_BEHAVIOR = BossBehaviorDefinition(
+    configType = SPORE_SPAWN_CONFIG_TYPE,
+    title = "SPORE SPAWN",
+    subtitle = "Advanced Behavior Editor",
+    description = "Edit Spore Spawn's orbit movement, hardening, descent, dust, and death constants from bank A5. HP and contact damage remain in Boss Stats.",
+    headerColor = Color(0xFF2E7D32),
+    sections = listOf(
+        BossBehaviorSection(
+            "Fight Movement",
+            "Orbit radius, angle step, open/closed waits, and the radius growth limits used during the active fight.",
+            Color(0xFF43A047),
+            listOf(
+                bossBehaviorField("fight_max_x_radius", "Fight Max X Radius", 0xA5E6D7, 0x0040, unit = "px"),
+                bossBehaviorField("fight_angle_delta", "Fight Angle Delta", 0xA5E6D9, 0x0001, signed = true),
+                bossBehaviorField("move_open_wait", "Open Wait", 0xA5E74F, 0x0200, unit = "frames"),
+                bossBehaviorField("move_closed_wait", "Closed Wait", 0xA5E757, 0x00D0, unit = "frames"),
+                bossBehaviorField("radius_increment", "Radius Increment", 0xA5E765, 0x0008, unit = "px"),
+                bossBehaviorField("radius_increment_cap", "Radius Increment Cap", 0xA5E768, 0x0030, unit = "px"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Descent And Harden",
+            "Descending speed, target height, hardened position, and orbit seed values for the falling phase.",
+            Color(0xFF827717),
+            listOf(
+                bossBehaviorField("descent_y_speed", "Descent Y Speed", 0xA5EB26, 0x0001, unit = "px/frame"),
+                bossBehaviorField("descent_target_y", "Descent Target Y", 0xA5EB2C, 0x0270, unit = "px"),
+                bossBehaviorField("descent_initial_radius", "Initial Radius", 0xA5EB3D, 0x0030, unit = "px"),
+                bossBehaviorField("descent_initial_angle_delta", "Initial Angle Delta", 0xA5EB44, 0x0001, signed = true),
+                bossBehaviorField("descent_initial_angle", "Initial Angle", 0xA5EB4B, 0x00C0, hex = true),
+                bossBehaviorField("harden_x", "Harden X", 0xA5E87D, 0x0080, unit = "px"),
+                bossBehaviorField("harden_y", "Harden Y", 0xA5E883, 0x0270, unit = "px"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Dust And Death",
+            "Hardening dust, death explosion spread, target point, movement speed, and arrival tolerance constants.",
+            Color(0xFF6D4C41),
+            listOf(
+                bossBehaviorField("hardening_dust_x_mask", "Hardening Dust X Mask", 0xA5E978, 0x007F, hex = true),
+                bossBehaviorField("hardening_dust_x_offset", "Hardening Dust X Offset", 0xA5E97C, 0x0040, unit = "px"),
+                bossBehaviorField("hardening_dust_y_mask", "Hardening Dust Y Mask", 0xA5E98C, 0x7F00, hex = true),
+                bossBehaviorField("hardening_dust_y_offset", "Hardening Dust Y Offset", 0xA5E991, 0x0040, unit = "px"),
+                bossBehaviorField("dying_explosion_x_mask", "Dying Explosion X Mask", 0xA5E9BB, 0x007F, hex = true),
+                bossBehaviorField("dying_explosion_x_offset", "Dying Explosion X Offset", 0xA5E9BF, 0x0040, unit = "px"),
+                bossBehaviorField("dying_explosion_y_mask", "Dying Explosion Y Mask", 0xA5E9CF, 0x3F00, hex = true),
+                bossBehaviorField("dying_explosion_y_offset", "Dying Explosion Y Offset", 0xA5E9D4, 0x0020, unit = "px"),
+                bossBehaviorField("death_target_x", "Death Target X", 0xA5EB9F, 0x0080, unit = "px"),
+                bossBehaviorField("death_target_y", "Death Target Y", 0xA5EBA8, 0x0270, unit = "px"),
+                bossBehaviorField("death_angle_offset", "Death Angle Offset", 0xA5EBB6, 0x0040, hex = true),
+                bossBehaviorField("death_speed_magnitude", "Death Speed Magnitude", 0xA5EBC4, 0x0001, unit = "speed"),
+                bossBehaviorField("death_arrival_target_x", "Death Arrival Target X", 0xA5EC20, 0x0080, unit = "px"),
+                bossBehaviorField("death_arrival_target_y", "Death Arrival Target Y", 0xA5EC30, 0x0270, unit = "px"),
+                bossBehaviorField(
+                    "death_arrival_tolerance",
+                    "Death Arrival Tolerance",
+                    0xA5EC27,
+                    0x0008,
+                    unit = "px",
+                    additionalWriteAddresses = intArrayOf(0xA5EC37),
+                ),
+            ),
+        ),
+    ),
+)
+
+val CROCOMIRE_BEHAVIOR = BossBehaviorDefinition(
+    configType = CROCOMIRE_CONFIG_TYPE,
+    title = "CROCOMIRE",
+    subtitle = "Advanced Behavior Editor",
+    description = "Edit Crocomire's reaction distances, projectile cadence, screen scroll, bridge collapse, acid, and skeleton constants from bank A4. HP and contact damage remain in Boss Stats.",
+    headerColor = Color(0xFFD84315),
+    sections = listOf(
+        BossBehaviorSection(
+            "Damage Reactions",
+            "Mouth close timers, knockback step counts, and hurt flash bonuses for beam, missile, super, and power bomb hits.",
+            Color(0xFFE64A19),
+            listOf(
+                bossBehaviorField("mouth_close_delay", "Mouth Close Delay", 0xA48692, 0x0008, unit = "frames"),
+                bossBehaviorField("mouth_close_delay_projectile", "Mouth Close Delay Projectile", 0xA48694, 0x0008, unit = "frames"),
+                bossBehaviorField("charged_steps_back", "Charged Steps Back", 0xA48698, 0x0002),
+                bossBehaviorField("missile_steps_back", "Missile Steps Back", 0xA4869A, 0x0001),
+                bossBehaviorField("super_steps_back", "Super Steps Back", 0xA4869C, 0x0003),
+                bossBehaviorField("power_bomb_step_counter", "Power Bomb Step Counter", 0xA4869E, 0x0003),
+                bossBehaviorField("uncharged_mouth_open_timer", "Uncharged Mouth Open Timer", 0xA486A0, 0x0008, unit = "frames"),
+                bossBehaviorField("hurt_flash_bonus", "Hurt Flash Bonus", 0xA4BAA5, 0x000E, unit = "frames"),
+                bossBehaviorField("power_bomb_flash_bonus", "Power Bomb Flash Bonus", 0xA4B9BE, 0x0004, unit = "frames"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Fight Flow",
+            "Wake distance, spike wall and bridge thresholds, projectile odds, and follow-up delays.",
+            Color(0xFF8D6E63),
+            listOf(
+                bossBehaviorField("wake_distance", "Wake Distance", 0xA48700, 0x00E0, unit = "px"),
+                bossBehaviorField("near_spike_wall_x", "Near Spike Wall X", 0xA486A2, 0x0300, unit = "px"),
+                bossBehaviorField("bridge_collapse_x", "Bridge Collapse X", 0xA486A4, 0x0640, unit = "px"),
+                bossBehaviorField("projectile_random_mask", "Projectile Random Mask", 0xA48757, 0x0FFF, hex = true),
+                bossBehaviorField("projectile_chance_threshold", "Projectile Chance Threshold", 0xA4875A, 0x0400, hex = true),
+                bossBehaviorField("projectile_counter_limit", "Projectile Counter Limit", 0xA48788, 0x0012),
+                bossBehaviorField("projectile_followup_delay", "Projectile Follow-Up Delay", 0xA4BBCA, 0x00B4, unit = "frames"),
+                bossBehaviorField("power_bomb_stop_threshold", "Power Bomb Stop Threshold", 0xA48889, 0x0002),
+            ),
+        ),
+        BossBehaviorSection(
+            "Scroll And Bridge",
+            "Offscreen padding, background scroll limits, and bridge section collapse positions.",
+            Color(0xFF455A64),
+            listOf(
+                bossBehaviorField(
+                    "offscreen_padding",
+                    "Offscreen Padding",
+                    0xA48BC1,
+                    0x0080,
+                    unit = "px",
+                    additionalWriteAddresses = intArrayOf(0xA48BFC),
+                ),
+                bossBehaviorField("bg_scroll_offset", "BG Scroll Offset", 0xA48BD1, 0x0033, unit = "px"),
+                bossBehaviorField("max_bg_scroll", "Max BG Scroll", 0xA48BDB, 0x011C, unit = "px"),
+                bossBehaviorField(
+                    "offscreen_bg_scroll",
+                    "Offscreen BG Scroll",
+                    0xA48BE1,
+                    0x0100,
+                    unit = "px",
+                    additionalWriteAddresses = intArrayOf(0xA48BE9),
+                ),
+                bossBehaviorField("bridge_part_2_x", "Bridge Part 2 X", 0xA48DF1, 0x0620, unit = "px"),
+                bossBehaviorField("bridge_part_3_x", "Bridge Part 3 X", 0xA48DF6, 0x0630, unit = "px"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Death Sequence",
+            "Acid smoke spread, sink timing, and skeleton movement values.",
+            Color(0xFF6D4C41),
+            listOf(
+                bossBehaviorField("acid_smoke_timer", "Acid Smoke Timer", 0xA49178, 0x0006, unit = "frames"),
+                bossBehaviorField("acid_smoke_x_mask", "Acid Smoke X Mask", 0xA49182, 0x003F, hex = true),
+                bossBehaviorField("acid_smoke_y_mask", "Acid Smoke Y Mask", 0xA4919D, 0x1F00, hex = true),
+                bossBehaviorField("sink_phase_y", "Sink Phase Y", 0xA491D8, 0x0118, unit = "px"),
+                bossBehaviorField("sink_rest_timer", "Sink Rest Timer", 0xA491E3, 0x0030, unit = "frames"),
+                bossBehaviorField("skeleton_x_shift", "Skeleton X Shift", 0xA49B1F, 0x0040, unit = "px"),
+                bossBehaviorField("skeleton_y_shift", "Skeleton Y Shift", 0xA49B29, 0x0015, unit = "px"),
+                bossBehaviorField("skeleton_y_radius", "Skeleton Y Radius", 0xA49B2F, 0x001C, unit = "px"),
+                bossBehaviorField("skeleton_x_radius", "Skeleton X Radius", 0xA49B35, 0x0028, unit = "px"),
+                bossBehaviorField("skeleton_x_velocity_increment", "Skeleton X Velocity Increment", 0xA49B4E, 0x1000, hex = true),
+                bossBehaviorField(
+                    "skeleton_x_velocity_cap",
+                    "Skeleton X Velocity Cap",
+                    0xA49B5A,
+                    0x0006,
+                    unit = "speed",
+                    additionalWriteAddresses = intArrayOf(0xA49B5F),
+                ),
+            ),
+        ),
+    ),
+)
+
+val BOTWOON_BEHAVIOR = BossBehaviorDefinition(
+    configType = BOTWOON_CONFIG_TYPE,
+    title = "BOTWOON",
+    subtitle = "Advanced Behavior Editor",
+    description = "Edit Botwoon's movement speeds, health thresholds, hole/pathing choices, spit patterns, and death fall constants from bank B3. HP and contact damage remain in Boss Stats.",
+    headerColor = Color(0xFF00838F),
+    sections = listOf(
+        BossBehaviorSection(
+            "Speed And Health",
+            "Health-based movement speeds, body segment travel timers, and palette change thresholds.",
+            Color(0xFF0097A7),
+            listOf(
+                bossBehaviorField("speed_full_health", "Speed Full Health", 0xB394BB, 0x0002, unit = "speed"),
+                bossBehaviorField("body_travel_full_health", "Body Travel Full Health", 0xB394BD, 0x0018, unit = "frames"),
+                bossBehaviorField("speed_half_health", "Speed Half Health", 0xB394BF, 0x0003, unit = "speed"),
+                bossBehaviorField("body_travel_half_health", "Body Travel Half Health", 0xB394C1, 0x0010, unit = "frames"),
+                bossBehaviorField("speed_quarter_health", "Speed Quarter Health", 0xB394C3, 0x0004, unit = "speed"),
+                bossBehaviorField("body_travel_quarter_health", "Body Travel Quarter Health", 0xB394C5, 0x000C, unit = "frames"),
+                bossBehaviorField("palette_threshold_1", "Palette Threshold 1", 0xB3981B, 0x0BB8, unit = "hp"),
+                bossBehaviorField("palette_threshold_4", "Palette Threshold 4", 0xB39821, 0x0753, unit = "hp"),
+                bossBehaviorField("palette_threshold_8", "Palette Threshold 8", 0xB39829, 0x0177, unit = "hp"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Init And Pathing",
+            "Setup values for body projectiles, initial timers, path history, palette offset, and random path/action choices.",
+            Color(0xFF5E35B1),
+            listOf(
+                bossBehaviorField("body_projectile_index", "Body Projectile Index", 0xB395B4, 0x0018),
+                bossBehaviorField("initial_timer", "Initial Timer", 0xB395E8, 0x0100, unit = "frames"),
+                bossBehaviorField("initial_head_hidden_flag", "Initial Head Hidden Flag", 0xB395FC, 0x0001, hex = true),
+                bossBehaviorField("initial_target_history_index", "Initial Target History Index", 0xB3960B, 0xFFFF, signed = true),
+                bossBehaviorField("initial_target_hole_index", "Initial Target Hole Index", 0xB39612, 0x0000, hex = true),
+                bossBehaviorField("palette_offset_base", "Palette Offset Base", 0xB39661, 0x0100, hex = true),
+                bossBehaviorField("leave_action_random_mask", "Leave Action Random Mask", 0xB398C6, 0x000E, hex = true),
+                bossBehaviorField("path_destination_random_mask", "Path Destination Random Mask", 0xB39948, 0x0018, hex = true),
+            ),
+        ),
+        BossBehaviorSection(
+            "Spit",
+            "Timer, spit speed thresholds, aim math, spread sizes, and projectile counts for three- and five-shot patterns.",
+            Color(0xFF1976D2),
+            listOf(
+                bossBehaviorField("spit_timer", "Spit Timer", 0xB39923, 0x0030, unit = "frames"),
+                bossBehaviorField("spit_speed_full_health", "Spit Speed Full Health", 0xB39E77, 0x0002, unit = "speed"),
+                bossBehaviorField("spit_speed_half_health", "Spit Speed Half Health", 0xB39E79, 0x0003, unit = "speed"),
+                bossBehaviorField("spit_speed_quarter_health", "Spit Speed Quarter Health", 0xB39E7B, 0x0004, unit = "speed"),
+                bossBehaviorField("spit_aim_offset", "Spit Aim Offset", 0xB39E90, 0x0010, hex = true),
+                bossBehaviorField("spit_angle_origin", "Spit Angle Origin", 0xB39EB5, 0x0040, hex = true),
+                bossBehaviorField("spit_angle_wrap", "Spit Angle Wrap", 0xB39EC0, 0x0100, hex = true),
+                bossBehaviorField("five_spit_spread_start", "Five-Spit Spread Start", 0xB39EF0, 0x0020, hex = true),
+                bossBehaviorField("five_spit_count", "Five-Spit Count", 0xB39EF9, 0x0005),
+                bossBehaviorField(
+                    "spit_angle_step",
+                    "Spit Angle Step",
+                    0xB39F19,
+                    0x0010,
+                    hex = true,
+                    additionalWriteAddresses = intArrayOf(0xB39F66),
+                ),
+                bossBehaviorField("three_spit_spread_start", "Three-Spit Spread Start", 0xB39F3D, 0x0010, hex = true),
+                bossBehaviorField("three_spit_count", "Three-Spit Count", 0xB39F46, 0x0003),
+            ),
+        ),
+        BossBehaviorSection(
+            "Death",
+            "Delay before the fall, floor clamp, and falling speed index increment.",
+            Color(0xFF37474F),
+            listOf(
+                bossBehaviorField("pre_death_delay", "Pre-Death Delay", 0xB39A53, 0x0100, unit = "frames"),
+                bossBehaviorField(
+                    "fall_ground_y",
+                    "Fall Ground Y",
+                    0xB39A87,
+                    0x00C8,
+                    unit = "px",
+                    additionalWriteAddresses = intArrayOf(0xB39A8C),
+                ),
+                bossBehaviorField("fall_speed_index_increment", "Fall Speed Index Increment", 0xB39AC3, 0x00C0, hex = true),
+            ),
+        ),
+    ),
+)
+
+val TORIZO_BEHAVIOR = BossBehaviorDefinition(
+    configType = TORIZO_CONFIG_TYPE,
+    title = "TORIZO / GOLDEN TORIZO",
+    subtitle = "Advanced Behavior Editor",
+    description = "Edit Bomb Torizo and Golden Torizo spawn, jump, landing, attack, and low-health constants from bank AA. HP and contact damage remain in Boss Stats.",
+    headerColor = Color(0xFF7B1FA2),
+    sections = listOf(
+        BossBehaviorSection(
+            "Init And Collision",
+            "Spawn coordinates and collision radii for the Crateria Bomb Torizo and Norfair Golden Torizo variants.",
+            Color(0xFF8E24AA),
+            listOf(
+                bossBehaviorField("bomb_initial_x", "Bomb Initial X", 0xAAC95F, 0x00DB, unit = "px"),
+                bossBehaviorField("golden_initial_x", "Golden Initial X", 0xAAC961, 0x01A8, unit = "px"),
+                bossBehaviorField("bomb_initial_y", "Bomb Initial Y", 0xAAC963, 0x00B3, unit = "px"),
+                bossBehaviorField("golden_initial_y", "Golden Initial Y", 0xAAC965, 0x0090, unit = "px"),
+                bossBehaviorField("bomb_x_radius", "Bomb X Radius", 0xAAC96F, 0x0012, unit = "px"),
+                bossBehaviorField("golden_x_radius", "Golden X Radius", 0xAAC971, 0x0012, unit = "px"),
+                bossBehaviorField("bomb_y_radius", "Bomb Y Radius", 0xAAC973, 0x0030, unit = "px"),
+                bossBehaviorField("golden_y_radius", "Golden Y Radius", 0xAAC975, 0x0029, unit = "px"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Jump And Landing",
+            "Forward/back jump velocities, shared fall reset velocity, and the landing earthquake effect.",
+            Color(0xFF3949AB),
+            listOf(
+                bossBehaviorField("forward_jump_left_x_speed", "Forward Jump Left X", 0xAAC210, 0xFE00, unit = "speed", signed = true),
+                bossBehaviorField("forward_jump_right_x_speed", "Forward Jump Right X", 0xAAC215, 0x0200, unit = "speed", signed = true),
+                bossBehaviorField("forward_jump_y_speed", "Forward Jump Y", 0xAAC21B, 0xFA40, unit = "speed", signed = true),
+                bossBehaviorField("forward_jump_y_accel", "Forward Jump Y Accel", 0xAAC221, 0x0028, unit = "subpx/frame"),
+                bossBehaviorField("back_jump_left_x_speed", "Back Jump Left X", 0xAAC233, 0x0300, unit = "speed", signed = true),
+                bossBehaviorField("back_jump_right_x_speed", "Back Jump Right X", 0xAAC238, 0xFD00, unit = "speed", signed = true),
+                bossBehaviorField("back_jump_y_speed", "Back Jump Y", 0xAAC23E, 0xFB80, unit = "speed", signed = true),
+                bossBehaviorField("back_jump_y_accel", "Back Jump Y Accel", 0xAAC244, 0x0028, unit = "subpx/frame"),
+                bossBehaviorField(
+                    "fall_reset_y_speed",
+                    "Fall Reset Y Speed",
+                    0xAAC7B8,
+                    0x0100,
+                    unit = "speed",
+                    additionalWriteAddresses = intArrayOf(0xAAC81F, 0xAAC86D, 0xAAD64F),
+                ),
+                bossBehaviorField("landing_earthquake_type", "Landing Earthquake Type", 0xAAC873, 0x0004, hex = true),
+                bossBehaviorField("landing_earthquake_timer", "Landing Earthquake Timer", 0xAAC879, 0x0020, unit = "frames"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Bomb Torizo",
+            "Bomb Torizo turn timing, low-health body changes, swipe/jump distances, and missile-based attack selection.",
+            Color(0xFFD81B60),
+            listOf(
+                bossBehaviorField(
+                    "low_health_drool_threshold",
+                    "Low Health Threshold",
+                    0xAAC35F,
+                    0x015E,
+                    unit = "hp",
+                    additionalWriteAddresses = intArrayOf(0xAAC636, 0xAAC70B),
+                ),
+                bossBehaviorField("face_blow_threshold", "Face Blow Threshold", 0xAAC72C, 0x0064, unit = "hp"),
+                bossBehaviorField(
+                    "bomb_turn_timer",
+                    "Turn Timer",
+                    0xAAC4B4,
+                    0x0048,
+                    unit = "frames",
+                    additionalWriteAddresses = intArrayOf(0xAAC529),
+                ),
+                bossBehaviorField("close_swipe_distance", "Close Swipe Distance", 0xAAC568, 0x0038, unit = "px"),
+                bossBehaviorField("bomb_back_jump_distance", "Back Jump Distance", 0xAAC58C, 0x0020, unit = "px"),
+                bossBehaviorField("bomb_missile_threshold", "Missile Threshold", 0xAAC5B1, 0x0005, unit = "missiles"),
+                bossBehaviorField("bomb_attack_selection_mask", "Attack Selection Mask", 0xAAC5BD, 0x0008, hex = true),
+            ),
+        ),
+        BossBehaviorSection(
+            "Golden Torizo",
+            "Golden Torizo wake trigger, movement choices, range checks, health thresholds, and missile-based attack selection.",
+            Color(0xFFFFA000),
+            listOf(
+                bossBehaviorField("golden_wake_y", "Wake Samus Y", 0xAAD5C3, 0x0140, unit = "px"),
+                bossBehaviorField("golden_wake_x", "Wake Samus X", 0xAAD5CB, 0x0170, unit = "px"),
+                bossBehaviorField("golden_turn_timer", "Turn Timer", 0xAAD591, 0x0010, unit = "frames"),
+                bossBehaviorField("golden_morph_behind_min", "Morph Behind Min", 0xAAD3F0, 0x0004, unit = "px"),
+                bossBehaviorField("golden_morph_behind_max", "Morph Behind Max", 0xAAD3F9, 0x0028, unit = "px"),
+                bossBehaviorField("golden_front_attack_min", "Front Attack Min", 0xAAD44B, 0x0020, unit = "px"),
+                bossBehaviorField("golden_front_attack_max", "Front Attack Max", 0xAAD454, 0x0060, unit = "px"),
+                bossBehaviorField("golden_front_attack_chance_mask", "Front Attack Chance Mask", 0xAAD461, 0x0110, hex = true),
+                bossBehaviorField("golden_low_health_attack_threshold", "Low Health Attack", 0xAAD475, 0x0788, unit = "hp"),
+                bossBehaviorField("golden_low_health_chance_mask", "Low Health Chance Mask", 0xAAD481, 0x0102, hex = true),
+                bossBehaviorField("golden_high_health_stunned_threshold", "High Health Stunned", 0xAAD49C, 0x2A30, unit = "hp"),
+                bossBehaviorField("golden_forward_jump_distance", "Forward Jump Distance", 0xAAD4BB, 0x0070, unit = "px"),
+                bossBehaviorField("golden_space_jump_counter", "Space Jump Counter", 0xAAD4C9, 0x0168, unit = "frames"),
+                bossBehaviorField("golden_forward_jump_chance_mask", "Forward Jump Chance Mask", 0xAAD4DD, 0x0101, hex = true),
+                bossBehaviorField("golden_back_jump_step_threshold", "Back Jump Step Threshold", 0xAAD502, 0x0008),
+                bossBehaviorField("golden_back_jump_distance", "Back Jump Distance", 0xAAD507, 0x0020, unit = "px"),
+                bossBehaviorField("golden_missile_threshold", "Missile Threshold", 0xAAD533, 0x0020, unit = "missiles"),
+                bossBehaviorField("golden_attack_selection_mask", "Attack Selection Mask", 0xAAD53F, 0x0008, hex = true),
+            ),
+        ),
+    ),
+)
+
+val MOTHER_BRAIN_BEHAVIOR = BossBehaviorDefinition(
+    configType = MOTHER_BRAIN_CONFIG_TYPE,
+    title = "MOTHER BRAIN",
+    subtitle = "Advanced Behavior Editor",
+    description = "Edit source-backed phase one, phase two, rainbow beam, laser, and death-sequence constants from bank A9. HP and contact damage remain in Boss Stats.",
+    headerColor = Color(0xFFC2185B),
+    sections = listOf(
+        BossBehaviorSection(
+            "Phase One And Fake Death",
+            "Samus position gate, fake-death delays, grey transition cadence, explosion loop, and tube projectile gating.",
+            Color(0xFFC2185B),
+            listOf(
+                bossBehaviorField("phase1_samus_x_gate", "Phase 1 Samus X Gate", 0xA987F5, 0x00EC, unit = "px"),
+                bossBehaviorField("fake_death_initial_pause", "Fake Death Initial Pause", 0xA98824, 0x0040, unit = "frames"),
+                bossBehaviorField("fake_death_lock_pause", "Fake Death Lock Pause", 0xA98848, 0x0020, unit = "frames"),
+                bossBehaviorField("fake_death_music_pause", "Fake Death Music Pause", 0xA98867, 0x000C, unit = "frames"),
+                bossBehaviorField("fake_death_unlock_pause", "Fake Death Unlock Pause", 0xA9887F, 0x0008, unit = "frames"),
+                bossBehaviorField("grey_transition_timer", "Grey Transition Timer", 0xA988B8, 0x0008, unit = "frames"),
+                bossBehaviorField("fake_death_explosion_timer", "Fake Death Explosion Timer", 0xA988EA, 0x0008, unit = "frames"),
+                bossBehaviorField("fake_death_explosion_wrap", "Explosion Index Wrap", 0xA988F8, 0x0007),
+                bossBehaviorField("fake_death_smoke_threshold", "Smoke Chance Threshold", 0xA98912, 0x4000, hex = true),
+                bossBehaviorField("tube_projectile_min_free_slots", "Tube Min Free Slots", 0xA9895B, 0x0004),
+            ),
+        ),
+        BossBehaviorSection(
+            "Phase Two Attacks",
+            "Second-phase health threshold, RNG gates, attack cooldown, proximity window, bomb limits, and bomb movement setup.",
+            Color(0xFF7B1FA2),
+            listOf(
+                bossBehaviorField("second_phase_low_health_threshold", "Low Health Threshold", 0xA9B61E, 0x1194, unit = "hp"),
+                bossBehaviorField("high_health_attack_roll_threshold", "High-Health Attack Roll", 0xA9B626, 0x1000, hex = true),
+                bossBehaviorField("low_health_walk_roll_threshold", "Low-Health Walk Roll", 0xA9B638, 0x2000, hex = true),
+                bossBehaviorField("low_health_attack_roll_threshold", "Low-Health Attack Roll", 0xA9B640, 0xA000, hex = true),
+                bossBehaviorField("attack_cooldown", "Attack Cooldown", 0xA9B65B, 0x0040, unit = "frames"),
+                bossBehaviorField("attack_y_proximity_offset", "Attack Y Offset", 0xA9B674, 0x0004, unit = "px"),
+                bossBehaviorField("attack_y_proximity_window", "Attack Y Window", 0xA9B681, 0x0020, unit = "px"),
+                bossBehaviorField(
+                    "max_active_bombs",
+                    "Max Active Bombs",
+                    0xA9B6BE,
+                    0x0001,
+                    additionalWriteAddresses = intArrayOf(0xA9B71D),
+                ),
+                bossBehaviorField("bomb_crouch_roll_threshold", "Bomb Crouch Roll", 0xA9B785, 0xFF80, hex = true),
+                bossBehaviorField("bomb_near_target_x", "Bomb Near Target X", 0xA9B78A, 0x0040, unit = "px"),
+                bossBehaviorField("bomb_far_target_x", "Bomb Far Target X", 0xA9B792, 0x0060, unit = "px"),
+                bossBehaviorField("bomb_post_fire_delay", "Bomb Post-Fire Delay", 0xA9B7E2, 0x002C, unit = "frames"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Laser And Rainbow Beam",
+            "Laser neck setup and projectile offset, rainbow charge timing, beam width, Samus drain, and quake values.",
+            Color(0xFF1976D2),
+            listOf(
+                bossBehaviorField("laser_fast_neck_delta", "Laser Fast Neck Delta", 0xA9B826, 0x0200, unit = "speed"),
+                bossBehaviorField("laser_fast_position_timer", "Laser Fast Position Timer", 0xA9B833, 0x0004, unit = "frames"),
+                bossBehaviorField("laser_slow_neck_delta", "Laser Slow Neck Delta", 0xA9B840, 0x0100, unit = "speed"),
+                bossBehaviorField("laser_finish_timer", "Laser Finish Timer", 0xA9B85D, 0x0010, unit = "frames"),
+                bossBehaviorField("laser_x_offset", "Laser X Offset", 0xA99F53, 0x0010, unit = "px"),
+                bossBehaviorField("laser_y_offset", "Laser Y Offset", 0xA99F5C, 0x0004, unit = "px"),
+                bossBehaviorField("laser_projectile_param", "Laser Projectile Param", 0xA99F61, 0x0001, hex = true),
+                bossBehaviorField("rainbow_extend_timer", "Rainbow Extend Timer", 0xA9B914, 0x0100, unit = "frames"),
+                bossBehaviorField("rainbow_retract_target_x", "Rainbow Retract Target X", 0xA9B92C, 0x0028, unit = "px"),
+                bossBehaviorField("rainbow_charge_timer", "Rainbow Charge Timer", 0xA9B93A, 0x0100, unit = "frames"),
+                bossBehaviorField("rainbow_start_firing_timer", "Rainbow Start Timer", 0xA9B970, 0x0010, unit = "frames"),
+                bossBehaviorField(
+                    "rainbow_initial_width",
+                    "Rainbow Initial Width",
+                    0xA9B995,
+                    0x0200,
+                    hex = true,
+                    additionalWriteAddresses = intArrayOf(0xA9BA77),
+                ),
+                bossBehaviorField("rainbow_samus_low_health", "Samus Low Health", 0xA9B9CC, 0x02BC, unit = "hp"),
+                bossBehaviorField("rainbow_sound_queue_count", "Rainbow Sound Queue Count", 0xA9B9D8, 0x0006),
+                bossBehaviorField("rainbow_wall_quake_type", "Wall Quake Type", 0xA9BA15, 0x0008, hex = true),
+                bossBehaviorField("rainbow_wall_quake_timer", "Wall Quake Timer", 0xA9BA1B, 0x0008, unit = "frames"),
+                bossBehaviorField("rainbow_drain_timer", "Rainbow Drain Timer", 0xA9BA2E, 0x012B, unit = "frames"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Death And Escape",
+            "Third-phase death movement, explosion cadence, falling brain clamp, corpse fade, and escape door explosion timing.",
+            Color(0xFF455A64),
+            listOf(
+                bossBehaviorField("death_back_room_target_x", "Back Room Target X", 0xA9AEFE, 0x0028, unit = "px"),
+                bossBehaviorField("death_idle_timer", "Death Idle Timer", 0xA9AF0D, 0x0080, unit = "frames"),
+                bossBehaviorField("death_middle_target_x", "Middle Target X", 0xA9AF28, 0x0060, unit = "px"),
+                bossBehaviorField("death_neck_angle_delta", "Death Neck Angle Delta", 0xA9AF41, 0x0500, unit = "speed"),
+                bossBehaviorField("death_disable_effects_delay", "Disable Effects Delay", 0xA9AF4E, 0x0020, unit = "frames"),
+                bossBehaviorField("final_explosions_timer", "Final Explosions Timer", 0xA9B00D, 0x0010, unit = "frames"),
+                bossBehaviorField("smoky_explosion_count", "Smoky Explosion Count", 0xA9B028, 0x0002),
+                bossBehaviorField("smoky_explosion_interval", "Smoky Explosion Interval", 0xA9B02D, 0x0010, unit = "frames"),
+                bossBehaviorField("mixed_explosion_count", "Mixed Explosion Count", 0xA9B037, 0x0004),
+                bossBehaviorField("mixed_explosion_interval", "Mixed Explosion Interval", 0xA9B03C, 0x0008, unit = "frames"),
+                bossBehaviorField("brain_fall_acceleration", "Brain Fall Acceleration", 0xA9B132, 0x0020, unit = "subpx/frame"),
+                bossBehaviorField("brain_ground_y", "Brain Ground Y", 0xA9B140, 0x00C4, unit = "px"),
+                bossBehaviorField("corpse_tiles_delay", "Corpse Tiles Delay", 0xA9B16D, 0x0020, unit = "frames"),
+                bossBehaviorField("corpse_fade_step_timer", "Corpse Fade Step Timer", 0xA9B19F, 0x0010, unit = "frames"),
+                bossBehaviorField("corpse_tip_timer", "Corpse Tip Timer", 0xA9B1B2, 0x0100, unit = "frames"),
+                bossBehaviorField("escape_music_text_delay", "Escape Music/Text Delay", 0xA9B20C, 0x0014, unit = "frames"),
+                bossBehaviorField("escape_earthquake_timer", "Escape Earthquake Timer", 0xA9B290, 0xFFFF, hex = true),
+                bossBehaviorField("escape_text_delay", "Escape Text Delay", 0xA9B2BD, 0x0020, unit = "frames"),
+                bossBehaviorField("escape_door_start_delay", "Escape Door Start Delay", 0xA9B2F3, 0x0020, unit = "frames"),
+                bossBehaviorField("escape_door_explosion_interval", "Escape Door Explosion Interval", 0xA9B350, 0x0004, unit = "frames"),
+                bossBehaviorField("escape_door_index_wrap", "Escape Door Index Wrap", 0xA9B35F, 0x0003),
+            ),
+        ),
+    ),
+)
+
+val BOSS_BEHAVIOR_DEFINITIONS: List<BossBehaviorDefinition> = listOf(
+    RIDLEY_BEHAVIOR,
+    DRAYGON_BEHAVIOR,
+    SPORE_SPAWN_BEHAVIOR,
+    CROCOMIRE_BEHAVIOR,
+    BOTWOON_BEHAVIOR,
+    TORIZO_BEHAVIOR,
+    MOTHER_BRAIN_BEHAVIOR,
+)
 
 val BOSS_BEHAVIOR_BY_CONFIG_TYPE: Map<String, BossBehaviorDefinition> =
     BOSS_BEHAVIOR_DEFINITIONS.associateBy { it.configType }
@@ -382,6 +926,11 @@ val BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE: Map<String, List<BossBehaviorField>> =
 
 val ALL_RIDLEY_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(RIDLEY_CONFIG_TYPE)
 val ALL_DRAYGON_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(DRAYGON_CONFIG_TYPE)
+val ALL_SPORE_SPAWN_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(SPORE_SPAWN_CONFIG_TYPE)
+val ALL_CROCOMIRE_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(CROCOMIRE_CONFIG_TYPE)
+val ALL_BOTWOON_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(BOTWOON_CONFIG_TYPE)
+val ALL_TORIZO_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(TORIZO_CONFIG_TYPE)
+val ALL_MOTHER_BRAIN_FIELDS: List<BossBehaviorField> = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(MOTHER_BRAIN_CONFIG_TYPE)
 
 @Composable
 fun BossBehaviorEditor(
@@ -396,16 +945,18 @@ fun BossBehaviorEditor(
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (field in fields) {
-            map[field.key] = stored?.get(field.key)
+            val value = stored?.get(field.key)
                 ?: readBossBehaviorFromRom(romParser, field)
                 ?: field.defaultValue
+            map[field.key] = coerceBossBehaviorValue(field, value)
         }
         map
     }
 
     fun apply(field: BossBehaviorField, value: Int) {
-        values[field.key] = value
-        editorState.setPatchConfigData(patch.id, field.key, value)
+        val coerced = coerceBossBehaviorValue(field, value)
+        values[field.key] = coerced
+        editorState.setPatchConfigData(patch.id, field.key, coerced)
     }
 
     Column(
@@ -566,7 +1117,9 @@ private fun BossBehaviorFieldRow(
     onChange: (Int) -> Unit,
 ) {
     val isModified = value != field.defaultValue
-    val displayValue = if (field.signed && value > 32767) value - 65536 else value
+    val displayValue = field.logicalValue(value)
+    val minValue = field.logicalMinValue()
+    val maxValue = field.logicalMaxValue()
 
     Row(
         modifier = Modifier
@@ -574,27 +1127,33 @@ private fun BossBehaviorFieldRow(
             .padding(vertical = 3.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            field.label,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f),
-            fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
-            color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(
+                field.label,
+                fontSize = 12.sp,
+                fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
+                color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                field.metadataText(),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         if (field.hex) {
-            BossBehaviorHexInput(value, onChange, Modifier.width(80.dp))
+            BossBehaviorHexInput(value, onChange, Modifier.width(80.dp), minValue, maxValue)
         } else if (field.signed) {
             BossBehaviorSignedInput(
                 value = displayValue,
-                onChange = { signed ->
-                    val stored = if (signed < 0) signed + 65536 else signed
-                    onChange(stored.coerceIn(0, 65535))
-                },
+                onChange = { signed -> onChange(field.storedValue(signed)) },
                 modifier = Modifier.width(80.dp),
+                minValue = minValue,
+                maxValue = maxValue,
             )
         } else {
-            BossBehaviorIntInput(value, onChange, Modifier.width(80.dp))
+            BossBehaviorIntInput(displayValue, { logical -> onChange(field.storedValue(logical)) }, Modifier.width(80.dp), minValue, maxValue)
         }
 
         val annotation = when {
@@ -613,14 +1172,21 @@ private fun BossBehaviorFieldRow(
 }
 
 @Composable
-private fun BossBehaviorIntInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun BossBehaviorIntInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(1, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filter { it.isDigit() }.take(5)
+            val filtered = raw.filter { it.isDigit() }.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -639,14 +1205,29 @@ private fun BossBehaviorIntInput(value: Int, onChange: (Int) -> Unit, modifier: 
 }
 
 @Composable
-private fun BossBehaviorSignedInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun BossBehaviorSignedInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(minValue.toString().length, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filterIndexed { i, c -> c.isDigit() || (i == 0 && c == '-') }.take(6)
+            val normalized = buildString {
+                for (c in raw) {
+                    when {
+                        c.isDigit() -> append(c)
+                        c == '-' && isEmpty() -> append(c)
+                    }
+                }
+            }
+            val filtered = normalized.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(-32768, 32767)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -665,14 +1246,20 @@ private fun BossBehaviorSignedInput(value: Int, onChange: (Int) -> Unit, modifie
 }
 
 @Composable
-private fun BossBehaviorHexInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun BossBehaviorHexInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }.take(4)
             text = filtered.uppercase()
-            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(

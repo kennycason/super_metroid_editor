@@ -28,7 +28,19 @@ fun BossTabSidebar(
     modifier: Modifier = Modifier,
 ) {
     var subTab by bossSubTab
-    val subTabs = listOf("Boss Stats", "Defeated Flags", "Phantoon", "Kraid", "Ridley", "Draygon")
+    val subTabs = listOf(
+        "Boss Stats",
+        "Defeated Flags",
+        "Phantoon",
+        "Kraid",
+        "Ridley",
+        "Draygon",
+        "Spore Spawn",
+        "Crocomire",
+        "Botwoon",
+        "Torizo",
+        "Mother Brain",
+    )
 
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         subTabs.forEachIndexed { idx, name ->
@@ -82,6 +94,26 @@ fun BossTabCanvas(
         5 -> {
             val patch = editorState.findOrCreateConfigPatch(DRAYGON_CONFIG_TYPE)
             BossBehaviorEditor(DRAYGON_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        6 -> {
+            val patch = editorState.findOrCreateConfigPatch(SPORE_SPAWN_CONFIG_TYPE)
+            BossBehaviorEditor(SPORE_SPAWN_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        7 -> {
+            val patch = editorState.findOrCreateConfigPatch(CROCOMIRE_CONFIG_TYPE)
+            BossBehaviorEditor(CROCOMIRE_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        8 -> {
+            val patch = editorState.findOrCreateConfigPatch(BOTWOON_CONFIG_TYPE)
+            BossBehaviorEditor(BOTWOON_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        9 -> {
+            val patch = editorState.findOrCreateConfigPatch(TORIZO_CONFIG_TYPE)
+            BossBehaviorEditor(TORIZO_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        10 -> {
+            val patch = editorState.findOrCreateConfigPatch(MOTHER_BRAIN_CONFIG_TYPE)
+            BossBehaviorEditor(MOTHER_BRAIN_BEHAVIOR, patch, editorState, romParser, modifier)
         }
     }
 }

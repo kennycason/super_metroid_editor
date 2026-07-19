@@ -303,6 +303,56 @@ val DRAYGON_PATCH = SmPatch(
     configType = DRAYGON_CONFIG_TYPE
 )
 
+/** Config patch: Spore Spawn AI behavior. Stores timer/movement/death values in configData. */
+val SPORE_SPAWN_PATCH = SmPatch(
+    id = "config_spore_spawn",
+    name = "Spore Spawn Behavior",
+    description = "Deep-dive editor for Spore Spawn's movement, hardening, dust, and death parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = SPORE_SPAWN_CONFIG_TYPE
+)
+
+/** Config patch: Crocomire AI behavior. Stores timer/movement/projectile values in configData. */
+val CROCOMIRE_PATCH = SmPatch(
+    id = "config_crocomire",
+    name = "Crocomire Behavior",
+    description = "Deep-dive editor for Crocomire's reactions, projectiles, scrolling, bridge, acid, and skeleton parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = CROCOMIRE_CONFIG_TYPE
+)
+
+/** Config patch: Botwoon AI behavior. Stores movement/pathing/projectile values in configData. */
+val BOTWOON_PATCH = SmPatch(
+    id = "config_botwoon",
+    name = "Botwoon Behavior",
+    description = "Deep-dive editor for Botwoon's speed, pathing, spit, and death parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = BOTWOON_CONFIG_TYPE
+)
+
+/** Config patch: Torizo / Golden Torizo AI behavior. Stores movement/attack values in configData. */
+val TORIZO_PATCH = SmPatch(
+    id = "config_torizo",
+    name = "Torizo Behavior",
+    description = "Deep-dive editor for Bomb Torizo and Golden Torizo spawn, jump, landing, and attack parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = TORIZO_CONFIG_TYPE
+)
+
+/** Config patch: Mother Brain AI behavior. Stores phase/timer/attack values in configData. */
+val MOTHER_BRAIN_PATCH = SmPatch(
+    id = "config_mother_brain",
+    name = "Mother Brain Behavior",
+    description = "Deep-dive editor for Mother Brain phase one, phase two, rainbow beam, laser, death, and escape parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = MOTHER_BRAIN_CONFIG_TYPE
+)
+
 internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
     "enemy_stats",
     "enemy_drops",
@@ -313,6 +363,11 @@ internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
     KRAID_CONFIG_TYPE,
     RIDLEY_CONFIG_TYPE,
     DRAYGON_CONFIG_TYPE,
+    SPORE_SPAWN_CONFIG_TYPE,
+    CROCOMIRE_CONFIG_TYPE,
+    BOTWOON_CONFIG_TYPE,
+    TORIZO_CONFIG_TYPE,
+    MOTHER_BRAIN_CONFIG_TYPE,
 )
 
 /** Config patch: Enemy Stats overrides. Stores per-enemy HP/damage in configData. */
