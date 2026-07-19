@@ -1,7 +1,9 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 
 class BossEditorDefinitionsTest {
@@ -34,5 +36,47 @@ class BossEditorDefinitionsTest {
         assertEquals(0xA7BE54, field.snesAddress)
         assertEquals(listOf(0xA7BE54, 0xA7BE64, 0xA7BE74, 0xA7BE84), field.writeSnesAddresses)
         assertTrue(field.signed)
+    }
+
+    @Test
+    fun `ridley fields use disassembly immediate operand addresses`() {
+        val fields = ALL_RIDLEY_FIELDS.associateBy { it.key }
+
+        assertEquals(0xA6A372, fields.getValue("norfair_intro_delay").snesAddress)
+        assertEquals(0x00AA, fields.getValue("norfair_intro_delay").defaultValue)
+        assertEquals(0xA6A1C1, fields.getValue("norfair_tail_damage").snesAddress)
+        assertEquals(0x0078, fields.getValue("norfair_tail_damage").defaultValue)
+        assertEquals(0xA6B4EE, fields.getValue("norfair_swoop_horizontal_speed").snesAddress)
+        assertEquals(0x0500, fields.getValue("norfair_swoop_horizontal_speed").defaultValue)
+    }
+
+    @Test
+    fun `draygon mirrored fields write every matching phase operand`() {
+        val fields = ALL_DRAYGON_FIELDS.associateBy { it.key }
+
+        assertEquals(
+            listOf(0xA58B6F, 0xA58CF1),
+            fields.getValue("goop_count").writeSnesAddresses,
+        )
+        assertEquals(
+            listOf(0xA588BE, 0xA5895B, 0xA58A0D, 0xA58A9D),
+            fields.getValue("arm_apex_index").writeSnesAddresses,
+        )
+        assertTrue(fields.getValue("goop_left_boundary").signed)
+    }
+
+    @Test
+    fun `ridley and draygon field defaults match vanilla rom words`() {
+        val parser = TestRomHelper.loadRomParser()
+        assumeTrue(parser != null, "Test ROM not found")
+        parser!!
+
+        for (field in ALL_RIDLEY_FIELDS + ALL_DRAYGON_FIELDS) {
+            assertEquals(
+                field.defaultValue,
+                readBossBehaviorFromRom(parser, field),
+                "${field.key} should point at its vanilla default word",
+            )
+        }
     }
 }

@@ -28,7 +28,7 @@ fun BossTabSidebar(
     modifier: Modifier = Modifier,
 ) {
     var subTab by bossSubTab
-    val subTabs = listOf("Boss Stats", "Defeated Flags", "Phantoon", "Kraid")
+    val subTabs = listOf("Boss Stats", "Defeated Flags", "Phantoon", "Kraid", "Ridley", "Draygon")
 
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         subTabs.forEachIndexed { idx, name ->
@@ -74,6 +74,14 @@ fun BossTabCanvas(
         3 -> {
             val patch = editorState.findOrCreateConfigPatch(KRAID_CONFIG_TYPE)
             KraidEditor(patch, editorState, romParser, modifier)
+        }
+        4 -> {
+            val patch = editorState.findOrCreateConfigPatch(RIDLEY_CONFIG_TYPE)
+            BossBehaviorEditor(RIDLEY_BEHAVIOR, patch, editorState, romParser, modifier)
+        }
+        5 -> {
+            val patch = editorState.findOrCreateConfigPatch(DRAYGON_CONFIG_TYPE)
+            BossBehaviorEditor(DRAYGON_BEHAVIOR, patch, editorState, romParser, modifier)
         }
     }
 }

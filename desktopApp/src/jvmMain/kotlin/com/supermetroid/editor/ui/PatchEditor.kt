@@ -301,6 +301,8 @@ fun PatchEditorCanvas(
             "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             KRAID_CONFIG_TYPE -> KraidEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            RIDLEY_CONFIG_TYPE -> BossBehaviorEditor(RIDLEY_BEHAVIOR, patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            DRAYGON_CONFIG_TYPE -> BossBehaviorEditor(DRAYGON_BEHAVIOR, patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_stats" -> EnemyStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())

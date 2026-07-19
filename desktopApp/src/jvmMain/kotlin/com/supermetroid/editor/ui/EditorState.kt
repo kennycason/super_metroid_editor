@@ -2147,7 +2147,7 @@ class EditorState {
         val ordered = mutableListOf<SmPatch>()
 
         // 1. GUI config patches (featured at top)
-        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, KRAID_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, FANFARE_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
+        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, KRAID_PATCH, RIDLEY_PATCH, DRAYGON_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, FANFARE_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH)) {
             if (guiPatch.id !in existingIds) {
                 ordered.add(SmPatch(
                     id = guiPatch.id,
@@ -5501,6 +5501,24 @@ class EditorState {
                     }
                 }
                 editorLog("[EXPORT]   Kraid behavior: $fieldCount fields modified")
+            } else if (patch.configType in BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE) {
+                val data = patch.configData ?: continue
+                val configType = patch.configType ?: continue
+                val definition = BOSS_BEHAVIOR_BY_CONFIG_TYPE[configType]
+                val fields = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(configType)
+                var fieldCount = 0
+                for (field in fields) {
+                    val value = data[field.key] ?: continue
+                    for (snesAddress in field.writeSnesAddresses) {
+                        val pc = romParser.snesToPc(snesAddress)
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            fieldCount++
+                        }
+                    }
+                }
+                editorLog("[EXPORT]   ${definition?.title ?: "Boss"} behavior: $fieldCount fields modified")
             } else if (patch.configType == "enemy_stats") {
                 val data = patch.configData ?: continue
                 var modCount = 0

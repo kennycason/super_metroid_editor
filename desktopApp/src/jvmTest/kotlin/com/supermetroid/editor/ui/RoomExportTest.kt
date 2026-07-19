@@ -383,6 +383,48 @@ class RoomExportTest {
     }
 
     @Test
+    fun `ridley and draygon behavior export writes direct and mirrored fields`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidBossBehavior.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val ridleyPatch = state.findOrCreateConfigPatch(RIDLEY_CONFIG_TYPE)
+        assertFalse(ridleyPatch.enabled, "ridley behavior starts disabled in a new project")
+        state.setPatchConfigData(ridleyPatch.id, "norfair_tail_damage", 0x0042)
+        state.setPatchConfigData(ridleyPatch.id, "norfair_swoop_horizontal_speed", 0x0600)
+        assertTrue(ridleyPatch.enabled, "editing ridley behavior should enable the patch for export")
+
+        val draygonPatch = state.findOrCreateConfigPatch(DRAYGON_CONFIG_TYPE)
+        assertFalse(draygonPatch.enabled, "draygon behavior starts disabled in a new project")
+        state.setPatchConfigData(draygonPatch.id, "goop_count", 0x0005)
+        state.setPatchConfigData(draygonPatch.id, "arm_apex_index", 0x0070)
+        assertTrue(draygonPatch.enabled, "editing draygon behavior should enable the patch for export")
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun word(snesAddress: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
+
+        assertEquals(0x0042, word(0xA6A1C1), "Ridley Norfair tail damage immediate operand should be patched")
+        assertEquals(0x0600, word(0xA6B4EE), "Ridley Norfair swoop horizontal speed immediate operand should be patched")
+        for (addr in listOf(0xA58B6F, 0xA58CF1)) {
+            assertEquals(0x0005, word(addr), "Mirrored Draygon goop count should be patched at ${addr.toString(16)}")
+        }
+        for (addr in listOf(0xA588BE, 0xA5895B, 0xA58A0D, 0xA58A9D)) {
+            assertEquals(0x0070, word(addr), "Mirrored Draygon arm-apex index should be patched at ${addr.toString(16)}")
+        }
+    }
+
+    @Test
     fun `boss tab config edits enable all boss config patches`() {
         val state = EditorState()
         val keysByConfig = mapOf(
@@ -390,6 +432,8 @@ class RoomExportTest {
             "boss_defeated" to "kraid",
             "phantoon" to "vuln_0",
             KRAID_CONFIG_TYPE to "intro_delay",
+            RIDLEY_CONFIG_TYPE to "norfair_tail_damage",
+            DRAYGON_CONFIG_TYPE to "goop_count",
         )
 
         for ((configType, key) in keysByConfig) {

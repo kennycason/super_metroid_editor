@@ -283,6 +283,26 @@ val KRAID_PATCH = SmPatch(
     configType = KRAID_CONFIG_TYPE
 )
 
+/** Config patch: Ridley AI behavior. Stores timer/movement/projectile values in configData. */
+val RIDLEY_PATCH = SmPatch(
+    id = "config_ridley",
+    name = "Ridley Behavior",
+    description = "Deep-dive editor for Ridley's intro, movement, swoop, hover, and pogo parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = RIDLEY_CONFIG_TYPE
+)
+
+/** Config patch: Draygon AI behavior. Stores timer/movement/projectile values in configData. */
+val DRAYGON_PATCH = SmPatch(
+    id = "config_draygon",
+    name = "Draygon Behavior",
+    description = "Deep-dive editor for Draygon's intro, swoop, goop, grab, spiral, foam, and bubble parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = DRAYGON_CONFIG_TYPE
+)
+
 internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
     "enemy_stats",
     "enemy_drops",
@@ -291,6 +311,8 @@ internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
     "boss_defeated",
     "phantoon",
     KRAID_CONFIG_TYPE,
+    RIDLEY_CONFIG_TYPE,
+    DRAYGON_CONFIG_TYPE,
 )
 
 /** Config patch: Enemy Stats overrides. Stores per-enemy HP/damage in configData. */
