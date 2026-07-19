@@ -2,6 +2,7 @@ package com.supermetroid.editor.emulator
 
 import com.supermetroid.editor.libretro.LibretroCoreDiscovery
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -89,5 +90,46 @@ class LibretroBackendTest {
         // No audio line opened, so writeSamples should be a no-op
         audio.writeSamples(ShortArray(100))
         audio.close()
+    }
+
+    @Test
+    fun `initialized empty super metroid save ram is not loadable`() {
+        val saveRam = ByteArray(0x2000)
+        for (i in 0 until 0x10) {
+            saveRam[i] = 0x60
+        }
+        "madadameyohn".encodeToByteArray().copyInto(saveRam, destinationOffset = 0x1FE0)
+
+        assertEquals(0, SuperMetroidSaveRam.validSlotCount(saveRam))
+        assertFalse(SuperMetroidSaveRam.isLoadable(saveRam))
+    }
+
+    @Test
+    fun `super metroid save ram validates primary and redundant checksums`() {
+        val saveRam = ByteArray(0x2000)
+        saveRam[0x10] = 0x01
+        saveRam[0x11] = 0x02
+        saveRam[0x24] = 0x10
+
+        val (high, low) = SuperMetroidSaveRam.checksumForSlot(saveRam, slot = 0)
+        writeSlotChecksum(saveRam, slot = 0, high = high, low = low)
+
+        assertEquals(1, SuperMetroidSaveRam.validSlotCount(saveRam))
+        assertTrue(SuperMetroidSaveRam.isLoadable(saveRam))
+
+        saveRam[0x08] = (saveRam[0x08].toInt() xor 0x01).toByte()
+        assertEquals(0, SuperMetroidSaveRam.validSlotCount(saveRam))
+        assertFalse(SuperMetroidSaveRam.isLoadable(saveRam))
+    }
+
+    private fun writeSlotChecksum(saveRam: ByteArray, slot: Int, high: Int, low: Int) {
+        val checksumOffsets = intArrayOf(0x00 + slot * 2, 0x1FF0 + slot * 2)
+        val complementOffsets = intArrayOf(0x08 + slot * 2, 0x1FF8 + slot * 2)
+        for (i in checksumOffsets.indices) {
+            saveRam[checksumOffsets[i]] = high.toByte()
+            saveRam[checksumOffsets[i] + 1] = low.toByte()
+            saveRam[complementOffsets[i]] = (high xor 0xFF).toByte()
+            saveRam[complementOffsets[i] + 1] = (low xor 0xFF).toByte()
+        }
     }
 }

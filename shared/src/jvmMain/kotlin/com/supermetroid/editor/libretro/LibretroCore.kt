@@ -233,6 +233,32 @@ class LibretroCore(private val corePath: String) {
         ptr.write(address.toLong(), data, 0, data.size)
     }
 
+    /** Read the cartridge's battery-backed save RAM, when the loaded game exposes it. */
+    fun readSaveRam(): ByteArray {
+        val size = lib.retro_get_memory_size(LibretroConstants.RETRO_MEMORY_SAVE_RAM)
+        if (size <= 0) return EMPTY_BYTE_ARRAY
+        val ptr = lib.retro_get_memory_data(LibretroConstants.RETRO_MEMORY_SAVE_RAM)
+            ?: return EMPTY_BYTE_ARRAY
+        return ptr.getByteArray(0, size.toInt())
+    }
+
+    /** Write persisted battery-backed save RAM into the loaded game. */
+    fun writeSaveRam(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val size = lib.retro_get_memory_size(LibretroConstants.RETRO_MEMORY_SAVE_RAM)
+        if (size <= 0) return false
+        val ptr = lib.retro_get_memory_data(LibretroConstants.RETRO_MEMORY_SAVE_RAM)
+            ?: return false
+        val bytesToCopy = minOf(data.size, size.toInt())
+        ptr.write(0, data, 0, bytesToCopy)
+        return bytesToCopy > 0
+    }
+
+    fun setSaveDirectory(path: String) {
+        saveDir = path
+        File(saveDir).mkdirs()
+    }
+
     fun close() {
         unloadGame()
         lib.retro_deinit()
@@ -405,5 +431,6 @@ class LibretroCore(private val corePath: String) {
         // ~1 second of stereo audio at 32040 Hz
         private const val AUDIO_BUFFER_SIZE = 32040 * 2 * 2
         private val EMPTY_SHORT_ARRAY = ShortArray(0)
+        private val EMPTY_BYTE_ARRAY = ByteArray(0)
     }
 }

@@ -4,12 +4,15 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.libretro.LibretroCore
 import com.supermetroid.editor.libretro.LibretroCoreDiscovery
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferInt
 import java.io.File
 import java.util.concurrent.Executors
+
+private val libretroBackendLog = KotlinLogging.logger {}
 
 /**
  * EmulatorBackend implementation using an in-process libretro SNES core.
@@ -49,13 +52,26 @@ class LibretroBackend(
     private var frameCounter = 0
     private var currentRomPath: String? = null
     private var frameImage: BufferedImage? = null
+    private var lastSaveRamHash: Int? = null
+    private var lastSaveRamPersistFrame = 0
+    private var lastPersistedSaveRamValidSlots = 0
+    private var lastSkippedSaveRamHash: Int? = null
 
     private var stateDir: File = (stateDirOverride
         ?: File(File(File(System.getProperty("user.home"), ".smedit"), "states"), "libretro")).apply { mkdirs() }
 
     /** Update the save state directory (e.g. when switching projects). */
     fun setStateDir(dir: File) {
-        stateDir = dir.apply { mkdirs() }
+        val nextDir = dir.absoluteFile
+        if (sessionActive && nextDir.path != stateDir.absoluteFile.path) {
+            persistSaveRamIfChangedSync()
+        }
+        stateDir = nextDir.apply { mkdirs() }
+        core?.let { c ->
+            runCatching {
+                emuThread.submit { c.setSaveDirectory(stateDir.absolutePath) }.get()
+            }
+        }
     }
 
     // ── EmulatorBackend interface ──────────────────────────────────────────
@@ -94,6 +110,7 @@ class LibretroBackend(
     }
 
     override suspend fun disconnect() {
+        persistSaveRamIfChanged()
         sessionActive = false
         currentRomPath = null
         runCatching { onEmuThread { core?.close() } }
@@ -109,6 +126,7 @@ class LibretroBackend(
         val c = core ?: throw IllegalStateException("Not connected")
         val romPath = config.romPath
             ?: throw IllegalArgumentException("romPath is required for libretro backend")
+        persistSaveRamIfChanged()
         val initialState = config.stateName
             ?.let { stateName ->
                 val stateFile = File(stateDir, "$stateName.state")
@@ -118,6 +136,10 @@ class LibretroBackend(
                     null
                 }
             }
+        val persistedSaveRam = readPersistedSaveRam()
+        val saveRamToLoad = persistedSaveRam?.takeIf(SuperMetroidSaveRam::isLoadable)
+        lastSaveRamHash = saveRamToLoad?.contentHashCode()
+        var loadedPersistedSaveRam = false
 
         val capture = onEmuThread {
             val loaded = c.loadGame(romPath)
@@ -125,22 +147,32 @@ class LibretroBackend(
             if (initialState != null) {
                 c.unserializeState(initialState)
             }
+            if (saveRamToLoad != null) {
+                loadedPersistedSaveRam = c.writeSaveRam(saveRamToLoad)
+            }
             c.run()
             captureStep(c, includeFrame = true)
         }
 
         currentRomPath = romPath
         frameCounter = 1
+        lastSaveRamPersistFrame = frameCounter
         sessionActive = true
         pushFrame(capture.snapshot.frame)
         audio?.writeSamples(capture.audioSamples)
+        if (saveRamToLoad == null) {
+            persistSaveRamIfChanged()
+        }
 
-        return buildStepResult(capture.snapshot, "Session started")
+        val message = if (loadedPersistedSaveRam) "Session started (battery save loaded)" else "Session started"
+        return buildStepResult(capture.snapshot, message)
     }
 
     override suspend fun closeSession(): StepResult {
+        persistSaveRamIfChanged()
         sessionActive = false
         onEmuThread { core?.unloadGame() }
+        lastSaveRamHash = null
         frameHolder.clear()
         frameImage = null
         return StepResult(
@@ -162,6 +194,7 @@ class LibretroBackend(
             captureStep(c, includeFrame = input.includeFrame)
         }
         frameCounter += repeat
+        maybePersistSaveRam()
 
         pushFrame(capture.snapshot.frame)
         audio?.writeSamples(capture.audioSamples)
@@ -181,6 +214,7 @@ class LibretroBackend(
             stateDir.mkdirs()
             File(stateDir, "$name.state").writeBytes(data)
         }
+        persistSaveRamIfChanged()
     }
 
     override suspend fun loadState(name: String): StepResult {
@@ -188,7 +222,11 @@ class LibretroBackend(
         val stateFile = File(stateDir, "$name.state")
         if (!stateFile.isFile) throw IllegalStateException("State not found: $name")
 
+        persistSaveRamIfChanged()
         val data = withContext(Dispatchers.IO) { stateFile.readBytes() }
+        val persistedSaveRam = readPersistedSaveRam()
+        val saveRamToLoad = persistedSaveRam?.takeIf(SuperMetroidSaveRam::isLoadable)
+        lastSaveRamHash = saveRamToLoad?.contentHashCode()
         val romPath = currentRomPath ?: throw IllegalStateException("No ROM loaded for libretro state restore")
         val capture = onEmuThread {
             if (!c.isGameLoaded()) {
@@ -196,13 +234,20 @@ class LibretroBackend(
                 check(loaded) { "Failed to load ROM: $romPath" }
             }
             c.unserializeState(data)
+            if (saveRamToLoad != null) {
+                c.writeSaveRam(saveRamToLoad)
+            }
             c.run()
             captureStep(c, includeFrame = true)
         }
         frameCounter++
+        lastSaveRamPersistFrame = frameCounter
         sessionActive = true
         pushFrame(capture.snapshot.frame)
         audio?.writeSamples(capture.audioSamples)
+        if (saveRamToLoad == null) {
+            persistSaveRamIfChanged()
+        }
 
         return buildStepResult(capture.snapshot, "Loaded $name")
     }
@@ -227,6 +272,7 @@ class LibretroBackend(
     }
 
     override fun close() {
+        persistSaveRamIfChangedSync()
         sessionActive = false
         currentRomPath = null
         core?.let { c ->
@@ -304,6 +350,108 @@ class LibretroBackend(
         )
     }
 
+    private suspend fun readPersistedSaveRam(): ByteArray? {
+        return withContext(Dispatchers.IO) {
+            val file = saveRamFile()
+            if (!file.isFile) {
+                lastPersistedSaveRamValidSlots = 0
+                return@withContext null
+            }
+            val data = file.readBytes().takeIf { it.isNotEmpty() }
+            val validSlots = data?.let(SuperMetroidSaveRam::validSlotCount) ?: 0
+            lastPersistedSaveRamValidSlots = validSlots
+            if (data != null) {
+                if (validSlots > 0) {
+                    libretroBackendLog.info {
+                        "[SRAM] Found persisted battery save: ${file.absolutePath} (${data.size} bytes, validSlots=$validSlots)"
+                    }
+                } else {
+                    libretroBackendLog.info {
+                        "[SRAM] Ignoring persisted battery save with no valid Super Metroid slots: " +
+                            "${file.absolutePath} (${data.size} bytes)"
+                    }
+                }
+            }
+            data
+        }
+    }
+
+    private suspend fun maybePersistSaveRam() {
+        if (frameCounter - lastSaveRamPersistFrame < SAVE_RAM_AUTOSAVE_INTERVAL_FRAMES) return
+        lastSaveRamPersistFrame = frameCounter
+        persistSaveRamIfChanged()
+    }
+
+    private suspend fun persistSaveRamIfChanged() {
+        val c = core ?: return
+        val data = runCatching { onEmuThread { c.readSaveRam() } }.getOrNull()
+            ?.takeIf(::shouldPersistSaveRam)
+            ?: return
+        persistSaveRamBytesIfChanged(data)
+    }
+
+    private fun persistSaveRamIfChangedSync() {
+        val c = core ?: return
+        val data = try {
+            emuThread.submit<ByteArray> { c.readSaveRam() }.get()
+        } catch (_: Exception) {
+            null
+        }?.takeIf(::shouldPersistSaveRam) ?: return
+        persistSaveRamBytesIfChangedSync(data)
+    }
+
+    private suspend fun persistSaveRamBytesIfChanged(data: ByteArray) {
+        val hash = data.contentHashCode()
+        if (hash == lastSaveRamHash) return
+        withContext(Dispatchers.IO) {
+            stateDir.mkdirs()
+            saveRamFile().writeBytes(data)
+        }
+        lastSaveRamHash = hash
+        lastPersistedSaveRamValidSlots = SuperMetroidSaveRam.validSlotCount(data)
+        lastSkippedSaveRamHash = null
+        libretroBackendLog.info {
+            "[SRAM] Persisted battery save: ${saveRamFile().absolutePath} (${data.size} bytes, " +
+                "validSlots=$lastPersistedSaveRamValidSlots)"
+        }
+    }
+
+    private fun persistSaveRamBytesIfChangedSync(data: ByteArray) {
+        val hash = data.contentHashCode()
+        if (hash == lastSaveRamHash) return
+        stateDir.mkdirs()
+        saveRamFile().writeBytes(data)
+        lastSaveRamHash = hash
+        lastPersistedSaveRamValidSlots = SuperMetroidSaveRam.validSlotCount(data)
+        lastSkippedSaveRamHash = null
+        libretroBackendLog.info {
+            "[SRAM] Persisted battery save: ${saveRamFile().absolutePath} (${data.size} bytes, " +
+                "validSlots=$lastPersistedSaveRamValidSlots)"
+        }
+    }
+
+    private fun saveRamFile(): File = File(stateDir, SAVE_RAM_FILE_NAME)
+
+    private fun shouldPersistSaveRam(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val validSlots = SuperMetroidSaveRam.validSlotCount(data)
+        if (validSlots > 0) return true
+
+        val hash = data.contentHashCode()
+        if (hash != lastSkippedSaveRamHash) {
+            val reason = if (lastPersistedSaveRamValidSlots > 0) {
+                "keeping existing persisted save with validSlots=$lastPersistedSaveRamValidSlots"
+            } else {
+                "no persisted valid save exists yet"
+            }
+            libretroBackendLog.info {
+                "[SRAM] Skipped battery save write: runtime SRAM has no valid Super Metroid slots ($reason)"
+            }
+            lastSkippedSaveRamHash = hash
+        }
+        return false
+    }
+
     private suspend fun <T> onEmuThread(action: () -> T): T {
         return withContext(Dispatchers.IO) {
             emuThread.submit<T> { action() }.get()
@@ -311,10 +459,108 @@ class LibretroBackend(
     }
 
     companion object {
+        private const val SAVE_RAM_FILE_NAME = "battery.srm"
+        private const val SAVE_RAM_AUTOSAVE_INTERVAL_FRAMES = 120
+
         // Read a little-endian 16-bit word from a byte array
         private fun ByteArray.readWord(offset: Int): Int {
             if (offset + 1 >= size) return 0
             return (this[offset].toInt() and 0xFF) or ((this[offset + 1].toInt() and 0xFF) shl 8)
         }
     }
+}
+
+internal object SuperMetroidSaveRam {
+    private const val SAVE_RAM_SIZE = 0x2000
+    private const val SLOT_COUNT = 3
+    private const val SLOT_SIZE = 0x65C
+    private const val SLOT_DATA_START = 0x10
+    private const val PRIMARY_CHECKSUM_START = 0x00
+    private const val PRIMARY_COMPLEMENT_START = 0x08
+    private const val REDUNDANT_CHECKSUM_START = 0x1FF0
+    private const val REDUNDANT_COMPLEMENT_START = 0x1FF8
+
+    fun isLoadable(data: ByteArray): Boolean = validSlotCount(data) > 0
+
+    fun validSlotCount(data: ByteArray): Int {
+        if (data.size < SAVE_RAM_SIZE) return 0
+        return (0 until SLOT_COUNT).count { slot -> hasValidSlot(data, slot) }
+    }
+
+    fun checksumForSlot(data: ByteArray, slot: Int): Pair<Int, Int> {
+        require(slot in 0 until SLOT_COUNT) { "slot must be in 0 until $SLOT_COUNT" }
+        val base = SLOT_DATA_START + SLOT_SIZE * slot
+        require(data.size >= base + SLOT_SIZE) { "data is too small for slot $slot" }
+
+        var high = 0
+        var low = 0
+        var offset = 0
+        while (offset < SLOT_SIZE) {
+            high += data[base + offset].unsigned()
+            if (high > 0xFF) {
+                high = high and 0xFF
+                low++
+            }
+            low += data[base + offset + 1].unsigned()
+            if (low > 0xFF) {
+                low = low and 0xFF
+            }
+            offset += 2
+        }
+        return high to low
+    }
+
+    private fun hasValidSlot(data: ByteArray, slot: Int): Boolean {
+        val base = SLOT_DATA_START + SLOT_SIZE * slot
+        if (data.size < base + SLOT_SIZE) return false
+        if (!hasSlotPayload(data, base)) return false
+
+        val (high, low) = checksumForSlot(data, slot)
+        val complementHigh = high xor 0xFF
+        val complementLow = low xor 0xFF
+        val primaryMatches = matchesChecksum(
+            data = data,
+            checksumOffset = PRIMARY_CHECKSUM_START + slot * 2,
+            complementOffset = PRIMARY_COMPLEMENT_START + slot * 2,
+            high = high,
+            low = low,
+            complementHigh = complementHigh,
+            complementLow = complementLow,
+        )
+        val redundantMatches = matchesChecksum(
+            data = data,
+            checksumOffset = REDUNDANT_CHECKSUM_START + slot * 2,
+            complementOffset = REDUNDANT_COMPLEMENT_START + slot * 2,
+            high = high,
+            low = low,
+            complementHigh = complementHigh,
+            complementLow = complementLow,
+        )
+        return primaryMatches && redundantMatches
+    }
+
+    private fun matchesChecksum(
+        data: ByteArray,
+        checksumOffset: Int,
+        complementOffset: Int,
+        high: Int,
+        low: Int,
+        complementHigh: Int,
+        complementLow: Int,
+    ): Boolean {
+        if (checksumOffset + 1 >= data.size || complementOffset + 1 >= data.size) return false
+        return data[checksumOffset].unsigned() == high &&
+            data[checksumOffset + 1].unsigned() == low &&
+            data[complementOffset].unsigned() == complementHigh &&
+            data[complementOffset + 1].unsigned() == complementLow
+    }
+
+    private fun hasSlotPayload(data: ByteArray, base: Int): Boolean {
+        for (offset in 0 until SLOT_SIZE) {
+            if (data[base + offset].toInt() != 0) return true
+        }
+        return false
+    }
+
+    private fun Byte.unsigned(): Int = toInt() and 0xFF
 }
