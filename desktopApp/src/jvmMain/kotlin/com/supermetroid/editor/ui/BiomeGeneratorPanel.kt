@@ -132,6 +132,7 @@ fun BiomeGeneratorPanel(
         allowCrumble = wfcCrumble,
         allowSpikes = wfcSpikes,
     )
+    val prof = profile?.takeIf { it.first == targetTilesetId }?.second
 
     Column(
         modifier = modifier.padding(8.dp).verticalScroll(rememberScrollState()),
@@ -278,7 +279,6 @@ fun BiomeGeneratorPanel(
             }
         }
 
-        val prof = profile?.takeIf { it.first == targetTilesetId }?.second
         Button(
             enabled = roomLoaded && prof != null && romParser != null,
             onClick = {

@@ -1,5 +1,6 @@
 package com.supermetroid.editor.procgen
 
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.random.Random
 
@@ -65,6 +66,57 @@ internal object StructureAlgorithms {
     ) {
         sealPinholes(cells, width, height, protectedCells)
         removeSmallSolidIslands(cells, width, height, rules, protectedCells)
+    }
+
+    fun connectDoorPockets(
+        cells: IntArray,
+        width: Int,
+        height: Int,
+        doorPockets: List<DoorPocket>,
+        tunnelThickness: Int,
+        preserved: BooleanArray?,
+    ) {
+        if (width < 5 || height < 5 || doorPockets.size < 2) return
+        val centers = doorPockets.map { pocket ->
+            val x0 = pocket.x0.coerceIn(1, width - 2)
+            val x1 = pocket.x1.coerceIn(1, width - 2)
+            val y0 = pocket.y0.coerceIn(1, height - 2)
+            val y1 = pocket.y1.coerceIn(1, height - 2)
+            ((x0 + x1) / 2) to ((y0 + y1) / 2)
+        }.distinct()
+        if (centers.size < 2) return
+
+        val roomCenterX = width / 2
+        val roomCenterY = height / 2
+        var hub = centers.first()
+        var hubScore = Int.MAX_VALUE
+        for (center in centers) {
+            val score = abs(center.first - roomCenterX) + abs(center.second - roomCenterY)
+            if (score < hubScore) {
+                hub = center
+                hubScore = score
+            }
+        }
+
+        val ordered = centers.sortedWith(
+            compareBy<Pair<Int, Int>> { abs(it.first - hub.first) + abs(it.second - hub.second) }
+                .thenBy { it.second }
+                .thenBy { it.first }
+        )
+        for ((x, y) in ordered) {
+            if (x == hub.first && y == hub.second) continue
+            GridConnectivity.carveTunnel(
+                cells,
+                width,
+                height,
+                x,
+                y,
+                hub.first,
+                hub.second,
+                thickness = tunnelThickness.coerceAtLeast(1),
+                preserved = preserved,
+            )
+        }
     }
 
     private fun sealPinholes(

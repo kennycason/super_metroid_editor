@@ -102,6 +102,14 @@ class BiomeGenerator(
         val protectedCells = BooleanArray(n) { preserved[it] || forceAir[it] }
         if (!isMaze) {
             StructureAlgorithms.refine(cells, width, height, rules, protectedCells)
+            StructureAlgorithms.connectDoorPockets(
+                cells,
+                width,
+                height,
+                pockets,
+                tunnelThickness = 2,
+                preserved = preserved,
+            )
             GridConnectivity.ensureConnected(cells, width, height, preserved, rng) { it == BiomeCell.AIR }
             GridConnectivity.ensureConnectedByIndex(
                 cells,

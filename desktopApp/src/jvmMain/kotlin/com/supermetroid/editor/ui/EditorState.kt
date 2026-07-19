@@ -4115,7 +4115,9 @@ class EditorState {
             addLandingSiteShipProtection(preserveRects, forceAirRects)
         }
         addElevatorProtectionForRoom(preserveRects, forceAirRects, romParser, roomId, width, height)
-        preserveRects.addAll(buildDoorCapPreserveRectsForRoom(romParser, roomId, width, height, effectivePlmsForBiomeRoom(roomId, romParser)))
+        val plms = effectivePlmsForBiomeRoom(roomId, romParser)
+        addImportantPlmProtection(preserveRects, forceAirRects, width, height, plms)
+        preserveRects.addAll(buildDoorCapPreserveRectsForRoom(romParser, roomId, width, height, plms))
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
@@ -4239,6 +4241,7 @@ class EditorState {
             workingBlocksWide,
             workingBlocksTall,
         )
+        addImportantPlmProtection(preserveRects, forceAirRects, workingBlocksWide, workingBlocksTall, _workingPlms)
         preserveRects.addAll(
             buildDoorCapPreserveRectsForRoom(
                 romParser,
@@ -4260,6 +4263,34 @@ class EditorState {
             wfcOptions = wfcOptions,
         )
     }
+
+    private fun addImportantPlmProtection(
+        preserveRects: MutableList<BiomeGenerationRect>,
+        forceAirRects: MutableList<BiomeGenerationRect>,
+        width: Int,
+        height: Int,
+        plms: List<RomParser.PlmEntry>,
+    ) {
+        if (width <= 0 || height <= 0) return
+        fun addRect(list: MutableList<BiomeGenerationRect>, rect: BiomeGenerationRect) {
+            if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
+                list.add(rect)
+            }
+        }
+        for (plm in plms) {
+            if (!isBiomeAnchorPlm(plm.id)) continue
+            val x = plm.x
+            val y = plm.y
+            if (x !in 0 until width || y !in 0 until height) continue
+            addRect(preserveRects, BiomeGenerationRect(x - 1, y - 1, x + 1, y + 1))
+            addRect(forceAirRects, BiomeGenerationRect(x - 3, y - 4, x + 3, y + 2))
+        }
+    }
+
+    private fun isBiomeAnchorPlm(plmId: Int): Boolean =
+        !RomParser.isScrollPlm(plmId) &&
+            !RomParser.isDoorCapPlm(plmId) &&
+            (isEditorItemPlm(plmId) || RomParser.isStationPlm(plmId) || RomParser.isGatePlm(plmId))
 
     private fun addLandingSiteShipProtection(
         preserveRects: MutableList<BiomeGenerationRect>,

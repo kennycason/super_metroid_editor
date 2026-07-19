@@ -85,8 +85,8 @@ class TilesetProfile private constructor(
         }
 
         /**
-         * Learn a profile for [tilesetId] by decompressing the level data of
-         * every room in [rooms] that uses that tileset.
+         * Learn tile vocabulary for [tilesetId] from every room in [rooms] that
+         * uses that tileset.
          */
         fun learn(romParser: RomParser, rooms: List<Room>, tilesetId: Int): TilesetProfile {
             // Words referencing undefined or placeholder "X" metatiles render
@@ -167,16 +167,17 @@ class TilesetProfile private constructor(
         }
 
         /** Minimal profile for tests / no-ROM contexts: one word per role. */
-        fun synthetic(): TilesetProfile = TilesetProfile(
-            solidByMask = emptyMap(),
-            solidByMask4 = emptyMap(),
-            solidFallback = (0x8 shl 12) or 0x120,
-            airWord = 0x00FF,
-            spikes = WeightedWords(emptyMap()),
-            crumbles = WeightedPairs(emptyMap()),
-            hiddenShots = WeightedPairs(emptyMap()),
-            bombs = WeightedPairs(emptyMap()),
-            roomsSampled = 0,
-        )
+        fun synthetic(): TilesetProfile =
+            TilesetProfile(
+                solidByMask = emptyMap(),
+                solidByMask4 = emptyMap(),
+                solidFallback = (0x8 shl 12) or 0x120,
+                airWord = 0x00FF,
+                spikes = WeightedWords(emptyMap()),
+                crumbles = WeightedPairs(emptyMap()),
+                hiddenShots = WeightedPairs(emptyMap()),
+                bombs = WeightedPairs(emptyMap()),
+                roomsSampled = 0,
+            )
     }
 }
