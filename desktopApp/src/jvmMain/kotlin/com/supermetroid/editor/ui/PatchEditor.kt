@@ -75,8 +75,7 @@ fun PatchListPanel(
 ) {
     @Suppress("UNUSED_VARIABLE") val pv = editorState.patchVersion
     // Filter out enemy/boss patches — they have their own top-level tabs
-    val enemyBossTypes = setOf("enemy_stats", "enemy_drops", "enemy_vuln", "boss_stats", "boss_defeated", "phantoon")
-    val patches = editorState.project.patches.filter { it.configType !in enemyBossTypes }
+    val patches = editorState.project.patches.filter { it.configType !in DEDICATED_EDITOR_CONFIG_TYPES }
     val selectedId = editorState.selectedPatchId
     var searchQuery by remember { mutableStateOf("") }
     val filtered = if (searchQuery.isBlank()) patches
@@ -301,6 +300,7 @@ fun PatchEditorCanvas(
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            KRAID_CONFIG_TYPE -> KraidEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_stats" -> EnemyStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())

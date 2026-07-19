@@ -322,12 +322,74 @@ class RoomExportTest {
     }
 
     @Test
+    fun `saved disabled boss stats data is auto-enabled on export`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidSavedBossStats.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val patch = state.findOrCreateConfigPatch("boss_stats")
+        patch.configData = mutableMapOf("kraid_hp" to 10_000)
+        patch.enabled = false
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun hp(speciesId: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId) + 4)
+
+        assertTrue(patch.enabled, "saved boss stats config data should be enabled for export")
+        assertEquals(10_000, hp(0xE2BF), "Kraid main stat block HP should be patched from saved data")
+        assertEquals(10_000, hp(0xE2FF), "Kraid upper-body stat block HP should be patched from saved data")
+    }
+
+    @Test
+    fun `kraid behavior export writes direct and mirrored fields`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidKraidBehavior.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val patch = state.findOrCreateConfigPatch(KRAID_CONFIG_TYPE)
+        assertFalse(patch.enabled, "kraid behavior starts disabled in a new project")
+        state.setPatchConfigData(patch.id, "intro_delay", 42)
+        state.setPatchConfigData(patch.id, "diagonal_up_y_speed", 2)
+        assertTrue(patch.enabled, "editing kraid behavior should enable the patch for export")
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun word(snesAddress: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
+
+        assertEquals(42, word(0xA7AA6A), "Kraid intro delay immediate operand should be patched")
+        for (addr in listOf(0xA7BE54, 0xA7BE64, 0xA7BE74, 0xA7BE84)) {
+            assertEquals(2, word(addr), "Mirrored diagonal-up fingernail Y speed should be patched at ${addr.toString(16)}")
+        }
+    }
+
+    @Test
     fun `boss tab config edits enable all boss config patches`() {
         val state = EditorState()
         val keysByConfig = mapOf(
             "boss_stats" to "kraid_hp",
             "boss_defeated" to "kraid",
             "phantoon" to "vuln_0",
+            KRAID_CONFIG_TYPE to "intro_delay",
         )
 
         for ((configType, key) in keysByConfig) {

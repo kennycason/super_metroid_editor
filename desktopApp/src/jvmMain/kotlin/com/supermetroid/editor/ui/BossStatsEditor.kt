@@ -89,9 +89,9 @@ val BOSS_DEFS = listOf(
     BossDef("Phantoon", Color(0xFF9C27B0), "Ph", listOf(
         hpField("phantoon_hp", "Phantoon HP", 0xE4BF, 2500),
         dmgField("phantoon_contact", "Contact Damage", 0xE4BF, 40),
-        dmgField("phantoon_flame1", "Flame (small)", 0xE4FF, 40),
-        dmgField("phantoon_flame2", "Flame (medium)", 0xE53F, 40),
-        dmgField("phantoon_flame3", "Flame (large)", 0xE57F, 40),
+        dmgField("phantoon_flame1", "Eye Contact", 0xE4FF, 40),
+        dmgField("phantoon_flame2", "Tentacles Contact", 0xE53F, 40),
+        dmgField("phantoon_flame3", "Mouth Contact", 0xE57F, 40),
     )),
     BossDef("Ridley", Color(0xFFFF5722), "R", listOf(
         hpField("ridley_hp", "Ridley HP", 0xE17F, 18000),
@@ -166,7 +166,7 @@ fun BossStatsEditor(
         Text("Boss Stats Editor", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Edit HP and damage values for all major and mini-bosses. Changes apply when patch is enabled.",
+            "Edit HP and damage values for all major and mini-bosses. Changes apply on ROM export.",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

@@ -62,6 +62,50 @@ The 64-byte species header layout (offsets from species base PC):
 3. **Belly spike damage** — `$A0:E345`, `$A0:E385`, `$A0:E3C5` (one per spike type).
 4. **Flying claw damage** — `$A0:E405`, `$A0:E445`, `$A0:E485`.
 
+## Behavior Editor Fields (Bank $A7)
+
+The Kraid behavior editor writes named data-table words and selected immediate operands from the disassembly. Values are u16 little-endian words.
+
+### Kraid Constants
+
+| Field | SNES Address | Default | Notes |
+|-------|--------------|---------|-------|
+| Top lint timer | `$A7:A916` | `$0120` / 288 | Initial top lint function timer |
+| Middle lint timer | `$A7:A918` | `$00A0` / 160 | Initial middle lint function timer |
+| Bottom lint timer | `$A7:A91A` | `$0040` / 64 | Initial bottom lint function timer |
+| Forward walk speed | `$A7:A91C` | `$0003` | Kraid forwards speed |
+| Backward walk speed | `$A7:A920` | `$0003` | Kraid backwards speed |
+| Lint X subspeed | `$A7:A926` | `$8000` | Fixed-point subspeed |
+| Lint X speed | `$A7:A928` | `$0003` | Integer speed |
+
+### Intro And Phase Timers
+
+| Field | SNES Address | Default | Notes |
+|-------|--------------|---------|-------|
+| Intro delay | `$A7:AA6A` | `$012C` / 300 | Kraid function timer before raising through floor |
+| Initial instruction timer | `$A7:AA77` | `$0040` / 64 | Initial Kraid instruction timer |
+| Get-big pause | `$A7:C016` | `$00B4` / 180 | Delay before second phase/get-big sequence |
+| Slow rock phase | `$A7:C8A4` | `$0078` / 120 | Raise-through-floor rocks every `$10` frames |
+| Fast rock phase | `$A7:C8F3` | `$0060` / 96 | Raise-through-floor rocks every `$08` frames |
+| Post-rise foot timer | `$A7:C973` | `$012C` / 300 | Kraid foot first-phase thinking timer |
+| After mouth closes | `$A7:AEF3` | `$005A` / 90 | Kraid instruction timer after the mouth closes |
+| Mouth reopen delay | `$A7:AF15` | `$0040` / 64 | Delay before forced mouth reopen |
+
+### Fingernails
+
+| Field | SNES Address(es) | Default | Notes |
+|-------|------------------|---------|-------|
+| Good fingernail timer | `$A7:AE5F` | `$0040` / 64 | Initial good fingernail function timer |
+| Bad fingernail timer | `$A7:AE65` | `$0080` / 128 | Initial bad fingernail function timer |
+| Horizontal nail X | `$A7:BE04` | `$0032` / 50 | Horizontal fingernail initial X |
+| Horizontal nail Y | `$A7:BE0A` | `$00F0` / 240 | Horizontal fingernail initial Y |
+| Horizontal nail X speed | `$A7:BE16` | `$0001` | Horizontal fingernail X velocity |
+| Horizontal nail Y speed | `$A7:BE22` | `$0000` | Horizontal fingernail Y velocity |
+| Diagonal up X speed | `$A7:BE50,$BE60,$BE70,$BE80` | `$FFFF` / -1 | Shared upward diagonal X velocity |
+| Diagonal up Y speed | `$A7:BE54,$BE64,$BE74,$BE84` | `$0001` / 1 | Shared upward diagonal Y velocity |
+| Diagonal down X speed | `$A7:BE58,$BE68,$BE78,$BE88` | `$FFFF` / -1 | Shared downward diagonal X velocity |
+| Diagonal down Y speed | `$A7:BE5C,$BE6C,$BE7C,$BE8C` | `$FFFF` / -1 | Shared downward diagonal Y velocity |
+
 ## What Requires ASM (Not Simple Data Writes)
 
 - **Rock spit speed/frequency** — Controlled by AI code, not a plain data table.

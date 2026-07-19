@@ -273,6 +273,26 @@ val PHANTOON_PATCH = SmPatch(
     configType = "phantoon"
 )
 
+/** Config patch: Kraid AI behavior. Stores timer/movement/projectile values in configData. */
+val KRAID_PATCH = SmPatch(
+    id = "config_kraid",
+    name = "Kraid Behavior",
+    description = "Deep-dive editor for Kraid's AI timers, movement speed, lint, and fingernail parameters.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = KRAID_CONFIG_TYPE
+)
+
+internal val DEDICATED_EDITOR_CONFIG_TYPES = setOf(
+    "enemy_stats",
+    "enemy_drops",
+    "enemy_vuln",
+    "boss_stats",
+    "boss_defeated",
+    "phantoon",
+    KRAID_CONFIG_TYPE,
+)
+
 /** Config patch: Enemy Stats overrides. Stores per-enemy HP/damage in configData. */
 val ENEMY_STATS_PATCH = SmPatch(
     id = "config_enemy_stats",

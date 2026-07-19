@@ -5,9 +5,9 @@
 | Entity | Species ID | Bank $A0 Offset |
 |--------|-----------|-----------------|
 | Phantoon (body) | $E4BF | $A0:E4BF |
-| Flame (small) | $E4FF | $A0:E4FF |
-| Flame (medium) | $E53F | $A0:E53F |
-| Flame (large) | $E57F | $A0:E57F |
+| Phantoon eye | $E4FF | $A0:E4FF |
+| Phantoon tentacles | $E53F | $A0:E53F |
+| Phantoon mouth | $E57F | $A0:E57F |
 
 Room ID: **$CD13** (Wrecked Ship)
 AI Bank: **$A7** (shared with Kraid, Etecoon, Dachora)
@@ -21,9 +21,9 @@ Boss defeated flag: **$7E:D82B** bit 0x01
 |-----------|-------------|-----------|---------|
 | Phantoon HP | $A0:E4C3 | 0x1064C3 | 2500 |
 | Contact Damage | $A0:E4C5 | 0x1064C5 | 40 |
-| Flame (small) damage | $A0:E505 | 0x106505 | 40 |
-| Flame (medium) damage | $A0:E545 | 0x106545 | 40 |
-| Flame (large) damage | $A0:E585 | 0x106585 | 40 |
+| Eye contact damage | $A0:E505 | 0x106505 | 40 |
+| Tentacles contact damage | $A0:E545 | 0x106545 | 40 |
+| Mouth contact damage | $A0:E585 | 0x106585 | 40 |
 
 ## Behavior Data Tables (Bank $A7)
 
@@ -149,16 +149,20 @@ Sub-table values (after pointers, starting at $A7:CD05):
 
 ### Flame Rain Positions
 
-Address: **$A7:CDAD** (PC 0x13CDAD) — 4 position sets × 4 words
+Address: **$A7:CDAD** (PC 0x13CDAD) — 8 position sets × 4 words
 
-Controls where Phantoon materializes during flame rain. Each set: (unknown, X, Y, padding).
+Controls where Phantoon materializes during flame rain. Each set: (movement index, X, Y, padding).
 
-| Set | X | Y |
-|-----|---|---|
-| 0 | 128 | 96 |
-| 1 | 71 | 168 |
-| 2 | 136 | 208 |
-| 3 | 201 | 168 |
+| Set | Movement index | X | Y |
+|-----|----------------|---|---|
+| 0 | 1 | 128 | 96 |
+| 1 | 71 | 168 | 64 |
+| 2 | 136 | 208 | 96 |
+| 3 | 201 | 168 | 128 |
+| 4 | 1 | 128 | 96 |
+| 5 | 334 | 88 | 64 |
+| 6 | 399 | 48 | 96 |
+| 7 | 465 | 88 | 128 |
 
 ### Wavy Phantoon Constants (Intro/Death)
 
@@ -166,11 +170,11 @@ Address: **$A7:CD9B** (PC 0x13CD9B) — 5 entries × 2 bytes
 
 | Index | Default | Purpose |
 |-------|---------|---------|
-| 0 | $0040 (64) | Wave amplitude |
-| 1 | $0C00 (3072) | Wave frequency |
-| 2 | $0100 (256) | Amplitude growth rate |
-| 3 | $F000 (-4096) | Amplitude decay rate |
-| 4 | $0008 (8) | Wave speed |
+| 0 | $0040 (64) | Amplitude delta - intro wavy Phantoon |
+| 1 | $0C00 (3072) | Max amplitude - intro wavy Phantoon |
+| 2 | $0100 (256) | Amplitude delta - dying wavy Phantoon |
+| 3 | $F000 (-4096) | Max amplitude - dying wavy Phantoon |
+| 4 | $0008 (8) | Wavy Phantoon phase delta |
 
 ## AI Routine Addresses (Bank $A7)
 

@@ -92,42 +92,42 @@ val PHANTOON_SECTIONS: List<PhantoonSection> = listOf(
     ),
     PhantoonSection(
         "Figure-8 Movement — Forward",
-        "Acceleration (fixed-point) and speed caps (pixels/frame) for rightward figure-8 movement.",
+        "Subacceleration/acceleration words and speed caps for forward figure-8 movement.",
         Color(0xFF1565C0),
         listOf(
             PhantoonField("fwd_accel_0", "Acceleration 0", 0xA7CD73, 0x0600, hex = true),
             PhantoonField("fwd_accel_1", "Acceleration 1", 0xA7CD75, 0x0000, hex = true),
             PhantoonField("fwd_accel_2", "Acceleration 2", 0xA7CD77, 0x1000, hex = true),
             PhantoonField("fwd_accel_3", "Acceleration 3", 0xA7CD79, 0x0000, hex = true),
-            PhantoonField("fwd_cap_0", "Speed Cap 0", 0xA7CD7B, 2, unit = "px/frame"),
-            PhantoonField("fwd_cap_1", "Speed Cap 1", 0xA7CD7D, 7, unit = "px/frame"),
-            PhantoonField("fwd_cap_2", "Speed Cap 2", 0xA7CD7F, 0, unit = "px/frame"),
+            PhantoonField("fwd_cap_0", "Speed Cap 0", 0xA7CD7B, 2, unit = "steps/frame"),
+            PhantoonField("fwd_cap_1", "Speed Cap 1", 0xA7CD7D, 7, unit = "steps/frame"),
+            PhantoonField("fwd_cap_2", "Speed Cap 2", 0xA7CD7F, 0, unit = "steps/frame"),
         )
     ),
     PhantoonSection(
         "Figure-8 Movement — Reverse",
-        "Acceleration and speed caps for leftward (reverse) figure-8 movement. Negative speed = leftward.",
+        "Subacceleration/acceleration words and speed caps for reverse figure-8 movement. Negative speed = reverse traversal.",
         Color(0xFF0D47A1),
         listOf(
             PhantoonField("rev_accel_0", "Acceleration 0", 0xA7CD81, 0x0600, hex = true),
             PhantoonField("rev_accel_1", "Acceleration 1", 0xA7CD83, 0x0000, hex = true),
             PhantoonField("rev_accel_2", "Acceleration 2", 0xA7CD85, 0x1000, hex = true),
             PhantoonField("rev_accel_3", "Acceleration 3", 0xA7CD87, 0x0000, hex = true),
-            PhantoonField("rev_cap_0", "Speed Cap 0", 0xA7CD89, 0xFFFE, unit = "px/frame", signed = true),
-            PhantoonField("rev_cap_1", "Speed Cap 1", 0xA7CD8B, 0xFFF9, unit = "px/frame", signed = true),
-            PhantoonField("rev_cap_2", "Speed Cap 2", 0xA7CD8D, 0x0000, unit = "px/frame", signed = true),
+            PhantoonField("rev_cap_0", "Speed Cap 0", 0xA7CD89, 0xFFFE, unit = "steps/frame", signed = true),
+            PhantoonField("rev_cap_1", "Speed Cap 1", 0xA7CD8B, 0xFFF9, unit = "steps/frame", signed = true),
+            PhantoonField("rev_cap_2", "Speed Cap 2", 0xA7CD8D, 0x0000, unit = "steps/frame", signed = true),
         )
     ),
     PhantoonSection(
         "Wavy Effect — Intro / Death",
-        "Parameters for Phantoon's wavy appearance/disappearance animation.",
+        "Amplitude deltas, max amplitudes, and phase delta for Phantoon's intro/death wave effect.",
         Color(0xFF00695C),
         listOf(
-            PhantoonField("wave_amp", "Wave Amplitude", 0xA7CD9B, 0x0040),
-            PhantoonField("wave_freq", "Wave Frequency", 0xA7CD9D, 0x0C00),
-            PhantoonField("wave_growth", "Amplitude Growth Rate", 0xA7CD9F, 0x0100),
-            PhantoonField("wave_decay", "Amplitude Decay Rate", 0xA7CDA1, 0xF000, signed = true),
-            PhantoonField("wave_speed", "Wave Speed", 0xA7CDA3, 0x0008),
+            PhantoonField("wave_amp", "Intro Amplitude Delta", 0xA7CD9B, 0x0040),
+            PhantoonField("wave_freq", "Intro Max Amplitude", 0xA7CD9D, 0x0C00),
+            PhantoonField("wave_growth", "Death Amplitude Delta", 0xA7CD9F, 0x0100),
+            PhantoonField("wave_decay", "Death Max Amplitude", 0xA7CDA1, 0xF000, signed = true),
+            PhantoonField("wave_speed", "Wave Phase Delta", 0xA7CDA3, 0x0008),
         )
     ),
     PhantoonSection(
@@ -137,12 +137,12 @@ val PHANTOON_SECTIONS: List<PhantoonSection> = listOf(
         listOf(
             PhantoonField("pos0_x", "Position 0 X", 0xA7CDAF, 128, unit = "px"),
             PhantoonField("pos0_y", "Position 0 Y", 0xA7CDB1, 96, unit = "px"),
-            PhantoonField("pos1_x", "Position 1 X", 0xA7CDB7, 71, unit = "px"),
-            PhantoonField("pos1_y", "Position 1 Y", 0xA7CDB9, 168, unit = "px"),
-            PhantoonField("pos2_x", "Position 2 X", 0xA7CDBF, 136, unit = "px"),
-            PhantoonField("pos2_y", "Position 2 Y", 0xA7CDC1, 208, unit = "px"),
-            PhantoonField("pos3_x", "Position 3 X", 0xA7CDC7, 201, unit = "px"),
-            PhantoonField("pos3_y", "Position 3 Y", 0xA7CDC9, 168, unit = "px"),
+            PhantoonField("pos1_x", "Position 1 X", 0xA7CDB7, 168, unit = "px"),
+            PhantoonField("pos1_y", "Position 1 Y", 0xA7CDB9, 64, unit = "px"),
+            PhantoonField("pos2_x", "Position 2 X", 0xA7CDBF, 208, unit = "px"),
+            PhantoonField("pos2_y", "Position 2 Y", 0xA7CDC1, 96, unit = "px"),
+            PhantoonField("pos3_x", "Position 3 X", 0xA7CDC7, 168, unit = "px"),
+            PhantoonField("pos3_y", "Position 3 Y", 0xA7CDC9, 128, unit = "px"),
         )
     ),
 )
