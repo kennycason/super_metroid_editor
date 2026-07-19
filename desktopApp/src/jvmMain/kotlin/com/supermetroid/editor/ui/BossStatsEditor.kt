@@ -53,9 +53,11 @@ data class BossStatField(
     val label: String,
     val speciesId: Int,
     val offset: Int,
-    val defaultValue: Int
+    val defaultValue: Int,
+    val additionalSpeciesIds: List<Int> = emptyList(),
 ) {
     val snesAddress: Int get() = RomConstants.BANK_ENEMY_AI or speciesId
+    val writeSpeciesIds: List<Int> get() = (listOf(speciesId) + additionalSpeciesIds).distinct()
 }
 
 data class BossDef(
@@ -65,11 +67,11 @@ data class BossDef(
     val fields: List<BossStatField>
 )
 
-private fun hpField(key: String, label: String, id: Int, default: Int) =
-    BossStatField(key, label, id, 4, default)
+private fun hpField(key: String, label: String, id: Int, default: Int, vararg additionalIds: Int) =
+    BossStatField(key, label, id, 4, default, additionalIds.toList())
 
-private fun dmgField(key: String, label: String, id: Int, default: Int) =
-    BossStatField(key, label, id, 6, default)
+private fun dmgField(key: String, label: String, id: Int, default: Int, vararg additionalIds: Int) =
+    BossStatField(key, label, id, 6, default, additionalIds.toList())
 
 // ─── Boss definitions with vanilla defaults ──────────────────────
 // Species IDs verified against Kraid's room enemy set ($A1:9EB5) and ROM binary.
@@ -79,10 +81,10 @@ private fun dmgField(key: String, label: String, id: Int, default: Int) =
 // Vanilla defaults verified against test ROM ($A0 bank enemy stat blocks).
 val BOSS_DEFS = listOf(
     BossDef("Kraid", Color(0xFF8BC34A), "K", listOf(
-        hpField("kraid_hp", "Kraid HP", 0xE2BF, 1000),
-        dmgField("kraid_contact", "Contact Damage", 0xE2BF, 20),
-        dmgField("kraid_belly_spike", "Belly Spike Damage", 0xE33F, 10),
-        dmgField("kraid_claw", "Flying Claw Damage", 0xE3FF, 10),
+        hpField("kraid_hp", "Kraid HP", 0xE2BF, 1000, 0xE2FF),
+        dmgField("kraid_contact", "Contact Damage", 0xE2BF, 20, 0xE2FF),
+        dmgField("kraid_belly_spike", "Belly Spike Damage", 0xE33F, 10, 0xE37F, 0xE3BF),
+        dmgField("kraid_claw", "Flying Claw Damage", 0xE3FF, 20),
     )),
     BossDef("Phantoon", Color(0xFF9C27B0), "Ph", listOf(
         hpField("phantoon_hp", "Phantoon HP", 0xE4BF, 2500),

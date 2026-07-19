@@ -8,6 +8,7 @@ import com.supermetroid.editor.procgen.BiomeStyle
 import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.TileGraphics
@@ -291,6 +292,52 @@ class RoomExportTest {
         )
     }
 
+    @Test
+    fun `boss stats export enables patch and writes kraid hp to both body stat blocks`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidBossStats.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val patch = state.findOrCreateConfigPatch("boss_stats")
+        assertFalse(patch.enabled, "boss stats starts disabled in a new project")
+        state.setPatchConfigData(patch.id, "kraid_hp", 10_000)
+        assertTrue(patch.enabled, "editing boss stats should enable the patch for export")
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun hp(speciesId: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId) + 4)
+
+        assertEquals(10_000, hp(0xE2BF), "Kraid main stat block HP should be patched")
+        assertEquals(10_000, hp(0xE2FF), "Kraid upper-body stat block HP should be patched")
+    }
+
+    @Test
+    fun `boss tab config edits enable all boss config patches`() {
+        val state = EditorState()
+        val keysByConfig = mapOf(
+            "boss_stats" to "kraid_hp",
+            "boss_defeated" to "kraid",
+            "phantoon" to "vuln_0",
+        )
+
+        for ((configType, key) in keysByConfig) {
+            val patch = state.findOrCreateConfigPatch(configType)
+            assertFalse(patch.enabled, "$configType starts disabled in a new project")
+            state.setPatchConfigData(patch.id, key, 1)
+            assertTrue(patch.enabled, "editing $configType should enable the patch")
+        }
+    }
+
     private data class ElevatorCellBefore(
         val word: Int,
         val bts: Int,
@@ -391,6 +438,9 @@ class RoomExportTest {
                 ((romData[offset + 1].toInt() and 0xFF) shl 8) or
                 ((romData[offset + 2].toInt() and 0xFF) shl 16)
     }
+
+    private fun readU16(bytes: ByteArray, pc: Int): Int =
+        (bytes[pc].toInt() and 0xFF) or ((bytes[pc + 1].toInt() and 0xFF) shl 8)
 
     private fun highEntropyPaletteColors(tilesetId: Int): IntArray {
         var x = 0x13579BDF xor (tilesetId * 0x10203)

@@ -302,32 +302,6 @@ fun BiomeGeneratorPanel(
         ) {
             Text("Generate room", fontSize = 11.sp)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = omitSpecialRooms, onCheckedChange = { omitSpecialRooms = it })
-            Text("Omit utility and boss rooms", fontSize = 10.sp)
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            OutlinedButton(
-                enabled = prof != null && romParser != null,
-                onClick = { confirmGenerateAll = true },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-            ) {
-                Text("Generate all", fontSize = 11.sp)
-            }
-            OutlinedButton(
-                enabled = romParser != null,
-                onClick = { confirmRevertAll = true },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-            ) {
-                Text("Revert all", fontSize = 11.sp)
-            }
-        }
         Text(
             when {
                 !roomLoaded -> "Load a room first"
@@ -355,6 +329,32 @@ fun BiomeGeneratorPanel(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Reset room", fontSize = 11.sp)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = omitSpecialRooms, onCheckedChange = { omitSpecialRooms = it })
+            Text("Omit utility and boss rooms", fontSize = 10.sp)
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OutlinedButton(
+                enabled = prof != null && romParser != null,
+                onClick = { confirmGenerateAll = true },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            ) {
+                Text("Generate all", fontSize = 11.sp)
+            }
+            OutlinedButton(
+                enabled = romParser != null,
+                onClick = { confirmRevertAll = true },
+                modifier = Modifier.weight(1f),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            ) {
+                Text("Revert all", fontSize = 11.sp)
+            }
         }
     }
 

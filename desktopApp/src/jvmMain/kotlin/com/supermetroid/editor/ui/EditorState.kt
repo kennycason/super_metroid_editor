@@ -1501,7 +1501,10 @@ class EditorState {
     }
 
     fun setPatchConfigValue(id: String, value: Int) {
-        project.patches.find { it.id == id }?.let { it.configValue = value }
+        project.patches.find { it.id == id }?.let {
+            it.configValue = value
+            if (it.configType != null) it.enabled = true
+        }
         dirty = true; patchVersion++
     }
 
@@ -1510,6 +1513,7 @@ class EditorState {
         val data = patch.configData ?: mutableMapOf()
         data[key] = value
         patch.configData = data
+        if (patch.configType != null) patch.enabled = true
         dirty = true; patchVersion++
     }
 
@@ -5439,12 +5443,15 @@ class EditorState {
                 var fieldCount = 0
                 for (field in ALL_BOSS_FIELDS) {
                     val value = data[field.key] ?: continue
-                    val pc = romParser.snesToPc(field.snesAddress) + field.offset
-                    if (pc + 1 < romData.size) {
-                        romData[pc] = (value and 0xFF).toByte()
-                        romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                    for (speciesId in field.writeSpeciesIds) {
+                        val snesAddress = RomConstants.BANK_ENEMY_AI or speciesId
+                        val pc = romParser.snesToPc(snesAddress) + field.offset
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            fieldCount++
+                        }
                     }
-                    fieldCount++
                 }
                 editorLog("[EXPORT]   Boss stats: $fieldCount fields modified")
             } else if (patch.configType == "phantoon") {
