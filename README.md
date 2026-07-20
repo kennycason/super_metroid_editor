@@ -141,24 +141,9 @@ git submodule update --init --recursive
 
 The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
 
-## CLI Export Tool
+## CLI
 
-The `cli` module provides headless export of structured JSON data from a ROM with no GUI dependency.
-
-```bash
-# List all rooms
-./gradlew -q :cli:runCli -Pargs="--rom rom.smc rooms"
-
-# Export single room by handle or hex ID
-./gradlew -q :cli:runCli -Pargs="--rom rom.smc room landingSite"
-./gradlew -q :cli:runCli -Pargs="--rom rom.smc room 0x91F8"
-
-# Navigation graph
-./gradlew -q :cli:runCli -Pargs="--rom rom.smc graph"
-
-# Full export to directory
-./gradlew -q :cli:runCli -Pargs="--rom rom.smc export -o /tmp/sm_export"
-```
+The `cli` module provides headless ROM data export and patch building without a GUI dependency. See [CLI.md](CLI.md) for command usage, build JSON examples, IPS-only generation, and the shared headless API.
 
 ## Editing Approach
 

@@ -1,7 +1,13 @@
 package com.supermetroid.editor.cli
 
+import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.RoomRepository
+import com.supermetroid.editor.headless.SmeditBuildReport
+import com.supermetroid.editor.headless.SmeditBuildRequest
+import com.supermetroid.editor.headless.SmeditBuildService
+import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.RomParser
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import java.io.File
@@ -9,6 +15,7 @@ import kotlin.system.exitProcess
 
 private val jsonPretty = Json { prettyPrint = true }
 private val jsonCompact = Json { prettyPrint = false }
+private val jsonInput = Json { ignoreUnknownKeys = true }
 
 fun main(args: Array<String>) {
     if (args.isEmpty()) {
@@ -33,7 +40,7 @@ fun main(args: Array<String>) {
         }
     }
 
-    if (romPath == null) {
+    if (romPath == null && command != "build" && command != "patches") {
         System.err.println("Error: --rom <path> is required")
         exitProcess(1)
     }
@@ -44,15 +51,21 @@ fun main(args: Array<String>) {
     }
 
     val json = if (compact) jsonCompact else jsonPretty
-    val parser = RomParser.loadRom(romPath)
-    val repo = RoomRepository()
-    val roomExporter = RoomExporter(parser, repo)
-
     when (command) {
-        "rooms" -> cmdRooms(roomExporter, json)
-        "room" -> cmdRoom(roomExporter, json, commandArgs)
-        "graph" -> cmdGraph(roomExporter, json)
-        "export" -> cmdExport(roomExporter, json, commandArgs)
+        "rooms", "room", "graph", "export" -> {
+            val requiredRomPath = romPath ?: error("ROM path was already validated")
+            val parser = RomParser.loadRom(requiredRomPath)
+            val repo = RoomRepository()
+            val roomExporter = RoomExporter(parser, repo)
+            when (command) {
+                "rooms" -> cmdRooms(roomExporter, json)
+                "room" -> cmdRoom(roomExporter, json, commandArgs)
+                "graph" -> cmdGraph(roomExporter, json)
+                "export" -> cmdExport(roomExporter, json, commandArgs)
+            }
+        }
+        "build" -> cmdBuild(json, romPath, commandArgs)
+        "patches" -> cmdPatches(json)
         else -> {
             System.err.println("Unknown command: $command")
             printUsage()
@@ -135,20 +148,141 @@ private fun cmdExport(
     System.err.println("Wrote ${roomExports.size} room files to rooms/ ($failed failed)")
 }
 
+private fun cmdPatches(json: Json) {
+    val supportedConfigTypes = SmeditPatchCatalog.supportedConfigTypes()
+    val summaries = SmeditPatchCatalog.defaultPatches().map { patch ->
+        CliPatchSummary(
+            id = patch.id,
+            name = patch.name,
+            description = patch.description,
+            configType = patch.configType,
+            headlessSupported = patch.writes.isNotEmpty() || patch.configType in supportedConfigTypes,
+            writeRecords = patch.writes.size,
+            writeBytes = patch.writes.sumOf { it.bytes.size },
+        )
+    }
+    println(json.encodeToString(summaries))
+}
+
+private fun cmdBuild(
+    json: Json,
+    romPath: String?,
+    args: List<String>,
+) {
+    var configPath: String? = null
+    var outputPath: String? = null
+    var patchPath: String? = null
+    var reportPath: String? = null
+
+    val iter = args.iterator()
+    while (iter.hasNext()) {
+        val arg = iter.next()
+        when {
+            arg == "--config" && iter.hasNext() -> configPath = iter.next()
+            (arg == "-o" || arg == "--output") && iter.hasNext() -> outputPath = iter.next()
+            arg == "--patch" && iter.hasNext() -> patchPath = iter.next()
+            arg == "--report" && iter.hasNext() -> reportPath = iter.next()
+            else -> {
+                System.err.println("Unknown build option: $arg")
+                printBuildUsage()
+                exitProcess(1)
+            }
+        }
+    }
+
+    if (configPath == null || (outputPath == null && patchPath == null)) {
+        printBuildUsage()
+        exitProcess(1)
+    }
+    if (outputPath != null && romPath == null) {
+        System.err.println("Error: build --output requires --rom <path.smc>; use --patch for ROM-free patch generation")
+        exitProcess(1)
+    }
+
+    val configFile = File(configPath).absoluteFile
+    val request = jsonInput.decodeFromString(SmeditBuildRequest.serializer(), configFile.readText())
+    val project = request.project?.let { projectPath ->
+        val projectFile = resolveRelative(configFile.parentFile, projectPath)
+        jsonInput.decodeFromString(SmEditProject.serializer(), projectFile.readText())
+    }
+
+    val service = SmeditBuildService()
+    val report = if (romPath != null) {
+        val result = service.build(File(romPath).readBytes(), request, project)
+        outputPath?.let { path ->
+            val outFile = File(path)
+            outFile.parentFile?.mkdirs()
+            outFile.writeBytes(result.romBytes)
+            System.err.println("Wrote ROM: ${outFile.absolutePath}")
+        }
+        patchPath?.let { path ->
+            val outFile = File(path)
+            outFile.parentFile?.mkdirs()
+            outFile.writeBytes(result.ipsPatchBytes)
+            System.err.println("Wrote IPS: ${outFile.absolutePath}")
+        }
+        result.report
+    } else {
+        val result = service.buildPatch(request, project)
+        val outFile = File(patchPath ?: error("patch path was already validated"))
+        outFile.parentFile?.mkdirs()
+        outFile.writeBytes(result.ipsPatchBytes)
+        System.err.println("Wrote IPS: ${outFile.absolutePath}")
+        result.report
+    }
+
+    val reportJson = json.encodeToString(SmeditBuildReport.serializer(), report)
+    reportPath?.let { path ->
+        val outFile = File(path)
+        outFile.parentFile?.mkdirs()
+        outFile.writeText(reportJson)
+        System.err.println("Wrote report: ${outFile.absolutePath}")
+    }
+    println(reportJson)
+}
+
+private fun resolveRelative(baseDir: File?, path: String): File {
+    val file = File(path)
+    return if (file.isAbsolute) file else File(baseDir ?: File("."), path)
+}
+
+@Serializable
+private data class CliPatchSummary(
+    val id: String,
+    val name: String,
+    val description: String,
+    val configType: String?,
+    val headlessSupported: Boolean,
+    val writeRecords: Int,
+    val writeBytes: Int,
+)
+
+private fun printBuildUsage() {
+    System.err.println("""
+Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>]
+
+At least one of --output or --patch is required.
+--output requires global --rom <path.smc>. --patch can run without --rom for ROM-free IPS generation.
+    """.trimIndent())
+}
+
 private fun printUsage() {
     System.err.println("""
-Super Metroid Editor CLI - Export structured ROM data
+Super Metroid Editor CLI - Export ROM data and apply headless patches
 
-Usage: --rom <path.smc> [--compact] <command> [options]
+Usage: [--rom <path.smc>] [--compact] <command> [options]
 
 Commands:
   rooms              List all rooms with metadata (JSON to stdout)
   room <id|handle>   Export single room with full collision grid
   graph              Export navigation graph (nodes + edges)
   export -o <dir>    Export everything: rooms.json, nav_graph.json, rooms/*.json
+  patches            List built-in patch IDs and headless support status
+  build --config <json>
+                     Apply supported project/request patches and write a ROM and/or IPS
 
 Options:
-  --rom <path>       Path to Super Metroid ROM file (.smc)
+  --rom <path>       Path to Super Metroid ROM file (.smc); required except patches or build --patch
   --compact          Output compact JSON (no indentation)
   -h, --help         Show this help
 
@@ -158,5 +292,8 @@ Examples:
   ... --rom rom.smc room landingSite
   ... --rom rom.smc graph
   ... --rom rom.smc export -o /tmp/sm_export
+  ... patches
+  ... --rom base.smc build --config build.json --output patched.smc --patch patched.ips
+  ... build --config build.json --patch patch-only.ips
     """.trimIndent())
 }
