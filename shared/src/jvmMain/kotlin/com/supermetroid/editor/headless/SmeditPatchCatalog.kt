@@ -41,12 +41,25 @@ const val FANFARE_DEFAULT_FRAMES = 0x0168
 const val FANFARE_MIN_FRAMES = 1
 const val FANFARE_MAX_FRAMES = 9999
 
+const val BEAM_DAMAGE_CONFIG_TYPE = "beam_damage"
+const val ENEMY_STATS_CONFIG_TYPE = "enemy_stats"
+const val ENEMY_DROPS_CONFIG_TYPE = "enemy_drops"
+const val ENEMY_VULN_CONFIG_TYPE = "enemy_vuln"
+
 object SmeditPatchCatalog {
     fun defaultPatches(): List<SmPatch> =
         hardcodedPatches() + configPatches() + unsupportedConfigPatches() + PatchRepository.loadBundledPatches()
 
     fun supportedConfigTypes(): Set<String> =
-        setOf(CERES_ESCAPE_CONFIG_TYPE, BOMB_CONFIG_TYPE, FANFARE_CONFIG_TYPE)
+        setOf(
+            CERES_ESCAPE_CONFIG_TYPE,
+            BOMB_CONFIG_TYPE,
+            FANFARE_CONFIG_TYPE,
+            BEAM_DAMAGE_CONFIG_TYPE,
+            ENEMY_STATS_CONFIG_TYPE,
+            ENEMY_DROPS_CONFIG_TYPE,
+            ENEMY_VULN_CONFIG_TYPE,
+        )
 
     private fun hardcodedPatches(): List<SmPatch> = listOf(
         SmPatch(
@@ -302,15 +315,37 @@ object SmeditPatchCatalog {
             enabled = false,
             configType = FANFARE_CONFIG_TYPE,
         ),
+        SmPatch(
+            id = "config_beam_damage",
+            name = "Beam Damage",
+            description = "Set uncharged beam damage values. Charged values are written as 3x the configured damage.",
+            enabled = false,
+            configType = BEAM_DAMAGE_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_enemy_stats",
+            name = "Enemy Stats",
+            description = "Set enemy HP, contact damage, AI routine pointers, graphics fields, and PB vulnerability fields.",
+            enabled = false,
+            configType = ENEMY_STATS_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_enemy_drops",
+            name = "Enemy Drops",
+            description = "Set enemy drop table weights from ROM-resolved drop table pointers.",
+            enabled = false,
+            configType = ENEMY_DROPS_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_enemy_vuln",
+            name = "Enemy Vulnerabilities",
+            description = "Set enemy weapon vulnerability table entries from ROM-resolved resistance table pointers.",
+            enabled = false,
+            configType = ENEMY_VULN_CONFIG_TYPE,
+        ),
     )
 
     private fun unsupportedConfigPatches(): List<SmPatch> = listOf(
-        unsupportedConfigPatch(
-            id = "config_beam_damage",
-            name = "Beam Damage",
-            configType = "beam_damage",
-            description = "Desktop-only v1: beam damage table writer has not been moved to the headless SDK yet.",
-        ),
         unsupportedConfigPatch(
             id = "config_boss_stats",
             name = "Boss Stats",
@@ -370,24 +405,6 @@ object SmeditPatchCatalog {
             name = "Mother Brain",
             configType = "mother_brain",
             description = "Desktop-only v1: Mother Brain behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_enemy_stats",
-            name = "Enemy Stats",
-            configType = "enemy_stats",
-            description = "Desktop-only v1: enemy stats and AI/GFX pointer writer has not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_enemy_drops",
-            name = "Enemy Drops",
-            configType = "enemy_drops",
-            description = "Desktop-only v1: enemy drop table writer has not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_enemy_vuln",
-            name = "Enemy Vulnerabilities",
-            configType = "enemy_vuln",
-            description = "Desktop-only v1: enemy vulnerability table writer has not been moved to the headless SDK yet.",
         ),
         unsupportedConfigPatch(
             id = "config_samus_physics",

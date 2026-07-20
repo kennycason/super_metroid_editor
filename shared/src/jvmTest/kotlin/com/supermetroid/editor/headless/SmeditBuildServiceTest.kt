@@ -104,12 +104,97 @@ class SmeditBuildServiceTest {
         val error = assertFailsWith<IllegalArgumentException> {
             SmeditBuildService().buildPatch(
                 SmeditBuildRequest(
-                    patches = mapOf("beam_damage" to SmeditPatchRequest())
+                    patches = mapOf("boss_stats" to SmeditPatchRequest())
                 )
             )
         }
 
         assertTrue(error.message.orEmpty().contains("not supported by headless build v1"))
+    }
+
+    @Test
+    fun `patch only build applies beam damage and enemy stats`() {
+        val original = ByteArray(0x300000)
+        val request = SmeditBuildRequest(
+            patches = mapOf(
+                BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf("power" to 123)
+                ),
+                ENEMY_STATS_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf(
+                        "zoomer_hp" to 456,
+                        "zoomer_dmg" to 78,
+                        "zoomer_touchAi" to 0x8023,
+                    )
+                ),
+            )
+        )
+
+        val result = SmeditBuildService().buildPatch(request)
+        val reconstructed = original.copyOf()
+        for (write in PatchRepository.parseIps(result.ipsPatchBytes)) {
+            for (i in write.bytes.indices) {
+                reconstructed[write.offset.toInt() + i] = write.bytes[i].toByte()
+            }
+        }
+
+        val parser = RomParser(original)
+        val beamTablePc = parser.snesToPc(0x938431)
+        val zoomerHeaderPc = parser.snesToPc(0xA0DCFF)
+
+        assertEquals(123, reconstructed.readWord(beamTablePc))
+        assertEquals(369, reconstructed.readWord(beamTablePc + 12 * 22))
+        assertEquals(456, reconstructed.readWord(zoomerHeaderPc + 0x04))
+        assertEquals(78, reconstructed.readWord(zoomerHeaderPc + 0x06))
+        assertEquals(0x8023, reconstructed.readWord(zoomerHeaderPc + 0x30))
+        assertTrue(result.report.applied.any { it.configType == BEAM_DAMAGE_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == ENEMY_STATS_CONFIG_TYPE })
+    }
+
+    @Test
+    fun `rom build applies enemy drops and vulnerabilities from rom pointers`() {
+        val original = ByteArray(0x300000)
+        val parser = RomParser(original)
+        val zoomerHeaderPc = parser.snesToPc(0xA0DCFF)
+        val dropTablePc = parser.snesToPc(0xB49000)
+        val vulnerabilityTablePc = parser.snesToPc(0xB49020)
+        writeWord(original, zoomerHeaderPc + 0x3A, 0x9000)
+        writeWord(original, zoomerHeaderPc + 0x3C, 0x9020)
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf(
+                    ENEMY_DROPS_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf("zoomer_drop2" to 77)
+                    ),
+                    ENEMY_VULN_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf("zoomer_vuln9" to 4)
+                    ),
+                )
+            )
+        )
+
+        assertEquals(77, result.romBytes[dropTablePc + 2].toInt() and 0xFF)
+        assertEquals(4, result.romBytes[vulnerabilityTablePc + 9].toInt() and 0xFF)
+        assertTrue(result.report.applied.any { it.configType == ENEMY_DROPS_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == ENEMY_VULN_CONFIG_TYPE })
+    }
+
+    @Test
+    fun `patch only enemy pointer tables warn without rom`() {
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    ENEMY_DROPS_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf("zoomer_drop0" to 10)
+                    )
+                )
+            )
+        )
+
+        assertEquals(0, PatchRepository.parseIps(result.ipsPatchBytes).size)
+        assertTrue(result.report.warnings.any { it.contains("requires --rom") })
     }
 
     @Test
@@ -191,6 +276,11 @@ class SmeditBuildServiceTest {
         data[offset] = (value and 0xFF).toByte()
         data[offset + 1] = ((value ushr 8) and 0xFF).toByte()
         data[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+    }
+
+    private fun writeWord(data: ByteArray, offset: Int, value: Int) {
+        data[offset] = (value and 0xFF).toByte()
+        data[offset + 1] = ((value ushr 8) and 0xFF).toByte()
     }
 
     private fun ByteArray.toIntList(): List<Int> =

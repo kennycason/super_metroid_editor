@@ -493,8 +493,150 @@ class SmeditBuildService(
                 }
                 FANFARE_CONFIG_TYPE
             }
+            BEAM_DAMAGE_CONFIG_TYPE -> {
+                applyBeamDamagePatch(patch, context)
+                BEAM_DAMAGE_CONFIG_TYPE
+            }
+            ENEMY_STATS_CONFIG_TYPE -> {
+                applyEnemyStatsPatch(patch, context)
+                ENEMY_STATS_CONFIG_TYPE
+            }
+            ENEMY_DROPS_CONFIG_TYPE -> {
+                applyEnemyDropsPatch(patch, context)
+                ENEMY_DROPS_CONFIG_TYPE
+            }
+            ENEMY_VULN_CONFIG_TYPE -> {
+                applyEnemyVulnerabilityPatch(patch, context)
+                ENEMY_VULN_CONFIG_TYPE
+            }
             else -> null
         }
+
+    private fun applyBeamDamagePatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (beam in HEADLESS_BEAMS) {
+            val damage = data[beam.key]?.coerceIn(0, 0xFFFF) ?: continue
+            val chargedDamage = (damage * 3).coerceIn(0, 0xFFFF)
+            writeWord(context, context.snesToPc(beam.snesAddress), damage, "Beam damage ${beam.key}")
+            writeWord(context, context.snesToPc(beam.chargedSnesAddress), chargedDamage, "Charged beam damage ${beam.key}")
+        }
+    }
+
+    private fun applyEnemyStatsPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (enemy in HEADLESS_ENEMY_DEFS) {
+            val enemyHeaderPc = context.snesToPc(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
+            val hp = data["${enemy.key}_hp"]
+            if (hp != null) {
+                writeWord(context, enemyHeaderPc + ENEMY_HEADER_HP_OFFSET, hp.coerceIn(0, 0xFFFF), "Enemy HP ${enemy.key}")
+            }
+
+            val damage = data["${enemy.key}_dmg"]
+            if (damage != null) {
+                writeWord(
+                    context,
+                    enemyHeaderPc + ENEMY_HEADER_CONTACT_DAMAGE_OFFSET,
+                    damage.coerceIn(0, 0xFFFF),
+                    "Enemy contact damage ${enemy.key}",
+                )
+            }
+
+            for ((suffix, offset) in ENEMY_HEADER_POINTER_FIELDS) {
+                val value = data["${enemy.key}$suffix"] ?: continue
+                writeWord(
+                    context,
+                    enemyHeaderPc + offset,
+                    value.coerceIn(0, 0xFFFF),
+                    "Enemy field ${enemy.key}$suffix",
+                )
+            }
+        }
+    }
+
+    private fun applyEnemyDropsPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (enemy in HEADLESS_ENEMY_DEFS) {
+            val dropTablePc = resolveEnemyBankB4TablePc(
+                context = context,
+                enemy = enemy,
+                pointerOffset = ENEMY_HEADER_DROP_TABLE_PTR_OFFSET,
+                tableSize = ENEMY_DROP_TABLE_BYTES,
+                tableLabel = "drop table",
+            ) ?: continue
+
+            for (index in 0 until ENEMY_DROP_TABLE_BYTES) {
+                val value = data["${enemy.key}_drop$index"] ?: continue
+                writeByte(context, dropTablePc + index, value.coerceIn(0, 255), "Enemy drop ${enemy.key}[$index]")
+            }
+        }
+    }
+
+    private fun applyEnemyVulnerabilityPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (enemy in HEADLESS_ENEMY_DEFS) {
+            val vulnerabilityTablePc = resolveEnemyBankB4TablePc(
+                context = context,
+                enemy = enemy,
+                pointerOffset = ENEMY_HEADER_VULNERABILITY_TABLE_PTR_OFFSET,
+                tableSize = ENEMY_VULNERABILITY_TABLE_BYTES,
+                tableLabel = "vulnerability table",
+            ) ?: continue
+
+            for (index in 0 until ENEMY_VULNERABILITY_TABLE_BYTES) {
+                val value = data["${enemy.key}_vuln$index"] ?: continue
+                writeByte(
+                    context,
+                    vulnerabilityTablePc + index,
+                    value.coerceIn(0, 255),
+                    "Enemy vulnerability ${enemy.key}[$index]",
+                )
+            }
+        }
+    }
+
+    private fun resolveEnemyBankB4TablePc(
+        context: ApplyContext,
+        enemy: HeadlessEnemyDef,
+        pointerOffset: Int,
+        tableSize: Int,
+        tableLabel: String,
+    ): Int? {
+        val rom = context.outputRom
+        val parser = context.parser
+        if (rom == null || parser == null) {
+            context.warnings.add("Enemy $tableLabel patch requires --rom because enemy table pointers are ROM-dependent.")
+            return null
+        }
+
+        val headerPc = parser.snesToPc(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
+        if (headerPc < 0 || headerPc + pointerOffset + 1 >= rom.size) {
+            context.warnings.add("Enemy ${enemy.key} $tableLabel pointer is out of ROM range.")
+            return null
+        }
+
+        val pointer = readU16(rom, headerPc + pointerOffset)
+        if (pointer == 0 || pointer == 0xFFFF) return null
+
+        val tablePc = parser.snesToPc(ENEMY_DATA_BANK_SNES or pointer)
+        if (tablePc < 0 || tablePc + tableSize > rom.size) {
+            context.warnings.add("Enemy ${enemy.key} $tableLabel resolved outside ROM bounds.")
+            return null
+        }
+
+        return tablePc
+    }
 
     private fun applyRawPatchWrites(
         patch: SmPatch,
@@ -775,6 +917,85 @@ private fun TilesetGfxData.unsupportedDescriptions(hasRom: Boolean): List<String
     return ignored
 }
 
+private data class HeadlessBeamDef(
+    val key: String,
+    val entryIndex: Int,
+    val chargedEntryIndex: Int,
+) {
+    val snesAddress: Int get() = BEAM_DAMAGE_TABLE_SNES + entryIndex * BEAM_DAMAGE_ENTRY_STRIDE
+    val chargedSnesAddress: Int get() = BEAM_DAMAGE_TABLE_SNES + chargedEntryIndex * BEAM_DAMAGE_ENTRY_STRIDE
+}
+
+private data class HeadlessEnemyDef(
+    val key: String,
+    val speciesId: Int,
+)
+
+private val HEADLESS_BEAMS = listOf(
+    HeadlessBeamDef("power", entryIndex = 0, chargedEntryIndex = 12),
+    HeadlessBeamDef("ice", entryIndex = 5, chargedEntryIndex = 17),
+    HeadlessBeamDef("spazer", entryIndex = 1, chargedEntryIndex = 13),
+    HeadlessBeamDef("wave", entryIndex = 6, chargedEntryIndex = 19),
+    HeadlessBeamDef("plasma", entryIndex = 7, chargedEntryIndex = 18),
+    HeadlessBeamDef("is", entryIndex = 2, chargedEntryIndex = 14),
+    HeadlessBeamDef("iw", entryIndex = 8, chargedEntryIndex = 20),
+    HeadlessBeamDef("ws", entryIndex = 9, chargedEntryIndex = 21),
+    HeadlessBeamDef("iws", entryIndex = 3, chargedEntryIndex = 15),
+    HeadlessBeamDef("ip", entryIndex = 11, chargedEntryIndex = 22),
+    HeadlessBeamDef("wp", entryIndex = 10, chargedEntryIndex = 23),
+    HeadlessBeamDef("iwp", entryIndex = 4, chargedEntryIndex = 16),
+)
+
+private val HEADLESS_ENEMY_DEFS = listOf(
+    HeadlessEnemyDef("zoomer", 0xDCFF),
+    HeadlessEnemyDef("geemer_horiz", 0xDC3F),
+    HeadlessEnemyDef("sidehopper", 0xD93F),
+    HeadlessEnemyDef("sidehopper_large", 0xD97F),
+    HeadlessEnemyDef("dessgeega", 0xD9BF),
+    HeadlessEnemyDef("tripper", 0xD7FF),
+    HeadlessEnemyDef("reo", 0xD87F),
+    HeadlessEnemyDef("waver", 0xD63F),
+    HeadlessEnemyDef("ripper", 0xD47F),
+    HeadlessEnemyDef("ripper2", 0xD3FF),
+    HeadlessEnemyDef("kihunter", 0xDFBF),
+    HeadlessEnemyDef("kihunter_green", 0xE03F),
+    HeadlessEnemyDef("sciser", 0xD77F),
+    HeadlessEnemyDef("zeela", 0xDC7F),
+    HeadlessEnemyDef("sova", 0xDD3F),
+    HeadlessEnemyDef("beetom", 0xDCBF),
+    HeadlessEnemyDef("rinka", 0xD23F),
+    HeadlessEnemyDef("zeb", 0xF193),
+    HeadlessEnemyDef("zebbo", 0xF1D3),
+    HeadlessEnemyDef("gamet", 0xF213),
+    HeadlessEnemyDef("oum", 0xD7BF),
+    HeadlessEnemyDef("skultera", 0xD6FF),
+    HeadlessEnemyDef("yard", 0xDBBF),
+    HeadlessEnemyDef("pirate_basic", 0xF353),
+    HeadlessEnemyDef("pirate_norfair", 0xF413),
+    HeadlessEnemyDef("pirate_maridia", 0xF453),
+    HeadlessEnemyDef("pirate_tourian", 0xF493),
+    HeadlessEnemyDef("pirate_mk2_norfair", 0xF593),
+    HeadlessEnemyDef("pirate_mk2_tourian", 0xF613),
+    HeadlessEnemyDef("metroid", 0xEEBF),
+    HeadlessEnemyDef("fireflea", 0xD6BF),
+    HeadlessEnemyDef("cacatac", 0xCFFF),
+    HeadlessEnemyDef("magdollite", 0xD4BF),
+    HeadlessEnemyDef("boyon", 0xCEBF),
+)
+
+private val ENEMY_HEADER_POINTER_FIELDS = listOf(
+    "_initAi" to 0x12,
+    "_mainAi" to 0x16,
+    "_touchAi" to 0x30,
+    "_shotAi" to 0x32,
+    "_hurtAi" to 0x1C,
+    "_frozenAi" to 0x1E,
+    "_grappleAi" to 0x1A,
+    "_deathAnim" to 0x22,
+    "_extraGfx" to 0x18,
+    "_pbVuln" to 0x28,
+)
+
 private const val TILESET_TABLE_ENTRY_BYTES = 9
 private const val TILESET_PALETTE_PTR_OFFSET = 6
 private const val TILESET_PALETTE_BYTES = 256
@@ -782,6 +1003,15 @@ private const val ENEMY_PALETTE_PREFIX = "enemy_pal:"
 private const val ENEMY_PALETTE_BYTES = 32
 private const val ENEMY_HEADER_PALETTE_PTR_OFFSET = 2
 private const val ENEMY_HEADER_AI_BANK_OFFSET = 0x0C
+private const val BEAM_DAMAGE_TABLE_SNES = 0x938431
+private const val BEAM_DAMAGE_ENTRY_STRIDE = 22
+private const val ENEMY_DATA_BANK_SNES = 0xB40000
+private const val ENEMY_HEADER_HP_OFFSET = 0x04
+private const val ENEMY_HEADER_CONTACT_DAMAGE_OFFSET = 0x06
+private const val ENEMY_HEADER_DROP_TABLE_PTR_OFFSET = 0x3A
+private const val ENEMY_HEADER_VULNERABILITY_TABLE_PTR_OFFSET = 0x3C
+private const val ENEMY_DROP_TABLE_BYTES = 6
+private const val ENEMY_VULNERABILITY_TABLE_BYTES = 22
 
 private fun SmPatch.deepCopy(): SmPatch =
     SmPatch(

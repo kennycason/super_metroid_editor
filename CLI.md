@@ -118,6 +118,38 @@ Each entry includes:
 
 `project` is optional. Relative project paths are resolved from the build config file's directory.
 
+Enemy and beam patch config keys match the desktop patch UI:
+
+```json
+{
+  "patches": {
+    "beam_damage": {
+      "config": {
+        "power": 40,
+        "plasma": 300
+      }
+    },
+    "enemy_stats": {
+      "config": {
+        "zoomer_hp": 50,
+        "zoomer_dmg": 12,
+        "zoomer_touchAi": 32803
+      }
+    },
+    "enemy_drops": {
+      "config": {
+        "zoomer_drop2": 77
+      }
+    },
+    "enemy_vuln": {
+      "config": {
+        "zoomer_vuln9": 4
+      }
+    }
+  }
+}
+```
+
 ## Build Outputs
 
 Generate an IPS without providing a ROM:
@@ -153,7 +185,7 @@ Build v1 supports:
 
 - Bundled IPS patches from `shared/src/commonMain/resources/patches`.
 - Hardcoded hex patches from the shared patch catalog.
-- Config patches for `bombs`, `fanfares`, and `ceres_escape_seconds`.
+- Config patches for `bombs`, `fanfares`, `ceres_escape_seconds`, `beam_damage`, `enemy_stats`, `enemy_drops`, and `enemy_vuln`.
 - ROM-backed `.smedit` tileset palette overrides, including area palette randomization.
 - `.smedit` fixed sprite palette overrides for Samus, beams, bosses, and listed enemy palette regions.
 - ROM-backed dynamic enemy palette overrides stored as `enemy_pal:<speciesId>`.
@@ -161,13 +193,12 @@ Build v1 supports:
 - Raw SNES LoROM writes with `snesAddress` or `address: "80:8000"`.
 - IPS-only generation without reading or writing a ROM.
 
-IPS-only generation supports fixed-address data. Tileset palette randomization and dynamic enemy palettes require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers and free space before writing or relocating data.
+IPS-only generation supports fixed-address data, including beam damage and enemy header stats. Tileset palette randomization, dynamic enemy palettes, enemy drop tables, and enemy vulnerability tables require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers, enemy table pointers, or free space before writing or relocating data.
 
 Build v1 intentionally does not yet export the full desktop project pipeline. If a `.smedit` project includes room edits, graphics tile edits, metatile table edits, palette effect metadata, text edits, minimap edits, music edits, or custom ASM, the CLI emits a warning that those project sections were ignored. Explicitly requested unsupported config patches fail instead of silently doing nothing.
 
 Desktop-only config patch types currently listed as unsupported by `patches`:
 
-- `beam_damage`
 - `boss_stats`
 - `phantoon`
 - `kraid`
@@ -178,9 +209,6 @@ Desktop-only config patch types currently listed as unsupported by `patches`:
 - `botwoon`
 - `torizo`
 - `mother_brain`
-- `enemy_stats`
-- `enemy_drops`
-- `enemy_vuln`
 - `samus_physics`
 - `controller_config`
 - `room_name_pause_map`
