@@ -6,7 +6,7 @@ import kotlinx.serialization.Serializable
 data class SmeditBuildRequest(
     val schemaVersion: Int = 1,
     val project: String? = null,
-    val strictConfigValidation: Boolean = false,
+    val strictConfigValidation: Boolean = true,
     val patches: Map<String, SmeditPatchRequest> = emptyMap(),
     val rawWrites: List<SmeditRawWriteRequest> = emptyList(),
 )

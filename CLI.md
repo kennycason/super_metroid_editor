@@ -89,7 +89,6 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
 {
   "schemaVersion": 1,
   "project": "projects/Super Mazetroid/Super Mazetroid.smedit",
-  "strictConfigValidation": false,
   "patches": {
     "bundled_fast_doors": { "enabled": true },
     "hex_higher_jump": { "enabled": true },
@@ -205,14 +204,14 @@ Enemy, beam, boss, generated hook, physics, and controller config keys match the
 }
 ```
 
-By default, unknown config keys and out-of-range values are reported as warnings. Set `strictConfigValidation` in JSON or pass `--strict-config` to make these validation issues fail the build.
+Config validation is strict by default. Unknown config keys and out-of-range values fail the build. Set `strictConfigValidation` to `false` in JSON or pass `--lenient-config` to report those issues as warnings.
 
 ## Build Outputs
 
 Generate an IPS without providing a ROM:
 
 ```bash
-./gradlew -q :cli:runCli -Pargs='build --config build.json --patch out.ips --report report.json --strict-config'
+./gradlew -q :cli:runCli -Pargs='build --config build.json --patch out.ips --report report.json'
 ```
 
 Generate a patched ROM and an IPS from a caller-provided ROM:
@@ -234,6 +233,16 @@ Reports are JSON and are also printed to stdout:
   "applied": [],
   "warnings": []
 }
+```
+
+## Examples
+
+Ready-to-run patch-only examples live in `examples/cli`:
+
+```bash
+./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/qol-fast-start.json --patch ../build/cli-examples/qol-fast-start.ips --report ../build/cli-examples/qol-fast-start-report.json'
+./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/combat-sandbox.json --patch ../build/cli-examples/combat-sandbox.ips --report ../build/cli-examples/combat-sandbox-report.json'
+./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/boss-lab.json --patch ../build/cli-examples/boss-lab.ips --report ../build/cli-examples/boss-lab-report.json'
 ```
 
 ## Supported Headless Build Features

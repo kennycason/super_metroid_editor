@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "bundled_vanilla_bugfixes": {
+      "enabled": true
+    },
+    "bundled_skip_intro": {
+      "enabled": true
+    },
+    "bundled_fast_doors": {
+      "enabled": true
+    },
+    "bundled_fast_saves": {
+      "enabled": true
+    },
+    "bundled_fast_pause_menu": {
+      "enabled": true
+    },
+    "bundled_elevators_speed": {
+      "enabled": true
+    },
+    "bundled_no_beeping": {
+      "enabled": true
+    },
+    "bundled_fast_reload": {
+      "enabled": true
+    },
+    "bundled_enable_moonwalk": {
+      "enabled": true
+    },
+    "bundled_energy_free_shinesparks": {
+      "enabled": true
+    },
+    "fanfares": {
+      "enabled": true,
+      "config": {
+        "item_fanfare_frames": 16
+      }
+    },
+    "bombs": {
+      "enabled": true,
+      "config": {
+        "max_active_bombs": 5,
+        "fuse_frames": 10,
+        "cooldown_frames": 1,
+        "explosion_frame_delay": 1
+      }
+    },
+    "ceres_escape_seconds": {
+      "enabled": true,
+      "configValue": 90
+    }
+  }
+}

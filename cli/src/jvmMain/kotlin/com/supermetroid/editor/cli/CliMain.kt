@@ -200,7 +200,7 @@ private fun cmdBuild(
     var outputPath: String? = null
     var patchPath: String? = null
     var reportPath: String? = null
-    var strictConfigValidation = false
+    var strictConfigValidationOverride: Boolean? = null
 
     val iter = args.iterator()
     while (iter.hasNext()) {
@@ -210,7 +210,7 @@ private fun cmdBuild(
             (arg == "-o" || arg == "--output") && iter.hasNext() -> outputPath = iter.next()
             arg == "--patch" && iter.hasNext() -> patchPath = iter.next()
             arg == "--report" && iter.hasNext() -> reportPath = iter.next()
-            arg == "--strict-config" -> strictConfigValidation = true
+            arg == "--lenient-config" -> strictConfigValidationOverride = false
             else -> {
                 System.err.println("Unknown build option: $arg")
                 printBuildUsage()
@@ -230,11 +230,9 @@ private fun cmdBuild(
 
     val configFile = File(configPath).absoluteFile
     val decodedRequest = jsonInput.decodeFromString(SmeditBuildRequest.serializer(), configFile.readText())
-    val request = if (strictConfigValidation) {
-        decodedRequest.copy(strictConfigValidation = true)
-    } else {
-        decodedRequest
-    }
+    val request = strictConfigValidationOverride
+        ?.let { decodedRequest.copy(strictConfigValidation = it) }
+        ?: decodedRequest
     val project = request.project?.let { projectPath ->
         val projectFile = resolveRelative(configFile.parentFile, projectPath)
         jsonInput.decodeFromString(SmEditProject.serializer(), projectFile.readText())
@@ -296,11 +294,11 @@ private data class CliPatchSummary(
 
 private fun printBuildUsage() {
     System.err.println("""
-Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>] [--strict-config]
+Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>] [--lenient-config]
 
 At least one of --output or --patch is required.
 --output requires global --rom <path.smc>. --patch can run without --rom for ROM-free IPS generation.
---strict-config makes unknown config keys and out-of-range values fail instead of warning.
+Config validation is strict by default. --lenient-config reports unknown config keys and out-of-range values as warnings.
     """.trimIndent())
 }
 
@@ -335,6 +333,6 @@ Examples:
   ... patches
   ... schema enemy_stats
   ... --rom base.smc build --config build.json --output patched.smc --patch patched.ips
-  ... build --config build.json --patch patch-only.ips --strict-config
+  ... build --config build.json --patch patch-only.ips
     """.trimIndent())
 }

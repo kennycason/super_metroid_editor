@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "hex_faster_charged_shots": {
+      "enabled": true
+    },
+    "hex_smooth_beam_shots": {
+      "enabled": true
+    },
+    "hex_always_charged_shots": {
+      "enabled": true
+    },
+    "hex_infinite_missiles": {
+      "enabled": true
+    },
+    "hex_infinite_supers": {
+      "enabled": true
+    },
+    "hex_infinite_pbs": {
+      "enabled": true
+    },
+    "hyper_beam": {
+      "enabled": true
+    },
+    "beam_damage": {
+      "enabled": true,
+      "config": {
+        "power": 35,
+        "ice": 45,
+        "spazer": 65,
+        "wave": 80,
+        "plasma": 220,
+        "iws": 140,
+        "iwp": 420
+      }
+    },
+    "enemy_stats": {
+      "enabled": true,
+      "config": {
+        "zoomer_hp": 45,
+        "zoomer_dmg": 12,
+        "geemer_horiz_hp": 45,
+        "geemer_horiz_dmg": 12,
+        "sidehopper_hp": 180,
+        "sidehopper_dmg": 35,
+        "sidehopper_large_hp": 300,
+        "sidehopper_large_dmg": 90
+      }
+    },
+    "samus_physics": {
+      "enabled": true,
+      "config": {
+        "jump_height": 5,
+        "hijump_height": 7,
+        "walljump": 5,
+        "gravity": 24,
+        "max_fall": 6,
+        "run_accel": 64,
+        "run_max": 3,
+        "air_spin": 2,
+        "air_normal": 2
+      }
+    },
+    "controller_config": {
+      "enabled": true,
+      "config": {
+        "shot": 64,
+        "jump": 32768,
+        "dash": 16384,
+        "item_select": 8192,
+        "item_cancel": 128,
+        "angle_down": 32,
+        "angle_up": 16
+      }
+    }
+  }
+}

@@ -257,7 +257,7 @@ class SmeditBuildServiceTest {
                 KRAID_CONFIG_TYPE to SmeditPatchRequest(
                     config = mapOf(
                         "diagonal_up_x_speed" to -3,
-                        "earthquake_ceiling_mask" to 0x01FF,
+                        "earthquake_ceiling_mask" to 0x00FF,
                     )
                 ),
                 RIDLEY_CONFIG_TYPE to SmeditPatchRequest(
@@ -405,22 +405,10 @@ class SmeditBuildServiceTest {
     }
 
     @Test
-    fun `config validation warns by default and fails in strict mode`() {
-        val warningResult = SmeditBuildService().buildPatch(
-            SmeditBuildRequest(
-                patches = mapOf(
-                    BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
-                        config = mapOf("power_typo" to 123)
-                    )
-                )
-            )
-        )
-        assertTrue(warningResult.report.warnings.any { it.contains("unknown config key") && it.contains("power_typo") })
-
+    fun `config validation fails by default and warns in lenient mode`() {
         val error = assertFailsWith<IllegalArgumentException> {
             SmeditBuildService().buildPatch(
                 SmeditBuildRequest(
-                    strictConfigValidation = true,
                     patches = mapOf(
                         BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
                             config = mapOf("power_typo" to 123)
@@ -430,6 +418,18 @@ class SmeditBuildServiceTest {
             )
         }
         assertTrue(error.message.orEmpty().contains("power_typo"))
+
+        val warningResult = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                strictConfigValidation = false,
+                patches = mapOf(
+                    BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf("power_typo" to 123)
+                    )
+                )
+            )
+        )
+        assertTrue(warningResult.report.warnings.any { it.contains("unknown config key") && it.contains("power_typo") })
     }
 
     @Test

@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "bundled_fast_mother_brain_cutscene": {
+      "enabled": true
+    },
+    "bundled_fast_big_boy_cutscene": {
+      "enabled": true
+    },
+    "boss_stats": {
+      "enabled": true,
+      "config": {
+        "kraid_hp": 10000,
+        "kraid_contact": 40,
+        "phantoon_hp": 3600,
+        "phantoon_contact": 80,
+        "ridley_hp": 24000,
+        "ridley_contact": 180,
+        "draygon_hp": 9000,
+        "draygon_body": 180,
+        "mb_phase1_hp": 12000,
+        "mb_phase2_hp": 22000,
+        "golden_torizo_hp": 18000,
+        "torizo_hp": 1200
+      }
+    },
+    "kraid": {
+      "enabled": true,
+      "config": {
+        "intro_delay": 120,
+        "get_big_pause": 60,
+        "earthquake_ceiling_mask": 255,
+        "ceiling_rocks_slow_timer": 80,
+        "ceiling_rocks_fast_timer": 48,
+        "good_fingernail_timer": 32,
+        "bad_fingernail_timer": 48,
+        "diagonal_up_x_speed": -3,
+        "diagonal_down_y_speed": -2
+      }
+    },
+    "phantoon": {
+      "enabled": true,
+      "config": {
+        "vuln_0": 45,
+        "vuln_1": 30,
+        "vuln_2": 20,
+        "closed_0": 180,
+        "closed_1": 60,
+        "hide_0": 30,
+        "fwd_cap_1": 8,
+        "rev_cap_0": -4,
+        "wave_speed": 12
+      }
+    },
+    "ridley": {
+      "enabled": true,
+      "config": {
+        "norfair_low_health_threshold": 12000,
+        "norfair_secondary_low_health_threshold": 7000,
+        "norfair_swoop_start_timer": 18,
+        "norfair_swoop_horizontal_speed": 1536,
+        "norfair_hover_wall_timer": 72,
+        "pogo_fireball_counter": 3
+      }
+    },
+    "draygon": {
+      "enabled": true,
+      "config": {
+        "intro_delay": 96,
+        "intro_dance_duration": 720,
+        "goop_count": 20,
+        "chase_speed": 3,
+        "tail_whip_timer": 48,
+        "foam_frequency_mask": 3
+      }
+    },
+    "torizo": {
+      "enabled": true,
+      "config": {
+        "bomb_turn_timer": 36,
+        "bomb_missile_threshold": 8,
+        "golden_turn_timer": 8,
+        "golden_space_jump_counter": 240,
+        "golden_missile_threshold": 24
+      }
+    },
+    "mother_brain": {
+      "enabled": true,
+      "config": {
+        "fake_death_initial_pause": 24,
+        "attack_cooldown": 40,
+        "rainbow_charge_timer": 160,
+        "rainbow_drain_timer": 180,
+        "corpse_tiles_delay": 16,
+        "escape_text_delay": 16
+      }
+    }
+  }
+}
