@@ -19,3 +19,4 @@ rootProject.name = "super-metroid-editor"
 include(":shared")
 include(":desktopApp")
 include(":cli")
+include(":smedit-service")
