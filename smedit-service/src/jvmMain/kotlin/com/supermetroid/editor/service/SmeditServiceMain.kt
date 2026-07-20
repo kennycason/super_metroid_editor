@@ -11,6 +11,8 @@ import com.supermetroid.editor.rom.RomConstants
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
+import io.ktor.http.content.streamProvider
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
@@ -20,7 +22,9 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.contentType
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
@@ -98,7 +102,7 @@ fun Application.smeditServiceModule(
 
     routing {
         post("/patch") {
-            val request = call.receive<SmeditServicePatchRequest>()
+            val request = call.receiveDecodedPatchRequest()
             val response = buildPatchedRom(request, buildService)
             val result = response.result
             if (call.wantsJsonResponse()) {
@@ -134,22 +138,91 @@ fun Application.smeditServiceModule(
     }
 }
 
+private data class SmeditServiceDecodedPatchRequest(
+    val romBytes: ByteArray,
+    val build: SmeditBuildRequest,
+    val randomize: SmeditRandomizationRequest,
+)
+
 private data class SmeditServiceBuildResponse(
     val result: SmeditBuildResult,
     val resolvedBuild: SmeditBuildRequest?,
     val randomization: SmeditRandomizationReport?,
 )
 
+private suspend fun ApplicationCall.receiveDecodedPatchRequest(): SmeditServiceDecodedPatchRequest =
+    if (request.contentType().match(ContentType.MultiPart.FormData)) {
+        receiveMultipartPatchRequest()
+    } else {
+        receive<SmeditServicePatchRequest>().toDecoded()
+    }
+
+private fun SmeditServicePatchRequest.toDecoded(): SmeditServiceDecodedPatchRequest =
+    SmeditServiceDecodedPatchRequest(
+        romBytes = decodeRomBase64(romBase64),
+        build = build,
+        randomize = randomize,
+    )
+
+private suspend fun ApplicationCall.receiveMultipartPatchRequest(): SmeditServiceDecodedPatchRequest {
+    var romBytes: ByteArray? = null
+    var build = SmeditBuildRequest()
+    var randomize = SmeditRandomizationRequest()
+    val multipart = receiveMultipart()
+
+    while (true) {
+        val part = multipart.readPart() ?: break
+        try {
+            when (part) {
+                is PartData.FileItem -> {
+                    if (part.name == "rom") {
+                        romBytes = part.streamProvider().use { it.readBytes() }
+                    }
+                }
+                is PartData.FormItem -> {
+                    when (part.name) {
+                        "build" -> build = decodeMultipartJson(part.value, "build")
+                        "randomize" -> randomize = decodeMultipartJson(part.value, "randomize")
+                    }
+                }
+                else -> Unit
+            }
+        } finally {
+            part.dispose()
+        }
+    }
+
+    return SmeditServiceDecodedPatchRequest(
+        romBytes = requireNotNull(romBytes) {
+            "multipart/form-data request must include a rom file field."
+        },
+        build = build,
+        randomize = randomize,
+    )
+}
+
+private inline fun <reified T> decodeMultipartJson(
+    value: String,
+    fieldName: String,
+): T =
+    try {
+        serviceJson.decodeFromString(value)
+    } catch (e: SerializationException) {
+        throw IllegalArgumentException("multipart field '$fieldName' is not valid JSON: ${e.message}", e)
+    } catch (e: IllegalArgumentException) {
+        throw IllegalArgumentException("multipart field '$fieldName' is not valid JSON: ${e.message}", e)
+    }
+
 private fun buildPatchedRom(
-    request: SmeditServicePatchRequest,
+    request: SmeditServiceDecodedPatchRequest,
     buildService: SmeditBuildService,
 ): SmeditServiceBuildResponse {
     require(request.build.project == null) {
         "Project file paths are not supported by the service endpoint; include patch settings directly in build."
     }
-    val romBytes = decodeRomBase64(request.romBase64)
+    val romBytes = request.romBytes
     require(romBytes.size >= RomConstants.ROM_SIZE) {
-        "romBase64 must contain a Super Metroid ROM of at least ${RomConstants.ROM_SIZE} bytes."
+        "ROM input must contain a Super Metroid ROM of at least ${RomConstants.ROM_SIZE} bytes."
     }
     val randomized = SmeditPatchRandomizer.apply(request.build.copy(project = null), request.randomize)
     return SmeditServiceBuildResponse(

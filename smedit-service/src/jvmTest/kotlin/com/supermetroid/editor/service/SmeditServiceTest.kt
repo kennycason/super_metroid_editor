@@ -13,9 +13,13 @@ import com.supermetroid.editor.headless.SmeditPatchRequest
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import io.ktor.client.call.body
 import io.ktor.client.request.accept
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -82,6 +86,62 @@ class SmeditServiceTest {
         assertEquals(0x05, patchedRom[0x81EB9].toInt() and 0xFF)
         assertTrue(body.ipsBase64.isNotBlank())
         assertTrue(body.report.applied.any { it.identifier == "hex_higher_jump" })
+    }
+
+    @Test
+    fun `patch endpoint accepts multipart rom uploads`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.post("/patch") {
+            setBody(
+                multipartPatchBody(
+                    build = SmeditBuildRequest(
+                        patches = mapOf(
+                            "hex_higher_jump" to SmeditPatchRequest(),
+                        )
+                    )
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("1", response.headers["X-SMEDIT-Changed-Bytes"])
+        val patchedRom = response.body<ByteArray>()
+        assertEquals(0x300000, patchedRom.size)
+        assertEquals(0x05, patchedRom[0x81EB9].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `multipart patch endpoint can return json and randomization details`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.post("/patch?format=json") {
+            accept(ContentType.Application.Json)
+            setBody(
+                multipartPatchBody(
+                    build = SmeditBuildRequest(),
+                    randomize = SmeditRandomizationRequest(
+                        seed = 888L,
+                        preset = "balanced",
+                        includeEnemies = listOf("zoomer"),
+                        includeBeams = listOf("power"),
+                    )
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServicePatchResponse>(response.body())
+        val patchedRom = Base64.getDecoder().decode(body.romBase64)
+        assertEquals(0x300000, patchedRom.size)
+        assertEquals(888L, body.randomization?.seed)
+        assertEquals("balanced", body.randomization?.preset)
+        assertEquals(1, body.randomization?.randomizedFieldCounts?.get(BEAM_DAMAGE_CONFIG_TYPE))
+        assertTrue(body.resolvedBuild?.patches.orEmpty().containsKey(BEAM_DAMAGE_CONFIG_TYPE))
     }
 
     @Test
@@ -213,6 +273,26 @@ class SmeditServiceTest {
         assertTrue(body.error.contains("noEffectChance"))
     }
 
+    @Test
+    fun `multipart patch endpoint requires rom file field`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.post("/patch") {
+            setBody(
+                multipartPatchBody(
+                    romBytes = null,
+                    build = SmeditBuildRequest(),
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = json.decodeFromString<SmeditServiceError>(response.body())
+        assertTrue(body.error.contains("rom file field"))
+    }
+
     private fun patchRequest(
         build: SmeditBuildRequest,
         randomize: SmeditRandomizationRequest = SmeditRandomizationRequest(),
@@ -221,5 +301,29 @@ class SmeditServiceTest {
             romBase64 = Base64.getEncoder().encodeToString(ByteArray(0x300000)),
             build = build,
             randomize = randomize,
+        )
+
+    private fun multipartPatchBody(
+        romBytes: ByteArray? = ByteArray(0x300000),
+        build: SmeditBuildRequest = SmeditBuildRequest(),
+        randomize: SmeditRandomizationRequest? = null,
+    ): MultiPartFormDataContent =
+        MultiPartFormDataContent(
+            formData {
+                if (romBytes != null) {
+                    append(
+                        key = "rom",
+                        value = romBytes,
+                        headers = Headers.build {
+                            append(HttpHeaders.ContentType, ContentType.Application.OctetStream.toString())
+                            append(HttpHeaders.ContentDisposition, "filename=\"base.smc\"")
+                        },
+                    )
+                }
+                append("build", json.encodeToString(build))
+                randomize?.let {
+                    append("randomize", json.encodeToString(it))
+                }
+            }
         )
 }

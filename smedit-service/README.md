@@ -12,7 +12,7 @@ The server listens on port `8080` by default. Set `SMEDIT_SERVICE_PORT` or `-Dsm
 
 ## POST /patch
 
-The caller supplies the ROM in the request. The service does not read, store, or host ROM files.
+The caller supplies the ROM in the request. The service does not read, store, or host ROM files. Send either JSON with `romBase64`, or `multipart/form-data` with a `rom` file field.
 
 Request body:
 
@@ -32,9 +32,41 @@ Request body:
 
 By default the response body is the patched ROM as `application/octet-stream`.
 
+### Multipart ROM Upload
+
+For local tools and web forms, upload the ROM as a multipart file while passing `build` and optional `randomize` JSON as form fields:
+
+```bash
+ROM=path/to/base.smc
+
+curl -sS \
+  -X POST \
+  -F rom=@"$ROM" \
+  -F 'build={"schemaVersion":1,"patches":{"hex_higher_jump":{"enabled":true}}}' \
+  http://localhost:8080/patch \
+  --output patched.smc
+```
+
+Multipart requests can also ask for the JSON response:
+
+```bash
+ROM=path/to/base.smc
+
+curl -sS \
+  -X POST \
+  -H 'Accept: application/json' \
+  -F rom=@"$ROM" \
+  -F 'build={"schemaVersion":1,"patches":{"beam_damage":{"enabled":true,"config":{"power":40}}}}' \
+  -F 'randomize={"seed":12345,"preset":"spicy","includeEnemies":["zoomer"],"includeBeams":["power"]}' \
+  'http://localhost:8080/patch?format=json' \
+  > multipart-response.json
+
+jq -r '.romBase64' multipart-response.json | base64 -D > patched.smc
+```
+
 ### Raw ROM Response
 
-This writes a patched ROM to disk:
+This writes a patched ROM to disk using the JSON/base64 request format:
 
 ```bash
 ROM=path/to/base.smc
@@ -234,7 +266,7 @@ When randomization is used, JSON responses include:
 
 ```json
 {
-      "randomization": {
+  "randomization": {
     "seed": 12345,
     "preset": "balanced",
     "randomizedConfigTypes": ["beam_damage", "enemy_stats", "enemy_drops", "enemy_vuln"],
