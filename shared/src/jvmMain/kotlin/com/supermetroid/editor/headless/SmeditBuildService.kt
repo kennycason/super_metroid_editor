@@ -1,6 +1,7 @@
 package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
@@ -8,6 +9,7 @@ import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.readU16
@@ -32,6 +34,7 @@ class SmeditBuildService(
             outputRom = outputRom,
             parser = RomParser(outputRom),
             warnings = mutableListOf(),
+            strictConfigValidation = request.strictConfigValidation,
         )
         val applied = applyRequest(request, project, context)
         val changedBytes = outputRom.changedByteCountFrom(inputRom)
@@ -59,6 +62,7 @@ class SmeditBuildService(
             outputRom = null,
             parser = null,
             warnings = mutableListOf(),
+            strictConfigValidation = request.strictConfigValidation,
         )
         val applied = applyRequest(request, project, context)
         val patchBytes = context.patchWrites.totalByteCount()
@@ -89,6 +93,9 @@ class SmeditBuildService(
         val applied = mutableListOf<SmeditAppliedPatchReport>()
         val patchEntries = resolvedPatchEntries(project, request, context.warnings)
         val requestedKeys = request.patches.keys
+        val roomNamePatchEntry = patchEntries.firstOrNull {
+            it.patch.enabled && it.patch.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE
+        }
 
         for (entry in patchEntries) {
             val patch = entry.patch
@@ -96,13 +103,18 @@ class SmeditBuildService(
 
             val beforePatchBytes = context.patchWrites.totalByteCount()
             val beforeWrites = context.appliedWriteCount
-            val handledConfig = applyConfigPatch(patch, context)
+            validateConfigPatch(patch, context)
+            val handledConfig = if (patch.configType.isDeferredGeneratedConfigType()) {
+                patch.configType
+            } else {
+                applyConfigPatch(patch, context)
+            }
             val writeCount = applyRawPatchWrites(patch, context)
             val wroteConfig = handledConfig != null
 
             if (patch.configType != null && !wroteConfig && writeCount == 0) {
                 val message = "Config patch '${patch.configType}' is not supported by headless build v1."
-                if (patch.id in requestedKeys || patch.configType in requestedKeys) {
+                if (entry.source == "request" || patch.id in requestedKeys || patch.configType in requestedKeys) {
                     throw IllegalArgumentException(message)
                 }
                 context.warnings.add(message)
@@ -110,7 +122,7 @@ class SmeditBuildService(
 
             val bytes = max(0, context.patchWrites.totalByteCount() - beforePatchBytes)
             val writes = context.appliedWriteCount - beforeWrites
-            if (bytes > 0 || writes > 0 || wroteConfig) {
+            if (bytes > 0 || writes > 0 || (wroteConfig && !patch.configType.isDeferredGeneratedConfigType())) {
                 applied.add(
                     SmeditAppliedPatchReport(
                         identifier = patch.id,
@@ -142,7 +154,18 @@ class SmeditBuildService(
 
         if (project != null) {
             applied.addAll(applyProjectCustomGraphics(project.customGfx, context))
-            addUnsupportedProjectWarnings(project, context)
+        }
+        roomNamePatchEntry?.let {
+            applied.addAll(applyRoomNamePauseMapPatch(it, project, context))
+        }
+        applyCombinedPerFrameHook(patchEntries, context)?.let(applied::add)
+
+        if (project != null) {
+            addUnsupportedProjectWarnings(
+                project = project,
+                context = context,
+                roomNameOverridesHandled = roomNamePatchEntry != null && context.outputRom != null,
+            )
         }
 
         return applied
@@ -183,14 +206,22 @@ class SmeditBuildService(
                 patchRequest.configType == null &&
                 key !in SmeditPatchCatalog.supportedConfigTypes()
             ) {
-                warnings.add("Patch '$key' was created from request but has no writes or configType.")
+                val message = "Patch '$key' was created from request but has no writes or configType."
+                if (request.strictConfigValidation) {
+                    throw IllegalArgumentException(message)
+                }
+                warnings.add(message)
             }
         }
 
         return entries.values.toList()
     }
 
-    private fun addUnsupportedProjectWarnings(project: SmEditProject, context: ApplyContext) {
+    private fun addUnsupportedProjectWarnings(
+        project: SmEditProject,
+        context: ApplyContext,
+        roomNameOverridesHandled: Boolean,
+    ) {
         val ignored = mutableListOf<String>()
         val editedRooms = project.rooms.values.count { it.hasEdits }
         if (editedRooms > 0) ignored.add("room edits: $editedRooms")
@@ -199,7 +230,7 @@ class SmeditBuildService(
         if (project.patterns.isNotEmpty()) ignored.add("patterns: ${project.patterns.size}")
         if (project.minimapEdits.isNotEmpty()) ignored.add("minimap edits: ${project.minimapEdits.size}")
         if (project.textEdits.isNotEmpty()) ignored.add("text edits: ${project.textEdits.size}")
-        if (project.roomNameOverrides.isNotEmpty()) {
+        if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
             ignored.add("room name overrides: ${project.roomNameOverrides.size}")
         }
         if (project.customAsm.isNotEmpty()) ignored.add("custom ASM entries: ${project.customAsm.size}")
@@ -509,8 +540,76 @@ class SmeditBuildService(
                 applyEnemyVulnerabilityPatch(patch, context)
                 ENEMY_VULN_CONFIG_TYPE
             }
-            else -> null
+            BOSS_STATS_CONFIG_TYPE -> {
+                applyBossStatsPatch(patch, context)
+                BOSS_STATS_CONFIG_TYPE
+            }
+            SAMUS_PHYSICS_CONFIG_TYPE -> {
+                applySamusPhysicsPatch(patch, context)
+                SAMUS_PHYSICS_CONFIG_TYPE
+            }
+            CONTROLLER_CONFIG_TYPE -> {
+                applyControllerConfigPatch(patch, context)
+                CONTROLLER_CONFIG_TYPE
+            }
+            else -> {
+                val configType = patch.configType
+                if (configType != null && configType in HEADLESS_BOSS_BEHAVIOR_BY_CONFIG_TYPE) {
+                    applyBossBehaviorPatch(configType, patch, context)
+                    configType
+                } else {
+                    null
+                }
+            }
         }
+
+    private fun validateConfigPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val configType = patch.configType ?: return
+        val data = patch.configData ?: return
+        if (data.isEmpty()) return
+
+        val schema = SmeditPatchCatalog.configSchema(configType) ?: return
+        val fieldsByKey = schema.fields.associateBy { it.key }
+        val unknownKeys = data.keys.filter { it !in fieldsByKey }.sorted()
+        if (unknownKeys.isNotEmpty()) {
+            reportConfigValidationIssue(
+                context,
+                "Config patch '$configType' has unknown config key(s): ${unknownKeys.joinToString()}."
+            )
+        }
+
+        for ((key, value) in data) {
+            val field = fieldsByKey[key] ?: continue
+            if (value < field.min || value > field.max) {
+                reportConfigValidationIssue(
+                    context,
+                    "Config patch '$configType' key '$key' value $value is outside ${field.min}..${field.max}; " +
+                        "headless build will clamp it."
+                )
+            }
+            val choiceValues = field.choices.map { it.value }.toSet()
+            if (choiceValues.isNotEmpty() && value !in choiceValues) {
+                val choices = field.choices.joinToString { "${it.label}=0x${it.value.toString(16)}" }
+                reportConfigValidationIssue(
+                    context,
+                    "Config patch '$configType' key '$key' value 0x${value.toString(16)} is not one of: $choices."
+                )
+            }
+        }
+    }
+
+    private fun reportConfigValidationIssue(
+        context: ApplyContext,
+        message: String,
+    ) {
+        if (context.strictConfigValidation) {
+            throw IllegalArgumentException(message)
+        }
+        context.warnings.add(message)
+    }
 
     private fun applyBeamDamagePatch(
         patch: SmPatch,
@@ -547,16 +646,158 @@ class SmeditBuildService(
                 )
             }
 
-            for ((suffix, offset) in ENEMY_HEADER_POINTER_FIELDS) {
-                val value = data["${enemy.key}$suffix"] ?: continue
+            for (field in ENEMY_HEADER_POINTER_FIELDS) {
+                val value = data["${enemy.key}${field.suffix}"] ?: continue
                 writeWord(
                     context,
-                    enemyHeaderPc + offset,
+                    enemyHeaderPc + field.offset,
                     value.coerceIn(0, 0xFFFF),
-                    "Enemy field ${enemy.key}$suffix",
+                    "Enemy field ${enemy.key}${field.suffix}",
                 )
             }
         }
+    }
+
+    private fun applyBossStatsPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (field in HEADLESS_BOSS_STAT_FIELDS) {
+            val value = data[field.key]?.coerceIn(0, 0xFFFF) ?: continue
+            for (speciesId in field.writeSpeciesIds) {
+                val enemyHeaderPc = context.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
+                writeWord(context, enemyHeaderPc + field.offset, value, "Boss stat ${field.key}")
+            }
+        }
+    }
+
+    private fun applySamusPhysicsPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (field in HEADLESS_PHYSICS_FIELDS) {
+            val value = data[field.key]?.coerceIn(0, 255) ?: continue
+            writeByte(context, field.pcOffset, value, "Samus physics ${field.key}")
+        }
+    }
+
+    private fun applyControllerConfigPatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (slot in HEADLESS_CONTROLLER_SLOTS) {
+            val value = data[slot.key]?.coerceIn(0, 0xFFFF) ?: continue
+            writeWord(context, CONTROLLER_TABLE_PC + slot.tableIndex * 2, value, "Controller config ${slot.key}")
+        }
+    }
+
+    private fun applyBossBehaviorPatch(
+        configType: String,
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        val definition = HEADLESS_BOSS_BEHAVIOR_BY_CONFIG_TYPE.getValue(configType)
+        for (field in definition.fields) {
+            val value = data[field.key] ?: continue
+            val coerced = coerceHeadlessBossBehaviorValue(field, value)
+            for (snesAddress in field.writeSnesAddresses) {
+                writeWord(
+                    context,
+                    context.snesToPc(snesAddress),
+                    coerced,
+                    "Boss behavior ${definition.configType}.${field.key}",
+                )
+            }
+        }
+    }
+
+    private fun applyRoomNamePauseMapPatch(
+        entry: PatchEntry,
+        project: SmEditProject?,
+        context: ApplyContext,
+    ): List<SmeditAppliedPatchReport> {
+        val rom = context.outputRom
+        val parser = context.parser
+        if (rom == null || parser == null) {
+            context.warnings.add("Room-name pause-map patch requires --rom because it allocates ROM free space.")
+            return emptyList()
+        }
+
+        val patch = entry.patch
+        val result = try {
+            RoomNamePauseMapPatch.install(
+                romData = rom,
+                snesToPc = parser::snesToPc,
+                pcToSnes = parser::pcToSnes,
+                rooms = RoomRepository().getAllRooms(),
+                overrides = project?.roomNameOverrides ?: emptyMap(),
+                alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
+                    patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
+                ),
+            )
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Room-name pause-map patch could not be written safely: ${e.message}", e)
+        }
+
+        context.patchWrites.addAll(result.writes)
+        context.appliedWriteCount += result.writes.size
+        return listOf(
+            SmeditAppliedPatchReport(
+                identifier = patch.id,
+                name = patch.name,
+                source = entry.source,
+                configType = patch.configType,
+                writes = result.writes.size,
+                bytes = result.writes.totalByteCount(),
+            )
+        )
+    }
+
+    private fun applyCombinedPerFrameHook(
+        patchEntries: List<PatchEntry>,
+        context: ApplyContext,
+    ): SmeditAppliedPatchReport? {
+        val bossPatch = patchEntries.firstOrNull {
+            it.patch.enabled && it.patch.configType == BOSS_DEFEATED_CONFIG_TYPE
+        }?.patch
+        val enabledBosses = bossPatch?.configData
+            ?.filterValues { it != 0 }
+            ?.keys
+            ?.toSet()
+            ?: emptySet()
+        val hyperBeam = patchEntries.any { it.patch.enabled && it.patch.configType == HYPER_BEAM_CONFIG_TYPE }
+        val infiniteBlueSuit = patchEntries.any { it.patch.enabled && it.patch.id == INFINITE_BLUE_SUIT_PATCH_ID }
+        val code = buildHeadlessPerFrameHook(enabledBosses, hyperBeam, infiniteBlueSuit)
+        if (code.isEmpty()) return null
+
+        val beforePatchBytes = context.patchWrites.totalByteCount()
+        val beforeWrites = context.appliedWriteCount
+        if (writeBytes(context, PER_FRAME_HOOK_PAYLOAD_PC, code, "combined per-frame hook payload")) {
+            context.appliedWriteCount++
+        }
+        if (writeBytes(context, PER_FRAME_HOOK_PATCH_PC, PER_FRAME_HOOK_JSL, "combined per-frame hook JSL")) {
+            context.appliedWriteCount++
+        }
+        val writes = context.appliedWriteCount - beforeWrites
+        val bytes = context.patchWrites.totalByteCount() - beforePatchBytes
+        if (writes == 0 && bytes == 0) return null
+
+        val parts = mutableListOf<String>()
+        if (enabledBosses.isNotEmpty()) parts.add("boss_defeated")
+        if (hyperBeam) parts.add("hyper_beam")
+        if (infiniteBlueSuit) parts.add(INFINITE_BLUE_SUIT_PATCH_ID)
+        return SmeditAppliedPatchReport(
+            identifier = "combined_per_frame_hook",
+            name = "Combined Per-frame Hook (${parts.joinToString()})",
+            source = "generated",
+            configType = "per_frame_hook",
+            writes = writes,
+            bytes = bytes,
+        )
     }
 
     private fun applyEnemyDropsPatch(
@@ -782,6 +1023,7 @@ class SmeditBuildService(
         val outputRom: ByteArray?,
         val parser: RomParser?,
         val warnings: MutableList<String>,
+        val strictConfigValidation: Boolean,
         val patchWrites: MutableList<PatchWrite> = mutableListOf(),
         var appliedWriteCount: Int = 0,
     )
@@ -863,6 +1105,9 @@ private fun paletteRelocationBanks(parser: RomParser, romSize: Int, originalSnes
         }
 }
 
+private fun String?.isDeferredGeneratedConfigType(): Boolean =
+    this == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE || this == BOSS_DEFEATED_CONFIG_TYPE || this == HYPER_BEAM_CONFIG_TYPE
+
 private fun decodeBase64(value: String, label: String, warnings: MutableList<String>): ByteArray? =
     try {
         Base64.getDecoder().decode(value)
@@ -917,85 +1162,6 @@ private fun TilesetGfxData.unsupportedDescriptions(hasRom: Boolean): List<String
     return ignored
 }
 
-private data class HeadlessBeamDef(
-    val key: String,
-    val entryIndex: Int,
-    val chargedEntryIndex: Int,
-) {
-    val snesAddress: Int get() = BEAM_DAMAGE_TABLE_SNES + entryIndex * BEAM_DAMAGE_ENTRY_STRIDE
-    val chargedSnesAddress: Int get() = BEAM_DAMAGE_TABLE_SNES + chargedEntryIndex * BEAM_DAMAGE_ENTRY_STRIDE
-}
-
-private data class HeadlessEnemyDef(
-    val key: String,
-    val speciesId: Int,
-)
-
-private val HEADLESS_BEAMS = listOf(
-    HeadlessBeamDef("power", entryIndex = 0, chargedEntryIndex = 12),
-    HeadlessBeamDef("ice", entryIndex = 5, chargedEntryIndex = 17),
-    HeadlessBeamDef("spazer", entryIndex = 1, chargedEntryIndex = 13),
-    HeadlessBeamDef("wave", entryIndex = 6, chargedEntryIndex = 19),
-    HeadlessBeamDef("plasma", entryIndex = 7, chargedEntryIndex = 18),
-    HeadlessBeamDef("is", entryIndex = 2, chargedEntryIndex = 14),
-    HeadlessBeamDef("iw", entryIndex = 8, chargedEntryIndex = 20),
-    HeadlessBeamDef("ws", entryIndex = 9, chargedEntryIndex = 21),
-    HeadlessBeamDef("iws", entryIndex = 3, chargedEntryIndex = 15),
-    HeadlessBeamDef("ip", entryIndex = 11, chargedEntryIndex = 22),
-    HeadlessBeamDef("wp", entryIndex = 10, chargedEntryIndex = 23),
-    HeadlessBeamDef("iwp", entryIndex = 4, chargedEntryIndex = 16),
-)
-
-private val HEADLESS_ENEMY_DEFS = listOf(
-    HeadlessEnemyDef("zoomer", 0xDCFF),
-    HeadlessEnemyDef("geemer_horiz", 0xDC3F),
-    HeadlessEnemyDef("sidehopper", 0xD93F),
-    HeadlessEnemyDef("sidehopper_large", 0xD97F),
-    HeadlessEnemyDef("dessgeega", 0xD9BF),
-    HeadlessEnemyDef("tripper", 0xD7FF),
-    HeadlessEnemyDef("reo", 0xD87F),
-    HeadlessEnemyDef("waver", 0xD63F),
-    HeadlessEnemyDef("ripper", 0xD47F),
-    HeadlessEnemyDef("ripper2", 0xD3FF),
-    HeadlessEnemyDef("kihunter", 0xDFBF),
-    HeadlessEnemyDef("kihunter_green", 0xE03F),
-    HeadlessEnemyDef("sciser", 0xD77F),
-    HeadlessEnemyDef("zeela", 0xDC7F),
-    HeadlessEnemyDef("sova", 0xDD3F),
-    HeadlessEnemyDef("beetom", 0xDCBF),
-    HeadlessEnemyDef("rinka", 0xD23F),
-    HeadlessEnemyDef("zeb", 0xF193),
-    HeadlessEnemyDef("zebbo", 0xF1D3),
-    HeadlessEnemyDef("gamet", 0xF213),
-    HeadlessEnemyDef("oum", 0xD7BF),
-    HeadlessEnemyDef("skultera", 0xD6FF),
-    HeadlessEnemyDef("yard", 0xDBBF),
-    HeadlessEnemyDef("pirate_basic", 0xF353),
-    HeadlessEnemyDef("pirate_norfair", 0xF413),
-    HeadlessEnemyDef("pirate_maridia", 0xF453),
-    HeadlessEnemyDef("pirate_tourian", 0xF493),
-    HeadlessEnemyDef("pirate_mk2_norfair", 0xF593),
-    HeadlessEnemyDef("pirate_mk2_tourian", 0xF613),
-    HeadlessEnemyDef("metroid", 0xEEBF),
-    HeadlessEnemyDef("fireflea", 0xD6BF),
-    HeadlessEnemyDef("cacatac", 0xCFFF),
-    HeadlessEnemyDef("magdollite", 0xD4BF),
-    HeadlessEnemyDef("boyon", 0xCEBF),
-)
-
-private val ENEMY_HEADER_POINTER_FIELDS = listOf(
-    "_initAi" to 0x12,
-    "_mainAi" to 0x16,
-    "_touchAi" to 0x30,
-    "_shotAi" to 0x32,
-    "_hurtAi" to 0x1C,
-    "_frozenAi" to 0x1E,
-    "_grappleAi" to 0x1A,
-    "_deathAnim" to 0x22,
-    "_extraGfx" to 0x18,
-    "_pbVuln" to 0x28,
-)
-
 private const val TILESET_TABLE_ENTRY_BYTES = 9
 private const val TILESET_PALETTE_PTR_OFFSET = 6
 private const val TILESET_PALETTE_BYTES = 256
@@ -1003,15 +1169,7 @@ private const val ENEMY_PALETTE_PREFIX = "enemy_pal:"
 private const val ENEMY_PALETTE_BYTES = 32
 private const val ENEMY_HEADER_PALETTE_PTR_OFFSET = 2
 private const val ENEMY_HEADER_AI_BANK_OFFSET = 0x0C
-private const val BEAM_DAMAGE_TABLE_SNES = 0x938431
-private const val BEAM_DAMAGE_ENTRY_STRIDE = 22
-private const val ENEMY_DATA_BANK_SNES = 0xB40000
-private const val ENEMY_HEADER_HP_OFFSET = 0x04
-private const val ENEMY_HEADER_CONTACT_DAMAGE_OFFSET = 0x06
-private const val ENEMY_HEADER_DROP_TABLE_PTR_OFFSET = 0x3A
-private const val ENEMY_HEADER_VULNERABILITY_TABLE_PTR_OFFSET = 0x3C
-private const val ENEMY_DROP_TABLE_BYTES = 6
-private const val ENEMY_VULNERABILITY_TABLE_BYTES = 22
+private const val INFINITE_BLUE_SUIT_PATCH_ID = "bundled_infinite_blue_suit"
 
 private fun SmPatch.deepCopy(): SmPatch =
     SmPatch(

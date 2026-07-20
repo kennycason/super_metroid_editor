@@ -40,7 +40,7 @@ fun main(args: Array<String>) {
         }
     }
 
-    if (romPath == null && command != "build" && command != "patches") {
+    if (romPath == null && command != "build" && command != "patches" && command != "schemas" && command != "schema") {
         System.err.println("Error: --rom <path> is required")
         exitProcess(1)
     }
@@ -51,26 +51,33 @@ fun main(args: Array<String>) {
     }
 
     val json = if (compact) jsonCompact else jsonPretty
-    when (command) {
-        "rooms", "room", "graph", "export" -> {
-            val requiredRomPath = romPath ?: error("ROM path was already validated")
-            val parser = RomParser.loadRom(requiredRomPath)
-            val repo = RoomRepository()
-            val roomExporter = RoomExporter(parser, repo)
-            when (command) {
-                "rooms" -> cmdRooms(roomExporter, json)
-                "room" -> cmdRoom(roomExporter, json, commandArgs)
-                "graph" -> cmdGraph(roomExporter, json)
-                "export" -> cmdExport(roomExporter, json, commandArgs)
+    try {
+        when (command) {
+            "rooms", "room", "graph", "export" -> {
+                val requiredRomPath = romPath ?: error("ROM path was already validated")
+                val parser = RomParser.loadRom(requiredRomPath)
+                val repo = RoomRepository()
+                val roomExporter = RoomExporter(parser, repo)
+                when (command) {
+                    "rooms" -> cmdRooms(roomExporter, json)
+                    "room" -> cmdRoom(roomExporter, json, commandArgs)
+                    "graph" -> cmdGraph(roomExporter, json)
+                    "export" -> cmdExport(roomExporter, json, commandArgs)
+                }
+            }
+            "build" -> cmdBuild(json, romPath, commandArgs)
+            "patches" -> cmdPatches(json)
+            "schemas" -> cmdSchemas(json)
+            "schema" -> cmdSchema(json, commandArgs)
+            else -> {
+                System.err.println("Unknown command: $command")
+                printUsage()
+                exitProcess(1)
             }
         }
-        "build" -> cmdBuild(json, romPath, commandArgs)
-        "patches" -> cmdPatches(json)
-        else -> {
-            System.err.println("Unknown command: $command")
-            printUsage()
-            exitProcess(1)
-        }
+    } catch (e: IllegalArgumentException) {
+        System.err.println("Error: ${e.message ?: "invalid argument"}")
+        exitProcess(1)
     }
 }
 
@@ -151,17 +158,37 @@ private fun cmdExport(
 private fun cmdPatches(json: Json) {
     val supportedConfigTypes = SmeditPatchCatalog.supportedConfigTypes()
     val summaries = SmeditPatchCatalog.defaultPatches().map { patch ->
+        val schema = patch.configType?.let { SmeditPatchCatalog.configSchema(it) }
         CliPatchSummary(
             id = patch.id,
             name = patch.name,
             description = patch.description,
             configType = patch.configType,
             headlessSupported = patch.writes.isNotEmpty() || patch.configType in supportedConfigTypes,
+            supportsPatchOnly = schema?.supportsPatchOnly ?: patch.writes.isNotEmpty(),
+            requiresRom = schema?.requiresRom ?: false,
+            configFieldCount = schema?.fields?.size ?: 0,
             writeRecords = patch.writes.size,
             writeBytes = patch.writes.sumOf { it.bytes.size },
         )
     }
     println(json.encodeToString(summaries))
+}
+
+private fun cmdSchemas(json: Json) {
+    println(json.encodeToString(SmeditPatchCatalog.configSchemas()))
+}
+
+private fun cmdSchema(json: Json, args: List<String>) {
+    if (args.isEmpty()) {
+        System.err.println("Usage: schema <patchId|configType>")
+        exitProcess(1)
+    }
+    val schema = SmeditPatchCatalog.configSchema(args[0]) ?: run {
+        System.err.println("No config schema found for: ${args[0]}")
+        exitProcess(1)
+    }
+    println(json.encodeToString(schema))
 }
 
 private fun cmdBuild(
@@ -173,6 +200,7 @@ private fun cmdBuild(
     var outputPath: String? = null
     var patchPath: String? = null
     var reportPath: String? = null
+    var strictConfigValidation = false
 
     val iter = args.iterator()
     while (iter.hasNext()) {
@@ -182,6 +210,7 @@ private fun cmdBuild(
             (arg == "-o" || arg == "--output") && iter.hasNext() -> outputPath = iter.next()
             arg == "--patch" && iter.hasNext() -> patchPath = iter.next()
             arg == "--report" && iter.hasNext() -> reportPath = iter.next()
+            arg == "--strict-config" -> strictConfigValidation = true
             else -> {
                 System.err.println("Unknown build option: $arg")
                 printBuildUsage()
@@ -200,7 +229,12 @@ private fun cmdBuild(
     }
 
     val configFile = File(configPath).absoluteFile
-    val request = jsonInput.decodeFromString(SmeditBuildRequest.serializer(), configFile.readText())
+    val decodedRequest = jsonInput.decodeFromString(SmeditBuildRequest.serializer(), configFile.readText())
+    val request = if (strictConfigValidation) {
+        decodedRequest.copy(strictConfigValidation = true)
+    } else {
+        decodedRequest
+    }
     val project = request.project?.let { projectPath ->
         val projectFile = resolveRelative(configFile.parentFile, projectPath)
         jsonInput.decodeFromString(SmEditProject.serializer(), projectFile.readText())
@@ -253,16 +287,20 @@ private data class CliPatchSummary(
     val description: String,
     val configType: String?,
     val headlessSupported: Boolean,
+    val supportsPatchOnly: Boolean,
+    val requiresRom: Boolean,
+    val configFieldCount: Int,
     val writeRecords: Int,
     val writeBytes: Int,
 )
 
 private fun printBuildUsage() {
     System.err.println("""
-Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>]
+Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>] [--strict-config]
 
 At least one of --output or --patch is required.
 --output requires global --rom <path.smc>. --patch can run without --rom for ROM-free IPS generation.
+--strict-config makes unknown config keys and out-of-range values fail instead of warning.
     """.trimIndent())
 }
 
@@ -278,11 +316,13 @@ Commands:
   graph              Export navigation graph (nodes + edges)
   export -o <dir>    Export everything: rooms.json, nav_graph.json, rooms/*.json
   patches            List built-in patch IDs and headless support status
+  schemas            List supported config patch schemas
+  schema <id|type>   Show one config patch schema
   build --config <json>
                      Apply supported project/request patches and write a ROM and/or IPS
 
 Options:
-  --rom <path>       Path to Super Metroid ROM file (.smc); required except patches or build --patch
+  --rom <path>       Path to Super Metroid ROM file (.smc); required except patches, schemas, or build --patch
   --compact          Output compact JSON (no indentation)
   -h, --help         Show this help
 
@@ -293,7 +333,8 @@ Examples:
   ... --rom rom.smc graph
   ... --rom rom.smc export -o /tmp/sm_export
   ... patches
+  ... schema enemy_stats
   ... --rom base.smc build --config build.json --output patched.smc --patch patched.ips
-  ... build --config build.json --patch patch-only.ips
+  ... build --config build.json --patch patch-only.ips --strict-config
     """.trimIndent())
 }

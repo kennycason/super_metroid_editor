@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class SmeditBuildRequest(
     val schemaVersion: Int = 1,
     val project: String? = null,
+    val strictConfigValidation: Boolean = false,
     val patches: Map<String, SmeditPatchRequest> = emptyMap(),
     val rawWrites: List<SmeditRawWriteRequest> = emptyList(),
 )
@@ -48,6 +49,42 @@ data class SmeditAppliedPatchReport(
     val configType: String? = null,
     val writes: Int,
     val bytes: Int,
+)
+
+@Serializable
+data class SmeditConfigSchema(
+    val configType: String,
+    val patchId: String,
+    val name: String,
+    val description: String,
+    val headlessSupported: Boolean,
+    val supportsPatchOnly: Boolean,
+    val requiresRom: Boolean,
+    val fields: List<SmeditConfigFieldSchema> = emptyList(),
+)
+
+@Serializable
+data class SmeditConfigFieldSchema(
+    val key: String,
+    val label: String,
+    val type: String = "int",
+    val min: Int = 0,
+    val max: Int = 0xFFFF,
+    val defaultValue: Int? = null,
+    val description: String = "",
+    val category: String? = null,
+    val unit: String = "",
+    val signed: Boolean = false,
+    val logicalMin: Int? = null,
+    val logicalMax: Int? = null,
+    val requiresRom: Boolean = false,
+    val choices: List<SmeditConfigChoiceSchema> = emptyList(),
+)
+
+@Serializable
+data class SmeditConfigChoiceSchema(
+    val label: String,
+    val value: Int,
 )
 
 data class SmeditBuildResult(

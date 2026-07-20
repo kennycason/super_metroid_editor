@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 import java.util.Base64
@@ -90,7 +91,9 @@ class SmeditBuildServiceTest {
     fun `explicit unsupported config patch fails`() {
         val original = ByteArray(0x300000)
         val request = SmeditBuildRequest(
-            patches = mapOf("hex_hyper_beam" to SmeditPatchRequest())
+            patches = mapOf(
+                "unknown_config_patch" to SmeditPatchRequest(configType = "unknown_config")
+            )
         )
 
         val error = assertFailsWith<IllegalArgumentException> {
@@ -100,11 +103,13 @@ class SmeditBuildServiceTest {
     }
 
     @Test
-    fun `known desktop only config patch fails explicitly`() {
+    fun `unknown generated-looking config patch fails explicitly`() {
         val error = assertFailsWith<IllegalArgumentException> {
             SmeditBuildService().buildPatch(
                 SmeditBuildRequest(
-                    patches = mapOf("boss_stats" to SmeditPatchRequest())
+                    patches = mapOf(
+                        "fake_generated" to SmeditPatchRequest(configType = "fake_generated")
+                    )
                 )
             )
         }
@@ -198,6 +203,236 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `patch only build applies boss stats physics and controller config`() {
+        val original = ByteArray(0x300000)
+        val request = SmeditBuildRequest(
+            patches = mapOf(
+                BOSS_STATS_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf(
+                        "kraid_hp" to 10_000,
+                        "kraid_belly_spike" to 33,
+                    )
+                ),
+                SAMUS_PHYSICS_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf("gravity" to 0x2C)
+                ),
+                CONTROLLER_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf("jump" to 0x4000)
+                ),
+            )
+        )
+
+        val result = SmeditBuildService().buildPatch(request)
+        val reconstructed = original.copyOf()
+        for (write in PatchRepository.parseIps(result.ipsPatchBytes)) {
+            for (i in write.bytes.indices) {
+                reconstructed[write.offset.toInt() + i] = write.bytes[i].toByte()
+            }
+        }
+
+        val parser = RomParser(original)
+        assertEquals(10_000, reconstructed.readWord(parser.snesToPc(0xA0E2BF) + 0x04))
+        assertEquals(10_000, reconstructed.readWord(parser.snesToPc(0xA0E2FF) + 0x04))
+        assertEquals(33, reconstructed.readWord(parser.snesToPc(0xA0E33F) + 0x06))
+        assertEquals(33, reconstructed.readWord(parser.snesToPc(0xA0E37F) + 0x06))
+        assertEquals(33, reconstructed.readWord(parser.snesToPc(0xA0E3BF) + 0x06))
+        assertEquals(0x2C, reconstructed[0x081EA2].toInt() and 0xFF)
+        assertEquals(0x4000, reconstructed.readWord(0x017575 + 2))
+        assertTrue(result.report.applied.any { it.configType == BOSS_STATS_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == SAMUS_PHYSICS_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == CONTROLLER_CONFIG_TYPE })
+    }
+
+    @Test
+    fun `patch only build applies boss behavior configs`() {
+        val original = ByteArray(0x300000)
+        val request = SmeditBuildRequest(
+            patches = mapOf(
+                PHANTOON_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf(
+                        "vuln_0" to 45,
+                        "rev_cap_0" to -20,
+                    )
+                ),
+                KRAID_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf(
+                        "diagonal_up_x_speed" to -3,
+                        "earthquake_ceiling_mask" to 0x01FF,
+                    )
+                ),
+                RIDLEY_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf("norfair_hover_wall_timer" to 5)
+                ),
+                TORIZO_CONFIG_TYPE to SmeditPatchRequest(
+                    config = mapOf("fall_reset_y_speed" to 0x0111)
+                ),
+            )
+        )
+
+        val result = SmeditBuildService().buildPatch(request)
+        val reconstructed = original.copyOf()
+        for (write in PatchRepository.parseIps(result.ipsPatchBytes)) {
+            for (i in write.bytes.indices) {
+                reconstructed[write.offset.toInt() + i] = write.bytes[i].toByte()
+            }
+        }
+
+        val parser = RomParser(original)
+        assertEquals(45, reconstructed.readWord(parser.snesToPc(0xA7CD41)))
+        assertEquals(0xFFEC, reconstructed.readWord(parser.snesToPc(0xA7CD89)))
+        assertEquals(0xFFFD, reconstructed.readWord(parser.snesToPc(0xA7BE50)))
+        assertEquals(0xFFFD, reconstructed.readWord(parser.snesToPc(0xA7BE60)))
+        assertEquals(0xFFFD, reconstructed.readWord(parser.snesToPc(0xA7BE70)))
+        assertEquals(0xFFFD, reconstructed.readWord(parser.snesToPc(0xA7BE80)))
+        assertEquals(0x00FF, reconstructed.readWord(parser.snesToPc(0xA7AC51)))
+        assertEquals(5, reconstructed.readWord(parser.snesToPc(0xA6B604)))
+        assertEquals(5, reconstructed.readWord(parser.snesToPc(0xA6B632)))
+        assertEquals(0x0111, reconstructed.readWord(parser.snesToPc(0xAAC7B8)))
+        assertEquals(0x0111, reconstructed.readWord(parser.snesToPc(0xAAC81F)))
+        assertEquals(0x0111, reconstructed.readWord(parser.snesToPc(0xAAC86D)))
+        assertEquals(0x0111, reconstructed.readWord(parser.snesToPc(0xAAD64F)))
+        assertTrue(result.report.applied.any { it.configType == PHANTOON_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == KRAID_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == RIDLEY_CONFIG_TYPE })
+        assertTrue(result.report.applied.any { it.configType == TORIZO_CONFIG_TYPE })
+    }
+
+    @Test
+    fun `patch only build applies combined per frame hook configs`() {
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    BOSS_DEFEATED_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf(
+                            "kraid" to 1,
+                            "phantoon" to 1,
+                            "ridley" to 1,
+                            "draygon" to 1,
+                        )
+                    ),
+                    HYPER_BEAM_CONFIG_TYPE to SmeditPatchRequest(),
+                    "bundled_infinite_blue_suit" to SmeditPatchRequest(),
+                )
+            )
+        )
+
+        val writes = PatchRepository.parseIps(result.ipsPatchBytes)
+        val hookWrite = writes.first { it.offset == PER_FRAME_HOOK_PATCH_PC.toLong() }
+        val payloadWrite = writes.first { it.offset == PER_FRAME_HOOK_PAYLOAD_PC.toLong() }
+
+        assertEquals(PER_FRAME_HOOK_JSL, hookWrite.bytes)
+        assertEquals(listOf(0x22, 0xEF, 0x89, 0x82, 0x08, 0xC2, 0x20), payloadWrite.bytes.take(7))
+        assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xAD, 0x9B, 0x07, 0xC9, 0x58, 0xDD)))
+        assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xAF, 0x29, 0xD8, 0x7E, 0x09, 0x01, 0x00)))
+        assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xAF, 0x21, 0xD8, 0x7E, 0x09, 0x07, 0x00)))
+        assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xA9, 0x00, 0x80, 0x8F, 0x76, 0x0A, 0x7E)))
+        assertTrue(payloadWrite.bytes.containsSubsequence(listOf(0xA9, 0x00, 0x04, 0x8F, 0x3E, 0x0B, 0x7E)))
+        assertTrue(result.report.applied.any { it.identifier == "combined_per_frame_hook" })
+    }
+
+    @Test
+    fun `rom build applies room name pause map patch`() {
+        val original = ByteArray(0x300000) { 0xFF.toByte() }
+        val parser = RomParser(original)
+        installOriginalPauseMapHook(original, parser.snesToPc(0x828D25))
+        installOriginalPauseMapHook(original, parser.snesToPc(0x8291DD))
+        val project = SmEditProject(
+            romPath = "base.smc",
+            roomNameOverrides = mutableMapOf("91F8" to "LANDING TEST"),
+        )
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf(
+                    ROOM_NAME_PAUSE_MAP_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY to 0)
+                    )
+                )
+            ),
+            project = project,
+        )
+
+        assertTrue(result.report.applied.any { it.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE })
+        assertTrue(result.report.warnings.none { it.contains("room name overrides") })
+        val firstHook = result.romBytes.readBytes(parser.snesToPc(0x828D25), 4)
+        val secondHook = result.romBytes.readBytes(parser.snesToPc(0x8291DD), 4)
+        assertEquals(0x22, firstHook[0])
+        assertContentEquals(firstHook, secondHook)
+        val wrapperSnes = firstHook[1] or (firstHook[2] shl 8) or (firstHook[3] shl 16)
+        assertEquals(0x22, result.romBytes[parser.snesToPc(wrapperSnes)].toInt() and 0xFF)
+        assertTrue(result.report.applied.first { it.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE }.bytes > 100)
+    }
+
+    @Test
+    fun `patch only room name pause map warns without rom`() {
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    ROOM_NAME_PAUSE_MAP_CONFIG_TYPE to SmeditPatchRequest()
+                )
+            )
+        )
+
+        assertEquals(0, PatchRepository.parseIps(result.ipsPatchBytes).size)
+        assertTrue(result.report.warnings.any { it.contains("requires --rom") })
+    }
+
+    @Test
+    fun `config schema exposes supported fields`() {
+        val enemyStats = SmeditPatchCatalog.configSchema(ENEMY_STATS_CONFIG_TYPE)!!
+        val controller = SmeditPatchCatalog.configSchema("config_controller")!!
+        val phantoon = SmeditPatchCatalog.configSchema(PHANTOON_CONFIG_TYPE)!!
+        val bossDefeated = SmeditPatchCatalog.configSchema(BOSS_DEFEATED_CONFIG_TYPE)!!
+        val roomName = SmeditPatchCatalog.configSchema(ROOM_NAME_PAUSE_MAP_CONFIG_TYPE)!!
+        val hyperBeam = SmeditPatchCatalog.configSchema(HYPER_BEAM_CONFIG_TYPE)!!
+
+        assertTrue(enemyStats.supportsPatchOnly)
+        assertTrue(enemyStats.fields.any { it.key == "zoomer_hp" && it.defaultValue == 15 })
+        assertTrue(enemyStats.fields.any { it.key == "zoomer_touchAi" })
+        assertEquals(CONTROLLER_CONFIG_TYPE, controller.configType)
+        assertTrue(controller.fields.first { it.key == "jump" }.choices.any { it.label == "Y" && it.value == 0x4000 })
+        assertTrue(phantoon.supportsPatchOnly)
+        assertTrue(
+            phantoon.fields.any {
+                it.key == "rev_cap_0" && it.signed && it.logicalMin == -255 && it.logicalMax == 255
+            }
+        )
+        assertTrue(bossDefeated.fields.any { it.key == "kraid" && it.max == 1 })
+        assertTrue(roomName.requiresRom)
+        assertTrue(roomName.fields.first { it.key == RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY }.choices.any { it.label == "Left" })
+        assertTrue(hyperBeam.supportsPatchOnly)
+    }
+
+    @Test
+    fun `config validation warns by default and fails in strict mode`() {
+        val warningResult = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf("power_typo" to 123)
+                    )
+                )
+            )
+        )
+        assertTrue(warningResult.report.warnings.any { it.contains("unknown config key") && it.contains("power_typo") })
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    strictConfigValidation = true,
+                    patches = mapOf(
+                        BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
+                            config = mapOf("power_typo" to 123)
+                        )
+                    )
+                )
+            )
+        }
+        assertTrue(error.message.orEmpty().contains("power_typo"))
+    }
+
+    @Test
     fun `project non patch edits warn because headless v1 ignores them`() {
         val project = SmEditProject(
             romPath = "base.smc",
@@ -272,6 +507,9 @@ class SmeditBuildServiceTest {
             ((this[offset + 1].toInt() and 0xFF) shl 8) or
             ((this[offset + 2].toInt() and 0xFF) shl 16)
 
+    private fun ByteArray.readBytes(offset: Int, count: Int): List<Int> =
+        (0 until count).map { this[offset + it].toInt() and 0xFF }
+
     private fun writeU24(data: ByteArray, offset: Int, value: Int) {
         data[offset] = (value and 0xFF).toByte()
         data[offset + 1] = ((value ushr 8) and 0xFF).toByte()
@@ -281,6 +519,19 @@ class SmeditBuildServiceTest {
     private fun writeWord(data: ByteArray, offset: Int, value: Int) {
         data[offset] = (value and 0xFF).toByte()
         data[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+    }
+
+    private fun installOriginalPauseMapHook(data: ByteArray, offset: Int) {
+        val bytes = listOf(0x22, 0xC3, 0x93, 0x82)
+        for ((index, byte) in bytes.withIndex()) {
+            data[offset + index] = byte.toByte()
+        }
+    }
+
+    private fun List<Int>.containsSubsequence(needle: List<Int>): Boolean {
+        if (needle.isEmpty()) return true
+        if (needle.size > size) return false
+        return windowed(needle.size).any { it == needle }
     }
 
     private fun ByteArray.toIntList(): List<Int> =

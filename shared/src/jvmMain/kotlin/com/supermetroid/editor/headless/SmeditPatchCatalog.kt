@@ -3,6 +3,7 @@ package com.supermetroid.editor.headless
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 
 const val CERES_ESCAPE_CONFIG_TYPE = "ceres_escape_seconds"
 const val CERES_TIMER_OPERAND_SNES = 0x809E0E
@@ -45,6 +46,21 @@ const val BEAM_DAMAGE_CONFIG_TYPE = "beam_damage"
 const val ENEMY_STATS_CONFIG_TYPE = "enemy_stats"
 const val ENEMY_DROPS_CONFIG_TYPE = "enemy_drops"
 const val ENEMY_VULN_CONFIG_TYPE = "enemy_vuln"
+const val BOSS_STATS_CONFIG_TYPE = "boss_stats"
+const val HYPER_BEAM_CONFIG_TYPE = "hyper_beam"
+const val BOSS_DEFEATED_CONFIG_TYPE = "boss_defeated"
+const val ROOM_NAME_PAUSE_MAP_CONFIG_TYPE = "room_name_pause_map"
+const val PHANTOON_CONFIG_TYPE = "phantoon"
+const val KRAID_CONFIG_TYPE = "kraid"
+const val RIDLEY_CONFIG_TYPE = "ridley"
+const val DRAYGON_CONFIG_TYPE = "draygon"
+const val SPORE_SPAWN_CONFIG_TYPE = "spore_spawn"
+const val CROCOMIRE_CONFIG_TYPE = "crocomire"
+const val BOTWOON_CONFIG_TYPE = "botwoon"
+const val TORIZO_CONFIG_TYPE = "torizo"
+const val MOTHER_BRAIN_CONFIG_TYPE = "mother_brain"
+const val SAMUS_PHYSICS_CONFIG_TYPE = "samus_physics"
+const val CONTROLLER_CONFIG_TYPE = "controller_config"
 
 object SmeditPatchCatalog {
     fun defaultPatches(): List<SmPatch> =
@@ -59,16 +75,45 @@ object SmeditPatchCatalog {
             ENEMY_STATS_CONFIG_TYPE,
             ENEMY_DROPS_CONFIG_TYPE,
             ENEMY_VULN_CONFIG_TYPE,
-        )
+            BOSS_STATS_CONFIG_TYPE,
+            HYPER_BEAM_CONFIG_TYPE,
+            BOSS_DEFEATED_CONFIG_TYPE,
+            ROOM_NAME_PAUSE_MAP_CONFIG_TYPE,
+            SAMUS_PHYSICS_CONFIG_TYPE,
+            CONTROLLER_CONFIG_TYPE,
+        ) + HEADLESS_BOSS_BEHAVIOR_CONFIG_TYPES
+
+    fun configSchemas(): List<SmeditConfigSchema> =
+        listOf(
+            ceresSchema(),
+            bombsSchema(),
+            fanfaresSchema(),
+            beamDamageSchema(),
+            enemyStatsSchema(),
+            enemyDropsSchema(),
+            enemyVulnerabilitySchema(),
+            bossStatsSchema(),
+            hyperBeamSchema(),
+            bossDefeatedSchema(),
+            roomNamePauseMapSchema(),
+            samusPhysicsSchema(),
+            controllerConfigSchema(),
+        ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map(::bossBehaviorSchema)
+
+    fun configSchema(key: String): SmeditConfigSchema? {
+        val catalogPatch = defaultPatches().firstOrNull { it.id == key || it.configType == key }
+        val configType = catalogPatch?.configType ?: key
+        return configSchemas().firstOrNull { it.configType == configType || it.patchId == key }
+    }
 
     private fun hardcodedPatches(): List<SmPatch> = listOf(
         SmPatch(
             id = "hex_hyper_beam",
             name = "Hyper Beam",
-            description = "Start with Hyper Beam enabled. Headless build v1 lists this patch but does not emit the desktop per-frame hook yet.",
+            description = "Start with Hyper Beam enabled using the shared per-frame hook.",
             enabled = false,
             writes = mutableListOf(),
-            configType = "hyper_beam",
+            configType = HYPER_BEAM_CONFIG_TYPE,
         ),
         SmPatch(
             id = "hex_higher_jump",
@@ -343,106 +388,360 @@ object SmeditPatchCatalog {
             enabled = false,
             configType = ENEMY_VULN_CONFIG_TYPE,
         ),
-    )
-
-    private fun unsupportedConfigPatches(): List<SmPatch> = listOf(
-        unsupportedConfigPatch(
+        SmPatch(
             id = "config_boss_stats",
             name = "Boss Stats",
-            configType = "boss_stats",
-            description = "Desktop-only v1: boss enemy-header stat writer has not been moved to the headless SDK yet.",
+            description = "Set HP and contact/projectile damage fields for major and mini-boss enemy headers.",
+            enabled = false,
+            configType = BOSS_STATS_CONFIG_TYPE,
         ),
-        unsupportedConfigPatch(
-            id = "config_phantoon",
-            name = "Phantoon",
-            configType = "phantoon",
-            description = "Desktop-only v1: Phantoon behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_kraid",
-            name = "Kraid",
-            configType = "kraid",
-            description = "Desktop-only v1: Kraid behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_ridley",
-            name = "Ridley",
-            configType = "ridley",
-            description = "Desktop-only v1: Ridley behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_draygon",
-            name = "Draygon",
-            configType = "draygon",
-            description = "Desktop-only v1: Draygon behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_spore_spawn",
-            name = "Spore Spawn",
-            configType = "spore_spawn",
-            description = "Desktop-only v1: Spore Spawn behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_crocomire",
-            name = "Crocomire",
-            configType = "crocomire",
-            description = "Desktop-only v1: Crocomire behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_botwoon",
-            name = "Botwoon",
-            configType = "botwoon",
-            description = "Desktop-only v1: Botwoon behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_torizo",
-            name = "Torizo",
-            configType = "torizo",
-            description = "Desktop-only v1: Torizo behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_mother_brain",
-            name = "Mother Brain",
-            configType = "mother_brain",
-            description = "Desktop-only v1: Mother Brain behavior fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_samus_physics",
-            name = "Samus Physics",
-            configType = "samus_physics",
-            description = "Desktop-only v1: Samus physics byte fields have not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_controller",
-            name = "Controller Config",
-            configType = "controller_config",
-            description = "Desktop-only v1: controller remapping table writer has not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
-            id = "config_room_name_pause_map",
-            name = "Room Names on Pause Map",
-            configType = "room_name_pause_map",
-            description = "Desktop-only v1: generated room-name pause map payload has not been moved to the headless SDK yet.",
-        ),
-        unsupportedConfigPatch(
+        SmPatch(
             id = "config_boss_defeated",
             name = "Boss Defeated Flags",
-            configType = "boss_defeated",
-            description = "Desktop-only v1: combined per-frame hook generation has not been moved to the headless SDK yet.",
-        ),
-    )
-
-    private fun unsupportedConfigPatch(
-        id: String,
-        name: String,
-        configType: String,
-        description: String,
-    ): SmPatch =
-        SmPatch(
-            id = id,
-            name = name,
-            description = description,
+            description = "Mark bosses as already defeated using the shared per-frame hook.",
             enabled = false,
-            configType = configType,
+            configType = BOSS_DEFEATED_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_room_name_pause_map",
+            name = "Room Name Pause Map",
+            description = "Draw the current room name on the pause map using SMEDIT room metadata and project overrides.",
+            enabled = false,
+            configType = ROOM_NAME_PAUSE_MAP_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_samus_physics",
+            name = "Samus Physics",
+            description = "Set Samus movement physics bytes for jump, gravity, run speed, and air control.",
+            enabled = false,
+            configType = SAMUS_PHYSICS_CONFIG_TYPE,
+        ),
+        SmPatch(
+            id = "config_controller",
+            name = "Controller Config",
+            description = "Remap the default controller button table.",
+            enabled = false,
+            configType = CONTROLLER_CONFIG_TYPE,
+        ),
+    ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map { definition ->
+        SmPatch(
+            id = definition.patchId,
+            name = definition.name,
+            description = definition.description,
+            enabled = false,
+            configType = definition.configType,
         )
+    }
+
+    private fun unsupportedConfigPatches(): List<SmPatch> = emptyList()
+
+    private fun ceresSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = CERES_ESCAPE_CONFIG_TYPE,
+            patchId = "config_ceres_escape_time",
+            name = "Ceres Escape Time",
+            description = "Sets the Ceres station escape timer in seconds. configValue is also accepted.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = listOf(
+                intField("seconds", "Seconds", min = 15, max = 600, defaultValue = 60),
+                intField("total_seconds", "Total Seconds", min = 15, max = 600, defaultValue = 60),
+                intField("totalSeconds", "Total Seconds", min = 15, max = 600, defaultValue = 60),
+            ),
+        )
+
+    private fun bombsSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = BOMB_CONFIG_TYPE,
+            patchId = "config_bombs",
+            name = "Bombs",
+            description = "Controls active normal bomb count, lay cooldown, bomb fuse timing, and explosion animation timing.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = listOf(
+                intField(BOMB_MAX_ACTIVE_KEY, "Max Active Bombs", 1, BOMB_MAX_PROJECTILE_SLOTS, BOMB_DEFAULT_MAX_ACTIVE),
+                intField(BOMB_FUSE_FRAMES_KEY, "Fuse Frames", 1, 9999, BOMB_DEFAULT_FUSE_FRAMES),
+                intField(BOMB_COOLDOWN_FRAMES_KEY, "Cooldown Frames", 0, 255, BOMB_DEFAULT_COOLDOWN_FRAMES),
+                intField(BOMB_EXPLOSION_FRAME_DELAY_KEY, "Explosion Frame Delay", 1, 255, BOMB_DEFAULT_EXPLOSION_FRAME_DELAY),
+            ),
+        )
+
+    private fun fanfaresSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = FANFARE_CONFIG_TYPE,
+            patchId = "config_fanfares",
+            name = "Fanfares",
+            description = "Controls item fanfare message duration and room-music resume timing.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = listOf(
+                intField(FANFARE_FRAMES_KEY, "Item Fanfare Frames", FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES, FANFARE_DEFAULT_FRAMES),
+            ),
+        )
+
+    private fun beamDamageSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = BEAM_DAMAGE_CONFIG_TYPE,
+            patchId = "config_beam_damage",
+            name = "Beam Damage",
+            description = "Sets uncharged beam damage. Charged beam damage is written as 3x the configured value.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_BEAMS.map { beam ->
+                intField(beam.key, beam.label, min = 0, max = 0xFFFF, defaultValue = beam.defaultDamage)
+            },
+        )
+
+    private fun enemyStatsSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = ENEMY_STATS_CONFIG_TYPE,
+            patchId = "config_enemy_stats",
+            name = "Enemy Stats",
+            description = "Sets enemy HP, contact damage, AI routine pointers, graphics fields, and PB vulnerability fields.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_ENEMY_DEFS.flatMap { enemy ->
+                listOf(
+                    intField("${enemy.key}_hp", "${enemy.label} HP", 0, 0xFFFF, enemy.defaultHp, enemy.category),
+                    intField("${enemy.key}_dmg", "${enemy.label} Contact Damage", 0, 0xFFFF, enemy.defaultDamage, enemy.category),
+                ) + ENEMY_HEADER_POINTER_FIELDS.map { field ->
+                    intField(
+                        key = "${enemy.key}${field.suffix}",
+                        label = "${enemy.label} ${field.label}",
+                        min = 0,
+                        max = 0xFFFF,
+                        defaultValue = null,
+                        category = enemy.category,
+                        description = field.description,
+                    )
+                }
+            },
+        )
+
+    private fun enemyDropsSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = ENEMY_DROPS_CONFIG_TYPE,
+            patchId = "config_enemy_drops",
+            name = "Enemy Drops",
+            description = "Sets enemy drop table weights. Values are 0-255 and usually sum to about 255 per enemy.",
+            headlessSupported = true,
+            supportsPatchOnly = false,
+            requiresRom = true,
+            fields = HEADLESS_ENEMY_DEFS.flatMap { enemy ->
+                HEADLESS_DROP_SLOTS.map { slot ->
+                    intField(
+                        key = "${enemy.key}_drop${slot.index}",
+                        label = "${enemy.label} ${slot.label}",
+                        min = 0,
+                        max = 255,
+                        defaultValue = null,
+                        category = enemy.category,
+                        requiresRom = true,
+                    )
+                }
+            },
+        )
+
+    private fun enemyVulnerabilitySchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = ENEMY_VULN_CONFIG_TYPE,
+            patchId = "config_enemy_vuln",
+            name = "Enemy Vulnerabilities",
+            description = "Sets enemy weapon vulnerability multipliers. 0=immune, 2=normal, 4=2x.",
+            headlessSupported = true,
+            supportsPatchOnly = false,
+            requiresRom = true,
+            fields = HEADLESS_ENEMY_DEFS.flatMap { enemy ->
+                HEADLESS_WEAPON_SLOTS.map { weapon ->
+                    intField(
+                        key = "${enemy.key}_vuln${weapon.index}",
+                        label = "${enemy.label} ${weapon.label}",
+                        min = 0,
+                        max = 255,
+                        defaultValue = weapon.defaultValue,
+                        category = enemy.category,
+                        requiresRom = true,
+                    )
+                }
+            },
+        )
+
+    private fun bossStatsSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = BOSS_STATS_CONFIG_TYPE,
+            patchId = "config_boss_stats",
+            name = "Boss Stats",
+            description = "Sets HP and contact/projectile damage fields for major and mini-boss enemy headers.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_BOSS_STAT_FIELDS.map { field ->
+                intField(field.key, field.label, 0, 0xFFFF, field.defaultValue, field.category)
+            },
+        )
+
+    private fun hyperBeamSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = HYPER_BEAM_CONFIG_TYPE,
+            patchId = "hex_hyper_beam",
+            name = "Hyper Beam",
+            description = "Starts Samus with Hyper Beam active via the shared per-frame hook.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = emptyList(),
+        )
+
+    private fun bossDefeatedSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = BOSS_DEFEATED_CONFIG_TYPE,
+            patchId = "config_boss_defeated",
+            name = "Boss Defeated Flags",
+            description = "Marks selected bosses as already defeated. Values are 0=clear and 1=defeated.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_BOSS_FLAGS.map { flag ->
+                intField(
+                    key = flag.key,
+                    label = flag.label,
+                    min = 0,
+                    max = 1,
+                    defaultValue = 0,
+                    category = if (flag.key in MAIN_BOSS_FLAG_KEYS) "Main Bosses" else "Mini-Bosses",
+                )
+            },
+        )
+
+    private fun roomNamePauseMapSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = ROOM_NAME_PAUSE_MAP_CONFIG_TYPE,
+            patchId = "config_room_name_pause_map",
+            name = "Room Name Pause Map",
+            description = "Draws the current room name on the pause map. Project roomNameOverrides are included when a project is supplied.",
+            headlessSupported = true,
+            supportsPatchOnly = false,
+            requiresRom = true,
+            fields = listOf(
+                SmeditConfigFieldSchema(
+                    key = RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY,
+                    label = "Alignment",
+                    type = "enum",
+                    min = RoomNamePauseMapPatch.RoomNameAlignment.entries.minOf { it.configValue },
+                    max = RoomNamePauseMapPatch.RoomNameAlignment.entries.maxOf { it.configValue },
+                    defaultValue = RoomNamePauseMapPatch.RoomNameAlignment.CENTER.configValue,
+                    category = "Display",
+                    requiresRom = true,
+                    choices = RoomNamePauseMapPatch.RoomNameAlignment.entries.map {
+                        SmeditConfigChoiceSchema(label = it.label, value = it.configValue)
+                    },
+                )
+            ),
+        )
+
+    private fun samusPhysicsSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = SAMUS_PHYSICS_CONFIG_TYPE,
+            patchId = "config_samus_physics",
+            name = "Samus Physics",
+            description = "Sets one-byte Samus movement physics values for jump, gravity, run speed, and air control.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_PHYSICS_FIELDS.map { field ->
+                intField(field.key, field.label, 0, 255, field.defaultValue, field.category, field.description)
+            },
+        )
+
+    private fun controllerConfigSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = CONTROLLER_CONFIG_TYPE,
+            patchId = "config_controller",
+            name = "Controller Config",
+            description = "Remaps the 7-slot default controller button table.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = HEADLESS_CONTROLLER_SLOTS.map { slot ->
+                SmeditConfigFieldSchema(
+                    key = slot.key,
+                    label = slot.label,
+                    type = "enum",
+                    min = 0,
+                    max = 0xFFFF,
+                    defaultValue = slot.defaultButton,
+                    category = "Controller",
+                    choices = HEADLESS_SNES_BUTTONS.map { button ->
+                        SmeditConfigChoiceSchema(label = button.label, value = button.bitmask)
+                    },
+                )
+            },
+        )
+
+    private fun bossBehaviorSchema(definition: HeadlessBossBehaviorDefinition): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = definition.configType,
+            patchId = definition.patchId,
+            name = definition.name,
+            description = definition.description,
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = definition.fields.map { field ->
+                intField(
+                    key = field.key,
+                    label = field.label,
+                    min = if (field.signed) -32768 else field.logicalMinValue(),
+                    max = if (field.signed) 0xFFFF else field.logicalMaxValue(),
+                    defaultValue = field.defaultValue,
+                    category = field.category,
+                    description = "SNES ${field.snesAddress.toString(16).uppercase()}" +
+                        if (field.writeSnesAddresses.size > 1) {
+                            "; writes ${field.writeSnesAddresses.size} mirrored operands"
+                        } else {
+                            ""
+                        },
+                    unit = field.unit,
+                    signed = field.signed,
+                    logicalMin = field.logicalMinValue(),
+                    logicalMax = field.logicalMaxValue(),
+                )
+            },
+        )
+
+    private fun intField(
+        key: String,
+        label: String,
+        min: Int,
+        max: Int,
+        defaultValue: Int? = null,
+        category: String? = null,
+        description: String = "",
+        unit: String = "",
+        signed: Boolean = false,
+        logicalMin: Int? = null,
+        logicalMax: Int? = null,
+        requiresRom: Boolean = false,
+    ): SmeditConfigFieldSchema =
+        SmeditConfigFieldSchema(
+            key = key,
+            label = label,
+            type = "int",
+            min = min,
+            max = max,
+            defaultValue = defaultValue,
+            description = description,
+            category = category,
+            unit = unit,
+            signed = signed,
+            logicalMin = logicalMin,
+            logicalMax = logicalMax,
+            requiresRom = requiresRom,
+        )
+
 }

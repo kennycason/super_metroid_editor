@@ -24,6 +24,8 @@ Usage: [--rom <path.smc>] [--compact] <command> [options]
 | Command | Requires ROM | Output |
 | --- | --- | --- |
 | `patches` | No | Built-in patch IDs and headless support status |
+| `schemas` | No | All supported config patch schemas |
+| `schema <id|type>` | No | One supported config patch schema |
 | `rooms` | Yes | Room summary JSON |
 | `room <id|handle>` | Yes | One room with collision grid JSON |
 | `graph` | Yes | Navigation graph JSON |
@@ -66,7 +68,18 @@ Each entry includes:
 | `name` | Display name |
 | `configType` | Alternate config key, when available |
 | `headlessSupported` | Whether CLI build v1 can apply it |
+| `supportsPatchOnly` | Whether it can produce IPS writes without reading a ROM |
+| `requiresRom` | Whether the config needs `--rom` to resolve pointers/free space |
+| `configFieldCount` | Number of discoverable config fields |
 | `writeRecords` / `writeBytes` | Static write size for direct hex/IPS patches |
+
+Use `schemas` or `schema` to discover valid config keys, value ranges, defaults, enum choices, and boss-field metadata such as `unit`, `signed`, `logicalMin`, and `logicalMax`:
+
+```bash
+./gradlew -q :cli:runCli -Pargs='--compact schemas'
+./gradlew -q :cli:runCli -Pargs='schema enemy_stats'
+./gradlew -q :cli:runCli -Pargs='schema config_controller'
+```
 
 ## Build Config
 
@@ -76,6 +89,7 @@ Each entry includes:
 {
   "schemaVersion": 1,
   "project": "projects/Super Mazetroid/Super Mazetroid.smedit",
+  "strictConfigValidation": false,
   "patches": {
     "bundled_fast_doors": { "enabled": true },
     "hex_higher_jump": { "enabled": true },
@@ -118,7 +132,7 @@ Each entry includes:
 
 `project` is optional. Relative project paths are resolved from the build config file's directory.
 
-Enemy and beam patch config keys match the desktop patch UI:
+Enemy, beam, boss, generated hook, physics, and controller config keys match the desktop patch UI:
 
 ```json
 {
@@ -145,17 +159,60 @@ Enemy and beam patch config keys match the desktop patch UI:
       "config": {
         "zoomer_vuln9": 4
       }
+    },
+    "boss_stats": {
+      "config": {
+        "kraid_hp": 10000,
+        "phantoon_contact": 80
+      }
+    },
+    "phantoon": {
+      "config": {
+        "vuln_0": 45,
+        "rev_cap_0": -20
+      }
+    },
+    "kraid": {
+      "config": {
+        "diagonal_up_x_speed": -3,
+        "earthquake_ceiling_mask": 255
+      }
+    },
+    "boss_defeated": {
+      "config": {
+        "kraid": 1,
+        "phantoon": 1
+      }
+    },
+    "hyper_beam": { "enabled": true },
+    "room_name_pause_map": {
+      "config": {
+        "alignment": 1
+      }
+    },
+    "samus_physics": {
+      "config": {
+        "gravity": 44,
+        "run_max": 3
+      }
+    },
+    "controller_config": {
+      "config": {
+        "jump": 16384
+      }
     }
   }
 }
 ```
+
+By default, unknown config keys and out-of-range values are reported as warnings. Set `strictConfigValidation` in JSON or pass `--strict-config` to make these validation issues fail the build.
 
 ## Build Outputs
 
 Generate an IPS without providing a ROM:
 
 ```bash
-./gradlew -q :cli:runCli -Pargs='build --config build.json --patch out.ips --report report.json'
+./gradlew -q :cli:runCli -Pargs='build --config build.json --patch out.ips --report report.json --strict-config'
 ```
 
 Generate a patched ROM and an IPS from a caller-provided ROM:
@@ -185,7 +242,7 @@ Build v1 supports:
 
 - Bundled IPS patches from `shared/src/commonMain/resources/patches`.
 - Hardcoded hex patches from the shared patch catalog.
-- Config patches for `bombs`, `fanfares`, `ceres_escape_seconds`, `beam_damage`, `enemy_stats`, `enemy_drops`, and `enemy_vuln`.
+- Config patches for `bombs`, `fanfares`, `ceres_escape_seconds`, `beam_damage`, `enemy_stats`, `enemy_drops`, `enemy_vuln`, `boss_stats`, boss behavior configs, `boss_defeated`, `hyper_beam`, `room_name_pause_map`, `samus_physics`, and `controller_config`.
 - ROM-backed `.smedit` tileset palette overrides, including area palette randomization.
 - `.smedit` fixed sprite palette overrides for Samus, beams, bosses, and listed enemy palette regions.
 - ROM-backed dynamic enemy palette overrides stored as `enemy_pal:<speciesId>`.
@@ -193,27 +250,15 @@ Build v1 supports:
 - Raw SNES LoROM writes with `snesAddress` or `address: "80:8000"`.
 - IPS-only generation without reading or writing a ROM.
 
-IPS-only generation supports fixed-address data, including beam damage and enemy header stats. Tileset palette randomization, dynamic enemy palettes, enemy drop tables, and enemy vulnerability tables require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers, enemy table pointers, or free space before writing or relocating data.
+Boss behavior config types are `phantoon`, `kraid`, `ridley`, `draygon`, `spore_spawn`, `crocomire`, `botwoon`, `torizo`, and `mother_brain`. They support fixed-address behavior/timer/speed operands and mirror the desktop boss tabs. HP and contact damage remain under `boss_stats`.
+
+`boss_defeated`, `hyper_beam`, and `bundled_infinite_blue_suit` share the same generated per-frame hook as desktop export. The headless builder emits one combined hook when any of those features are enabled.
+
+IPS-only generation supports fixed-address data, including beam damage, boss stats, boss behavior, boss-defeated flags, hyper beam, enemy header stats, Samus physics, and controller remaps. Tileset palette randomization, dynamic enemy palettes, enemy drop tables, enemy vulnerability tables, and `room_name_pause_map` require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers, enemy table pointers, pause-map hook bytes, or free space before writing or relocating data.
 
 Build v1 intentionally does not yet export the full desktop project pipeline. If a `.smedit` project includes room edits, graphics tile edits, metatile table edits, palette effect metadata, text edits, minimap edits, music edits, or custom ASM, the CLI emits a warning that those project sections were ignored. Explicitly requested unsupported config patches fail instead of silently doing nothing.
 
-Desktop-only config patch types currently listed as unsupported by `patches`:
-
-- `boss_stats`
-- `phantoon`
-- `kraid`
-- `ridley`
-- `draygon`
-- `spore_spawn`
-- `crocomire`
-- `botwoon`
-- `torizo`
-- `mother_brain`
-- `samus_physics`
-- `controller_config`
-- `room_name_pause_map`
-- `boss_defeated`
-- `hyper_beam`
+No desktop config patch types are currently listed as unsupported by `patches`.
 
 ## Programmatic API
 
