@@ -5477,7 +5477,7 @@ class EditorState {
                 val data = patch.configData ?: continue
                 var fieldCount = 0
                 for (field in ALL_PHANTOON_FIELDS) {
-                    val value = data[field.key] ?: continue
+                    val value = coercePhantoonValue(field, data[field.key] ?: continue)
                     val pc = romParser.snesToPc(field.snesAddress)
                     if (pc + 1 < romData.size) {
                         romData[pc] = (value and 0xFF).toByte()
@@ -5490,7 +5490,7 @@ class EditorState {
                 val data = patch.configData ?: continue
                 var fieldCount = 0
                 for (field in ALL_KRAID_FIELDS) {
-                    val value = data[field.key] ?: continue
+                    val value = coerceKraidValue(field, data[field.key] ?: continue)
                     for (snesAddress in field.writeSnesAddresses) {
                         val pc = romParser.snesToPc(snesAddress)
                         if (pc + 1 < romData.size) {

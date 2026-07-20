@@ -49,17 +49,17 @@ const val TORIZO_CONFIG_TYPE = "torizo"
 const val MOTHER_BRAIN_CONFIG_TYPE = "mother_brain"
 
 data class BossBehaviorField(
-    val key: String,
-    val label: String,
-    val snesAddress: Int,
-    val defaultValue: Int,
-    val unit: String = "",
-    val signed: Boolean = false,
-    val hex: Boolean = false,
-    val minValue: Int? = null,
-    val maxValue: Int? = null,
-    val writeSnesAddresses: List<Int> = listOf(snesAddress),
-)
+    override val key: String,
+    override val label: String,
+    override val snesAddress: Int,
+    override val defaultValue: Int,
+    override val unit: String = "",
+    override val signed: Boolean = false,
+    override val hex: Boolean = false,
+    override val minValue: Int? = null,
+    override val maxValue: Int? = null,
+    override val writeSnesAddresses: List<Int> = listOf(snesAddress),
+) : BossTuningField
 
 data class BossBehaviorSection(
     val title: String,
@@ -102,73 +102,8 @@ private fun bossBehaviorField(
         writeSnesAddresses = (listOf(snesAddress) + additionalWriteAddresses.toList()).distinct(),
     )
 
-private fun BossBehaviorField.logicalDefaultValue(): Int =
-    if (signed && defaultValue > 32767) defaultValue - 65536 else defaultValue
-
-private fun BossBehaviorField.logicalValue(storedValue: Int): Int {
-    val word = storedValue and 0xFFFF
-    return if (signed && word > 32767) word - 65536 else word
-}
-
-private fun BossBehaviorField.storedValue(logicalValue: Int): Int =
-    if (signed && logicalValue < 0) logicalValue + 65536 else logicalValue
-
-private fun BossBehaviorField.logicalMinValue(): Int =
-    minValue ?: when {
-        signed -> -32768
-        else -> 0
-    }
-
-private fun BossBehaviorField.logicalMaxValue(): Int {
-    val inferred = when {
-        maxValue != null -> maxValue
-        signed -> 32767
-        hex -> 65535
-        unit == "hp" -> 32767
-        unit == "frames" -> 32767
-        unit == "px" -> 4095
-        unit == "missiles" -> 999
-        unit == "damage" -> 9999
-        unit == "px/frame" -> 255
-        unit == "subpx/frame" -> 32767
-        unit == "speed" -> 32767
-        else -> 65535
-    }
-    return maxOf(inferred, logicalDefaultValue())
-}
-
-internal fun coerceBossBehaviorValue(field: BossBehaviorField, storedValue: Int): Int {
-    val min = field.logicalMinValue()
-    val max = field.logicalMaxValue()
-    val logical = field.logicalValue(storedValue).coerceIn(min, max)
-    return field.storedValue(logical).coerceIn(0, 65535)
-}
-
-private fun formatBossBehaviorSnesAddress(snesAddress: Int): String {
-    val bank = (snesAddress ushr 16) and 0xFF
-    val offset = snesAddress and 0xFFFF
-    return "$" + bank.toString(16).uppercase().padStart(2, '0') +
-        ":" + offset.toString(16).uppercase().padStart(4, '0')
-}
-
-private fun BossBehaviorField.rangeText(): String {
-    val min = logicalMinValue()
-    val max = logicalMaxValue()
-    return if (hex && min >= 0) {
-        val lo = min.toString(16).uppercase().padStart(4, '0')
-        val hi = max.toString(16).uppercase().padStart(4, '0')
-        "\$$lo..\$$hi"
-    } else {
-        "$min..$max"
-    }
-}
-
-private fun BossBehaviorField.metadataText(): String {
-    val source = formatBossBehaviorSnesAddress(snesAddress)
-    val mirrors = writeSnesAddresses.size - 1
-    val mirrorText = if (mirrors > 0) " +$mirrors mirror" + if (mirrors == 1) "" else "s" else ""
-    return "$source$mirrorText | ${rangeText()}"
-}
+internal fun coerceBossBehaviorValue(field: BossBehaviorField, storedValue: Int): Int =
+    coerceBossTuningValue(field, storedValue)
 
 val RIDLEY_BEHAVIOR = BossBehaviorDefinition(
     configType = RIDLEY_CONFIG_TYPE,
@@ -801,7 +736,7 @@ val MOTHER_BRAIN_BEHAVIOR = BossBehaviorDefinition(
     configType = MOTHER_BRAIN_CONFIG_TYPE,
     title = "MOTHER BRAIN",
     subtitle = "Advanced Behavior Editor",
-    description = "Edit source-backed phase one, phase two, rainbow beam, laser, and death-sequence constants from bank A9. HP and contact damage remain in Boss Stats.",
+    description = "Edit source-backed phase one, phase two, blue-ring, rainbow beam, laser, and death-sequence constants from bank A9. HP and contact damage remain in Boss Stats.",
     headerColor = Color(0xFFC2185B),
     sections = listOf(
         BossBehaviorSection(
@@ -844,6 +779,33 @@ val MOTHER_BRAIN_BEHAVIOR = BossBehaviorDefinition(
                 bossBehaviorField("bomb_near_target_x", "Bomb Near Target X", 0xA9B78A, 0x0040, unit = "px"),
                 bossBehaviorField("bomb_far_target_x", "Bomb Far Target X", 0xA9B792, 0x0060, unit = "px"),
                 bossBehaviorField("bomb_post_fire_delay", "Bomb Post-Fire Delay", 0xA9B7E2, 0x002C, unit = "frames"),
+            ),
+        ),
+        BossBehaviorSection(
+            "Blue Ring Projectiles",
+            "Aim offsets, angle flip origin, and Shitroid attack counter cap used by Mother Brain's blue-ring projectiles.",
+            Color(0xFF00695C),
+            listOf(
+                bossBehaviorField("blue_ring_shitroid_x_offset", "Shitroid Aim X Offset", 0xA99E47, 0x000A, unit = "px"),
+                bossBehaviorField("blue_ring_shitroid_y_offset", "Shitroid Aim Y Offset", 0xA99E54, 0x0010, unit = "px"),
+                bossBehaviorField("blue_ring_samus_x_offset", "Samus Aim X Offset", 0xA99E66, 0x000A, unit = "px"),
+                bossBehaviorField("blue_ring_samus_y_offset", "Samus Aim Y Offset", 0xA99E73, 0x0010, unit = "px"),
+                bossBehaviorField(
+                    "blue_ring_angle_flip_origin",
+                    "Angle Flip Origin",
+                    0xA99E7D,
+                    0x0080,
+                    hex = true,
+                    maxValue = 0x00FF,
+                ),
+                bossBehaviorField(
+                    "shitroid_attack_cap",
+                    "Shitroid Attack Cap",
+                    0xA99EA9,
+                    0x000C,
+                    maxValue = 0x000C,
+                    additionalWriteAddresses = intArrayOf(0xA99EAE),
+                ),
             ),
         ),
         BossBehaviorSection(

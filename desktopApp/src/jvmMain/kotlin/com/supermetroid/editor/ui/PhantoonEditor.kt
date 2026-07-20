@@ -48,14 +48,17 @@ import javax.imageio.ImageIO
 // ─── Phantoon AI data model ─────────────────────────────────────
 
 data class PhantoonField(
-    val key: String,
-    val label: String,
-    val snesAddress: Int,
-    val defaultValue: Int,
-    val unit: String = "",
-    val signed: Boolean = false,
-    val hex: Boolean = false
-)
+    override val key: String,
+    override val label: String,
+    override val snesAddress: Int,
+    override val defaultValue: Int,
+    override val unit: String = "",
+    override val signed: Boolean = false,
+    override val hex: Boolean = false,
+    override val minValue: Int? = null,
+    override val maxValue: Int? = null,
+    override val writeSnesAddresses: List<Int> = listOf(snesAddress),
+) : BossTuningField
 
 data class PhantoonSection(
     val title: String,
@@ -70,6 +73,9 @@ private fun timerFields(prefix: String, baseSnes: Int, defaults: List<Int>): Lis
     defaults.mapIndexed { i, d ->
         PhantoonField("${prefix}_$i", "Round $i", baseSnes + i * 2, d, unit = "frames")
     }
+
+internal fun coercePhantoonValue(field: PhantoonField, storedValue: Int): Int =
+    coerceBossTuningValue(field, storedValue)
 
 val PHANTOON_SECTIONS: List<PhantoonSection> = listOf(
     PhantoonSection(
@@ -172,16 +178,18 @@ fun PhantoonEditor(
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (field in ALL_PHANTOON_FIELDS) {
-            map[field.key] = stored?.get(field.key)
+            val value = stored?.get(field.key)
                 ?: readPhantoonFromRom(romParser, field)
                 ?: field.defaultValue
+            map[field.key] = coercePhantoonValue(field, value)
         }
         map
     }
 
     fun apply(field: PhantoonField, value: Int) {
-        values[field.key] = value
-        editorState.setPatchConfigData(patch.id, field.key, value)
+        val coerced = coercePhantoonValue(field, value)
+        values[field.key] = coerced
+        editorState.setPatchConfigData(patch.id, field.key, coerced)
     }
 
     Column(
@@ -383,7 +391,9 @@ private fun PhantoonFieldRow(
     onChange: (Int) -> Unit
 ) {
     val isModified = value != field.defaultValue
-    val displayValue = if (field.signed && value > 32767) value - 65536 else value
+    val displayValue = field.logicalValue(value)
+    val minValue = field.logicalMinValue()
+    val maxValue = field.logicalMaxValue()
 
     Row(
         modifier = Modifier
@@ -391,24 +401,34 @@ private fun PhantoonFieldRow(
             .padding(vertical = 3.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            field.label,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f),
-            fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
-            color = if (isModified) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface
-        )
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(
+                field.label,
+                fontSize = 12.sp,
+                fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
+                color = if (isModified) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                field.metadataText(),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         if (field.hex) {
-            PhantoonHexInput(value, onChange, Modifier.width(80.dp))
+            PhantoonHexInput(value, onChange, Modifier.width(80.dp), minValue, maxValue)
         } else if (field.signed) {
-            PhantoonSignedInput(displayValue, { signed ->
-                val stored = if (signed < 0) signed + 65536 else signed
-                onChange(stored.coerceIn(0, 65535))
-            }, Modifier.width(80.dp))
+            PhantoonSignedInput(
+                displayValue,
+                { signed -> onChange(field.storedValue(signed)) },
+                Modifier.width(80.dp),
+                minValue,
+                maxValue,
+            )
         } else {
-            PhantoonIntInput(value, onChange, Modifier.width(80.dp))
+            PhantoonIntInput(displayValue, { logical -> onChange(field.storedValue(logical)) }, Modifier.width(80.dp), minValue, maxValue)
         }
 
         // Annotation column
@@ -431,14 +451,21 @@ private fun PhantoonFieldRow(
 // ─── Input widgets ──────────────────────────────────────────────
 
 @Composable
-private fun PhantoonIntInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun PhantoonIntInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(1, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filter { it.isDigit() }.take(5)
+            val filtered = raw.filter { it.isDigit() }.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -455,14 +482,29 @@ private fun PhantoonIntInput(value: Int, onChange: (Int) -> Unit, modifier: Modi
 }
 
 @Composable
-private fun PhantoonSignedInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun PhantoonSignedInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(minValue.toString().length, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filterIndexed { i, c -> c.isDigit() || (i == 0 && c == '-') }.take(6)
+            val normalized = buildString {
+                for (c in raw) {
+                    when {
+                        c.isDigit() -> append(c)
+                        c == '-' && isEmpty() -> append(c)
+                    }
+                }
+            }
+            val filtered = normalized.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(-32768, 32767)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -479,14 +521,20 @@ private fun PhantoonSignedInput(value: Int, onChange: (Int) -> Unit, modifier: M
 }
 
 @Composable
-private fun PhantoonHexInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun PhantoonHexInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }.take(4)
             text = filtered.uppercase()
-            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(

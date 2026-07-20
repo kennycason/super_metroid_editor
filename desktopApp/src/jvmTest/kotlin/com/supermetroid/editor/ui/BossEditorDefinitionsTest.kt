@@ -39,6 +39,50 @@ class BossEditorDefinitionsTest {
     }
 
     @Test
+    fun `kraid projectile fields cover earthquake masks and falling rock table`() {
+        val fields = ALL_KRAID_FIELDS.associateBy { it.key }
+
+        assertEquals(0xA7AC51, fields.getValue("earthquake_ceiling_mask").snesAddress)
+        assertEquals(0x0007, fields.getValue("earthquake_ceiling_mask").defaultValue)
+        assertTrue(fields.getValue("earthquake_ceiling_mask").hex)
+        assertEquals(0x00FF, fields.getValue("earthquake_ceiling_mask").maxValue)
+        assertEquals(0xA7ACC3, fields.getValue("falling_rock_x_8").snesAddress)
+        assertEquals(0x0048, fields.getValue("falling_rock_x_8").defaultValue)
+    }
+
+    @Test
+    fun `phantoon and kraid guardrails clamp unsafe custom editor values`() {
+        val phantoonFields = ALL_PHANTOON_FIELDS.associateBy { it.key }
+        val kraidFields = ALL_KRAID_FIELDS.associateBy { it.key }
+
+        assertEquals(
+            0x7FFF,
+            coercePhantoonValue(phantoonFields.getValue("closed_0"), 0xFFFF),
+            "Phantoon timers should not accept 0xFFFF as a practical value",
+        )
+        assertEquals(
+            0x0FFF,
+            coercePhantoonValue(phantoonFields.getValue("pos2_x"), 0xFFFF),
+            "Phantoon room positions should be clamped to a sane coordinate ceiling",
+        )
+        assertEquals(
+            0xFF01,
+            coercePhantoonValue(phantoonFields.getValue("rev_cap_1"), 0x8000),
+            "Phantoon signed movement caps should clamp to -255",
+        )
+        assertEquals(
+            0xFF01,
+            coerceKraidValue(kraidFields.getValue("diagonal_up_x_speed"), 0x8000),
+            "Kraid signed fingernail speeds should clamp to -255",
+        )
+        assertEquals(
+            0xFFFF,
+            coerceKraidValue(kraidFields.getValue("lint_x_subspeed"), 0xFFFF),
+            "Kraid raw hex fields should still allow full 16-bit constants",
+        )
+    }
+
+    @Test
     fun `ridley fields use disassembly immediate operand addresses`() {
         val fields = ALL_RIDLEY_FIELDS.associateBy { it.key }
 
@@ -133,6 +177,10 @@ class BossEditorDefinitionsTest {
             listOf(0xA9B995, 0xA9BA77),
             fields.getValue("rainbow_initial_width").writeSnesAddresses,
         )
+        assertEquals(
+            listOf(0xA99EA9, 0xA99EAE),
+            fields.getValue("shitroid_attack_cap").writeSnesAddresses,
+        )
         assertTrue(fields.getValue("fake_death_smoke_threshold").hex)
         assertTrue(fields.getValue("escape_earthquake_timer").hex)
     }
@@ -156,6 +204,11 @@ class BossEditorDefinitionsTest {
             0xFFFF,
             coerceBossBehaviorValue(motherBrainFields.getValue("escape_earthquake_timer"), 0xFFFF),
             "explicit hex fields should still allow full 16-bit constants",
+        )
+        assertEquals(
+            0x000C,
+            coerceBossBehaviorValue(motherBrainFields.getValue("shitroid_attack_cap"), 0xFFFF),
+            "Mother Brain's Shitroid attack cap should stay inside the vanilla sound table",
         )
         assertEquals(
             0xFE00,

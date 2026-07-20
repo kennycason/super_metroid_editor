@@ -43,15 +43,17 @@ import com.supermetroid.editor.rom.RomParser
 const val KRAID_CONFIG_TYPE = "kraid"
 
 data class KraidField(
-    val key: String,
-    val label: String,
-    val snesAddress: Int,
-    val defaultValue: Int,
-    val unit: String = "",
-    val signed: Boolean = false,
-    val hex: Boolean = false,
-    val writeSnesAddresses: List<Int> = listOf(snesAddress),
-)
+    override val key: String,
+    override val label: String,
+    override val snesAddress: Int,
+    override val defaultValue: Int,
+    override val unit: String = "",
+    override val signed: Boolean = false,
+    override val hex: Boolean = false,
+    override val minValue: Int? = null,
+    override val maxValue: Int? = null,
+    override val writeSnesAddresses: List<Int> = listOf(snesAddress),
+) : BossTuningField
 
 data class KraidSection(
     val title: String,
@@ -68,6 +70,8 @@ private fun kraidField(
     unit: String = "",
     signed: Boolean = false,
     hex: Boolean = false,
+    minValue: Int? = null,
+    maxValue: Int? = null,
     vararg additionalWriteAddresses: Int,
 ): KraidField =
     KraidField(
@@ -78,8 +82,13 @@ private fun kraidField(
         unit = unit,
         signed = signed,
         hex = hex,
+        minValue = minValue,
+        maxValue = maxValue,
         writeSnesAddresses = (listOf(snesAddress) + additionalWriteAddresses.toList()).distinct(),
     )
+
+internal fun coerceKraidValue(field: KraidField, storedValue: Int): Int =
+    coerceBossTuningValue(field, storedValue)
 
 val KRAID_SECTIONS: List<KraidSection> = listOf(
     KraidSection(
@@ -109,6 +118,26 @@ val KRAID_SECTIONS: List<KraidSection> = listOf(
             kraidField("post_rise_foot_timer", "Post-Rise Foot Timer", 0xA7C973, 0x012C, unit = "frames"),
             kraidField("mouth_close_timer", "After Mouth Closes", 0xA7AEF3, 0x005A, unit = "frames"),
             kraidField("mouth_reopen_timer", "Mouth Reopen Delay", 0xA7AF15, 0x0040, unit = "frames"),
+        ),
+    ),
+    KraidSection(
+        "Projectile Spawns",
+        "Earthquake projectile cadence masks and the falling-rock X-position table used while Kraid breaks the ceiling.",
+        Color(0xFF546E7A),
+        listOf(
+            kraidField("earthquake_ceiling_mask", "Ceiling Quake Mask", 0xA7AC51, 0x0007, hex = true, maxValue = 0x00FF),
+            kraidField("earthquake_rise_slow_mask", "Rise Slow Quake Mask", 0xA7C8FA, 0x000F, hex = true, maxValue = 0x00FF),
+            kraidField("earthquake_rise_fast_mask", "Rise Fast Quake Mask", 0xA7C91C, 0x0007, hex = true, maxValue = 0x00FF),
+            kraidField("earthquake_shake_bit_mask", "Screen-Shake Spawn Mask", 0xA7C92B, 0x0005, hex = true, maxValue = 0x00FF),
+            kraidField("falling_rock_x_0", "Falling Rock X 0", 0xA7ACB3, 0x0068, unit = "px"),
+            kraidField("falling_rock_x_1", "Falling Rock X 1", 0xA7ACB5, 0x00D8, unit = "px"),
+            kraidField("falling_rock_x_2", "Falling Rock X 2", 0xA7ACB7, 0x0028, unit = "px"),
+            kraidField("falling_rock_x_3", "Falling Rock X 3", 0xA7ACB9, 0x00A8, unit = "px"),
+            kraidField("falling_rock_x_4", "Falling Rock X 4", 0xA7ACBB, 0x0058, unit = "px"),
+            kraidField("falling_rock_x_5", "Falling Rock X 5", 0xA7ACBD, 0x00C8, unit = "px"),
+            kraidField("falling_rock_x_6", "Falling Rock X 6", 0xA7ACBF, 0x0038, unit = "px"),
+            kraidField("falling_rock_x_7", "Falling Rock X 7", 0xA7ACC1, 0x00B8, unit = "px"),
+            kraidField("falling_rock_x_8", "Falling Rock X 8", 0xA7ACC3, 0x0048, unit = "px"),
         ),
     ),
     KraidSection(
@@ -182,16 +211,18 @@ fun KraidEditor(
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (field in ALL_KRAID_FIELDS) {
-            map[field.key] = stored?.get(field.key)
+            val value = stored?.get(field.key)
                 ?: readKraidFromRom(romParser, field)
                 ?: field.defaultValue
+            map[field.key] = coerceKraidValue(field, value)
         }
         map
     }
 
     fun apply(field: KraidField, value: Int) {
-        values[field.key] = value
-        editorState.setPatchConfigData(patch.id, field.key, value)
+        val coerced = coerceKraidValue(field, value)
+        values[field.key] = coerced
+        editorState.setPatchConfigData(patch.id, field.key, coerced)
     }
 
     Column(
@@ -352,7 +383,9 @@ private fun KraidFieldRow(
     onChange: (Int) -> Unit,
 ) {
     val isModified = value != field.defaultValue
-    val displayValue = if (field.signed && value > 32767) value - 65536 else value
+    val displayValue = field.logicalValue(value)
+    val minValue = field.logicalMinValue()
+    val maxValue = field.logicalMaxValue()
 
     Row(
         modifier = Modifier
@@ -360,27 +393,33 @@ private fun KraidFieldRow(
             .padding(vertical = 3.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            field.label,
-            fontSize = 12.sp,
-            modifier = Modifier.weight(1f),
-            fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
-            color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
+        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(
+                field.label,
+                fontSize = 12.sp,
+                fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
+                color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                field.metadataText(),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         if (field.hex) {
-            KraidHexInput(value, onChange, Modifier.width(80.dp))
+            KraidHexInput(value, onChange, Modifier.width(80.dp), minValue, maxValue)
         } else if (field.signed) {
             KraidSignedInput(
                 value = displayValue,
-                onChange = { signed ->
-                    val stored = if (signed < 0) signed + 65536 else signed
-                    onChange(stored.coerceIn(0, 65535))
-                },
+                onChange = { signed -> onChange(field.storedValue(signed)) },
                 modifier = Modifier.width(80.dp),
+                minValue = minValue,
+                maxValue = maxValue,
             )
         } else {
-            KraidIntInput(value, onChange, Modifier.width(80.dp))
+            KraidIntInput(displayValue, { logical -> onChange(field.storedValue(logical)) }, Modifier.width(80.dp), minValue, maxValue)
         }
 
         val annotation = when {
@@ -399,14 +438,21 @@ private fun KraidFieldRow(
 }
 
 @Composable
-private fun KraidIntInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun KraidIntInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(1, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filter { it.isDigit() }.take(5)
+            val filtered = raw.filter { it.isDigit() }.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -425,14 +471,29 @@ private fun KraidIntInput(value: Int, onChange: (Int) -> Unit, modifier: Modifie
 }
 
 @Composable
-private fun KraidSignedInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun KraidSignedInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    val maxChars = maxOf(minValue.toString().length, maxValue.toString().length)
     BasicTextField(
         value = text,
         onValueChange = { raw ->
-            val filtered = raw.filterIndexed { i, c -> c.isDigit() || (i == 0 && c == '-') }.take(6)
+            val normalized = buildString {
+                for (c in raw) {
+                    when {
+                        c.isDigit() -> append(c)
+                        c == '-' && isEmpty() -> append(c)
+                    }
+                }
+            }
+            val filtered = normalized.take(maxChars)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(-32768, 32767)) }
+            filtered.toIntOrNull()?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(
@@ -451,14 +512,20 @@ private fun KraidSignedInput(value: Int, onChange: (Int) -> Unit, modifier: Modi
 }
 
 @Composable
-private fun KraidHexInput(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun KraidHexInput(
+    value: Int,
+    onChange: (Int) -> Unit,
+    modifier: Modifier,
+    minValue: Int,
+    maxValue: Int,
+) {
     var text by remember(value) { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }.take(4)
             text = filtered.uppercase()
-            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(0, 65535)) }
+            filtered.toIntOrNull(16)?.let { onChange(it.coerceIn(minValue, maxValue)) }
         },
         singleLine = true,
         textStyle = TextStyle(

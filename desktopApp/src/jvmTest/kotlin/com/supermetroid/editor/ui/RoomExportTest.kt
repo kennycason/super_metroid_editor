@@ -351,6 +351,50 @@ class RoomExportTest {
     }
 
     @Test
+    fun `phantoon and kraid behavior export clamps stale unsafe values`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidCustomBossGuardrails.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val phantoonPatch = state.findOrCreateConfigPatch("phantoon")
+        phantoonPatch.configData = mutableMapOf(
+            "closed_0" to 0xFFFF,
+            "pos2_x" to 0xFFFF,
+            "rev_cap_1" to 0x8000,
+        )
+        phantoonPatch.enabled = true
+
+        val kraidPatch = state.findOrCreateConfigPatch(KRAID_CONFIG_TYPE)
+        kraidPatch.configData = mutableMapOf(
+            "intro_delay" to 0xFFFF,
+            "diagonal_up_x_speed" to 0x8000,
+        )
+        kraidPatch.enabled = true
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        fun word(snesAddress: Int): Int =
+            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
+
+        assertEquals(0x7FFF, word(0xA7CD53), "Phantoon closed timer should be clamped during export")
+        assertEquals(0x0FFF, word(0xA7CDBF), "Phantoon flame-rain X position should be clamped during export")
+        assertEquals(0xFF01, word(0xA7CD8B), "Phantoon signed reverse movement cap should be clamped during export")
+        assertEquals(0x7FFF, word(0xA7AA6A), "Kraid intro delay should be clamped during export")
+        for (addr in listOf(0xA7BE50, 0xA7BE60, 0xA7BE70, 0xA7BE80)) {
+            assertEquals(0xFF01, word(addr), "Kraid mirrored signed fingernail speed should be clamped at ${addr.toString(16)}")
+        }
+    }
+
+    @Test
     fun `kraid behavior export writes direct and mirrored fields`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")
@@ -366,6 +410,8 @@ class RoomExportTest {
         val patch = state.findOrCreateConfigPatch(KRAID_CONFIG_TYPE)
         assertFalse(patch.enabled, "kraid behavior starts disabled in a new project")
         state.setPatchConfigData(patch.id, "intro_delay", 42)
+        state.setPatchConfigData(patch.id, "earthquake_ceiling_mask", 0x0003)
+        state.setPatchConfigData(patch.id, "falling_rock_x_8", 0x0060)
         state.setPatchConfigData(patch.id, "diagonal_up_y_speed", 2)
         assertTrue(patch.enabled, "editing kraid behavior should enable the patch for export")
 
@@ -377,6 +423,8 @@ class RoomExportTest {
             readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
 
         assertEquals(42, word(0xA7AA6A), "Kraid intro delay immediate operand should be patched")
+        assertEquals(0x0003, word(0xA7AC51), "Kraid ceiling quake mask immediate operand should be patched")
+        assertEquals(0x0060, word(0xA7ACC3), "Kraid falling-rock X table entry should be patched")
         for (addr in listOf(0xA7BE54, 0xA7BE64, 0xA7BE74, 0xA7BE84)) {
             assertEquals(2, word(addr), "Mirrored diagonal-up fingernail Y speed should be patched at ${addr.toString(16)}")
         }
@@ -501,6 +549,8 @@ class RoomExportTest {
         state.setPatchConfigData(motherBrainPatch.id, "attack_cooldown", 0x0050)
         state.setPatchConfigData(motherBrainPatch.id, "max_active_bombs", 0x0002)
         state.setPatchConfigData(motherBrainPatch.id, "phase1_samus_x_gate", 0xFFFF)
+        state.setPatchConfigData(motherBrainPatch.id, "blue_ring_samus_x_offset", 0x0014)
+        state.setPatchConfigData(motherBrainPatch.id, "shitroid_attack_cap", 0x0008)
         state.setPatchConfigData(motherBrainPatch.id, "rainbow_initial_width", 0x0300)
         state.setPatchConfigData(motherBrainPatch.id, "escape_door_explosion_interval", 0x0006)
         assertTrue(motherBrainPatch.enabled, "editing mother brain behavior should enable the patch for export")
@@ -521,6 +571,10 @@ class RoomExportTest {
         assertEquals(0x0080, word(0xAAD4BB), "Golden Torizo forward jump distance should be patched")
         assertEquals(0x0FFF, word(0xA987F5), "Mother Brain Samus X gate should be clamped during export")
         assertEquals(0x0050, word(0xA9B65B), "Mother Brain attack cooldown should be patched")
+        assertEquals(0x0014, word(0xA99E66), "Mother Brain blue-ring Samus X aim offset should be patched")
+        for (addr in listOf(0xA99EA9, 0xA99EAE)) {
+            assertEquals(0x0008, word(addr), "Mirrored Mother Brain Shitroid attack cap should be patched at ${addr.toString(16)}")
+        }
         for (addr in listOf(0xA9B6BE, 0xA9B71D)) {
             assertEquals(0x0002, word(addr), "Mirrored Mother Brain active bomb gate should be patched at ${addr.toString(16)}")
         }
