@@ -22,6 +22,6 @@ VITE_SMEDIT_SERVICE_URL=http://localhost:8080
 
 The app asks `GET /metadata` for supported patch IDs, randomizer filters, and colorize effects when the service is running. It can generate either a patched ROM plus IPS bundle through the JSON response, or an IPS-only binary response through `POST /patch?format=ips`.
 
-ROM files are kept in browser storage until removed. Patch, colorize, randomizer, output, selected ROM, API URL, fanfare, and bomb-tuning settings are remembered in localStorage for the next session.
+ROM files are kept in browser storage until removed. Patch, colorize, randomizer, output, selected ROM, API URL, fanfare, Ceres timer, and bomb-tuning settings are remembered in localStorage for the next session.
 
-The Patch Toggles section includes common convenience patches like Skip Ceres + intro, Quick item fanfares, Energy-free shinesparks, Enable moonwalk, and Bomb tuning. Bomb tuning exposes max active bombs, fuse frames, cooldown frames, and explosion delay.
+The Patch Toggles section includes common convenience patches like Skip Ceres + intro, Ceres escape timer, Quick item fanfares, Energy-free shinesparks, Enable moonwalk, and Bomb tuning. Ceres timer exposes minutes and seconds, while Bomb tuning exposes max active bombs, fuse frames, cooldown frames, and explosion delay.

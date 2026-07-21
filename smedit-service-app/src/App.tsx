@@ -26,6 +26,7 @@ const serviceUrlDefault = import.meta.env.VITE_SMEDIT_SERVICE_URL || 'http://loc
 const patchOptions: PatchOption[] = [
   { id: 'skip_intro_and_ceres', label: 'Skip Ceres + intro', section: 'Start', defaultEnabled: true },
   { id: 'skip_intro', label: 'Skip intro only', section: 'Start' },
+  { id: 'ceres_escape_seconds', label: 'Ceres escape timer', section: 'Start' },
   { id: 'vanilla_bugfixes', label: 'Vanilla bugfixes', section: 'Start' },
   { id: 'fanfares', label: 'Quick item fanfares', section: 'Start', defaultEnabled: true },
   { id: 'bombs', label: 'Bomb tuning', section: 'Combat' },
@@ -74,13 +75,20 @@ type BombSettings = {
   explosionDelay: number;
 };
 
+type CeresTimerSettings = {
+  minutes: number;
+  seconds: number;
+};
+
 type PersistedSettings = {
   serviceUrl?: string;
   selectedRomId?: string;
+  selectedPatchId?: PatchId | null;
   enabledPatches?: Partial<Record<PatchId, boolean>>;
   fanfareFrames?: number;
   outputMode?: OutputMode;
   bombs?: Partial<BombSettings>;
+  ceresTimer?: Partial<CeresTimerSettings>;
   colorize?: {
     enabled?: boolean;
     effect?: string;
@@ -134,6 +142,10 @@ const defaultBombSettings: BombSettings = {
   cooldownFrames: 1,
   explosionDelay: 1,
 };
+const defaultCeresTimerSettings: CeresTimerSettings = {
+  minutes: 1,
+  seconds: 0,
+};
 
 export function App() {
   const savedSettings = useMemo(loadPersistedSettings, []);
@@ -144,6 +156,9 @@ export function App() {
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [isDragging, setDragging] = useState(false);
+  const [selectedPatchId, setSelectedPatchId] = useState<PatchId | null>(
+    savedSettings.selectedPatchId && patchHasOptions(savedSettings.selectedPatchId) ? savedSettings.selectedPatchId : null,
+  );
   const [enabledPatches, setEnabledPatches] = useState<Record<PatchId, boolean>>(
     mergePatchSettings(savedSettings.enabledPatches),
   );
@@ -160,6 +175,12 @@ export function App() {
   );
   const [bombExplosionDelay, setBombExplosionDelay] = useState(
     numberSetting(savedSettings.bombs?.explosionDelay, defaultBombSettings.explosionDelay),
+  );
+  const [ceresMinutes, setCeresMinutes] = useState(
+    numberSetting(savedSettings.ceresTimer?.minutes, defaultCeresTimerSettings.minutes),
+  );
+  const [ceresSeconds, setCeresSeconds] = useState(
+    numberSetting(savedSettings.ceresTimer?.seconds, defaultCeresTimerSettings.seconds),
   );
 
   const [colorizeEnabled, setColorizeEnabled] = useState(booleanSetting(savedSettings.colorize?.enabled, true));
@@ -242,6 +263,7 @@ export function App() {
     savePersistedSettings({
       serviceUrl,
       selectedRomId,
+      selectedPatchId,
       enabledPatches,
       fanfareFrames,
       outputMode,
@@ -250,6 +272,10 @@ export function App() {
         fuseFrames: bombFuseFrames,
         cooldownFrames: bombCooldownFrames,
         explosionDelay: bombExplosionDelay,
+      },
+      ceresTimer: {
+        minutes: ceresMinutes,
+        seconds: ceresSeconds,
       },
       colorize: {
         enabled: colorizeEnabled,
@@ -296,6 +322,8 @@ export function App() {
     bombExplosionDelay,
     bombFuseFrames,
     bombMaxActive,
+    ceresMinutes,
+    ceresSeconds,
     colorEffect,
     colorizeEnabled,
     dropMaxNothing,
@@ -328,6 +356,7 @@ export function App() {
     requireMissiles,
     seed,
     selectedBeams,
+    selectedPatchId,
     selectedRomId,
     serviceUrl,
     spriteRegionFilter,
@@ -344,6 +373,13 @@ export function App() {
   const beamOptions = metadata?.randomization.beams ?? fallbackBeamOptions;
   const categoryOptions = metadata?.randomization.enemyCategories ?? fallbackCategoryOptions;
   const presetOptions = metadata?.randomization.presets ?? ['balanced', 'spicy', 'chaos', 'survival'];
+  const ceresTotalSeconds = ceresMinutes * 60 + ceresSeconds;
+
+  useEffect(() => {
+    if (selectedPatchId && !visiblePatchOptions.some((option) => option.id === selectedPatchId && patchHasOptions(option.id))) {
+      setSelectedPatchId(null);
+    }
+  }, [selectedPatchId, visiblePatchOptions]);
 
   const buildRequest = useMemo<BuildRequest>(() => {
     const patches: NonNullable<BuildRequest['patches']> = {};
@@ -359,6 +395,13 @@ export function App() {
             fuse_frames: bombFuseFrames,
             cooldown_frames: bombCooldownFrames,
             explosion_frame_delay: bombExplosionDelay,
+          },
+        };
+      } else if (option.id === 'ceres_escape_seconds') {
+        patches[option.id] = {
+          enabled: true,
+          config: {
+            seconds: ceresTotalSeconds,
           },
         };
       } else {
@@ -387,6 +430,7 @@ export function App() {
     bombExplosionDelay,
     bombFuseFrames,
     bombMaxActive,
+    ceresTotalSeconds,
     colorEffect,
     colorizeEnabled,
     enabledPatches,
@@ -501,6 +545,13 @@ export function App() {
       errors.push(...validateIntegerField('Bomb cooldown frames', bombCooldownFrames, 0, 255));
       errors.push(...validateIntegerField('Bomb explosion delay', bombExplosionDelay, 1, 255));
     }
+    if (enabledPatches.ceres_escape_seconds) {
+      errors.push(...validateIntegerField('Ceres timer minutes', ceresMinutes, 0, 10));
+      errors.push(...validateIntegerField('Ceres timer seconds', ceresSeconds, 0, 59));
+      if (ceresTotalSeconds < 15 || ceresTotalSeconds > 600) {
+        errors.push('Ceres escape timer must total 15 to 600 seconds.');
+      }
+    }
 
     if (colorizeEnabled) {
       if (!colorEffectOptions.some((effect) => effect.id === colorEffect)) {
@@ -603,6 +654,9 @@ export function App() {
     bombFuseFrames,
     bombMaxActive,
     categoryOptions,
+    ceresMinutes,
+    ceresSeconds,
+    ceresTotalSeconds,
     colorEffect,
     colorEffectOptions,
     colorizeEnabled,
@@ -614,6 +668,7 @@ export function App() {
     enemyHpMax,
     enemyHpMin,
     enabledPatches.bombs,
+    enabledPatches.ceres_escape_seconds,
     enabledPatches.fanfares,
     excludeCategories,
     extraExcludedEnemies,
@@ -849,29 +904,69 @@ export function App() {
               <h2>Patch Toggles</h2>
             </div>
             <div className="option-grid">
-              {visiblePatchOptions.map((option) => (
-                <label key={option.id} className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={enabledPatches[option.id]}
-                    onChange={(event) =>
-                      setEnabledPatches((current) => ({
-                        ...current,
-                        [option.id]: event.target.checked,
-                      }))
-                    }
-                  />
-                  <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.section}</small>
-                  </span>
-                </label>
-              ))}
+              {visiblePatchOptions.map((option) => {
+                const hasOptions = patchHasOptions(option.id);
+                return (
+                  <div
+                    key={option.id}
+                    className={`checkbox-row patch-toggle ${hasOptions ? 'has-options' : ''} ${
+                      selectedPatchId === option.id ? 'selected' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={`Enable ${option.label}`}
+                      checked={enabledPatches[option.id]}
+                      onChange={(event) =>
+                        setEnabledPatches((current) => ({
+                          ...current,
+                          [option.id]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="patch-toggle-body"
+                      disabled={!hasOptions}
+                      onClick={() => {
+                        if (hasOptions) {
+                          setSelectedPatchId((current) => (current === option.id ? null : option.id));
+                        }
+                      }}
+                    >
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.section}</small>
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
             {metadataError && <div className="inline-note">{metadataError}</div>}
-            <div className="settings-grid">
-              <NumberField label="Fanfare frames" value={fanfareFrames} min={1} max={9999} step={1} onChange={setFanfareFrames} />
-              {enabledPatches.bombs && (
+            {selectedPatchId && (
+              <div className="settings-grid">
+                {selectedPatchId === 'fanfares' && (
+                  <NumberField
+                    label="Fanfare frames"
+                    value={fanfareFrames}
+                    min={1}
+                    max={9999}
+                    step={1}
+                    onChange={setFanfareFrames}
+                  />
+                )}
+                {selectedPatchId === 'ceres_escape_seconds' && (
+                  <>
+                    <NumberField label="Minutes" value={ceresMinutes} min={0} max={10} step={1} onChange={setCeresMinutes} />
+                    <NumberField label="Seconds" value={ceresSeconds} min={0} max={59} step={1} onChange={setCeresSeconds} />
+                    <div className="summary-field">
+                      <span>Total</span>
+                      <strong>{formatDuration(ceresTotalSeconds)}</strong>
+                    </div>
+                  </>
+                )}
+                {selectedPatchId === 'bombs' && (
                 <>
                   <NumberField label="Max bombs" value={bombMaxActive} min={1} max={5} step={1} onChange={setBombMaxActive} />
                   <NumberField label="Fuse frames" value={bombFuseFrames} min={1} max={9999} step={1} onChange={setBombFuseFrames} />
@@ -885,8 +980,9 @@ export function App() {
                     onChange={setBombExplosionDelay}
                   />
                 </>
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="panel">
@@ -1286,6 +1382,10 @@ function validateIntegerField(label: string, value: number, min: number, max: nu
   return [];
 }
 
+function patchHasOptions(id: PatchId): id is Extract<PatchId, 'fanfares' | 'bombs' | 'ceres_escape_seconds'> {
+  return id === 'fanfares' || id === 'bombs' || id === 'ceres_escape_seconds';
+}
+
 function loadPersistedSettings(): PersistedSettings {
   if (typeof window === 'undefined') return {};
   try {
@@ -1337,6 +1437,14 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds)) return '--';
+  const clamped = Math.max(0, Math.trunc(totalSeconds));
+  const minutes = Math.floor(clamped / 60);
+  const seconds = clamped % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 function formatDate(timestamp: number): string {

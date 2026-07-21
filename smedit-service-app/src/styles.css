@@ -250,7 +250,7 @@ h3 {
 
 .option-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -288,6 +288,52 @@ h3 {
   font-size: 11px;
 }
 
+.patch-toggle {
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.patch-toggle > input {
+  margin-left: 11px;
+}
+
+.patch-toggle-body {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 42px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  padding: 9px 11px 9px 10px;
+  text-align: left;
+}
+
+.patch-toggle.has-options .patch-toggle-body {
+  cursor: pointer;
+}
+
+.patch-toggle.has-options .patch-toggle-body:hover,
+.patch-toggle.selected .patch-toggle-body {
+  background: #121a23;
+}
+
+.patch-toggle.selected {
+  border-color: #8bd3ff;
+}
+
+.patch-toggle-body:disabled {
+  color: inherit;
+  opacity: 1;
+}
+
+.patch-toggle strong {
+  overflow-wrap: anywhere;
+}
+
 .checkbox-row.slim {
   min-height: 38px;
   border-color: transparent;
@@ -311,8 +357,29 @@ h3 {
 
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 12px;
+}
+
+.summary-field {
+  display: grid;
+  align-content: end;
+  min-height: 67px;
+  border: 1px solid #242b36;
+  border-radius: 8px;
+  background: #0d1014;
+  padding: 10px 12px;
+}
+
+.summary-field span {
+  color: #aab3c2;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.summary-field strong {
+  font-size: 16px;
+  margin-top: 6px;
 }
 
 .two-col,

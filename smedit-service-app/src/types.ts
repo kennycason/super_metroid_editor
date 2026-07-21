@@ -2,6 +2,7 @@ export type PatchId =
   | 'vanilla_bugfixes'
   | 'skip_intro_and_ceres'
   | 'skip_intro'
+  | 'ceres_escape_seconds'
   | 'fanfares'
   | 'bombs'
   | 'higher_jump'
