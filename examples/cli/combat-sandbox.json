@@ -1,22 +1,22 @@
 {
   "schemaVersion": 1,
   "patches": {
-    "hex_faster_charged_shots": {
+    "faster_charged_shots": {
       "enabled": true
     },
-    "hex_smooth_beam_shots": {
+    "smooth_beam_shots": {
       "enabled": true
     },
-    "hex_always_charged_shots": {
+    "always_fire_charged_shots": {
       "enabled": true
     },
-    "hex_infinite_missiles": {
+    "infinite_missiles": {
       "enabled": true
     },
-    "hex_infinite_supers": {
+    "infinite_super_missiles": {
       "enabled": true
     },
-    "hex_infinite_pbs": {
+    "infinite_power_bombs": {
       "enabled": true
     },
     "hyper_beam": {

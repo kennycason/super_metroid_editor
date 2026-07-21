@@ -90,8 +90,8 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
   "schemaVersion": 1,
   "project": "projects/Super Mazetroid/Super Mazetroid.smedit",
   "patches": {
-    "bundled_fast_doors": { "enabled": true },
-    "hex_higher_jump": { "enabled": true },
+    "fast_doors": { "enabled": true },
+    "higher_jump": { "enabled": true },
     "bombs": {
       "enabled": true,
       "config": {
@@ -127,9 +127,21 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
 }
 ```
 
-`patches` keys can be either patch IDs, such as `bundled_fast_doors`, or supported config types, such as `bombs`.
+`patches` keys can be either patch IDs, such as `fast_doors`, or supported config types, such as `bombs`.
 
 `project` is optional. Relative project paths are resolved from the build config file's directory.
+
+For ROM-backed builds, add `colorize` to apply one of the shared palette effects to area tileset palettes and fixed sprite palettes:
+
+```json
+{
+  "colorize": {
+    "effect": "psychedelic"
+  }
+}
+```
+
+You can also pass `--colorize psychedelic` to `build` to set or override this field from the CLI. Palette colorize requires `--rom` because it reads the caller-provided ROM's compressed tileset palettes before writing or relocating them.
 
 Enemy, beam, boss, generated hook, physics, and controller config keys match the desktop patch UI:
 
@@ -220,6 +232,12 @@ Generate a patched ROM and an IPS from a caller-provided ROM:
 ./gradlew -q :cli:runCli -Pargs='--rom base.smc build --config build.json --output out.smc --patch out.ips --report report.json'
 ```
 
+Apply a color effect while building a ROM:
+
+```bash
+./gradlew -q :cli:runCli -Pargs='--rom base.smc build --config build.json --colorize psychedelic --output out.smc --report report.json'
+```
+
 Reports are JSON and are also printed to stdout:
 
 ```json
@@ -255,6 +273,7 @@ Build v1 supports:
 - ROM-backed `.smedit` tileset palette overrides, including area palette randomization.
 - `.smedit` fixed sprite palette overrides for Samus, beams, bosses, and listed enemy palette regions.
 - ROM-backed dynamic enemy palette overrides stored as `enemy_pal:<speciesId>`.
+- ROM-backed palette colorize effects such as `psychedelic`.
 - Raw PC writes with `pcOffset` or `address: "pc:0x..."`.
 - Raw SNES LoROM writes with `snesAddress` or `address: "80:8000"`.
 - IPS-only generation without reading or writing a ROM.
@@ -263,7 +282,7 @@ Boss behavior config types are `phantoon`, `kraid`, `ridley`, `draygon`, `spore_
 
 `boss_defeated`, `hyper_beam`, and `bundled_infinite_blue_suit` share the same generated per-frame hook as desktop export. The headless builder emits one combined hook when any of those features are enabled.
 
-IPS-only generation supports fixed-address data, including beam damage, boss stats, boss behavior, boss-defeated flags, hyper beam, enemy header stats, Samus physics, and controller remaps. Tileset palette randomization, dynamic enemy palettes, enemy drop tables, enemy vulnerability tables, and `room_name_pause_map` require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers, enemy table pointers, pause-map hook bytes, or free space before writing or relocating data.
+IPS-only generation supports fixed-address data, including beam damage, boss stats, boss behavior, boss-defeated flags, hyper beam, enemy header stats, Samus physics, and controller remaps. Tileset palette randomization, palette colorize, dynamic enemy palettes, enemy drop tables, enemy vulnerability tables, and `room_name_pause_map` require `--rom` because SMEDIT must inspect the base ROM's compressed palette pointers, enemy table pointers, pause-map hook bytes, or free space before writing or relocating data.
 
 Build v1 intentionally does not yet export the full desktop project pipeline. If a `.smedit` project includes room edits, graphics tile edits, metatile table edits, palette effect metadata, text edits, minimap edits, music edits, or custom ASM, the CLI emits a warning that those project sections were ignored. Explicitly requested unsupported config patches fail instead of silently doing nothing.
 
@@ -280,7 +299,7 @@ import com.supermetroid.editor.headless.SmeditPatchRequest
 
 val request = SmeditBuildRequest(
     patches = mapOf(
-        "bundled_fast_doors" to SmeditPatchRequest(enabled = true)
+        "fast_doors" to SmeditPatchRequest(enabled = true)
     )
 )
 

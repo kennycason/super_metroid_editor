@@ -6,11 +6,14 @@ import com.supermetroid.editor.headless.ENEMY_STATS_CONFIG_TYPE
 import com.supermetroid.editor.headless.ENEMY_VULN_CONFIG_TYPE
 import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBeamDamageRandomization
+import com.supermetroid.editor.headless.SmeditColorizeRequest
 import com.supermetroid.editor.headless.SmeditEnemyDropsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyStatsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyVulnerabilityRandomization
 import com.supermetroid.editor.headless.SmeditPatchRequest
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
+import com.supermetroid.editor.rom.PaletteEffects
+import com.supermetroid.editor.rom.SpritePalettes
 import io.ktor.client.call.body
 import io.ktor.client.request.accept
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -27,6 +30,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.Base64
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -45,7 +49,7 @@ class SmeditServiceTest {
         val request = patchRequest(
             SmeditBuildRequest(
                 patches = mapOf(
-                    "hex_higher_jump" to SmeditPatchRequest(),
+                    "higher_jump" to SmeditPatchRequest(),
                 )
             )
         )
@@ -70,7 +74,7 @@ class SmeditServiceTest {
         val request = patchRequest(
             SmeditBuildRequest(
                 patches = mapOf(
-                    "hex_higher_jump" to SmeditPatchRequest(),
+                    "higher_jump" to SmeditPatchRequest(),
                 )
             )
         )
@@ -85,7 +89,46 @@ class SmeditServiceTest {
         val patchedRom = Base64.getDecoder().decode(body.romBase64)
         assertEquals(0x05, patchedRom[0x81EB9].toInt() and 0xFF)
         assertTrue(body.ipsBase64.isNotBlank())
-        assertTrue(body.report.applied.any { it.identifier == "hex_higher_jump" })
+        assertTrue(body.report.applied.any { it.identifier == "higher_jump" })
+    }
+
+    @Test
+    fun `patch endpoint applies colorize build option`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val rom = ByteArray(0x300000)
+        val colors = IntArray(SpritePalettes.BEAM_STANDARD.colorCount) { index -> if (index == 0) 0 else 0x03E0 }
+        SpritePalettes.colorsToBytes(colors).copyInto(rom, SpritePalettes.BEAM_STANDARD.offset)
+        val request = patchRequest(
+            build = SmeditBuildRequest(
+                colorize = SmeditColorizeRequest(
+                    effect = "psychedelic",
+                    includeTilesets = false,
+                    spriteRegions = listOf(SpritePalettes.BEAM_STANDARD.id),
+                )
+            ),
+            romBytes = rom,
+        )
+
+        val response = client.post("/patch?format=json") {
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            setBody(json.encodeToString(request))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServicePatchResponse>(response.body())
+        val patchedRom = Base64.getDecoder().decode(body.romBase64)
+        val expectedColors = colors.copyOf()
+        PaletteEffects.psychedelic(expectedColors)
+        val expectedPalette = SpritePalettes.colorsToBytes(expectedColors)
+        assertContentEquals(
+            expectedPalette.toIntList(),
+            patchedRom.readBytes(SpritePalettes.BEAM_STANDARD.offset, expectedPalette.size),
+        )
+        assertTrue(body.report.applied.any { it.identifier == "colorize" })
     }
 
     @Test
@@ -99,7 +142,7 @@ class SmeditServiceTest {
                 multipartPatchBody(
                     build = SmeditBuildRequest(
                         patches = mapOf(
-                            "hex_higher_jump" to SmeditPatchRequest(),
+                            "higher_jump" to SmeditPatchRequest(),
                         )
                     )
                 )
@@ -296,9 +339,10 @@ class SmeditServiceTest {
     private fun patchRequest(
         build: SmeditBuildRequest,
         randomize: SmeditRandomizationRequest = SmeditRandomizationRequest(),
+        romBytes: ByteArray = ByteArray(0x300000),
     ): SmeditServicePatchRequest =
         SmeditServicePatchRequest(
-            romBase64 = Base64.getEncoder().encodeToString(ByteArray(0x300000)),
+            romBase64 = Base64.getEncoder().encodeToString(romBytes),
             build = build,
             randomize = randomize,
         )
@@ -326,4 +370,10 @@ class SmeditServiceTest {
                 }
             }
         )
+
+    private fun ByteArray.readBytes(offset: Int, count: Int): List<Int> =
+        (0 until count).map { this[offset + it].toInt() and 0xFF }
+
+    private fun ByteArray.toIntList(): List<Int> =
+        map { it.toInt() and 0xFF }
 }

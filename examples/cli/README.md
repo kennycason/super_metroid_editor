@@ -17,3 +17,4 @@ To emit a patched ROM, add `--rom` and `--output`:
 ```
 
 Use `schema <configType>` to inspect valid fields before changing these examples.
+Use `patches` to list public patch IDs. Internally prefixed IDs such as `bundled_*` and `hex_*` are still accepted as aliases, but examples use the cleaner public names.

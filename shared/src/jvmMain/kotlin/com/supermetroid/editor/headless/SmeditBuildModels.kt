@@ -9,6 +9,7 @@ data class SmeditBuildRequest(
     val strictConfigValidation: Boolean = true,
     val patches: Map<String, SmeditPatchRequest> = emptyMap(),
     val rawWrites: List<SmeditRawWriteRequest> = emptyList(),
+    val colorize: SmeditColorizeRequest? = null,
 )
 
 @Serializable
@@ -27,6 +28,15 @@ data class SmeditRawWriteRequest(
     val address: String? = null,
     val bytes: List<Int> = emptyList(),
     val label: String = "",
+)
+
+@Serializable
+data class SmeditColorizeRequest(
+    val effect: String,
+    val includeTilesets: Boolean = true,
+    val includeSprites: Boolean = true,
+    val tilesets: List<Int> = emptyList(),
+    val spriteRegions: List<String> = emptyList(),
 )
 
 @Serializable

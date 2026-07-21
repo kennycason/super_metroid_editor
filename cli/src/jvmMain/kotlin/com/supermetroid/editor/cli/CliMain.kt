@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.headless.SmeditBuildReport
 import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBuildService
+import com.supermetroid.editor.headless.SmeditColorizeRequest
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.serialization.Serializable
@@ -159,8 +160,11 @@ private fun cmdPatches(json: Json) {
     val supportedConfigTypes = SmeditPatchCatalog.supportedConfigTypes()
     val summaries = SmeditPatchCatalog.defaultPatches().map { patch ->
         val schema = patch.configType?.let { SmeditPatchCatalog.configSchema(it) }
+        val publicId = SmeditPatchCatalog.publicPatchId(patch)
         CliPatchSummary(
-            id = patch.id,
+            id = publicId,
+            internalId = patch.id.takeIf { it != publicId },
+            aliases = SmeditPatchCatalog.patchAliasesFor(patch.id),
             name = patch.name,
             description = patch.description,
             configType = patch.configType,
@@ -201,6 +205,7 @@ private fun cmdBuild(
     var patchPath: String? = null
     var reportPath: String? = null
     var strictConfigValidationOverride: Boolean? = null
+    var colorizeEffectOverride: String? = null
 
     val iter = args.iterator()
     while (iter.hasNext()) {
@@ -210,6 +215,7 @@ private fun cmdBuild(
             (arg == "-o" || arg == "--output") && iter.hasNext() -> outputPath = iter.next()
             arg == "--patch" && iter.hasNext() -> patchPath = iter.next()
             arg == "--report" && iter.hasNext() -> reportPath = iter.next()
+            arg == "--colorize" && iter.hasNext() -> colorizeEffectOverride = iter.next()
             arg == "--lenient-config" -> strictConfigValidationOverride = false
             else -> {
                 System.err.println("Unknown build option: $arg")
@@ -227,12 +233,19 @@ private fun cmdBuild(
         System.err.println("Error: build --output requires --rom <path.smc>; use --patch for ROM-free patch generation")
         exitProcess(1)
     }
+    if (colorizeEffectOverride != null && romPath == null) {
+        System.err.println("Error: build --colorize requires --rom <path.smc> because palette effects read base ROM palettes")
+        exitProcess(1)
+    }
 
     val configFile = File(configPath).absoluteFile
     val decodedRequest = jsonInput.decodeFromString(SmeditBuildRequest.serializer(), configFile.readText())
-    val request = strictConfigValidationOverride
+    val requestWithStrict = strictConfigValidationOverride
         ?.let { decodedRequest.copy(strictConfigValidation = it) }
         ?: decodedRequest
+    val request = colorizeEffectOverride
+        ?.let { requestWithStrict.copy(colorize = SmeditColorizeRequest(effect = it)) }
+        ?: requestWithStrict
     val project = request.project?.let { projectPath ->
         val projectFile = resolveRelative(configFile.parentFile, projectPath)
         jsonInput.decodeFromString(SmEditProject.serializer(), projectFile.readText())
@@ -281,6 +294,8 @@ private fun resolveRelative(baseDir: File?, path: String): File {
 @Serializable
 private data class CliPatchSummary(
     val id: String,
+    val internalId: String? = null,
+    val aliases: List<String> = emptyList(),
     val name: String,
     val description: String,
     val configType: String?,
@@ -294,10 +309,11 @@ private data class CliPatchSummary(
 
 private fun printBuildUsage() {
     System.err.println("""
-Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>] [--lenient-config]
+Usage: build --config <build.json> [--output <patched.smc>] [--patch <patch.ips>] [--report <report.json>] [--colorize <effect>] [--lenient-config]
 
 At least one of --output or --patch is required.
 --output requires global --rom <path.smc>. --patch can run without --rom for ROM-free IPS generation.
+--colorize applies a palette effect such as psychedelic and requires global --rom <path.smc>.
 Config validation is strict by default. --lenient-config reports unknown config keys and out-of-range values as warnings.
     """.trimIndent())
 }
@@ -333,6 +349,7 @@ Examples:
   ... patches
   ... schema enemy_stats
   ... --rom base.smc build --config build.json --output patched.smc --patch patched.ips
+  ... --rom base.smc build --config build.json --colorize psychedelic --output patched.smc
   ... build --config build.json --patch patch-only.ips
     """.trimIndent())
 }

@@ -3,6 +3,7 @@ package com.supermetroid.editor.headless
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
@@ -20,7 +21,7 @@ class SmeditBuildServiceTest {
         val original = ByteArray(0x300000)
         val request = SmeditBuildRequest(
             patches = mapOf(
-                "hex_higher_jump" to SmeditPatchRequest(),
+                "higher_jump" to SmeditPatchRequest(),
                 "bombs" to SmeditPatchRequest(
                     config = mapOf(
                         BOMB_MAX_ACTIVE_KEY to 5,
@@ -60,7 +61,7 @@ class SmeditBuildServiceTest {
         assertEquals(0xAA, rom[0].toInt() and 0xFF)
 
         assertTrue(result.report.changedBytes > 0)
-        assertTrue(result.report.applied.any { it.identifier == "hex_higher_jump" })
+        assertTrue(result.report.applied.any { it.identifier == "higher_jump" })
         assertTrue(result.report.applied.any { it.configType == BOMB_CONFIG_TYPE })
         assertTrue(result.report.applied.any { it.configType == FANFARE_CONFIG_TYPE })
         assertTrue(result.report.applied.any { it.configType == CERES_ESCAPE_CONFIG_TYPE })
@@ -85,6 +86,40 @@ class SmeditBuildServiceTest {
             }
         }
         assertContentEquals(rom, reconstructedFromDirectPatch)
+    }
+
+    @Test
+    fun `build accepts clean public aliases for prefixed patch ids`() {
+        val service = SmeditBuildService()
+        val clean = service.buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    "higher_jump" to SmeditPatchRequest(),
+                    "skip_intro" to SmeditPatchRequest(),
+                    "skip_intro_and_ceres" to SmeditPatchRequest(),
+                    "fast_elevators" to SmeditPatchRequest(),
+                    "infinite_power_bombs" to SmeditPatchRequest(),
+                )
+            )
+        )
+        val internal = service.buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    "hex_higher_jump" to SmeditPatchRequest(),
+                    "bundled_skip_intro_ceres" to SmeditPatchRequest(),
+                    "bundled_skip_intro" to SmeditPatchRequest(),
+                    "bundled_elevators_speed" to SmeditPatchRequest(),
+                    "hex_infinite_pbs" to SmeditPatchRequest(),
+                )
+            )
+        )
+
+        assertContentEquals(internal.ipsPatchBytes, clean.ipsPatchBytes)
+        assertTrue(clean.report.applied.any { it.identifier == "higher_jump" })
+        assertTrue(clean.report.applied.any { it.identifier == "skip_intro" })
+        assertTrue(clean.report.applied.any { it.identifier == "skip_intro_and_ceres" })
+        assertTrue(clean.report.applied.any { it.identifier == "fast_elevators" })
+        assertTrue(clean.report.applied.any { it.identifier == "infinite_power_bombs" })
     }
 
     @Test
@@ -311,7 +346,7 @@ class SmeditBuildServiceTest {
                         )
                     ),
                     HYPER_BEAM_CONFIG_TYPE to SmeditPatchRequest(),
-                    "bundled_infinite_blue_suit" to SmeditPatchRequest(),
+                    "infinite_blue_suit" to SmeditPatchRequest(),
                 )
             )
         )
@@ -497,6 +532,69 @@ class SmeditBuildServiceTest {
         assertContentEquals(editedPalette, patchedPalette)
         assertTrue(result.report.applied.any { it.identifier == "project_tileset_palettes" })
         assertTrue(result.report.warnings.none { it.contains("tileset palettes require --rom") })
+    }
+
+    @Test
+    fun `rom build applies colorize to selected tilesets and sprite palettes`() {
+        val original = ByteArray(0x300000) { 0xFF.toByte() }
+        val parser = RomParser(original)
+        val tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
+        val paletteSnes = 0xC08000
+        val palettePc = parser.snesToPc(paletteSnes)
+        writeU24(original, tablePc + 6, paletteSnes)
+
+        val tilesetColors = IntArray(128) { index -> if (index == 0) 0 else 0x03E0 }
+        val tilesetPalette = SpritePalettes.colorsToBytes(tilesetColors)
+        LZ5Compressor.compress(tilesetPalette).copyInto(original, palettePc)
+
+        val spriteColors = IntArray(SpritePalettes.BEAM_STANDARD.colorCount) { index -> if (index == 0) 0 else 0x03E0 }
+        val spritePalette = SpritePalettes.colorsToBytes(spriteColors)
+        spritePalette.copyInto(original, SpritePalettes.BEAM_STANDARD.offset)
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                colorize = SmeditColorizeRequest(
+                    effect = "psychedelic",
+                    tilesets = listOf(0),
+                    spriteRegions = listOf(SpritePalettes.BEAM_STANDARD.id),
+                )
+            )
+        )
+
+        val expectedTilesetColors = tilesetColors.copyOf()
+        PaletteEffects.psychedelic(expectedTilesetColors)
+        val expectedTilesetPalette = SpritePalettes.colorsToBytes(expectedTilesetColors)
+        val patchedPaletteSnes = result.romBytes.readU24(tablePc + 6)
+        val patchedTilesetPalette = RomParser(result.romBytes).decompressLZ2(patchedPaletteSnes).copyOf(256)
+        assertContentEquals(expectedTilesetPalette, patchedTilesetPalette)
+
+        val expectedSpriteColors = spriteColors.copyOf()
+        PaletteEffects.psychedelic(expectedSpriteColors)
+        val expectedSpritePalette = SpritePalettes.colorsToBytes(expectedSpriteColors)
+        assertContentEquals(
+            expectedSpritePalette.toIntList(),
+            result.romBytes.readBytes(SpritePalettes.BEAM_STANDARD.offset, expectedSpritePalette.size),
+        )
+        assertTrue(result.report.applied.any { it.identifier == "colorize" })
+    }
+
+    @Test
+    fun `colorize rejects unknown effects and patch-only builds`() {
+        val unknownEffect = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(
+                ByteArray(0x300000),
+                SmeditBuildRequest(colorize = SmeditColorizeRequest(effect = "not-a-real-effect")),
+            )
+        }
+        assertTrue(unknownEffect.message.orEmpty().contains("Unknown colorize effect"))
+
+        val patchOnly = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(colorize = SmeditColorizeRequest(effect = "psychedelic"))
+            )
+        }
+        assertTrue(patchOnly.message.orEmpty().contains("requires --rom"))
     }
 
     private fun ByteArray.readWord(offset: Int): Int =

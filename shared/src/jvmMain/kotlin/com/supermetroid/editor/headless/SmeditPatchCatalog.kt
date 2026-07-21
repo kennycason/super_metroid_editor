@@ -66,6 +66,26 @@ object SmeditPatchCatalog {
     fun defaultPatches(): List<SmPatch> =
         hardcodedPatches() + configPatches() + unsupportedConfigPatches() + PatchRepository.loadBundledPatches()
 
+    fun resolvePatchKey(key: String): String =
+        patchAliasesByPublicId()[key] ?: key
+
+    fun publicPatchId(patch: SmPatch): String =
+        explicitPublicPatchIds[patch.id]
+            ?: patch.configType
+            ?: patch.id.removePrefix("hex_").removePrefix("bundled_")
+
+    fun patchAliasesFor(internalPatchId: String): List<String> {
+        val publicId = defaultPatches()
+            .firstOrNull { it.id == internalPatchId }
+            ?.let(::publicPatchId)
+            ?: explicitPublicPatchIds[internalPatchId]
+        return patchAliasesByPublicId()
+            .filterValues { it == internalPatchId }
+            .keys
+            .filter { it != publicId }
+            .sorted()
+    }
+
     fun supportedConfigTypes(): Set<String> =
         setOf(
             CERES_ESCAPE_CONFIG_TYPE,
@@ -101,10 +121,60 @@ object SmeditPatchCatalog {
         ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map(::bossBehaviorSchema)
 
     fun configSchema(key: String): SmeditConfigSchema? {
-        val catalogPatch = defaultPatches().firstOrNull { it.id == key || it.configType == key }
-        val configType = catalogPatch?.configType ?: key
-        return configSchemas().firstOrNull { it.configType == configType || it.patchId == key }
+        val resolvedKey = resolvePatchKey(key)
+        val catalogPatch = defaultPatches().firstOrNull {
+            it.id == resolvedKey || it.configType == resolvedKey || it.id == key || it.configType == key
+        }
+        val configType = catalogPatch?.configType ?: resolvedKey
+        return configSchemas().firstOrNull {
+            it.configType == configType || it.patchId == resolvedKey || it.patchId == key
+        }
     }
+
+    private fun patchAliasesByPublicId(): Map<String, String> {
+        val aliases = linkedMapOf<String, String>()
+        for (patch in defaultPatches()) {
+            val publicId = publicPatchId(patch)
+            aliases[publicId] = patch.id
+
+            if (patch.id.startsWith("hex_")) {
+                aliases.putIfAbsent(patch.id.removePrefix("hex_"), patch.id)
+            }
+            if (patch.id.startsWith("bundled_")) {
+                aliases.putIfAbsent(patch.id.removePrefix("bundled_"), patch.id)
+            }
+            patch.configType?.let { aliases.putIfAbsent(it, patch.id) }
+        }
+        aliases.putAll(explicitPatchAliases)
+        return aliases
+    }
+
+    private val explicitPublicPatchIds = mapOf(
+        "bundled_skip_intro" to "skip_intro_and_ceres",
+        "bundled_skip_intro_ceres" to "skip_intro",
+        "bundled_elevators_speed" to "fast_elevators",
+        "bundled_no_beeping" to "no_low_energy_beeping",
+        "hex_always_charged_shots" to "always_fire_charged_shots",
+        "hex_infinite_supers" to "infinite_super_missiles",
+        "hex_infinite_pbs" to "infinite_power_bombs",
+        "hex_morph_ball_no_item" to "morph_ball_without_item",
+        "hex_space_jump_no_item" to "space_jump_without_item",
+        "hex_speed_boost_no_item" to "speed_booster_without_item",
+        "hex_supers_dont_open_reds" to "supers_dont_open_red_doors",
+    )
+
+    private val explicitPatchAliases = mapOf(
+        "skip_ceres_and_intro" to "bundled_skip_intro",
+        "elevators_speed" to "bundled_elevators_speed",
+        "no_beeping" to "bundled_no_beeping",
+        "always_charged_shots" to "hex_always_charged_shots",
+        "infinite_supers" to "hex_infinite_supers",
+        "infinite_pbs" to "hex_infinite_pbs",
+        "morph_ball_no_item" to "hex_morph_ball_no_item",
+        "space_jump_no_item" to "hex_space_jump_no_item",
+        "speed_boost_no_item" to "hex_speed_boost_no_item",
+        "supers_dont_open_reds" to "hex_supers_dont_open_reds",
+    )
 
     private fun hardcodedPatches(): List<SmPatch> = listOf(
         SmPatch(

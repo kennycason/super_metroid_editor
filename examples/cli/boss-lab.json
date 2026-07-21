@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "patches": {
-    "bundled_fast_mother_brain_cutscene": {
+    "fast_mother_brain_cutscene": {
       "enabled": true
     },
-    "bundled_fast_big_boy_cutscene": {
+    "fast_big_boy_cutscene": {
       "enabled": true
     },
     "boss_stats": {

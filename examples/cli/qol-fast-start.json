@@ -1,34 +1,34 @@
 {
   "schemaVersion": 1,
   "patches": {
-    "bundled_vanilla_bugfixes": {
+    "vanilla_bugfixes": {
       "enabled": true
     },
-    "bundled_skip_intro": {
+    "skip_intro_and_ceres": {
       "enabled": true
     },
-    "bundled_fast_doors": {
+    "fast_doors": {
       "enabled": true
     },
-    "bundled_fast_saves": {
+    "fast_saves": {
       "enabled": true
     },
-    "bundled_fast_pause_menu": {
+    "fast_pause_menu": {
       "enabled": true
     },
-    "bundled_elevators_speed": {
+    "fast_elevators": {
       "enabled": true
     },
-    "bundled_no_beeping": {
+    "no_low_energy_beeping": {
       "enabled": true
     },
-    "bundled_fast_reload": {
+    "fast_reload": {
       "enabled": true
     },
-    "bundled_enable_moonwalk": {
+    "enable_moonwalk": {
       "enabled": true
     },
-    "bundled_energy_free_shinesparks": {
+    "energy_free_shinesparks": {
       "enabled": true
     },
     "fanfares": {

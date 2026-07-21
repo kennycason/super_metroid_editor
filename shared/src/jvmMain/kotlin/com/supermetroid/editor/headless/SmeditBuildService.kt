@@ -6,6 +6,7 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
@@ -125,7 +126,7 @@ class SmeditBuildService(
             if (bytes > 0 || writes > 0 || (wroteConfig && !patch.configType.isDeferredGeneratedConfigType())) {
                 applied.add(
                     SmeditAppliedPatchReport(
-                        identifier = patch.id,
+                        identifier = SmeditPatchCatalog.publicPatchId(patch),
                         name = patch.name,
                         source = entry.source,
                         configType = patch.configType,
@@ -154,6 +155,9 @@ class SmeditBuildService(
 
         if (project != null) {
             applied.addAll(applyProjectCustomGraphics(project.customGfx, context))
+        }
+        request.colorize?.let { colorize ->
+            applyColorizeRequest(colorize, context)?.let(applied::add)
         }
         roomNamePatchEntry?.let {
             applied.addAll(applyRoomNamePauseMapPatch(it, project, context))
@@ -204,7 +208,7 @@ class SmeditBuildService(
             if (patch.writes.isEmpty() &&
                 patch.configType == null &&
                 patchRequest.configType == null &&
-                key !in SmeditPatchCatalog.supportedConfigTypes()
+                SmeditPatchCatalog.resolvePatchKey(key) !in SmeditPatchCatalog.supportedConfigTypes()
             ) {
                 val message = "Patch '$key' was created from request but has no writes or configType."
                 if (request.strictConfigValidation) {
@@ -242,7 +246,11 @@ class SmeditBuildService(
     }
 
     private fun findEntry(entries: Map<String, PatchEntry>, key: String): PatchEntry? =
-        entries[key] ?: entries.values.firstOrNull { it.patch.configType == key }
+        SmeditPatchCatalog.resolvePatchKey(key).let { resolvedKey ->
+            entries[key]
+                ?: entries[resolvedKey]
+                ?: entries.values.firstOrNull { it.patch.configType == key || it.patch.configType == resolvedKey }
+        }
 
     private fun applyProjectCustomGraphics(
         gfx: TilesetGfxData,
@@ -293,22 +301,10 @@ class SmeditBuildService(
     ) {
         if (gfx.palettes.isEmpty()) return
 
-        val rom = context.outputRom
-        val parser = context.parser
-        if (rom == null || parser == null) {
-            context.warnings.add(
-                "Tileset palette overrides require --rom because compressed palette pointers and free space are ROM-dependent."
-            )
-            return
-        }
-
-        val tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
-        val allocator = RomFreeSpaceAllocator(
-            romData = rom,
-            snesToPc = parser::snesToPc,
-            pcToSnes = parser::pcToSnes,
-            guardBytes = 2,
-        )
+        val writer = createTilesetPaletteWriter(
+            context = context,
+            missingRomMessage = "Tileset palette overrides require --rom because compressed palette pointers and free space are ROM-dependent.",
+        ) ?: return
 
         for ((tilesetKey, paletteBase64) in gfx.palettes) {
             val tilesetId = tilesetKey.toIntOrNull()
@@ -325,63 +321,254 @@ class SmeditBuildService(
                 continue
             }
 
-            val entryOffset = tablePc + tilesetId * TILESET_TABLE_ENTRY_BYTES
-            if (entryOffset < 0 || entryOffset + TILESET_TABLE_ENTRY_BYTES > rom.size) {
-                context.warnings.add("Tileset $tilesetId table entry is out of ROM range.")
+            val target = resolveTilesetPaletteTarget(writer, tilesetId, context) ?: continue
+            writeTilesetPalette(writer, target, rawPalette, context, clearOriginalOnRelocate = true)
+        }
+    }
+
+    private fun applyColorizeRequest(
+        colorize: SmeditColorizeRequest,
+        context: ApplyContext,
+    ): SmeditAppliedPatchReport? {
+        val effectId = colorize.effect.trim()
+        if (effectId.isBlank()) {
+            reportValidationIssue(context, "colorize.effect must not be blank.")
+            return null
+        }
+        val effect = PaletteEffects.findEffect(effectId)
+        if (effect == null) {
+            reportValidationIssue(
+                context,
+                "Unknown colorize effect '$effectId'. Valid effects: ${PaletteEffects.EFFECTS.joinToString { it.id }}.",
+            )
+            return null
+        }
+        if (!colorize.includeTilesets && !colorize.includeSprites) {
+            reportValidationIssue(context, "colorize must include tilesets, sprites, or both.")
+            return null
+        }
+        if (context.outputRom == null || context.parser == null) {
+            reportValidationIssue(context, "colorize requires --rom because palette effects must read base ROM palette data.")
+            return null
+        }
+
+        val beforeRecords = context.patchWrites.size
+        val beforeBytes = context.patchWrites.totalByteCount()
+        if (colorize.includeTilesets) {
+            applyTilesetPaletteColorize(effect, colorize, context)
+        }
+        if (colorize.includeSprites) {
+            applySpritePaletteColorize(effect, colorize, context)
+        }
+
+        val writes = context.patchWrites.size - beforeRecords
+        if (writes == 0) return null
+
+        return SmeditAppliedPatchReport(
+            identifier = "colorize",
+            name = "Colorize Palettes (${effect.name})",
+            source = "request",
+            configType = "colorize",
+            writes = writes,
+            bytes = context.patchWrites.totalByteCount() - beforeBytes,
+        )
+    }
+
+    private fun applyTilesetPaletteColorize(
+        effect: PaletteEffects.EffectDef,
+        colorize: SmeditColorizeRequest,
+        context: ApplyContext,
+    ) {
+        val writer = createTilesetPaletteWriter(
+            context = context,
+            missingRomMessage = "colorize tilesets requires --rom because tileset palettes are compressed and pointer-based.",
+        ) ?: return
+        val tilesets = resolveColorizeTilesets(colorize, context) ?: return
+        val snapshots = tilesets.mapNotNull { tilesetId ->
+            val target = resolveTilesetPaletteTarget(writer, tilesetId, context) ?: return@mapNotNull null
+            val decompressed = runCatching { writer.parser.decompressLZ2WithSize(target.paletteSnes).first }.getOrNull()
+            if (decompressed == null || decompressed.size < TILESET_PALETTE_BYTES) {
+                context.warnings.add("Tileset $tilesetId palette could not be decompressed for colorize.")
+                return@mapNotNull null
+            }
+            TilesetPaletteSnapshot(
+                target = target,
+                rawPalette = decompressed.copyOfRange(0, TILESET_PALETTE_BYTES),
+            )
+        }
+
+        for (snapshot in snapshots) {
+            val colors = SpritePalettes.bytesToColors(snapshot.rawPalette)
+            effect.apply(colors)
+            writeTilesetPalette(
+                writer = writer,
+                target = snapshot.target,
+                rawPalette = SpritePalettes.colorsToBytes(colors),
+                context = context,
+                clearOriginalOnRelocate = false,
+            )
+        }
+    }
+
+    private fun applySpritePaletteColorize(
+        effect: PaletteEffects.EffectDef,
+        colorize: SmeditColorizeRequest,
+        context: ApplyContext,
+    ) {
+        val rom = context.outputRom ?: return
+        val regions = resolveColorizeSpriteRegions(colorize, context) ?: return
+        for (region in regions) {
+            if (region.offset < 0 || region.offset + region.byteSize > rom.size) {
+                context.warnings.add("Sprite palette '${region.id}' is out of ROM range.")
                 continue
             }
-
-            val paletteSnes = readU24(rom, entryOffset + TILESET_PALETTE_PTR_OFFSET)
-            val palettePc = runCatching { parser.snesToPc(paletteSnes) }.getOrNull()
-            if (palettePc == null || palettePc !in rom.indices) {
-                context.warnings.add("Tileset $tilesetId palette pointer is out of ROM range.")
+            val colors = SpritePalettes.readColors(rom, region)
+            if (colors == null) {
+                context.warnings.add("Sprite palette '${region.id}' could not be read for colorize.")
                 continue
             }
+            effect.apply(colors)
+            writeBytes(context, region.offset, SpritePalettes.colorsToBytes(colors).toIntList(), "colorize ${region.name}")
+        }
+    }
 
-            val originalSize = runCatching { parser.decompressLZ2WithSize(paletteSnes).second }.getOrNull()
-            if (originalSize == null || palettePc + originalSize > rom.size) {
-                context.warnings.add("Tileset $tilesetId original palette could not be decompressed safely.")
-                continue
-            }
+    private fun resolveColorizeTilesets(
+        colorize: SmeditColorizeRequest,
+        context: ApplyContext,
+    ): List<Int>? {
+        if (colorize.tilesets.isEmpty()) return (0 until TileGraphics.NUM_TILESETS).toList()
 
-            val compressed = LZ5Compressor.compress(rawPalette)
-            if (compressed.size <= originalSize) {
-                writeBytes(
-                    context = context,
-                    offset = palettePc,
-                    bytes = (compressed + ByteArray(originalSize - compressed.size) { 0xFF.toByte() }).toIntList(),
-                    label = "tileset $tilesetId palette",
-                )
-            } else {
-                val allocation = allocator.allocatePalette(
-                    parser = parser,
-                    romSize = rom.size,
-                    originalSnesAddress = paletteSnes,
-                    compressed = compressed,
-                    tilesetId = tilesetId,
-                )
-                if (allocation == null) {
-                    context.warnings.add(
-                        "Tileset $tilesetId palette compressed to ${compressed.size} bytes, exceeds original " +
-                            "$originalSize bytes, and no free space was found."
-                    )
-                    continue
-                }
+        val invalid = colorize.tilesets.filter { it !in 0 until TileGraphics.NUM_TILESETS }.distinct()
+        if (invalid.isNotEmpty()) {
+            reportValidationIssue(context, "colorize.tilesets contains invalid tileset id(s): ${invalid.joinToString()}.")
+            return null
+        }
+        return colorize.tilesets.distinct()
+    }
 
-                writeBytes(context, allocation.pcOffset, compressed.toIntList(), "tileset $tilesetId relocated palette")
-                writeBytes(
-                    context,
-                    entryOffset + TILESET_PALETTE_PTR_OFFSET,
-                    u24Bytes(allocation.snesAddress),
-                    "tileset $tilesetId palette pointer",
-                )
-                writeBytes(
-                    context = context,
-                    offset = palettePc,
-                    bytes = List(originalSize) { 0xFF },
-                    label = "tileset $tilesetId old palette free fill",
-                )
-            }
+    private fun resolveColorizeSpriteRegions(
+        colorize: SmeditColorizeRequest,
+        context: ApplyContext,
+    ): List<SpritePalettes.PaletteRegion>? {
+        if (colorize.spriteRegions.isEmpty()) return SpritePalettes.REGIONS
+
+        val regions = mutableListOf<SpritePalettes.PaletteRegion>()
+        val invalid = mutableListOf<String>()
+        for (regionId in colorize.spriteRegions.distinct()) {
+            val region = SpritePalettes.findRegion(regionId)
+            if (region == null) invalid.add(regionId) else regions.add(region)
+        }
+        if (invalid.isNotEmpty()) {
+            reportValidationIssue(context, "colorize.spriteRegions contains unknown region id(s): ${invalid.joinToString()}.")
+            return null
+        }
+        return regions
+    }
+
+    private fun createTilesetPaletteWriter(
+        context: ApplyContext,
+        missingRomMessage: String,
+    ): TilesetPaletteWriter? {
+        val rom = context.outputRom
+        val parser = context.parser
+        if (rom == null || parser == null) {
+            context.warnings.add(missingRomMessage)
+            return null
+        }
+
+        return TilesetPaletteWriter(
+            rom = rom,
+            parser = parser,
+            tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES),
+            allocator = RomFreeSpaceAllocator(
+                romData = rom,
+                snesToPc = parser::snesToPc,
+                pcToSnes = parser::pcToSnes,
+                guardBytes = 2,
+            ),
+        )
+    }
+
+    private fun resolveTilesetPaletteTarget(
+        writer: TilesetPaletteWriter,
+        tilesetId: Int,
+        context: ApplyContext,
+    ): TilesetPaletteTarget? {
+        val entryOffset = writer.tablePc + tilesetId * TILESET_TABLE_ENTRY_BYTES
+        if (entryOffset < 0 || entryOffset + TILESET_TABLE_ENTRY_BYTES > writer.rom.size) {
+            context.warnings.add("Tileset $tilesetId table entry is out of ROM range.")
+            return null
+        }
+
+        val paletteSnes = readU24(writer.rom, entryOffset + TILESET_PALETTE_PTR_OFFSET)
+        val palettePc = runCatching { writer.parser.snesToPc(paletteSnes) }.getOrNull()
+        if (palettePc == null || palettePc !in writer.rom.indices) {
+            context.warnings.add("Tileset $tilesetId palette pointer is out of ROM range.")
+            return null
+        }
+
+        val originalSize = runCatching { writer.parser.decompressLZ2WithSize(paletteSnes).second }.getOrNull()
+        if (originalSize == null || palettePc + originalSize > writer.rom.size) {
+            context.warnings.add("Tileset $tilesetId original palette could not be decompressed safely.")
+            return null
+        }
+
+        return TilesetPaletteTarget(
+            tilesetId = tilesetId,
+            entryOffset = entryOffset,
+            paletteSnes = paletteSnes,
+            palettePc = palettePc,
+            originalSize = originalSize,
+        )
+    }
+
+    private fun writeTilesetPalette(
+        writer: TilesetPaletteWriter,
+        target: TilesetPaletteTarget,
+        rawPalette: ByteArray,
+        context: ApplyContext,
+        clearOriginalOnRelocate: Boolean,
+    ) {
+        val compressed = LZ5Compressor.compress(rawPalette)
+        if (compressed.size <= target.originalSize) {
+            writeBytes(
+                context = context,
+                offset = target.palettePc,
+                bytes = (compressed + ByteArray(target.originalSize - compressed.size) { 0xFF.toByte() }).toIntList(),
+                label = "tileset ${target.tilesetId} palette",
+            )
+            return
+        }
+
+        val allocation = writer.allocator.allocatePalette(
+            parser = writer.parser,
+            romSize = writer.rom.size,
+            originalSnesAddress = target.paletteSnes,
+            compressed = compressed,
+            tilesetId = target.tilesetId,
+        )
+        if (allocation == null) {
+            context.warnings.add(
+                "Tileset ${target.tilesetId} palette compressed to ${compressed.size} bytes, exceeds original " +
+                    "${target.originalSize} bytes, and no free space was found."
+            )
+            return
+        }
+
+        writeBytes(context, allocation.pcOffset, compressed.toIntList(), "tileset ${target.tilesetId} relocated palette")
+        writeBytes(
+            context,
+            target.entryOffset + TILESET_PALETTE_PTR_OFFSET,
+            u24Bytes(allocation.snesAddress),
+            "tileset ${target.tilesetId} palette pointer",
+        )
+        if (clearOriginalOnRelocate) {
+            writeBytes(
+                context = context,
+                offset = target.palettePc,
+                bytes = List(target.originalSize) { 0xFF },
+                label = "tileset ${target.tilesetId} old palette free fill",
+            )
         }
     }
 
@@ -458,11 +645,12 @@ class SmeditBuildService(
     }
 
     private fun createRequestPatch(key: String, request: SmeditPatchRequest): PatchEntry {
-        val configType = request.configType ?: key.takeIf { it in SmeditPatchCatalog.supportedConfigTypes() }
+        val resolvedKey = SmeditPatchCatalog.resolvePatchKey(key)
+        val configType = request.configType ?: resolvedKey.takeIf { it in SmeditPatchCatalog.supportedConfigTypes() }
         return PatchEntry(
             SmPatch(
-                id = if (configType != null) "config_$configType" else key,
-                name = key.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                id = if (configType != null) "config_$configType" else resolvedKey,
+                name = resolvedKey.replace('_', ' ').replaceFirstChar { it.uppercase() },
                 enabled = request.enabled,
                 configType = configType,
             ),
@@ -602,6 +790,13 @@ class SmeditBuildService(
     }
 
     private fun reportConfigValidationIssue(
+        context: ApplyContext,
+        message: String,
+    ) {
+        reportValidationIssue(context, message)
+    }
+
+    private fun reportValidationIssue(
         context: ApplyContext,
         message: String,
     ) {
@@ -1026,6 +1221,26 @@ class SmeditBuildService(
         val strictConfigValidation: Boolean,
         val patchWrites: MutableList<PatchWrite> = mutableListOf(),
         var appliedWriteCount: Int = 0,
+    )
+
+    private data class TilesetPaletteWriter(
+        val rom: ByteArray,
+        val parser: RomParser,
+        val tablePc: Int,
+        val allocator: RomFreeSpaceAllocator,
+    )
+
+    private data class TilesetPaletteTarget(
+        val tilesetId: Int,
+        val entryOffset: Int,
+        val paletteSnes: Int,
+        val palettePc: Int,
+        val originalSize: Int,
+    )
+
+    private data class TilesetPaletteSnapshot(
+        val target: TilesetPaletteTarget,
+        val rawPalette: ByteArray,
     )
 
     private data class PatchEntry(
