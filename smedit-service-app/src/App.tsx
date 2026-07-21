@@ -28,8 +28,10 @@ const patchOptions: PatchOption[] = [
   { id: 'skip_intro', label: 'Skip intro only', section: 'Start' },
   { id: 'vanilla_bugfixes', label: 'Vanilla bugfixes', section: 'Start' },
   { id: 'fanfares', label: 'Quick item fanfares', section: 'Start', defaultEnabled: true },
+  { id: 'bombs', label: 'Bomb tuning', section: 'Combat' },
   { id: 'higher_jump', label: 'Higher jump', section: 'Movement' },
   { id: 'energy_free_shinesparks', label: 'Energy-free shinesparks', section: 'Movement' },
+  { id: 'enable_moonwalk', label: 'Enable moonwalk', section: 'Movement' },
   { id: 'fast_doors', label: 'Fast doors', section: 'Movement' },
   { id: 'fast_elevators', label: 'Fast elevators', section: 'Movement' },
   { id: 'infinite_missiles', label: 'Infinite missiles', section: 'Supplies' },
@@ -65,6 +67,59 @@ const defaultPatches = Object.fromEntries(patchOptions.map((option) => [option.i
 
 type OutputMode = 'rom' | 'ips';
 
+type BombSettings = {
+  maxActiveBombs: number;
+  fuseFrames: number;
+  cooldownFrames: number;
+  explosionDelay: number;
+};
+
+type PersistedSettings = {
+  serviceUrl?: string;
+  selectedRomId?: string;
+  enabledPatches?: Partial<Record<PatchId, boolean>>;
+  fanfareFrames?: number;
+  outputMode?: OutputMode;
+  bombs?: Partial<BombSettings>;
+  colorize?: {
+    enabled?: boolean;
+    effect?: string;
+    includeTilesets?: boolean;
+    includeSprites?: boolean;
+    tilesetFilter?: string;
+    spriteRegionFilter?: string;
+  };
+  randomizer?: {
+    enabled?: boolean;
+    preset?: string;
+    seed?: string;
+    selectedBeams?: string[];
+    excludeMetroid?: boolean;
+    extraExcludedEnemies?: string;
+    includeCategories?: string[];
+    excludeCategories?: string[];
+    overrideBeamDamage?: boolean;
+    beamDamageMin?: number;
+    beamDamageMax?: number;
+    overrideEnemyStats?: boolean;
+    enemyHpMin?: number;
+    enemyHpMax?: number;
+    enemyDamageMin?: number;
+    enemyDamageMax?: number;
+    randomizeHp?: boolean;
+    randomizeContactDamage?: boolean;
+    overrideDrops?: boolean;
+    dropNothingWeight?: number;
+    dropMinNonZeroSlots?: number;
+    dropMaxNothing?: number;
+    overrideVulnerabilities?: boolean;
+    noEffectChance?: number;
+    minEffectiveWeapons?: number;
+    multipliers?: string;
+    requireMissiles?: boolean;
+  };
+};
+
 type ResultState = {
   response: ServicePatchResponse;
   romBlob: Blob;
@@ -72,53 +127,88 @@ type ResultState = {
   baseName: string;
 };
 
+const settingsStorageKey = 'smedit-service-app-settings-v1';
+const defaultBombSettings: BombSettings = {
+  maxActiveBombs: 5,
+  fuseFrames: 10,
+  cooldownFrames: 1,
+  explosionDelay: 1,
+};
+
 export function App() {
+  const savedSettings = useMemo(loadPersistedSettings, []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [serviceUrl, setServiceUrl] = useState(serviceUrlDefault);
+  const [serviceUrl, setServiceUrl] = useState(savedSettings.serviceUrl ?? serviceUrlDefault);
   const [history, setHistory] = useState<RomHistorySummary[]>([]);
-  const [selectedRomId, setSelectedRomId] = useState<string>('');
+  const [selectedRomId, setSelectedRomId] = useState<string>(savedSettings.selectedRomId ?? '');
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [isDragging, setDragging] = useState(false);
-  const [enabledPatches, setEnabledPatches] = useState<Record<PatchId, boolean>>(defaultPatches);
-  const [fanfareFrames, setFanfareFrames] = useState(16);
-  const [outputMode, setOutputMode] = useState<OutputMode>('rom');
+  const [enabledPatches, setEnabledPatches] = useState<Record<PatchId, boolean>>(
+    mergePatchSettings(savedSettings.enabledPatches),
+  );
+  const [fanfareFrames, setFanfareFrames] = useState(numberSetting(savedSettings.fanfareFrames, 16));
+  const [outputMode, setOutputMode] = useState<OutputMode>(savedSettings.outputMode === 'ips' ? 'ips' : 'rom');
+  const [bombMaxActive, setBombMaxActive] = useState(
+    numberSetting(savedSettings.bombs?.maxActiveBombs, defaultBombSettings.maxActiveBombs),
+  );
+  const [bombFuseFrames, setBombFuseFrames] = useState(
+    numberSetting(savedSettings.bombs?.fuseFrames, defaultBombSettings.fuseFrames),
+  );
+  const [bombCooldownFrames, setBombCooldownFrames] = useState(
+    numberSetting(savedSettings.bombs?.cooldownFrames, defaultBombSettings.cooldownFrames),
+  );
+  const [bombExplosionDelay, setBombExplosionDelay] = useState(
+    numberSetting(savedSettings.bombs?.explosionDelay, defaultBombSettings.explosionDelay),
+  );
 
-  const [colorizeEnabled, setColorizeEnabled] = useState(true);
-  const [colorEffect, setColorEffect] = useState('psychedelic');
-  const [includeTilesets, setIncludeTilesets] = useState(true);
-  const [includeSprites, setIncludeSprites] = useState(true);
-  const [tilesetFilter, setTilesetFilter] = useState('');
-  const [spriteRegionFilter, setSpriteRegionFilter] = useState('');
+  const [colorizeEnabled, setColorizeEnabled] = useState(booleanSetting(savedSettings.colorize?.enabled, true));
+  const [colorEffect, setColorEffect] = useState(savedSettings.colorize?.effect ?? 'psychedelic');
+  const [includeTilesets, setIncludeTilesets] = useState(booleanSetting(savedSettings.colorize?.includeTilesets, true));
+  const [includeSprites, setIncludeSprites] = useState(booleanSetting(savedSettings.colorize?.includeSprites, true));
+  const [tilesetFilter, setTilesetFilter] = useState(savedSettings.colorize?.tilesetFilter ?? '');
+  const [spriteRegionFilter, setSpriteRegionFilter] = useState(savedSettings.colorize?.spriteRegionFilter ?? '');
 
-  const [randomEnabled, setRandomEnabled] = useState(true);
-  const [preset, setPreset] = useState('spicy');
-  const [seed, setSeed] = useState('');
-  const [selectedBeams, setSelectedBeams] = useState<string[]>(['power', 'ice', 'wave', 'plasma']);
-  const [excludeMetroid, setExcludeMetroid] = useState(true);
-  const [extraExcludedEnemies, setExtraExcludedEnemies] = useState('');
-  const [includeCategories, setIncludeCategories] = useState<string[]>([]);
-  const [excludeCategories, setExcludeCategories] = useState<string[]>(['Special']);
+  const [randomEnabled, setRandomEnabled] = useState(booleanSetting(savedSettings.randomizer?.enabled, true));
+  const [preset, setPreset] = useState(savedSettings.randomizer?.preset ?? 'spicy');
+  const [seed, setSeed] = useState(savedSettings.randomizer?.seed ?? '');
+  const [selectedBeams, setSelectedBeams] = useState<string[]>(
+    stringArraySetting(savedSettings.randomizer?.selectedBeams, ['power', 'ice', 'wave', 'plasma']),
+  );
+  const [excludeMetroid, setExcludeMetroid] = useState(booleanSetting(savedSettings.randomizer?.excludeMetroid, true));
+  const [extraExcludedEnemies, setExtraExcludedEnemies] = useState(savedSettings.randomizer?.extraExcludedEnemies ?? '');
+  const [includeCategories, setIncludeCategories] = useState<string[]>(
+    stringArraySetting(savedSettings.randomizer?.includeCategories, []),
+  );
+  const [excludeCategories, setExcludeCategories] = useState<string[]>(
+    stringArraySetting(savedSettings.randomizer?.excludeCategories, ['Special']),
+  );
 
-  const [overrideBeamDamage, setOverrideBeamDamage] = useState(false);
-  const [beamDamageMin, setBeamDamageMin] = useState(0.5);
-  const [beamDamageMax, setBeamDamageMax] = useState(2.75);
-  const [overrideEnemyStats, setOverrideEnemyStats] = useState(false);
-  const [enemyHpMin, setEnemyHpMin] = useState(0.5);
-  const [enemyHpMax, setEnemyHpMax] = useState(3.5);
-  const [enemyDamageMin, setEnemyDamageMin] = useState(0.5);
-  const [enemyDamageMax, setEnemyDamageMax] = useState(2.25);
-  const [randomizeHp, setRandomizeHp] = useState(true);
-  const [randomizeContactDamage, setRandomizeContactDamage] = useState(true);
-  const [overrideDrops, setOverrideDrops] = useState(false);
-  const [dropNothingWeight, setDropNothingWeight] = useState(5);
-  const [dropMinNonZeroSlots, setDropMinNonZeroSlots] = useState(2);
-  const [dropMaxNothing, setDropMaxNothing] = useState(220);
-  const [overrideVulnerabilities, setOverrideVulnerabilities] = useState(false);
-  const [noEffectChance, setNoEffectChance] = useState(0.25);
-  const [minEffectiveWeapons, setMinEffectiveWeapons] = useState(2);
-  const [multipliers, setMultipliers] = useState('1,2,4,8');
-  const [requireMissiles, setRequireMissiles] = useState(true);
+  const [overrideBeamDamage, setOverrideBeamDamage] = useState(booleanSetting(savedSettings.randomizer?.overrideBeamDamage, false));
+  const [beamDamageMin, setBeamDamageMin] = useState(numberSetting(savedSettings.randomizer?.beamDamageMin, 0.5));
+  const [beamDamageMax, setBeamDamageMax] = useState(numberSetting(savedSettings.randomizer?.beamDamageMax, 2.75));
+  const [overrideEnemyStats, setOverrideEnemyStats] = useState(booleanSetting(savedSettings.randomizer?.overrideEnemyStats, false));
+  const [enemyHpMin, setEnemyHpMin] = useState(numberSetting(savedSettings.randomizer?.enemyHpMin, 0.5));
+  const [enemyHpMax, setEnemyHpMax] = useState(numberSetting(savedSettings.randomizer?.enemyHpMax, 3.5));
+  const [enemyDamageMin, setEnemyDamageMin] = useState(numberSetting(savedSettings.randomizer?.enemyDamageMin, 0.5));
+  const [enemyDamageMax, setEnemyDamageMax] = useState(numberSetting(savedSettings.randomizer?.enemyDamageMax, 2.25));
+  const [randomizeHp, setRandomizeHp] = useState(booleanSetting(savedSettings.randomizer?.randomizeHp, true));
+  const [randomizeContactDamage, setRandomizeContactDamage] = useState(
+    booleanSetting(savedSettings.randomizer?.randomizeContactDamage, true),
+  );
+  const [overrideDrops, setOverrideDrops] = useState(booleanSetting(savedSettings.randomizer?.overrideDrops, false));
+  const [dropNothingWeight, setDropNothingWeight] = useState(numberSetting(savedSettings.randomizer?.dropNothingWeight, 5));
+  const [dropMinNonZeroSlots, setDropMinNonZeroSlots] = useState(
+    numberSetting(savedSettings.randomizer?.dropMinNonZeroSlots, 2),
+  );
+  const [dropMaxNothing, setDropMaxNothing] = useState(numberSetting(savedSettings.randomizer?.dropMaxNothing, 220));
+  const [overrideVulnerabilities, setOverrideVulnerabilities] = useState(
+    booleanSetting(savedSettings.randomizer?.overrideVulnerabilities, false),
+  );
+  const [noEffectChance, setNoEffectChance] = useState(numberSetting(savedSettings.randomizer?.noEffectChance, 0.25));
+  const [minEffectiveWeapons, setMinEffectiveWeapons] = useState(numberSetting(savedSettings.randomizer?.minEffectiveWeapons, 2));
+  const [multipliers, setMultipliers] = useState(savedSettings.randomizer?.multipliers ?? '1,2,4,8');
+  const [requireMissiles, setRequireMissiles] = useState(booleanSetting(savedSettings.randomizer?.requireMissiles, true));
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +238,102 @@ export function App() {
     return () => controller.abort();
   }, [serviceUrl]);
 
+  useEffect(() => {
+    savePersistedSettings({
+      serviceUrl,
+      selectedRomId,
+      enabledPatches,
+      fanfareFrames,
+      outputMode,
+      bombs: {
+        maxActiveBombs: bombMaxActive,
+        fuseFrames: bombFuseFrames,
+        cooldownFrames: bombCooldownFrames,
+        explosionDelay: bombExplosionDelay,
+      },
+      colorize: {
+        enabled: colorizeEnabled,
+        effect: colorEffect,
+        includeTilesets,
+        includeSprites,
+        tilesetFilter,
+        spriteRegionFilter,
+      },
+      randomizer: {
+        enabled: randomEnabled,
+        preset,
+        seed,
+        selectedBeams,
+        excludeMetroid,
+        extraExcludedEnemies,
+        includeCategories,
+        excludeCategories,
+        overrideBeamDamage,
+        beamDamageMin,
+        beamDamageMax,
+        overrideEnemyStats,
+        enemyHpMin,
+        enemyHpMax,
+        enemyDamageMin,
+        enemyDamageMax,
+        randomizeHp,
+        randomizeContactDamage,
+        overrideDrops,
+        dropNothingWeight,
+        dropMinNonZeroSlots,
+        dropMaxNothing,
+        overrideVulnerabilities,
+        noEffectChance,
+        minEffectiveWeapons,
+        multipliers,
+        requireMissiles,
+      },
+    });
+  }, [
+    beamDamageMax,
+    beamDamageMin,
+    bombCooldownFrames,
+    bombExplosionDelay,
+    bombFuseFrames,
+    bombMaxActive,
+    colorEffect,
+    colorizeEnabled,
+    dropMaxNothing,
+    dropMinNonZeroSlots,
+    dropNothingWeight,
+    enabledPatches,
+    enemyDamageMax,
+    enemyDamageMin,
+    enemyHpMax,
+    enemyHpMin,
+    excludeCategories,
+    excludeMetroid,
+    extraExcludedEnemies,
+    fanfareFrames,
+    includeCategories,
+    includeSprites,
+    includeTilesets,
+    minEffectiveWeapons,
+    multipliers,
+    noEffectChance,
+    outputMode,
+    overrideBeamDamage,
+    overrideDrops,
+    overrideEnemyStats,
+    overrideVulnerabilities,
+    preset,
+    randomEnabled,
+    randomizeContactDamage,
+    randomizeHp,
+    requireMissiles,
+    seed,
+    selectedBeams,
+    selectedRomId,
+    serviceUrl,
+    spriteRegionFilter,
+    tilesetFilter,
+  ]);
+
   const selectedRom = history.find((item) => item.id === selectedRomId);
   const availablePatchIds = useMemo(() => new Set(metadata?.patches.map((patch) => patch.id)), [metadata]);
   const visiblePatchOptions = useMemo(
@@ -163,10 +349,21 @@ export function App() {
     const patches: NonNullable<BuildRequest['patches']> = {};
     for (const option of visiblePatchOptions) {
       if (!enabledPatches[option.id]) continue;
-      patches[option.id] =
-        option.id === 'fanfares'
-          ? { enabled: true, config: { item_fanfare_frames: fanfareFrames } }
-          : { enabled: true };
+      if (option.id === 'fanfares') {
+        patches[option.id] = { enabled: true, config: { item_fanfare_frames: fanfareFrames } };
+      } else if (option.id === 'bombs') {
+        patches[option.id] = {
+          enabled: true,
+          config: {
+            max_active_bombs: bombMaxActive,
+            fuse_frames: bombFuseFrames,
+            cooldown_frames: bombCooldownFrames,
+            explosion_frame_delay: bombExplosionDelay,
+          },
+        };
+      } else {
+        patches[option.id] = { enabled: true };
+      }
     }
 
     const build: BuildRequest = {
@@ -186,6 +383,10 @@ export function App() {
 
     return stripEmpty(build);
   }, [
+    bombCooldownFrames,
+    bombExplosionDelay,
+    bombFuseFrames,
+    bombMaxActive,
     colorEffect,
     colorizeEnabled,
     enabledPatches,
@@ -294,6 +495,12 @@ export function App() {
     ) {
       errors.push('Fanfare frames must be an integer from 1 to 9999.');
     }
+    if (enabledPatches.bombs) {
+      errors.push(...validateIntegerField('Max active bombs', bombMaxActive, 1, 5));
+      errors.push(...validateIntegerField('Bomb fuse frames', bombFuseFrames, 1, 9999));
+      errors.push(...validateIntegerField('Bomb cooldown frames', bombCooldownFrames, 0, 255));
+      errors.push(...validateIntegerField('Bomb explosion delay', bombExplosionDelay, 1, 255));
+    }
 
     if (colorizeEnabled) {
       if (!colorEffectOptions.some((effect) => effect.id === colorEffect)) {
@@ -391,6 +598,10 @@ export function App() {
     beamDamageMax,
     beamDamageMin,
     beamOptions,
+    bombCooldownFrames,
+    bombExplosionDelay,
+    bombFuseFrames,
+    bombMaxActive,
     categoryOptions,
     colorEffect,
     colorEffectOptions,
@@ -402,6 +613,7 @@ export function App() {
     enemyDamageMin,
     enemyHpMax,
     enemyHpMin,
+    enabledPatches.bombs,
     enabledPatches.fanfares,
     excludeCategories,
     extraExcludedEnemies,
@@ -447,7 +659,8 @@ export function App() {
       setHistory(items);
       setSelectedRomId((current) => {
         if (nextSelectedId !== undefined) return nextSelectedId || items[0]?.id || '';
-        return current || items[0]?.id || '';
+        if (current && items.some((item) => item.id === current)) return current;
+        return items[0]?.id || '';
       });
     } catch (err) {
       setError(`Could not read local ROM history: ${errorText(err)}`);
@@ -656,16 +869,24 @@ export function App() {
               ))}
             </div>
             {metadataError && <div className="inline-note">{metadataError}</div>}
-            <label className="field compact">
-              <span>Fanfare frames</span>
-              <input
-                type="number"
-                min={1}
-                max={600}
-                value={fanfareFrames}
-                onChange={(event) => setFanfareFrames(Number(event.target.value))}
-              />
-            </label>
+            <div className="settings-grid">
+              <NumberField label="Fanfare frames" value={fanfareFrames} min={1} max={9999} step={1} onChange={setFanfareFrames} />
+              {enabledPatches.bombs && (
+                <>
+                  <NumberField label="Max bombs" value={bombMaxActive} min={1} max={5} step={1} onChange={setBombMaxActive} />
+                  <NumberField label="Fuse frames" value={bombFuseFrames} min={1} max={9999} step={1} onChange={setBombFuseFrames} />
+                  <NumberField label="Cooldown" value={bombCooldownFrames} min={0} max={255} step={1} onChange={setBombCooldownFrames} />
+                  <NumberField
+                    label="Explosion delay"
+                    value={bombExplosionDelay}
+                    min={1}
+                    max={255}
+                    step={1}
+                    onChange={setBombExplosionDelay}
+                  />
+                </>
+              )}
+            </div>
           </section>
 
           <section className="panel">
@@ -1056,6 +1277,56 @@ function validateOrderedRange(label: string, min: number, max: number, floor: nu
     return [`${label} min/max must be at least ${floor} and ordered.`];
   }
   return [];
+}
+
+function validateIntegerField(label: string, value: number, min: number, max: number): string[] {
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
+    return [`${label} must be an integer from ${min} to ${max}.`];
+  }
+  return [];
+}
+
+function loadPersistedSettings(): PersistedSettings {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(settingsStorageKey);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) ? (parsed as PersistedSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePersistedSettings(settings: PersistedSettings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(settingsStorageKey, JSON.stringify(settings));
+  } catch {
+    // Local settings are a convenience; failing to persist should not block ROM generation.
+  }
+}
+
+function mergePatchSettings(saved: Partial<Record<PatchId, boolean>> | undefined): Record<PatchId, boolean> {
+  return Object.fromEntries(
+    patchOptions.map((option) => [option.id, typeof saved?.[option.id] === 'boolean' ? saved[option.id] : !!option.defaultEnabled]),
+  ) as Record<PatchId, boolean>;
+}
+
+function numberSetting(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function booleanSetting(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function stringArraySetting(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : [...fallback];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function errorText(err: unknown): string {
