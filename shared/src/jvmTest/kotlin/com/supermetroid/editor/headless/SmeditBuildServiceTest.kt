@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
@@ -89,6 +90,50 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `build applies writes to headered rom body and emits headerless ips`() {
+        val original = ByteArray(RomConstants.ROM_SIZE_WITH_HEADER)
+        original.fill(0xA5.toByte(), 0, RomConstants.SMC_HEADER_SIZE)
+        writeWord(original, RomConstants.SMC_HEADER_SIZE + FANFARE_MESSAGE_BOX_WAIT_PC, 0x1234)
+
+        val request = SmeditBuildRequest(
+            patches = mapOf(
+                "higher_jump" to SmeditPatchRequest(),
+                "fanfares" to SmeditPatchRequest(),
+            ),
+            rawWrites = listOf(
+                SmeditRawWriteRequest(address = "pc:0x1234", bytes = listOf(1, 2), label = "pc test"),
+                SmeditRawWriteRequest(address = "80:8000", bytes = listOf(0xAA), label = "snes test"),
+            ),
+        )
+
+        val result = SmeditBuildService().build(original, request)
+        val rom = result.romBytes
+        val headerSize = RomConstants.SMC_HEADER_SIZE
+
+        assertContentEquals(original.copyOfRange(0, headerSize), rom.copyOfRange(0, headerSize))
+        assertEquals(0, rom[0x81EB9].toInt() and 0xFF)
+        assertEquals(0x05, rom[headerSize + 0x81EB9].toInt() and 0xFF)
+        assertEquals(1, rom[headerSize + 0x1234].toInt() and 0xFF)
+        assertEquals(2, rom[headerSize + 0x1235].toInt() and 0xFF)
+        assertEquals(0xAA, rom[headerSize].toInt() and 0xFF)
+        assertEquals(0x1234, rom.readWord(headerSize + FANFARE_MUSIC_RESUME_DELAY_PCS.first()))
+
+        val writes = PatchRepository.parseIps(result.ipsPatchBytes)
+        assertTrue(writes.any { it.offset == 0L && it.bytes == listOf(0xAA) })
+        assertTrue(writes.any { it.offset == 0x1234L && it.bytes == listOf(1, 2) })
+        assertTrue(writes.any { it.offset == 0x81EB9L && it.bytes == listOf(0x05) })
+        assertTrue(writes.none { it.offset >= RomConstants.SMC_HEADER_SIZE && it.offset - RomConstants.SMC_HEADER_SIZE == 0x81EB9L })
+
+        val reconstructedBody = original.copyOfRange(headerSize, original.size)
+        for (write in writes) {
+            for (i in write.bytes.indices) {
+                reconstructedBody[write.offset.toInt() + i] = write.bytes[i].toByte()
+            }
+        }
+        assertContentEquals(rom.copyOfRange(headerSize, rom.size), reconstructedBody)
+    }
+
+    @Test
     fun `build accepts clean public aliases for prefixed patch ids`() {
         val service = SmeditBuildService()
         val clean = service.buildPatch(
@@ -98,6 +143,7 @@ class SmeditBuildServiceTest {
                     "skip_intro" to SmeditPatchRequest(),
                     "skip_intro_and_ceres" to SmeditPatchRequest(),
                     "fast_elevators" to SmeditPatchRequest(),
+                    "energy_free_shinesparks" to SmeditPatchRequest(),
                     "infinite_power_bombs" to SmeditPatchRequest(),
                 )
             )
@@ -109,6 +155,7 @@ class SmeditBuildServiceTest {
                     "bundled_skip_intro_ceres" to SmeditPatchRequest(),
                     "bundled_skip_intro" to SmeditPatchRequest(),
                     "bundled_elevators_speed" to SmeditPatchRequest(),
+                    "bundled_energy_free_shinesparks" to SmeditPatchRequest(),
                     "hex_infinite_pbs" to SmeditPatchRequest(),
                 )
             )
@@ -119,6 +166,7 @@ class SmeditBuildServiceTest {
         assertTrue(clean.report.applied.any { it.identifier == "skip_intro" })
         assertTrue(clean.report.applied.any { it.identifier == "skip_intro_and_ceres" })
         assertTrue(clean.report.applied.any { it.identifier == "fast_elevators" })
+        assertTrue(clean.report.applied.any { it.identifier == "energy_free_shinesparks" })
         assertTrue(clean.report.applied.any { it.identifier == "infinite_power_bombs" })
     }
 

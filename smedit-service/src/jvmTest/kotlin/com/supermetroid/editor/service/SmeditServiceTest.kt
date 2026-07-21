@@ -1,5 +1,6 @@
 package com.supermetroid.editor.service
 
+import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.headless.BEAM_DAMAGE_CONFIG_TYPE
 import com.supermetroid.editor.headless.ENEMY_DROPS_CONFIG_TYPE
 import com.supermetroid.editor.headless.ENEMY_STATS_CONFIG_TYPE
@@ -13,11 +14,13 @@ import com.supermetroid.editor.headless.SmeditEnemyVulnerabilityRandomization
 import com.supermetroid.editor.headless.SmeditPatchRequest
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.rom.PaletteEffects
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.SpritePalettes
 import io.ktor.client.call.body
 import io.ktor.client.request.accept
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
+import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -32,6 +35,7 @@ import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SmeditServiceTest {
@@ -90,6 +94,53 @@ class SmeditServiceTest {
         assertEquals(0x05, patchedRom[0x81EB9].toInt() and 0xFF)
         assertTrue(body.ipsBase64.isNotBlank())
         assertTrue(body.report.applied.any { it.identifier == "higher_jump" })
+    }
+
+    @Test
+    fun `patch endpoint can return ips only`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val request = patchRequest(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    "higher_jump" to SmeditPatchRequest(),
+                )
+            )
+        )
+        val response = client.post("/patch?format=ips") {
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(request))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("1", response.headers["X-SMEDIT-Changed-Bytes"])
+        assertTrue(response.headers[HttpHeaders.ContentDisposition].orEmpty().contains("smedit.ips"))
+        val writes = PatchRepository.parseIps(response.body())
+        assertTrue(writes.any { it.offset == 0x81EB9L && it.bytes == listOf(0x05) })
+    }
+
+    @Test
+    fun `metadata endpoint returns patch randomizer and color catalogs`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.get("/metadata") {
+            accept(ContentType.Application.Json)
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServiceMetadataResponse>(response.body())
+        assertTrue(body.patches.any { it.id == "skip_intro_and_ceres" })
+        assertTrue(body.patches.any { it.id == "energy_free_shinesparks" })
+        assertTrue(body.randomization.presets.contains("spicy"))
+        assertTrue(body.randomization.beams.contains("power"))
+        assertTrue(body.randomization.enemyCategories.contains("Aquatic"))
+        assertFalse(body.randomization.enemyCategories.contains("Boss"))
+        assertTrue(body.colorize.effects.any { it.id == "psychedelic" })
+        assertEquals(SpritePalettes.REGIONS.size, body.colorize.spriteRegions.size)
     }
 
     @Test
@@ -334,6 +385,29 @@ class SmeditServiceTest {
         assertEquals(HttpStatusCode.BadRequest, response.status)
         val body = json.decodeFromString<SmeditServiceError>(response.body())
         assertTrue(body.error.contains("rom file field"))
+    }
+
+    @Test
+    fun `patch endpoint rejects ambiguous rom sizes`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.post("/patch") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                json.encodeToString(
+                    patchRequest(
+                        build = SmeditBuildRequest(),
+                        romBytes = ByteArray(RomConstants.ROM_SIZE + 1),
+                    )
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = json.decodeFromString<SmeditServiceError>(response.body())
+        assertTrue(body.error.contains("headerless"))
     }
 
     private fun patchRequest(

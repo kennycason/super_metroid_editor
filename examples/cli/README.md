@@ -16,5 +16,7 @@ To emit a patched ROM, add `--rom` and `--output`:
 ./gradlew -q :cli:runCli -Pargs='--rom ../path/to/base.smc build --config ../examples/cli/qol-fast-start.json --output ../build/cli-examples/qol-fast-start.smc --patch ../build/cli-examples/qol-fast-start.ips --report ../build/cli-examples/qol-fast-start-report.json'
 ```
 
+The headless build engine accepts normal 3 MB ROMs and 3 MB ROMs with a 512-byte SMC header. Headered ROM outputs keep the header, while `--patch` IPS output uses standard headerless offsets.
+
 Use `schema <configType>` to inspect valid fields before changing these examples.
 Use `patches` to list public patch IDs. Internally prefixed IDs such as `bundled_*` and `hex_*` are still accepted as aliases, but examples use the cleaner public names.

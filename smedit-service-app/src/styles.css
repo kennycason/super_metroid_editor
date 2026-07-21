@@ -424,7 +424,7 @@ h3 {
 
 .action-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 240px) auto;
   align-items: center;
   gap: 16px;
 }
@@ -466,7 +466,11 @@ h3 {
 .download-row {
   display: flex;
   gap: 10px;
-  grid-column: 2;
+  grid-column: 3;
+}
+
+.output-mode {
+  align-self: end;
 }
 
 .download-row button {
@@ -483,6 +487,17 @@ h3 {
 .message {
   border-radius: 8px;
   padding: 10px 12px;
+}
+
+.message p + p {
+  margin-top: 6px;
+}
+
+.inline-note {
+  color: #ffdca8;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: -4px 0 14px;
 }
 
 .message.error {

@@ -4,6 +4,7 @@ export type PatchId =
   | 'skip_intro'
   | 'fanfares'
   | 'higher_jump'
+  | 'energy_free_shinesparks'
   | 'fast_doors'
   | 'fast_elevators'
   | 'infinite_missiles'
@@ -41,7 +42,7 @@ export type ColorizeRequest = {
 
 export type RandomizationRequest = {
   seed?: number;
-  preset?: 'balanced' | 'spicy' | 'chaos' | 'survival';
+  preset?: string;
   includeBeams?: string[];
   excludeEnemies?: string[];
   includeEnemyCategories?: string[];
@@ -125,4 +126,73 @@ export type RandomizationReport = {
   preset?: string;
   randomizedConfigTypes: string[];
   randomizedFieldCounts: Record<string, number>;
+};
+
+export type ServiceMetadata = {
+  schemaVersion: number;
+  patches: ServicePatchMetadata[];
+  configSchemas: ConfigSchema[];
+  randomization: {
+    presets: string[];
+    beams: string[];
+    enemyCategories: string[];
+    enemies: Array<{
+      key: string;
+      label: string;
+      category: string;
+    }>;
+  };
+  colorize: {
+    effects: Array<{
+      id: string;
+      name: string;
+    }>;
+    tilesetCount: number;
+    spriteRegions: Array<{
+      id: string;
+      name: string;
+      category: string;
+      colors: number;
+    }>;
+  };
+};
+
+export type ServicePatchMetadata = {
+  id: string;
+  internalId: string;
+  name: string;
+  description?: string;
+  configType?: string;
+  aliases?: string[];
+  headlessSupported: boolean;
+  supportsPatchOnly: boolean;
+  requiresRom: boolean;
+};
+
+export type ConfigSchema = {
+  configType: string;
+  patchId: string;
+  name: string;
+  description: string;
+  headlessSupported: boolean;
+  supportsPatchOnly: boolean;
+  requiresRom: boolean;
+  fields: ConfigField[];
+};
+
+export type ConfigField = {
+  key: string;
+  label: string;
+  type: string;
+  min: number;
+  max: number;
+  defaultValue?: number;
+  description?: string;
+  category?: string;
+  unit?: string;
+  signed?: boolean;
+  logicalMin?: number;
+  logicalMax?: number;
+  requiresRom?: boolean;
+  choices?: Array<{ label: string; value: number }>;
 };

@@ -228,12 +228,12 @@ data class TileDefaultOverride(
 )
 
 /**
- * A single patch write operation: write bytes at a PC offset.
+ * A single patch write operation: write bytes at an unheadered ROM PC offset.
  * Equivalent to one IPS record.
  */
 @Serializable
 data class PatchWrite(
-    val offset: Long,         // PC file offset (not SNES address)
+    val offset: Long,         // unheadered PC offset (not SNES address)
     val bytes: List<Int>      // byte values 0x00-0xFF
 )
 

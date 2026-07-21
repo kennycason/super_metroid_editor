@@ -42,7 +42,7 @@ class SmeditBuildService(
 
         return SmeditBuildResult(
             romBytes = outputRom,
-            ipsPatchBytes = IpsPatch.encodeDiff(inputRom, outputRom),
+            ipsPatchBytes = IpsPatch.encodeDiff(inputRom.headerlessRomBytes(), outputRom.headerlessRomBytes()),
             report = SmeditBuildReport(
                 mode = "rom",
                 inputRomBytes = inputRom.size,
@@ -418,11 +418,12 @@ class SmeditBuildService(
         val rom = context.outputRom ?: return
         val regions = resolveColorizeSpriteRegions(colorize, context) ?: return
         for (region in regions) {
-            if (region.offset < 0 || region.offset + region.byteSize > rom.size) {
+            val fileOffset = context.pcToFileOffset(region.offset)
+            if (fileOffset < 0 || fileOffset + region.byteSize > rom.size) {
                 context.warnings.add("Sprite palette '${region.id}' is out of ROM range.")
                 continue
             }
-            val colors = SpritePalettes.readColors(rom, region)
+            val colors = readSpritePaletteColors(rom, fileOffset, region)
             if (colors == null) {
                 context.warnings.add("Sprite palette '${region.id}' could not be read for colorize.")
                 continue
@@ -465,6 +466,20 @@ class SmeditBuildService(
         return regions
     }
 
+    private fun readSpritePaletteColors(
+        rom: ByteArray,
+        fileOffset: Int,
+        region: SpritePalettes.PaletteRegion,
+    ): IntArray? {
+        if (fileOffset < 0 || fileOffset + region.byteSize > rom.size) return null
+        val colors = IntArray(region.colorCount)
+        for (i in 0 until region.colorCount) {
+            val addr = fileOffset + i * 2
+            colors[i] = (rom[addr].toInt() and 0xFF) or ((rom[addr + 1].toInt() and 0xFF) shl 8)
+        }
+        return colors
+    }
+
     private fun createTilesetPaletteWriter(
         context: ApplyContext,
         missingRomMessage: String,
@@ -479,7 +494,7 @@ class SmeditBuildService(
         return TilesetPaletteWriter(
             rom = rom,
             parser = parser,
-            tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES),
+            tableFileOffset = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES),
             allocator = RomFreeSpaceAllocator(
                 romData = rom,
                 snesToPc = parser::snesToPc,
@@ -494,30 +509,30 @@ class SmeditBuildService(
         tilesetId: Int,
         context: ApplyContext,
     ): TilesetPaletteTarget? {
-        val entryOffset = writer.tablePc + tilesetId * TILESET_TABLE_ENTRY_BYTES
-        if (entryOffset < 0 || entryOffset + TILESET_TABLE_ENTRY_BYTES > writer.rom.size) {
+        val entryFileOffset = writer.tableFileOffset + tilesetId * TILESET_TABLE_ENTRY_BYTES
+        if (entryFileOffset < 0 || entryFileOffset + TILESET_TABLE_ENTRY_BYTES > writer.rom.size) {
             context.warnings.add("Tileset $tilesetId table entry is out of ROM range.")
             return null
         }
 
-        val paletteSnes = readU24(writer.rom, entryOffset + TILESET_PALETTE_PTR_OFFSET)
-        val palettePc = runCatching { writer.parser.snesToPc(paletteSnes) }.getOrNull()
-        if (palettePc == null || palettePc !in writer.rom.indices) {
+        val paletteSnes = readU24(writer.rom, entryFileOffset + TILESET_PALETTE_PTR_OFFSET)
+        val paletteFileOffset = runCatching { writer.parser.snesToPc(paletteSnes) }.getOrNull()
+        if (paletteFileOffset == null || paletteFileOffset !in writer.rom.indices) {
             context.warnings.add("Tileset $tilesetId palette pointer is out of ROM range.")
             return null
         }
 
         val originalSize = runCatching { writer.parser.decompressLZ2WithSize(paletteSnes).second }.getOrNull()
-        if (originalSize == null || palettePc + originalSize > writer.rom.size) {
+        if (originalSize == null || paletteFileOffset + originalSize > writer.rom.size) {
             context.warnings.add("Tileset $tilesetId original palette could not be decompressed safely.")
             return null
         }
 
         return TilesetPaletteTarget(
             tilesetId = tilesetId,
-            entryOffset = entryOffset,
+            entryPc = context.fileToPcOffset(entryFileOffset),
             paletteSnes = paletteSnes,
-            palettePc = palettePc,
+            palettePc = context.fileToPcOffset(paletteFileOffset),
             originalSize = originalSize,
         )
     }
@@ -555,10 +570,15 @@ class SmeditBuildService(
             return
         }
 
-        writeBytes(context, allocation.pcOffset, compressed.toIntList(), "tileset ${target.tilesetId} relocated palette")
         writeBytes(
             context,
-            target.entryOffset + TILESET_PALETTE_PTR_OFFSET,
+            context.fileToPcOffset(allocation.pcOffset),
+            compressed.toIntList(),
+            "tileset ${target.tilesetId} relocated palette",
+        )
+        writeBytes(
+            context,
+            target.entryPc + TILESET_PALETTE_PTR_OFFSET,
             u24Bytes(allocation.snesAddress),
             "tileset ${target.tilesetId} palette pointer",
         )
@@ -607,8 +627,7 @@ class SmeditBuildService(
         context: ApplyContext,
     ) {
         val rom = context.outputRom
-        val parser = context.parser
-        if (rom == null || parser == null) {
+        if (rom == null) {
             context.warnings.add("Enemy palette '$regionId' requires --rom because the palette pointer is species-dependent.")
             return
         }
@@ -626,17 +645,19 @@ class SmeditBuildService(
             return
         }
 
-        val headerPc = parser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
-        if (headerPc < 0 || headerPc + ENEMY_HEADER_AI_BANK_OFFSET >= rom.size) {
+        val headerPc = context.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
+        val headerFileOffset = context.pcToFileOffset(headerPc)
+        if (headerFileOffset < 0 || headerFileOffset + ENEMY_HEADER_AI_BANK_OFFSET >= rom.size) {
             context.warnings.add("Enemy palette $speciesHex has an invalid species header.")
             return
         }
 
-        val palettePtr = readU16(rom, headerPc + ENEMY_HEADER_PALETTE_PTR_OFFSET)
-        val aiBank = readU8(rom, headerPc + ENEMY_HEADER_AI_BANK_OFFSET)
+        val palettePtr = readU16(rom, headerFileOffset + ENEMY_HEADER_PALETTE_PTR_OFFSET)
+        val aiBank = readU8(rom, headerFileOffset + ENEMY_HEADER_AI_BANK_OFFSET)
         val paletteSnes = (aiBank shl 16) or (palettePtr and 0xFFFF)
-        val palettePc = parser.snesToPc(paletteSnes)
-        if (palettePc < 0 || palettePc + ENEMY_PALETTE_BYTES > rom.size) {
+        val palettePc = context.snesToPc(paletteSnes)
+        val paletteFileOffset = context.pcToFileOffset(palettePc)
+        if (paletteFileOffset < 0 || paletteFileOffset + ENEMY_PALETTE_BYTES > rom.size) {
             context.warnings.add("Enemy palette $speciesHex resolved outside ROM bounds.")
             return
         }
@@ -682,7 +703,7 @@ class SmeditBuildService(
             }
             BOMB_CONFIG_TYPE -> {
                 val data = patch.configData
-                val defaults = context.outputRom?.let { BombDefaults.fromRom(it) } ?: BombDefaults.vanilla()
+                val defaults = if (context.outputRom != null) bombDefaults(context) else BombDefaults.vanilla()
                 val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
                     .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
                 val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
@@ -702,7 +723,7 @@ class SmeditBuildService(
             }
             FANFARE_CONFIG_TYPE -> {
                 val data = patch.configData
-                val defaultFrames = context.outputRom?.readWordOrNull(FANFARE_MESSAGE_BOX_WAIT_PC)
+                val defaultFrames = context.readWordOrNull(FANFARE_MESSAGE_BOX_WAIT_PC)
                     ?: FANFARE_DEFAULT_FRAMES
                 val frames = (data?.get(FANFARE_FRAMES_KEY) ?: defaultFrames)
                     .coerceIn(FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES)
@@ -938,16 +959,19 @@ class SmeditBuildService(
             throw IllegalArgumentException("Room-name pause-map patch could not be written safely: ${e.message}", e)
         }
 
-        context.patchWrites.addAll(result.writes)
+        val logicalWrites = result.writes.map { write ->
+            PatchWrite(context.fileToPcOffset(write.offset.toInt()).toLong(), write.bytes)
+        }
+        context.patchWrites.addAll(logicalWrites)
         context.appliedWriteCount += result.writes.size
         return listOf(
             SmeditAppliedPatchReport(
-                identifier = patch.id,
+                identifier = SmeditPatchCatalog.publicPatchId(patch),
                 name = patch.name,
                 source = entry.source,
                 configType = patch.configType,
                 writes = result.writes.size,
-                bytes = result.writes.totalByteCount(),
+                bytes = logicalWrites.totalByteCount(),
             )
         )
     }
@@ -1050,23 +1074,24 @@ class SmeditBuildService(
         tableLabel: String,
     ): Int? {
         val rom = context.outputRom
-        val parser = context.parser
-        if (rom == null || parser == null) {
+        if (rom == null) {
             context.warnings.add("Enemy $tableLabel patch requires --rom because enemy table pointers are ROM-dependent.")
             return null
         }
 
-        val headerPc = parser.snesToPc(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
-        if (headerPc < 0 || headerPc + pointerOffset + 1 >= rom.size) {
+        val headerPc = context.snesToPc(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
+        val headerFileOffset = context.pcToFileOffset(headerPc)
+        if (headerFileOffset < 0 || headerFileOffset + pointerOffset + 1 >= rom.size) {
             context.warnings.add("Enemy ${enemy.key} $tableLabel pointer is out of ROM range.")
             return null
         }
 
-        val pointer = readU16(rom, headerPc + pointerOffset)
+        val pointer = readU16(rom, headerFileOffset + pointerOffset)
         if (pointer == 0 || pointer == 0xFFFF) return null
 
-        val tablePc = parser.snesToPc(ENEMY_DATA_BANK_SNES or pointer)
-        if (tablePc < 0 || tablePc + tableSize > rom.size) {
+        val tablePc = context.snesToPc(ENEMY_DATA_BANK_SNES or pointer)
+        val tableFileOffset = context.pcToFileOffset(tablePc)
+        if (tableFileOffset < 0 || tableFileOffset + tableSize > rom.size) {
             context.warnings.add("Enemy ${enemy.key} $tableLabel resolved outside ROM bounds.")
             return null
         }
@@ -1164,12 +1189,14 @@ class SmeditBuildService(
 
         val rom = context.outputRom
         if (rom != null) {
-            if (endOffset >= rom.size) {
+            val fileOffset = context.pcToFileOffset(offset)
+            val fileEndOffset = fileOffset.toLong() + normalizedBytes.size - 1
+            if (fileOffset < 0 || fileEndOffset >= rom.size) {
                 context.warnings.add("$label write out of ROM range at 0x${offset.toString(16)} (${bytes.size} bytes)")
                 return false
             }
             for (i in normalizedBytes.indices) {
-                rom[offset + i] = normalizedBytes[i].toByte()
+                rom[fileOffset + i] = normalizedBytes[i].toByte()
             }
         }
 
@@ -1199,9 +1226,6 @@ class SmeditBuildService(
         }
     }
 
-    private fun ApplyContext.snesToPc(snesAddress: Int): Int =
-        parser?.snesToPc(snesAddress) ?: snesToPcLoRom(snesAddress)
-
     private fun RomFreeSpaceAllocator.allocatePalette(
         parser: RomParser,
         romSize: Int,
@@ -1221,18 +1245,35 @@ class SmeditBuildService(
         val strictConfigValidation: Boolean,
         val patchWrites: MutableList<PatchWrite> = mutableListOf(),
         var appliedWriteCount: Int = 0,
-    )
+    ) {
+        val romHeaderOffset: Int = outputRom?.smcHeaderOffset() ?: 0
+
+        fun snesToPc(snesAddress: Int): Int =
+            snesToPcLoRom(snesAddress)
+
+        fun pcToFileOffset(pcOffset: Int): Int =
+            pcOffset + romHeaderOffset
+
+        fun fileToPcOffset(fileOffset: Int): Int =
+            fileOffset - romHeaderOffset
+
+        fun readByteOrNull(pcOffset: Int): Int? =
+            outputRom?.readByteOrNull(pcToFileOffset(pcOffset))
+
+        fun readWordOrNull(pcOffset: Int): Int? =
+            outputRom?.readWordOrNull(pcToFileOffset(pcOffset))
+    }
 
     private data class TilesetPaletteWriter(
         val rom: ByteArray,
         val parser: RomParser,
-        val tablePc: Int,
+        val tableFileOffset: Int,
         val allocator: RomFreeSpaceAllocator,
     )
 
     private data class TilesetPaletteTarget(
         val tilesetId: Int,
-        val entryOffset: Int,
+        val entryPc: Int,
         val paletteSnes: Int,
         val palettePc: Int,
         val originalSize: Int,
@@ -1264,22 +1305,22 @@ class SmeditBuildService(
                     explosionFrameDelay = BOMB_DEFAULT_EXPLOSION_FRAME_DELAY,
                     hardCap = BOMB_DEFAULT_HARD_CAP,
                 )
-
-            fun fromRom(rom: ByteArray): BombDefaults {
-                val fuse = rom.readWordOrNull(BOMB_FUSE_TIMER_PC) ?: BOMB_DEFAULT_FUSE_FRAMES
-                val hardCap = rom.readWordOrNull(BOMB_ACTIVE_HARD_CAP_OPERAND_PC) ?: BOMB_DEFAULT_HARD_CAP
-                val cooldown = rom.readByteOrNull(BOMB_COOLDOWN_PC) ?: BOMB_DEFAULT_COOLDOWN_FRAMES
-                val explosionDelay = rom.readWordOrNull(BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC)
-                    ?: BOMB_DEFAULT_EXPLOSION_FRAME_DELAY
-                return BombDefaults(
-                    maxActiveBombs = derivePracticalBombCap(fuse, cooldown, hardCap),
-                    fuseFrames = fuse,
-                    cooldownFrames = cooldown,
-                    explosionFrameDelay = explosionDelay,
-                    hardCap = hardCap,
-                )
-            }
         }
+    }
+
+    private fun bombDefaults(context: ApplyContext): BombDefaults {
+        val fuse = context.readWordOrNull(BOMB_FUSE_TIMER_PC) ?: BOMB_DEFAULT_FUSE_FRAMES
+        val hardCap = context.readWordOrNull(BOMB_ACTIVE_HARD_CAP_OPERAND_PC) ?: BOMB_DEFAULT_HARD_CAP
+        val cooldown = context.readByteOrNull(BOMB_COOLDOWN_PC) ?: BOMB_DEFAULT_COOLDOWN_FRAMES
+        val explosionDelay = context.readWordOrNull(BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC)
+            ?: BOMB_DEFAULT_EXPLOSION_FRAME_DELAY
+        return BombDefaults(
+            maxActiveBombs = derivePracticalBombCap(fuse, cooldown, hardCap),
+            fuseFrames = fuse,
+            cooldownFrames = cooldown,
+            explosionFrameDelay = explosionDelay,
+            hardCap = hardCap,
+        )
     }
 }
 
@@ -1336,6 +1377,12 @@ private fun u24Bytes(value: Int): List<Int> =
 
 private fun ByteArray.toIntList(): List<Int> =
     map { it.toInt() and 0xFF }
+
+private fun ByteArray.smcHeaderOffset(): Int =
+    if (size == RomConstants.ROM_SIZE_WITH_HEADER) RomConstants.SMC_HEADER_SIZE else 0
+
+private fun ByteArray.headerlessRomBytes(): ByteArray =
+    if (smcHeaderOffset() == 0) this else copyOfRange(RomConstants.SMC_HEADER_SIZE, size)
 
 private fun ByteArray.readByteOrNull(offset: Int): Int? =
     if (offset in indices) this[offset].toInt() and 0xFF else null

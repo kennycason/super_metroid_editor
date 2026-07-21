@@ -1,4 +1,4 @@
-import type { BuildRequest, RandomizationRequest, ServicePatchResponse } from './types';
+import type { BuildRequest, RandomizationRequest, ServiceMetadata, ServicePatchResponse } from './types';
 
 export type PatchServiceInput = {
   serviceUrl: string;
@@ -8,20 +8,29 @@ export type PatchServiceInput = {
   randomize?: RandomizationRequest;
 };
 
-export async function patchRom(input: PatchServiceInput): Promise<ServicePatchResponse> {
-  const form = new FormData();
-  form.append('rom', input.rom, input.romFilename ?? 'base.smc');
-  form.append('build', JSON.stringify(stripEmpty(input.build)));
-  if (input.randomize) {
-    form.append('randomize', JSON.stringify(stripEmpty(input.randomize)));
+export async function fetchMetadata(serviceUrl: string): Promise<ServiceMetadata> {
+  const response = await fetch(`${serviceBaseUrl(serviceUrl)}/metadata`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(errorMessageFromResponse(text, response.status));
   }
 
-  const response = await fetch(`${input.serviceUrl.replace(/\/+$/, '')}/patch?format=json`, {
+  return response.json() as Promise<ServiceMetadata>;
+}
+
+export async function patchRom(input: PatchServiceInput): Promise<ServicePatchResponse> {
+  const response = await fetch(`${serviceBaseUrl(input.serviceUrl)}/patch?format=json`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
     },
-    body: form,
+    body: patchForm(input),
   });
 
   if (!response.ok) {
@@ -30,6 +39,34 @@ export async function patchRom(input: PatchServiceInput): Promise<ServicePatchRe
   }
 
   return response.json() as Promise<ServicePatchResponse>;
+}
+
+export async function patchIps(input: PatchServiceInput): Promise<Blob> {
+  const response = await fetch(`${serviceBaseUrl(input.serviceUrl)}/patch?format=ips`, {
+    method: 'POST',
+    body: patchForm(input),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(errorMessageFromResponse(text, response.status));
+  }
+
+  return response.blob();
+}
+
+function patchForm(input: PatchServiceInput): FormData {
+  const form = new FormData();
+  form.append('rom', input.rom, input.romFilename ?? 'base.smc');
+  form.append('build', JSON.stringify(stripEmpty(input.build)));
+  if (input.randomize) {
+    form.append('randomize', JSON.stringify(stripEmpty(input.randomize)));
+  }
+  return form;
+}
+
+function serviceBaseUrl(serviceUrl: string): string {
+  return serviceUrl.replace(/\/+$/, '');
 }
 
 export function base64ToBlob(base64: string, contentType: string): Blob {
@@ -46,8 +83,13 @@ export function downloadBlob(blob: Blob, filename: string): void {
   const anchor = document.createElement('a');
   anchor.href = href;
   anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(href);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(href);
+    anchor.remove();
+  }, 1000);
 }
 
 export function stripEmpty<T>(value: T): T {

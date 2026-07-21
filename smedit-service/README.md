@@ -14,6 +14,8 @@ The server listens on port `8080` by default. Set `SMEDIT_SERVICE_PORT` or `-Dsm
 
 The caller supplies the ROM in the request. The service does not read, store, or host ROM files. For command-line tools and web forms, prefer `multipart/form-data` with a `rom` file field. JSON with `romBase64` is also supported for SDK-style callers and tests.
 
+ROM uploads must be either a normal 3 MB Super Metroid ROM (`3145728` bytes) or a 3 MB ROM with a 512-byte SMC copier header (`3146240` bytes). Headered ROMs are patched at the correct file offsets; generated IPS patches use normal headerless offsets.
+
 Multipart fields:
 
 | Field | Required | Description |
@@ -25,6 +27,15 @@ Multipart fields:
 Use public patch IDs in `build.patches`. For the common intro patches, `skip_intro_and_ceres` starts directly on Zebes, while `skip_intro` starts at Ceres with only the intro cinematic skipped. Older internal IDs such as `bundled_*` and `hex_*` are still accepted as aliases.
 
 By default the response body is the patched ROM as `application/octet-stream`.
+
+## GET /metadata
+
+Use metadata to discover the service's supported public patch IDs, config schemas, randomizer presets, enemy categories, beam keys, color effects, and sprite palette region IDs:
+
+```bash
+curl -sS http://localhost:8080/metadata | jq '.randomization.enemyCategories'
+curl -sS http://localhost:8080/metadata | jq '.colorize.effects[].id'
+```
 
 ### Quick File Upload
 
@@ -42,7 +53,8 @@ BUILD_JSON="$(jq -nc '{
         item_fanfare_frames: 16
       }
     },
-    higher_jump: { enabled: true }
+    higher_jump: { enabled: true },
+    energy_free_shinesparks: { enabled: true }
   }
 }')"
 
@@ -101,6 +113,7 @@ BUILD_JSON="$(jq -nc '{
     skip_intro_and_ceres: { enabled: true },
     fast_doors: { enabled: true },
     higher_jump: { enabled: true },
+    energy_free_shinesparks: { enabled: true },
     bombs: {
       enabled: true,
       config: {
@@ -181,6 +194,34 @@ curl -sS \
 jq -r '.romBase64' patch-response.json | base64 -D > patched.smc
 jq -r '.ipsBase64' patch-response.json | base64 -D > patched.ips
 jq '.report' patch-response.json
+```
+
+### IPS-Only Response
+
+Use `?format=ips` to receive only the generated IPS patch as `application/octet-stream`:
+
+```bash
+ROM=path/to/base.smc
+BUILD_JSON="$(jq -nc '{
+  schemaVersion: 1,
+  patches: {
+    skip_intro_and_ceres: { enabled: true },
+    fanfares: {
+      enabled: true,
+      config: {
+        item_fanfare_frames: 16
+      }
+    },
+    energy_free_shinesparks: { enabled: true }
+  }
+}')"
+
+curl -sS \
+  -X POST \
+  -F rom=@"$ROM" \
+  -F "build=$BUILD_JSON" \
+  'http://localhost:8080/patch?format=ips' \
+  --output smedit.ips
 ```
 
 ### Randomized Patch Configs
@@ -310,7 +351,7 @@ When randomization is used, JSON responses include:
 }
 ```
 
-Raw ROM responses include `X-SMEDIT-Randomization-Seed`, `X-SMEDIT-Randomization-Preset`, `X-SMEDIT-Randomized-Config-Types`, and `X-SMEDIT-Randomized-Field-Counts` headers when randomization is used.
+Raw ROM and IPS responses include `X-SMEDIT-Randomization-Seed`, `X-SMEDIT-Randomization-Preset`, `X-SMEDIT-Randomized-Config-Types`, and `X-SMEDIT-Randomized-Field-Counts` headers when randomization is used.
 
 ### Boss Lab Request
 
@@ -380,7 +421,8 @@ jq -nc --arg rom "$ROM_B64" '{
           item_fanfare_frames: 16
         }
       },
-      higher_jump: { enabled: true }
+      higher_jump: { enabled: true },
+      energy_free_shinesparks: { enabled: true }
     }
   }
 }' |

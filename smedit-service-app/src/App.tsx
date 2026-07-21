@@ -9,7 +9,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { base64ToBlob, downloadBlob, patchRom, stripEmpty } from './api';
+import { base64ToBlob, downloadBlob, fetchMetadata, patchIps, patchRom, stripEmpty } from './api';
 import { deleteRom, getRom, listRoms, saveRomFile } from './storage';
 import type {
   BuildRequest,
@@ -17,6 +17,7 @@ import type {
   PatchOption,
   RandomizationRequest,
   RomHistorySummary,
+  ServiceMetadata,
   ServicePatchResponse,
 } from './types';
 
@@ -28,6 +29,7 @@ const patchOptions: PatchOption[] = [
   { id: 'vanilla_bugfixes', label: 'Vanilla bugfixes', section: 'Start' },
   { id: 'fanfares', label: 'Quick item fanfares', section: 'Start', defaultEnabled: true },
   { id: 'higher_jump', label: 'Higher jump', section: 'Movement' },
+  { id: 'energy_free_shinesparks', label: 'Energy-free shinesparks', section: 'Movement' },
   { id: 'fast_doors', label: 'Fast doors', section: 'Movement' },
   { id: 'fast_elevators', label: 'Fast elevators', section: 'Movement' },
   { id: 'infinite_missiles', label: 'Infinite missiles', section: 'Supplies' },
@@ -37,29 +39,31 @@ const patchOptions: PatchOption[] = [
   { id: 'infinite_blue_suit', label: 'Infinite blue suit', section: 'Combat' },
 ];
 
-const colorEffects = [
-  'psychedelic',
-  'vaporwave',
-  'acid',
-  'cyberpunk',
-  'rainbow',
-  'thermal',
-  'hologram',
-  'pastel',
-  'golden',
-  'icecold',
-  'lava',
-  'underwater',
-  'grayscale',
-  'invert',
+const fallbackColorEffects = [
+  { id: 'psychedelic', name: 'Psychedelic' },
+  { id: 'vaporwave', name: 'Vaporwave' },
+  { id: 'acid', name: 'Acid Trip' },
+  { id: 'cyberpunk', name: 'Cyberpunk' },
+  { id: 'rainbow', name: 'Rainbow' },
+  { id: 'thermal', name: 'Thermal' },
+  { id: 'hologram', name: 'Hologram' },
+  { id: 'pastel', name: 'Pastel' },
+  { id: 'golden', name: 'Golden' },
+  { id: 'icecold', name: 'Ice Cold' },
+  { id: 'lava', name: 'Lava' },
+  { id: 'underwater', name: 'Underwater' },
+  { id: 'grayscale', name: 'Grayscale' },
+  { id: 'invert', name: 'Invert' },
 ];
 
-const beamOptions = ['power', 'ice', 'wave', 'spazer', 'plasma', 'iwp'];
-const categoryOptions = ['Pirate', 'Flyer', 'Crawler', 'Boss', 'Special'];
+const fallbackBeamOptions = ['power', 'ice', 'spazer', 'wave', 'plasma', 'is', 'iw', 'ws', 'iws', 'ip', 'wp', 'iwp'];
+const fallbackCategoryOptions = ['Aquatic', 'Crawler', 'Flyer', 'Hopper', 'Pirate', 'Spawner', 'Special'];
 const defaultPatches = Object.fromEntries(patchOptions.map((option) => [option.id, !!option.defaultEnabled])) as Record<
   PatchId,
   boolean
 >;
+
+type OutputMode = 'rom' | 'ips';
 
 type ResultState = {
   response: ServicePatchResponse;
@@ -73,9 +77,12 @@ export function App() {
   const [serviceUrl, setServiceUrl] = useState(serviceUrlDefault);
   const [history, setHistory] = useState<RomHistorySummary[]>([]);
   const [selectedRomId, setSelectedRomId] = useState<string>('');
+  const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
   const [isDragging, setDragging] = useState(false);
   const [enabledPatches, setEnabledPatches] = useState<Record<PatchId, boolean>>(defaultPatches);
   const [fanfareFrames, setFanfareFrames] = useState(16);
+  const [outputMode, setOutputMode] = useState<OutputMode>('rom');
 
   const [colorizeEnabled, setColorizeEnabled] = useState(true);
   const [colorEffect, setColorEffect] = useState('psychedelic');
@@ -85,7 +92,7 @@ export function App() {
   const [spriteRegionFilter, setSpriteRegionFilter] = useState('');
 
   const [randomEnabled, setRandomEnabled] = useState(true);
-  const [preset, setPreset] = useState<'balanced' | 'spicy' | 'chaos' | 'survival'>('spicy');
+  const [preset, setPreset] = useState('spicy');
   const [seed, setSeed] = useState('');
   const [selectedBeams, setSelectedBeams] = useState<string[]>(['power', 'ice', 'wave', 'plasma']);
   const [excludeMetroid, setExcludeMetroid] = useState(true);
@@ -122,11 +129,39 @@ export function App() {
     void refreshHistory();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadMetadata() {
+      try {
+        const loaded = await fetchMetadata(serviceUrl);
+        if (controller.signal.aborted) return;
+        setMetadata(loaded);
+        setMetadataError(null);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setMetadata(null);
+        setMetadataError(`Metadata unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    void loadMetadata();
+    return () => controller.abort();
+  }, [serviceUrl]);
+
   const selectedRom = history.find((item) => item.id === selectedRomId);
+  const availablePatchIds = useMemo(() => new Set(metadata?.patches.map((patch) => patch.id)), [metadata]);
+  const visiblePatchOptions = useMemo(
+    () => patchOptions.filter((option) => !metadata || availablePatchIds.has(option.id)),
+    [availablePatchIds, metadata],
+  );
+  const colorEffectOptions = metadata?.colorize.effects ?? fallbackColorEffects;
+  const beamOptions = metadata?.randomization.beams ?? fallbackBeamOptions;
+  const categoryOptions = metadata?.randomization.enemyCategories ?? fallbackCategoryOptions;
+  const presetOptions = metadata?.randomization.presets ?? ['balanced', 'spicy', 'chaos', 'survival'];
 
   const buildRequest = useMemo<BuildRequest>(() => {
     const patches: NonNullable<BuildRequest['patches']> = {};
-    for (const option of patchOptions) {
+    for (const option of visiblePatchOptions) {
       if (!enabledPatches[option.id]) continue;
       patches[option.id] =
         option.id === 'fanfares'
@@ -159,6 +194,7 @@ export function App() {
     includeTilesets,
     spriteRegionFilter,
     tilesetFilter,
+    visiblePatchOptions,
   ]);
 
   const randomizationRequest = useMemo<RandomizationRequest | undefined>(() => {
@@ -167,7 +203,7 @@ export function App() {
     const excludedEnemies = [...(excludeMetroid ? ['metroid'] : []), ...parseStringList(extraExcludedEnemies)];
     const request: RandomizationRequest = {
       preset,
-      seed: seed.trim() ? Number(seed) : undefined,
+      seed: parseOptionalInteger(seed),
       includeBeams: selectedBeams,
       excludeEnemies: excludedEnemies,
       includeEnemyCategories: includeCategories,
@@ -250,6 +286,148 @@ export function App() {
     selectedBeams,
   ]);
 
+  const validationErrors = useMemo(() => {
+    const errors: string[] = [];
+    if (
+      enabledPatches.fanfares &&
+      (!Number.isFinite(fanfareFrames) || !Number.isInteger(fanfareFrames) || fanfareFrames < 1 || fanfareFrames > 9999)
+    ) {
+      errors.push('Fanfare frames must be an integer from 1 to 9999.');
+    }
+
+    if (colorizeEnabled) {
+      if (!colorEffectOptions.some((effect) => effect.id === colorEffect)) {
+        errors.push(`Color effect '${colorEffect}' is not available from this service.`);
+      }
+      if (!includeTilesets && !includeSprites) {
+        errors.push('Colorize must include area tilesets, sprite palettes, or both.');
+      }
+      const parsedTilesets = parseIntegerListDetailed(tilesetFilter);
+      if (parsedTilesets.invalid.length > 0) {
+        errors.push(`Tilesets must be comma-separated integers: ${parsedTilesets.invalid.join(', ')}.`);
+      }
+      const maxTileset = (metadata?.colorize.tilesetCount ?? 29) - 1;
+      const invalidTilesets = parsedTilesets.values.filter((id) => id < 0 || id > maxTileset);
+      if (invalidTilesets.length > 0) {
+        errors.push(`Tileset IDs must be from 0 to ${maxTileset}: ${invalidTilesets.join(', ')}.`);
+      }
+      if (metadata && spriteRegionFilter.trim()) {
+        const knownRegions = new Set(metadata.colorize.spriteRegions.map((region) => region.id));
+        const unknownRegions = parseStringList(spriteRegionFilter).filter((region) => !knownRegions.has(region));
+        if (unknownRegions.length > 0) {
+          errors.push(`Unknown sprite region(s): ${unknownRegions.join(', ')}.`);
+        }
+      }
+    }
+
+    if (randomEnabled) {
+      if (seed.trim() && parseOptionalInteger(seed) === undefined) {
+        errors.push('Seed must be an integer.');
+      }
+      if (!presetOptions.includes(preset)) {
+        errors.push(`Preset '${preset}' is not available from this service.`);
+      }
+      const knownBeams = new Set(beamOptions);
+      const unknownBeams = selectedBeams.filter((beam) => !knownBeams.has(beam));
+      if (unknownBeams.length > 0) {
+        errors.push(`Unknown beam filter(s): ${unknownBeams.join(', ')}.`);
+      }
+      if (metadata) {
+        const knownCategories = new Set(categoryOptions);
+        const unknownCategories = [...includeCategories, ...excludeCategories].filter((category) => !knownCategories.has(category));
+        if (unknownCategories.length > 0) {
+          errors.push(`Unknown enemy category filter(s): ${[...new Set(unknownCategories)].join(', ')}.`);
+        }
+        const knownEnemies = new Set(metadata.randomization.enemies.map((enemy) => enemy.key));
+        const unknownEnemies = parseStringList(extraExcludedEnemies).filter((enemy) => !knownEnemies.has(enemy));
+        if (unknownEnemies.length > 0) {
+          errors.push(`Unknown excluded enemy key(s): ${unknownEnemies.join(', ')}.`);
+        }
+      }
+      if (overrideBeamDamage) {
+        errors.push(...validateOrderedRange('Beam damage rate', beamDamageMin, beamDamageMax, 0));
+      }
+      if (overrideEnemyStats) {
+        if (!randomizeHp && !randomizeContactDamage) {
+          errors.push('Enemy stats must randomize HP, contact damage, or both.');
+        }
+        errors.push(...validateOrderedRange('Enemy HP rate', enemyHpMin, enemyHpMax, 0));
+        errors.push(...validateOrderedRange('Enemy damage rate', enemyDamageMin, enemyDamageMax, 0));
+      }
+      if (overrideDrops) {
+        if (!Number.isFinite(dropNothingWeight) || dropNothingWeight < 0) {
+          errors.push('Enemy drops nothing weight must be non-negative.');
+        }
+        if (!Number.isInteger(dropMinNonZeroSlots) || dropMinNonZeroSlots < 1 || dropMinNonZeroSlots > 6) {
+          errors.push('Enemy drops min slots must be an integer from 1 to 6.');
+        }
+        if (!Number.isInteger(dropMaxNothing) || dropMaxNothing < 0 || dropMaxNothing > 255) {
+          errors.push('Enemy drops max nothing must be an integer from 0 to 255.');
+        }
+      }
+      if (overrideVulnerabilities) {
+        if (!Number.isFinite(noEffectChance) || noEffectChance < 0 || noEffectChance > 1) {
+          errors.push('No effect chance must be from 0.0 to 1.0.');
+        }
+        if (!Number.isInteger(minEffectiveWeapons) || minEffectiveWeapons < 0 || minEffectiveWeapons > 22) {
+          errors.push('Min effective weapons must be an integer from 0 to 22.');
+        }
+        const parsedMultipliers = parseIntegerListDetailed(multipliers);
+        if (parsedMultipliers.invalid.length > 0) {
+          errors.push(`Multipliers must be comma-separated integers: ${parsedMultipliers.invalid.join(', ')}.`);
+        }
+        if (parsedMultipliers.values.length === 0) {
+          errors.push('Multipliers must include at least one value.');
+        }
+        const invalidMultipliers = parsedMultipliers.values.filter((value) => value < 1 || value > 255);
+        if (invalidMultipliers.length > 0) {
+          errors.push(`Multipliers must be from 1 to 255: ${invalidMultipliers.join(', ')}.`);
+        }
+      }
+    }
+
+    return errors;
+  }, [
+    beamDamageMax,
+    beamDamageMin,
+    beamOptions,
+    categoryOptions,
+    colorEffect,
+    colorEffectOptions,
+    colorizeEnabled,
+    dropMaxNothing,
+    dropMinNonZeroSlots,
+    dropNothingWeight,
+    enemyDamageMax,
+    enemyDamageMin,
+    enemyHpMax,
+    enemyHpMin,
+    enabledPatches.fanfares,
+    excludeCategories,
+    extraExcludedEnemies,
+    fanfareFrames,
+    includeCategories,
+    includeSprites,
+    includeTilesets,
+    metadata,
+    minEffectiveWeapons,
+    multipliers,
+    noEffectChance,
+    overrideBeamDamage,
+    overrideDrops,
+    overrideEnemyStats,
+    overrideVulnerabilities,
+    preset,
+    presetOptions,
+    randomEnabled,
+    randomizeContactDamage,
+    randomizeHp,
+    seed,
+    selectedBeams,
+    tilesetFilter,
+    spriteRegionFilter,
+  ]);
+
   const previewJson = useMemo(
     () =>
       JSON.stringify(
@@ -264,12 +442,16 @@ export function App() {
   );
 
   async function refreshHistory(nextSelectedId?: string) {
-    const items = await listRoms();
-    setHistory(items);
-    setSelectedRomId((current) => {
-      if (nextSelectedId !== undefined) return nextSelectedId || items[0]?.id || '';
-      return current || items[0]?.id || '';
-    });
+    try {
+      const items = await listRoms();
+      setHistory(items);
+      setSelectedRomId((current) => {
+        if (nextSelectedId !== undefined) return nextSelectedId || items[0]?.id || '';
+        return current || items[0]?.id || '';
+      });
+    } catch (err) {
+      setError(`Could not read local ROM history: ${errorText(err)}`);
+    }
   }
 
   async function importFile(file: File) {
@@ -279,9 +461,13 @@ export function App() {
       setError('Use a .smc or .sfc ROM file.');
       return;
     }
-    const summary = await saveRomFile(file);
-    await refreshHistory(summary.id);
-    setNotice(`Stored ${summary.name}`);
+    try {
+      const summary = await saveRomFile(file);
+      await refreshHistory(summary.id);
+      setNotice(`Stored ${summary.name}`);
+    } catch (err) {
+      setError(`Could not store ROM locally: ${errorText(err)}`);
+    }
   }
 
   async function handleFiles(files: FileList | File[]) {
@@ -290,9 +476,16 @@ export function App() {
   }
 
   async function removeRom(id: string) {
-    await deleteRom(id);
-    setResult(null);
-    await refreshHistory(selectedRomId === id ? '' : selectedRomId);
+    setError(null);
+    setNotice(null);
+    try {
+      await deleteRom(id);
+      setResult(null);
+      await refreshHistory(selectedRomId === id ? '' : selectedRomId);
+      setNotice('Removed ROM from local history');
+    } catch (err) {
+      setError(`Could not remove ROM: ${errorText(err)}`);
+    }
   }
 
   async function generateRom() {
@@ -303,31 +496,44 @@ export function App() {
       setError('Select a ROM first.');
       return;
     }
-
-    const record = await getRom(selectedRom.id);
-    if (!record) {
-      setError('Selected ROM was not found in local history.');
-      await refreshHistory();
+    if (validationErrors.length > 0) {
+      setError(validationErrors[0]);
       return;
     }
 
     setBusy(true);
     try {
-      const response = await patchRom({
+      const record = await getRom(selectedRom.id);
+      if (!record) {
+        setError('Selected ROM was not found in local history.');
+        await refreshHistory();
+        return;
+      }
+
+      const patchInput = {
         serviceUrl,
         rom: record.blob,
         romFilename: record.name,
         build: buildRequest,
         randomize: randomizationRequest,
-      });
+      };
       const baseName = record.name.replace(/\.(smc|sfc)$/i, '');
+
+      if (outputMode === 'ips') {
+        const ipsBlob = await patchIps(patchInput);
+        downloadBlob(ipsBlob, `${baseName}-smedit.ips`);
+        setNotice('Generated IPS patch');
+        return;
+      }
+
+      const response = await patchRom(patchInput);
       const romBlob = base64ToBlob(response.romBase64, 'application/octet-stream');
       const ipsBlob = base64ToBlob(response.ipsBase64, 'application/octet-stream');
       setResult({ response, romBlob, ipsBlob, baseName });
       downloadBlob(romBlob, `${baseName}-smedit.smc`);
       setNotice('Generated patched ROM');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -364,6 +570,12 @@ export function App() {
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
             role="button"
             tabIndex={0}
           >
@@ -424,7 +636,7 @@ export function App() {
               <h2>Patch Toggles</h2>
             </div>
             <div className="option-grid">
-              {patchOptions.map((option) => (
+              {visiblePatchOptions.map((option) => (
                 <label key={option.id} className="checkbox-row">
                   <input
                     type="checkbox"
@@ -443,6 +655,7 @@ export function App() {
                 </label>
               ))}
             </div>
+            {metadataError && <div className="inline-note">{metadataError}</div>}
             <label className="field compact">
               <span>Fanfare frames</span>
               <input
@@ -472,9 +685,9 @@ export function App() {
               <label className="field">
                 <span>Effect</span>
                 <select value={colorEffect} onChange={(event) => setColorEffect(event.target.value)}>
-                  {colorEffects.map((effect) => (
-                    <option key={effect} value={effect}>
-                      {effect}
+                  {colorEffectOptions.map((effect) => (
+                    <option key={effect.id} value={effect.id}>
+                      {effect.name}
                     </option>
                   ))}
                 </select>
@@ -535,11 +748,12 @@ export function App() {
             <div className="controls-grid">
               <label className="field">
                 <span>Preset</span>
-                <select value={preset} onChange={(event) => setPreset(event.target.value as typeof preset)}>
-                  <option value="balanced">balanced</option>
-                  <option value="spicy">spicy</option>
-                  <option value="chaos">chaos</option>
-                  <option value="survival">survival</option>
+                <select value={preset} onChange={(event) => setPreset(event.target.value)}>
+                  {presetOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="field">
@@ -651,9 +865,20 @@ export function App() {
                 <small>{selectedRom ? formatBytes(selectedRom.size) : 'Upload or select from history'}</small>
               </span>
             </div>
-            <button className="primary-button" disabled={busy || !selectedRom} onClick={() => void generateRom()}>
+            <label className="field output-mode">
+              <span>Output</span>
+              <select value={outputMode} onChange={(event) => setOutputMode(event.target.value as OutputMode)}>
+                <option value="rom">Patched ROM + IPS</option>
+                <option value="ips">IPS only</option>
+              </select>
+            </label>
+            <button
+              className="primary-button"
+              disabled={busy || !selectedRom || validationErrors.length > 0}
+              onClick={() => void generateRom()}
+            >
               {busy ? <Loader2 className="spin" size={20} /> : <Play size={20} />}
-              Generate ROM
+              {outputMode === 'ips' ? 'Generate IPS' : 'Generate ROM'}
             </button>
             {result && (
               <div className="download-row">
@@ -669,6 +894,13 @@ export function App() {
             )}
             {error && <div className="message error">{error}</div>}
             {notice && <div className="message notice">{notice}</div>}
+            {validationErrors.length > 0 && (
+              <div className="message error">
+                {validationErrors.map((message) => (
+                  <p key={message}>{message}</p>
+                ))}
+              </div>
+            )}
             {result && (
               <div className="report-strip">
                 <span>{result.response.report.changedBytes.toLocaleString()} changed bytes</span>
@@ -787,9 +1019,47 @@ function parseStringList(value: string): string[] {
 }
 
 function parseIntegerList(value: string): number[] {
-  return parseStringList(value)
-    .map((item) => Number.parseInt(item, 10))
-    .filter((item) => Number.isFinite(item));
+  return parseIntegerListDetailed(value).values;
+}
+
+function parseIntegerListDetailed(value: string): { values: number[]; invalid: string[] } {
+  const values: number[] = [];
+  const invalid: string[] = [];
+  for (const item of parseStringList(value)) {
+    if (!/^-?\d+$/.test(item)) {
+      invalid.push(item);
+      continue;
+    }
+    const parsed = Number(item);
+    if (!Number.isSafeInteger(parsed)) {
+      invalid.push(item);
+      continue;
+    }
+    values.push(parsed);
+  }
+  return { values, invalid };
+}
+
+function parseOptionalInteger(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!/^-?\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function validateOrderedRange(label: string, min: number, max: number, floor: number): string[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return [`${label} must use finite numbers.`];
+  }
+  if (min < floor || max < floor || max < min) {
+    return [`${label} min/max must be at least ${floor} and ordered.`];
+  }
+  return [];
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function formatBytes(bytes: number): string {
