@@ -10,6 +10,7 @@ import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.rom.RomConstants
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.http.content.streamProvider
@@ -21,6 +22,7 @@ import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.contentType
 import io.ktor.server.request.receive
@@ -77,6 +79,26 @@ fun Application.smeditServiceModule(
 ) {
     install(ContentNegotiation) {
         json(serviceJson)
+    }
+    install(CORS) {
+        allowMethod(HttpMethod.Post)
+        allowMethod(HttpMethod.Options)
+        allowHeader(HttpHeaders.Accept)
+        allowHeader(HttpHeaders.ContentType)
+        allowNonSimpleContentTypes = true
+
+        exposeHeader("X-SMEDIT-Changed-Bytes")
+        exposeHeader("X-SMEDIT-Patch-Bytes")
+        exposeHeader("X-SMEDIT-Warnings")
+        exposeHeader("X-SMEDIT-Randomization-Seed")
+        exposeHeader("X-SMEDIT-Randomization-Preset")
+        exposeHeader("X-SMEDIT-Randomized-Config-Types")
+        exposeHeader("X-SMEDIT-Randomized-Field-Counts")
+
+        allowHost("localhost:5173", schemes = listOf("http"))
+        allowHost("127.0.0.1:5173", schemes = listOf("http"))
+        allowHost("localhost:4173", schemes = listOf("http"))
+        allowHost("127.0.0.1:4173", schemes = listOf("http"))
     }
     install(StatusPages) {
         exception<SerializationException> { call, cause ->

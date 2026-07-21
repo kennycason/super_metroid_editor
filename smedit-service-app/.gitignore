@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+.DS_Store
+*.log
+vite.config.d.ts
+vite.config.js
+*.smc
+*.sfc
+*.rom
