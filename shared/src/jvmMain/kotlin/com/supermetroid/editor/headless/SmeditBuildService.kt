@@ -19,6 +19,7 @@ import com.supermetroid.editor.rom.readU8
 import java.util.Base64
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.random.Random
 
 class SmeditBuildService(
     catalogPatches: List<SmPatch> = SmeditPatchCatalog.defaultPatches(),
@@ -352,13 +353,14 @@ class SmeditBuildService(
             return null
         }
 
+        val random = colorize.seed?.let(::Random)
         val beforeRecords = context.patchWrites.size
         val beforeBytes = context.patchWrites.totalByteCount()
         if (colorize.includeTilesets) {
-            applyTilesetPaletteColorize(effect, colorize, context)
+            applyTilesetPaletteColorize(effect, colorize, context, random)
         }
         if (colorize.includeSprites) {
-            applySpritePaletteColorize(effect, colorize, context)
+            applySpritePaletteColorize(effect, colorize, context, random)
         }
 
         val writes = context.patchWrites.size - beforeRecords
@@ -366,7 +368,7 @@ class SmeditBuildService(
 
         return SmeditAppliedPatchReport(
             identifier = "colorize",
-            name = "Colorize Palettes (${effect.name})",
+            name = "Colorize Palettes (${effect.name}${colorize.seed?.let { ", seed $it" } ?: ""})",
             source = "request",
             configType = "colorize",
             writes = writes,
@@ -378,6 +380,7 @@ class SmeditBuildService(
         effect: PaletteEffects.EffectDef,
         colorize: SmeditColorizeRequest,
         context: ApplyContext,
+        random: Random?,
     ) {
         val writer = createTilesetPaletteWriter(
             context = context,
@@ -399,7 +402,7 @@ class SmeditBuildService(
 
         for (snapshot in snapshots) {
             val colors = SpritePalettes.bytesToColors(snapshot.rawPalette)
-            effect.apply(colors)
+            PaletteEffects.applyEffect(effect, colors, random)
             writeTilesetPalette(
                 writer = writer,
                 target = snapshot.target,
@@ -414,6 +417,7 @@ class SmeditBuildService(
         effect: PaletteEffects.EffectDef,
         colorize: SmeditColorizeRequest,
         context: ApplyContext,
+        random: Random?,
     ) {
         val rom = context.outputRom ?: return
         val regions = resolveColorizeSpriteRegions(colorize, context) ?: return
@@ -428,7 +432,7 @@ class SmeditBuildService(
                 context.warnings.add("Sprite palette '${region.id}' could not be read for colorize.")
                 continue
             }
-            effect.apply(colors)
+            PaletteEffects.applyEffect(effect, colors, random)
             writeBytes(context, region.offset, SpritePalettes.colorsToBytes(colors).toIntList(), "colorize ${region.name}")
         }
     }

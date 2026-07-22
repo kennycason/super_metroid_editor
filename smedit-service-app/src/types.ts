@@ -37,6 +37,7 @@ export type PatchRequest = {
 
 export type ColorizeRequest = {
   effect: string;
+  seed?: number;
   includeTilesets?: boolean;
   includeSprites?: boolean;
   tilesets?: number[];
@@ -88,7 +89,7 @@ export type RandomizationRequest = {
   };
 };
 
-export type RomHistoryItem = {
+export type StoredRomItem = {
   id: string;
   name: string;
   size: number;
@@ -97,7 +98,7 @@ export type RomHistoryItem = {
   blob: Blob;
 };
 
-export type RomHistorySummary = Omit<RomHistoryItem, 'blob'>;
+export type StoredRomSummary = Omit<StoredRomItem, 'blob'>;
 
 export type ServicePatchResponse = {
   romBase64: string;

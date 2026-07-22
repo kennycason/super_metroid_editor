@@ -33,6 +33,7 @@ data class SmeditRawWriteRequest(
 @Serializable
 data class SmeditColorizeRequest(
     val effect: String,
+    val seed: Long? = null,
     val includeTilesets: Boolean = true,
     val includeSprites: Boolean = true,
     val tilesets: List<Int> = emptyList(),

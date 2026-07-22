@@ -136,12 +136,13 @@ For ROM-backed builds, add `colorize` to apply one of the shared palette effects
 ```json
 {
   "colorize": {
-    "effect": "psychedelic"
+    "effect": "psychedelic-randomize",
+    "seed": 12345
   }
 }
 ```
 
-You can also pass `--colorize psychedelic` to `build` to set or override this field from the CLI. Palette colorize requires `--rom` because it reads the caller-provided ROM's compressed tileset palettes before writing or relocating them.
+You can also pass `--colorize psychedelic-randomize` to `build` to set or override this field from the CLI. Random colorize effects accept an optional `seed` in JSON for reproducible output; omit it to reroll each build. Palette colorize requires `--rom` because it reads the caller-provided ROM's compressed tileset palettes before writing or relocating them.
 
 Enemy, beam, boss, generated hook, physics, and controller config keys match the desktop patch UI:
 
@@ -235,7 +236,7 @@ Generate a patched ROM and an IPS from a caller-provided ROM:
 Apply a color effect while building a ROM:
 
 ```bash
-./gradlew -q :cli:runCli -Pargs='--rom base.smc build --config build.json --colorize psychedelic --output out.smc --report report.json'
+./gradlew -q :cli:runCli -Pargs='--rom base.smc build --config build.json --colorize psychedelic-randomize --output out.smc --report report.json'
 ```
 
 Reports are JSON and are also printed to stdout:
@@ -273,7 +274,7 @@ Build v1 supports:
 - ROM-backed `.smedit` tileset palette overrides, including area palette randomization.
 - `.smedit` fixed sprite palette overrides for Samus, beams, bosses, and listed enemy palette regions.
 - ROM-backed dynamic enemy palette overrides stored as `enemy_pal:<speciesId>`.
-- ROM-backed palette colorize effects such as `psychedelic`.
+- ROM-backed palette colorize effects such as `psychedelic-randomize`.
 - Raw PC writes with `pcOffset` or `address: "pc:0x..."`.
 - Raw SNES LoROM writes with `snesAddress` or `address: "80:8000"`.
 - IPS-only generation without reading or writing a ROM.

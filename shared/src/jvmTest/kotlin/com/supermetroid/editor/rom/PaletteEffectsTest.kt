@@ -1,8 +1,10 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import kotlin.random.Random
 
 class PaletteEffectsTest {
 
@@ -119,5 +121,24 @@ class PaletteEffectsTest {
         PaletteEffects.mathematicalRandomize(mathematical)
         assertEquals(0, mathematical[0])
         assertEquals(0, mathematical[16])
+    }
+
+    @Test
+    fun `seeded random effects are reproducible`() {
+        val original = IntArray(32) { i ->
+            if (i == 0 || i == 16) 0
+            else PaletteEffects.rgb5ToBgr555((i * 3) % 32, (i * 5) % 32, (i * 7) % 32)
+        }
+        val effect = PaletteEffects.findEffect("psychedelic-randomize")!!
+
+        val first = original.copyOf()
+        val second = original.copyOf()
+        val third = original.copyOf()
+        PaletteEffects.applyEffect(effect, first, Random(12345L))
+        PaletteEffects.applyEffect(effect, second, Random(12345L))
+        PaletteEffects.applyEffect(effect, third, Random(54321L))
+
+        assertArrayEquals(first, second)
+        assertNotEquals(first.toList(), third.toList())
     }
 }

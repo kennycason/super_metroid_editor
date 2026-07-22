@@ -80,9 +80,20 @@ export function base64ToBlob(base64: string, contentType: string): Blob {
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const href = URL.createObjectURL(blob);
+  const frameName = 'smedit-download-frame';
+  let frame = document.querySelector<HTMLIFrameElement>(`iframe[name="${frameName}"]`);
+  if (!frame) {
+    frame = document.createElement('iframe');
+    frame.name = frameName;
+    frame.style.display = 'none';
+    document.body.appendChild(frame);
+  }
+
   const anchor = document.createElement('a');
   anchor.href = href;
   anchor.download = filename;
+  anchor.target = frameName;
+  anchor.rel = 'noopener';
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();

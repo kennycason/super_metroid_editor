@@ -66,7 +66,7 @@ curl -sS \
   --output patched.smc
 ```
 
-There is also a ready-to-run version of this pattern at `examples/service/random-spicy-combat.sh`. It accepts `--colorize psychedelic` to add a ROM palette effect to the generated combat ROM.
+There is also a ready-to-run version of this pattern at `examples/service/random-spicy-combat.sh`. It accepts `--colorize psychedelic-randomize` to add a ROM palette effect to the generated combat ROM.
 
 ### Colorize Palettes
 
@@ -86,7 +86,8 @@ BUILD_JSON="$(jq -nc '{
     }
   },
   colorize: {
-    effect: "psychedelic"
+    effect: "psychedelic-randomize",
+    seed: 12345
   }
 }')"
 
@@ -95,10 +96,10 @@ curl -sS \
   -F rom=@"$ROM" \
   -F "build=$BUILD_JSON" \
   http://localhost:8080/patch \
-  --output psychedelic.smc
+  --output psychedelic-chaos.smc
 ```
 
-The effect must match an ID from SMEDIT's palette effect registry, such as `psychedelic`, `vaporwave`, `grayscale`, or `acid`. Palette colorize requires a ROM upload because the service must read compressed tileset palette pointers before writing or relocating color data.
+The effect must match an ID from SMEDIT's palette effect registry, such as `psychedelic-randomize`, `randomize`, `mathematical-randomize`, `psychedelic`, `vaporwave`, `grayscale`, or `acid`. The optional `seed` makes random colorize effects reproducible; omit it to reroll each build. Palette colorize requires a ROM upload because the service must read compressed tileset palette pointers before writing or relocating color data.
 
 ### Raw ROM Response
 

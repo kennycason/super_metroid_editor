@@ -1,4 +1,4 @@
-import type { RomHistoryItem, RomHistorySummary } from './types';
+import type { StoredRomItem, StoredRomSummary } from './types';
 
 const DB_NAME = 'smedit-service-app';
 const DB_VERSION = 1;
@@ -52,8 +52,8 @@ export function romIdForFile(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-export async function saveRomFile(file: File): Promise<RomHistorySummary> {
-  const item: RomHistoryItem = {
+export async function saveRomFile(file: File): Promise<StoredRomSummary> {
+  const item: StoredRomItem = {
     id: romIdForFile(file),
     name: file.name,
     size: file.size,
@@ -61,22 +61,25 @@ export async function saveRomFile(file: File): Promise<RomHistorySummary> {
     addedAt: Date.now(),
     blob: file,
   };
-  await withStore('readwrite', (store) => store.put(item));
+  await withStore('readwrite', (store) => {
+    store.clear();
+    return store.put(item);
+  });
   const { blob: _blob, ...summary } = item;
   return summary;
 }
 
-export async function listRoms(): Promise<RomHistorySummary[]> {
-  const items = (await withStore<RomHistoryItem[]>('readonly', (store) => store.getAll())) ?? [];
+export async function listRoms(): Promise<StoredRomSummary[]> {
+  const items = (await withStore<StoredRomItem[]>('readonly', (store) => store.getAll())) ?? [];
   return items
     .map(({ blob: _blob, ...summary }) => summary)
     .sort((a, b) => b.addedAt - a.addedAt);
 }
 
-export async function getRom(id: string): Promise<RomHistoryItem | undefined> {
-  return withStore<RomHistoryItem>('readonly', (store) => store.get(id));
+export async function getRom(id: string): Promise<StoredRomItem | undefined> {
+  return withStore<StoredRomItem>('readonly', (store) => store.get(id));
 }
 
-export async function deleteRom(id: string): Promise<void> {
-  await withStore('readwrite', (store) => store.delete(id));
+export async function clearRoms(): Promise<void> {
+  await withStore('readwrite', (store) => store.clear());
 }

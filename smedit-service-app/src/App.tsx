@@ -1,24 +1,23 @@
 import { ChangeEvent, DragEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  Download,
   FileArchive,
-  History,
   Loader2,
   Play,
+  RefreshCw,
   Trash2,
   Upload,
 } from 'lucide-react';
 import { base64ToBlob, downloadBlob, fetchMetadata, patchIps, patchRom, stripEmpty } from './api';
-import { deleteRom, getRom, listRoms, saveRomFile } from './storage';
+import { clearRoms, getRom, listRoms, saveRomFile } from './storage';
 import type {
   BuildRequest,
   PatchId,
   PatchOption,
   RandomizationRequest,
-  RomHistorySummary,
   ServiceMetadata,
   ServicePatchResponse,
+  StoredRomSummary,
 } from './types';
 
 const serviceUrlDefault = import.meta.env.VITE_SMEDIT_SERVICE_URL || 'http://localhost:8080';
@@ -43,6 +42,9 @@ const patchOptions: PatchOption[] = [
 ];
 
 const fallbackColorEffects = [
+  { id: 'psychedelic-randomize', name: 'Psychedelic Chaos' },
+  { id: 'randomize', name: 'Random Chaos' },
+  { id: 'mathematical-randomize', name: 'Mathematical Harmony' },
   { id: 'psychedelic', name: 'Psychedelic' },
   { id: 'vaporwave', name: 'Vaporwave' },
   { id: 'acid', name: 'Acid Trip' },
@@ -81,12 +83,12 @@ type CeresTimerSettings = {
 };
 
 type PersistedSettings = {
+  settingsVersion?: number;
   serviceUrl?: string;
   selectedRomId?: string;
   selectedPatchId?: PatchId | null;
   enabledPatches?: Partial<Record<PatchId, boolean>>;
   fanfareFrames?: number;
-  outputMode?: OutputMode;
   bombs?: Partial<BombSettings>;
   ceresTimer?: Partial<CeresTimerSettings>;
   colorize?: {
@@ -96,6 +98,7 @@ type PersistedSettings = {
     includeSprites?: boolean;
     tilesetFilter?: string;
     spriteRegionFilter?: string;
+    seed?: string;
   };
   randomizer?: {
     enabled?: boolean;
@@ -136,6 +139,8 @@ type ResultState = {
 };
 
 const settingsStorageKey = 'smedit-service-app-settings-v1';
+const settingsVersion = 2;
+const defaultColorEffect = 'psychedelic-randomize';
 const defaultBombSettings: BombSettings = {
   maxActiveBombs: 5,
   fuseFrames: 10,
@@ -151,7 +156,7 @@ export function App() {
   const savedSettings = useMemo(loadPersistedSettings, []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [serviceUrl, setServiceUrl] = useState(savedSettings.serviceUrl ?? serviceUrlDefault);
-  const [history, setHistory] = useState<RomHistorySummary[]>([]);
+  const [storedRoms, setStoredRoms] = useState<StoredRomSummary[]>([]);
   const [selectedRomId, setSelectedRomId] = useState<string>(savedSettings.selectedRomId ?? '');
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
@@ -163,7 +168,6 @@ export function App() {
     mergePatchSettings(savedSettings.enabledPatches),
   );
   const [fanfareFrames, setFanfareFrames] = useState(numberSetting(savedSettings.fanfareFrames, 16));
-  const [outputMode, setOutputMode] = useState<OutputMode>(savedSettings.outputMode === 'ips' ? 'ips' : 'rom');
   const [bombMaxActive, setBombMaxActive] = useState(
     numberSetting(savedSettings.bombs?.maxActiveBombs, defaultBombSettings.maxActiveBombs),
   );
@@ -184,11 +188,12 @@ export function App() {
   );
 
   const [colorizeEnabled, setColorizeEnabled] = useState(booleanSetting(savedSettings.colorize?.enabled, true));
-  const [colorEffect, setColorEffect] = useState(savedSettings.colorize?.effect ?? 'psychedelic');
+  const [colorEffect, setColorEffect] = useState(savedSettings.colorize?.effect ?? defaultColorEffect);
   const [includeTilesets, setIncludeTilesets] = useState(booleanSetting(savedSettings.colorize?.includeTilesets, true));
   const [includeSprites, setIncludeSprites] = useState(booleanSetting(savedSettings.colorize?.includeSprites, true));
   const [tilesetFilter, setTilesetFilter] = useState(savedSettings.colorize?.tilesetFilter ?? '');
   const [spriteRegionFilter, setSpriteRegionFilter] = useState(savedSettings.colorize?.spriteRegionFilter ?? '');
+  const [colorSeed, setColorSeed] = useState(savedSettings.colorize?.seed ?? '');
 
   const [randomEnabled, setRandomEnabled] = useState(booleanSetting(savedSettings.randomizer?.enabled, true));
   const [preset, setPreset] = useState(savedSettings.randomizer?.preset ?? 'spicy');
@@ -231,13 +236,14 @@ export function App() {
   const [multipliers, setMultipliers] = useState(savedSettings.randomizer?.multipliers ?? '1,2,4,8');
   const [requireMissiles, setRequireMissiles] = useState(booleanSetting(savedSettings.randomizer?.requireMissiles, true));
 
-  const [busy, setBusy] = useState(false);
+  const [busyMode, setBusyMode] = useState<OutputMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [result, setResult] = useState<ResultState | null>(null);
+  const busy = busyMode !== null;
 
   useEffect(() => {
-    void refreshHistory();
+    void refreshStoredRoms();
   }, []);
 
   useEffect(() => {
@@ -261,12 +267,12 @@ export function App() {
 
   useEffect(() => {
     savePersistedSettings({
+      settingsVersion,
       serviceUrl,
       selectedRomId,
       selectedPatchId,
       enabledPatches,
       fanfareFrames,
-      outputMode,
       bombs: {
         maxActiveBombs: bombMaxActive,
         fuseFrames: bombFuseFrames,
@@ -284,6 +290,7 @@ export function App() {
         includeSprites,
         tilesetFilter,
         spriteRegionFilter,
+        seed: colorSeed,
       },
       randomizer: {
         enabled: randomEnabled,
@@ -325,6 +332,7 @@ export function App() {
     ceresMinutes,
     ceresSeconds,
     colorEffect,
+    colorSeed,
     colorizeEnabled,
     dropMaxNothing,
     dropMinNonZeroSlots,
@@ -344,7 +352,6 @@ export function App() {
     minEffectiveWeapons,
     multipliers,
     noEffectChance,
-    outputMode,
     overrideBeamDamage,
     overrideDrops,
     overrideEnemyStats,
@@ -363,7 +370,7 @@ export function App() {
     tilesetFilter,
   ]);
 
-  const selectedRom = history.find((item) => item.id === selectedRomId);
+  const selectedRom = storedRoms.find((item) => item.id === selectedRomId);
   const availablePatchIds = useMemo(() => new Set(metadata?.patches.map((patch) => patch.id)), [metadata]);
   const visiblePatchOptions = useMemo(
     () => patchOptions.filter((option) => !metadata || availablePatchIds.has(option.id)),
@@ -417,6 +424,7 @@ export function App() {
     if (colorizeEnabled) {
       build.colorize = {
         effect: colorEffect,
+        seed: parseOptionalInteger(colorSeed),
         includeTilesets,
         includeSprites,
         tilesets: parseIntegerList(tilesetFilter),
@@ -432,6 +440,7 @@ export function App() {
     bombMaxActive,
     ceresTotalSeconds,
     colorEffect,
+    colorSeed,
     colorizeEnabled,
     enabledPatches,
     fanfareFrames,
@@ -496,7 +505,7 @@ export function App() {
         multipliers: parseIntegerList(multipliers),
         ensureAtLeastOneEffectivePerEnemy: true,
         minEffectiveWeaponsPerEnemy: minEffectiveWeapons,
-        requiredEffectiveWeaponSlots: requireMissiles ? [21] : [],
+        requiredEffectiveWeaponSlots: requireMissiles ? [9] : [],
       };
     }
 
@@ -559,6 +568,9 @@ export function App() {
       }
       if (!includeTilesets && !includeSprites) {
         errors.push('Colorize must include area tilesets, sprite palettes, or both.');
+      }
+      if (colorSeed.trim() && parseOptionalInteger(colorSeed) === undefined) {
+        errors.push('Color seed must be an integer.');
       }
       const parsedTilesets = parseIntegerListDetailed(tilesetFilter);
       if (parsedTilesets.invalid.length > 0) {
@@ -659,6 +671,7 @@ export function App() {
     ceresTotalSeconds,
     colorEffect,
     colorEffectOptions,
+    colorSeed,
     colorizeEnabled,
     dropMaxNothing,
     dropMinNonZeroSlots,
@@ -708,17 +721,17 @@ export function App() {
     [buildRequest, randomizationRequest],
   );
 
-  async function refreshHistory(nextSelectedId?: string) {
+  async function refreshStoredRoms(nextSelectedId?: string) {
     try {
       const items = await listRoms();
-      setHistory(items);
+      setStoredRoms(items);
       setSelectedRomId((current) => {
         if (nextSelectedId !== undefined) return nextSelectedId || items[0]?.id || '';
         if (current && items.some((item) => item.id === current)) return current;
         return items[0]?.id || '';
       });
     } catch (err) {
-      setError(`Could not read local ROM history: ${errorText(err)}`);
+      setError(`Could not read stored ROM: ${errorText(err)}`);
     }
   }
 
@@ -731,7 +744,7 @@ export function App() {
     }
     try {
       const summary = await saveRomFile(file);
-      await refreshHistory(summary.id);
+      await refreshStoredRoms(summary.id);
       setNotice(`Stored ${summary.name}`);
     } catch (err) {
       setError(`Could not store ROM locally: ${errorText(err)}`);
@@ -743,20 +756,20 @@ export function App() {
     if (file) await importFile(file);
   }
 
-  async function removeRom(id: string) {
+  async function removeRom() {
     setError(null);
     setNotice(null);
     try {
-      await deleteRom(id);
+      await clearRoms();
       setResult(null);
-      await refreshHistory(selectedRomId === id ? '' : selectedRomId);
-      setNotice('Removed ROM from local history');
+      await refreshStoredRoms('');
+      setNotice('Removed current ROM');
     } catch (err) {
       setError(`Could not remove ROM: ${errorText(err)}`);
     }
   }
 
-  async function generateRom() {
+  async function generateOutput(mode: OutputMode) {
     setError(null);
     setNotice(null);
     setResult(null);
@@ -769,12 +782,12 @@ export function App() {
       return;
     }
 
-    setBusy(true);
+    setBusyMode(mode);
     try {
       const record = await getRom(selectedRom.id);
       if (!record) {
-        setError('Selected ROM was not found in local history.');
-        await refreshHistory();
+        setError('Selected ROM was not found locally.');
+        await refreshStoredRoms();
         return;
       }
 
@@ -787,7 +800,7 @@ export function App() {
       };
       const baseName = record.name.replace(/\.(smc|sfc)$/i, '');
 
-      if (outputMode === 'ips') {
+      if (mode === 'ips') {
         const ipsBlob = await patchIps(patchInput);
         downloadBlob(ipsBlob, `${baseName}-smedit.ips`);
         setNotice('Generated IPS patch');
@@ -803,7 +816,7 @@ export function App() {
     } catch (err) {
       setError(errorText(err));
     } finally {
-      setBusy(false);
+      setBusyMode(null);
     }
   }
 
@@ -817,86 +830,57 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">SMEDIT Service</p>
+          <p className="eyebrow">SMEDIT Lite</p>
           <h1>ROM Patch Builder</h1>
         </div>
-        <label className="service-field">
-          <span>API</span>
-          <input value={serviceUrl} onChange={(event) => setServiceUrl(event.target.value)} />
-        </label>
+        <div className="topbar-actions">
+          <label className="service-field">
+            <span>API</span>
+            <input value={serviceUrl} onChange={(event) => setServiceUrl(event.target.value)} />
+          </label>
+          <div className="generate-buttons">
+            <button
+              className="primary-button"
+              disabled={busy || !selectedRom || validationErrors.length > 0}
+              onClick={() => void generateOutput('ips')}
+            >
+              {busyMode === 'ips' && <Loader2 className="spin" size={18} />}
+              Generate IPS
+            </button>
+            <button
+              className="primary-button"
+              disabled={busy || !selectedRom || validationErrors.length > 0}
+              onClick={() => void generateOutput('rom')}
+            >
+              {busyMode === 'rom' && <Loader2 className="spin" size={18} />}
+              Generate ROM
+            </button>
+          </div>
+        </div>
       </header>
 
+      {(error || notice || validationErrors.length > 0 || result) && (
+        <section className="top-feedback">
+          {error && <div className="message error">{error}</div>}
+          {notice && <div className="message notice">{notice}</div>}
+          {validationErrors.length > 0 && (
+            <div className="message error">
+              {validationErrors.map((message) => (
+                <p key={message}>{message}</p>
+              ))}
+            </div>
+          )}
+          {result && (
+            <div className="report-strip">
+              <span>{result.response.report?.changedBytes?.toLocaleString() ?? '0'} changed bytes</span>
+              <span>{result.response.report?.applied?.length ?? 0} applied</span>
+              <span>{result.response.report?.warnings?.length ?? 0} warnings</span>
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="workspace">
-        <aside className="sidebar" aria-label="ROM history">
-          <div
-            className={`drop-zone ${isDragging ? 'dragging' : ''}`}
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
-            role="button"
-            tabIndex={0}
-          >
-            <Upload size={24} />
-            <strong>Drop .smc</strong>
-            <span>or choose a ROM</span>
-            <input
-              ref={fileInputRef}
-              hidden
-              type="file"
-              accept=".smc,.sfc"
-              onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                if (event.target.files) void handleFiles(event.target.files);
-                event.target.value = '';
-              }}
-            />
-          </div>
-
-          <div className="panel-header">
-            <History size={18} />
-            <h2>Local History</h2>
-          </div>
-          <div className="history-list">
-            {history.length === 0 ? (
-              <div className="empty-state">No ROMs stored</div>
-            ) : (
-              history.map((rom) => (
-                <button
-                  key={rom.id}
-                  className={`history-item ${rom.id === selectedRomId ? 'selected' : ''}`}
-                  onClick={() => setSelectedRomId(rom.id)}
-                >
-                  <FileArchive size={18} />
-                  <span>
-                    <strong>{rom.name}</strong>
-                    <small>
-                      {formatBytes(rom.size)} · {formatDate(rom.addedAt)}
-                    </small>
-                  </span>
-                  <Trash2
-                    size={17}
-                    className="trash"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void removeRom(rom.id);
-                    }}
-                  />
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
-
         <section className="main-grid">
           <section className="panel">
             <div className="panel-header">
@@ -967,86 +951,154 @@ export function App() {
                   </>
                 )}
                 {selectedPatchId === 'bombs' && (
-                <>
-                  <NumberField label="Max bombs" value={bombMaxActive} min={1} max={5} step={1} onChange={setBombMaxActive} />
-                  <NumberField label="Fuse frames" value={bombFuseFrames} min={1} max={9999} step={1} onChange={setBombFuseFrames} />
-                  <NumberField label="Cooldown" value={bombCooldownFrames} min={0} max={255} step={1} onChange={setBombCooldownFrames} />
-                  <NumberField
-                    label="Explosion delay"
-                    value={bombExplosionDelay}
-                    min={1}
-                    max={255}
-                    step={1}
-                    onChange={setBombExplosionDelay}
-                  />
-                </>
+                  <>
+                    <NumberField label="Max bombs" value={bombMaxActive} min={1} max={5} step={1} onChange={setBombMaxActive} />
+                    <NumberField label="Fuse frames" value={bombFuseFrames} min={1} max={9999} step={1} onChange={setBombFuseFrames} />
+                    <NumberField
+                      label="Cooldown"
+                      value={bombCooldownFrames}
+                      min={0}
+                      max={255}
+                      step={1}
+                      onChange={setBombCooldownFrames}
+                    />
+                    <NumberField
+                      label="Explosion delay"
+                      value={bombExplosionDelay}
+                      min={1}
+                      max={255}
+                      step={1}
+                      onChange={setBombExplosionDelay}
+                    />
+                  </>
                 )}
               </div>
             )}
           </section>
 
-          <section className="panel">
-            <div className="panel-header">
-              <FileArchive size={18} />
-              <h2>Colorize</h2>
-              <label className="toggle">
+          <div className="side-stack">
+            <section className="panel rom-panel">
+              <div className="panel-header">
+                <Upload size={18} />
+                <h2>Current ROM</h2>
+              </div>
+              <div
+                className={`drop-zone compact ${isDragging ? 'dragging' : ''}`}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDragging(true);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <Upload size={22} />
+                <strong>Drop .smc</strong>
+                <span>{selectedRom ? 'or replace current ROM' : 'or choose a ROM'}</span>
                 <input
-                  type="checkbox"
-                  checked={colorizeEnabled}
-                  onChange={(event) => setColorizeEnabled(event.target.checked)}
+                  ref={fileInputRef}
+                  hidden
+                  type="file"
+                  accept=".smc,.sfc"
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                    if (event.target.files) void handleFiles(event.target.files);
+                    event.target.value = '';
+                  }}
                 />
-                <span />
-              </label>
-            </div>
-            <div className="two-col">
-              <label className="field">
-                <span>Effect</span>
-                <select value={colorEffect} onChange={(event) => setColorEffect(event.target.value)}>
-                  {colorEffectOptions.map((effect) => (
-                    <option key={effect.id} value={effect.id}>
-                      {effect.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="stack">
-                <label className="checkbox-row slim">
+              </div>
+              <div className={`current-rom ${selectedRom ? '' : 'empty'}`}>
+                <FileArchive size={18} />
+                <span>
+                  <strong>{selectedRom?.name ?? 'No ROM loaded'}</strong>
+                  <small>{selectedRom ? formatBytes(selectedRom.size) : 'Drop or choose a ROM to start'}</small>
+                </span>
+                {selectedRom && (
+                  <button type="button" className="icon-button danger" title="Remove current ROM" onClick={() => void removeRom()}>
+                    <Trash2 size={17} />
+                  </button>
+                )}
+              </div>
+            </section>
+
+            <section className="panel colorize-panel">
+              <div className="panel-header">
+                <FileArchive size={18} />
+                <h2>Colorize</h2>
+                <label className="toggle">
                   <input
                     type="checkbox"
-                    checked={includeTilesets}
-                    onChange={(event) => setIncludeTilesets(event.target.checked)}
+                    checked={colorizeEnabled}
+                    onChange={(event) => setColorizeEnabled(event.target.checked)}
                   />
-                  <span>Area tilesets</span>
-                </label>
-                <label className="checkbox-row slim">
-                  <input
-                    type="checkbox"
-                    checked={includeSprites}
-                    onChange={(event) => setIncludeSprites(event.target.checked)}
-                  />
-                  <span>Sprite palettes</span>
+                  <span />
                 </label>
               </div>
-            </div>
-            <div className="two-col">
-              <label className="field">
-                <span>Tilesets</span>
-                <input
-                  value={tilesetFilter}
-                  placeholder="0,7,10"
-                  onChange={(event) => setTilesetFilter(event.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Sprite regions</span>
-                <input
-                  value={spriteRegionFilter}
-                  placeholder="samus_power,boss_kraid"
-                  onChange={(event) => setSpriteRegionFilter(event.target.value)}
-                />
-              </label>
-            </div>
-          </section>
+              <div className="colorize-compact-grid">
+                <label className="field">
+                  <span>Effect</span>
+                  <select value={colorEffect} onChange={(event) => setColorEffect(event.target.value)}>
+                    {colorEffectOptions.map((effect) => (
+                      <option key={effect.id} value={effect.id}>
+                        {effect.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Seed</span>
+                  <div className="seed-input">
+                    <input value={colorSeed} placeholder="random" onChange={(event) => setColorSeed(event.target.value)} />
+                    <button type="button" title="Reroll color seed" onClick={() => setColorSeed(randomSeedString())}>
+                      <RefreshCw size={17} />
+                    </button>
+                  </div>
+                </label>
+                <label className="field">
+                  <span>Tilesets</span>
+                  <input
+                    value={tilesetFilter}
+                    placeholder="0,7,10"
+                    onChange={(event) => setTilesetFilter(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  <span>Sprite regions</span>
+                  <input
+                    value={spriteRegionFilter}
+                    placeholder="samus_power,boss_kraid"
+                    onChange={(event) => setSpriteRegionFilter(event.target.value)}
+                  />
+                </label>
+                <div className="colorize-flags">
+                  <label className="checkbox-row slim">
+                    <input
+                      type="checkbox"
+                      checked={includeTilesets}
+                      onChange={(event) => setIncludeTilesets(event.target.checked)}
+                    />
+                    <span>Area tilesets</span>
+                  </label>
+                  <label className="checkbox-row slim">
+                    <input
+                      type="checkbox"
+                      checked={includeSprites}
+                      onChange={(event) => setIncludeSprites(event.target.checked)}
+                    />
+                    <span>Sprite palettes</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+          </div>
 
           <section className="panel wide">
             <div className="panel-header">
@@ -1168,63 +1220,10 @@ export function App() {
                     checked={requireMissiles}
                     onChange={(event) => setRequireMissiles(event.target.checked)}
                   />
-                  <span>Require slot 21</span>
+                  <span>Require missiles</span>
                 </label>
               </RangePanel>
             </div>
-          </section>
-
-          <section className="panel action-panel">
-            <div className="selected-rom">
-              <FileArchive size={20} />
-              <span>
-                <strong>{selectedRom?.name ?? 'No ROM selected'}</strong>
-                <small>{selectedRom ? formatBytes(selectedRom.size) : 'Upload or select from history'}</small>
-              </span>
-            </div>
-            <label className="field output-mode">
-              <span>Output</span>
-              <select value={outputMode} onChange={(event) => setOutputMode(event.target.value as OutputMode)}>
-                <option value="rom">Patched ROM + IPS</option>
-                <option value="ips">IPS only</option>
-              </select>
-            </label>
-            <button
-              className="primary-button"
-              disabled={busy || !selectedRom || validationErrors.length > 0}
-              onClick={() => void generateRom()}
-            >
-              {busy ? <Loader2 className="spin" size={20} /> : <Play size={20} />}
-              {outputMode === 'ips' ? 'Generate IPS' : 'Generate ROM'}
-            </button>
-            {result && (
-              <div className="download-row">
-                <button onClick={() => downloadBlob(result.romBlob, `${result.baseName}-smedit.smc`)}>
-                  <Download size={17} />
-                  ROM
-                </button>
-                <button onClick={() => downloadBlob(result.ipsBlob, `${result.baseName}-smedit.ips`)}>
-                  <Download size={17} />
-                  IPS
-                </button>
-              </div>
-            )}
-            {error && <div className="message error">{error}</div>}
-            {notice && <div className="message notice">{notice}</div>}
-            {validationErrors.length > 0 && (
-              <div className="message error">
-                {validationErrors.map((message) => (
-                  <p key={message}>{message}</p>
-                ))}
-              </div>
-            )}
-            {result && (
-              <div className="report-strip">
-                <span>{result.response.report.changedBytes.toLocaleString()} changed bytes</span>
-                <span>{result.response.report.applied.length} applied</span>
-                <span>{result.response.report.warnings.length} warnings</span>
-              </div>
-            )}
           </section>
 
           <section className="panel preview-panel">
@@ -1392,7 +1391,19 @@ function loadPersistedSettings(): PersistedSettings {
     const raw = window.localStorage.getItem(settingsStorageKey);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
-    return isRecord(parsed) ? (parsed as PersistedSettings) : {};
+    if (!isRecord(parsed)) return {};
+    const settings = parsed as PersistedSettings;
+    if ((settings.settingsVersion ?? 1) < 2 && settings.colorize?.effect === 'psychedelic') {
+      return {
+        ...settings,
+        settingsVersion,
+        colorize: {
+          ...settings.colorize,
+          effect: defaultColorEffect,
+        },
+      };
+    }
+    return settings;
   } catch {
     return {};
   }
@@ -1447,11 +1458,11 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function formatDate(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(timestamp);
+function randomSeedString(): string {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const values = new Uint32Array(1);
+    crypto.getRandomValues(values);
+    return values[0].toString();
+  }
+  return Math.floor(Math.random() * 0x100000000).toString();
 }
