@@ -468,6 +468,22 @@ fun main() = application {
                 var spriteSearchQuery by remember { mutableStateOf("") }
                 var spriteSortMode by remember { mutableStateOf(SpriteSortMode.DEFAULT) }
                 val tilesetEditorState = remember { TilesetEditorState() }
+                fun refreshCurrentEditorTilesetGrid() {
+                    tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+                }
+                fun reloadPaletteBackedViews() {
+                    val parser = romParser ?: return
+                    val id = editorState.editorTilesetId
+                    scope.launch {
+                        val ok = withContext(Dispatchers.Default) {
+                            editorState.reloadCurrentRoomTileGraphics(parser)
+                            editorState.loadEditorTileset(id, parser)
+                        }
+                        if (ok) {
+                            refreshCurrentEditorTilesetGrid()
+                        }
+                    }
+                }
                 val soundEditorState = remember { SoundEditorState() }
                 val minimapEditorState = remember { MinimapEditorState() }
                 var bottomPaneTab by remember { mutableStateOf(BOTTOM_TAB_TILESET) }
@@ -750,18 +766,19 @@ fun main() = application {
                                                             },
                                                             onPaletteReset = {
                                                                 if (currentTilesetId != null) {
-                                                                    editorState.resetPaletteOverride(currentTilesetId)
-                                                                    editorState.editorTileGraphics?.invalidateCache()
-                                                                    editorState.editorTileGraphics?.loadTileset(currentTilesetId)
-                                                                    editorState.applyCustomGfxToTileGraphics(
-                                                                        editorState.editorTileGraphics!!, currentTilesetId
-                                                                    )
-                                                                    tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+                                                                    if (editorState.resetPaletteOverride(currentTilesetId)) {
+                                                                        reloadPaletteBackedViews()
+                                                                    }
                                                                 }
                                                             },
                                                             onRefreshNeeded = {
-                                                                tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
-                                                                editorState.paletteVersion++
+                                                                refreshCurrentEditorTilesetGrid()
+                                                                val clearedEffect = currentTilesetId
+                                                                    ?.let { editorState.clearPaletteEffect("tileset:$it") }
+                                                                    ?: false
+                                                                if (!clearedEffect) {
+                                                                    editorState.paletteVersion++
+                                                                }
                                                             },
                                                             onColorSelected = { row, col ->
                                                                 editorState.sampledPaletteRow = row
@@ -781,6 +798,13 @@ fun main() = application {
                                                         AreaPaletteEditor(
                                                             romParser = romParser,
                                                             editorState = editorState,
+                                                            onCurrentTilesetPaletteChanged = { reloadCurrentTileset ->
+                                                                if (reloadCurrentTileset) {
+                                                                    reloadPaletteBackedViews()
+                                                                } else {
+                                                                    refreshCurrentEditorTilesetGrid()
+                                                                }
+                                                            },
                                                             modifier = Modifier.fillMaxSize()
                                                         )
                                                     }

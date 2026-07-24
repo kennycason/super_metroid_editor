@@ -89,14 +89,16 @@ fun SpritePaletteEditor(
             val hasAnyOverride = SpritePalettes.REGIONS.any { editorState.hasSpritePaletteOverride(it.id) }
             if (hasAnyOverride) {
                 OutlinedButton(onClick = {
+                    var changed = false
                     for (region in SpritePalettes.REGIONS) {
-                        editorState.resetSpritePaletteOverride(region.id)
-                        editorState.clearPaletteEffect(region.id)
+                        changed = editorState.resetSpritePaletteOverride(region.id) || changed
                     }
-                    selectedRegionId = null
-                    selectedColorIdx = -1
-                    showHsvPicker = false
-                    editVersion++
+                    if (changed) {
+                        selectedRegionId = null
+                        selectedColorIdx = -1
+                        showHsvPicker = false
+                        editVersion++
+                    }
                 }) {
                     Text("Reset All", fontSize = 10.sp, color = Color(0xFFEF5350))
                 }
@@ -142,9 +144,9 @@ fun SpritePaletteEditor(
                         showHsvPicker = true
                     },
                     onReset = {
-                        editorState.resetSpritePaletteOverride(region.id)
-                        editorState.clearPaletteEffect(region.id)
-                        editVersion++
+                        if (editorState.resetSpritePaletteOverride(region.id)) {
+                            editVersion++
+                        }
                     }
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -368,6 +370,7 @@ private fun PaletteRegionCard(
 fun AreaPaletteEditor(
     romParser: RomParser?,
     editorState: EditorState,
+    onCurrentTilesetPaletteChanged: (reloadCurrentTileset: Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     if (romParser == null) {
@@ -404,15 +407,17 @@ fun AreaPaletteEditor(
             val hasAnyOverride = (0 until 29).any { editorState.hasCustomPalette(it) }
             if (hasAnyOverride) {
                 OutlinedButton(onClick = {
+                    var changed = false
                     for (i in 0 until 29) {
-                        editorState.resetPaletteOverride(i)
-                        editorState.clearPaletteEffect("tileset:$i")
+                        changed = editorState.resetPaletteOverride(i) || changed
                     }
-                    selectedTileset = -1
-                    selectedColorIdx = -1
-                    showHsvPicker = false
-                    editVersion++
-                    editorState.paletteVersion++
+                    if (changed) {
+                        selectedTileset = -1
+                        selectedColorIdx = -1
+                        showHsvPicker = false
+                        editVersion++
+                        onCurrentTilesetPaletteChanged(true)
+                    }
                 }) {
                     Text("Reset All", fontSize = 10.sp, color = Color(0xFFEF5350))
                 }
@@ -423,14 +428,22 @@ fun AreaPaletteEditor(
         fun targetTilesets(): List<Int> =
             if (selectedTileset >= 0) listOf(selectedTileset) else (0 until 29).toList()
 
+        fun notifyCurrentTilesetIfAffected(targets: List<Int>, reloadCurrentTileset: Boolean) {
+            if (editorState.editorTilesetId in targets || editorState.currentTilesetId in targets) {
+                onCurrentTilesetPaletteChanged(reloadCurrentTileset)
+            }
+        }
+
         fun applyAreaEffect(effectId: String) {
             val effect = PaletteEffects.findEffect(effectId) ?: return
-            for (tsId in targetTilesets()) {
+            val targets = targetTilesets()
+            for (tsId in targets) {
                 val colors = getColors(tsId) ?: continue
                 effect.apply(colors)
                 editorState.saveTilesetPaletteFromColors(tsId, colors)
                 editorState.setPaletteEffect("tileset:$tsId", effect.id)
             }
+            notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
             editVersion++
         }
 
@@ -441,22 +454,26 @@ fun AreaPaletteEditor(
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedButton(onClick = {
-                for (tsId in targetTilesets()) {
+                val targets = targetTilesets()
+                for (tsId in targets) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     editorState.saveTilesetPaletteFromColors(tsId, colors)
                     editorState.setPaletteEffect("tileset:$tsId", "random_palette")
                 }
+                notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
             }) { Text("Random Palette", fontSize = 10.sp) }
             OutlinedButton(onClick = {
-                for (tsId in targetTilesets()) {
+                val targets = targetTilesets()
+                for (tsId in targets) {
                     val colors = getColors(tsId) ?: continue
                     PaletteEffects.randomEffect(colors)
                     PaletteEffects.mutate(colors)
                     editorState.saveTilesetPaletteFromColors(tsId, colors)
                     editorState.setPaletteEffect("tileset:$tsId", "full_random")
                 }
+                notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
             }) { Text("Full Random", fontSize = 10.sp) }
             OutlinedButton(onClick = { applyAreaEffect("psychedelic-randomize") }) {
@@ -504,6 +521,7 @@ fun AreaPaletteEditor(
                             editorState.saveTilesetPaletteFromColors(tsId, colors)
                             editorState.setPaletteEffect("tileset:$tsId", effect.id)
                         }
+                        notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                         editVersion++
                     }
                 ) {
@@ -558,10 +576,10 @@ fun AreaPaletteEditor(
                         if (hasOverride) {
                             TextButton(
                                 onClick = {
-                                    editorState.resetPaletteOverride(tsId)
-                                    editorState.clearPaletteEffect("tileset:$tsId")
-                                    editorState.paletteVersion++
-                                    editVersion++
+                                    if (editorState.resetPaletteOverride(tsId)) {
+                                        notifyCurrentTilesetIfAffected(listOf(tsId), reloadCurrentTileset = true)
+                                        editVersion++
+                                    }
                                 },
                                 colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFEF5350))
                             ) { Text("Reset", fontSize = 9.sp) }
@@ -625,6 +643,7 @@ fun AreaPaletteEditor(
                         updated[selectedColorIdx] = newBgr
                         editorState.saveTilesetPaletteFromColors(selectedTileset, updated)
                         editorState.clearPaletteEffect("tileset:$selectedTileset")
+                        notifyCurrentTilesetIfAffected(listOf(selectedTileset), reloadCurrentTileset = false)
                         editVersion++
                     }
                 )

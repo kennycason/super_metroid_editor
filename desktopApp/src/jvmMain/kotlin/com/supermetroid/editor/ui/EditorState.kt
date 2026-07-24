@@ -537,7 +537,7 @@ class EditorState {
         private set
 
     /** TileGraphics for the tileset editor view (may differ from room's tileGraphics). */
-    var editorTileGraphics: TileGraphics? = null
+    var editorTileGraphics by mutableStateOf<TileGraphics?>(null)
         private set
 
     /** Currently selected metatile index in the tileset editor (-1 = none). */
@@ -603,29 +603,40 @@ class EditorState {
         val rawBgr = tg.getRawPaletteData() ?: return
         project.customGfx.palettes[tilesetId.toString()] = java.util.Base64.getEncoder().encodeToString(rawBgr)
         dirty = true
+        paletteVersion++
+        if (tilesetId == currentTilesetId) {
+            tileGraphics?.let {
+                applyCustomPaletteToTileGraphics(it, tilesetId)
+                _editVersionState.value++
+            }
+        }
     }
 
+    private fun tilesetPaletteEffectKey(tilesetId: Int) = "tileset:$tilesetId"
+
     /** Remove the custom palette override, restoring the ROM default. */
-    fun resetPaletteOverride(tilesetId: Int) {
+    fun resetPaletteOverride(tilesetId: Int): Boolean {
         val removedPalette = project.customGfx.palettes.remove(tilesetId.toString()) != null
-        val removedEffect = project.customGfx.paletteEffects.remove("tileset:$tilesetId") != null
+        val removedEffect = project.customGfx.paletteEffects.remove(tilesetPaletteEffectKey(tilesetId)) != null
         if (removedPalette || removedEffect) {
             dirty = true
             paletteVersion++
+            return true
         }
+        return false
     }
 
     /** Check if the project has a custom palette for the given tileset. */
     fun hasCustomPalette(tilesetId: Int): Boolean =
-        project.customGfx.palettes.containsKey(tilesetId.toString())
+        project.customGfx.palettes.containsKey(tilesetId.toString()) ||
+                project.customGfx.paletteEffects.containsKey(tilesetPaletteEffectKey(tilesetId))
 
     fun hasCurrentTilesetOverrides(): Boolean =
         hasCustomVarGfx() ||
                 hasCustomCreGfx() ||
                 hasCustomVarTileTable() ||
                 hasCustomCreTileTable() ||
-                hasCustomPalette(editorTilesetId) ||
-                project.customGfx.paletteEffects.containsKey("tileset:$editorTilesetId")
+                hasCustomPalette(editorTilesetId)
 
     fun resetCurrentTilesetOverrides(
         areaTiles: Boolean,
@@ -655,7 +666,7 @@ class EditorState {
             if (project.customGfx.palettes.remove(tilesetKey) != null) {
                 paletteChanged = true
             }
-            if (project.customGfx.paletteEffects.remove("tileset:$tilesetKey") != null) {
+            if (project.customGfx.paletteEffects.remove(tilesetPaletteEffectKey(editorTilesetId)) != null) {
                 paletteChanged = true
             }
             if (paletteChanged) {
@@ -701,15 +712,21 @@ class EditorState {
     }
 
     /** Remove sprite palette override, restoring ROM default. */
-    fun resetSpritePaletteOverride(regionId: String) {
-        project.customGfx.spritePalettes.remove(regionId)
-        dirty = true
-        paletteVersion++
+    fun resetSpritePaletteOverride(regionId: String): Boolean {
+        val removedPalette = project.customGfx.spritePalettes.remove(regionId) != null
+        val removedEffect = project.customGfx.paletteEffects.remove(regionId) != null
+        if (removedPalette || removedEffect) {
+            dirty = true
+            paletteVersion++
+            return true
+        }
+        return false
     }
 
     /** Check if a sprite palette has a project override. */
     fun hasSpritePaletteOverride(regionId: String): Boolean =
-        project.customGfx.spritePalettes.containsKey(regionId)
+        project.customGfx.spritePalettes.containsKey(regionId) ||
+                project.customGfx.paletteEffects.containsKey(regionId)
 
     // ─── Palette effect tracking ───────────────────────────────────
 
@@ -723,9 +740,13 @@ class EditorState {
     }
 
     /** Clear the effect tracking for a palette key (e.g. on reset or manual edit). */
-    fun clearPaletteEffect(key: String) {
-        project.customGfx.paletteEffects.remove(key)
-        dirty = true
+    fun clearPaletteEffect(key: String): Boolean {
+        val changed = project.customGfx.paletteEffects.remove(key) != null
+        if (changed) {
+            dirty = true
+            paletteVersion++
+        }
+        return changed
     }
 
     /**
@@ -778,6 +799,24 @@ class EditorState {
         if (tilesetId == editorTilesetId) {
             editorTileGraphics?.let { applyCustomPaletteToTileGraphics(it, tilesetId) }
         }
+        if (tilesetId == currentTilesetId) {
+            tileGraphics?.let {
+                applyCustomPaletteToTileGraphics(it, tilesetId)
+                _editVersionState.value++
+            }
+        }
+    }
+
+    fun reloadCurrentRoomTileGraphics(romParser: RomParser): Boolean {
+        val tg = TileGraphics(romParser)
+        tileGraphics = if (tg.loadTileset(currentTilesetId)) {
+            applyCustomGfxToTileGraphics(tg, currentTilesetId)
+            tg
+        } else {
+            null
+        }
+        _editVersionState.value++
+        return tileGraphics != null
     }
 
     // ─── Tileset graphics export / import ────────────────────────────
@@ -2566,6 +2605,12 @@ class EditorState {
         patchesSeeded = false
         seedDefaultPatches(forceRefreshBundled = true)
         tileGraphics = null
+        editorTileGraphics = null
+        editorSelectedMetatile = -1
+        tilesetSelStart = null
+        tilesetSelEnd = null
+        sampledPaletteRow = -1
+        sampledPaletteCol = -1
         workingLevelData = null
         originalLevelData = null
         mapSelStart = null
@@ -2596,6 +2641,7 @@ class EditorState {
         }
 
         romVersion++
+        paletteVersion++
 
         migrateTileDefaultsToCore()
 

@@ -96,6 +96,14 @@ class TilesetEditorState {
         gridData = tg.renderTilesetGrid()
         palettes = tg.getPalettes()
     }
+
+    fun clear() {
+        gridData = null
+        palettes = null
+        isLoading = false
+        errorMessage = null
+        highlightPalette = -1
+    }
 }
 
 // ─── Left column: tileset list + palette ───────────────────────────────
@@ -115,14 +123,17 @@ fun TilesetListPanel(
     )
 
     fun loadTileset(id: Int) {
-        if (romParser == null) return
+        val parser = romParser ?: run {
+            tilesetEditorState.clear()
+            return
+        }
         tilesetEditorState.isLoading = true
         tilesetEditorState.errorMessage = null
         tilesetEditorState.gridData = null
         tilesetEditorState.palettes = null
         coroutineScope.launch {
             try {
-                val ok = withContext(Dispatchers.Default) { editorState.loadEditorTileset(id, romParser) }
+                val ok = withContext(Dispatchers.Default) { editorState.loadEditorTileset(id, parser) }
                 if (!ok) { tilesetEditorState.errorMessage = "Failed to load tileset $id"; return@launch }
                 val tg = editorState.editorTileGraphics!!
                 tilesetEditorState.gridData = withContext(Dispatchers.Default) { tg.renderTilesetGrid() }
@@ -132,8 +143,9 @@ fun TilesetListPanel(
         }
     }
 
-    LaunchedEffect(romParser) {
-        if (romParser != null && tilesetEditorState.gridData == null) loadTileset(tilesetId)
+    LaunchedEffect(romParser, editorState.romVersion) {
+        if (romParser != null) loadTileset(editorState.editorTilesetId)
+        else tilesetEditorState.clear()
     }
 
     Card(
@@ -236,7 +248,10 @@ fun TilesetCanvas(
         tilesetEditorState.errorMessage = null
         coroutineScope.launch {
             try {
-                val ok = withContext(Dispatchers.Default) { editorState.loadEditorTileset(id, parser) }
+                val ok = withContext(Dispatchers.Default) {
+                    editorState.reloadCurrentRoomTileGraphics(parser)
+                    editorState.loadEditorTileset(id, parser)
+                }
                 if (!ok) {
                     tilesetEditorState.errorMessage = "Failed to load tileset $id"
                     return@launch

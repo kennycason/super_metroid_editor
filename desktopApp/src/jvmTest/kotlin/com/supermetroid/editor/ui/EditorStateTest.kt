@@ -137,6 +137,24 @@ class EditorStateTest {
             assertFalse(state.project.customGfx.palettes.containsKey("0"))
             assertFalse(state.project.customGfx.paletteEffects.containsKey("tileset:0"))
         }
+
+        @Test
+        fun `effect-only tileset palette state is treated as an override`() {
+            state.project.customGfx.paletteEffects["tileset:0"] = "random_palette"
+
+            assertTrue(state.hasCustomPalette(0))
+            assertTrue(state.resetPaletteOverride(0))
+            assertFalse(state.hasCustomPalette(0))
+        }
+
+        @Test
+        fun `sprite palette reset clears effect-only state`() {
+            state.project.customGfx.paletteEffects["samus_power"] = "random_palette"
+
+            assertTrue(state.hasSpritePaletteOverride("samus_power"))
+            assertTrue(state.resetSpritePaletteOverride("samus_power"))
+            assertFalse(state.hasSpritePaletteOverride("samus_power"))
+        }
     }
 
     @Nested
