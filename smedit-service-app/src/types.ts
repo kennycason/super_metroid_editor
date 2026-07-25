@@ -44,6 +44,11 @@ export type ColorizeRequest = {
   spriteRegions?: string[];
 };
 
+export type GeneratorRequest = {
+  mazetroid?: boolean;
+  seed?: number;
+};
+
 export type RandomizationRequest = {
   seed?: number;
   preset?: string;
@@ -106,6 +111,7 @@ export type ServicePatchResponse = {
   report: BuildReport;
   resolvedBuild?: BuildRequest;
   randomization?: RandomizationReport;
+  generator?: GeneratorReport;
 };
 
 export type BuildReport = {
@@ -130,6 +136,21 @@ export type RandomizationReport = {
   preset?: string;
   randomizedConfigTypes: string[];
   randomizedFieldCounts: Record<string, number>;
+};
+
+export type GeneratorReport = {
+  seed: number;
+  generatedRooms: number;
+  skippedRooms: number;
+  changedTiles: number;
+  itemPlacements: Array<{
+    roomId: number;
+    item: string;
+    plmId: number;
+    x: number;
+    y: number;
+    param: number;
+  }>;
 };
 
 export type ServiceMetadata = {

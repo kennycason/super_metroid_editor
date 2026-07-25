@@ -5,6 +5,9 @@ import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBuildResult
 import com.supermetroid.editor.headless.SmeditBuildService
 import com.supermetroid.editor.headless.SmeditConfigSchema
+import com.supermetroid.editor.headless.SmeditGeneratorReport
+import com.supermetroid.editor.headless.SmeditGeneratorRequest
+import com.supermetroid.editor.headless.SmeditMazetroidGenerator
 import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.headless.SmeditPatchRandomizer
 import com.supermetroid.editor.headless.SmeditRandomizationReport
@@ -41,7 +44,19 @@ import io.ktor.server.routing.routing
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.net.BindException
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.Base64
+import kotlin.system.exitProcess
+
+private const val DEFAULT_SERVICE_HOST = "0.0.0.0"
+private const val DEFAULT_SERVICE_PORT = 8080
+private const val SERVICE_HOST_ENV = "SMEDIT_SERVICE_HOST"
+private const val SERVICE_PORT_ENV = "SMEDIT_SERVICE_PORT"
+private const val SERVICE_HOST_PROPERTY = "smedit.service.host"
+private const val SERVICE_PORT_PROPERTY = "smedit.service.port"
+private val FALLBACK_SERVICE_PORTS = (8090..8099).toList()
 
 private val serviceJson = Json {
     ignoreUnknownKeys = false
@@ -54,6 +69,7 @@ data class SmeditServicePatchRequest(
     val romBase64: String,
     val build: SmeditBuildRequest = SmeditBuildRequest(),
     val randomize: SmeditRandomizationRequest = SmeditRandomizationRequest(),
+    val generator: SmeditGeneratorRequest = SmeditGeneratorRequest(),
 )
 
 @Serializable
@@ -63,6 +79,7 @@ data class SmeditServicePatchResponse(
     val report: SmeditBuildReport,
     val resolvedBuild: SmeditBuildRequest? = null,
     val randomization: SmeditRandomizationReport? = null,
+    val generator: SmeditGeneratorReport? = null,
 )
 
 @Serializable
@@ -129,13 +146,117 @@ data class SmeditServiceSpriteRegionMetadata(
 )
 
 fun main() {
-    val port = System.getenv("SMEDIT_SERVICE_PORT")?.toIntOrNull()
-        ?: System.getProperty("smedit.service.port")?.toIntOrNull()
-        ?: 8080
+    val host = System.getenv(SERVICE_HOST_ENV)?.takeIf { it.isNotBlank() }
+        ?: System.getProperty(SERVICE_HOST_PROPERTY)?.takeIf { it.isNotBlank() }
+        ?: DEFAULT_SERVICE_HOST
+    val configuredPort = configuredServicePort()
+    val port = if (configuredPort != null) {
+        val occupiedAddress = firstOccupiedLocalAddress(host, configuredPort)
+        if (occupiedAddress != null) {
+            printPortInUseMessage(host, configuredPort, occupiedAddress)
+            exitProcess(1)
+        }
+        configuredPort
+    } else {
+        resolveDefaultServicePort(host) ?: run {
+            printNoAvailablePortMessage(host)
+            exitProcess(1)
+        }
+    }
 
-    embeddedServer(Netty, host = "0.0.0.0", port = port) {
-        smeditServiceModule()
-    }.start(wait = true)
+    if (configuredPort == null && port != DEFAULT_SERVICE_PORT) {
+        System.err.println(
+            "Port $DEFAULT_SERVICE_PORT is already in use; starting SMEDIT service on http://localhost:$port instead.",
+        )
+    }
+
+    val occupiedAddress = firstOccupiedLocalAddress(host, port)
+    if (occupiedAddress != null) {
+        printPortInUseMessage(host, port, occupiedAddress)
+        exitProcess(1)
+    }
+
+    try {
+        println("Starting SMEDIT service at http://$host:$port")
+        embeddedServer(Netty, host = host, port = port) {
+            smeditServiceModule()
+        }.start(wait = true)
+    } catch (t: Throwable) {
+        if (t.causedByBindException()) {
+            printPortInUseMessage(host, port)
+        }
+        throw t
+    }
+}
+
+private fun configuredServicePort(): Int? =
+    System.getenv(SERVICE_PORT_ENV)?.toIntOrNull()
+        ?: System.getProperty(SERVICE_PORT_PROPERTY)?.toIntOrNull()
+
+private fun resolveDefaultServicePort(host: String): Int? =
+    (listOf(DEFAULT_SERVICE_PORT) + FALLBACK_SERVICE_PORTS)
+        .firstOrNull { firstOccupiedLocalAddress(host, it) == null }
+
+private fun firstOccupiedLocalAddress(host: String, port: Int): String? {
+    val hostsToCheck = when (host) {
+        "0.0.0.0", "::", "[::]" -> listOf("127.0.0.1", "::1")
+        else -> listOf(host)
+    }
+    return hostsToCheck.firstOrNull { canConnectTo(it, port) }
+}
+
+private fun canConnectTo(host: String, port: Int): Boolean =
+    runCatching {
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(host, port), 200)
+        }
+    }.isSuccess
+
+private fun printPortInUseMessage(host: String, port: Int, occupiedAddress: String? = null) {
+    val detected = occupiedAddress?.let { " ($it:$port is already accepting connections)" }.orEmpty()
+    System.err.println(
+        """
+        Cannot start SMEDIT service on http://$host:$port; that port is already in use$detected.
+
+        Find the owner:
+          lsof -nP -iTCP:$port -sTCP:LISTEN
+
+        Stop that process, or run SMEDIT on a free port:
+          ./gradlew :smedit-service:runService -D$SERVICE_PORT_PROPERTY=8090
+
+        In IntelliJ, add either this environment variable:
+          $SERVICE_PORT_ENV=8090
+
+        Or add this VM option to the SMEDIT service run configuration:
+          -D$SERVICE_PORT_PROPERTY=8090
+
+        Then set SMEDIT Lite's API URL to http://localhost:8090.
+        """.trimIndent(),
+    )
+}
+
+private fun printNoAvailablePortMessage(host: String) {
+    val ports = (listOf(DEFAULT_SERVICE_PORT) + FALLBACK_SERVICE_PORTS).joinToString()
+    System.err.println(
+        """
+        Cannot start SMEDIT service on $host; none of these ports are available: $ports.
+
+        Find current owners:
+          lsof -nP -iTCP -sTCP:LISTEN
+
+        Stop another local service, or choose a free port explicitly:
+          ./gradlew :smedit-service:runService -D$SERVICE_PORT_PROPERTY=8100
+        """.trimIndent(),
+    )
+}
+
+private fun Throwable.causedByBindException(): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is BindException) return true
+        current = current.cause
+    }
+    return false
 }
 
 fun Application.smeditServiceModule(
@@ -206,6 +327,7 @@ fun Application.smeditServiceModule(
                             report = result.report,
                             resolvedBuild = response.resolvedBuild,
                             randomization = response.randomization,
+                            generator = response.generator,
                         )
                     )
                 }
@@ -335,12 +457,14 @@ private data class SmeditServiceDecodedPatchRequest(
     val romBytes: ByteArray,
     val build: SmeditBuildRequest,
     val randomize: SmeditRandomizationRequest,
+    val generator: SmeditGeneratorRequest,
 )
 
 private data class SmeditServiceBuildResponse(
     val result: SmeditBuildResult,
     val resolvedBuild: SmeditBuildRequest?,
     val randomization: SmeditRandomizationReport?,
+    val generator: SmeditGeneratorReport?,
 )
 
 private suspend fun ApplicationCall.receiveDecodedPatchRequest(): SmeditServiceDecodedPatchRequest =
@@ -355,12 +479,14 @@ private fun SmeditServicePatchRequest.toDecoded(): SmeditServiceDecodedPatchRequ
         romBytes = decodeRomBase64(romBase64),
         build = build,
         randomize = randomize,
+        generator = generator,
     )
 
 private suspend fun ApplicationCall.receiveMultipartPatchRequest(): SmeditServiceDecodedPatchRequest {
     var romBytes: ByteArray? = null
     var build = SmeditBuildRequest()
     var randomize = SmeditRandomizationRequest()
+    var generator = SmeditGeneratorRequest()
     val multipart = receiveMultipart()
 
     while (true) {
@@ -376,6 +502,7 @@ private suspend fun ApplicationCall.receiveMultipartPatchRequest(): SmeditServic
                     when (part.name) {
                         "build" -> build = decodeMultipartJson(part.value, "build")
                         "randomize" -> randomize = decodeMultipartJson(part.value, "randomize")
+                        "generator" -> generator = decodeMultipartJson(part.value, "generator")
                     }
                 }
                 else -> Unit
@@ -391,6 +518,7 @@ private suspend fun ApplicationCall.receiveMultipartPatchRequest(): SmeditServic
         },
         build = build,
         randomize = randomize,
+        generator = generator,
     )
 }
 
@@ -419,10 +547,16 @@ private fun buildPatchedRom(
             "${RomConstants.ROM_SIZE_WITH_HEADER} bytes with a 512-byte SMC header."
     }
     val randomized = SmeditPatchRandomizer.apply(request.build.copy(project = null), request.randomize)
+    val generated = if (request.generator.mazetroid) {
+        SmeditMazetroidGenerator.generate(romBytes, request.generator)
+    } else {
+        null
+    }
     return SmeditServiceBuildResponse(
-        result = buildService.build(romBytes, randomized.build),
+        result = buildService.build(romBytes, randomized.build, generated?.project),
         resolvedBuild = randomized.build.takeIf { randomized.report != null },
         randomization = randomized.report,
+        generator = generated?.report,
     )
 }
 

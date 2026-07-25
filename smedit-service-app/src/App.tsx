@@ -12,6 +12,7 @@ import { base64ToBlob, downloadBlob, fetchMetadata, patchIps, patchRom, stripEmp
 import { clearRoms, getRom, listRoms, saveRomFile } from './storage';
 import type {
   BuildRequest,
+  GeneratorRequest,
   PatchId,
   PatchOption,
   RandomizationRequest,
@@ -99,6 +100,9 @@ type PersistedSettings = {
     tilesetFilter?: string;
     spriteRegionFilter?: string;
     seed?: string;
+  };
+  generator?: {
+    mazetroid?: boolean;
   };
   randomizer?: {
     enabled?: boolean;
@@ -194,6 +198,7 @@ export function App() {
   const [tilesetFilter, setTilesetFilter] = useState(savedSettings.colorize?.tilesetFilter ?? '');
   const [spriteRegionFilter, setSpriteRegionFilter] = useState(savedSettings.colorize?.spriteRegionFilter ?? '');
   const [colorSeed, setColorSeed] = useState(savedSettings.colorize?.seed ?? '');
+  const [mazetroidEnabled, setMazetroidEnabled] = useState(booleanSetting(savedSettings.generator?.mazetroid, false));
 
   const [randomEnabled, setRandomEnabled] = useState(booleanSetting(savedSettings.randomizer?.enabled, true));
   const [preset, setPreset] = useState(savedSettings.randomizer?.preset ?? 'spicy');
@@ -250,7 +255,7 @@ export function App() {
     const controller = new AbortController();
     async function loadMetadata() {
       try {
-        const loaded = await fetchMetadata(serviceUrl);
+        const loaded = await fetchMetadata(serviceUrl, controller.signal);
         if (controller.signal.aborted) return;
         setMetadata(loaded);
         setMetadataError(null);
@@ -291,6 +296,9 @@ export function App() {
         tilesetFilter,
         spriteRegionFilter,
         seed: colorSeed,
+      },
+      generator: {
+        mazetroid: mazetroidEnabled,
       },
       randomizer: {
         enabled: randomEnabled,
@@ -349,6 +357,7 @@ export function App() {
     includeCategories,
     includeSprites,
     includeTilesets,
+    mazetroidEnabled,
     minEffectiveWeapons,
     multipliers,
     noEffectChance,
@@ -540,6 +549,11 @@ export function App() {
     selectedBeams,
   ]);
 
+  const generatorRequest = useMemo<GeneratorRequest | undefined>(() => {
+    if (!mazetroidEnabled) return undefined;
+    return { mazetroid: true };
+  }, [mazetroidEnabled]);
+
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
     if (
@@ -714,11 +728,12 @@ export function App() {
         {
           build: buildRequest,
           randomize: randomizationRequest,
+          generator: generatorRequest,
         },
         null,
         2,
       ),
-    [buildRequest, randomizationRequest],
+    [buildRequest, generatorRequest, randomizationRequest],
   );
 
   async function refreshStoredRoms(nextSelectedId?: string) {
@@ -797,6 +812,7 @@ export function App() {
         romFilename: record.name,
         build: buildRequest,
         randomize: randomizationRequest,
+        generator: generatorRequest,
       };
       const baseName = record.name.replace(/\.(smc|sfc)$/i, '');
 
@@ -859,8 +875,9 @@ export function App() {
         </div>
       </header>
 
-      {(error || notice || validationErrors.length > 0 || result) && (
+      {(metadataError || error || notice || validationErrors.length > 0 || result) && (
         <section className="top-feedback">
+          {metadataError && <div className="message warning">{metadataError}</div>}
           {error && <div className="message error">{error}</div>}
           {notice && <div className="message notice">{notice}</div>}
           {validationErrors.length > 0 && (
@@ -874,6 +891,9 @@ export function App() {
             <div className="report-strip">
               <span>{result.response.report?.changedBytes?.toLocaleString() ?? '0'} changed bytes</span>
               <span>{result.response.report?.applied?.length ?? 0} applied</span>
+              {result.response.generator && (
+                <span>{result.response.generator.generatedRooms.toLocaleString()} Mazetroid rooms</span>
+              )}
               <span>{result.response.report?.warnings?.length ?? 0} warnings</span>
             </div>
           )}
@@ -927,7 +947,6 @@ export function App() {
                 );
               })}
             </div>
-            {metadataError && <div className="inline-note">{metadataError}</div>}
             {selectedPatchId && (
               <div className="settings-grid">
                 {selectedPatchId === 'fanfares' && (
@@ -1097,6 +1116,24 @@ export function App() {
                   </label>
                 </div>
               </div>
+            </section>
+
+            <section className="panel generator-panel">
+              <div className="panel-header">
+                <RefreshCw size={18} />
+                <h2>Generator</h2>
+              </div>
+              <label className={`checkbox-row generator-option ${mazetroidEnabled ? 'selected' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={mazetroidEnabled}
+                  onChange={(event) => setMazetroidEnabled(event.target.checked)}
+                />
+                <span>
+                  <strong>Mazetroid</strong>
+                  <small>Pipe maze all rooms, ship clear, Morph 67,69, Bombs 75,68</small>
+                </span>
+              </label>
             </section>
           </div>
 

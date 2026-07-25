@@ -44,9 +44,19 @@ import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.procgen.WfcOptions
 import com.supermetroid.editor.rom.RomParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlin.random.Random
+
+private data class PendingGenerateAllBiome(
+    val rules: BiomeRules,
+    val theme: BiomeTheme,
+    val seed: Long,
+    val wfcOptions: WfcOptions,
+    val omitSpecialRooms: Boolean,
+)
 
 /**
  * Generative biome builder panel: rolls a seeded rule card for the chosen
@@ -69,15 +79,23 @@ fun BiomeGeneratorPanel(
     }
     var style by remember { mutableStateOf(BiomeStyle.PIPE_MAZE) }
     var theme by remember { mutableStateOf(BiomeTheme.KEEP) }
-    var seed by remember { mutableStateOf(Random.nextInt(0, 1_000_000).toLong()) }
-    var seedText by remember { mutableStateOf(seed.toString()) }
+    var previewSeed by remember { mutableStateOf(Random.nextInt(0, 1_000_000_000).toLong()) }
+    var seedText by remember { mutableStateOf("") }
+    var lastGeneratedSeed by remember { mutableStateOf<Long?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var confirmGenerateAll by remember { mutableStateOf(false) }
     var confirmRevertAll by remember { mutableStateOf(false) }
     var omitSpecialRooms by remember { mutableStateOf(true) }
+    var bulkActionRunning by remember { mutableStateOf(false) }
+    var pendingGenerateAll by remember { mutableStateOf<PendingGenerateAllBiome?>(null) }
+    var pendingRevertAll by remember { mutableStateOf(false) }
 
     val roomLoaded = editorState.workingBlocksWide > 0 && editorState.workingBlocksTall > 0
-    val resolvedTheme = remember(theme, seed) { theme.resolve(seed) }
+    val trimmedSeedText = seedText.trim()
+    val pinnedSeed = trimmedSeedText.takeIf { it.isNotEmpty() }?.toLongOrNull()
+    val seedInputInvalid = trimmedSeedText.isNotEmpty() && pinnedSeed == null
+    val displaySeed = pinnedSeed ?: previewSeed
+    val resolvedTheme = remember(theme, displaySeed) { theme.resolve(displaySeed) }
     // Dress with the theme's tileset when set, else the loaded room's tileset.
     val targetTilesetId = resolvedTheme.tilesetId ?: editorState.currentTilesetId
 
@@ -92,14 +110,21 @@ fun BiomeGeneratorPanel(
         }
     }
 
-    val baseRules = remember(style, seed) { BiomeRules.roll(style, seed) }
+    val baseRules = remember(style, displaySeed) { BiomeRules.roll(style, displaySeed) }
     var platforms by remember(baseRules) { mutableStateOf(baseRules.platformDensity.toFloat()) }
+    var platformsEdited by remember(baseRules) { mutableStateOf(false) }
     var hazards by remember(baseRules) { mutableStateOf(baseRules.hazardDensity.toFloat()) }
+    var hazardsEdited by remember(baseRules) { mutableStateOf(false) }
     var destructibles by remember(baseRules) { mutableStateOf(baseRules.destructibleDensity.toFloat()) }
+    var destructiblesEdited by remember(baseRules) { mutableStateOf(false) }
     var mazeBranches by remember(baseRules) { mutableStateOf(baseRules.mazeBranchDensity.toFloat()) }
+    var mazeBranchesEdited by remember(baseRules) { mutableStateOf(false) }
     var mazeLoops by remember(baseRules) { mutableStateOf(baseRules.mazeLoopDensity.toFloat()) }
+    var mazeLoopsEdited by remember(baseRules) { mutableStateOf(false) }
     var mazeHub by remember(baseRules) { mutableStateOf(baseRules.mazeHubSize.toFloat()) }
+    var mazeHubEdited by remember(baseRules) { mutableStateOf(false) }
     var mazeEmptyCenter by remember(baseRules) { mutableStateOf(baseRules.mazeEmptyCenter) }
+    var mazeEmptyCenterEdited by remember(baseRules) { mutableStateOf(false) }
     var wfcDetail by remember { mutableStateOf(0.55f) }
     var wfcTunnelWidth by remember { mutableStateOf(2f) }
     var wfcBendiness by remember { mutableStateOf(0.35f) }
@@ -132,7 +157,100 @@ fun BiomeGeneratorPanel(
         allowCrumble = wfcCrumble,
         allowSpikes = wfcSpikes,
     )
+    fun nextRandomSeed(): Long {
+        var next = Random.nextInt(0, 1_000_000_000).toLong()
+        val previous = lastGeneratedSeed
+        if (previous != null && next == previous) {
+            next = (next + 1L) % 1_000_000_000L
+        }
+        return next
+    }
+    fun nextRunSeed(): Long = pinnedSeed ?: nextRandomSeed()
+    fun rememberUsedSeed(runSeed: Long) {
+        lastGeneratedSeed = runSeed
+        if (pinnedSeed == null) previewSeed = runSeed
+    }
+    fun rulesForSeed(runSeed: Long): BiomeRules {
+        val rolled = BiomeRules.roll(style, runSeed)
+        return if (rolled.algorithm == StructureAlgorithm.MAZE) {
+            rolled.withMazeOverrides(
+                branchDensity = if (mazeBranchesEdited) mazeBranches.toDouble() else rolled.mazeBranchDensity,
+                loopDensity = if (mazeLoopsEdited) mazeLoops.toDouble() else rolled.mazeLoopDensity,
+                hubSize = if (mazeHubEdited) mazeHub.toDouble() else rolled.mazeHubSize,
+                emptyCenter = if (mazeEmptyCenterEdited) mazeEmptyCenter else rolled.mazeEmptyCenter,
+            )
+        } else {
+            rolled.withOverrides(
+                platformDensity = if (platformsEdited) platforms.toDouble() else rolled.platformDensity,
+                hazardDensity = if (hazardsEdited) hazards.toDouble() else rolled.hazardDensity,
+                destructibleDensity = if (destructiblesEdited) destructibles.toDouble() else rolled.destructibleDensity,
+            )
+        }
+    }
+    fun profileForTheme(runTheme: BiomeTheme, rp: RomParser): TilesetProfile {
+        val runTargetTilesetId = runTheme.tilesetId ?: editorState.currentTilesetId
+        profile?.takeIf { it.first == runTargetTilesetId }?.let { return it.second }
+        val headers = rooms.mapNotNull { rp.readRoomHeader(it.getRoomIdAsInt()) }
+        return TilesetProfileCache.getOrLearn(rp, headers, runTargetTilesetId)
+    }
     val prof = profile?.takeIf { it.first == targetTilesetId }?.second
+
+    LaunchedEffect(pendingGenerateAll) {
+        val request = pendingGenerateAll ?: return@LaunchedEffect
+        val rp = romParser
+        if (rp == null) {
+            pendingGenerateAll = null
+            status = "Load a ROM first"
+            return@LaunchedEffect
+        }
+        bulkActionRunning = true
+        status = "Generating all rooms..."
+        yield()
+        try {
+            val result = editorState.generateBiomeForAllRooms(
+                request.rules,
+                request.theme,
+                request.seed,
+                rp,
+                wfcOptions = request.wfcOptions,
+                omitSpecialRooms = request.omitSpecialRooms,
+            )
+            status = buildString {
+                append("Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles")
+                append(" (seed ${request.seed})")
+                if (result.manualSkippedRooms > 0) append(" (${result.manualSkippedRooms} manual)")
+            }
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            status = "Generate all failed: ${t.message ?: t::class.simpleName}"
+        } finally {
+            bulkActionRunning = false
+            pendingGenerateAll = null
+        }
+    }
+
+    LaunchedEffect(pendingRevertAll) {
+        if (!pendingRevertAll) return@LaunchedEffect
+        val rp = romParser
+        if (rp == null) {
+            pendingRevertAll = false
+            status = "Load a ROM first"
+            return@LaunchedEffect
+        }
+        bulkActionRunning = true
+        status = "Reverting generated rooms..."
+        yield()
+        try {
+            val result = editorState.resetGeneratedBiomeRooms(rp)
+            status = "Reverted generated edits in ${result.generatedRooms} rooms"
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            status = "Revert all failed: ${t.message ?: t::class.simpleName}"
+        } finally {
+            bulkActionRunning = false
+            pendingRevertAll = false
+        }
+    }
 
     Column(
         modifier = modifier.padding(8.dp).verticalScroll(rememberScrollState()),
@@ -203,22 +321,36 @@ fun BiomeGeneratorPanel(
                 value = seedText,
                 onValueChange = { text ->
                     seedText = text
-                    text.toLongOrNull()?.let { seed = it }
+                    text.trim().toLongOrNull()?.let { previewSeed = it }
                 },
                 label = { Text("Seed", fontSize = 9.sp) },
                 textStyle = TextStyle(fontSize = 11.sp),
                 singleLine = true,
+                isError = seedInputInvalid,
                 modifier = Modifier.width(132.dp).height(52.dp),
             )
             OutlinedButton(
                 onClick = {
-                    seed = Random.nextInt(0, 1_000_000).toLong()
-                    seedText = seed.toString()
+                    val randomSeed = nextRandomSeed()
+                    seedText = randomSeed.toString()
+                    previewSeed = randomSeed
                 },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
             ) {
                 Text("Random", fontSize = 11.sp)
             }
+        }
+        when {
+            seedInputInvalid -> Text(
+                "Seed must be a whole number",
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
+            lastGeneratedSeed != null && trimmedSeedText.isEmpty() -> Text(
+                "Last generated seed: $lastGeneratedSeed",
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Surface(
@@ -239,14 +371,29 @@ fun BiomeGeneratorPanel(
         }
 
         if (effectiveRules.algorithm == StructureAlgorithm.MAZE) {
-            LabeledSlider("Branches", mazeBranches) { mazeBranches = it }
-            LabeledSlider("Loops", mazeLoops) { mazeLoops = it }
+            LabeledSlider("Branches", mazeBranches) {
+                mazeBranches = it
+                mazeBranchesEdited = true
+            }
+            LabeledSlider("Loops", mazeLoops) {
+                mazeLoops = it
+                mazeLoopsEdited = true
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = mazeEmptyCenter, onCheckedChange = { mazeEmptyCenter = it })
+                Checkbox(
+                    checked = mazeEmptyCenter,
+                    onCheckedChange = {
+                        mazeEmptyCenter = it
+                        mazeEmptyCenterEdited = true
+                    },
+                )
                 Text("Empty center", fontSize = 10.sp)
             }
             if (mazeEmptyCenter) {
-                LabeledSlider("Center size", mazeHub) { mazeHub = it }
+                LabeledSlider("Center size", mazeHub) {
+                    mazeHub = it
+                    mazeHubEdited = true
+                }
             }
         } else if (effectiveRules.algorithm == StructureAlgorithm.WFC) {
             LabeledSlider("Sample detail", wfcDetail) { wfcDetail = it }
@@ -267,9 +414,18 @@ fun BiomeGeneratorPanel(
                 CompactCheckbox("Spikes", wfcSpikes) { wfcSpikes = it }
             }
         } else {
-            LabeledSlider("Platforms", platforms) { platforms = it }
-            LabeledSlider("Hazards", hazards) { hazards = it }
-            LabeledSlider("Destructibles", destructibles) { destructibles = it }
+            LabeledSlider("Platforms", platforms) {
+                platforms = it
+                platformsEdited = true
+            }
+            LabeledSlider("Hazards", hazards) {
+                hazards = it
+                hazardsEdited = true
+            }
+            LabeledSlider("Destructibles", destructibles) {
+                destructibles = it
+                destructiblesEdited = true
+            }
         }
 
         if (editorState.currentRoomId == 0x91F8) {
@@ -280,22 +436,27 @@ fun BiomeGeneratorPanel(
         }
 
         Button(
-            enabled = roomLoaded && prof != null && romParser != null,
+            enabled = roomLoaded && prof != null && romParser != null && !bulkActionRunning && !seedInputInvalid,
             onClick = {
                 if (prof == null || romParser == null) return@Button
-                editorState.applyBiomeTheme(resolvedTheme, romParser)
+                val runSeed = nextRunSeed()
+                val runRules = rulesForSeed(runSeed)
+                val runTheme = theme.resolve(runSeed)
+                val runProfile = profileForTheme(runTheme, romParser)
+                editorState.applyBiomeTheme(runTheme, romParser)
                 val applied = editorState.generateBiome(
-                    effectiveRules,
-                    prof,
-                    seed,
+                    runRules,
+                    runProfile,
+                    runSeed,
                     keepLandingSiteShipClear = keepLandingSiteShipClear,
                     romParser = romParser,
                     wfcOptions = currentWfcOptions(),
                 )
+                rememberUsedSeed(runSeed)
                 status = buildString {
                     append(if (applied > 0) "Rewrote $applied tiles" else "No layout changes")
-                    if (resolvedTheme.tilesetId != null) append(" as ${resolvedTheme.displayName}")
-                    append(" (scrolls reset, Ctrl+Z undoes)")
+                    if (runTheme.tilesetId != null) append(" as ${runTheme.displayName}")
+                    append(" (seed $runSeed, scrolls reset, Ctrl+Z undoes)")
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -317,7 +478,7 @@ fun BiomeGeneratorPanel(
             Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
         }
         OutlinedButton(
-            enabled = roomLoaded && romParser != null,
+            enabled = roomLoaded && romParser != null && !bulkActionRunning,
             onClick = {
                 val rp = romParser ?: return@OutlinedButton
                 status = if (editorState.resetCurrentRoomToOriginal(rp)) {
@@ -340,7 +501,7 @@ fun BiomeGeneratorPanel(
             modifier = Modifier.fillMaxWidth(),
         ) {
             OutlinedButton(
-                enabled = prof != null && romParser != null,
+                enabled = prof != null && romParser != null && !bulkActionRunning && !seedInputInvalid,
                 onClick = { confirmGenerateAll = true },
                 modifier = Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
@@ -348,7 +509,7 @@ fun BiomeGeneratorPanel(
                 Text("Generate all", fontSize = 11.sp)
             }
             OutlinedButton(
-                enabled = romParser != null,
+                enabled = romParser != null && !bulkActionRunning,
                 onClick = { confirmRevertAll = true },
                 modifier = Modifier.weight(1f),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
@@ -365,7 +526,9 @@ fun BiomeGeneratorPanel(
             text = {
                 Text(
                     buildString {
-                        append("This will replace generated biome edits across supported rooms using the current style, theme, and seed.")
+                        append("This will replace generated biome edits across supported rooms using the current style and theme.")
+                        if (pinnedSeed != null) append(" Seed $pinnedSeed will be used.")
+                        else append(" A fresh random seed will be used.")
                         if (omitSpecialRooms) append(" Utility and boss rooms will be skipped.")
                         append(" Rooms with manual edits will be skipped; use Generate room for those.")
                     }
@@ -374,21 +537,18 @@ fun BiomeGeneratorPanel(
             confirmButton = {
                 Button(
                     onClick = {
+                        val runSeed = nextRunSeed()
                         confirmGenerateAll = false
-                        val rp = romParser ?: return@Button
-                        val result = editorState.generateBiomeForAllRooms(
-                            effectiveRules,
-                            resolvedTheme,
-                            seed,
-                            rp,
-                            wfcOptions = currentWfcOptions(),
-                            omitSpecialRooms = omitSpecialRooms,
+                        pendingGenerateAll = PendingGenerateAllBiome(
+                            rulesForSeed(runSeed),
+                            theme.resolve(runSeed),
+                            runSeed,
+                            currentWfcOptions(),
+                            omitSpecialRooms,
                         )
-                        status = buildString {
-                            append("Generated ${result.generatedRooms} rooms, skipped ${result.skippedRooms}, rewrote ${result.changedTiles} tiles")
-                            if (result.manualSkippedRooms > 0) append(" (${result.manualSkippedRooms} manual)")
-                        }
+                        rememberUsedSeed(runSeed)
                     },
+                    enabled = !seedInputInvalid,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) {
                     Text("Generate all")
@@ -413,9 +573,7 @@ fun BiomeGeneratorPanel(
                 Button(
                     onClick = {
                         confirmRevertAll = false
-                        val rp = romParser ?: return@Button
-                        val result = editorState.resetGeneratedBiomeRooms(rp)
-                        status = "Reverted generated edits in ${result.generatedRooms} rooms"
+                        pendingRevertAll = true
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 ) {

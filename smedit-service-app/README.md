@@ -14,6 +14,12 @@ Run the service in another terminal:
 ./gradlew :smedit-service:runService
 ```
 
+If port `8080` is already taken, run the service on another port and set the app to the same URL:
+
+```bash
+./gradlew :smedit-service:runService -Dsmedit.service.port=8090
+```
+
 The local API base URL is set in `.env.local`:
 
 ```bash

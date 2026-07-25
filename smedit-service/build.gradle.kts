@@ -4,6 +4,7 @@ plugins {
 }
 
 val ktorVersion = "2.3.12"
+val smeditServiceSystemProperties = listOf("smedit.service.host", "smedit.service.port")
 
 kotlin {
     jvm {
@@ -35,6 +36,14 @@ kotlin {
                 implementation("org.junit.jupiter:junit-jupiter:5.10.0")
                 implementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")
             }
+        }
+    }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    smeditServiceSystemProperties.forEach { propertyName ->
+        providers.systemProperty(propertyName).orNull?.let { value ->
+            systemProperty(propertyName, value)
         }
     }
 }

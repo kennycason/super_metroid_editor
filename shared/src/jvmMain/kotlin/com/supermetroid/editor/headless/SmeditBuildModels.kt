@@ -41,6 +41,31 @@ data class SmeditColorizeRequest(
 )
 
 @Serializable
+data class SmeditGeneratorRequest(
+    val mazetroid: Boolean = false,
+    val seed: Long? = null,
+)
+
+@Serializable
+data class SmeditGeneratorReport(
+    val seed: Long,
+    val generatedRooms: Int,
+    val skippedRooms: Int,
+    val changedTiles: Int,
+    val itemPlacements: List<SmeditGeneratorItemPlacement> = emptyList(),
+)
+
+@Serializable
+data class SmeditGeneratorItemPlacement(
+    val roomId: Int,
+    val item: String,
+    val plmId: Int,
+    val x: Int,
+    val y: Int,
+    val param: Int,
+)
+
+@Serializable
 data class SmeditBuildReport(
     val schemaVersion: Int = 1,
     val mode: String = "rom",

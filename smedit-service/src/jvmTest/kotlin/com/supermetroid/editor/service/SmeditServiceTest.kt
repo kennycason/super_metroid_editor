@@ -1,6 +1,8 @@
 package com.supermetroid.editor.service
 
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.headless.BEAM_DAMAGE_CONFIG_TYPE
 import com.supermetroid.editor.headless.ENEMY_DROPS_CONFIG_TYPE
 import com.supermetroid.editor.headless.ENEMY_STATS_CONFIG_TYPE
@@ -11,10 +13,12 @@ import com.supermetroid.editor.headless.SmeditColorizeRequest
 import com.supermetroid.editor.headless.SmeditEnemyDropsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyStatsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyVulnerabilityRandomization
+import com.supermetroid.editor.headless.SmeditGeneratorRequest
 import com.supermetroid.editor.headless.SmeditPatchRequest
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
 import io.ktor.client.call.body
 import io.ktor.client.request.accept
@@ -31,6 +35,8 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import java.io.File
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -180,6 +186,54 @@ class SmeditServiceTest {
             patchedRom.readBytes(SpritePalettes.BEAM_STANDARD.offset, expectedPalette.size),
         )
         assertTrue(body.report.applied.any { it.identifier == "colorize" })
+    }
+
+    @Test
+    fun `patch endpoint applies mazetroid generator and places starter items`() = testApplication {
+        val romBytes = loadTestRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        application {
+            smeditServiceModule()
+        }
+
+        val request = patchRequest(
+            build = SmeditBuildRequest(),
+            generator = SmeditGeneratorRequest(
+                mazetroid = true,
+                seed = 123456L,
+            ),
+            romBytes = requireNotNull(romBytes),
+        )
+        val response = client.post("/patch?format=json") {
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            setBody(json.encodeToString(request))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServicePatchResponse>(response.body())
+        assertEquals(123456L, body.generator?.seed)
+        assertTrue((body.generator?.generatedRooms ?: 0) > 0)
+        assertTrue((body.generator?.changedTiles ?: 0) > 0)
+        assertTrue(body.report.applied.any { it.identifier == "project_room_edits" })
+        val patchedRom = Base64.getDecoder().decode(body.romBase64)
+        val originalParser = RomParser(requireNotNull(romBytes))
+        val patchedParser = RomParser(patchedRom)
+        val landingSite = patchedParser.readRoomHeader(0x91F8)
+        val plms = patchedParser.parsePlmSet(requireNotNull(landingSite).plmSetPtr)
+        assertTrue(plms.any { it.id == 0xEF23 && it.x == 67 && it.y == 69 })
+        assertTrue(plms.any { it.id == 0xEEE7 && it.x == 75 && it.y == 68 })
+
+        val landingScrolls = patchedParser.parseScrollData(landingSite.roomScrollsPtr, landingSite.width, landingSite.height)
+        assertContentEquals(mazetroidScrollsFor(landingSite), landingScrolls.toList())
+
+        val roomWithScrollPlms = RoomRepository().getAllRooms()
+            .map { it.getRoomIdAsInt() }
+            .firstOrNull { roomId -> originalParser.getAllPlmEntriesForRoom(roomId).any { RomParser.isScrollPlm(it.id) } }
+        assertTrue(roomWithScrollPlms != null, "Test ROM should contain at least one scroll trigger PLM")
+        val patchedScrollPlms = patchedParser.getAllPlmEntriesForRoom(requireNotNull(roomWithScrollPlms))
+            .filter { RomParser.isScrollPlm(it.id) }
+        assertTrue(patchedScrollPlms.isEmpty(), "Mazetroid export should remove original scroll trigger PLMs")
     }
 
     @Test
@@ -413,18 +467,21 @@ class SmeditServiceTest {
     private fun patchRequest(
         build: SmeditBuildRequest,
         randomize: SmeditRandomizationRequest = SmeditRandomizationRequest(),
+        generator: SmeditGeneratorRequest = SmeditGeneratorRequest(),
         romBytes: ByteArray = ByteArray(0x300000),
     ): SmeditServicePatchRequest =
         SmeditServicePatchRequest(
             romBase64 = Base64.getEncoder().encodeToString(romBytes),
             build = build,
             randomize = randomize,
+            generator = generator,
         )
 
     private fun multipartPatchBody(
         romBytes: ByteArray? = ByteArray(0x300000),
         build: SmeditBuildRequest = SmeditBuildRequest(),
         randomize: SmeditRandomizationRequest? = null,
+        generator: SmeditGeneratorRequest? = null,
     ): MultiPartFormDataContent =
         MultiPartFormDataContent(
             formData {
@@ -442,12 +499,37 @@ class SmeditServiceTest {
                 randomize?.let {
                     append("randomize", json.encodeToString(it))
                 }
+                generator?.let {
+                    append("generator", json.encodeToString(it))
+                }
             }
         )
+
+    private fun loadTestRomBytes(): ByteArray? {
+        val paths = listOf(
+            "test-resources/Super Metroid (JU) [!].smc",
+            "../test-resources/Super Metroid (JU) [!].smc",
+            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
+        )
+        return paths
+            .asSequence()
+            .map(::File)
+            .firstOrNull { it.exists() }
+            ?.readBytes()
+    }
 
     private fun ByteArray.readBytes(offset: Int, count: Int): List<Int> =
         (0 until count).map { this[offset + it].toInt() and 0xFF }
 
     private fun ByteArray.toIntList(): List<Int> =
         map { it.toInt() and 0xFF }
+
+    private fun mazetroidScrollsFor(room: Room): List<Int> =
+        buildList {
+            for (screenY in 0 until room.height) {
+                for (screenX in 0 until room.width) {
+                    add(if (screenY == room.height - 1) 0x02 else 0x01)
+                }
+            }
+        }
 }

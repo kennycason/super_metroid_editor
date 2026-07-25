@@ -1,4 +1,4 @@
-import type { BuildRequest, RandomizationRequest, ServiceMetadata, ServicePatchResponse } from './types';
+import type { BuildRequest, GeneratorRequest, RandomizationRequest, ServiceMetadata, ServicePatchResponse } from './types';
 
 export type PatchServiceInput = {
   serviceUrl: string;
@@ -6,14 +6,17 @@ export type PatchServiceInput = {
   romFilename?: string;
   build: BuildRequest;
   randomize?: RandomizationRequest;
+  generator?: GeneratorRequest;
 };
 
-export async function fetchMetadata(serviceUrl: string): Promise<ServiceMetadata> {
-  const response = await fetch(`${serviceBaseUrl(serviceUrl)}/metadata`, {
+export async function fetchMetadata(serviceUrl: string, signal?: AbortSignal): Promise<ServiceMetadata> {
+  const baseUrl = serviceBaseUrl(serviceUrl);
+  const response = await fetchService(baseUrl, '/metadata', {
     method: 'GET',
     headers: {
       Accept: 'application/json',
     },
+    signal,
   });
 
   if (!response.ok) {
@@ -25,7 +28,8 @@ export async function fetchMetadata(serviceUrl: string): Promise<ServiceMetadata
 }
 
 export async function patchRom(input: PatchServiceInput): Promise<ServicePatchResponse> {
-  const response = await fetch(`${serviceBaseUrl(input.serviceUrl)}/patch?format=json`, {
+  const baseUrl = serviceBaseUrl(input.serviceUrl);
+  const response = await fetchService(baseUrl, '/patch?format=json', {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -42,7 +46,8 @@ export async function patchRom(input: PatchServiceInput): Promise<ServicePatchRe
 }
 
 export async function patchIps(input: PatchServiceInput): Promise<Blob> {
-  const response = await fetch(`${serviceBaseUrl(input.serviceUrl)}/patch?format=ips`, {
+  const baseUrl = serviceBaseUrl(input.serviceUrl);
+  const response = await fetchService(baseUrl, '/patch?format=ips', {
     method: 'POST',
     body: patchForm(input),
   });
@@ -62,11 +67,26 @@ function patchForm(input: PatchServiceInput): FormData {
   if (input.randomize) {
     form.append('randomize', JSON.stringify(stripEmpty(input.randomize)));
   }
+  if (input.generator) {
+    form.append('generator', JSON.stringify(stripEmpty(input.generator)));
+  }
   return form;
 }
 
 function serviceBaseUrl(serviceUrl: string): string {
   return serviceUrl.replace(/\/+$/, '');
+}
+
+async function fetchService(baseUrl: string, path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${baseUrl}${path}`, init);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    throw new Error(
+      `Cannot reach SMEDIT service at ${baseUrl}. Start the service or update the API URL. ` +
+        `If it is running, check that the browser URL is allowed by the service CORS settings.`,
+    );
+  }
 }
 
 export function base64ToBlob(base64: string, contentType: string): Blob {

@@ -8,7 +8,19 @@ Run it from the repository root:
 ./gradlew :smedit-service:runService
 ```
 
-The server listens on port `8080` by default. Set `SMEDIT_SERVICE_PORT` or `-Dsmedit.service.port=8081` to change it.
+The server listens on port `8080` by default. If `8080` is already taken and no port was explicitly configured, it automatically tries `8090` through `8099` and prints the URL it selected. Set `SMEDIT_SERVICE_PORT` or `-Dsmedit.service.port=8090` to force a specific port:
+
+```bash
+./gradlew :smedit-service:runService -Dsmedit.service.port=8090
+```
+
+If IntelliJ still reports `non-zero exit value 1` when starting the service, check whether all default/fallback ports are already taken:
+
+```bash
+lsof -nP -iTCP:8080 -sTCP:LISTEN
+```
+
+For Gradle-delegated IntelliJ runs, set `SMEDIT_SERVICE_PORT=8090` in the run configuration environment variables, or pass `-Dsmedit.service.port=8090` as a Gradle VM/system property if you want to force one port. Set SMEDIT Lite's API URL to the port printed by the service.
 
 ## POST /patch
 

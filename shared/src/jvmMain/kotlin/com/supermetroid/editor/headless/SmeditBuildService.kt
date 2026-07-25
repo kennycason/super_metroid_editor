@@ -1,9 +1,13 @@
 package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.RoomRepository
+import com.supermetroid.editor.data.RoomEdits
+import com.supermetroid.editor.data.ScrollChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
@@ -160,6 +164,9 @@ class SmeditBuildService(
         request.colorize?.let { colorize ->
             applyColorizeRequest(colorize, context)?.let(applied::add)
         }
+        if (project != null) {
+            applied.addAll(applyProjectRoomEdits(project, context))
+        }
         roomNamePatchEntry?.let {
             applied.addAll(applyRoomNamePauseMapPatch(it, project, context))
         }
@@ -228,8 +235,8 @@ class SmeditBuildService(
         roomNameOverridesHandled: Boolean,
     ) {
         val ignored = mutableListOf<String>()
-        val editedRooms = project.rooms.values.count { it.hasEdits }
-        if (editedRooms > 0) ignored.add("room edits: $editedRooms")
+        val unsupportedRoomEdits = project.rooms.values.count { it.hasUnsupportedHeadlessRoomEdits() }
+        if (unsupportedRoomEdits > 0) ignored.add("unsupported room edits: $unsupportedRoomEdits")
         if (project.tileDefaults.isNotEmpty()) ignored.add("tile defaults: ${project.tileDefaults.size}")
         ignored.addAll(project.customGfx.unsupportedDescriptions(hasRom = context.outputRom != null))
         if (project.patterns.isNotEmpty()) ignored.add("patterns: ${project.patterns.size}")
@@ -374,6 +381,402 @@ class SmeditBuildService(
             writes = writes,
             bytes = context.patchWrites.totalByteCount() - beforeBytes,
         )
+    }
+
+    private fun applyProjectRoomEdits(
+        project: SmEditProject,
+        context: ApplyContext,
+    ): List<SmeditAppliedPatchReport> {
+        val rom = context.outputRom
+        val parser = context.parser
+        if (project.rooms.values.none {
+                it.operations.isNotEmpty() || it.plmChanges.isNotEmpty() || it.scrollChanges.isNotEmpty()
+            }
+        ) {
+            return emptyList()
+        }
+        if (rom == null || parser == null) {
+            context.warnings.add(
+                "Project room edits require --rom because level and PLM data are compressed and pointer-based."
+            )
+            return emptyList()
+        }
+
+        val beforeRecords = context.patchWrites.size
+        val beforeBytes = context.patchWrites.totalByteCount()
+        val levelAllocator = RomFreeSpaceAllocator(
+            romData = rom,
+            snesToPc = parser::snesToPc,
+            pcToSnes = parser::pcToSnes,
+            guardBytes = 1,
+        )
+        val plmAllocator = RomFreeSpaceAllocator(
+            romData = rom,
+            snesToPc = parser::snesToPc,
+            pcToSnes = parser::pcToSnes,
+            guardBytes = 1,
+        )
+        val scrollAllocator = RomFreeSpaceAllocator(
+            romData = rom,
+            snesToPc = parser::snesToPc,
+            pcToSnes = parser::pcToSnes,
+            guardBytes = 1,
+        )
+        var patchedRooms = 0
+
+        for ((roomKey, roomEdits) in project.rooms) {
+            val roomId = roomKey.toIntOrNull(16) ?: continue
+            val room = parser.readRoomHeader(roomId) ?: continue
+            var patched = false
+            if (roomEdits.operations.any { it.edits.isNotEmpty() } && room.levelDataPtr != 0) {
+                patched = applyRoomTileEdits(roomKey, roomId, room, roomEdits, levelAllocator, context) || patched
+            }
+            if (roomEdits.plmChanges.isNotEmpty()) {
+                patched = applyRoomPlmChanges(roomKey, roomId, roomEdits, plmAllocator, context) || patched
+            }
+            if (roomEdits.effectiveScrollChanges().isNotEmpty()) {
+                patched = applyRoomScrollChanges(roomKey, roomId, room, roomEdits, scrollAllocator, context) || patched
+            }
+            if (patched) patchedRooms++
+        }
+
+        val writes = context.patchWrites.size - beforeRecords
+        if (writes == 0) return emptyList()
+
+        return listOf(
+            SmeditAppliedPatchReport(
+                identifier = "project_room_edits",
+                name = "Project Room Edits",
+                source = "project",
+                writes = writes,
+                bytes = context.patchWrites.totalByteCount() - beforeBytes,
+            )
+        ).also {
+            if (patchedRooms == 0) {
+                context.warnings.add("Project room edits were present but no room data could be written.")
+            }
+        }
+    }
+
+    private fun applyRoomTileEdits(
+        roomKey: String,
+        roomId: Int,
+        room: com.supermetroid.editor.data.Room,
+        roomEdits: RoomEdits,
+        levelAllocator: RomFreeSpaceAllocator,
+        context: ApplyContext,
+    ): Boolean {
+        val rom = context.outputRom ?: return false
+        val parser = context.parser ?: return false
+        val allStateOffsets = parser.findAllStateDataOffsets(roomId)
+        if (allStateOffsets.isEmpty()) {
+            context.warnings.add("Room 0x$roomKey has tile edits but no editable room states.")
+            return false
+        }
+
+        val width = room.width * 16
+        val height = room.height * 16
+        val totalBlocks = width * height
+        val ptrToStates = linkedMapOf<Int, MutableList<Int>>()
+        for (stateOffset in allStateOffsets) {
+            val levelPtr = readU24(rom, stateOffset)
+            if (levelPtr != 0) ptrToStates.getOrPut(levelPtr) { mutableListOf() }.add(stateOffset)
+        }
+
+        var wrote = false
+        val tileEdits = roomEdits.operations.flatMap { it.edits }
+        for ((levelPtr, statesForPtr) in ptrToStates) {
+            val decompressed = runCatching { parser.decompressLZ2WithSize(levelPtr) }.getOrNull()
+            if (decompressed == null) {
+                context.warnings.add("Room 0x$roomKey level data at 0x${levelPtr.toString(16)} could not be decompressed.")
+                continue
+            }
+            val (originalData, originalSize) = decompressed
+            val editedData = originalData.copyOf()
+            if (editedData.size < 2) continue
+            val layer1Size = (editedData[0].toInt() and 0xFF) or ((editedData[1].toInt() and 0xFF) shl 8)
+            val layer2Start = 2 + layer1Size + totalBlocks
+            val hasEmbeddedLayer2 = layer2Start + totalBlocks * 2 <= editedData.size && room.bgScrolling == 0
+            var changedPointerData = false
+
+            for (edit in tileEdits) {
+                if (edit.blockX !in 0 until width || edit.blockY !in 0 until height) continue
+                val index = edit.blockY * width + edit.blockX
+                if (edit.layer == TILE_EDIT_LAYER_2) {
+                    if (hasEmbeddedLayer2) {
+                        val offset = layer2Start + index * 2
+                        val word = edit.newBlockWord and 0x0FFF
+                        editedData[offset] = (word and 0xFF).toByte()
+                        editedData[offset + 1] = ((word shr 8) and 0xFF).toByte()
+                        changedPointerData = true
+                    }
+                    continue
+                }
+
+                val wordOffset = 2 + index * 2
+                if (wordOffset + 1 < editedData.size) {
+                    editedData[wordOffset] = (edit.newBlockWord and 0xFF).toByte()
+                    editedData[wordOffset + 1] = ((edit.newBlockWord shr 8) and 0xFF).toByte()
+                    changedPointerData = true
+                }
+                val btsOffset = 2 + layer1Size + index
+                if (btsOffset < editedData.size) {
+                    editedData[btsOffset] = edit.newBts.toByte()
+                }
+            }
+            if (!changedPointerData) continue
+
+            val compressed = LZ5Compressor.compress(editedData)
+            val roundTripped = runCatching { LZ5Compressor.decompress(compressed) }.getOrNull()
+            if (roundTripped == null || !roundTripped.contentEquals(editedData)) {
+                context.warnings.add("Room 0x$roomKey level data failed LZ5 round-trip validation.")
+                continue
+            }
+
+            val levelPc = context.snesToPc(levelPtr)
+            if (compressed.size <= originalSize) {
+                val bytes = (compressed + ByteArray(originalSize - compressed.size) { 0xFF.toByte() }).toIntList()
+                wrote = writeTrackedBytes(context, levelPc, bytes, "room 0x$roomKey level data") || wrote
+            } else {
+                val allocation = levelAllocator.reserve(
+                    size = compressed.size,
+                    banks = levelDataRelocationBanks(levelPtr),
+                    label = "room 0x$roomKey level data",
+                )
+                if (allocation == null) {
+                    context.warnings.add(
+                        "Room 0x$roomKey level data compressed to ${compressed.size} bytes, exceeds original " +
+                            "$originalSize bytes, and no free space was found."
+                    )
+                    continue
+                }
+                wrote = writeTrackedBytes(
+                    context,
+                    context.fileToPcOffset(allocation.pcOffset),
+                    compressed.toIntList(),
+                    "room 0x$roomKey relocated level data",
+                ) || wrote
+                for (stateOffset in statesForPtr) {
+                    wrote = writeTrackedBytes(
+                        context,
+                        context.fileToPcOffset(stateOffset),
+                        u24Bytes(allocation.snesAddress),
+                        "room 0x$roomKey level data pointer",
+                    ) || wrote
+                }
+                wrote = writeTrackedBytes(
+                    context,
+                    levelPc,
+                    List(originalSize) { 0xFF },
+                    "room 0x$roomKey old level data free fill",
+                ) || wrote
+            }
+        }
+        return wrote
+    }
+
+    private fun applyRoomPlmChanges(
+        roomKey: String,
+        roomId: Int,
+        roomEdits: RoomEdits,
+        plmAllocator: RomFreeSpaceAllocator,
+        context: ApplyContext,
+    ): Boolean {
+        val rom = context.outputRom ?: return false
+        val parser = context.parser ?: return false
+        val allStateOffsets = parser.findAllStateDataOffsets(roomId)
+        if (allStateOffsets.isEmpty()) {
+            context.warnings.add("Room 0x$roomKey has PLM edits but no editable room states.")
+            return false
+        }
+
+        val distinctPlmPtrs = linkedSetOf<Int>()
+        for (stateOffset in allStateOffsets) {
+            val plmPtr = readU16(rom, stateOffset + 20)
+            if (plmPtr != 0 && plmPtr != 0xFFFF) distinctPlmPtrs.add(plmPtr)
+        }
+        if (distinctPlmPtrs.isEmpty()) {
+            context.warnings.add("Room 0x$roomKey has PLM edits but no PLM set pointer.")
+            return false
+        }
+
+        var wrote = false
+        for (plmSetPtr in distinctPlmPtrs) {
+            val originalPlms = parser.parsePlmSet(plmSetPtr)
+            val modifiedPlms = originalPlms.toMutableList()
+            for (change in roomEdits.plmChanges) {
+                when (change.action) {
+                    "add" -> modifiedPlms.add(change.toPlmEntry())
+                    "remove" -> modifiedPlms.removeAll {
+                        it.id == change.plmId && it.x == change.x && it.y == change.y
+                    }
+                }
+            }
+            val deduped = dedupeItemPlmsByPosition(modifiedPlms)
+            val originalSize = originalPlms.size * 6 + 2
+            val bytes = serializePlmSet(deduped)
+            val plmPc = context.snesToPc(RomConstants.BANK_ROOM_DATA or plmSetPtr)
+
+            if (bytes.size <= originalSize) {
+                val padded = bytes + List(originalSize - bytes.size) { 0 }
+                wrote = writeTrackedBytes(context, plmPc, padded, "room 0x$roomKey PLM set") || wrote
+            } else {
+                val allocation = plmAllocator.reserve(
+                    size = bytes.size,
+                    banks = listOf(0x8F),
+                    label = "room 0x$roomKey PLM set",
+                )
+                if (allocation == null) {
+                    context.warnings.add(
+                        "Room 0x$roomKey PLM set expanded to ${bytes.size} bytes and no bank 8F free space was found."
+                    )
+                    continue
+                }
+                wrote = writeTrackedBytes(
+                    context,
+                    context.fileToPcOffset(allocation.pcOffset),
+                    bytes,
+                    "room 0x$roomKey relocated PLM set",
+                ) || wrote
+                val newPtr = allocation.snesAddress and 0xFFFF
+                for (stateOffset in allStateOffsets) {
+                    val existingPtr = readU16(rom, stateOffset + 20)
+                    if (existingPtr != plmSetPtr) continue
+                    wrote = writeTrackedBytes(
+                        context,
+                        context.fileToPcOffset(stateOffset + 20),
+                        u16Bytes(newPtr),
+                        "room 0x$roomKey PLM set pointer",
+                    ) || wrote
+                }
+            }
+        }
+        return wrote
+    }
+
+    private fun applyRoomScrollChanges(
+        roomKey: String,
+        roomId: Int,
+        room: com.supermetroid.editor.data.Room,
+        roomEdits: RoomEdits,
+        scrollAllocator: RomFreeSpaceAllocator,
+        context: ApplyContext,
+    ): Boolean {
+        val parser = context.parser ?: return false
+        val allStateOffsets = parser.findAllStateDataOffsets(roomId)
+        if (allStateOffsets.isEmpty()) {
+            context.warnings.add("Room 0x$roomKey has scroll edits but no editable room states.")
+            return false
+        }
+        if (room.width <= 0 || room.height <= 0) return false
+
+        val scrollChanges = roomEdits.effectiveScrollChanges()
+        if (scrollChanges.isEmpty()) return false
+
+        val distinctScrollPtrs = linkedSetOf<Int>()
+        for (stateOffset in allStateOffsets) {
+            distinctScrollPtrs.add(readU16(context.outputRom ?: return false, stateOffset + 14))
+        }
+        if (distinctScrollPtrs.isEmpty()) {
+            context.warnings.add("Room 0x$roomKey has scroll edits but no scroll data pointer.")
+            return false
+        }
+
+        var wrote = false
+        for (scrollPtr in distinctScrollPtrs) {
+            val originalScrolls = parser.parseScrollData(scrollPtr, room.width, room.height)
+            val modifiedScrolls = originalScrolls.copyOf()
+            for (change in scrollChanges) {
+                val index = change.screenY * room.width + change.screenX
+                if (index in modifiedScrolls.indices) modifiedScrolls[index] = change.newValue
+            }
+            if (modifiedScrolls.contentEquals(originalScrolls)) continue
+
+            val bytes = modifiedScrolls.map { it and 0xFF }
+            if (scrollPtr > 1) {
+                val scrollPc = context.snesToPc(RomConstants.BANK_ROOM_DATA or scrollPtr)
+                wrote = writeTrackedBytes(context, scrollPc, bytes, "room 0x$roomKey scroll data") || wrote
+            } else {
+                val allocation = scrollAllocator.reserve(
+                    size = bytes.size,
+                    banks = listOf(0x8F),
+                    label = "room 0x$roomKey scroll data",
+                )
+                if (allocation == null) {
+                    context.warnings.add(
+                        "Room 0x$roomKey scroll data expanded from a special pointer to ${bytes.size} bytes " +
+                            "and no bank 8F free space was found."
+                    )
+                    continue
+                }
+                wrote = writeTrackedBytes(
+                    context,
+                    context.fileToPcOffset(allocation.pcOffset),
+                    bytes,
+                    "room 0x$roomKey relocated scroll data",
+                ) || wrote
+                val newPtr = allocation.snesAddress and 0xFFFF
+                for (stateOffset in allStateOffsets) {
+                    val existingPtr = readU16(context.outputRom ?: return false, stateOffset + 14)
+                    if (existingPtr != scrollPtr) continue
+                    wrote = writeTrackedBytes(
+                        context,
+                        context.fileToPcOffset(stateOffset + 14),
+                        u16Bytes(newPtr),
+                        "room 0x$roomKey scroll data pointer",
+                    ) || wrote
+                }
+            }
+        }
+        return wrote
+    }
+
+    private fun writeTrackedBytes(
+        context: ApplyContext,
+        offset: Int,
+        bytes: List<Int>,
+        label: String,
+    ): Boolean {
+        val wrote = writeBytes(context, offset, bytes, label)
+        if (wrote) context.appliedWriteCount++
+        return wrote
+    }
+
+    private fun PlmChange.toPlmEntry(): RomParser.PlmEntry =
+        RomParser.PlmEntry(plmId, x, y, param)
+
+    private fun dedupeItemPlmsByPosition(plms: List<RomParser.PlmEntry>): List<RomParser.PlmEntry> {
+        val seenItemPositions = mutableSetOf<Long>()
+        val deduped = mutableListOf<RomParser.PlmEntry>()
+        for (plm in plms.asReversed()) {
+            val key = (plm.x.toLong() shl 16) or plm.y.toLong()
+            if (RomParser.isItemPlm(plm.id)) {
+                if (key in seenItemPositions) continue
+                seenItemPositions.add(key)
+            }
+            deduped.add(plm)
+        }
+        deduped.reverse()
+        return deduped
+    }
+
+    private fun serializePlmSet(plms: List<RomParser.PlmEntry>): List<Int> =
+        buildList {
+            for (plm in plms) {
+                add(plm.id and 0xFF)
+                add((plm.id ushr 8) and 0xFF)
+                add(plm.x and 0xFF)
+                add(plm.y and 0xFF)
+                add(plm.param and 0xFF)
+                add((plm.param ushr 8) and 0xFF)
+            }
+            add(0)
+            add(0)
+        }
+
+    private fun levelDataRelocationBanks(originalSnesAddress: Int): List<Int> {
+        val originalBank = (originalSnesAddress shr 16) and 0xFF
+        return (listOf(originalBank) + (0xCE downTo 0xC0)).distinct()
     }
 
     private fun applyTilesetPaletteColorize(
@@ -1379,6 +1782,9 @@ private fun decodeBase64(value: String, label: String, warnings: MutableList<Str
 private fun u24Bytes(value: Int): List<Int> =
     listOf(value and 0xFF, (value ushr 8) and 0xFF, (value ushr 16) and 0xFF)
 
+private fun u16Bytes(value: Int): List<Int> =
+    listOf(value and 0xFF, (value ushr 8) and 0xFF)
+
 private fun ByteArray.toIntList(): List<Int> =
     map { it.toInt() and 0xFF }
 
@@ -1426,6 +1832,37 @@ private fun TilesetGfxData.unsupportedDescriptions(hasRom: Boolean): List<String
         ignored.add("enemy palettes require --rom: $dynamicEnemyPalettes")
     }
     return ignored
+}
+
+private fun RoomEdits.hasUnsupportedHeadlessRoomEdits(): Boolean =
+    doorChanges.isNotEmpty() ||
+        enemyChanges.isNotEmpty() ||
+        fxChange != null ||
+        stateDataChange != null ||
+        roomHeaderChange != null ||
+        customScrollCommands.isNotEmpty() ||
+        saveStationSpawns.isNotEmpty() ||
+        operations.any {
+            it.enemyAdds.isNotEmpty() ||
+                it.enemyRemoves.isNotEmpty() ||
+                it.enemyUpdates.isNotEmpty() ||
+                it.stateDataBefore != null ||
+                it.stateDataAfter != null ||
+                it.fxBefore != null ||
+                it.fxAfter != null
+        }
+
+private fun RoomEdits.effectiveScrollChanges(): List<ScrollChange> {
+    val byScreen = linkedMapOf<Pair<Int, Int>, ScrollChange>()
+    for (operation in operations) {
+        for (change in operation.scrollEdits) {
+            byScreen[change.screenX to change.screenY] = change
+        }
+    }
+    for (change in scrollChanges) {
+        byScreen[change.screenX to change.screenY] = change
+    }
+    return byScreen.values.toList()
 }
 
 private const val TILESET_TABLE_ENTRY_BYTES = 9

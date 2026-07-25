@@ -346,6 +346,11 @@ h3 {
   border-color: #8bd3ff;
 }
 
+.generator-option.selected {
+  border-color: #8bd3ff;
+  background: #12202b;
+}
+
 .patch-toggle-body:disabled {
   color: inherit;
   opacity: 1;
@@ -605,6 +610,12 @@ h3 {
   border: 1px solid #2c6b4d;
   background: #102419;
   color: #d6ffe8;
+}
+
+.message.warning {
+  border: 1px solid #806022;
+  background: #281e0d;
+  color: #ffe0a3;
 }
 
 .report-strip {
