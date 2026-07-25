@@ -12,6 +12,13 @@ data class BiomeGenerationRect(
 data class BiomeGenerationOptions(
     val preserveRects: List<BiomeGenerationRect> = emptyList(),
     val forceAirRects: List<BiomeGenerationRect> = emptyList(),
+    /**
+     * Like [forceAirRects] but applied *after* [protectedCells], so these cells are
+     * guaranteed to become air even when the safety mask would otherwise lock them.
+     * Use for structural clearance zones (elevator shafts, PLM approach paths) where
+     * the game requires open space regardless of original room geometry.
+     */
+    val hardForceAirRects: List<BiomeGenerationRect> = emptyList(),
     val protectedCells: BooleanArray? = null,
     val wfcSamples: List<WfcSample> = emptyList(),
     val wfcOptions: WfcOptions = WfcOptions(),
@@ -72,6 +79,19 @@ class BiomeGenerator(
                 if (protectedCells[i]) {
                     preserved[i] = true
                     forceAir[i] = false
+                }
+            }
+        }
+        // Hard force-air rects override the safety mask: elevator shafts and PLM approach
+        // zones must be open regardless of original block types at those positions.
+        // Type-9 elevator triggers are already preserved verbatim and are skipped here.
+        if (options.hardForceAirRects.isNotEmpty()) {
+            val hardForceAir = BooleanArray(n)
+            applyRects(hardForceAir, width, height, options.hardForceAirRects)
+            for (i in 0 until n) {
+                if (hardForceAir[i] && ((originalWords[i] shr 12) and 0xF) != 0x9) {
+                    preserved[i] = false
+                    forceAir[i] = true
                 }
             }
         }

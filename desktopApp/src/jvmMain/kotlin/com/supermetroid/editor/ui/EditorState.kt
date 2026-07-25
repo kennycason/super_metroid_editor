@@ -4186,16 +4186,18 @@ class EditorState {
     ): BiomeGenerationOptions {
         val preserveRects = ArrayList<BiomeGenerationRect>()
         val forceAirRects = ArrayList<BiomeGenerationRect>()
+        val hardForceAirRects = ArrayList<BiomeGenerationRect>()
         if (roomId == 0x91F8) {
             addLandingSiteShipProtection(preserveRects, forceAirRects)
         }
-        addElevatorProtectionForRoom(preserveRects, forceAirRects, romParser, roomId, width, height)
+        addElevatorProtectionForRoom(preserveRects, hardForceAirRects, romParser, roomId, width, height)
         val plms = effectivePlmsForBiomeRoom(roomId, romParser)
-        addImportantPlmProtection(preserveRects, forceAirRects, width, height, plms)
+        addImportantPlmProtection(preserveRects, hardForceAirRects, width, height, plms)
         preserveRects.addAll(buildDoorCapPreserveRectsForRoom(romParser, roomId, width, height, plms))
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
+            hardForceAirRects = hardForceAirRects,
             protectedCells = BiomeSafetyMask.protectNonPlainMetadata(width, height, originalWords, originalBts, plms),
             wfcSamples = if (rules.algorithm == StructureAlgorithm.WFC) wfcSamples else emptyList(),
             wfcOptions = wfcOptions,
@@ -4278,18 +4280,19 @@ class EditorState {
     ): BiomeGenerationOptions {
         val preserveRects = ArrayList<BiomeGenerationRect>()
         val forceAirRects = ArrayList<BiomeGenerationRect>()
+        val hardForceAirRects = ArrayList<BiomeGenerationRect>()
         if (keepLandingSiteShipClear && currentRoomId == 0x91F8) {
             addLandingSiteShipProtection(preserveRects, forceAirRects)
         }
         addElevatorProtectionForRoom(
             preserveRects,
-            forceAirRects,
+            hardForceAirRects,
             romParser,
             currentRoomId,
             workingBlocksWide,
             workingBlocksTall,
         )
-        addImportantPlmProtection(preserveRects, forceAirRects, workingBlocksWide, workingBlocksTall, _workingPlms)
+        addImportantPlmProtection(preserveRects, hardForceAirRects, workingBlocksWide, workingBlocksTall, _workingPlms)
         preserveRects.addAll(
             buildDoorCapPreserveRectsForRoom(
                 romParser,
@@ -4307,6 +4310,7 @@ class EditorState {
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
+            hardForceAirRects = hardForceAirRects,
             protectedCells = BiomeSafetyMask.protectNonPlainMetadata(
                 workingBlocksWide,
                 workingBlocksTall,
@@ -4321,7 +4325,7 @@ class EditorState {
 
     private fun addImportantPlmProtection(
         preserveRects: MutableList<BiomeGenerationRect>,
-        forceAirRects: MutableList<BiomeGenerationRect>,
+        hardForceAirRects: MutableList<BiomeGenerationRect>,
         width: Int,
         height: Int,
         plms: List<RomParser.PlmEntry>,
@@ -4338,7 +4342,7 @@ class EditorState {
             val y = plm.y
             if (x !in 0 until width || y !in 0 until height) continue
             addRect(preserveRects, BiomeGenerationRect(x - 1, y - 1, x + 1, y + 1))
-            addRect(forceAirRects, BiomeGenerationRect(x - 3, y - 4, x + 3, y + 2))
+            addRect(hardForceAirRects, BiomeGenerationRect(x - 3, y - 4, x + 3, y + 2))
         }
     }
 
@@ -4359,7 +4363,7 @@ class EditorState {
 
     private fun addElevatorProtectionForRoom(
         preserveRects: MutableList<BiomeGenerationRect>,
-        forceAirRects: MutableList<BiomeGenerationRect>,
+        hardForceAirRects: MutableList<BiomeGenerationRect>,
         romParser: RomParser?,
         roomId: Int,
         width: Int,
@@ -4368,13 +4372,13 @@ class EditorState {
         if (romParser == null || roomId == 0 || width <= 0 || height <= 0) return
         val incomingElevators = romParser.findDoorsLeadingTo(roomId).filter { it.isElevator }
         for (door in incomingElevators) {
-            addElevatorProtectionForDoor(preserveRects, forceAirRects, door, width, height)
+            addElevatorProtectionForDoor(preserveRects, hardForceAirRects, door, width, height)
         }
     }
 
     private fun addElevatorProtectionForDoor(
         preserveRects: MutableList<BiomeGenerationRect>,
-        forceAirRects: MutableList<BiomeGenerationRect>,
+        hardForceAirRects: MutableList<BiomeGenerationRect>,
         door: RomParser.DoorEntry,
         width: Int,
         height: Int,
@@ -4398,9 +4402,9 @@ class EditorState {
                 preserveRects.add(rect)
             }
         }
-        fun addForceAir(rect: BiomeGenerationRect) {
+        fun addHardForceAir(rect: BiomeGenerationRect) {
             if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
-                forceAirRects.add(rect)
+                hardForceAirRects.add(rect)
             }
         }
 
@@ -4410,7 +4414,7 @@ class EditorState {
                 // then keep a wider shaft below it open for Samus.
                 val doorY = screenY0
                 addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addForceAir(
+                addHardForceAir(
                     BiomeGenerationRect(
                         verticalClearLeftX,
                         doorY + 1,
@@ -4425,7 +4429,7 @@ class EditorState {
                 // with the standing space immediately above it.
                 val doorY = minOf(screenY0 + 15, height - 1)
                 addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addForceAir(
+                addHardForceAir(
                     BiomeGenerationRect(
                         verticalClearLeftX,
                         doorY - elevatorClearanceDepth,
@@ -4437,7 +4441,7 @@ class EditorState {
             0 -> {
                 val doorX = screenX0
                 addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addForceAir(
+                addHardForceAir(
                     BiomeGenerationRect(
                         doorX + 1,
                         horizontalClearTopY,
@@ -4449,7 +4453,7 @@ class EditorState {
             1 -> {
                 val doorX = minOf(screenX0 + 15, width - 1)
                 addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addForceAir(
+                addHardForceAir(
                     BiomeGenerationRect(
                         doorX - elevatorClearanceDepth,
                         horizontalClearTopY,
