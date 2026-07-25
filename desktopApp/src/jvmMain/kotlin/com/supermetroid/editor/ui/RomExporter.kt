@@ -382,9 +382,13 @@ internal class RomExporter(
             "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
         }
 
-        val patchBlocks = buildSpcPatchBlocks(spcWrites)
-
-        val relocatedChain = serializeTransferChain(originalBlocks + patchBlocks)
+        // Merge originalBlocks and spcWrites at the SPC RAM byte level so we emit
+        // only the union of covered bytes — not the concatenation of both chains.
+        // For native IT/custom-sample payloads the patch writes cover the same SPC
+        // RAM addresses as the original blocks (full replacement), so the merged
+        // chain is ~payload-sized rather than ~original+payload-sized.
+        val mergedBlocks = mergeSpcRamBlocks(originalBlocks, spcWrites)
+        val relocatedChain = serializeTransferChain(mergedBlocks)
         val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
         relocatedChain.copyInto(romData, writePc)
 
@@ -395,9 +399,55 @@ internal class RomExporter(
             "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
                 "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
                 "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
-                "(${originalBlocks.size} original + ${patchBlocks.size} patch blocks)"
+                "(${mergedBlocks.size} merged blocks, ${relocatedChain.size} bytes)"
         )
         return relocatedChain.size
+    }
+
+    /**
+     * Merges [originalBlocks] and [spcWrites] at the SPC RAM byte level.
+     * Original bytes are applied first; [spcWrites] overwrite them where they overlap.
+     * The result contains exactly the union of all covered SPC RAM addresses.
+     */
+    private fun mergeSpcRamBlocks(
+        originalBlocks: List<SpcData.TransferBlock>,
+        spcWrites: Map<Int, ByteArray>
+    ): List<SpcData.TransferBlock> {
+        val ram = ByteArray(RomConstants.SPC_RAM_SIZE)
+        val covered = BooleanArray(RomConstants.SPC_RAM_SIZE)
+
+        for (block in originalBlocks) {
+            val dest = block.destAddr and 0xFFFF
+            for (i in block.data.indices) {
+                ram[dest + i] = block.data[i]
+                covered[dest + i] = true
+            }
+        }
+        for ((addr, data) in spcWrites) {
+            val dest = addr and 0xFFFF
+            for (i in data.indices) {
+                ram[dest + i] = data[i]
+                covered[dest + i] = true
+            }
+        }
+
+        val blocks = mutableListOf<SpcData.TransferBlock>()
+        var runStart = -1
+        val runBytes = mutableListOf<Byte>()
+        for (i in covered.indices) {
+            if (covered[i]) {
+                if (runStart < 0) runStart = i
+                runBytes += ram[i]
+            } else if (runStart >= 0) {
+                blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
+                runBytes.clear()
+                runStart = -1
+            }
+        }
+        if (runStart >= 0) {
+            blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
+        }
+        return blocks
     }
 
     private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
