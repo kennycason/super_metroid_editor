@@ -2,13 +2,15 @@
 
 ## Project Overview
 A native cross-platform Super Metroid ROM editor built with Kotlin/Compose Desktop.
-Three Gradle modules: `shared` (domain/ROM parsing), `desktopApp` (Compose UI), `cli` (headless export).
+Four Gradle modules: `shared` (domain/ROM parsing), `desktopApp` (Compose UI), `cli` (headless export), `smedit-service` (Ktor HTTP API).
+`smedit-service-app` is a companion TypeScript/Vite web frontend (not a Gradle module).
 
 ## Build & Run
 ```bash
 ./gradlew :desktopApp:run                              # Run the editor
 ./gradlew :shared:jvmTest :desktopApp:jvmTest          # Run all tests
 ./gradlew :desktopApp:packageDistributionForCurrentOS   # Package installer
+./gradlew :smedit-service:runService                   # Run the HTTP API service
 ```
 Requires JDK 17+ and a C++ compiler for the native SPC audio library.
 
@@ -17,6 +19,8 @@ Requires JDK 17+ and a C++ compiler for the native SPC audio library.
 - **shared/jvmMain** - JVM-specific: JNA native SPC emulator, WAV rendering
 - **desktopApp** - Compose Desktop UI: EditorState manages all editor state with undo/redo
 - **cli** - Command-line ROM export (rooms, graph, images)
+- **smedit-service** - Ktor HTTP wrapper around the headless build engine (POST /patch, GET /metadata)
+- **smedit-service-app** - TypeScript/Vite web UI for the service (in `smedit-service-app/`)
 
 Data flow: ROM File → RomParser (immutable) → EditorState (tracked changes) → Project JSON / Patched ROM
 

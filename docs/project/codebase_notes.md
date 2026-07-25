@@ -1,14 +1,12 @@
 # Local Codebase Notes
 
-Last reviewed: 2026-06-02
+Last reviewed: 2026-07-25
 
 ## Current Worktree
 
 | Path | Branch | Notes |
 |------|--------|-------|
-| `/Users/kenny/code/super_metroid_dev` | `kenny/sound-edit` | Active SMEDIT repo. Current sound branch includes SPC track preview, piano roll editing, BRR import/export, native `snes_spc` render path, and in-place sample replacement. |
-
-Current known dirty state during this review: `tools/snes_spc` is a modified submodule. Treat it as existing work unless explicitly asked to inspect or reset it.
+| `/Users/kenny/code/super_metroid_dev` | `main` | Active SMEDIT repo. Sound editing (SPC track preview, piano roll, BRR import/export, native `snes_spc` render path, sample replacement) is merged to main. |
 
 ## SMEDIT Architecture
 
@@ -18,6 +16,8 @@ Current known dirty state during this review: `tools/snes_spc` is a modified sub
 | `shared/jvmMain` | JVM-specific integrations: JNA bridge to native `libspc`, libretro/JNA bindings. |
 | `desktopApp` | Compose Desktop UI, editor state, emulator workspace, sound editor, piano roll, project save/load, patch management. |
 | `cli` | Headless room/graph/image export tools. |
+| `smedit-service` | Ktor HTTP API wrapping the headless build engine (POST /patch, GET /metadata). |
+| `smedit-service-app` | TypeScript/Vite web frontend for the service (not a Gradle module). |
 
 Key start points:
 
