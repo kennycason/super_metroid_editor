@@ -2,6 +2,7 @@ package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.ScrollChange
@@ -29,6 +30,8 @@ class SmeditBuildService(
     catalogPatches: List<SmPatch> = SmeditPatchCatalog.defaultPatches(),
 ) {
     private val catalog = catalogPatches.map { PatchEntry(it.deepCopy(), "catalog") }
+    private val itemDefinitions = buildItemDefinitions(catalogPatches)
+    private val itemPlmIds = itemDefinitions.flatMap { it.plmIds() }.toSet()
 
     fun build(
         inputRom: ByteArray,
@@ -167,6 +170,17 @@ class SmeditBuildService(
         if (project != null) {
             applied.addAll(applyProjectRoomEdits(project, context))
         }
+        createItemPlacementProject(request.items, patchEntries, context)?.let { itemProject ->
+            applied.addAll(
+                applyProjectRoomEdits(
+                    project = itemProject,
+                    context = context,
+                    identifier = "request_item_placements",
+                    name = "Request Item Placements",
+                    source = "request",
+                )
+            )
+        }
         roomNamePatchEntry?.let {
             applied.addAll(applyRoomNamePauseMapPatch(it, project, context))
         }
@@ -259,6 +273,202 @@ class SmeditBuildService(
                 ?: entries[resolvedKey]
                 ?: entries.values.firstOrNull { it.patch.configType == key || it.patch.configType == resolvedKey }
         }
+
+    private fun buildItemDefinitions(patches: List<SmPatch>): List<HeadlessItemDefinition> =
+        buildList {
+            for (item in RomParser.ITEM_DEFS) {
+                add(
+                    HeadlessItemDefinition(
+                        id = itemApiId(item.name),
+                        name = item.name,
+                        shortLabel = item.shortLabel,
+                        visiblePlmId = item.visibleId,
+                        chozoPlmId = item.chozoId,
+                        hiddenPlmId = item.hiddenId,
+                    )
+                )
+            }
+            for (patch in patches) {
+                for (item in patch.customItems) {
+                    add(
+                        HeadlessItemDefinition(
+                            id = item.id,
+                            name = item.name,
+                            shortLabel = item.shortLabel,
+                            visiblePlmId = item.visiblePlmId,
+                            chozoPlmId = item.chozoPlmId,
+                            hiddenPlmId = item.hiddenPlmId,
+                            sourcePatchId = SmeditPatchCatalog.publicPatchId(patch),
+                        )
+                    )
+                }
+            }
+        }
+
+    private fun itemApiId(name: String): String =
+        name.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
+
+    private fun createItemPlacementProject(
+        items: List<SmeditItemPlacementRequest>,
+        patchEntries: List<PatchEntry>,
+        context: ApplyContext,
+    ): SmEditProject? {
+        if (items.isEmpty()) return null
+        val parser = context.parser
+        if (context.outputRom == null || parser == null) {
+            context.warnings.add(
+                "Request item placements require --rom because PLM data is compressed and pointer-based."
+            )
+            return null
+        }
+
+        val roomInfos = RoomRepository().getAllRooms()
+        val roomsById = roomInfos.associateBy { it.getRoomIdAsInt() }
+        val usedParams = collectUsedItemParams(parser, roomInfos.map { it.getRoomIdAsInt() })
+        val itemProject = SmEditProject(romPath = "")
+
+        for (placement in items) {
+            val item = resolveItemDefinition(placement.item)
+            requireCustomItemPatchEnabled(item, patchEntries, context)
+            val roomId = resolvePlacementRoomId(placement, roomsById)
+            val plmId = item.plmIdFor(placement.kind)
+                ?: throw IllegalArgumentException(
+                    "Item '${placement.item}' does not support placement kind '${placement.kind}'."
+                )
+            require(placement.x in 0..0xFF) {
+                "Item '${placement.item}' x coordinate must be from 0 to 255."
+            }
+            require(placement.y in 0..0xFF) {
+                "Item '${placement.item}' y coordinate must be from 0 to 255."
+            }
+            val param = placement.param?.also {
+                require(it in 0..0xFFFF) {
+                    "Item '${placement.item}' param must be from 0 to 65535."
+                }
+                if (it > 0) usedParams.add(it)
+            } ?: nextItemParam(usedParams)
+
+            val room = itemProject.getOrCreateRoom(roomId)
+            room.plmChanges.removeAll {
+                it.action == "add" && it.x == placement.x && it.y == placement.y && it.plmId in itemPlmIds
+            }
+            room.plmChanges.add(
+                PlmChange(
+                    action = "add",
+                    plmId = plmId,
+                    x = placement.x,
+                    y = placement.y,
+                    param = param,
+                )
+            )
+        }
+
+        return itemProject
+    }
+
+    private fun collectUsedItemParams(parser: RomParser, roomIds: List<Int>): MutableSet<Int> {
+        val used = mutableSetOf<Int>()
+        for (roomId in roomIds) {
+            for (plm in parser.getAllPlmEntriesForRoom(roomId)) {
+                if (plm.id in itemPlmIds && plm.param > 0) {
+                    used.add(plm.param)
+                }
+            }
+        }
+        return used
+    }
+
+    private fun resolveItemDefinition(item: String): HeadlessItemDefinition {
+        val key = lookupKey(item)
+        return itemDefinitions.firstOrNull { definition ->
+            key == lookupKey(definition.id) ||
+                key == lookupKey(definition.name) ||
+                key == lookupKey(definition.shortLabel)
+        } ?: throw IllegalArgumentException("Unknown item '$item'.")
+    }
+
+    private fun requireCustomItemPatchEnabled(
+        item: HeadlessItemDefinition,
+        patchEntries: List<PatchEntry>,
+        context: ApplyContext,
+    ) {
+        val sourcePatchId = item.sourcePatchId ?: return
+        val enabled = patchEntries.any {
+            it.patch.enabled && SmeditPatchCatalog.publicPatchId(it.patch) == sourcePatchId
+        }
+        if (enabled) return
+
+        val message = "Item '${item.id}' requires patch '$sourcePatchId' to be enabled."
+        if (context.strictConfigValidation) {
+            throw IllegalArgumentException(message)
+        }
+        context.warnings.add(message)
+    }
+
+    private fun resolvePlacementRoomId(
+        placement: SmeditItemPlacementRequest,
+        roomsById: Map<Int, RoomInfo>,
+    ): Int {
+        placement.roomId?.let { roomId ->
+            require(roomsById.containsKey(roomId)) {
+                "Unknown roomId 0x${roomId.toString(16).uppercase()} for item '${placement.item}'."
+            }
+            return roomId
+        }
+
+        val roomRef = placement.room?.trim().orEmpty()
+        require(roomRef.isNotEmpty()) {
+            "Item '${placement.item}' requires roomId or room."
+        }
+
+        val roomIdCandidates = parseRoomReferences(roomRef)
+        roomIdCandidates.firstOrNull(roomsById::containsKey)?.let { roomId ->
+            return roomId
+        }
+        if (roomIdCandidates.isNotEmpty()) {
+            throw IllegalArgumentException(
+                "Unknown room '$roomRef' for item '${placement.item}'."
+            )
+        }
+
+        val key = lookupKey(roomRef)
+        val room = roomsById.values.firstOrNull {
+            key == lookupKey(it.handle) || key == lookupKey(it.name)
+        } ?: throw IllegalArgumentException("Unknown room '$roomRef' for item '${placement.item}'.")
+        return room.getRoomIdAsInt()
+    }
+
+    private fun parseRoomReferences(roomRef: String): List<Int> {
+        val trimmed = roomRef.trim()
+        val hex = trimmed.removePrefix("0x").removePrefix("0X")
+        if (trimmed.startsWith("0x", ignoreCase = true)) {
+            return listOfNotNull(hex.toIntOrNull(16))
+        }
+        return buildList {
+            hex.takeIf { it.all { char -> char.isDigitOrHexLetter() } }
+                ?.toIntOrNull(16)
+                ?.let(::add)
+            trimmed.toIntOrNull()?.let(::add)
+        }.distinct()
+    }
+
+    private fun nextItemParam(usedParams: MutableSet<Int>): Int {
+        var candidate = 0x51
+        while (candidate in usedParams && candidate <= 0xFFFF) candidate++
+        require(candidate <= 0xFFFF) {
+            "No free item collection parameters remain."
+        }
+        usedParams.add(candidate)
+        return candidate
+    }
+
+    private fun Char.isDigitOrHexLetter(): Boolean =
+        this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
+
+    private fun lookupKey(value: String): String =
+        value.lowercase().filter { it.isLetterOrDigit() }
 
     private fun applyProjectCustomGraphics(
         gfx: TilesetGfxData,
@@ -386,6 +596,9 @@ class SmeditBuildService(
     private fun applyProjectRoomEdits(
         project: SmEditProject,
         context: ApplyContext,
+        identifier: String = "project_room_edits",
+        name: String = "Project Room Edits",
+        source: String = "project",
     ): List<SmeditAppliedPatchReport> {
         val rom = context.outputRom
         val parser = context.parser
@@ -404,19 +617,7 @@ class SmeditBuildService(
 
         val beforeRecords = context.patchWrites.size
         val beforeBytes = context.patchWrites.totalByteCount()
-        val levelAllocator = RomFreeSpaceAllocator(
-            romData = rom,
-            snesToPc = parser::snesToPc,
-            pcToSnes = parser::pcToSnes,
-            guardBytes = 1,
-        )
-        val plmAllocator = RomFreeSpaceAllocator(
-            romData = rom,
-            snesToPc = parser::snesToPc,
-            pcToSnes = parser::pcToSnes,
-            guardBytes = 1,
-        )
-        val scrollAllocator = RomFreeSpaceAllocator(
+        val roomDataAllocator = RomFreeSpaceAllocator(
             romData = rom,
             snesToPc = parser::snesToPc,
             pcToSnes = parser::pcToSnes,
@@ -429,13 +630,13 @@ class SmeditBuildService(
             val room = parser.readRoomHeader(roomId) ?: continue
             var patched = false
             if (roomEdits.operations.any { it.edits.isNotEmpty() } && room.levelDataPtr != 0) {
-                patched = applyRoomTileEdits(roomKey, roomId, room, roomEdits, levelAllocator, context) || patched
+                patched = applyRoomTileEdits(roomKey, roomId, room, roomEdits, roomDataAllocator, context) || patched
             }
             if (roomEdits.plmChanges.isNotEmpty()) {
-                patched = applyRoomPlmChanges(roomKey, roomId, roomEdits, plmAllocator, context) || patched
+                patched = applyRoomPlmChanges(roomKey, roomId, roomEdits, roomDataAllocator, context) || patched
             }
             if (roomEdits.effectiveScrollChanges().isNotEmpty()) {
-                patched = applyRoomScrollChanges(roomKey, roomId, room, roomEdits, scrollAllocator, context) || patched
+                patched = applyRoomScrollChanges(roomKey, roomId, room, roomEdits, roomDataAllocator, context) || patched
             }
             if (patched) patchedRooms++
         }
@@ -445,9 +646,9 @@ class SmeditBuildService(
 
         return listOf(
             SmeditAppliedPatchReport(
-                identifier = "project_room_edits",
-                name = "Project Room Edits",
-                source = "project",
+                identifier = identifier,
+                name = name,
+                source = source,
                 writes = writes,
                 bytes = context.patchWrites.totalByteCount() - beforeBytes,
             )
@@ -750,7 +951,7 @@ class SmeditBuildService(
         val deduped = mutableListOf<RomParser.PlmEntry>()
         for (plm in plms.asReversed()) {
             val key = (plm.x.toLong() shl 16) or plm.y.toLong()
-            if (RomParser.isItemPlm(plm.id)) {
+            if (plm.id in itemPlmIds) {
                 if (key in seenItemPositions) continue
                 seenItemPositions.add(key)
             }
@@ -1690,6 +1891,27 @@ class SmeditBuildService(
         val target: TilesetPaletteTarget,
         val rawPalette: ByteArray,
     )
+
+    private data class HeadlessItemDefinition(
+        val id: String,
+        val name: String,
+        val shortLabel: String,
+        val visiblePlmId: Int?,
+        val chozoPlmId: Int?,
+        val hiddenPlmId: Int?,
+        val sourcePatchId: String? = null,
+    ) {
+        fun plmIds(): List<Int> =
+            listOfNotNull(visiblePlmId, chozoPlmId, hiddenPlmId)
+
+        fun plmIdFor(kind: String): Int? =
+            when (kind.lowercase().filter { it.isLetterOrDigit() }) {
+                "visible" -> visiblePlmId
+                "chozo", "chozostatue" -> chozoPlmId
+                "hidden" -> hiddenPlmId
+                else -> null
+            }
+    }
 
     private data class PatchEntry(
         val patch: SmPatch,

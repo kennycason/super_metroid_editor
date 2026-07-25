@@ -14,6 +14,7 @@ import com.supermetroid.editor.headless.SmeditEnemyDropsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyStatsRandomization
 import com.supermetroid.editor.headless.SmeditEnemyVulnerabilityRandomization
 import com.supermetroid.editor.headless.SmeditGeneratorRequest
+import com.supermetroid.editor.headless.SmeditItemPlacementRequest
 import com.supermetroid.editor.headless.SmeditPatchRequest
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.rom.PaletteEffects
@@ -141,6 +142,8 @@ class SmeditServiceTest {
         val body = json.decodeFromString<SmeditServiceMetadataResponse>(response.body())
         assertTrue(body.patches.any { it.id == "skip_intro_and_ceres" })
         assertTrue(body.patches.any { it.id == "energy_free_shinesparks" })
+        assertTrue(body.patches.any { it.id == "spider_ball" })
+        assertTrue(body.rooms.any { it.id == "0x91F8" && it.name == "Landing Site" })
         assertTrue(body.randomization.presets.contains("spicy"))
         assertTrue(body.randomization.beams.contains("power"))
         assertTrue(body.randomization.enemyCategories.contains("Aquatic"))
@@ -189,6 +192,49 @@ class SmeditServiceTest {
     }
 
     @Test
+    fun `patch endpoint applies spider ball patch and request item placement`() = testApplication {
+        val romBytes = loadTestRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        application {
+            smeditServiceModule()
+        }
+
+        val request = patchRequest(
+            build = SmeditBuildRequest(
+                patches = mapOf(
+                    "spider_ball" to SmeditPatchRequest(),
+                ),
+                items = listOf(
+                    SmeditItemPlacementRequest(
+                        item = "spider_ball",
+                        roomId = 0x91F8,
+                        x = 83,
+                        y = 68,
+                        kind = "chozo",
+                        param = 0x5A,
+                    )
+                ),
+            ),
+            romBytes = requireNotNull(romBytes),
+        )
+        val response = client.post("/patch?format=json") {
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            setBody(json.encodeToString(request))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServicePatchResponse>(response.body())
+        assertTrue(body.report.applied.any { it.identifier == "spider_ball" })
+        assertTrue(body.report.applied.any { it.identifier == "request_item_placements" })
+        val patchedRom = Base64.getDecoder().decode(body.romBase64)
+        val patchedParser = RomParser(patchedRom)
+        val landingSite = requireNotNull(patchedParser.readRoomHeader(0x91F8))
+        val plms = patchedParser.parsePlmSet(landingSite.plmSetPtr)
+        assertTrue(plms.any { it.id == 0xF204 && it.x == 83 && it.y == 68 && it.param == 0x5A })
+    }
+
+    @Test
     fun `patch endpoint applies mazetroid generator and places starter items`() = testApplication {
         val romBytes = loadTestRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")
@@ -226,6 +272,15 @@ class SmeditServiceTest {
 
         val landingScrolls = patchedParser.parseScrollData(landingSite.roomScrollsPtr, landingSite.width, landingSite.height)
         assertContentEquals(mazetroidScrollsFor(landingSite), landingScrolls.toList())
+
+        val originalMotherBrain = requireNotNull(originalParser.readRoomHeader(0xDD58))
+        val patchedMotherBrain = requireNotNull(patchedParser.readRoomHeader(0xDD58))
+        assertEquals(originalMotherBrain.levelDataPtr, patchedMotherBrain.levelDataPtr)
+        assertContentEquals(
+            originalParser.decompressLZ2(originalMotherBrain.levelDataPtr),
+            patchedParser.decompressLZ2(patchedMotherBrain.levelDataPtr),
+            "Mazetroid service generation should skip Mother Brain room level data",
+        )
 
         val roomWithScrollPlms = RoomRepository().getAllRooms()
             .map { it.getRoomIdAsInt() }

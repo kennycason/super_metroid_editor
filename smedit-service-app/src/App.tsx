@@ -13,6 +13,7 @@ import { clearRoms, getRom, listRoms, saveRomFile } from './storage';
 import type {
   BuildRequest,
   GeneratorRequest,
+  ItemPlacementKind,
   PatchId,
   PatchOption,
   RandomizationRequest,
@@ -33,6 +34,7 @@ const patchOptions: PatchOption[] = [
   { id: 'higher_jump', label: 'Higher jump', section: 'Movement' },
   { id: 'energy_free_shinesparks', label: 'Energy-free shinesparks', section: 'Movement' },
   { id: 'enable_moonwalk', label: 'Enable moonwalk', section: 'Movement' },
+  { id: 'spider_ball', label: 'Spider Ball', section: 'Movement' },
   { id: 'fast_doors', label: 'Fast doors', section: 'Movement' },
   { id: 'fast_elevators', label: 'Fast elevators', section: 'Movement' },
   { id: 'infinite_missiles', label: 'Infinite missiles', section: 'Supplies' },
@@ -83,6 +85,13 @@ type CeresTimerSettings = {
   seconds: number;
 };
 
+type SpiderBallSettings = {
+  roomId: number;
+  x: number;
+  y: number;
+  kind: ItemPlacementKind;
+};
+
 type PersistedSettings = {
   settingsVersion?: number;
   serviceUrl?: string;
@@ -92,6 +101,7 @@ type PersistedSettings = {
   fanfareFrames?: number;
   bombs?: Partial<BombSettings>;
   ceresTimer?: Partial<CeresTimerSettings>;
+  spiderBall?: Partial<SpiderBallSettings>;
   colorize?: {
     enabled?: boolean;
     effect?: string;
@@ -155,6 +165,12 @@ const defaultCeresTimerSettings: CeresTimerSettings = {
   minutes: 1,
   seconds: 0,
 };
+const defaultSpiderBallSettings: SpiderBallSettings = {
+  roomId: 0x91f8,
+  x: 83,
+  y: 68,
+  kind: 'visible',
+};
 
 export function App() {
   const savedSettings = useMemo(loadPersistedSettings, []);
@@ -189,6 +205,14 @@ export function App() {
   );
   const [ceresSeconds, setCeresSeconds] = useState(
     numberSetting(savedSettings.ceresTimer?.seconds, defaultCeresTimerSettings.seconds),
+  );
+  const [spiderBallRoomId, setSpiderBallRoomId] = useState(
+    numberSetting(savedSettings.spiderBall?.roomId, defaultSpiderBallSettings.roomId),
+  );
+  const [spiderBallX, setSpiderBallX] = useState(numberSetting(savedSettings.spiderBall?.x, defaultSpiderBallSettings.x));
+  const [spiderBallY, setSpiderBallY] = useState(numberSetting(savedSettings.spiderBall?.y, defaultSpiderBallSettings.y));
+  const [spiderBallKind, setSpiderBallKind] = useState<ItemPlacementKind>(
+    itemPlacementKindSetting(savedSettings.spiderBall?.kind, defaultSpiderBallSettings.kind),
   );
 
   const [colorizeEnabled, setColorizeEnabled] = useState(booleanSetting(savedSettings.colorize?.enabled, true));
@@ -288,6 +312,12 @@ export function App() {
         minutes: ceresMinutes,
         seconds: ceresSeconds,
       },
+      spiderBall: {
+        roomId: spiderBallRoomId,
+        x: spiderBallX,
+        y: spiderBallY,
+        kind: spiderBallKind,
+      },
       colorize: {
         enabled: colorizeEnabled,
         effect: colorEffect,
@@ -375,6 +405,10 @@ export function App() {
     selectedPatchId,
     selectedRomId,
     serviceUrl,
+    spiderBallKind,
+    spiderBallRoomId,
+    spiderBallX,
+    spiderBallY,
     spriteRegionFilter,
     tilesetFilter,
   ]);
@@ -385,6 +419,7 @@ export function App() {
     () => patchOptions.filter((option) => !metadata || availablePatchIds.has(option.id)),
     [availablePatchIds, metadata],
   );
+  const roomOptions = metadata?.rooms ?? [];
   const colorEffectOptions = metadata?.colorize.effects ?? fallbackColorEffects;
   const beamOptions = metadata?.randomization.beams ?? fallbackBeamOptions;
   const categoryOptions = metadata?.randomization.enemyCategories ?? fallbackCategoryOptions;
@@ -396,6 +431,13 @@ export function App() {
       setSelectedPatchId(null);
     }
   }, [selectedPatchId, visiblePatchOptions]);
+
+  useEffect(() => {
+    if (roomOptions.length === 0) return;
+    if (!roomOptions.some((room) => room.roomId === spiderBallRoomId)) {
+      setSpiderBallRoomId(roomOptions[0].roomId);
+    }
+  }, [roomOptions, spiderBallRoomId]);
 
   const buildRequest = useMemo<BuildRequest>(() => {
     const patches: NonNullable<BuildRequest['patches']> = {};
@@ -430,6 +472,18 @@ export function App() {
       patches,
     };
 
+    if (enabledPatches.spider_ball) {
+      build.items = [
+        {
+          item: 'spider_ball',
+          roomId: spiderBallRoomId,
+          x: spiderBallX,
+          y: spiderBallY,
+          kind: spiderBallKind,
+        },
+      ];
+    }
+
     if (colorizeEnabled) {
       build.colorize = {
         effect: colorEffect,
@@ -455,6 +509,10 @@ export function App() {
     fanfareFrames,
     includeSprites,
     includeTilesets,
+    spiderBallKind,
+    spiderBallRoomId,
+    spiderBallX,
+    spiderBallY,
     spriteRegionFilter,
     tilesetFilter,
     visiblePatchOptions,
@@ -573,6 +631,16 @@ export function App() {
       errors.push(...validateIntegerField('Ceres timer seconds', ceresSeconds, 0, 59));
       if (ceresTotalSeconds < 15 || ceresTotalSeconds > 600) {
         errors.push('Ceres escape timer must total 15 to 600 seconds.');
+      }
+    }
+    if (enabledPatches.spider_ball) {
+      if (metadata && !roomOptions.some((room) => room.roomId === spiderBallRoomId)) {
+        errors.push('Spider Ball room must be selected from the service room list.');
+      }
+      errors.push(...validateIntegerField('Spider Ball x coordinate', spiderBallX, 0, 255));
+      errors.push(...validateIntegerField('Spider Ball y coordinate', spiderBallY, 0, 255));
+      if (!['visible', 'chozo', 'hidden'].includes(spiderBallKind)) {
+        errors.push('Spider Ball type must be visible, Chozo, or hidden.');
       }
     }
 
@@ -697,6 +765,7 @@ export function App() {
     enabledPatches.bombs,
     enabledPatches.ceres_escape_seconds,
     enabledPatches.fanfares,
+    enabledPatches.spider_ball,
     excludeCategories,
     extraExcludedEnemies,
     fanfareFrames,
@@ -718,8 +787,13 @@ export function App() {
     randomizeHp,
     seed,
     selectedBeams,
+    spiderBallKind,
+    spiderBallRoomId,
+    spiderBallX,
+    spiderBallY,
     tilesetFilter,
     spriteRegionFilter,
+    roomOptions,
   ]);
 
   const previewJson = useMemo(
@@ -989,6 +1063,38 @@ export function App() {
                       step={1}
                       onChange={setBombExplosionDelay}
                     />
+                  </>
+                )}
+                {selectedPatchId === 'spider_ball' && (
+                  <>
+                    <label className="field">
+                      <span>Room</span>
+                      <select
+                        value={spiderBallRoomId}
+                        onChange={(event) => setSpiderBallRoomId(Number(event.target.value))}
+                        disabled={roomOptions.length === 0}
+                      >
+                        {roomOptions.length === 0 ? (
+                          <option value={spiderBallRoomId}>0x{spiderBallRoomId.toString(16).toUpperCase()}</option>
+                        ) : (
+                          roomOptions.map((room) => (
+                            <option key={room.id} value={room.roomId}>
+                              {room.name} ({room.id})
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <NumberField label="X" value={spiderBallX} min={0} max={255} step={1} onChange={setSpiderBallX} />
+                    <NumberField label="Y" value={spiderBallY} min={0} max={255} step={1} onChange={setSpiderBallY} />
+                    <label className="field">
+                      <span>Type</span>
+                      <select value={spiderBallKind} onChange={(event) => setSpiderBallKind(event.target.value as ItemPlacementKind)}>
+                        <option value="visible">Visible</option>
+                        <option value="chozo">Chozo</option>
+                        <option value="hidden">Hidden</option>
+                      </select>
+                    </label>
                   </>
                 )}
               </div>
@@ -1418,8 +1524,8 @@ function validateIntegerField(label: string, value: number, min: number, max: nu
   return [];
 }
 
-function patchHasOptions(id: PatchId): id is Extract<PatchId, 'fanfares' | 'bombs' | 'ceres_escape_seconds'> {
-  return id === 'fanfares' || id === 'bombs' || id === 'ceres_escape_seconds';
+function patchHasOptions(id: PatchId): id is Extract<PatchId, 'fanfares' | 'bombs' | 'ceres_escape_seconds' | 'spider_ball'> {
+  return id === 'fanfares' || id === 'bombs' || id === 'ceres_escape_seconds' || id === 'spider_ball';
 }
 
 function loadPersistedSettings(): PersistedSettings {
@@ -1471,6 +1577,10 @@ function booleanSetting(value: unknown, fallback: boolean): boolean {
 
 function stringArraySetting(value: unknown, fallback: string[]): string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : [...fallback];
+}
+
+function itemPlacementKindSetting(value: unknown, fallback: ItemPlacementKind): ItemPlacementKind {
+  return value === 'visible' || value === 'chozo' || value === 'hidden' ? value : fallback;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

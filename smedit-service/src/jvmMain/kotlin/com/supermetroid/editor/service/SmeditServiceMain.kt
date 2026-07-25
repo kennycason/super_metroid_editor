@@ -12,6 +12,7 @@ import com.supermetroid.editor.headless.SmeditPatchCatalog
 import com.supermetroid.editor.headless.SmeditPatchRandomizer
 import com.supermetroid.editor.headless.SmeditRandomizationReport
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.SpritePalettes
@@ -92,6 +93,7 @@ data class SmeditServiceMetadataResponse(
     val schemaVersion: Int = 1,
     val patches: List<SmeditServicePatchMetadata>,
     val configSchemas: List<SmeditConfigSchema>,
+    val rooms: List<SmeditServiceRoomMetadata>,
     val randomization: SmeditServiceRandomizationMetadata,
     val colorize: SmeditServiceColorizeMetadata,
 )
@@ -107,6 +109,14 @@ data class SmeditServicePatchMetadata(
     val headlessSupported: Boolean,
     val supportsPatchOnly: Boolean,
     val requiresRom: Boolean,
+)
+
+@Serializable
+data class SmeditServiceRoomMetadata(
+    val id: String,
+    val roomId: Int,
+    val handle: String,
+    val name: String,
 )
 
 @Serializable
@@ -399,6 +409,16 @@ private fun serviceMetadata(): SmeditServiceMetadataResponse {
     return SmeditServiceMetadataResponse(
         patches = patches,
         configSchemas = schemas,
+        rooms = RoomRepository().getAllRooms()
+            .map {
+                SmeditServiceRoomMetadata(
+                    id = it.id,
+                    roomId = it.getRoomIdAsInt(),
+                    handle = it.handle,
+                    name = it.name,
+                )
+            }
+            .sortedBy { it.roomId },
         randomization = SmeditServiceRandomizationMetadata(
             presets = SmeditPatchRandomizer.availablePresets,
             beams = beamKeys,

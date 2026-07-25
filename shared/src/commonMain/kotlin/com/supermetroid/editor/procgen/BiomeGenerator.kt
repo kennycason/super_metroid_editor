@@ -12,6 +12,7 @@ data class BiomeGenerationRect(
 data class BiomeGenerationOptions(
     val preserveRects: List<BiomeGenerationRect> = emptyList(),
     val forceAirRects: List<BiomeGenerationRect> = emptyList(),
+    val protectedCells: BooleanArray? = null,
     val wfcSamples: List<WfcSample> = emptyList(),
     val wfcOptions: WfcOptions = WfcOptions(),
 )
@@ -65,6 +66,15 @@ class BiomeGenerator(
             }
         }
         for (i in 0 until n) if (explicitPreserve[i]) preserved[i] = true
+        options.protectedCells?.let { protectedCells ->
+            require(protectedCells.size >= n) { "protected cell mask smaller than room" }
+            for (i in 0 until n) {
+                if (protectedCells[i]) {
+                    preserved[i] = true
+                    forceAir[i] = false
+                }
+            }
+        }
         if (isMaze) {
             preserveOriginalMazeCollision(originalWords, width, preserved, forceAir)
         }

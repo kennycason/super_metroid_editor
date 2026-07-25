@@ -8,6 +8,7 @@ export type PatchId =
   | 'higher_jump'
   | 'energy_free_shinesparks'
   | 'enable_moonwalk'
+  | 'spider_ball'
   | 'fast_doors'
   | 'fast_elevators'
   | 'infinite_missiles'
@@ -27,12 +28,25 @@ export type BuildRequest = {
   schemaVersion: 1;
   strictConfigValidation?: boolean;
   patches?: Record<string, PatchRequest>;
+  items?: ItemPlacementRequest[];
   colorize?: ColorizeRequest;
 };
 
 export type PatchRequest = {
   enabled?: boolean;
   config?: Record<string, number>;
+};
+
+export type ItemPlacementKind = 'visible' | 'chozo' | 'hidden';
+
+export type ItemPlacementRequest = {
+  item: string;
+  roomId?: number;
+  room?: string;
+  x: number;
+  y: number;
+  kind?: ItemPlacementKind;
+  param?: number;
 };
 
 export type ColorizeRequest = {
@@ -157,6 +171,7 @@ export type ServiceMetadata = {
   schemaVersion: number;
   patches: ServicePatchMetadata[];
   configSchemas: ConfigSchema[];
+  rooms: ServiceRoomMetadata[];
   randomization: {
     presets: string[];
     beams: string[];
@@ -180,6 +195,13 @@ export type ServiceMetadata = {
       colors: number;
     }>;
   };
+};
+
+export type ServiceRoomMetadata = {
+  id: string;
+  roomId: number;
+  handle: string;
+  name: string;
 };
 
 export type ServicePatchMetadata = {

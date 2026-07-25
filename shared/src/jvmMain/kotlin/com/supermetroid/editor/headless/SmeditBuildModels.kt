@@ -8,6 +8,7 @@ data class SmeditBuildRequest(
     val project: String? = null,
     val strictConfigValidation: Boolean = true,
     val patches: Map<String, SmeditPatchRequest> = emptyMap(),
+    val items: List<SmeditItemPlacementRequest> = emptyList(),
     val rawWrites: List<SmeditRawWriteRequest> = emptyList(),
     val colorize: SmeditColorizeRequest? = null,
 )
@@ -28,6 +29,17 @@ data class SmeditRawWriteRequest(
     val address: String? = null,
     val bytes: List<Int> = emptyList(),
     val label: String = "",
+)
+
+@Serializable
+data class SmeditItemPlacementRequest(
+    val item: String,
+    val roomId: Int? = null,
+    val room: String? = null,
+    val x: Int,
+    val y: Int,
+    val kind: String = "visible",
+    val param: Int? = null,
 )
 
 @Serializable

@@ -1,5 +1,6 @@
 package com.supermetroid.editor.procgen
 
+import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -149,6 +150,56 @@ class BiomeGeneratorTest {
             assertTrue(isPassableType((gen.words[left] shr 12) and 0xF), "force-air left edge (24,$y) must be open")
             assertTrue(isPassableType((gen.words[right] shr 12) and 0xF), "force-air right edge (39,$y) must be open")
         }
+    }
+
+    @Test
+    fun `protected metadata cells override force air and stay verbatim`() {
+        val w = 48
+        val h = 32
+        val (words, bts) = syntheticRoom(w, h)
+        val profile = TilesetProfile.synthetic()
+        val solid = (0x8 shl 12) or 0x220
+        val metaAir = 12 * w + 12
+        val metaSolid = 12 * w + 13
+        val slope = 12 * w + 14
+        val slopeHalo = 13 * w + 15
+        val plmCenter = 18 * w + 20
+        val plmEdge = 20 * w + 22
+        val plainForceAir = 15 * w + 15
+
+        words[metaAir] = 0x00FF
+        bts[metaAir] = 0x2A
+        words[metaSolid] = solid
+        bts[metaSolid] = 0x2B
+        words[slope] = (0x1 shl 12) or 0x221
+        bts[slope] = 0
+        words[plmCenter] = solid
+        words[plmEdge] = solid
+        words[plainForceAir] = solid
+
+        val options = BiomeGenerationOptions(
+            forceAirRects = listOf(BiomeGenerationRect(4, 4, w - 5, h - 5)),
+            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(
+                width = w,
+                height = h,
+                originalWords = words,
+                originalBts = bts,
+                plms = listOf(RomParser.PlmEntry(0xEF23, 20, 18, 0x51)),
+            ),
+        )
+        val gen = BiomeGenerator(rules(1111, BiomeStyle.PIPE_MAZE), profile, 1111, options)
+            .generate(w, h, words, bts)
+
+        for (i in listOf(metaAir, metaSolid, slope, slopeHalo, plmCenter, plmEdge)) {
+            assertEquals(words[i], gen.words[i], "protected word $i must remain unchanged")
+            assertEquals(bts[i], gen.bts[i], "protected BTS $i must remain unchanged")
+            assertTrue(gen.preserved[i], "protected cell $i must be flagged preserved")
+        }
+        assertTrue(!gen.preserved[plainForceAir], "plain force-air cell should remain editable")
+        assertTrue(
+            isPassableType((gen.words[plainForceAir] shr 12) and 0xF),
+            "plain force-air cell should become passable",
+        )
     }
 
     @Test

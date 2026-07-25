@@ -32,7 +32,9 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
 import com.supermetroid.editor.procgen.BiomeGenerationOptions
 import com.supermetroid.editor.procgen.BiomeGenerationRect
+import com.supermetroid.editor.procgen.BiomeRoomEligibility
 import com.supermetroid.editor.procgen.BiomeRules
+import com.supermetroid.editor.procgen.BiomeSafetyMask
 import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.LevelGrid
 import com.supermetroid.editor.procgen.StructureAlgorithm
@@ -3806,7 +3808,14 @@ class EditorState {
         val n = w * h
         val origWords = IntArray(n) { readBlockWord(it % w, it / w) }
         val origBts = IntArray(n) { readBts(it % w, it / w) }
-        val options = buildBiomeGenerationOptions(keepLandingSiteShipClear, rules, romParser, wfcOptions)
+        val options = buildBiomeGenerationOptions(
+            keepLandingSiteShipClear,
+            rules,
+            romParser,
+            wfcOptions,
+            origWords,
+            origBts,
+        )
         val result = BiomeGenerator(rules, profile, seed, options).generate(w, h, origWords, origBts)
 
         val edits = ArrayList<TileEdit>()
@@ -3879,6 +3888,8 @@ class EditorState {
                 roomId = roomId,
                 width = grids.width,
                 height = grids.height,
+                originalWords = grids.words,
+                originalBts = grids.bts,
                 rules = rules,
                 romParser = romParser,
                 wfcOptions = wfcOptions,
@@ -4173,6 +4184,8 @@ class EditorState {
         roomId: Int,
         width: Int,
         height: Int,
+        originalWords: IntArray,
+        originalBts: IntArray,
         rules: BiomeRules,
         romParser: RomParser?,
         wfcOptions: WfcOptions,
@@ -4190,6 +4203,7 @@ class EditorState {
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
+            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(width, height, originalWords, originalBts, plms),
             wfcSamples = if (rules.algorithm == StructureAlgorithm.WFC) wfcSamples else emptyList(),
             wfcOptions = wfcOptions,
         )
@@ -4258,37 +4272,7 @@ class EditorState {
     }
 
     private fun shouldSkipBulkBiomeRoom(roomInfo: RoomInfo, room: Room): Boolean {
-        val haystack = "${roomInfo.name} ${roomInfo.handle} ${room.name} ${room.handle}"
-            .lowercase()
-            .replace("'", "")
-            .replace(" ", "")
-        val excluded = listOf(
-            "save",
-            "savestation",
-            "station",
-            "recharge",
-            "refill",
-            "healthrefill",
-            "energycharge",
-            "missilestation",
-            "maproom",
-            "premap",
-            "boss",
-            "kraid",
-            "phantoon",
-            "draygon",
-            "ridley",
-            "torizo",
-            "sporespawn",
-            "crocomire",
-            "botwoon",
-            "motherbrain",
-            "goldentorizo",
-            "ceres",
-            "escape",
-            "statue",
-        )
-        return excluded.any { it in haystack }
+        return BiomeRoomEligibility.shouldSkipBulkBiomeRoom(roomInfo, room)
     }
 
     private fun buildBiomeGenerationOptions(
@@ -4296,6 +4280,8 @@ class EditorState {
         rules: BiomeRules,
         romParser: RomParser?,
         wfcOptions: WfcOptions,
+        originalWords: IntArray,
+        originalBts: IntArray,
     ): BiomeGenerationOptions {
         val preserveRects = ArrayList<BiomeGenerationRect>()
         val forceAirRects = ArrayList<BiomeGenerationRect>()
@@ -4328,6 +4314,13 @@ class EditorState {
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
+            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(
+                workingBlocksWide,
+                workingBlocksTall,
+                originalWords,
+                originalBts,
+                _workingPlms,
+            ),
             wfcSamples = wfcSamples,
             wfcOptions = wfcOptions,
         )

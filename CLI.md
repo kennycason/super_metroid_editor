@@ -107,11 +107,23 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
         "item_fanfare_frames": 16
       }
     },
+    "spider_ball": {
+      "enabled": true
+    },
     "ceres_escape_seconds": {
       "enabled": true,
       "configValue": 90
     }
   },
+  "items": [
+    {
+      "item": "spider_ball",
+      "roomId": 37368,
+      "x": 83,
+      "y": 68,
+      "kind": "visible"
+    }
+  ],
   "rawWrites": [
     {
       "address": "80:8000",
@@ -128,6 +140,8 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
 ```
 
 `patches` keys can be either patch IDs, such as `fast_doors`, or supported config types, such as `bombs`.
+
+`items` places item PLMs in ROM-backed builds. Use `roomId` values from the service metadata room list, or pass `room` as a room hex string, handle, or name. `kind` accepts `visible`, `chozo`, or `hidden`. Patch-defined items such as `spider_ball` require their owning patch to be enabled in `patches`.
 
 `project` is optional. Relative project paths are resolved from the build config file's directory.
 

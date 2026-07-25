@@ -11,7 +11,9 @@ import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.procgen.BiomeGenerationOptions
 import com.supermetroid.editor.procgen.BiomeGenerationRect
 import com.supermetroid.editor.procgen.BiomeGenerator
+import com.supermetroid.editor.procgen.BiomeRoomEligibility
 import com.supermetroid.editor.procgen.BiomeRules
+import com.supermetroid.editor.procgen.BiomeSafetyMask
 import com.supermetroid.editor.procgen.BiomeStyle
 import com.supermetroid.editor.procgen.LevelGrid
 import com.supermetroid.editor.procgen.TilesetProfile
@@ -55,9 +57,14 @@ object SmeditMazetroidGenerator {
         var skipped = 0
         var changedTiles = 0
 
-        for (roomId in roomIds.sorted()) {
+        for (roomInfo in roomInfos.sortedBy { it.getRoomIdAsInt() }) {
+            val roomId = roomInfo.getRoomIdAsInt()
             val room = headersById[roomId]
             if (room == null) {
+                skipped++
+                continue
+            }
+            if (BiomeRoomEligibility.shouldSkipBulkBiomeRoom(roomInfo, room)) {
                 skipped++
                 continue
             }
@@ -74,6 +81,8 @@ object SmeditMazetroidGenerator {
                 roomId = roomId,
                 width = grids.width,
                 height = grids.height,
+                originalWords = grids.words,
+                originalBts = grids.bts,
                 parser = parser,
             )
             val roomSeed = seed xor (roomId.toLong() * -7046029254386353131L)
@@ -200,6 +209,8 @@ object SmeditMazetroidGenerator {
         roomId: Int,
         width: Int,
         height: Int,
+        originalWords: IntArray,
+        originalBts: IntArray,
         parser: RomParser,
     ): BiomeGenerationOptions {
         val preserveRects = ArrayList<BiomeGenerationRect>()
@@ -214,6 +225,7 @@ object SmeditMazetroidGenerator {
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
+            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(width, height, originalWords, originalBts, plms),
         )
     }
 
@@ -226,7 +238,7 @@ object SmeditMazetroidGenerator {
             .map { it.plm.param }
             .filterTo(mutableSetOf()) { it > 0 }
         val morph = placement("Morph Ball", MORPH_BALL_VISIBLE_PLM, x = 67, y = 69, param = nextItemParam(usedParams))
-        val bombs = placement("Bombs", BOMB_VISIBLE_PLM, x = 75, y = 68, param = nextItemParam(usedParams))
+        val bombs = placement("Bombs", BOMB_VISIBLE_PLM, x = 75, y = 69, param = nextItemParam(usedParams))
         val landingSite = project.getOrCreateRoom(LANDING_SITE_ROOM_ID)
         for (placement in listOf(morph, bombs)) {
             landingSite.plmChanges.removeAll { it.action == "add" && it.x == placement.x && it.y == placement.y }

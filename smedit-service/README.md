@@ -42,9 +42,10 @@ By default the response body is the patched ROM as `application/octet-stream`.
 
 ## GET /metadata
 
-Use metadata to discover the service's supported public patch IDs, config schemas, randomizer presets, enemy categories, beam keys, color effects, and sprite palette region IDs:
+Use metadata to discover the service's supported public patch IDs, config schemas, room IDs/names, randomizer presets, enemy categories, beam keys, color effects, and sprite palette region IDs:
 
 ```bash
+curl -sS http://localhost:8080/metadata | jq '.rooms[] | select(.name == "Landing Site")'
 curl -sS http://localhost:8080/metadata | jq '.randomization.enemyCategories'
 curl -sS http://localhost:8080/metadata | jq '.colorize.effects[].id'
 ```
@@ -79,6 +80,36 @@ curl -sS \
 ```
 
 There is also a ready-to-run version of this pattern at `examples/service/random-spicy-combat.sh`. It accepts `--colorize psychedelic-randomize` to add a ROM palette effect to the generated combat ROM.
+
+### Item Placements
+
+Add `items` to the `build` field to place item PLMs in named rooms. `roomId` is the numeric value from `/metadata`, `x` and `y` are PLM coordinates, and `kind` is `visible`, `chozo`, or `hidden`. Spider Ball is a patch-defined item, so its patch must also be enabled:
+
+```bash
+ROM=path/to/base.smc
+BUILD_JSON="$(jq -nc '{
+  schemaVersion: 1,
+  patches: {
+    spider_ball: { enabled: true }
+  },
+  items: [
+    {
+      item: "spider_ball",
+      roomId: 37368,
+      x: 83,
+      y: 68,
+      kind: "visible"
+    }
+  ]
+}')"
+
+curl -sS \
+  -X POST \
+  -F rom=@"$ROM" \
+  -F "build=$BUILD_JSON" \
+  http://localhost:8080/patch \
+  --output spider-ball.smc
+```
 
 ### Colorize Palettes
 
