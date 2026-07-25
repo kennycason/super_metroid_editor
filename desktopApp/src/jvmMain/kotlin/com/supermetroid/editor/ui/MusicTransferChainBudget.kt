@@ -26,10 +26,13 @@ internal object MusicTransferChainBudget {
         val payloadChainBytes = serializedTransferChainSize(
             payloadWrites.map { (addr, data) -> SpcData.TransferBlock(addr, data) }
         )
+        // Native payloads are exported without original blocks (the payload is a full
+        // replacement and including both would double-count old/new sample regions).
+        // So the relocated chain size is just the compacted payload writes chain size.
         return NativePayloadAssessment(
             originalChainBytes = originalChainBytes,
             payloadChainBytes = payloadChainBytes,
-            relocatedChainBytes = originalChainBytes + payloadChainBytes - 2
+            relocatedChainBytes = payloadChainBytes
         )
     }
 
