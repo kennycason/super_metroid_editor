@@ -59,32 +59,6 @@ internal object MusicTransferChainBudget {
                 }
             }
         }
-        return compactSpcBytes(bytesByAddr)
-    }
-
-    private fun compactSpcBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> {
-        val writes = linkedMapOf<Int, ByteArray>()
-        var runStart = -1
-        val runBytes = mutableListOf<Int>()
-        var previousAddr = -1
-
-        fun flushRun() {
-            if (runStart >= 0) {
-                writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
-                runBytes.clear()
-                runStart = -1
-            }
-        }
-
-        for ((addr, value) in bytesByAddr) {
-            if (runStart < 0 || addr != previousAddr + 1) {
-                flushRun()
-                runStart = addr
-            }
-            runBytes += value
-            previousAddr = addr
-        }
-        flushRun()
-        return writes
+        return SpcData.packSpcBytesToWrites(bytesByAddr)
     }
 }

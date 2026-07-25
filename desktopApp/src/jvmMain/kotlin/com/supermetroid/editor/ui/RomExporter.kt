@@ -198,31 +198,7 @@ internal class RomExporter(
     ) {
         fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
 
-        fun toWriteMap(): Map<Int, ByteArray> {
-            val writes = linkedMapOf<Int, ByteArray>()
-            var runStart = -1
-            val runBytes = mutableListOf<Int>()
-            var previousAddr = -1
-
-            fun flushRun() {
-                if (runStart >= 0) {
-                    writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
-                    runBytes.clear()
-                    runStart = -1
-                }
-            }
-
-            for ((addr, value) in bytesByAddr) {
-                if (runStart < 0 || addr != previousAddr + 1) {
-                    flushRun()
-                    runStart = addr
-                }
-                runBytes += value
-                previousAddr = addr
-            }
-            flushRun()
-            return writes
-        }
+        fun toWriteMap(): Map<Int, ByteArray> = SpcData.packSpcBytesToWrites(bytesByAddr)
     }
 
     private fun validateMusicSequenceWrites(
@@ -301,31 +277,8 @@ internal class RomExporter(
         return compactSpcWriteBytes(bytesByAddr)
     }
 
-    private fun compactSpcWriteBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> {
-        val writes = linkedMapOf<Int, ByteArray>()
-        var runStart = -1
-        val runBytes = mutableListOf<Int>()
-        var previousAddr = -1
-
-        fun flushRun() {
-            if (runStart >= 0) {
-                writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
-                runBytes.clear()
-                runStart = -1
-            }
-        }
-
-        for ((addr, value) in bytesByAddr) {
-            if (runStart < 0 || addr != previousAddr + 1) {
-                flushRun()
-                runStart = addr
-            }
-            runBytes += value
-            previousAddr = addr
-        }
-        flushRun()
-        return writes
-    }
+    private fun compactSpcWriteBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> =
+        SpcData.packSpcBytesToWrites(bytesByAddr)
 
     private fun mergeSpcWrites(
         accumulator: SpcWriteAccumulator,
@@ -451,23 +404,12 @@ internal class RomExporter(
             }
         }
 
-        val blocks = mutableListOf<SpcData.TransferBlock>()
-        var runStart = -1
-        val runBytes = mutableListOf<Byte>()
+        val bytesByAddr = sortedMapOf<Int, Int>()
         for (i in covered.indices) {
-            if (covered[i]) {
-                if (runStart < 0) runStart = i
-                runBytes += ram[i]
-            } else if (runStart >= 0) {
-                blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
-                runBytes.clear()
-                runStart = -1
-            }
+            if (covered[i]) bytesByAddr[i] = ram[i].toInt() and 0xFF
         }
-        if (runStart >= 0) {
-            blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
-        }
-        return blocks
+        return SpcData.packSpcBytesToWrites(bytesByAddr)
+            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
     }
 
     private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
@@ -479,31 +421,10 @@ internal class RomExporter(
             require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
                 "SPC write 0x${dest.toString(16)}..0x${(dest + data.size).toString(16)} exceeds SPC RAM"
             }
-            for (i in data.indices) {
-                bytesByAddr[dest + i] = data[i].toInt() and 0xFF
-            }
+            for (i in data.indices) bytesByAddr[dest + i] = data[i].toInt() and 0xFF
         }
-        if (bytesByAddr.isEmpty()) return emptyList()
-
-        val blocks = mutableListOf<SpcData.TransferBlock>()
-        var runStart = -1
-        val runBytes = mutableListOf<Int>()
-        var previousAddr = -1
-        for ((addr, value) in bytesByAddr) {
-            if (runStart < 0 || addr != previousAddr + 1) {
-                if (runStart >= 0) {
-                    blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
-                    runBytes.clear()
-                }
-                runStart = addr
-            }
-            runBytes += value
-            previousAddr = addr
-        }
-        if (runStart >= 0) {
-            blocks += SpcData.TransferBlock(runStart, ByteArray(runBytes.size) { runBytes[it].toByte() })
-        }
-        return blocks
+        return SpcData.packSpcBytesToWrites(bytesByAddr)
+            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
     }
 
     private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {

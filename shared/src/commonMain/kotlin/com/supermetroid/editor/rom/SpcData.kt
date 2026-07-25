@@ -729,27 +729,7 @@ object SpcData {
             }
         }
 
-        val writes = mutableListOf<Pair<Int, ByteArray>>()
-        var runStart = -1
-        val runBytes = mutableListOf<Int>()
-        var prevOffset = -1
-
-        for ((offset, value) in bytesByRomOffset) {
-            if (runStart < 0 || offset != prevOffset + 1) {
-                if (runStart >= 0) {
-                    writes += runStart to ByteArray(runBytes.size) { runBytes[it].toByte() }
-                    runBytes.clear()
-                }
-                runStart = offset
-            }
-            runBytes += value
-            prevOffset = offset
-        }
-        if (runStart >= 0) {
-            writes += runStart to ByteArray(runBytes.size) { runBytes[it].toByte() }
-        }
-
-        return writes
+        return packSpcBytesToWrites(bytesByRomOffset).map { (offset, data) -> offset to data }
     }
 
     /**
@@ -876,5 +856,37 @@ object SpcData {
 
         EditorLog.info("[SPC-REPLACE] Writing ${finalBrr.size}B at ROM PC 0x${location.romPcOffset.toString(16)}")
         return Pair(writes, wasTrimmed)
+    }
+
+    /**
+     * Packs a sorted map of (address → byte value) into contiguous-run write records.
+     *
+     * Consecutive addresses are merged into a single ByteArray entry; gaps produce
+     * separate entries. The map **must** be sorted by key — callers should use
+     * [sortedMapOf] or [java.util.TreeMap] to guarantee this.
+     *
+     * Used by SPC-write accumulation in the exporter, the chain-budget assessment,
+     * and by [buildRomWritesForSpcRamWrites] for ROM-level writes.
+     */
+    fun packSpcBytesToWrites(bytesByAddr: Map<Int, Int>): Map<Int, ByteArray> {
+        val writes = linkedMapOf<Int, ByteArray>()
+        var runStart = -1
+        val runBytes = mutableListOf<Int>()
+        var prevAddr = -1
+        for ((addr, value) in bytesByAddr) {
+            if (runStart < 0 || addr != prevAddr + 1) {
+                if (runStart >= 0) {
+                    writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
+                    runBytes.clear()
+                }
+                runStart = addr
+            }
+            runBytes += value
+            prevAddr = addr
+        }
+        if (runStart >= 0) {
+            writes[runStart] = ByteArray(runBytes.size) { runBytes[it].toByte() }
+        }
+        return writes
     }
 }
