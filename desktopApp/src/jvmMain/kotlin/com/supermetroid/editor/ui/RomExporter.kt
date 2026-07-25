@@ -104,6 +104,7 @@ internal class RomExporter(
                     require(nativeWrites.isNotEmpty()) { "native music payload $key produced no SPC writes" }
                     val owner = "native music payload '$key' (${edit.trackName})"
                     mergeSpcWrites(accumulatedWrites, owner, nativeWrites, rejectAnyOverlap = true)
+                    accumulatedWrites.hasNativePayload = true
                     val totalBytes = nativeWrites.values.sumOf { it.size }
                     patched++
                     onLog(
@@ -177,7 +178,9 @@ internal class RomExporter(
             }
 
             if (accumulatedWrites.isNotEmpty()) {
-                val chainBytes = writeRelocatedSongSetTransferChain(romData, songSet, accumulatedWrites.toWriteMap())
+                val chainBytes = writeRelocatedSongSetTransferChain(
+                    romData, songSet, accumulatedWrites.toWriteMap(), accumulatedWrites.hasNativePayload
+                )
                 onLog(
                     "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
                         "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
@@ -190,7 +193,8 @@ internal class RomExporter(
     private data class SpcWriteAccumulator(
         val songSet: Int,
         val bytesByAddr: java.util.TreeMap<Int, Int> = java.util.TreeMap(),
-        val ownersByAddr: MutableMap<Int, String> = mutableMapOf()
+        val ownersByAddr: MutableMap<Int, String> = mutableMapOf(),
+        var hasNativePayload: Boolean = false
     ) {
         fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
 
@@ -366,7 +370,8 @@ internal class RomExporter(
     private fun writeRelocatedSongSetTransferChain(
         romData: ByteArray,
         songSet: Int,
-        spcWrites: Map<Int, ByteArray>
+        spcWrites: Map<Int, ByteArray>,
+        hasNativePayload: Boolean = false
     ): Int {
         require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
 
@@ -382,13 +387,28 @@ internal class RomExporter(
             "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
         }
 
-        // Merge originalBlocks and spcWrites at the SPC RAM byte level so we emit
-        // only the union of covered bytes — not the concatenation of both chains.
-        // For native IT/custom-sample payloads the patch writes cover the same SPC
-        // RAM addresses as the original blocks (full replacement), so the merged
-        // chain is ~payload-sized rather than ~original+payload-sized.
+        // Always try merging at the SPC RAM byte level first — this preserves data for
+        // other play indices in the same song set while applying the patch writes on top.
+        // If the merged chain exceeds one LoROM bank (32 KiB), fall back to payload-only
+        // for native payloads: those payloads replace the instrument/sample table so other
+        // arrangements would be broken by them anyway, and the original bytes only add size.
         val mergedBlocks = mergeSpcRamBlocks(originalBlocks, spcWrites)
-        val relocatedChain = serializeTransferChain(mergedBlocks)
+        val mergedChain = serializeTransferChain(mergedBlocks)
+        val maxBank = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
+        val (relocatedChain, chainMode) = when {
+            mergedChain.size <= maxBank -> mergedChain to "merged"
+            hasNativePayload -> {
+                val payloadOnlyBlocks = buildSpcPatchBlocks(spcWrites)
+                val payloadChain = serializeTransferChain(payloadOnlyBlocks)
+                onLog(
+                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: merged chain " +
+                        "${mergedChain.size} B > $maxBank B bank limit; falling back to payload-only " +
+                        "(${payloadChain.size} B) — other arrangements in this song set may be affected"
+                )
+                payloadChain to "payload-only"
+            }
+            else -> mergedChain to "merged" // let findMusicTransferFreeSpace report the error
+        }
         val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
         relocatedChain.copyInto(romData, writePc)
 
@@ -399,7 +419,7 @@ internal class RomExporter(
             "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
                 "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
                 "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
-                "(${mergedBlocks.size} merged blocks, ${relocatedChain.size} bytes)"
+                "($chainMode, ${relocatedChain.size} bytes)"
         )
         return relocatedChain.size
     }

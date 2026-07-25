@@ -26,56 +26,14 @@ internal object MusicTransferChainBudget {
         val payloadChainBytes = serializedTransferChainSize(
             payloadWrites.map { (addr, data) -> SpcData.TransferBlock(addr, data) }
         )
-        // Compute the merged chain size using the same byte-level merge as the exporter
-        // (union of covered SPC RAM addresses, patch overwrites original).
-        val mergedBlocks = mergeSpcRamBlocks(originalBlocks, payloadWrites)
-        val relocatedChainBytes = serializedTransferChainSize(mergedBlocks)
+        // Native payloads are exported without original blocks (the payload is a full
+        // replacement and including both would double-count old/new sample regions).
+        // So the relocated chain size is just the compacted payload writes chain size.
         return NativePayloadAssessment(
             originalChainBytes = originalChainBytes,
             payloadChainBytes = payloadChainBytes,
-            relocatedChainBytes = relocatedChainBytes
+            relocatedChainBytes = payloadChainBytes
         )
-    }
-
-    /** Merges [originalBlocks] and [spcWrites] at the SPC RAM byte level. */
-    private fun mergeSpcRamBlocks(
-        originalBlocks: List<SpcData.TransferBlock>,
-        spcWrites: Map<Int, ByteArray>
-    ): List<SpcData.TransferBlock> {
-        val ramSize = 0x10000
-        val ram = ByteArray(ramSize)
-        val covered = BooleanArray(ramSize)
-        for (block in originalBlocks) {
-            val dest = block.destAddr and 0xFFFF
-            for (i in block.data.indices) {
-                ram[dest + i] = block.data[i]
-                covered[dest + i] = true
-            }
-        }
-        for ((addr, data) in spcWrites) {
-            val dest = addr and 0xFFFF
-            for (i in data.indices) {
-                ram[dest + i] = data[i]
-                covered[dest + i] = true
-            }
-        }
-        val blocks = mutableListOf<SpcData.TransferBlock>()
-        var runStart = -1
-        val runBytes = mutableListOf<Byte>()
-        for (i in covered.indices) {
-            if (covered[i]) {
-                if (runStart < 0) runStart = i
-                runBytes += ram[i]
-            } else if (runStart >= 0) {
-                blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
-                runBytes.clear()
-                runStart = -1
-            }
-        }
-        if (runStart >= 0) {
-            blocks += SpcData.TransferBlock(runStart, runBytes.toByteArray())
-        }
-        return blocks
     }
 
     fun serializedTransferChainSize(blocks: List<SpcData.TransferBlock>): Int =
