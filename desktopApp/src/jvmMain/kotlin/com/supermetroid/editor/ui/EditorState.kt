@@ -320,6 +320,14 @@ internal fun buildBgDataWithClonedDoorDependentTransfer(
     return null
 }
 
+internal fun writePng(filePath: String, pixels: IntArray, w: Int, h: Int): Boolean {
+    return try {
+        val img = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        img.setRGB(0, 0, w, h, pixels, 0, w)
+        javax.imageio.ImageIO.write(img, "png", java.io.File(filePath))
+    } catch (_: Exception) { false }
+}
+
 data class FloatingMapSelection(val x: Int, val y: Int)
 
 data class EffectiveSaveStationSpawn(
@@ -434,6 +442,24 @@ class EditorState {
         dirty = true
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
+
+    // ── Sprite editor state objects ───────────────────────────────────────
+
+    val enemySprite = EnemySpriteEditorState(
+        customGfx = { project.customGfx },
+        onDirty = { dirty = true },
+    )
+
+    val phantoonSprite = PhantoonSpriteEditorState(
+        customGfx = { project.customGfx },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
+        onDirty = { dirty = true },
+    )
+
+    val kraidSprite = KraidSpriteEditorState(
+        customGfx = { project.customGfx },
+        onDirty = { dirty = true },
+    )
 
     /** Incremented on every edit to trigger map re-render + update room edit order. */
     private val _editVersionState = mutableStateOf(0)
@@ -906,437 +932,50 @@ class EditorState {
      * Returns custom project PNG if present, otherwise decodes the embedded resource PNG.
      * @param speciesIdHex e.g. "E4BF"
      */
-    fun getEnemySpritePixels(speciesIdHex: String): Pair<IntArray, Pair<Int,Int>>? {
-        val customB64 = project.customGfx.enemyGfx[speciesIdHex]
-        val img: java.awt.image.BufferedImage? = if (customB64 != null) {
-            try {
-                val bytes = java.util.Base64.getDecoder().decode(customB64)
-                javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(bytes))
-            } catch (_: Exception) { null }
-        } else {
-            try {
-                val stream = javaClass.getResourceAsStream("/enemies/$speciesIdHex.png")
-                stream?.let { javax.imageio.ImageIO.read(it) }
-            } catch (_: Exception) { null }
-        }
-        img ?: return null
-        val w = img.width; val h = img.height
-        val pixels = img.getRGB(0, 0, w, h, null, 0, w)
-        return Pair(pixels, Pair(w, h))
-    }
+    // ── Enemy sprite delegates ────────────────────────────────────────────
 
-    /** Whether a custom (imported/edited) sprite exists for this species ID. */
-    fun hasCustomEnemySprite(speciesIdHex: String): Boolean =
-        project.customGfx.enemyGfx.containsKey(speciesIdHex)
+    fun getEnemySpritePixels(speciesIdHex: String) = enemySprite.getEnemySpritePixels(speciesIdHex)
+    fun hasCustomEnemySprite(speciesIdHex: String) = enemySprite.hasCustomEnemySprite(speciesIdHex)
+    fun exportEnemySprite(speciesIdHex: String, filePath: String) = enemySprite.exportEnemySprite(speciesIdHex, filePath)
+    fun importEnemySprite(speciesIdHex: String, filePath: String) = enemySprite.importEnemySprite(speciesIdHex, filePath)
+    fun saveEnemySpritePixels(speciesIdHex: String, pixels: IntArray, w: Int, h: Int) = enemySprite.saveEnemySpritePixels(speciesIdHex, pixels, w, h)
+    fun resetEnemySprite(speciesIdHex: String) = enemySprite.resetEnemySprite(speciesIdHex)
+    fun loadEnemyTileData(romParser: RomParser, speciesId: Int) = enemySprite.loadEnemyTileData(romParser, speciesId)
+    fun applyEnemyTileSheetEdits(romParser: RomParser, speciesId: Int, pixels: IntArray, w: Int, h: Int) = enemySprite.applyEnemyTileSheetEdits(romParser, speciesId, pixels, w, h)
+    fun hasCustomEnemyTiles(speciesId: Int) = enemySprite.hasCustomEnemyTiles(speciesId)
+    fun resetEnemyTiles(speciesId: Int) = enemySprite.resetEnemyTiles(speciesId)
+    fun loadEnemyPalette(romParser: RomParser, speciesId: Int) = enemySprite.loadEnemyPalette(romParser, speciesId)
+    fun applyEnemyPalette(speciesId: Int, palette: IntArray) = enemySprite.applyEnemyPalette(speciesId, palette)
+    fun hasCustomEnemyPalette(speciesId: Int) = enemySprite.hasCustomEnemyPalette(speciesId)
+    fun resetEnemyPalette(speciesId: Int) = enemySprite.resetEnemyPalette(speciesId)
 
-    /**
-     * Export the current enemy sprite (custom or default resource) as a PNG.
-     */
-    fun exportEnemySprite(speciesIdHex: String, filePath: String): Boolean {
-        val (pixels, dims) = getEnemySpritePixels(speciesIdHex) ?: return false
-        return writePng(filePath, pixels, dims.first, dims.second)
-    }
+    // ── Phantoon sprite delegates ─────────────────────────────────────────
 
-    /**
-     * Import a PNG from disk as a custom enemy sprite override.
-     */
-    fun importEnemySprite(speciesIdHex: String, filePath: String): Boolean {
-        return try {
-            val bytes = java.io.File(filePath).readBytes()
-            val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
-            project.customGfx.enemyGfx[speciesIdHex] = b64
-            dirty = true
-            true
-        } catch (_: Exception) { false }
-    }
+    fun getPhantoonSpritemap(romParser: RomParser) = phantoonSprite.getSpritemap(romParser)
+    fun renderPhantoonComponent(romParser: RomParser, def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef) = phantoonSprite.renderComponent(romParser, def)
+    fun applyPhantoonComponentEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite, editedPixels: IntArray) = phantoonSprite.applyComponentEdits(romParser, sprite, editedPixels)
+    fun getPhantoonPalette(romParser: RomParser) = phantoonSprite.getPalette(romParser)
+    fun hasCustomPhantoonComponents() = phantoonSprite.hasCustomComponents()
+    fun loadPhantoonTileSheet(romParser: RomParser) = phantoonSprite.loadTileSheet(romParser)
+    fun getSpriteSheetPalette() = phantoonSprite.getSheetPalette()
+    fun applyPhantoonTileSheetEdits(pixels: IntArray, w: Int, h: Int) = phantoonSprite.applyTileSheetEdits(pixels, w, h)
+    fun hasCustomPhantoonTileSheet() = phantoonSprite.hasCustomTileSheet()
+    fun resetPhantoonTileSheet() = phantoonSprite.resetTileSheet()
 
-    /**
-     * Persist in-editor pixel changes to the project for an enemy sprite.
-     * @param pixels ARGB pixel array
-     */
-    fun saveEnemySpritePixels(speciesIdHex: String, pixels: IntArray, w: Int, h: Int): Boolean {
-        return try {
-            val img = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-            img.setRGB(0, 0, w, h, pixels, 0, w)
-            val baos = java.io.ByteArrayOutputStream()
-            javax.imageio.ImageIO.write(img, "png", baos)
-            val b64 = java.util.Base64.getEncoder().encodeToString(baos.toByteArray())
-            project.customGfx.enemyGfx[speciesIdHex] = b64
-            dirty = true
-            true
-        } catch (_: Exception) { false }
-    }
+    // ── Kraid sprite delegates ────────────────────────────────────────────
 
-    /** Remove custom sprite override, reverting to built-in resource PNG. */
-    fun resetEnemySprite(speciesIdHex: String) {
-        project.customGfx.enemyGfx.remove(speciesIdHex)
-        dirty = true
-    }
+    fun getKraidSpritemap(romParser: RomParser) = kraidSprite.getSpritemap(romParser)
+    fun renderKraidFullBody(romParser: RomParser) = kraidSprite.renderFullBody(romParser)
+    fun renderKraidBodyTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.BodyTilemapDef) = kraidSprite.renderBodyTilemap(romParser, def)
+    fun renderKraidBigSprmap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.ComponentDef) = kraidSprite.renderBigSprmap(romParser, def)
+    fun getKraidPalette(romParser: RomParser) = kraidSprite.getPalette(romParser)
+    fun applyKraidComponentEdits(sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyComponentEdits(sprite, editedPixels)
+    fun loadKraidTileSheet(romParser: RomParser) = kraidSprite.loadTileSheet(romParser)
+    fun getKraidSheetPalette() = kraidSprite.getSheetPalette()
+    fun applyKraidTileSheetEdits(pixels: IntArray, w: Int, h: Int) = kraidSprite.applyTileSheetEdits(pixels, w, h)
+    fun hasCustomKraidTileSheet() = kraidSprite.hasCustomTileSheet()
+    fun resetKraidTileSheet() = kraidSprite.resetTileSheet()
 
-    // ── Enemy tile-sheet editing (raw 4bpp) ──────────────────────────────────
-
-    /**
-     * Load the effective tile data for an enemy species.
-     * Returns custom project data if present, otherwise raw ROM data.
-     */
-    fun loadEnemyTileData(romParser: com.supermetroid.editor.rom.RomParser, speciesId: Int): ByteArray? {
-        val key = "enemy:${speciesId.toString(16).uppercase()}"
-        val customB64 = project.customGfx.spriteTileBlocks[key]
-        if (customB64 != null) {
-            try {
-                return java.util.Base64.getDecoder().decode(customB64)
-            } catch (_: Exception) { /* fall through to ROM */ }
-        }
-        return com.supermetroid.editor.rom.EnemySpriteGraphics.loadEnemyTileData(romParser, speciesId)
-    }
-
-    /**
-     * Apply pixel edits to an enemy's tile sheet. Converts ARGB pixels back to
-     * raw 4bpp tile data and stores in the project.
-     */
-    fun applyEnemyTileSheetEdits(
-        romParser: com.supermetroid.editor.rom.RomParser,
-        speciesId: Int,
-        pixels: IntArray,
-        w: Int,
-        h: Int
-    ) {
-        val palette = loadEnemyPalette(romParser, speciesId) ?: return
-        val tileData = loadEnemyTileData(romParser, speciesId) ?: return
-        val gfx = com.supermetroid.editor.rom.EnemySpriteGraphics(romParser)
-        gfx.loadFromRaw(listOf(tileData))
-        gfx.importFromArgb(pixels, w, h, palette, 16)
-        val rawBlocks = gfx.getRawBlocks() ?: return
-        val raw = rawBlocks.firstOrNull() ?: return
-        val key = "enemy:${speciesId.toString(16).uppercase()}"
-        project.customGfx.spriteTileBlocks[key] = java.util.Base64.getEncoder().encodeToString(raw)
-        dirty = true
-    }
-
-    /** Whether the project has custom tile data for this enemy. */
-    fun hasCustomEnemyTiles(speciesId: Int): Boolean {
-        val key = "enemy:${speciesId.toString(16).uppercase()}"
-        return project.customGfx.spriteTileBlocks.containsKey(key)
-    }
-
-    /** Reset custom enemy tile data to ROM defaults. */
-    fun resetEnemyTiles(speciesId: Int) {
-        val key = "enemy:${speciesId.toString(16).uppercase()}"
-        project.customGfx.spriteTileBlocks.remove(key)
-        dirty = true
-    }
-
-    // ─── Enemy palette editing ──────────────────────────────────────
-
-    private fun enemyPalKey(speciesId: Int) = "enemy_pal:${speciesId.toString(16).uppercase()}"
-
-    /** Load enemy palette: project override if present, else ROM. */
-    fun loadEnemyPalette(romParser: com.supermetroid.editor.rom.RomParser, speciesId: Int): IntArray? {
-        val b64 = project.customGfx.spritePalettes[enemyPalKey(speciesId)]
-        if (b64 != null) {
-            try {
-                val raw = java.util.Base64.getDecoder().decode(b64)
-                return enemyPalBytesToArgb(raw)
-            } catch (_: Exception) { /* fall through */ }
-        }
-        return com.supermetroid.editor.rom.EnemySpriteGraphics.readEnemyPalette(romParser, speciesId)
-    }
-
-    /** Save an edited enemy palette (16 ARGB colors) to the project. */
-    fun applyEnemyPalette(speciesId: Int, palette: IntArray) {
-        val raw = enemyPalArgbToBytes(palette)
-        project.customGfx.spritePalettes[enemyPalKey(speciesId)] =
-            java.util.Base64.getEncoder().encodeToString(raw)
-        dirty = true
-    }
-
-    fun hasCustomEnemyPalette(speciesId: Int): Boolean =
-        project.customGfx.spritePalettes.containsKey(enemyPalKey(speciesId))
-
-    fun resetEnemyPalette(speciesId: Int) {
-        project.customGfx.spritePalettes.remove(enemyPalKey(speciesId))
-        dirty = true
-    }
-
-    /** Convert 32-byte BGR555 palette to 16-entry ARGB array. */
-    private fun enemyPalBytesToArgb(raw: ByteArray): IntArray {
-        val pal = IntArray(16)
-        pal[0] = 0x00000000
-        for (i in 1 until 16) {
-            val lo = raw[i * 2].toInt() and 0xFF
-            val hi = raw[i * 2 + 1].toInt() and 0xFF
-            val bgr = lo or (hi shl 8)
-            pal[i] = com.supermetroid.editor.rom.EnemySpriteGraphics.snesColorToArgb(bgr)
-        }
-        return pal
-    }
-
-    /** Convert 16-entry ARGB array to 32-byte BGR555 palette. */
-    private fun enemyPalArgbToBytes(palette: IntArray): ByteArray {
-        val raw = ByteArray(32)
-        for (i in 0 until 16) {
-            val argb = palette[i]
-            val r = (argb shr 16) and 0xFF
-            val g = (argb shr 8) and 0xFF
-            val b = argb and 0xFF
-            val bgr555 = ((b shr 3) shl 10) or ((g shr 3) shl 5) or (r shr 3)
-            raw[i * 2] = (bgr555 and 0xFF).toByte()
-            raw[i * 2 + 1] = ((bgr555 shr 8) and 0xFF).toByte()
-        }
-        return raw
-    }
-
-    // ── Boss sprite tile-sheet editing ───────────────────────────────────────
-
-    /**
-     * Cached EnemySpriteGraphics for the currently open tile-sheet session.
-     * Populated by [loadPhantoonTileSheet]; reset on new session.
-     */
-    private var spriteSheetGfx: com.supermetroid.editor.rom.EnemySpriteGraphics? = null
-    private var spriteSheetPalette: IntArray? = null
-
-    // ── Phantoon assembled-sprite editing (BG2 tilemap path) ─────────────
-
-    private var phantoonSpritemap: com.supermetroid.editor.rom.PhantoonSpritemap? = null
-
-    /**
-     * Get or create the cached PhantoonSpritemap.
-     * Applies any project-stored custom var GFX for the Phantoon room tileset.
-     */
-    fun getPhantoonSpritemap(romParser: com.supermetroid.editor.rom.RomParser): com.supermetroid.editor.rom.PhantoonSpritemap? {
-        phantoonSpritemap?.let { return it }
-        val sm = com.supermetroid.editor.rom.PhantoonSpritemap(romParser)
-        if (!sm.load()) return null
-        applyCustomGfxToTileGraphics(sm.getTileGraphics(), sm.getTilesetId())
-        phantoonSpritemap = sm
-        return sm
-    }
-
-    fun renderPhantoonComponent(
-        romParser: com.supermetroid.editor.rom.RomParser,
-        def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef
-    ): com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite? {
-        return getPhantoonSpritemap(romParser)?.renderComponent(def)
-    }
-
-    fun applyPhantoonComponentEdits(
-        romParser: com.supermetroid.editor.rom.RomParser,
-        sprite: com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite,
-        editedPixels: IntArray
-    ) {
-        val sm = getPhantoonSpritemap(romParser) ?: return
-        val tg = sm.getTileGraphics()
-        sm.applyEdits(sprite, editedPixels, tg)
-        val rawVarGfx = tg.getRawVarGfx() ?: return
-        val b64 = java.util.Base64.getEncoder().encodeToString(rawVarGfx)
-        project.customGfx.varGfx[sm.getTilesetId().toString()] = b64
-        dirty = true
-        phantoonSpritemap = null
-    }
-
-    fun getPhantoonPalette(romParser: com.supermetroid.editor.rom.RomParser): IntArray? {
-        return getPhantoonSpritemap(romParser)?.getPalette()
-    }
-
-    fun hasCustomPhantoonComponents(): Boolean {
-        val sm = phantoonSpritemap ?: return false
-        return project.customGfx.varGfx.containsKey(sm.getTilesetId().toString())
-    }
-
-    /**
-     * Load Phantoon's sprite tile sheet as an ARGB grid.
-     * Uses project-stored custom tile data if present, otherwise decompresses from ROM.
-     * @return (pixels, width, height, palette16) or null on failure
-     */
-    fun loadPhantoonTileSheet(
-        romParser: com.supermetroid.editor.rom.RomParser
-    ): Triple<IntArray, Int, Int>? {
-        val gfx = com.supermetroid.editor.rom.EnemySpriteGraphics(romParser)
-
-        // Build a map of custom block overrides (blockIndex → raw 4bpp bytes)
-        val customOverrides = mutableMapOf<Int, ByteArray>()
-        for ((i, _) in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
-            val b64 = project.customGfx.spriteTileBlocks["phantoon:$i"] ?: continue
-            try { customOverrides[i] = java.util.Base64.getDecoder().decode(b64) } catch (_: Exception) {}
-        }
-
-        val loaded = if (customOverrides.isEmpty()) {
-            gfx.load(com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS)
-        } else {
-            gfx.loadWithOverrides(
-                com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS,
-                customOverrides
-            )
-        }
-        if (!loaded) return null
-
-        val palette = com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_PALETTE
-
-        spriteSheetGfx = gfx
-        spriteSheetPalette = palette
-        editorLog("[SPRITE] loadPhantoonTileSheet: loaded ${gfx.getTileCount()} tiles, palette=${palette.size} colors, spriteSheetGfx set")
-
-        return gfx.renderSheet(palette)
-    }
-
-    /** Palette for the last loaded tile sheet (used by UI for colour swatches). */
-    fun getSpriteSheetPalette(): IntArray? = spriteSheetPalette
-
-    /**
-     * Encode ARGB pixel edits back to raw 4bpp tile blocks and store in the project.
-     * Must be called after [loadPhantoonTileSheet] to have the gfx session available.
-     */
-    fun applyPhantoonTileSheetEdits(pixels: IntArray, w: Int, h: Int) {
-        editorLog("[SPRITE] applyPhantoonTileSheetEdits called (${w}x${h}, ${pixels.size} px)")
-        val gfx = spriteSheetGfx
-        if (gfx == null) { editorLog("[SPRITE] ABORT: spriteSheetGfx is null — was loadPhantoonTileSheet() called first?"); return }
-        val palette = spriteSheetPalette
-        if (palette == null) { editorLog("[SPRITE] ABORT: spriteSheetPalette is null"); return }
-        gfx.importFromArgb(pixels, w, h, palette)
-        val rawBlocks = gfx.getRawBlocks()
-        if (rawBlocks == null) { editorLog("[SPRITE] ABORT: getRawBlocks() returned null after importFromArgb"); return }
-        for ((i, raw) in rawBlocks.withIndex()) {
-            val b64 = java.util.Base64.getEncoder().encodeToString(raw)
-            project.customGfx.spriteTileBlocks["phantoon:$i"] = b64
-            editorLog("[SPRITE] Stored phantoon:$i — ${raw.size} raw bytes, ${b64.length} b64 chars")
-        }
-        dirty = true
-        editorLog("[SPRITE] applyPhantoonTileSheetEdits DONE — ${rawBlocks.size} blocks stored, spriteTileBlocks keys=${project.customGfx.spriteTileBlocks.keys}")
-    }
-
-    /** Whether the project has custom Phantoon tile block data. */
-    fun hasCustomPhantoonTileSheet(): Boolean =
-        com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.indices.any { i ->
-            project.customGfx.spriteTileBlocks.containsKey("phantoon:$i")
-        }
-
-    /** Remove all custom Phantoon tile-sheet overrides. */
-    fun resetPhantoonTileSheet() {
-        com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.indices.forEach { i ->
-            project.customGfx.spriteTileBlocks.remove("phantoon:$i")
-        }
-        spriteSheetGfx = null
-        spriteSheetPalette = null
-        dirty = true
-    }
-
-    // ── Kraid sprite editing ────────────────────────────────────────
-
-    private var kraidSpritemap: com.supermetroid.editor.rom.KraidSpritemap? = null
-    private var kraidSheetGfx: com.supermetroid.editor.rom.EnemySpriteGraphics? = null
-    private var kraidSheetPalette: IntArray? = null
-
-    fun getKraidSpritemap(romParser: com.supermetroid.editor.rom.RomParser): com.supermetroid.editor.rom.KraidSpritemap? {
-        kraidSpritemap?.let { return it }
-        val sm = com.supermetroid.editor.rom.KraidSpritemap(romParser)
-        val b64 = project.customGfx.spriteTileBlocks["kraid:0"]
-        val loaded = if (b64 != null) {
-            try {
-                val custom = java.util.Base64.getDecoder().decode(b64)
-                sm.loadWithCustomTiles(custom)
-            } catch (_: Exception) { sm.load() }
-        } else {
-            sm.load()
-        }
-        if (!loaded) return null
-        kraidSpritemap = sm
-        return sm
-    }
-
-    fun renderKraidFullBody(romParser: com.supermetroid.editor.rom.RomParser): com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite? {
-        return getKraidSpritemap(romParser)?.renderFullBody()
-    }
-
-    fun renderKraidBodyTilemap(
-        romParser: com.supermetroid.editor.rom.RomParser,
-        def: com.supermetroid.editor.rom.KraidSpritemap.BodyTilemapDef
-    ): com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite? {
-        return getKraidSpritemap(romParser)?.renderBodyTilemap(def)
-    }
-
-    fun renderKraidBigSprmap(
-        romParser: com.supermetroid.editor.rom.RomParser,
-        def: com.supermetroid.editor.rom.KraidSpritemap.ComponentDef
-    ): com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite? {
-        return getKraidSpritemap(romParser)?.renderBigSprmap(def)
-    }
-
-    fun getKraidPalette(romParser: com.supermetroid.editor.rom.RomParser): IntArray? {
-        return getKraidSpritemap(romParser)?.getPalette()
-    }
-
-    fun applyKraidComponentEdits(
-        sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite,
-        editedPixels: IntArray
-    ) {
-        val sm = kraidSpritemap ?: return
-        sm.applyEdits(sprite, editedPixels)
-        val tiles = sm.getTileData() ?: return
-        val b64 = java.util.Base64.getEncoder().encodeToString(tiles)
-        project.customGfx.spriteTileBlocks["kraid:0"] = b64
-        dirty = true
-        kraidSpritemap = null
-    }
-
-    fun loadKraidTileSheet(
-        romParser: com.supermetroid.editor.rom.RomParser
-    ): Triple<IntArray, Int, Int>? {
-        val gfx = com.supermetroid.editor.rom.EnemySpriteGraphics(romParser)
-        val b64 = project.customGfx.spriteTileBlocks["kraid:0"]
-        val loaded = if (b64 != null) {
-            try {
-                val custom = java.util.Base64.getDecoder().decode(b64)
-                gfx.loadFromRaw(listOf(custom))
-                true
-            } catch (_: Exception) { false }
-        } else {
-            false
-        }
-        if (!loaded) {
-            if (!gfx.load(com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS)) return null
-        }
-
-        val sm = getKraidSpritemap(romParser) ?: return null
-        val palette = sm.getPalette() ?: return null
-        kraidSheetGfx = gfx
-        kraidSheetPalette = palette
-        val result = gfx.renderSheet(palette, cols = 16) ?: return null
-        return Triple(result.first, result.second, result.third)
-    }
-
-    fun getKraidSheetPalette(): IntArray? = kraidSheetPalette
-
-    fun applyKraidTileSheetEdits(pixels: IntArray, w: Int, h: Int) {
-        val gfx = kraidSheetGfx ?: return
-        val palette = kraidSheetPalette ?: return
-        gfx.importFromArgb(pixels, w, h, palette, cols = 16)
-        val rawBlocks = gfx.getRawBlocks() ?: return
-        for ((i, raw) in rawBlocks.withIndex()) {
-            val b64 = java.util.Base64.getEncoder().encodeToString(raw)
-            project.customGfx.spriteTileBlocks["kraid:$i"] = b64
-        }
-        dirty = true
-        kraidSpritemap = null
-    }
-
-    fun hasCustomKraidTileSheet(): Boolean =
-        project.customGfx.spriteTileBlocks.containsKey("kraid:0")
-
-    fun resetKraidTileSheet() {
-        project.customGfx.spriteTileBlocks.remove("kraid:0")
-        kraidSheetGfx = null
-        kraidSheetPalette = null
-        kraidSpritemap = null
-        dirty = true
-    }
-
-    private fun writePng(filePath: String, pixels: IntArray, w: Int, h: Int): Boolean {
-        return try {
-            val img = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-            img.setRGB(0, 0, w, h, pixels, 0, w)
-            javax.imageio.ImageIO.write(img, "png", java.io.File(filePath))
-        } catch (_: Exception) { false }
-    }
 
     fun selectEditorMetatile(index: Int) {
         editorSelectedMetatile = index
@@ -2620,12 +2259,8 @@ class EditorState {
         vanillaSaveIndicesByArea = emptyMap()
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
-        spriteSheetGfx = null
-        spriteSheetPalette = null
-        phantoonSpritemap = null
-        kraidSpritemap = null
-        kraidSheetGfx = null
-        kraidSheetPalette = null
+        phantoonSprite.invalidate()
+        kraidSprite.invalidate()
 
         _roomEditOrder.clear()
         _editCounter = 0L
