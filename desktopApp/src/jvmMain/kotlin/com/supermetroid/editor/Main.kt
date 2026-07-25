@@ -2,15 +2,14 @@ package com.supermetroid.editor
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,11 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.material3.ScrollableTabRow
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -46,7 +40,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -57,9 +50,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
@@ -70,59 +61,44 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.procgen.TilesetProfileCache
-import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomValidator
-import com.supermetroid.editor.ui.AppOutlinedTextField
-import com.supermetroid.editor.ui.EditorTheme
-import com.supermetroid.editor.ui.EditorThemeState
-import com.supermetroid.editor.ui.FontSize
-import com.supermetroid.editor.ui.LocalEditorTheme
-import com.supermetroid.editor.ui.SettingsPopup
-import com.supermetroid.editor.ui.BiomeGeneratorPanel
-import com.supermetroid.editor.ui.DraggableDividerHorizontal
+import com.supermetroid.editor.ui.BossTabCanvas
+import com.supermetroid.editor.ui.BossTabSidebar
 import com.supermetroid.editor.ui.DraggableDividerVertical
 import com.supermetroid.editor.ui.EditorState
+import com.supermetroid.editor.ui.EditorTheme
+import com.supermetroid.editor.ui.EditorThemeState
 import com.supermetroid.editor.ui.EmulatorWorkspaceState
-import com.supermetroid.editor.ui.EnemySpriteViewer
+import com.supermetroid.editor.ui.EnemyTabCanvas
+import com.supermetroid.editor.ui.EnemyTabSidebar
 import com.supermetroid.editor.ui.FloatingEmulatorWindow
-import com.supermetroid.editor.ui.KraidSpriteEditor
+import com.supermetroid.editor.ui.FontSize
+import com.supermetroid.editor.ui.ItemLocationPanel
+import com.supermetroid.editor.ui.LocalEditorTheme
 import com.supermetroid.editor.ui.LocalSwingWindow
 import com.supermetroid.editor.ui.MapCanvas
-import com.supermetroid.editor.ui.ItemLocationPanel
-import com.supermetroid.editor.ui.PatchEditorCanvas
-import com.supermetroid.editor.ui.PatchListPanel
-import com.supermetroid.editor.ui.PatternEditorCanvas
-import com.supermetroid.editor.ui.PatternListPanel
-import com.supermetroid.editor.ui.PatternThumbnailList
-import com.supermetroid.editor.ui.PhantoonSpriteEditor
-import com.supermetroid.editor.ui.RoomListView
-import com.supermetroid.editor.ui.SamusSpriteViewer
-import com.supermetroid.editor.ui.RoomPropertiesPanel
 import com.supermetroid.editor.ui.MinimapCanvas
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
-import com.supermetroid.editor.ui.TextEditorPreview
-import com.supermetroid.editor.ui.TextEditorSidebar
-import com.supermetroid.editor.ui.EnemyTabSidebar
-import com.supermetroid.editor.ui.EnemyTabCanvas
-import com.supermetroid.editor.ui.BossTabSidebar
-import com.supermetroid.editor.ui.BossTabCanvas
+import com.supermetroid.editor.ui.PatchEditorCanvas
+import com.supermetroid.editor.ui.PatchListPanel
+import com.supermetroid.editor.ui.PatternEditorCanvas
+import com.supermetroid.editor.ui.RoomsTabSidebar
+import com.supermetroid.editor.ui.SettingsPopup
 import com.supermetroid.editor.ui.SoundEditorCanvas
-import com.supermetroid.editor.ui.PaletteEditor
-import com.supermetroid.editor.ui.SpritePaletteEditor
-import com.supermetroid.editor.ui.AreaPaletteEditor
 import com.supermetroid.editor.ui.SoundEditorState
 import com.supermetroid.editor.ui.SoundListPanel
+import com.supermetroid.editor.ui.SpritesTabCanvas
+import com.supermetroid.editor.ui.SpritesTabSidebar
+import com.supermetroid.editor.ui.TextEditorPreview
+import com.supermetroid.editor.ui.TextEditorSidebar
 import com.supermetroid.editor.ui.TilesetCanvas
 import com.supermetroid.editor.ui.TilesetEditorState
-import com.supermetroid.editor.ui.TilesetListPanel
-import com.supermetroid.editor.ui.TilesetPreview
+import com.supermetroid.editor.ui.TilesTabSidebar
 import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
-import com.supermetroid.editor.ui.rememberVerticalSelectionFocusRequester
 import com.supermetroid.editor.ui.requestVerticalSelectionFocus
-import com.supermetroid.editor.ui.verticalSelectionKeyNavigation
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
 import java.awt.Frame
@@ -145,47 +121,6 @@ private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
 
-private const val BOTTOM_TAB_TILESET = 0
-private const val BOTTOM_TAB_PATTERNS = 1
-private const val BOTTOM_TAB_ROOM_INFO = 2
-private const val BOTTOM_TAB_GENERATE = 3
-
-private enum class SpriteSortMode(val label: String) {
-    DEFAULT("Default"),
-    NAME("A-Z"),
-    SPECIES_ID("ID"),
-}
-
-private fun spriteMatchesQuery(
-    entry: EnemySpriteGraphics.Companion.EnemySpriteEntry,
-    query: String
-): Boolean {
-    val trimmed = query.trim()
-    if (trimmed.isEmpty()) return true
-
-    val lower = trimmed.lowercase()
-    val compact = lower.filter { it.isLetterOrDigit() }.removePrefix("0x")
-    val speciesHex = entry.speciesId.toString(16).padStart(4, '0').lowercase()
-    return entry.name.lowercase().contains(lower) ||
-        entry.category.lowercase().contains(lower) ||
-        speciesHex.contains(compact) ||
-        "a0$speciesHex".contains(compact)
-}
-
-private fun samusMatchesSpriteQuery(query: String): Boolean {
-    val lower = query.trim().lowercase()
-    return lower.isEmpty() || "samus".contains(lower) || "player".contains(lower)
-}
-
-private fun sortSpriteEntries(
-    entries: List<EnemySpriteGraphics.Companion.EnemySpriteEntry>,
-    mode: SpriteSortMode
-): List<EnemySpriteGraphics.Companion.EnemySpriteEntry> =
-    when (mode) {
-        SpriteSortMode.DEFAULT -> entries
-        SpriteSortMode.NAME -> entries.sortedWith(compareBy({ it.name.lowercase() }, { it.speciesId }))
-        SpriteSortMode.SPECIES_ID -> entries.sortedBy { it.speciesId }
-    }
 
 fun main() = application {
     val roomRepository = remember { RoomRepository() }
@@ -465,8 +400,6 @@ fun main() = application {
                 var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 val mainContentFocusRequester = remember { FocusRequester() }
                 var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
-                var spriteSearchQuery by remember { mutableStateOf("") }
-                var spriteSortMode by remember { mutableStateOf(SpriteSortMode.DEFAULT) }
                 val tilesetEditorState = remember { TilesetEditorState() }
                 fun refreshCurrentEditorTilesetGrid() {
                     tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
@@ -486,7 +419,6 @@ fun main() = application {
                 }
                 val soundEditorState = remember { SoundEditorState() }
                 val minimapEditorState = remember { MinimapEditorState() }
-                var bottomPaneTab by remember { mutableStateOf(BOTTOM_TAB_TILESET) }
                 var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
                 // Auto-switch to Palette tab when user samples a tile
                 val sampledRow = editorState.sampledPaletteRow
@@ -571,433 +503,62 @@ fun main() = application {
 
                             key(leftTab) {
                             when (leftTab) {
-                                TAB_ROOMS -> {
-                                    // Top: room list
-                                    RoomListView(
-                                        rooms = rooms,
-                                        selectedRoom = selectedRoom,
-                                        romParser = romParser,
-                                        editorState = editorState,
-                                        onRoomSelected = { room ->
-                                            selectedRoom = room
-                                            val romPath = RomPreferences.getLastRomPath()
-                                            if (romPath != null) saveLastRoom(romPath, room)
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    DraggableDividerHorizontal(
-                                        onDelta = { dy ->
-                                            tilesetHeightDp = (tilesetHeightDp - dy).coerceIn(120f, 700f)
-                                        }
-                                    )
-                                    // Bottom: sub-tabs [Tileset | Patterns]
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth().height(tilesetHeightDp.dp)
-                                    ) {
-                                        TabRow(
-                                            selectedTabIndex = bottomPaneTab,
-                                            modifier = Modifier.fillMaxWidth().height(26.dp)
-                                        ) {
-                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_TILESET, onClick = { bottomPaneTab = BOTTOM_TAB_TILESET },
-                                                modifier = Modifier.height(26.dp)) {
-                                                Text("Tileset", fontSize = fs.tabLabel)
-                                            }
-                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_PATTERNS, onClick = {
-                                                bottomPaneTab = BOTTOM_TAB_PATTERNS
-                                                editorState.seedBuiltInPatterns(romParser)
-                                            }, modifier = Modifier.height(26.dp)) {
-                                                Text("Patterns", fontSize = fs.tabLabel)
-                                            }
-                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_ROOM_INFO, onClick = { bottomPaneTab = BOTTOM_TAB_ROOM_INFO },
-                                                modifier = Modifier.height(26.dp)) {
-                                                Text("Room Info", fontSize = fs.tabLabel)
-                                            }
-                                            Tab(selected = bottomPaneTab == BOTTOM_TAB_GENERATE, onClick = { bottomPaneTab = BOTTOM_TAB_GENERATE },
-                                                modifier = Modifier.height(26.dp)) {
-                                                Text("Generate", fontSize = fs.tabLabel)
-                                            }
-                                        }
-                                        key(bottomPaneTab) {
-                                        when (bottomPaneTab) {
-                                            BOTTOM_TAB_TILESET -> TilesetPreview(
-                                                room = selectedRoom,
-                                                romParser = romParser,
-                                                editorState = editorState,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                            BOTTOM_TAB_PATTERNS -> PatternThumbnailList(
-                                                editorState = editorState,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                            BOTTOM_TAB_ROOM_INFO -> {
-                                                val rp = romParser
-                                                val sr = selectedRoom
-                                                if (rp != null && sr != null) {
-                                                    val roomHeader = remember(sr) { rp.readRoomHeader(sr.getRoomIdAsInt()) }
-                                                    if (roomHeader != null) {
-                                                        RoomPropertiesPanel(
-                                                            room = roomHeader,
-                                                            romParser = rp,
-                                                            editorState = editorState,
-                                                            modifier = Modifier.fillMaxSize(),
-                                                            onNavigateToMap = { leftTab = TAB_MAP },
-                                                        )
-                                                    } else {
-                                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                            Text("Could not parse room header", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
-                                                        }
-                                                    }
-                                                } else {
-                                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                        Text("Select a room", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    }
-                                                }
-                                            }
-                                            BOTTOM_TAB_GENERATE -> BiomeGeneratorPanel(
-                                                editorState = editorState,
-                                                romParser = romParser,
-                                                rooms = rooms,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        }
-                                        }
-                                    }
-                                }
-                                TAB_ITEMS -> {
-                                    ItemLocationPanel(
-                                        rooms = rooms,
-                                        selectedRoom = selectedRoom,
-                                        romParser = romParser,
-                                        editorState = editorState,
-                                        onRoomSelected = { room ->
-                                            selectedRoom = room
-                                            val romPath = RomPreferences.getLastRomPath()
-                                            if (romPath != null) saveLastRoom(romPath, room)
-                                        },
-                                        modifier = Modifier.fillMaxSize(),
-                                        onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
-                                    )
-                                }
-                                TAB_TILES -> {
-                                    // Tilesets tab: sub-tabs [Tilesets | Patterns | Palette]
-                                    TabRow(
-                                        selectedTabIndex = tilesetSubTab,
-                                        modifier = Modifier.fillMaxWidth().height(26.dp)
-                                    ) {
-                                        Tab(selected = tilesetSubTab == 0, onClick = { tilesetSubTab = 0 },
-                                            modifier = Modifier.height(26.dp)) {
-                                            Text("Tilesets", fontSize = fs.tabLabel)
-                                        }
-                                        Tab(selected = tilesetSubTab == 1, onClick = {
-                                            tilesetSubTab = 1
-                                            editorState.seedBuiltInPatterns(romParser)
-                                        }, modifier = Modifier.height(26.dp)) {
-                                            Text("Patterns", fontSize = fs.tabLabel)
-                                        }
-                                        Tab(selected = tilesetSubTab == 2, onClick = { tilesetSubTab = 2 },
-                                            modifier = Modifier.height(26.dp)) {
-                                            Text("Palette", fontSize = fs.tabLabel)
-                                        }
-                                    }
-                                    key(tilesetSubTab) {
-                                    when (tilesetSubTab) {
-                                        0 -> TilesetListPanel(
-                                            romParser = romParser,
-                                            editorState = editorState,
-                                            tilesetEditorState = tilesetEditorState,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                        1 -> {
-                                            PatternListPanel(
-                                                editorState = editorState,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            DraggableDividerHorizontal(
-                                                onDelta = { dy ->
-                                                    tilesetHeightDp = (tilesetHeightDp - dy).coerceIn(120f, 700f)
-                                                }
-                                            )
-                                            TilesetPreview(
-                                                room = selectedRoom,
-                                                romParser = romParser,
-                                                editorState = editorState,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(tilesetHeightDp.dp)
-                                            )
-                                        }
-                                        2 -> {
-                                            // Palette tab: sub-selector for Environment vs Samus/Beams
-                                            var paletteCategory by remember { mutableStateOf(0) } // 0=Environment, 1=Samus/Beams, 2=Area
-                                            Column(modifier = Modifier.fillMaxSize()) {
-                                                Row(
-                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-                                                ) {
-                                                    for ((idx, label) in listOf("Environment", "Samus / Beams", "Area").withIndex()) {
-                                                        val selected = paletteCategory == idx
-                                                        Surface(
-                                                            shape = RoundedCornerShape(4.dp),
-                                                            color = if (selected) MaterialTheme.colorScheme.primary
-                                                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                                            modifier = Modifier.clickable { paletteCategory = idx }
-                                                        ) {
-                                                            Text(
-                                                                label,
-                                                                fontSize = 10.sp,
-                                                                color = if (selected) MaterialTheme.colorScheme.onPrimary
-                                                                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                when (paletteCategory) {
-                                                    0 -> {
-                                                        val currentTilesetId = editorState.editorTilesetId.takeIf { it >= 0 }
-                                                        PaletteEditor(
-                                                            tileGraphics = editorState.editorTileGraphics,
-                                                            tilesetId = currentTilesetId?.toString(),
-                                                            hasCustomPalette = currentTilesetId != null && editorState.hasCustomPalette(currentTilesetId),
-                                                            sampledPaletteRow = editorState.sampledPaletteRow,
-                                                            sampledPaletteCol = editorState.sampledPaletteCol,
-                                                            onPaletteSaved = {
-                                                                currentTilesetId?.let { editorState.savePaletteOverride(it) }
-                                                            },
-                                                            onPaletteReset = {
-                                                                if (currentTilesetId != null) {
-                                                                    if (editorState.resetPaletteOverride(currentTilesetId)) {
-                                                                        reloadPaletteBackedViews()
-                                                                    }
-                                                                }
-                                                            },
-                                                            onRefreshNeeded = {
-                                                                refreshCurrentEditorTilesetGrid()
-                                                                val clearedEffect = currentTilesetId
-                                                                    ?.let { editorState.clearPaletteEffect("tileset:$it") }
-                                                                    ?: false
-                                                                if (!clearedEffect) {
-                                                                    editorState.paletteVersion++
-                                                                }
-                                                            },
-                                                            onColorSelected = { row, col ->
-                                                                editorState.sampledPaletteRow = row
-                                                                editorState.sampledPaletteCol = col
-                                                            },
-                                                            modifier = Modifier.fillMaxSize()
-                                                        )
-                                                    }
-                                                    1 -> {
-                                                        SpritePaletteEditor(
-                                                            romParser = romParser,
-                                                            editorState = editorState,
-                                                            modifier = Modifier.fillMaxSize()
-                                                        )
-                                                    }
-                                                    2 -> {
-                                                        AreaPaletteEditor(
-                                                            romParser = romParser,
-                                                            editorState = editorState,
-                                                            onCurrentTilesetPaletteChanged = { reloadCurrentTileset ->
-                                                                if (reloadCurrentTileset) {
-                                                                    reloadPaletteBackedViews()
-                                                                } else {
-                                                                    refreshCurrentEditorTilesetGrid()
-                                                                }
-                                                            },
-                                                            modifier = Modifier.fillMaxSize()
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    }
-                                }
-                                TAB_PATCHES -> {
-                                    PatchListPanel(
-                                        editorState = editorState,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                }
-                                TAB_SOUND -> {
-                                    SoundListPanel(
-                                        romParser = romParser,
-                                        editorState = editorState,
-                                        soundEditorState = soundEditorState,
-                                        modifier = Modifier.fillMaxSize(),
-                                        onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
-                                    )
-                                }
-                                TAB_SPRITES -> {
-                                    val entries = EnemySpriteGraphics.EDITOR_ENEMIES
-                                    val spriteNavigationFocusRequester = rememberVerticalSelectionFocusRequester(
-                                        requestFocusKey = leftTab
-                                    )
-                                    val indexBySpecies = remember(entries) {
-                                        entries.mapIndexed { index, entry -> entry.speciesId to index }.toMap()
-                                    }
-                                    val categories = remember(entries) { entries.map { it.category }.distinct() }
-                                    val showSamus = samusMatchesSpriteQuery(spriteSearchQuery)
-                                    val visibleGroups = remember(entries, categories, spriteSearchQuery, spriteSortMode) {
-                                        val filtered = entries.filter { spriteMatchesQuery(it, spriteSearchQuery) }
-                                        categories.mapNotNull { category ->
-                                            val items = sortSpriteEntries(
-                                                filtered.filter { it.category == category },
-                                                spriteSortMode
-                                            )
-                                            if (items.isEmpty()) null else category to items
-                                        }
-                                    }
-                                    val visibleSelectionKeys = remember(showSamus, visibleGroups, indexBySpecies) {
-                                        buildList {
-                                            if (showSamus) add(-1)
-                                            visibleGroups.forEach { (_, items) ->
-                                                items.forEach { entry ->
-                                                    indexBySpecies[entry.speciesId]?.let(::add)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    val selectedVisibleIndex = visibleSelectionKeys.indexOf(selectedSpriteIdx)
-                                    LaunchedEffect(leftTab, visibleSelectionKeys) {
-                                        if (
-                                            leftTab == TAB_SPRITES &&
-                                            visibleSelectionKeys.isNotEmpty() &&
-                                            selectedSpriteIdx !in visibleSelectionKeys
-                                        ) {
-                                            selectedSpriteIdx = visibleSelectionKeys.first()
-                                        }
-                                    }
-                                    Column(
-                                        modifier = Modifier.fillMaxSize().padding(8.dp)
-                                            .verticalSelectionKeyNavigation(
-                                                focusRequester = spriteNavigationFocusRequester,
-                                                itemCount = visibleSelectionKeys.size,
-                                                selectedIndex = selectedVisibleIndex,
-                                                onSelectIndex = { index ->
-                                                    visibleSelectionKeys.getOrNull(index)?.let { selectedSpriteIdx = it }
-                                                }
-                                            )
-                                            .verticalScroll(rememberScrollState()),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        AppOutlinedTextField(
-                                            value = spriteSearchQuery,
-                                            onValueChange = { spriteSearchQuery = it },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            label = "Search sprites",
-                                            singleLine = true,
-                                            fontSize = fs.body
-                                        )
-                                        @OptIn(ExperimentalLayoutApi::class)
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            SpriteSortMode.values().forEach { mode ->
-                                                val selected = spriteSortMode == mode
-                                                val colors = if (selected) {
-                                                    ButtonDefaults.buttonColors(
-                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                                    )
-                                                } else {
-                                                    ButtonDefaults.outlinedButtonColors()
-                                                }
-                                                val buttonModifier = Modifier.height(28.dp)
-                                                val contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-                                                if (selected) {
-                                                    Button(
-                                                        onClick = {
-                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
-                                                            spriteSortMode = mode
-                                                        },
-                                                        modifier = buttonModifier,
-                                                        contentPadding = contentPadding,
-                                                        colors = colors
-                                                    ) {
-                                                        Text(mode.label, fontSize = fs.detail)
-                                                    }
-                                                } else {
-                                                    OutlinedButton(
-                                                        onClick = {
-                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
-                                                            spriteSortMode = mode
-                                                        },
-                                                        modifier = buttonModifier,
-                                                        contentPadding = contentPadding,
-                                                        colors = colors
-                                                    ) {
-                                                        Text(mode.label, fontSize = fs.detail)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Text(
-                                            "${visibleSelectionKeys.size}/${entries.size + 1} sprites",
-                                            fontSize = fs.detail,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(Modifier.height(4.dp))
-
-                                        // Samus at the top
-                                        if (showSamus) {
-                                            Text("Player", fontSize = fs.body,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface)
-                                            Spacer(Modifier.height(2.dp))
-                                            Surface(
-                                                modifier = Modifier.fillMaxWidth()
-                                                    .clickable {
-                                                        requestVerticalSelectionFocus(spriteNavigationFocusRequester)
-                                                        selectedSpriteIdx = -1
-                                                    },
-                                                color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.primaryContainer
-                                                        else MaterialTheme.colorScheme.surface,
-                                                shape = RoundedCornerShape(6.dp)
-                                            ) {
-                                                Text("Samus", fontSize = fs.body,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                                    color = if (selectedSpriteIdx == -1) MaterialTheme.colorScheme.onPrimaryContainer
-                                                            else MaterialTheme.colorScheme.onSurface)
-                                            }
-                                            Spacer(Modifier.height(8.dp))
-                                        }
-
-                                        if (!showSamus && visibleGroups.isEmpty()) {
-                                            Text("No sprites match this search.", fontSize = fs.body,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-
-                                        for ((category, items) in visibleGroups) {
-                                            Text(category, fontSize = fs.body,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface)
-                                            Spacer(Modifier.height(2.dp))
-                                            for (entry in items) {
-                                                val idx = indexBySpecies[entry.speciesId] ?: continue
-                                                Surface(
-                                                    modifier = Modifier.fillMaxWidth()
-                                                        .clickable {
-                                                            requestVerticalSelectionFocus(spriteNavigationFocusRequester)
-                                                            selectedSpriteIdx = idx
-                                                        },
-                                                    color = if (selectedSpriteIdx == idx) MaterialTheme.colorScheme.primaryContainer
-                                                            else MaterialTheme.colorScheme.surface,
-                                                    shape = RoundedCornerShape(6.dp)
-                                                ) {
-                                                    Text(entry.name, fontSize = fs.body,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                                                        color = if (selectedSpriteIdx == idx) MaterialTheme.colorScheme.onPrimaryContainer
-                                                                else MaterialTheme.colorScheme.onSurface)
-                                                }
-                                            }
-                                            Spacer(Modifier.height(8.dp))
-                                        }
-                                    }
-                                }
+                                TAB_ROOMS -> RoomsTabSidebar(
+                                    rooms = rooms,
+                                    selectedRoom = selectedRoom,
+                                    onRoomSelected = { room ->
+                                        selectedRoom = room
+                                        val romPath = RomPreferences.getLastRomPath()
+                                        if (romPath != null) saveLastRoom(romPath, room)
+                                    },
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    tilesetHeightDp = tilesetHeightDp,
+                                    onTilesetHeightChange = { tilesetHeightDp = it },
+                                    onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
+                                    onNavigateToMap = { leftTab = TAB_MAP },
+                                )
+                                TAB_ITEMS -> ItemLocationPanel(
+                                    rooms = rooms,
+                                    selectedRoom = selectedRoom,
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    onRoomSelected = { room ->
+                                        selectedRoom = room
+                                        val romPath = RomPreferences.getLastRomPath()
+                                        if (romPath != null) saveLastRoom(romPath, room)
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                    onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
+                                )
+                                TAB_TILES -> TilesTabSidebar(
+                                    tilesetSubTab = tilesetSubTab,
+                                    onSubTabChange = { tilesetSubTab = it },
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    tilesetEditorState = tilesetEditorState,
+                                    selectedRoom = selectedRoom,
+                                    tilesetHeightDp = tilesetHeightDp,
+                                    onTilesetHeightChange = { tilesetHeightDp = it },
+                                    onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
+                                    onReloadPaletteBackedViews = ::reloadPaletteBackedViews,
+                                    onRefreshTilesetGrid = ::refreshCurrentEditorTilesetGrid,
+                                )
+                                TAB_PATCHES -> PatchListPanel(
+                                    editorState = editorState,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                TAB_SOUND -> SoundListPanel(
+                                    romParser = romParser,
+                                    editorState = editorState,
+                                    soundEditorState = soundEditorState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
+                                )
+                                TAB_SPRITES -> SpritesTabSidebar(
+                                    selectedSpriteIdx = selectedSpriteIdx,
+                                    onSelectSprite = { selectedSpriteIdx = it },
+                                )
                                 TAB_MAP -> MinimapSidebar(
                                     state = minimapEditorState,
                                     romParser = romParser,
@@ -1092,39 +653,12 @@ fun main() = application {
                                         soundEditorState = soundEditorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    TAB_SPRITES -> {
-                                        if (selectedSpriteIdx == -1) {
-                                            SamusSpriteViewer(
-                                                romParser = romParser,
-                                                editorState = editorState,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                        val entries = com.supermetroid.editor.rom.EnemySpriteGraphics.EDITOR_ENEMIES
-                                        val selected = entries.getOrNull(selectedSpriteIdx) ?: entries.first()
-                                        if (selected.speciesId == 0xE4BF) {
-                                            PhantoonSpriteEditor(
-                                                editorState = editorState,
-                                                romParser = romParser,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else if (selected.speciesId == 0xE2BF) {
-                                            KraidSpriteEditor(
-                                                editorState = editorState,
-                                                romParser = romParser,
-                                                showOamComponents = true,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            EnemySpriteViewer(
-                                                entry = selected,
-                                                romParser = romParser,
-                                                editorState = editorState,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        }
-                                        } // else (enemy sprites)
-                                    }
+                                    TAB_SPRITES -> SpritesTabCanvas(
+                                        selectedSpriteIdx = selectedSpriteIdx,
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
                                     TAB_MAP -> MinimapCanvas(
                                         state = minimapEditorState,
                                         editorState = editorState,

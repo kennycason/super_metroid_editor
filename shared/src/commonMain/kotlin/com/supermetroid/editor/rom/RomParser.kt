@@ -1574,6 +1574,23 @@ class RomParser(internal val romData: ByteArray) {
         fun itemNameForPlm(plmId: Int): String? = plmToItemName[plmId]
         fun isItemPlm(plmId: Int): Boolean = plmId in plmToItemName
 
+        /**
+         * Serialize a PLM entry list to a flat byte list (id-lo, id-hi, x, y, param-lo, param-hi per
+         * entry, terminated by 0x0000). This is the inverse of [RomParser.parsePlmSet].
+         */
+        fun serializePlmSet(plms: List<PlmEntry>): List<Int> = buildList {
+            for (plm in plms) {
+                add(plm.id and 0xFF)
+                add((plm.id ushr 8) and 0xFF)
+                add(plm.x and 0xFF)
+                add(plm.y and 0xFF)
+                add(plm.param and 0xFF)
+                add((plm.param ushr 8) and 0xFF)
+            }
+            add(0)
+            add(0)
+        }
+
         private val EXPANSION_ITEM_NAMES = setOf("Energy Tank", "Missile", "Super Missile", "Power Bomb")
 
         private val upgradeItemPlmIds: Set<Int> = buildSet {

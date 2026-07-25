@@ -623,6 +623,14 @@ class SmeditBuildService(
             pcToSnes = parser::pcToSnes,
             guardBytes = 1,
         )
+        // Include custom item PLM IDs from this project's enabled patches so that dedup
+        // also covers project-defined items (not just catalog items).
+        val projectCustomItemPlmIds = project.patches
+            .filter { it.enabled }
+            .flatMap { it.customItems }
+            .flatMap { listOfNotNull(it.visiblePlmId, it.chozoPlmId, it.hiddenPlmId) }
+            .toSet()
+        val effectiveItemPlmIds = itemPlmIds + projectCustomItemPlmIds
         var patchedRooms = 0
 
         for ((roomKey, roomEdits) in project.rooms) {
@@ -633,7 +641,7 @@ class SmeditBuildService(
                 patched = applyRoomTileEdits(roomKey, roomId, room, roomEdits, roomDataAllocator, context) || patched
             }
             if (roomEdits.plmChanges.isNotEmpty()) {
-                patched = applyRoomPlmChanges(roomKey, roomId, roomEdits, roomDataAllocator, context) || patched
+                patched = applyRoomPlmChanges(roomKey, roomId, roomEdits, roomDataAllocator, effectiveItemPlmIds, context) || patched
             }
             if (roomEdits.effectiveScrollChanges().isNotEmpty()) {
                 patched = applyRoomScrollChanges(roomKey, roomId, room, roomEdits, roomDataAllocator, context) || patched
@@ -781,6 +789,7 @@ class SmeditBuildService(
         roomId: Int,
         roomEdits: RoomEdits,
         plmAllocator: RomFreeSpaceAllocator,
+        effectiveItemPlmIds: Set<Int>,
         context: ApplyContext,
     ): Boolean {
         val rom = context.outputRom ?: return false
@@ -813,9 +822,9 @@ class SmeditBuildService(
                     }
                 }
             }
-            val deduped = dedupeItemPlmsByPosition(modifiedPlms)
+            val deduped = dedupeItemPlmsByPosition(modifiedPlms, effectiveItemPlmIds)
             val originalSize = originalPlms.size * 6 + 2
-            val bytes = serializePlmSet(deduped)
+            val bytes = RomParser.serializePlmSet(deduped)
             val plmPc = context.snesToPc(RomConstants.BANK_ROOM_DATA or plmSetPtr)
 
             if (bytes.size <= originalSize) {
@@ -946,7 +955,10 @@ class SmeditBuildService(
     private fun PlmChange.toPlmEntry(): RomParser.PlmEntry =
         RomParser.PlmEntry(plmId, x, y, param)
 
-    private fun dedupeItemPlmsByPosition(plms: List<RomParser.PlmEntry>): List<RomParser.PlmEntry> {
+    private fun dedupeItemPlmsByPosition(
+        plms: List<RomParser.PlmEntry>,
+        itemPlmIds: Set<Int>,
+    ): List<RomParser.PlmEntry> {
         val seenItemPositions = mutableSetOf<Long>()
         val deduped = mutableListOf<RomParser.PlmEntry>()
         for (plm in plms.asReversed()) {
@@ -960,20 +972,6 @@ class SmeditBuildService(
         deduped.reverse()
         return deduped
     }
-
-    private fun serializePlmSet(plms: List<RomParser.PlmEntry>): List<Int> =
-        buildList {
-            for (plm in plms) {
-                add(plm.id and 0xFF)
-                add((plm.id ushr 8) and 0xFF)
-                add(plm.x and 0xFF)
-                add(plm.y and 0xFF)
-                add(plm.param and 0xFF)
-                add((plm.param ushr 8) and 0xFF)
-            }
-            add(0)
-            add(0)
-        }
 
     private fun levelDataRelocationBanks(originalSnesAddress: Int): List<Int> {
         val originalBank = (originalSnesAddress shr 16) and 0xFF

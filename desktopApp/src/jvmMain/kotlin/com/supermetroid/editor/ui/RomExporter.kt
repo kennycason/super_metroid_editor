@@ -998,21 +998,16 @@ internal class RomExporter(
         if (gfxFreePtr + 2 <= bankB4End) gfxFreePtr += 2
         onLog("[EXPORT] B4 free space: raw=0x${rawGfxFreePtr.toString(16)}, guarded=0x${gfxFreePtr.toString(16)} (+2 terminator guard)")
 
-        // Free space tracker for level data banks ($C0-$CE).
-        // Each bank is scanned from the end to find trailing 0xFF padding.
-        val levelBankFree = mutableMapOf<Int, Int>()  // bank -> next free PC offset
-        fun getLevelBankFreePtr(bank: Int): Int {
-            return levelBankFree.getOrPut(bank) {
-                val bankEnd = romParser.snesToPc((bank shl 16) or 0xFFFF) + 1
-                val bankStart = romParser.snesToPc((bank shl 16) or 0x8000)
-                var ptr = bankEnd
-                while (ptr > bankStart) {
-                    if ((romData[ptr - 1].toInt() and 0xFF) != 0xFF) break
-                    ptr--
-                }
-                ptr + 1
-            }
-        }
+        // Free space allocator for level data banks ($C0-$CE).
+        // Scanned AFTER patches (same as 8F/A1/B4 allocators above) so we don't hand out
+        // space a patch already wrote. Uses the same RomFreeSpaceAllocator used by
+        // SmeditBuildService so both paths share the same allocation strategy.
+        val levelDataAllocator = RomFreeSpaceAllocator(
+            romData = romData,
+            snesToPc = romParser::snesToPc,
+            pcToSnes = romParser::pcToSnes,
+            guardBytes = 1,
+        )
 
         val vanillaEnemyGfxDestinationsBySpecies by lazy {
             collectVanillaEnemyGfxDestinations(romParser)
@@ -1120,28 +1115,18 @@ internal class RomExporter(
                         for (i in compressed.size until origSize) romData[pcOff + i] = 0xFF.toByte()
                     } else {
                         val origBank = (lvlPtr shr 16) and 0xFF
-                        val banksToTry = listOf(origBank) +
-                                (0xCE downTo 0xC0).filter { it != origBank }
-                        var relocated = false
-                        for (tryBank in banksToTry) {
-                            val bEnd = romParser.snesToPc((tryBank shl 16) or 0xFFFF) + 1
-                            val freeStart = getLevelBankFreePtr(tryBank)
-                            if (freeStart + compressed.size <= bEnd) {
-                                System.arraycopy(compressed, 0, romData, freeStart, compressed.size)
-                                val newSnes = romParser.pcToSnes(freeStart)
-                                levelBankFree[tryBank] = freeStart + compressed.size
-                                for (stateOffset in statesForPtr) {
-                                    romData[stateOffset] = (newSnes and 0xFF).toByte()
-                                    romData[stateOffset + 1] = ((newSnes shr 8) and 0xFF).toByte()
-                                    romData[stateOffset + 2] = ((newSnes shr 16) and 0xFF).toByte()
-                                }
-                                for (i in pcOff until pcOff + origSize) romData[i] = 0xFF.toByte()
-                                onLog("Room 0x$roomKey: relocated level data \$${lvlPtr.toString(16)} to \$${tryBank.toString(16).uppercase()}:${(newSnes and 0xFFFF).toString(16).uppercase()} (${compressed.size} bytes, updated ${statesForPtr.size} state(s))")
-                                relocated = true
-                                break
+                        val banksToTry = (listOf(origBank) + (0xCE downTo 0xC0)).distinct()
+                        val allocation = levelDataAllocator.allocate(compressed, banksToTry, "room 0x$roomKey level data")
+                        if (allocation != null) {
+                            val newSnes = allocation.snesAddress
+                            for (stateOffset in statesForPtr) {
+                                romData[stateOffset] = (newSnes and 0xFF).toByte()
+                                romData[stateOffset + 1] = ((newSnes shr 8) and 0xFF).toByte()
+                                romData[stateOffset + 2] = ((newSnes shr 16) and 0xFF).toByte()
                             }
-                        }
-                        if (!relocated) {
+                            for (i in pcOff until pcOff + origSize) romData[i] = 0xFF.toByte()
+                            onLog("Room 0x$roomKey: relocated level data \$${lvlPtr.toString(16)} to \$${allocation.bank.toString(16).uppercase()}:${(newSnes and 0xFFFF).toString(16).uppercase()} (${compressed.size} bytes, updated ${statesForPtr.size} state(s))")
+                        } else {
                             onLog("WARN: Room 0x$roomKey lvlPtr=\$${lvlPtr.toString(16)} compressed ${compressed.size} > orig $origSize and no free space — skipped")
                         }
                     }
@@ -1190,15 +1175,15 @@ internal class RomExporter(
 
                 // Write all PLM sets to ROM
                 for (psd in plmSets) {
-                    val newSize = psd.plms.size * 6 + 2
+                    val serialized = RomParser.serializePlmSet(psd.plms)
                     val plmPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or psd.plmSetPtr)
 
                     val writePc: Int
-                    if (newSize <= psd.originalSize) {
+                    if (serialized.size <= psd.originalSize) {
                         writePc = plmPc
-                    } else if (freePtr + newSize <= bank8FEnd) {
+                    } else if (freePtr + serialized.size <= bank8FEnd) {
                         writePc = freePtr
-                        freePtr += newSize
+                        freePtr += serialized.size
                         val newSnes = romParser.pcToSnes(writePc)
                         val newPtr = newSnes and 0xFFFF
                         var updatedStates = 0
@@ -1217,21 +1202,13 @@ internal class RomExporter(
                         continue
                     }
 
-                    var offset = writePc
                     for (plm in psd.plms) {
-                        romData[offset] = (plm.id and 0xFF).toByte()
-                        romData[offset + 1] = ((plm.id shr 8) and 0xFF).toByte()
-                        romData[offset + 2] = plm.x.toByte()
-                        romData[offset + 3] = plm.y.toByte()
-                        romData[offset + 4] = (plm.param and 0xFF).toByte()
-                        romData[offset + 5] = ((plm.param shr 8) and 0xFF).toByte()
-                        offset += 6
                         val name = RomParser.plmDisplayName(plm.id, plm.param)
                         onLog("  PLM: $name (0x${plm.id.toString(16)}) at (${plm.x},${plm.y}) param=0x${plm.param.toString(16)}")
                     }
-                    romData[offset] = 0; romData[offset + 1] = 0
+                    for ((i, b) in serialized.withIndex()) romData[writePc + i] = b.toByte()
                     if (writePc == plmPc) {
-                        for (i in offset + 2 until plmPc + psd.originalSize) romData[i] = 0
+                        for (i in writePc + serialized.size until plmPc + psd.originalSize) romData[i] = 0
                     }
                 }
                 roomsPatched.add(roomKey)
