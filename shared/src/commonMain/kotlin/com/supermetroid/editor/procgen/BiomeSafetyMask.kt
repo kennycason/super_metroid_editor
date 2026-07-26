@@ -23,6 +23,10 @@ object BiomeSafetyMask {
             for (x in 0 until width) {
                 val i = y * width + x
                 val type = (originalWords[i] shr 12) and 0xF
+                // Type-9 (elevator triggers) are already preserved verbatim by DoorPreservation
+                // and their clearance zones are enforced via forceAirRects. Generating a metadata
+                // halo around them would spill into the clearance zone and block forced-air.
+                if (type == ELEVATOR_TRIGGER_TYPE) continue
                 if ((type != PLAIN_AIR_TYPE && type != PLAIN_SOLID_TYPE) || originalBts[i] != 0) {
                     protectRect(mask, width, height, x - metadataHalo, y - metadataHalo, x + metadataHalo, y + metadataHalo)
                 }
@@ -53,6 +57,7 @@ object BiomeSafetyMask {
 
     private const val PLAIN_AIR_TYPE = 0x0
     private const val PLAIN_SOLID_TYPE = 0x8
+    private const val ELEVATOR_TRIGGER_TYPE = 0x9
     private const val DEFAULT_METADATA_HALO_BLOCKS = 1
     private const val DEFAULT_PLM_HALO_BLOCKS = 2
 }

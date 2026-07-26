@@ -27,6 +27,7 @@ import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.EnemyUpdate
 import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
@@ -67,8 +68,6 @@ private fun editorLog(message: Any? = "") {
         else -> editorStateLog.info { text }
     }
 }
-
-private const val GENERATED_BIOME_PREFIX = "Generated biome:"
 
 internal fun writePng(filePath: String, pixels: IntArray, w: Int, h: Int): Boolean {
     return try {
@@ -2133,19 +2132,10 @@ class EditorState {
 
         // Load scroll data for this room (resize if dimensions changed)
         val romScrolls = romParser.parseScrollData(room.roomScrollsPtr, romWidth, romHeight)
-        if (effectiveWidth != romWidth || effectiveHeight != romHeight) {
-            val newScreenCount = effectiveWidth * effectiveHeight
-            val resized = IntArray(newScreenCount) { 1 } // default Blue (visible)
-            for (sy in 0 until minOf(romHeight, effectiveHeight)) {
-                for (sx in 0 until minOf(romWidth, effectiveWidth)) {
-                    val oldIdx = sy * romWidth + sx
-                    val newIdx = sy * effectiveWidth + sx
-                    if (oldIdx in romScrolls.indices) resized[newIdx] = romScrolls[oldIdx]
-                }
-            }
-            _originalScrolls = resized
+        _originalScrolls = if (effectiveWidth != romWidth || effectiveHeight != romHeight) {
+            resizeScrollGrid(romScrolls, romWidth, romHeight, effectiveWidth, effectiveHeight)
         } else {
-            _originalScrolls = romScrolls
+            romScrolls
         }
         _workingScrolls = _originalScrolls.copyOf()
         scrollVersion++
@@ -2165,74 +2155,75 @@ class EditorState {
 
         val roomKey = project.roomKey(roomId)
         val savedRoom = project.rooms[roomKey]
-        if (savedRoom != null) {
-            // Replay saved tile edits
-            if (savedRoom.operations.isNotEmpty()) {
-                var count = 0
-                for (op in savedRoom.operations) {
-                    for (edit in op.edits) {
-                        applyTileEdit(edit, useNew = true)
-                        count++
-                    }
-                    undoStack.add(op)
-                }
-                undoVersion++
-                editorLog("Replayed $count saved edits for room 0x$roomKey")
-            }
-            // Replay saved PLM changes
-            for (change in savedRoom.plmChanges) {
-                when (change.action) {
-                    "add" -> _workingPlms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
-                    "remove" -> _workingPlms.removeAll { it.id == change.plmId && it.x == change.x && it.y == change.y }
-                }
-            }
-            // Replay saved door changes (last change per index wins)
-            for (dc in savedRoom.doorChanges) {
-                if (dc.doorIndex in 0 until _workingDoors.size) {
-                    _workingDoors[dc.doorIndex] = RomParser.DoorEntry(
-                        destRoomPtr = dc.destRoomPtr,
-                        bitflag = dc.bitflag,
-                        doorCapCode = dc.doorCapCode,
-                        screenX = dc.screenX,
-                        screenY = dc.screenY,
-                        distFromDoor = dc.distFromDoor,
-                        entryCode = dc.entryCode
-                    )
-                }
-            }
-            // Replay saved scroll changes (use effective width, not ROM width)
-            for (sc in savedRoom.scrollChanges) {
-                val idx = sc.screenY * effectiveWidth + sc.screenX
-                if (idx in _workingScrolls.indices) _workingScrolls[idx] = sc.newValue
-            }
-            if (savedRoom.scrollChanges.isNotEmpty()) scrollVersion++
+        if (savedRoom != null) replaySavedRoomEdits(savedRoom, effectiveWidth, roomKey)
+        // Bump render version without marking room as user-edited
+        _editVersionState.value++
+    }
 
-            // Replay saved enemy changes (including extra fields)
-            for (ec in savedRoom.enemyChanges) {
-                when (ec.action) {
-                    "add" -> _workingEnemies.add(
-                        RomParser.EnemyEntry(ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
-                            ec.extra1, ec.extra2, ec.extra3)
-                    )
-                    "remove" -> _workingEnemies.removeAll {
+    private fun replaySavedRoomEdits(savedRoom: RoomEdits, effectiveWidth: Int, roomKey: String) {
+        // Replay saved tile edits
+        if (savedRoom.operations.isNotEmpty()) {
+            var count = 0
+            for (op in savedRoom.operations) {
+                for (edit in op.edits) {
+                    applyTileEdit(edit, useNew = true)
+                    count++
+                }
+                undoStack.add(op)
+            }
+            undoVersion++
+            editorLog("Replayed $count saved edits for room 0x$roomKey")
+        }
+        // Replay saved PLM changes
+        for (change in savedRoom.plmChanges) {
+            when (change.action) {
+                "add" -> _workingPlms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                "remove" -> _workingPlms.removeAll { it.id == change.plmId && it.x == change.x && it.y == change.y }
+            }
+        }
+        // Replay saved door changes (last change per index wins)
+        for (dc in savedRoom.doorChanges) {
+            if (dc.doorIndex in 0 until _workingDoors.size) {
+                _workingDoors[dc.doorIndex] = RomParser.DoorEntry(
+                    destRoomPtr = dc.destRoomPtr,
+                    bitflag = dc.bitflag,
+                    doorCapCode = dc.doorCapCode,
+                    screenX = dc.screenX,
+                    screenY = dc.screenY,
+                    distFromDoor = dc.distFromDoor,
+                    entryCode = dc.entryCode
+                )
+            }
+        }
+        // Replay saved scroll changes (use effective width, not ROM width)
+        for (sc in savedRoom.scrollChanges) {
+            val idx = sc.screenY * effectiveWidth + sc.screenX
+            if (idx in _workingScrolls.indices) _workingScrolls[idx] = sc.newValue
+        }
+        if (savedRoom.scrollChanges.isNotEmpty()) scrollVersion++
+        // Replay saved enemy changes (including extra fields)
+        for (ec in savedRoom.enemyChanges) {
+            when (ec.action) {
+                "add" -> _workingEnemies.add(
+                    RomParser.EnemyEntry(ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+                        ec.extra1, ec.extra2, ec.extra3)
+                )
+                "remove" -> _workingEnemies.removeAll {
+                    it.id == ec.enemyId && it.x == ec.origX && it.y == ec.origY
+                }
+                "update" -> {
+                    val idx = _workingEnemies.indexOfFirst {
                         it.id == ec.enemyId && it.x == ec.origX && it.y == ec.origY
                     }
-                    "update" -> {
-                        val idx = _workingEnemies.indexOfFirst {
-                            it.id == ec.enemyId && it.x == ec.origX && it.y == ec.origY
-                        }
-                        if (idx >= 0) {
-                            _workingEnemies[idx] = RomParser.EnemyEntry(
-                                ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
-                                ec.extra1, ec.extra2, ec.extra3
-                            )
-                        }
+                    if (idx >= 0) {
+                        _workingEnemies[idx] = RomParser.EnemyEntry(
+                            ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+                            ec.extra1, ec.extra2, ec.extra3
+                        )
                     }
                 }
             }
         }
-        // Bump render version without marking room as user-edited
-        _editVersionState.value++
     }
 
     /**
@@ -2964,17 +2955,7 @@ class EditorState {
         workingBlocksTall = newHeight * 16
 
         // Resize scroll data: one byte per screen, default Blue (1)
-        val newScreenCount = newWidth * newHeight
-        val newScrolls = IntArray(newScreenCount) { 1 } // default to Blue (visible)
-        for (sy in 0 until minOf(oldHeight, newHeight)) {
-            for (sx in 0 until minOf(oldWidth, newWidth)) {
-                val oldIdx = sy * oldWidth + sx
-                val newIdx = sy * newWidth + sx
-                if (oldIdx in _workingScrolls.indices) {
-                    newScrolls[newIdx] = _workingScrolls[oldIdx]
-                }
-            }
-        }
+        val newScrolls = resizeScrollGrid(_workingScrolls, oldWidth, oldHeight, newWidth, newHeight)
         _originalScrolls = newScrolls.copyOf()
         _workingScrolls = newScrolls
         scrollVersion++
@@ -3363,13 +3344,6 @@ class EditorState {
         return BulkBiomeResult(resetRooms, 0, removedTiles)
     }
 
-    private data class RoomGrids(
-        val width: Int,
-        val height: Int,
-        val words: IntArray,
-        val bts: IntArray,
-    )
-
     private fun buildEffectiveRoomGrids(romParser: RomParser, romRoom: Room, effectiveRoom: Room): RoomGrids? {
         val data = runCatching { romParser.decompressLZ2(romRoom.levelDataPtr) }.getOrNull() ?: return null
         val effectiveData = if (effectiveRoom.width != romRoom.width || effectiveRoom.height != romRoom.height) {
@@ -3405,7 +3379,7 @@ class EditorState {
     }
 
     private fun recordGeneratedBiomeOperation(
-        roomEdits: com.supermetroid.editor.data.RoomEdits,
+        roomEdits: RoomEdits,
         roomId: Int,
         rules: BiomeRules,
         seed: Long,
@@ -3449,64 +3423,6 @@ class EditorState {
         _roomEditOrder[roomId] = ++_editCounter
     }
 
-    private fun stripGeneratedBiomeEdits(roomEdits: com.supermetroid.editor.data.RoomEdits?): Boolean {
-        if (roomEdits == null) return false
-        val generatedOps = roomEdits.operations.filter { isGeneratedBiomeOperation(it) }
-        if (generatedOps.isEmpty()) return false
-        roomEdits.operations.removeAll(generatedOps.toSet())
-        for (op in generatedOps) {
-            if (op.stateDataBefore != op.stateDataAfter && roomEdits.stateDataChange == op.stateDataAfter) {
-                roomEdits.stateDataChange = op.stateDataBefore
-            }
-            if (op.fxBefore != op.fxAfter && roomEdits.fxChange == op.fxAfter) {
-                roomEdits.fxChange = op.fxBefore
-            }
-            for (sc in op.scrollEdits) {
-                roomEdits.scrollChanges.removeAll {
-                    it.screenX == sc.screenX && it.screenY == sc.screenY && it.newValue == sc.newValue
-                }
-            }
-            for (plm in op.plmRemoves) {
-                roomEdits.plmChanges.removeAll {
-                    it.action == plm.action && it.plmId == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param
-                }
-            }
-        }
-        return true
-    }
-
-    private fun isGeneratedBiomeOperation(op: EditOperation): Boolean =
-        op.description.startsWith(GENERATED_BIOME_PREFIX) ||
-            op.description.startsWith("Generate biome (")
-
-    private fun hasManualBiomeBlockingEdits(roomEdits: com.supermetroid.editor.data.RoomEdits?): Boolean {
-        if (roomEdits == null) return false
-        val generatedOps = roomEdits.operations.filter { isGeneratedBiomeOperation(it) }
-        if (roomEdits.operations.any { !isGeneratedBiomeOperation(it) }) return true
-        if (roomEdits.doorChanges.isNotEmpty() ||
-            roomEdits.enemyChanges.isNotEmpty() ||
-            roomEdits.roomHeaderChange != null ||
-            roomEdits.customScrollCommands.isNotEmpty() ||
-            roomEdits.saveStationSpawns.isNotEmpty()
-        ) {
-            return true
-        }
-
-        val generatedScrollChanges = generatedOps.flatMap { it.scrollEdits }
-        if (roomEdits.scrollChanges.any { it !in generatedScrollChanges }) return true
-
-        val generatedPlmChanges = generatedOps.flatMap { it.plmAdds + it.plmRemoves }
-        if (roomEdits.plmChanges.any { it !in generatedPlmChanges }) return true
-
-        val generatedStateChanges = generatedOps.mapNotNull { it.stateDataAfter }
-        if (roomEdits.stateDataChange != null && roomEdits.stateDataChange !in generatedStateChanges) return true
-
-        val generatedFxChanges = generatedOps.mapNotNull { it.fxAfter }
-        if (roomEdits.fxChange != null && roomEdits.fxChange !in generatedFxChanges) return true
-
-        return false
-    }
-
     private fun prepareBulkTheme(theme: BiomeTheme, romParser: RomParser) {
         val targetTileset = theme.tilesetId ?: return
         val effectId = theme.paletteEffectId ?: return
@@ -3515,40 +3431,6 @@ class EditorState {
         effect.apply(colors)
         saveTilesetPaletteFromColors(targetTileset, colors)
         setPaletteEffect("tileset:$targetTileset", effect.id)
-    }
-
-    private fun applyBulkBiomeThemeToRoom(
-        roomEdits: com.supermetroid.editor.data.RoomEdits,
-        romRoom: Room,
-        effectiveRoom: Room,
-        theme: BiomeTheme,
-    ) {
-        val targetTileset = theme.tilesetId
-        if (targetTileset != null) {
-            val existing = roomEdits.stateDataChange ?: StateDataChange()
-            val change = existing.copy(tileset = targetTileset.takeIf { it != romRoom.tileset })
-            roomEdits.stateDataChange = change.takeIf { it != StateDataChange() }
-        }
-        if (theme.fxType != null) {
-            val existing = roomEdits.fxChange ?: FxChange()
-            roomEdits.fxChange = if (theme.isLiquid) {
-                val heightPx = effectiveRoom.height * 16 * 16
-                val surface = (heightPx * theme.liquidFraction).toInt()
-                    .coerceIn(0x20, maxOf(0x20, heightPx - 0x20))
-                existing.copy(
-                    fxType = theme.fxType,
-                    liquidSurfaceStart = surface,
-                    liquidSurfaceNew = surface,
-                    liquidSpeed = 0,
-                    liquidDelay = 0,
-                    fxBitA = 0x02,
-                    fxBitB = 0x02,
-                    fxBitC = 0,
-                )
-            } else {
-                existing.copy(fxType = theme.fxType, liquidSurfaceStart = 0xFFFF, liquidSurfaceNew = 0xFFFF)
-            }
-        }
     }
 
     private fun buildBiomeGenerationOptionsForRoom(
@@ -3591,19 +3473,11 @@ class EditorState {
         val roomWidthScreens = effectiveRoom.width
         val roomHeightScreens = effectiveRoom.height
         if (roomWidthScreens <= 0 || roomHeightScreens <= 0) return emptyList()
+        val romScrolls = romParser.parseScrollData(romRoom.roomScrollsPtr, romRoom.width, romRoom.height)
         val original = if (effectiveRoom.width != romRoom.width || effectiveRoom.height != romRoom.height) {
-            val resized = IntArray(roomWidthScreens * roomHeightScreens) { 1 }
-            val romScrolls = romParser.parseScrollData(romRoom.roomScrollsPtr, romRoom.width, romRoom.height)
-            for (sy in 0 until minOf(romRoom.height, effectiveRoom.height)) {
-                for (sx in 0 until minOf(romRoom.width, effectiveRoom.width)) {
-                    val oldIdx = sy * romRoom.width + sx
-                    val newIdx = sy * effectiveRoom.width + sx
-                    if (oldIdx in romScrolls.indices) resized[newIdx] = romScrolls[oldIdx]
-                }
-            }
-            resized
+            resizeScrollGrid(romScrolls, romRoom.width, romRoom.height, roomWidthScreens, roomHeightScreens)
         } else {
-            romParser.parseScrollData(romRoom.roomScrollsPtr, romRoom.width, romRoom.height)
+            romScrolls
         }
         val current = original.copyOf()
         project.rooms[project.roomKey(roomId)]?.scrollChanges.orEmpty().forEach { sc ->
@@ -3642,10 +3516,6 @@ class EditorState {
             }
         }
         return plms
-    }
-
-    private fun shouldSkipBulkBiomeRoom(roomInfo: RoomInfo, room: Room): Boolean {
-        return BiomeRoomEligibility.shouldSkipBulkBiomeRoom(roomInfo, room)
     }
 
     private fun buildBiomeGenerationOptions(
@@ -3728,186 +3598,6 @@ class EditorState {
         !RomParser.isScrollPlm(plmId) &&
             !RomParser.isDoorCapPlm(plmId) &&
             (isEditorItemPlm(plmId) || RomParser.isStationPlm(plmId) || RomParser.isGatePlm(plmId))
-
-    private fun addLandingSiteShipProtection(
-        preserveRects: MutableList<BiomeGenerationRect>,
-        forceAirRects: MutableList<BiomeGenerationRect>,
-    ) {
-        // Landing Site's ship is a special room anchor. Preserve the ship body
-        // and clear only a tight 3-tile cushion around it.
-        preserveRects.add(BiomeGenerationRect(58, 60, 84, 73))
-        forceAirRects.add(BiomeGenerationRect(55, 57, 87, 76))
-    }
-
-    private fun addElevatorProtectionForRoom(
-        preserveRects: MutableList<BiomeGenerationRect>,
-        hardForceAirRects: MutableList<BiomeGenerationRect>,
-        romParser: RomParser?,
-        roomId: Int,
-        width: Int,
-        height: Int,
-    ) {
-        if (romParser == null || roomId == 0 || width <= 0 || height <= 0) return
-        val incomingElevators = romParser.findDoorsLeadingTo(roomId).filter { it.isElevator }
-        for (door in incomingElevators) {
-            addElevatorProtectionForDoor(preserveRects, hardForceAirRects, door, width, height)
-        }
-    }
-
-    private fun addElevatorProtectionForDoor(
-        preserveRects: MutableList<BiomeGenerationRect>,
-        hardForceAirRects: MutableList<BiomeGenerationRect>,
-        door: RomParser.DoorEntry,
-        width: Int,
-        height: Int,
-    ) {
-        val screenX0 = door.screenX * 16
-        val screenY0 = door.screenY * 16
-        if (screenX0 !in 0 until width || screenY0 !in 0 until height) return
-
-        val centerLeftX = screenX0 + 7
-        val centerRightX = screenX0 + 8
-        val centerTopY = screenY0 + 7
-        val centerBottomY = screenY0 + 8
-        val verticalClearLeftX = centerLeftX - 1
-        val verticalClearRightX = centerRightX + 1
-        val horizontalClearTopY = centerTopY - 1
-        val horizontalClearBottomY = centerBottomY + 1
-        val elevatorClearanceDepth = 5
-
-        fun addPreserve(rect: BiomeGenerationRect) {
-            if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
-                preserveRects.add(rect)
-            }
-        }
-        fun addHardForceAir(rect: BiomeGenerationRect) {
-            if (rect.x1 >= 0 && rect.y1 >= 0 && rect.x0 < width && rect.y0 < height) {
-                hardForceAirRects.add(rect)
-            }
-        }
-
-        when (door.direction and 0x03) {
-            2 -> {
-                // Elevator entering from the top edge: preserve the top door strip,
-                // then keep a wider shaft below it open for Samus.
-                val doorY = screenY0
-                addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addHardForceAir(
-                    BiomeGenerationRect(
-                        verticalClearLeftX,
-                        doorY + 1,
-                        verticalClearRightX,
-                        doorY + elevatorClearanceDepth,
-                    )
-                )
-            }
-            3 -> {
-                // Elevator entering from the bottom edge. Vanilla bottom elevator
-                // rooms have their lower type-9 strip on the screen's bottom row,
-                // with the standing space immediately above it.
-                val doorY = minOf(screenY0 + 15, height - 1)
-                addPreserve(BiomeGenerationRect(centerLeftX - 4, doorY, centerRightX + 4, doorY))
-                addHardForceAir(
-                    BiomeGenerationRect(
-                        verticalClearLeftX,
-                        doorY - elevatorClearanceDepth,
-                        verticalClearRightX,
-                        doorY - 1,
-                    )
-                )
-            }
-            0 -> {
-                val doorX = screenX0
-                addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addHardForceAir(
-                    BiomeGenerationRect(
-                        doorX + 1,
-                        horizontalClearTopY,
-                        doorX + elevatorClearanceDepth,
-                        horizontalClearBottomY,
-                    )
-                )
-            }
-            1 -> {
-                val doorX = minOf(screenX0 + 15, width - 1)
-                addPreserve(BiomeGenerationRect(doorX, centerTopY - 4, doorX, centerBottomY + 4))
-                addHardForceAir(
-                    BiomeGenerationRect(
-                        doorX - elevatorClearanceDepth,
-                        horizontalClearTopY,
-                        doorX - 1,
-                        horizontalClearBottomY,
-                    )
-                )
-            }
-        }
-    }
-
-    private fun buildWfcSamples(romParser: RomParser, sourceRoomId: Int, sourceTilesetId: Int): List<WfcSample> {
-        val current = romParser.readRoomHeader(sourceRoomId)
-        val headers = RoomRepository().getAllRooms()
-            .mapNotNull { info -> runCatching { romParser.readRoomHeader(info.getRoomIdAsInt()) }.getOrNull() }
-            .filter { it.levelDataPtr != 0 && it.width > 0 && it.height > 0 }
-        fun sampleRank(room: com.supermetroid.editor.data.Room): Int =
-            when {
-                room.roomId == sourceRoomId -> 0
-                current != null && room.area == current.area && room.tileset == current.tileset -> 1
-                room.tileset == sourceTilesetId -> 2
-                current != null && room.area == current.area -> 3
-                else -> 4
-            }
-        return headers
-            .distinctBy { it.roomId }
-            .sortedWith(compareBy<com.supermetroid.editor.data.Room> { sampleRank(it) }
-                .thenBy { it.roomId })
-            .mapNotNull { header -> buildWfcSample(romParser, header, sampleRank(header)) }
-    }
-
-    private fun buildWfcSample(romParser: RomParser, room: com.supermetroid.editor.data.Room, sampleRank: Int): WfcSample? {
-        return runCatching {
-            val w = room.width * 16
-            val h = room.height * 16
-            val grid = LevelGrid.parse(romParser.decompressLZ2(room.levelDataPtr), w, h) ?: return null
-            val words = IntArray(w * h)
-            val bts = IntArray(w * h)
-            for (y in 0 until h) for (x in 0 until w) {
-                val i = y * w + x
-                words[i] = grid.word(x, y)
-                bts[i] = grid.bts(x, y)
-            }
-            WfcSample(w, h, words, bts, sampleRank)
-        }.getOrNull()
-    }
-
-    private fun buildDoorCapPreserveRectsForRoom(
-        romParser: RomParser?,
-        roomId: Int,
-        width: Int,
-        height: Int,
-        plms: List<RomParser.PlmEntry>,
-    ): List<BiomeGenerationRect> {
-        val rects = ArrayList<BiomeGenerationRect>()
-        for (plm in plms) {
-            if (!RomParser.isDoorCapPlm(plm.id)) continue
-            rects.add(doorCapRect(plm.x, plm.y, RomParser.doorCapIsHorizontal(plm.id)))
-        }
-        val incomingDoors = romParser?.findDoorsLeadingTo(roomId).orEmpty()
-        for (door in incomingDoors) {
-            val x = door.doorCapCode and 0xFF
-            val y = (door.doorCapCode shr 8) and 0xFF
-            if (x !in 0 until width || y !in 0 until height) continue
-            val horizontal = (door.direction and 0x03) == 2 || (door.direction and 0x03) == 3
-            rects.add(doorCapRect(x, y, horizontal))
-        }
-        return rects
-    }
-
-    private fun doorCapRect(x: Int, y: Int, horizontal: Boolean): BiomeGenerationRect =
-        if (horizontal) {
-            BiomeGenerationRect(x - 1, y - 2, x + 4, y + 2)
-        } else {
-            BiomeGenerationRect(x - 2, y - 1, x + 2, y + 4)
-        }
 
     private fun buildGeneratedRoomScrollResetEdits(): List<ScrollChange> {
         val roomWidthScreens = workingBlocksWide / 16
@@ -4406,6 +4096,26 @@ class EditorState {
         return ipsFile.absolutePath
     }
 
+}
+
+/**
+ * Copy a flat scroll-value grid from one screen dimension to another.
+ * New cells default to [default] (1 = Blue/visible). Overlapping cells are preserved.
+ */
+internal fun resizeScrollGrid(
+    source: IntArray,
+    oldWidth: Int, oldHeight: Int,
+    newWidth: Int, newHeight: Int,
+    default: Int = 1,
+): IntArray {
+    val result = IntArray(newWidth * newHeight) { default }
+    for (sy in 0 until minOf(oldHeight, newHeight)) {
+        for (sx in 0 until minOf(oldWidth, newWidth)) {
+            val oldIdx = sy * oldWidth + sx
+            if (oldIdx in source.indices) result[sy * newWidth + sx] = source[oldIdx]
+        }
+    }
+    return result
 }
 
 /**

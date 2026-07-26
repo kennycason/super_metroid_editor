@@ -1,18 +1,14 @@
 package com.supermetroid.editor.ui
 
-import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.rom.LZ5Compressor
-import com.supermetroid.editor.rom.NspcRenderer
-import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
-import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextCategory
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
@@ -65,432 +61,13 @@ internal class RomExporter(
     private val onLog: (String) -> Unit = {},
     private val onStatus: (String) -> Unit = {},
 ) {
+
+    private val music = MusicRomExporter(project, onLog)
+
     private fun exportSuffix(): String {
         val version = "v${project.versionMajor}.${project.versionMinor}"
         val build = project.buildName.trim()
         return if (build.isNotEmpty()) "$build-$version" else version
-    }
-
-    private fun applyMusicEditsToRom(romData: ByteArray): Int {
-        if (project.musicEdits.isEmpty()) return 0
-
-        var patched = 0
-        val editsBySongSet = project.musicEdits.toSortedMap().entries.groupBy { it.value.songSet }.toSortedMap()
-        for ((songSet, edits) in editsBySongSet) {
-            val exportParser = RomParser(romData)
-            val baseBlocks = SpcData.parseTransferBlocks(romData, exportParser.snesToPc(0xCF8000))
-            val baseRam = SpcData.buildInitialSpcRam(exportParser)
-            val songBlocks = SpcData.findSongSetTransferData(exportParser, songSet)
-            val originalSpcRam = baseRam.copyOf()
-            SpcData.applyTransferBlocks(originalSpcRam, songBlocks)
-            val accumulatedWrites = SpcWriteAccumulator(songSet)
-            val knownPlayIndexes = SpcData.KNOWN_TRACKS
-                .filter { it.songSet == songSet }
-                .mapTo(mutableSetOf()) { it.playIndex }
-            edits.mapTo(knownPlayIndexes) { it.value.playIndex }
-            val editedPlayIndexes = edits.mapTo(mutableSetOf()) { it.value.playIndex }
-            val protectedPlayIndexes = knownPlayIndexes - editedPlayIndexes
-            val occupiedSequenceRanges = MusicSequenceBudget.buildProtectedSpcOccupancy(
-                baseBlocks = baseBlocks,
-                songBlocks = songBlocks,
-                spcRam = originalSpcRam,
-                protectedPlayIndexes = protectedPlayIndexes
-            ).toMutableList()
-
-            for ((key, edit) in edits) {
-                val nativePayload = edit.nativePayload
-                if (nativePayload != null) {
-                    val nativeWrites = nativeMusicPayloadWrites(edit)
-                    require(nativeWrites.isNotEmpty()) { "native music payload $key produced no SPC writes" }
-                    val owner = "native music payload '$key' (${edit.trackName})"
-                    mergeSpcWrites(accumulatedWrites, owner, nativeWrites, rejectAnyOverlap = true)
-                    accumulatedWrites.hasNativePayload = true
-                    val totalBytes = nativeWrites.values.sumOf { it.size }
-                    patched++
-                    onLog(
-                        "[EXPORT] Native music payload '$key' ${edit.trackName}: " +
-                            "${nativeWrites.size} SPC write records, $totalBytes payload bytes, " +
-                            "sourcePlayIndex=${nativePayload.sourcePlayIndex}"
-                    )
-                    continue
-                }
-
-                val originalSong = NspcSequence.parse(originalSpcRam, edit.playIndex)
-                val editedSong = MusicEditConversion.toSong(edit)
-                val hasNoteDelta = PianoRollPreviewLogic.deltaOverlayPlan(editedSong, originalSong)?.hasDelta
-                    ?: editedSong.isModified
-
-                val relocatedSequence = if (hasNoteDelta) {
-                    MusicSequenceBudget.encodeRelocated(
-                        song = editedSong,
-                        playIndex = edit.playIndex,
-                        spcRam = originalSpcRam,
-                        occupiedRanges = occupiedSequenceRanges,
-                        key = key
-                    ).also { patch ->
-                        if (patch.fit.trimmed) {
-                            onLog(
-                                "WARN [EXPORT] Music edit '$key' ${edit.trackName}: " +
-                                    "trimmed ${patch.fit.removedNotes} notes and ${patch.fit.removedCommands} commands after tick " +
-                                    "${patch.fit.cutoffTick} to fit ${patch.fit.encodedBytes}/${patch.fit.budgetBytes} sequence bytes"
-                            )
-                        }
-                    }
-                } else {
-                    null
-                }
-                val relocationRange = relocatedSequence?.allocation
-                val sequenceWrites = relocatedSequence?.writes ?: emptyMap()
-                validateMusicSequenceWrites(
-                    key = key,
-                    playIndex = edit.playIndex,
-                    writes = sequenceWrites,
-                    allocatedRange = relocationRange
-                )
-                if (relocationRange != null) {
-                    occupiedSequenceRanges += relocationRange
-                }
-
-                val originalInstruments = NspcRenderer.readInstrumentTable(originalSpcRam)
-                val editedInstruments = MusicEditConversion.toInstrumentEntries(edit)
-                val instrumentWrites = if (editedInstruments.isNotEmpty()) {
-                    PianoRollPreviewLogic.instrumentPatchWrites(editedInstruments, originalInstruments)
-                } else {
-                    emptyMap()
-                }
-
-                if (sequenceWrites.isEmpty() && instrumentWrites.isEmpty()) {
-                    onLog("[EXPORT] Music edit $key has no note/instrument delta; skipping")
-                    continue
-                }
-
-                val owner = "music edit '$key' (${edit.trackName})"
-                mergeSpcWrites(accumulatedWrites, owner, sequenceWrites, rejectAnyOverlap = true)
-                mergeSpcWrites(accumulatedWrites, owner, instrumentWrites, rejectAnyOverlap = false)
-                val spcWrites = sequenceWrites + instrumentWrites
-                val totalBytes = spcWrites.values.sumOf { it.size }
-
-                patched++
-                onLog(
-                    "[EXPORT] Music edit '$key' ${edit.trackName}: ${spcWrites.size} SPC write records, " +
-                        "$totalBytes payload bytes, noteDelta=$hasNoteDelta, instrumentWrites=${instrumentWrites.size}"
-                )
-            }
-
-            if (accumulatedWrites.isNotEmpty()) {
-                val chainBytes = writeRelocatedSongSetTransferChain(
-                    romData, songSet, accumulatedWrites.toWriteMap(), accumulatedWrites.hasNativePayload
-                )
-                onLog(
-                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
-                        "${edits.size} music edit(s) into $chainBytes-byte transfer chain"
-                )
-            }
-        }
-        return patched
-    }
-
-    private data class SpcWriteAccumulator(
-        val songSet: Int,
-        val bytesByAddr: java.util.TreeMap<Int, Int> = java.util.TreeMap(),
-        val ownersByAddr: MutableMap<Int, String> = mutableMapOf(),
-        var hasNativePayload: Boolean = false
-    ) {
-        fun isNotEmpty(): Boolean = bytesByAddr.isNotEmpty()
-
-        fun toWriteMap(): Map<Int, ByteArray> = SpcData.packSpcBytesToWrites(bytesByAddr)
-    }
-
-    private fun validateMusicSequenceWrites(
-        key: String,
-        playIndex: Int,
-        writes: Map<Int, ByteArray>,
-        allocatedRange: MusicSequenceBudget.SpcRange?
-    ) {
-        val songTableEntry = MusicSequenceBudget.SONG_TABLE_BASE + playIndex * 2
-        for ((addr, data) in writes) {
-            val dest = addr and 0xFFFF
-            val endExclusive = dest + data.size
-            require(data.isNotEmpty()) { "music edit $key produced an empty sequence write at 0x${dest.toString(16)}" }
-            if (dest == songTableEntry && data.size == 2) continue
-            require(dest >= MusicSequenceBudget.SONG_TABLE_BASE && endExclusive <= MusicSequenceBudget.SEQUENCE_EXPORT_MAX) {
-                "music edit $key produced unsafe sequence SPC write " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
-            }
-            if (allocatedRange != null) {
-                require(dest >= allocatedRange.start && endExclusive <= allocatedRange.endExclusive) {
-                    "music edit $key re-encode escaped relocated allocation " +
-                        "0x${allocatedRange.start.toString(16).padStart(4, '0')}.." +
-                        "0x${(allocatedRange.endExclusive - 1).toString(16).padStart(4, '0')} with write " +
-                        "0x${dest.toString(16).padStart(4, '0')}.." +
-                        "0x${(endExclusive - 1).toString(16).padStart(4, '0')}"
-                }
-            }
-        }
-    }
-
-    private fun nativeMusicPayloadWrites(edit: MusicTrackEdit): Map<Int, ByteArray> {
-        val payload = edit.nativePayload ?: return emptyMap()
-        val blocks = MusicEditConversion.toTransferBlocks(payload)
-        val sourcePlayIndex = payload.sourcePlayIndex.takeIf { it >= 0 } ?: edit.playIndex
-        val sourceEntry = MusicSequenceBudget.SONG_TABLE_BASE + sourcePlayIndex * 2
-        val targetEntry = MusicSequenceBudget.SONG_TABLE_BASE + edit.playIndex * 2
-        val bytesByAddr = java.util.TreeMap<Int, Int>()
-        var sawSourceEntry = false
-
-        fun putByte(addr: Int, value: Int) {
-            require(addr in 0 until RomConstants.SPC_RAM_SIZE) {
-                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} writes outside SPC RAM at " +
-                    "0x${addr.toString(16).padStart(4, '0')}"
-            }
-            bytesByAddr[addr] = value and 0xFF
-        }
-
-        for (block in blocks) {
-            val dest = block.destAddr and 0xFFFF
-            require(dest + block.data.size <= RomConstants.SPC_RAM_SIZE) {
-                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} has out-of-bounds block " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(dest + block.data.size - 1).toString(16).padStart(4, '0')}"
-            }
-            for (i in block.data.indices) {
-                val addr = dest + i
-                val value = block.data[i].toInt() and 0xFF
-                if (addr == sourceEntry || addr == sourceEntry + 1) {
-                    sawSourceEntry = true
-                    val offset = addr - sourceEntry
-                    putByte(targetEntry + offset, value)
-                    if (sourceEntry == targetEntry) {
-                        continue
-                    }
-                } else {
-                    putByte(addr, value)
-                }
-            }
-        }
-
-        require(sawSourceEntry) {
-            "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} did not include its source " +
-                "song-table entry for play index $sourcePlayIndex"
-        }
-        return compactSpcWriteBytes(bytesByAddr)
-    }
-
-    private fun compactSpcWriteBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> =
-        SpcData.packSpcBytesToWrites(bytesByAddr)
-
-    private fun mergeSpcWrites(
-        accumulator: SpcWriteAccumulator,
-        owner: String,
-        writes: Map<Int, ByteArray>,
-        rejectAnyOverlap: Boolean
-    ) {
-        val songSetLabel = "0x${accumulator.songSet.toString(16).padStart(2, '0')}"
-        for ((addr, data) in writes) {
-            val dest = addr and 0xFFFF
-            require(data.isNotEmpty()) { "$owner produced an empty SPC write at 0x${dest.toString(16)}" }
-            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
-                "$owner produced out-of-bounds SPC write " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(dest + data.size - 1).toString(16).padStart(4, '0')}"
-            }
-            for (i in data.indices) {
-                val spcAddr = dest + i
-                val value = data[i].toInt() and 0xFF
-                val existing = accumulator.bytesByAddr[spcAddr]
-                val previousOwner = accumulator.ownersByAddr[spcAddr]
-                if (existing != null && previousOwner != owner) {
-                    require(!rejectAnyOverlap) {
-                        "music edits for songSet $songSetLabel overlap at SPC " +
-                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
-                    }
-                    require(existing == value) {
-                        "music edits for songSet $songSetLabel write different values at SPC " +
-                            "0x${spcAddr.toString(16).padStart(4, '0')} ($previousOwner vs $owner)"
-                    }
-                } else if (existing != null && existing != value) {
-                    require(false) {
-                        "$owner produced conflicting SPC bytes at 0x${spcAddr.toString(16).padStart(4, '0')}"
-                    }
-                }
-                accumulator.bytesByAddr[spcAddr] = value
-                accumulator.ownersByAddr[spcAddr] = owner
-            }
-        }
-    }
-
-    private fun writeRelocatedSongSetTransferChain(
-        romData: ByteArray,
-        songSet: Int,
-        spcWrites: Map<Int, ByteArray>,
-        hasNativePayload: Boolean = false
-    ): Int {
-        require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
-
-        val parser = RomParser(romData)
-        val pointerEntryPc = SpcData.findSongSetPointerEntryPc(parser, songSet)
-        require(pointerEntryPc >= 0) {
-            "songSet 0x${songSet.toString(16)} has no writable transfer pointer table entry"
-        }
-
-        val originalPointer = SpcData.readSongSetPointer(parser, songSet)
-        val originalBlocks = SpcData.findSongSetTransferData(parser, songSet)
-        require(originalBlocks.isNotEmpty()) {
-            "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
-        }
-
-        // Always try merging at the SPC RAM byte level first — this preserves data for
-        // other play indices in the same song set while applying the patch writes on top.
-        // If the merged chain exceeds one LoROM bank (32 KiB), fall back to payload-only
-        // for native payloads: those payloads replace the instrument/sample table so other
-        // arrangements would be broken by them anyway, and the original bytes only add size.
-        val mergedBlocks = mergeSpcRamBlocks(originalBlocks, spcWrites)
-        val mergedChain = serializeTransferChain(mergedBlocks)
-        val maxBank = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
-        val (relocatedChain, chainMode) = when {
-            mergedChain.size <= maxBank -> mergedChain to "merged"
-            hasNativePayload -> {
-                val payloadOnlyBlocks = buildSpcPatchBlocks(spcWrites)
-                val payloadChain = serializeTransferChain(payloadOnlyBlocks)
-                onLog(
-                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: merged chain " +
-                        "${mergedChain.size} B > $maxBank B bank limit; falling back to payload-only " +
-                        "(${payloadChain.size} B) — other arrangements in this song set may be affected"
-                )
-                payloadChain to "payload-only"
-            }
-            else -> mergedChain to "merged" // let findMusicTransferFreeSpace report the error
-        }
-        val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
-        relocatedChain.copyInto(romData, writePc)
-
-        val relocatedPointer = parser.pcToSnes(writePc)
-        writeRomU24(romData, pointerEntryPc, relocatedPointer)
-
-        onLog(
-            "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
-                "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
-                "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
-                "($chainMode, ${relocatedChain.size} bytes)"
-        )
-        return relocatedChain.size
-    }
-
-    /**
-     * Merges [originalBlocks] and [spcWrites] at the SPC RAM byte level.
-     * Original bytes are applied first; [spcWrites] overwrite them where they overlap.
-     * The result contains exactly the union of all covered SPC RAM addresses.
-     */
-    private fun mergeSpcRamBlocks(
-        originalBlocks: List<SpcData.TransferBlock>,
-        spcWrites: Map<Int, ByteArray>
-    ): List<SpcData.TransferBlock> {
-        val ram = ByteArray(RomConstants.SPC_RAM_SIZE)
-        val covered = BooleanArray(RomConstants.SPC_RAM_SIZE)
-
-        for (block in originalBlocks) {
-            val dest = block.destAddr and 0xFFFF
-            for (i in block.data.indices) {
-                ram[dest + i] = block.data[i]
-                covered[dest + i] = true
-            }
-        }
-        for ((addr, data) in spcWrites) {
-            val dest = addr and 0xFFFF
-            for (i in data.indices) {
-                ram[dest + i] = data[i]
-                covered[dest + i] = true
-            }
-        }
-
-        val bytesByAddr = sortedMapOf<Int, Int>()
-        for (i in covered.indices) {
-            if (covered[i]) bytesByAddr[i] = ram[i].toInt() and 0xFF
-        }
-        return SpcData.packSpcBytesToWrites(bytesByAddr)
-            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
-    }
-
-    private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
-        val bytesByAddr = sortedMapOf<Int, Int>()
-        for ((addr, data) in spcWrites) {
-            val dest = addr and 0xFFFF
-            require(data.isNotEmpty()) { "empty SPC write at 0x${dest.toString(16)}" }
-            require(data.size <= 0xFFFF) { "SPC write at 0x${dest.toString(16)} is too large (${data.size} bytes)" }
-            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
-                "SPC write 0x${dest.toString(16)}..0x${(dest + data.size).toString(16)} exceeds SPC RAM"
-            }
-            for (i in data.indices) bytesByAddr[dest + i] = data[i].toInt() and 0xFF
-        }
-        return SpcData.packSpcBytesToWrites(bytesByAddr)
-            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
-    }
-
-    private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
-        val out = java.io.ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
-        for (block in blocks) {
-            require(block.data.size <= 0xFFFF) {
-                "transfer block at 0x${block.destAddr.toString(16)} is too large (${block.data.size} bytes)"
-            }
-            writeStreamU16(out, block.data.size)
-            writeStreamU16(out, block.destAddr and 0xFFFF)
-            out.write(block.data)
-        }
-        writeStreamU16(out, 0)
-        return out.toByteArray()
-    }
-
-    private fun writeStreamU16(out: java.io.ByteArrayOutputStream, value: Int) {
-        out.write(value and 0xFF)
-        out.write((value ushr 8) and 0xFF)
-    }
-
-    private fun writeRomU24(romData: ByteArray, offset: Int, value: Int) {
-        require(offset >= 0 && offset + 2 < romData.size) {
-            "out-of-bounds ROM pointer write at 0x${offset.toString(16)}"
-        }
-        romData[offset] = (value and 0xFF).toByte()
-        romData[offset + 1] = ((value ushr 8) and 0xFF).toByte()
-        romData[offset + 2] = ((value ushr 16) and 0xFF).toByte()
-    }
-
-    private fun findMusicTransferFreeSpace(
-        parser: RomParser,
-        romData: ByteArray,
-        requiredBytes: Int
-    ): Int {
-        require(requiredBytes > 0) { "music transfer chain must not be empty" }
-        val maxLoRomBankBytes = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
-        if (requiredBytes > maxLoRomBankBytes) {
-            error(
-                "music transfer chain needs $requiredBytes bytes, but one LoROM bank can hold at most " +
-                    "$maxLoRomBankBytes bytes. Large native IT/custom-sample imports can preview and export raw .nspc, " +
-                    "but cannot be ROM-exported yet without a smaller payload or a future multi-bank/compact exporter"
-            )
-        }
-        val preferredBanks = listOf(0xB8, 0xCE, 0x85, 0x83, 0x89)
-        val fallbackBanks = (0x80..0xFF).filterNot { it in preferredBanks }
-        for (bank in preferredBanks + fallbackBanks) {
-            val bankStart = parser.snesToPc((bank shl 16) or 0x8000)
-            val bankEndExclusive = parser.snesToPc((bank shl 16) or 0xFFFF) + 1
-            if (bankStart < 0 || bankEndExclusive > romData.size || bankStart >= bankEndExclusive) continue
-
-            var freeStart = bankEndExclusive
-            while (freeStart > bankStart && romData[freeStart - 1] == 0xFF.toByte()) {
-                freeStart--
-            }
-            if (freeStart >= bankEndExclusive) continue
-
-            val alignedStart = ((freeStart + 0x0F) / 0x10) * 0x10
-            if (alignedStart + requiredBytes <= bankEndExclusive) {
-                return alignedStart
-            }
-        }
-
-        error(
-            "not enough contiguous free ROM space for $requiredBytes-byte relocated SPC transfer chain"
-        )
     }
 
     private fun isEditorItemPlm(plmId: Int): Boolean {
@@ -512,330 +89,10 @@ internal class RomExporter(
         // Apply patches FIRST so free-space scanners see any code/data
         // that patches write into otherwise-empty banks (e.g. skip_intro
         // writes custom ASM into bank $A1 free space).
-        var patchesApplied = 0
-        val enabledCount = project.patches.count { it.enabled }
-        val disabledCount = project.patches.size - enabledCount
-        val deferredGeneratedPatches = mutableListOf<SmPatch>()
-        onLog("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
-        for (patch in project.patches) {
-            if (!patch.enabled) continue
-            onLog("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
-            if (patch.configType == "ceres_escape_seconds") {
-                val totalSecs = (patch.configValue ?: 60).coerceIn(15, 600)
-                val mins = totalSecs / 60
-                val secs = totalSecs % 60
-                val secsBcd = ((secs / 10) shl 4) or (secs % 10)
-                val minsBcd = ((mins / 10) shl 4) or (mins % 10)
-                val off = romParser.snesToPc(CERES_TIMER_OPERAND_SNES)
-                if (off + 1 < romData.size) {
-                    romData[off] = secsBcd.toByte()
-                    romData[off + 1] = minsBcd.toByte()
-                }
-                onLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
-            } else if (patch.configType == "beam_damage") {
-                val data = patch.configData ?: continue
-                var beamCount = 0
-                for (beam in ALL_BEAMS) {
-                    val dmg = data[beam.key] ?: continue
-                    val charged = dmg * 3
-                    val pcUncharged = romParser.snesToPc(beam.snesAddress)
-                    if (pcUncharged + 1 < romData.size) {
-                        romData[pcUncharged] = (dmg and 0xFF).toByte()
-                        romData[pcUncharged + 1] = ((dmg shr 8) and 0xFF).toByte()
-                    }
-                    val pcCharged = romParser.snesToPc(beam.chargedSnesAddress)
-                    if (pcCharged + 1 < romData.size) {
-                        romData[pcCharged] = (charged and 0xFF).toByte()
-                        romData[pcCharged + 1] = ((charged shr 8) and 0xFF).toByte()
-                    }
-                    beamCount++
-                }
-                onLog("[EXPORT]   Beam damage: $beamCount beams modified")
-            } else if (patch.configType == "boss_stats") {
-                val data = patch.configData ?: continue
-                var fieldCount = 0
-                for (field in ALL_BOSS_FIELDS) {
-                    val value = data[field.key] ?: continue
-                    for (speciesId in field.writeSpeciesIds) {
-                        val snesAddress = RomConstants.BANK_ENEMY_AI or speciesId
-                        val pc = romParser.snesToPc(snesAddress) + field.offset
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
-                    }
-                }
-                onLog("[EXPORT]   Boss stats: $fieldCount fields modified")
-            } else if (patch.configType == "phantoon") {
-                val data = patch.configData ?: continue
-                var fieldCount = 0
-                for (field in ALL_PHANTOON_FIELDS) {
-                    val value = coercePhantoonValue(field, data[field.key] ?: continue)
-                    val pc = romParser.snesToPc(field.snesAddress)
-                    if (pc + 1 < romData.size) {
-                        romData[pc] = (value and 0xFF).toByte()
-                        romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                    }
-                    fieldCount++
-                }
-                onLog("[EXPORT]   Phantoon behavior: $fieldCount fields modified")
-            } else if (patch.configType == KRAID_CONFIG_TYPE) {
-                val data = patch.configData ?: continue
-                var fieldCount = 0
-                for (field in ALL_KRAID_FIELDS) {
-                    val value = coerceKraidValue(field, data[field.key] ?: continue)
-                    for (snesAddress in field.writeSnesAddresses) {
-                        val pc = romParser.snesToPc(snesAddress)
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
-                    }
-                }
-                onLog("[EXPORT]   Kraid behavior: $fieldCount fields modified")
-            } else if (patch.configType in BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE) {
-                val data = patch.configData ?: continue
-                val configType = patch.configType ?: continue
-                val definition = BOSS_BEHAVIOR_BY_CONFIG_TYPE[configType]
-                val fields = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(configType)
-                var fieldCount = 0
-                for (field in fields) {
-                    val value = coerceBossBehaviorValue(field, data[field.key] ?: continue)
-                    for (snesAddress in field.writeSnesAddresses) {
-                        val pc = romParser.snesToPc(snesAddress)
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
-                    }
-                }
-                onLog("[EXPORT]   ${definition?.title ?: "Boss"} behavior: $fieldCount fields modified")
-            } else if (patch.configType == "enemy_stats") {
-                val data = patch.configData ?: continue
-                var modCount = 0
-                for (e in ENEMY_DEFS) {
-                    val hp = data["${e.key}_hp"]
-                    val dmg = data["${e.key}_dmg"]
-                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
-                    if (hp != null) {
-                        val pc = romParser.snesToPc(snesAddr) + 4
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (hp and 0xFF).toByte()
-                            romData[pc + 1] = ((hp shr 8) and 0xFF).toByte()
-                        }
-                        modCount++
-                    }
-                    if (dmg != null) {
-                        val pc = romParser.snesToPc(snesAddr) + 6
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (dmg and 0xFF).toByte()
-                            romData[pc + 1] = ((dmg shr 8) and 0xFF).toByte()
-                        }
-                        modCount++
-                    }
-                }
-                // AI routine pointers and graphics fields
-                val aiFields = listOf(
-                    "_initAi" to 0x12, "_mainAi" to 0x16, "_touchAi" to 0x30,
-                    "_shotAi" to 0x32, "_hurtAi" to 0x1C, "_frozenAi" to 0x1E,
-                    "_grappleAi" to 0x1A, "_deathAnim" to 0x22,
-                    "_extraGfx" to 0x18, "_pbVuln" to 0x28,
-                )
-                for (e in ENEMY_DEFS) {
-                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
-                    for ((suffix, offset) in aiFields) {
-                        val value = data["${e.key}$suffix"] ?: continue
-                        val pc = romParser.snesToPc(snesAddr) + offset
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            modCount++
-                        }
-                    }
-                }
-                onLog("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
-            } else if (patch.configType == "enemy_drops") {
-                val data = patch.configData ?: continue
-                var modCount = 0
-                for (e in ENEMY_DEFS) {
-                    // Resolve drop table pointer: species header +$3A → bank $B4
-                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
-                    val headerPc = romParser.snesToPc(snesAddr)
-                    if (headerPc + 0x3C > romData.size) continue
-                    val ptr = (romData[headerPc + 0x3A].toInt() and 0xFF) or
-                            ((romData[headerPc + 0x3B].toInt() and 0xFF) shl 8)
-                    if (ptr == 0 || ptr == 0xFFFF) continue
-                    val dropPc = romParser.snesToPc(0xB40000 or ptr)
-                    if (dropPc + 6 > romData.size) continue
-                    for (i in 0..5) {
-                        val value = data["${e.key}_drop$i"] ?: continue
-                        romData[dropPc + i] = (value and 0xFF).toByte()
-                        modCount++
-                    }
-                }
-                onLog("[EXPORT]   Enemy drop rates: $modCount values modified")
-            } else if (patch.configType == "enemy_vuln") {
-                val data = patch.configData ?: continue
-                var modCount = 0
-                for (e in ENEMY_DEFS) {
-                    // Resolve resistance table pointer: species header +$3C → bank $B4
-                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
-                    val headerPc = romParser.snesToPc(snesAddr)
-                    if (headerPc + 0x3E > romData.size) continue
-                    val ptr = (romData[headerPc + 0x3C].toInt() and 0xFF) or
-                            ((romData[headerPc + 0x3D].toInt() and 0xFF) shl 8)
-                    if (ptr == 0 || ptr == 0xFFFF) continue
-                    val resPc = romParser.snesToPc(0xB40000 or ptr)
-                    if (resPc + 22 > romData.size) continue
-                    for (i in 0..21) {
-                        val value = data["${e.key}_vuln$i"] ?: continue
-                        romData[resPc + i] = (value and 0xFF).toByte()
-                        modCount++
-                    }
-                }
-                onLog("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
-            } else if (patch.configType == "samus_physics") {
-                val data = patch.configData ?: continue
-                var modCount = 0
-                for (field in ALL_PHYSICS_FIELDS) {
-                    val value = data[field.key] ?: continue
-                    val pc = field.pcOffset
-                    if (pc < romData.size) {
-                        romData[pc] = (value and 0xFF).toByte()
-                    }
-                    modCount++
-                }
-                onLog("[EXPORT]   Samus physics: $modCount values modified")
-            } else if (patch.configType == BOMB_CONFIG_TYPE) {
-                val data = patch.configData
-                val defaults = readBombsRomDefaults(romParser)
-                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
-                    .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
-                val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
-                    .coerceIn(1, 9999)
-                val cooldownFrames = (
-                    data?.get(BOMB_COOLDOWN_FRAMES_KEY)
-                        ?: calculateBombCooldownForConfig(
-                            maxActiveBombs = maxActive,
-                            fuseFrames = fuseFrames,
-                            baseCooldownFrames = defaults.cooldownFrames,
-                        )
-                    ).coerceIn(0, 255)
-                val explosionDelay = (data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay)
-                    .coerceIn(1, 255)
-
-                fun writeByte(offset: Int, value: Int) {
-                    if (offset < romData.size) romData[offset] = (value and 0xFF).toByte()
-                }
-
-                fun writeWord(offset: Int, value: Int) {
-                    if (offset + 1 < romData.size) {
-                        romData[offset] = (value and 0xFF).toByte()
-                        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
-                    }
-                }
-
-                writeWord(BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
-                writeByte(BOMB_COOLDOWN_PC, cooldownFrames)
-                writeWord(BOMB_FUSE_TIMER_PC, fuseFrames)
-                writeWord(BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay)
-                onLog(
-                    "[EXPORT]   Bombs: maxActive=$maxActive, fuse=$fuseFrames frames, " +
-                        "cooldown=$cooldownFrames frames, explosionDelay=$explosionDelay"
-                )
-            } else if (patch.configType == FANFARE_CONFIG_TYPE) {
-                val data = patch.configData
-                val defaults = readFanfareRomDefaults(romParser)
-                val frames = (data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames)
-                    .coerceIn(FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES)
-
-                fun writeWord(offset: Int, value: Int) {
-                    if (offset + 1 < romData.size) {
-                        romData[offset] = (value and 0xFF).toByte()
-                        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
-                    }
-                }
-
-                writeWord(FANFARE_MESSAGE_BOX_WAIT_PC, frames)
-                for (offset in FANFARE_MUSIC_RESUME_DELAY_PCS) {
-                    writeWord(offset, frames)
-                }
-                onLog(
-                    "[EXPORT]   Fanfares: item box/music resume delay=$frames frames, " +
-                        "${FANFARE_MUSIC_RESUME_DELAY_PCS.size + 1} values modified"
-                )
-            } else if (patch.configType == "controller_config") {
-                val data = patch.configData ?: continue
-                var slotCount = 0
-                for (slot in CONTROLLER_SLOTS) {
-                    val value = data[slot.key] ?: continue
-                    val off = CONTROLLER_TABLE_PC + slot.tableIndex * 2
-                    if (off + 1 < romData.size) {
-                        romData[off] = (value and 0xFF).toByte()
-                        romData[off + 1] = ((value shr 8) and 0xFF).toByte()
-                    }
-                    slotCount++
-                }
-                onLog("[EXPORT]   Controller config: $slotCount buttons remapped")
-            } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
-                deferredGeneratedPatches.add(patch)
-                onLog("[EXPORT]   (deferred until fixed patch writes are applied)")
-            } else if (patch.configType == "boss_defeated" || patch.configType == "hyper_beam") {
-                onLog("[EXPORT]   (deferred to combined per-frame hook)")
-            } else {
-                val totalBytes = patch.writes.sumOf { it.bytes.size }
-                for (write in patch.writes) {
-                    val off = write.offset.toInt()
-                    for ((i, b) in write.bytes.withIndex()) {
-                        if (off + i < romData.size) romData[off + i] = b.toByte()
-                    }
-                }
-                onLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
-                if (patch.id == "bundled_spider_ball") {
-                    val flatHash = bytesSha256(patch.writes.flatMap { it.bytes })
-                    onLog(
-                        "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
-                            "movePtr@0x82353=${romData.hexAt(0x82353, 2)}, " +
-                            "posePtr@0x8801C=${romData.hexAt(0x8801C, 2)}, " +
-                            "code@0x87800=${romData.hexAt(0x87800, 12)}, " +
-                            "guard@0x880BE=${romData.hexAt(0x880BE, 12)}, " +
-                            "plm@0x27200=${romData.hexAt(0x27200, 12)}"
-                    )
-                }
-            }
-            patchesApplied++
-        }
-
-        for (patch in deferredGeneratedPatches) {
-            try {
-                val result = RoomNamePauseMapPatch.install(
-                    romData = romData,
-                    snesToPc = romParser::snesToPc,
-                    pcToSnes = romParser::pcToSnes,
-                    rooms = RoomRepository().getAllRooms(),
-                    overrides = project.roomNameOverrides,
-                    alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
-                        patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
-                    ),
-                )
-                onLog(
-                    "[EXPORT]   Generated '${patch.name}': ${result.roomCount} room names, " +
-                        "${result.payloadSize} bytes at SNES $" +
-                        result.allocation.snesAddress.toString(16).uppercase().padStart(6, '0')
-                )
-            } catch (e: Exception) {
-                val message = "Export failed: ${patch.name} could not be written safely (${e.message})"
-                onLog("ERROR: $message")
-                onStatus(message)
-                return null
-            }
-        }
+        val patchesApplied = applyPatches(romData) ?: return null
 
         val musicPatched = try {
-            applyMusicEditsToRom(romData)
+            music.applyMusicEditsToRom(romData)
         } catch (e: Exception) {
             val message = "Export failed: music edit could not be written safely (${e.message})"
             onLog("ERROR: $message")
@@ -844,157 +101,17 @@ internal class RomExporter(
         }
         if (musicPatched > 0) onLog("[EXPORT] Patched $musicPatched music track edit(s)")
 
-        // Combined per-frame hook: boss-defeated + hyper beam + infinite blue suit
-        // Writes a single routine at $DF:F040 (PC $2FF040) and hooks $82:896E.
-        run {
-            val enabledBosses = mutableSetOf<String>()
-            var hyperBeam = false
-            var infiniteBlueSuit = false
-            for (patch in project.patches) {
-                if (!patch.enabled) continue
-                if (patch.configType == "boss_defeated") {
-                    val data = patch.configData ?: continue
-                    enabledBosses.addAll(data.filter { it.value != 0 }.keys)
-                }
-                if (patch.configType == "hyper_beam") hyperBeam = true
-                if (patch.id == "bundled_infinite_blue_suit") infiniteBlueSuit = true
-            }
-            if (enabledBosses.isNotEmpty() || hyperBeam || infiniteBlueSuit) {
-                onLog("[EXPORT] Per-frame hook active: bosses=${enabledBosses.ifEmpty { "none" }}, hyperBeam=$hyperBeam, infiniteBlueSuit=$infiniteBlueSuit")
-                val code = mutableListOf<Int>()
-                // Chain to original: JSL $8289EF
-                code.addAll(listOf(0x22, 0xEF, 0x89, 0x82))
-                code.add(0x08) // PHP
-                code.addAll(listOf(0xC2, 0x20)) // REP #$20
+        applyPerFrameHook(romData)
 
-                // Skip flag-setting in Mother Brain's room ($8F:DD58).
-                // MB's AI uses event flags at $D820-$D821 for its multi-phase
-                // state machine (MB1→MB2→Baby Metroid→escape). Force-ORing
-                // boss/Tourian event bits every frame prevents these transitions.
-                // Flags are already in WRAM from prior rooms, so skipping here is safe.
-                code.addAll(listOf(0xAD, 0x9B, 0x07))         // LDA $079B (room_ptr)
-                code.addAll(listOf(0xC9, 0x58, 0xDD))         // CMP #$DD58
-                // BEQ to the PLP;RTL at the end — offset will be patched below
-                val beqPos = code.size
-                code.addAll(listOf(0xF0, 0x00))                // BEQ .done (placeholder)
-
-                // Boss flags + associated event flags (long addressing for WRAM from bank $DF)
-                if (enabledBosses.isNotEmpty()) {
-                    val byAddr = mutableMapOf<Int, Int>()
-                    for (flag in BOSS_FLAG_DEFS) {
-                        if (flag.key in enabledBosses) {
-                            byAddr[flag.wramAddr] = (byAddr[flag.wramAddr] ?: 0) or flag.bit
-                        }
-                    }
-
-                    // Per-boss golden-statue events ($7E:D820-D821 event bitfield)
-                    val bossStatueEvents = mapOf(
-                        "phantoon" to (0xD820 to 0x40), // Event 0x06
-                        "ridley"   to (0xD820 to 0x80), // Event 0x07
-                        "draygon"  to (0xD821 to 0x01), // Event 0x08
-                        "kraid"    to (0xD821 to 0x02), // Event 0x09
-                    )
-                    for ((boss, addrBit) in bossStatueEvents) {
-                        if (boss in enabledBosses) {
-                            byAddr[addrBit.first] = (byAddr[addrBit.first] ?: 0) or addrBit.second
-                        }
-                    }
-                    val mainBosses = setOf("kraid", "phantoon", "ridley", "draygon")
-                    if (mainBosses.all { it in enabledBosses }) {
-                        byAddr[0xD821] = (byAddr[0xD821] ?: 0) or 0x04 // Event 0x0A: Path to Tourian open
-                    }
-
-                    for ((addr, bits) in byAddr) {
-                        code.addAll(listOf(0xAF, addr and 0xFF, (addr shr 8) and 0xFF, 0x7E))
-                        code.addAll(listOf(0x09, bits and 0xFF, 0x00))
-                        code.addAll(listOf(0x8F, addr and 0xFF, (addr shr 8) and 0xFF, 0x7E))
-                    }
-                }
-
-                // Hyper beam (long addressing: STA $7E:0A76)
-                if (hyperBeam) {
-                    code.addAll(listOf(0xA9, 0x00, 0x80))             // LDA #$8000
-                    code.addAll(listOf(0x8F, 0x76, 0x0A, 0x7E))      // STA $7E0A76
-                }
-
-                // Infinite blue suit: force dash counter to $0400 every frame
-                if (infiniteBlueSuit) {
-                    code.addAll(listOf(0xA9, 0x00, 0x04))             // LDA #$0400
-                    code.addAll(listOf(0x8F, 0x3E, 0x0B, 0x7E))      // STA $7E0B3E
-                }
-
-                code.add(0x28) // PLP
-                code.add(0x6B) // RTL
-
-                // Patch the BEQ offset to jump to PLP (skip the flag-setting body)
-                val plpPos = code.size - 2  // position of PLP
-                val branchOffset = plpPos - (beqPos + 2)  // +2 for the BEQ instruction size
-                if (branchOffset in 0..127) {
-                    code[beqPos + 1] = branchOffset
-                }
-
-                // Write payload at PC $2FF040
-                for ((i, b) in code.withIndex()) {
-                    val addr = 0x2FF040 + i
-                    if (addr < romData.size) romData[addr] = b.toByte()
-                }
-                // Hook $82:896E (PC $1096E): JSL $DFF040
-                val hook = listOf(0x22, 0x40, 0xF0, 0xDF)
-                for ((i, b) in hook.withIndex()) {
-                    val addr = 0x1096E + i
-                    if (addr < romData.size) romData[addr] = b.toByte()
-                }
-                onLog("[EXPORT]   Per-frame hook: ${code.size} bytes at \$DF:F040, hook at \$82:896E")
-            } else {
-                onLog("[EXPORT] Per-frame hook: not needed (no boss flags, hyper beam, or blue suit)")
-            }
-        }
-
-        // Free space allocator for bank $8F (PLM sets live here).
-        // Scanned AFTER patches so we don't hand out space a patch already uses.
+        // Free space pointers — scanned AFTER patches so we don't hand out space a patch already uses.
+        // $8F = PLM sets, $A1 = enemy population sets, $B4 = enemy GFX sets.
         val bank8FEnd = romParser.snesToPc(0x8FFFFF) + 1
-        val bank8FStart = romParser.snesToPc(0x8F8000)
-        var freePtr = bank8FEnd
-        while (freePtr > bank8FStart) {
-            val b = romData[freePtr - 1].toInt() and 0xFF
-            if (b != 0xFF) break
-            freePtr--
-        }
-        freePtr++
-
-        // Free space allocator for bank $A1 (enemy population sets).
         val bankA1End = romParser.snesToPc(0xA1FFFF) + 1
-        val bankA1Start = romParser.snesToPc(0xA18000)
-        var enemyFreePtr = bankA1End
-        while (enemyFreePtr > bankA1Start) {
-            val b = romData[enemyFreePtr - 1].toInt() and 0xFF
-            if (b != 0xFF) break
-            enemyFreePtr--
-        }
-        enemyFreePtr++
-
-        // Free space allocator for bank $B4 (enemy GFX sets).
-        // Must be computed ONCE and incremented — rescanning per-room fails
-        // because written GFX data contains 0xFF (species IDs, FFFF terminator)
-        // and 0x00 (palette high bytes), which a rescan treats as free space,
-        // causing subsequent rooms to overwrite earlier relocated GFX sets.
-        //
-        // The backward scan also absorbs any FFFF terminator at the boundary
-        // (both bytes are 0xFF). We skip forward +2 to preserve it — otherwise
-        // the last vanilla GFX set loses its terminator and the engine reads
-        // garbage entries past it, corrupting VRAM and palettes.
         val bankB4End = romParser.snesToPc(0xB4FFFF) + 1
-        val bankB4Start = romParser.snesToPc(0xB48000)
-        var gfxFreePtr = bankB4End
-        while (gfxFreePtr > bankB4Start) {
-            val b = romData[gfxFreePtr - 1].toInt() and 0xFF
-            if (b != 0xFF) break
-            gfxFreePtr--
-        }
-        gfxFreePtr++
+        var freePtr = scanFreeSpaceEnd(romData, romParser.snesToPc(0x8F8000), bank8FEnd)
+        var enemyFreePtr = scanFreeSpaceEnd(romData, romParser.snesToPc(0xA18000), bankA1End)
+        var gfxFreePtr = scanFreeSpaceEnd(romData, romParser.snesToPc(0xB48000), bankB4End)
         val rawGfxFreePtr = gfxFreePtr
-        // The scan absorbed any FFFF terminator at the boundary; skip past it.
-        // Cost: at most 2 wasted bytes if there was no terminator.
         if (gfxFreePtr + 2 <= bankB4End) gfxFreePtr += 2
         onLog("[EXPORT] B4 free space: raw=0x${rawGfxFreePtr.toString(16)}, guarded=0x${gfxFreePtr.toString(16)} (+2 terminator guard)")
 
@@ -1646,17 +763,15 @@ internal class RomExporter(
                     }
                 } else {
                     // Scroll data grew — MUST relocate to avoid corrupting adjacent data.
-                    // Find free space at end of bank $8F by scanning backwards from bank end.
+                    // Re-scan bank $8F for free space (independent of the PLM freePtr above).
                     val bank8F = (RomConstants.BANK_ROOM_DATA shr 16) and 0xFF
                     val bankEnd = romParser.snesToPc((bank8F shl 16) or 0xFFFF) + 1
                     val bankStart = romParser.snesToPc((bank8F shl 16) or 0x8000)
-                    var freePtr = bankEnd
-                    while (freePtr > bankStart && (romData[freePtr - 1].toInt() and 0xFF) == 0xFF) freePtr--
-                    freePtr++ // first free byte
-                    if (freePtr + modifiedScrolls.size <= bankEnd) {
+                    val scrollFreePtr = scanFreeSpaceEnd(romData, bankStart, bankEnd)
+                    if (scrollFreePtr + modifiedScrolls.size <= bankEnd) {
                         // Write scroll data at free space
-                        for (i in modifiedScrolls.indices) romData[freePtr + i] = modifiedScrolls[i].toByte()
-                        val newSnesPtr = romParser.pcToSnes(freePtr) and 0xFFFF // 16-bit offset within bank
+                        for (i in modifiedScrolls.indices) romData[scrollFreePtr + i] = modifiedScrolls[i].toByte()
+                        val newSnesPtr = romParser.pcToSnes(scrollFreePtr) and 0xFFFF // 16-bit offset within bank
                         // Zero out old scroll data
                         for (i in originalScrolls.indices) {
                             if (scrollPc + i < romData.size) romData[scrollPc + i] = 0xFF.toByte()
@@ -1846,18 +961,18 @@ internal class RomExporter(
 
             // Patch room header fields (area, map position, scrollers, CRE)
             if (hasHeaderEdits) {
-                val hc = roomEdits.roomHeaderChange!!
+                val headerChange = hc!!
                 val headerPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
-                hc.index?.let { romData[headerPc] = it.toByte() }
-                hc.area?.let { romData[headerPc + 1] = it.toByte() }
-                hc.mapX?.let { romData[headerPc + 2] = it.toByte() }
-                hc.mapY?.let { romData[headerPc + 3] = it.toByte() }
-                hc.width?.let { romData[headerPc + 4] = it.toByte() }
-                hc.height?.let { romData[headerPc + 5] = it.toByte() }
-                hc.upScroller?.let { romData[headerPc + 6] = it.toByte() }
-                hc.downScroller?.let { romData[headerPc + 7] = it.toByte() }
-                hc.creBitflag?.let { romData[headerPc + 8] = it.toByte() }
-                hc.doorOut?.let {
+                headerChange.index?.let { romData[headerPc] = it.toByte() }
+                headerChange.area?.let { romData[headerPc + 1] = it.toByte() }
+                headerChange.mapX?.let { romData[headerPc + 2] = it.toByte() }
+                headerChange.mapY?.let { romData[headerPc + 3] = it.toByte() }
+                headerChange.width?.let { romData[headerPc + 4] = it.toByte() }
+                headerChange.height?.let { romData[headerPc + 5] = it.toByte() }
+                headerChange.upScroller?.let { romData[headerPc + 6] = it.toByte() }
+                headerChange.downScroller?.let { romData[headerPc + 7] = it.toByte() }
+                headerChange.creBitflag?.let { romData[headerPc + 8] = it.toByte() }
+                headerChange.doorOut?.let {
                     romData[headerPc + 9] = (it and 0xFF).toByte()
                     romData[headerPc + 10] = ((it shr 8) and 0xFF).toByte()
                 }
@@ -1887,12 +1002,6 @@ internal class RomExporter(
             }
 
             if (hasSaveStationSpawnEdits) {
-                fun writeAreaSaveU16(offset: Int, value: Int) {
-                    if (offset + 1 >= romData.size) return
-                    romData[offset] = (value and 0xFF).toByte()
-                    romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
-                }
-
                 for (spawn in roomEdits.saveStationSpawns) {
                     val romEntry = romParser.readSaveEntry(spawn.area, spawn.saveIndex)
                     if (romEntry == null) {
@@ -1903,12 +1012,12 @@ internal class RomExporter(
                         continue
                     }
                     val off = romEntry.pcOffset
-                    writeAreaSaveU16(off, spawn.roomId)
-                    writeAreaSaveU16(off + 2, spawn.doorPtr)
-                    writeAreaSaveU16(off + 6, spawn.scrollX)
-                    writeAreaSaveU16(off + 8, spawn.scrollY)
-                    writeAreaSaveU16(off + 10, spawn.samusY)
-                    writeAreaSaveU16(off + 12, spawn.samusX)
+                    writeU16(romData,off, spawn.roomId)
+                    writeU16(romData,off + 2, spawn.doorPtr)
+                    writeU16(romData,off + 6, spawn.scrollX)
+                    writeU16(romData,off + 8, spawn.scrollY)
+                    writeU16(romData,off + 10, spawn.samusY)
+                    writeU16(romData,off + 12, spawn.samusX)
                     onLog(
                         "Room 0x$roomKey: patched AreaSave area=${spawn.area} index=${spawn.saveIndex} " +
                             "room=0x${spawn.roomId.toString(16)} door=0x${spawn.doorPtr.toString(16)} " +
@@ -1918,36 +1027,344 @@ internal class RomExporter(
                 }
             }
         }
-        // Apply custom tileset graphics
+        val gfxPatched = applyCustomGfxPatches(romData)
+        val minimapPatched = applyMinimapEdits(romData)
+        val textPatched = applyTextEdits(romData)
+        val asmPatched = applyCustomAsm(romData)
+
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
+            val orig = File(romPath)
+            val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
+            out.writeBytes(romData)
+            onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
+            return out.absolutePath
+        }
+
+        verifyExportedRom(romData, roomsPatched)
+
+        val orig = File(romPath)
+        val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
+        out.writeBytes(romData)
+        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
+        onLog(msg)
+        onStatus(msg)
+        return out.absolutePath
+    }
+
+    /**
+     * Applies all enabled patches to romData (configType-specific handlers + raw hex writes),
+     * then applies any deferred generated patches (e.g. room name pause map).
+     * Returns total patches applied, or null if a deferred patch fails.
+     */
+    private fun applyPatches(romData: ByteArray): Int? {
+        var patchesApplied = 0
+        val enabledCount = project.patches.count { it.enabled }
+        val disabledCount = project.patches.size - enabledCount
+        val deferredGeneratedPatches = mutableListOf<SmPatch>()
+        onLog("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
+        for (patch in project.patches) {
+            if (!patch.enabled) continue
+            onLog("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
+            if (patch.configType == "ceres_escape_seconds") {
+                val totalSecs = (patch.configValue ?: 60).coerceIn(15, 600)
+                val mins = totalSecs / 60
+                val secs = totalSecs % 60
+                val secsBcd = ((secs / 10) shl 4) or (secs % 10)
+                val minsBcd = ((mins / 10) shl 4) or (mins % 10)
+                val off = romParser.snesToPc(CERES_TIMER_OPERAND_SNES)
+                if (off + 1 < romData.size) {
+                    romData[off] = secsBcd.toByte()
+                    romData[off + 1] = minsBcd.toByte()
+                }
+                onLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
+            } else if (patch.configType == "beam_damage") {
+                val data = patch.configData ?: continue
+                var beamCount = 0
+                for (beam in ALL_BEAMS) {
+                    val dmg = data[beam.key] ?: continue
+                    val charged = dmg * 3
+                    val pcUncharged = romParser.snesToPc(beam.snesAddress)
+                    if (pcUncharged + 1 < romData.size) {
+                        romData[pcUncharged] = (dmg and 0xFF).toByte()
+                        romData[pcUncharged + 1] = ((dmg shr 8) and 0xFF).toByte()
+                    }
+                    val pcCharged = romParser.snesToPc(beam.chargedSnesAddress)
+                    if (pcCharged + 1 < romData.size) {
+                        romData[pcCharged] = (charged and 0xFF).toByte()
+                        romData[pcCharged + 1] = ((charged shr 8) and 0xFF).toByte()
+                    }
+                    beamCount++
+                }
+                onLog("[EXPORT]   Beam damage: $beamCount beams modified")
+            } else if (patch.configType == "boss_stats") {
+                val data = patch.configData ?: continue
+                var fieldCount = 0
+                for (field in ALL_BOSS_FIELDS) {
+                    val value = data[field.key] ?: continue
+                    for (speciesId in field.writeSpeciesIds) {
+                        val snesAddress = RomConstants.BANK_ENEMY_AI or speciesId
+                        val pc = romParser.snesToPc(snesAddress) + field.offset
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            fieldCount++
+                        }
+                    }
+                }
+                onLog("[EXPORT]   Boss stats: $fieldCount fields modified")
+            } else if (patch.configType == "phantoon") {
+                val data = patch.configData ?: continue
+                var fieldCount = 0
+                for (field in ALL_PHANTOON_FIELDS) {
+                    val value = coercePhantoonValue(field, data[field.key] ?: continue)
+                    writeU16(romData, romParser.snesToPc(field.snesAddress), value)
+                    fieldCount++
+                }
+                onLog("[EXPORT]   Phantoon behavior: $fieldCount fields modified")
+            } else if (patch.configType == KRAID_CONFIG_TYPE) {
+                val data = patch.configData ?: continue
+                var fieldCount = 0
+                for (field in ALL_KRAID_FIELDS) {
+                    val value = coerceKraidValue(field, data[field.key] ?: continue)
+                    for (snesAddress in field.writeSnesAddresses) {
+                        val pc = romParser.snesToPc(snesAddress)
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            fieldCount++
+                        }
+                    }
+                }
+                onLog("[EXPORT]   Kraid behavior: $fieldCount fields modified")
+            } else if (patch.configType in BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE) {
+                val data = patch.configData ?: continue
+                val configType = patch.configType ?: continue
+                val definition = BOSS_BEHAVIOR_BY_CONFIG_TYPE[configType]
+                val fields = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(configType)
+                var fieldCount = 0
+                for (field in fields) {
+                    val value = coerceBossBehaviorValue(field, data[field.key] ?: continue)
+                    for (snesAddress in field.writeSnesAddresses) {
+                        val pc = romParser.snesToPc(snesAddress)
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            fieldCount++
+                        }
+                    }
+                }
+                onLog("[EXPORT]   ${definition?.title ?: "Boss"} behavior: $fieldCount fields modified")
+            } else if (patch.configType == "enemy_stats") {
+                val data = patch.configData ?: continue
+                var modCount = 0
+                for (e in ENEMY_DEFS) {
+                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
+                    val basePc = romParser.snesToPc(snesAddr)
+                    data["${e.key}_hp"]?.let { writeU16(romData, basePc + 4, it); modCount++ }
+                    data["${e.key}_dmg"]?.let { writeU16(romData, basePc + 6, it); modCount++ }
+                }
+                val aiFields = listOf(
+                    "_initAi" to 0x12, "_mainAi" to 0x16, "_touchAi" to 0x30,
+                    "_shotAi" to 0x32, "_hurtAi" to 0x1C, "_frozenAi" to 0x1E,
+                    "_grappleAi" to 0x1A, "_deathAnim" to 0x22,
+                    "_extraGfx" to 0x18, "_pbVuln" to 0x28,
+                )
+                for (e in ENEMY_DEFS) {
+                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
+                    for ((suffix, offset) in aiFields) {
+                        val value = data["${e.key}$suffix"] ?: continue
+                        val pc = romParser.snesToPc(snesAddr) + offset
+                        if (pc + 1 < romData.size) {
+                            romData[pc] = (value and 0xFF).toByte()
+                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
+                            modCount++
+                        }
+                    }
+                }
+                onLog("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
+            } else if (patch.configType == "enemy_drops") {
+                val data = patch.configData ?: continue
+                var modCount = 0
+                for (e in ENEMY_DEFS) {
+                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
+                    val headerPc = romParser.snesToPc(snesAddr)
+                    if (headerPc + 0x3C > romData.size) continue
+                    val ptr = (romData[headerPc + 0x3A].toInt() and 0xFF) or
+                            ((romData[headerPc + 0x3B].toInt() and 0xFF) shl 8)
+                    if (ptr == 0 || ptr == 0xFFFF) continue
+                    val dropPc = romParser.snesToPc(0xB40000 or ptr)
+                    if (dropPc + 6 > romData.size) continue
+                    for (i in 0..5) {
+                        val value = data["${e.key}_drop$i"] ?: continue
+                        romData[dropPc + i] = (value and 0xFF).toByte()
+                        modCount++
+                    }
+                }
+                onLog("[EXPORT]   Enemy drop rates: $modCount values modified")
+            } else if (patch.configType == "enemy_vuln") {
+                val data = patch.configData ?: continue
+                var modCount = 0
+                for (e in ENEMY_DEFS) {
+                    val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
+                    val headerPc = romParser.snesToPc(snesAddr)
+                    if (headerPc + 0x3E > romData.size) continue
+                    val ptr = (romData[headerPc + 0x3C].toInt() and 0xFF) or
+                            ((romData[headerPc + 0x3D].toInt() and 0xFF) shl 8)
+                    if (ptr == 0 || ptr == 0xFFFF) continue
+                    val resPc = romParser.snesToPc(0xB40000 or ptr)
+                    if (resPc + 22 > romData.size) continue
+                    for (i in 0..21) {
+                        val value = data["${e.key}_vuln$i"] ?: continue
+                        romData[resPc + i] = (value and 0xFF).toByte()
+                        modCount++
+                    }
+                }
+                onLog("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
+            } else if (patch.configType == "samus_physics") {
+                val data = patch.configData ?: continue
+                var modCount = 0
+                for (field in ALL_PHYSICS_FIELDS) {
+                    val value = data[field.key] ?: continue
+                    writeU8(romData, field.pcOffset, value)
+                    modCount++
+                }
+                onLog("[EXPORT]   Samus physics: $modCount values modified")
+            } else if (patch.configType == BOMB_CONFIG_TYPE) {
+                val data = patch.configData
+                val defaults = readBombsRomDefaults(romParser)
+                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
+                    .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
+                val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
+                    .coerceIn(1, 9999)
+                val cooldownFrames = (
+                    data?.get(BOMB_COOLDOWN_FRAMES_KEY)
+                        ?: calculateBombCooldownForConfig(
+                            maxActiveBombs = maxActive,
+                            fuseFrames = fuseFrames,
+                            baseCooldownFrames = defaults.cooldownFrames,
+                        )
+                    ).coerceIn(0, 255)
+                val explosionDelay = (data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay)
+                    .coerceIn(1, 255)
+                writeU16(romData, BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
+                writeU8(romData, BOMB_COOLDOWN_PC, cooldownFrames)
+                writeU16(romData, BOMB_FUSE_TIMER_PC, fuseFrames)
+                writeU16(romData, BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay)
+                onLog(
+                    "[EXPORT]   Bombs: maxActive=$maxActive, fuse=$fuseFrames frames, " +
+                        "cooldown=$cooldownFrames frames, explosionDelay=$explosionDelay"
+                )
+            } else if (patch.configType == FANFARE_CONFIG_TYPE) {
+                val data = patch.configData
+                val defaults = readFanfareRomDefaults(romParser)
+                val frames = (data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames)
+                    .coerceIn(FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES)
+                writeU16(romData, FANFARE_MESSAGE_BOX_WAIT_PC, frames)
+                for (offset in FANFARE_MUSIC_RESUME_DELAY_PCS) {
+                    writeU16(romData, offset, frames)
+                }
+                onLog(
+                    "[EXPORT]   Fanfares: item box/music resume delay=$frames frames, " +
+                        "${FANFARE_MUSIC_RESUME_DELAY_PCS.size + 1} values modified"
+                )
+            } else if (patch.configType == "controller_config") {
+                val data = patch.configData ?: continue
+                var slotCount = 0
+                for (slot in CONTROLLER_SLOTS) {
+                    val value = data[slot.key] ?: continue
+                    writeU16(romData, CONTROLLER_TABLE_PC + slot.tableIndex * 2, value)
+                    slotCount++
+                }
+                onLog("[EXPORT]   Controller config: $slotCount buttons remapped")
+            } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
+                deferredGeneratedPatches.add(patch)
+                onLog("[EXPORT]   (deferred until fixed patch writes are applied)")
+            } else if (patch.configType == "boss_defeated" || patch.configType == "hyper_beam") {
+                onLog("[EXPORT]   (deferred to combined per-frame hook)")
+            } else {
+                val totalBytes = patch.writes.sumOf { it.bytes.size }
+                for (write in patch.writes) {
+                    val off = write.offset.toInt()
+                    for ((i, b) in write.bytes.withIndex()) {
+                        if (off + i < romData.size) romData[off + i] = b.toByte()
+                    }
+                }
+                onLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
+                if (patch.id == "bundled_spider_ball") {
+                    val flatHash = bytesSha256(patch.writes.flatMap { it.bytes })
+                    onLog(
+                        "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
+                            "movePtr@0x82353=${romData.hexAt(0x82353, 2)}, " +
+                            "posePtr@0x8801C=${romData.hexAt(0x8801C, 2)}, " +
+                            "code@0x87800=${romData.hexAt(0x87800, 12)}, " +
+                            "guard@0x880BE=${romData.hexAt(0x880BE, 12)}, " +
+                            "plm@0x27200=${romData.hexAt(0x27200, 12)}"
+                    )
+                }
+            }
+            patchesApplied++
+        }
+
+        for (patch in deferredGeneratedPatches) {
+            try {
+                val result = RoomNamePauseMapPatch.install(
+                    romData = romData,
+                    snesToPc = romParser::snesToPc,
+                    pcToSnes = romParser::pcToSnes,
+                    rooms = RoomRepository().getAllRooms(),
+                    overrides = project.roomNameOverrides,
+                    alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
+                        patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
+                    ),
+                )
+                onLog(
+                    "[EXPORT]   Generated '${patch.name}': ${result.roomCount} room names, " +
+                        "${result.payloadSize} bytes at SNES $" +
+                        result.allocation.snesAddress.toString(16).uppercase().padStart(6, '0')
+                )
+            } catch (e: Exception) {
+                val message = "Export failed: ${patch.name} could not be written safely (${e.message})"
+                onLog("ERROR: $message")
+                onStatus(message)
+                return null
+            }
+        }
+
+        return patchesApplied
+    }
+
+    /** Applies all custom GFX edits (tileset gfx/tables/palettes, sprite tiles, enemy palettes). Returns count of items patched. */
+    private fun applyCustomGfxPatches(romData: ByteArray): Int {
         var gfxPatched = 0
         val gfxData = project.customGfx
+
+        // Helper: LZ5-compress rawData and write in-place at snesPtr if it fits, or warn and skip.
+        fun writeLZ5InPlace(rawData: ByteArray, snesPtr: Int, label: String): Boolean {
+            val compressed = LZ5Compressor.compress(rawData)
+            val pcOffset = romParser.snesToPc(snesPtr)
+            val (_, origSize) = romParser.decompressLZ2WithSize(snesPtr)
+            return if (compressed.size <= origSize) {
+                System.arraycopy(compressed, 0, romData, pcOffset, compressed.size)
+                for (i in compressed.size until origSize) romData[pcOffset + i] = 0xFF.toByte()
+                onLog("Patched $label in-place (${compressed.size}/$origSize bytes)")
+                true
+            } else {
+                onLog("WARN: Compressed $label (${compressed.size}) exceeds original ($origSize) — skipped")
+                false
+            }
+        }
 
         // Custom CRE graphics (shared, always at $B9:8000)
         val creB64 = gfxData.creGfx
         if (creB64 != null) {
             try {
                 val rawCre = java.util.Base64.getDecoder().decode(creB64)
-                val compressed = LZ5Compressor.compress(rawCre)
-                val crePc = romParser.snesToPc(TileGraphics.CRE_GFX_SNES)
-                val (_, origSize) = romParser.decompressLZ2WithSize(TileGraphics.CRE_GFX_SNES)
-                if (compressed.size <= origSize) {
-                    System.arraycopy(compressed, 0, romData, crePc, compressed.size)
-                    for (i in compressed.size until origSize) romData[crePc + i] = 0xFF.toByte()
-                    gfxPatched++
-                    onLog("Patched CRE graphics in-place (${compressed.size}/$origSize bytes)")
-                } else {
-                    onLog("WARN: Compressed CRE gfx (${compressed.size}) exceeds original ($origSize) — skipped")
-                }
+                if (writeLZ5InPlace(rawCre, TileGraphics.CRE_GFX_SNES, "CRE graphics")) gfxPatched++
             } catch (e: Exception) { onLog("WARN: CRE gfx patch failed: ${e.message}") }
         }
 
         // Custom variable (URE) graphics per tileset
         val tablePC = romParser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
-        fun writeUInt24(pcOffset: Int, value: Int) {
-            romData[pcOffset] = (value and 0xFF).toByte()
-            romData[pcOffset + 1] = ((value shr 8) and 0xFF).toByte()
-            romData[pcOffset + 2] = ((value shr 16) and 0xFF).toByte()
-        }
         val tilesetPaletteAllocator = RomFreeSpaceAllocator(
             romData = romData,
             snesToPc = romParser::snesToPc,
@@ -1958,21 +1375,11 @@ internal class RomExporter(
             val tsId = tsIdStr.toIntOrNull() ?: continue
             try {
                 val rawVar = java.util.Base64.getDecoder().decode(varB64)
-                val compressed = LZ5Compressor.compress(rawVar)
                 val entryOffset = tablePC + tsId * 9
                 val gfxSnes = (romData[entryOffset + 3].toInt() and 0xFF) or
                         ((romData[entryOffset + 4].toInt() and 0xFF) shl 8) or
                         ((romData[entryOffset + 5].toInt() and 0xFF) shl 16)
-                val gfxPc = romParser.snesToPc(gfxSnes)
-                val (_, origSize) = romParser.decompressLZ2WithSize(gfxSnes)
-                if (compressed.size <= origSize) {
-                    System.arraycopy(compressed, 0, romData, gfxPc, compressed.size)
-                    for (i in compressed.size until origSize) romData[gfxPc + i] = 0xFF.toByte()
-                    gfxPatched++
-                    onLog("Patched tileset $tsId variable gfx in-place (${compressed.size}/$origSize bytes)")
-                } else {
-                    onLog("WARN: Compressed tileset $tsId gfx (${compressed.size}) exceeds original ($origSize) — skipped")
-                }
+                if (writeLZ5InPlace(rawVar, gfxSnes, "tileset $tsId variable gfx")) gfxPatched++
             } catch (e: Exception) { onLog("WARN: Tileset $tsId gfx patch failed: ${e.message}") }
         }
 
@@ -1984,17 +1391,7 @@ internal class RomExporter(
                 if (rawCreTable.isEmpty() || rawCreTable.size % 8 != 0) {
                     onLog("WARN: CRE metatile table has ${rawCreTable.size} bytes (expected non-empty multiple of 8) — skipped")
                 } else {
-                    val compressed = LZ5Compressor.compress(rawCreTable)
-                    val creTablePc = romParser.snesToPc(TileGraphics.CRE_TILE_TABLE_SNES)
-                    val (_, origSize) = romParser.decompressLZ2WithSize(TileGraphics.CRE_TILE_TABLE_SNES)
-                    if (compressed.size <= origSize) {
-                        System.arraycopy(compressed, 0, romData, creTablePc, compressed.size)
-                        for (i in compressed.size until origSize) romData[creTablePc + i] = 0xFF.toByte()
-                        gfxPatched++
-                        onLog("Patched CRE metatile table in-place (${compressed.size}/$origSize bytes)")
-                    } else {
-                        onLog("WARN: Compressed CRE metatile table (${compressed.size}) exceeds original ($origSize) — skipped")
-                    }
+                    if (writeLZ5InPlace(rawCreTable, TileGraphics.CRE_TILE_TABLE_SNES, "CRE metatile table")) gfxPatched++
                 }
             } catch (e: Exception) { onLog("WARN: CRE metatile table patch failed: ${e.message}") }
         }
@@ -2008,21 +1405,11 @@ internal class RomExporter(
                     onLog("WARN: Tileset $tsId metatile table has ${rawTable.size} bytes (expected non-empty multiple of 8) — skipped")
                     continue
                 }
-                val compressed = LZ5Compressor.compress(rawTable)
                 val entryOffset = tablePC + tsId * 9
                 val tableSnes = (romData[entryOffset].toInt() and 0xFF) or
                         ((romData[entryOffset + 1].toInt() and 0xFF) shl 8) or
                         ((romData[entryOffset + 2].toInt() and 0xFF) shl 16)
-                val tablePc = romParser.snesToPc(tableSnes)
-                val (_, origSize) = romParser.decompressLZ2WithSize(tableSnes)
-                if (compressed.size <= origSize) {
-                    System.arraycopy(compressed, 0, romData, tablePc, compressed.size)
-                    for (i in compressed.size until origSize) romData[tablePc + i] = 0xFF.toByte()
-                    gfxPatched++
-                    onLog("Patched tileset $tsId metatile table in-place (${compressed.size}/$origSize bytes)")
-                } else {
-                    onLog("WARN: Compressed tileset $tsId metatile table (${compressed.size}) exceeds original ($origSize) — skipped")
-                }
+                if (writeLZ5InPlace(rawTable, tableSnes, "tileset $tsId metatile table")) gfxPatched++
             } catch (e: Exception) { onLog("WARN: Tileset $tsId metatile table patch failed: ${e.message}") }
         }
 
@@ -2061,7 +1448,7 @@ internal class RomExporter(
                         label = "tileset $tsId palette",
                     )
                     if (allocation != null) {
-                        writeUInt24(entryOffset + 6, allocation.snesAddress)
+                        writeU24(romData,entryOffset + 6, allocation.snesAddress)
                         for (i in palPc until palPc + origSize) romData[i] = 0xFF.toByte()
                         gfxPatched++
                         onLog(
@@ -2155,15 +1542,11 @@ internal class RomExporter(
                     rawBytes = rawBytes
                 )
                 if (!validation.isExportable) {
-                    validation.errors.forEach { reason ->
-                        onLog("[EXPORT] WARN: Enemy $speciesHex: $reason")
-                    }
+                    validation.errors.forEach { reason -> onLog("[EXPORT] WARN: Enemy $speciesHex: $reason") }
                     onLog("[EXPORT] WARN: Enemy $speciesHex sprite tile patch skipped")
                     continue
                 }
-                validation.warnings.forEach { reason ->
-                    onLog("[EXPORT] INFO: Enemy $speciesHex: $reason")
-                }
+                validation.warnings.forEach { reason -> onLog("[EXPORT] INFO: Enemy $speciesHex: $reason") }
                 val pcAddress = validation.pcAddress ?: continue
                 val snesAddress = validation.snesAddress ?: 0
                 System.arraycopy(rawBytes, 0, romData, pcAddress, rawBytes.size)
@@ -2207,108 +1590,229 @@ internal class RomExporter(
             }
         }
 
-        // Apply minimap tile edits
-        var minimapPatched = 0
+        return gfxPatched
+    }
+
+    private fun writeU8(romData: ByteArray, offset: Int, value: Int) {
+        if (offset < romData.size) romData[offset] = (value and 0xFF).toByte()
+    }
+
+    private fun writeU16(romData: ByteArray, offset: Int, value: Int) {
+        if (offset + 1 < romData.size) {
+            romData[offset] = (value and 0xFF).toByte()
+            romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+        }
+    }
+
+    private fun writeU24(romData: ByteArray, offset: Int, value: Int) {
+        if (offset + 2 < romData.size) {
+            romData[offset] = (value and 0xFF).toByte()
+            romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+            romData[offset + 2] = ((value shr 16) and 0xFF).toByte()
+        }
+    }
+
+    /** Scans backwards from [end] to find the first non-0xFF byte, then returns that position + 1. */
+    private fun scanFreeSpaceEnd(romData: ByteArray, start: Int, end: Int): Int {
+        var ptr = end
+        while (ptr > start && romData[ptr - 1] == 0xFF.toByte()) ptr--
+        return ptr + 1
+    }
+
+    private fun applyMinimapEdits(romData: ByteArray): Int {
+        var patched = 0
         for ((areaKey, edits) in project.minimapEdits) {
             val area = areaKey.toIntOrNull() ?: continue
             if (area !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) continue
             val baseline = romParser.readMinimapTiles(area)
-            var patched = baseline
+            var tiles = baseline
             for (edit in edits) {
-                patched = patched.withTile(edit.x, edit.y, edit.tileWord)
+                tiles = tiles.withTile(edit.x, edit.y, edit.tileWord)
             }
-            for ((offset, byte) in romParser.writeMinimapTiles(patched)) {
+            for ((offset, byte) in romParser.writeMinimapTiles(tiles)) {
                 romData[offset] = byte
             }
-            minimapPatched += edits.size
+            patched += edits.size
             onLog("Minimap area $area: patched ${edits.size} tiles")
         }
+        return patched
+    }
 
-        // ─── Text edits ────────────────────────────────────────────
-        var textPatched = 0
+    private fun applyTextEdits(romData: ByteArray): Int {
+        var patched = 0
         val allText = if (project.textEdits.isNotEmpty()) TextData.readAllText(romParser.getRomData()) else emptyList()
         for ((id, newText) in project.textEdits) {
             val entry = allText.find { it.id == id } ?: continue
-            val patched = when (entry.category) {
+            val encoded = when (entry.category) {
                 TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
                 TextCategory.ESCAPE_TEXT -> TextData.encodeEscapeText(newText, entry.rawBytes)
                 TextCategory.UI_MESSAGE -> TextData.encodeUiMessage(newText, entry.rawBytes)
                 TextCategory.ITEM_NAME -> TextData.encodeUiMessage(newText, entry.rawBytes)
                 TextCategory.INTRO_STORY -> TextData.encodeGreenText(newText, entry.rawBytes)
             }
-            for (i in patched.indices) {
-                if (entry.pcOffset + i < romData.size) {
-                    romData[entry.pcOffset + i] = patched[i]
-                }
+            for (i in encoded.indices) {
+                if (entry.pcOffset + i < romData.size) romData[entry.pcOffset + i] = encoded[i]
             }
-            textPatched++
+            patched++
         }
-        if (textPatched > 0) onLog("[EXPORT] Patched $textPatched text entries")
+        if (patched > 0) onLog("[EXPORT] Patched $patched text entries")
+        return patched
+    }
 
-        // ─── Custom ASM embedding ─────────────────────────────────────
-        // Write custom code bytes to free space in bank $A0 and update
-        // the species header pointer to the new address.
-        var asmPatched = 0
+    /**
+     * Embeds custom ASM hex bytes into free space in bank $A0 and updates
+     * the species header pointer field to point at the new routine.
+     */
+    private fun applyCustomAsm(romData: ByteArray): Int {
+        var patched = 0
         for ((key, entry) in project.customAsm) {
             val parts = key.split(":")
             if (parts.size != 2) continue
             val speciesId = parts[0].toIntOrNull(16) ?: continue
             val fieldName = parts[1]
-
             val headerOffset = when (fieldName) {
                 "initAi" -> 0x12; "mainAi" -> 0x16; "touchAi" -> 0x30
                 "shotAi" -> 0x32; "hurtAi" -> 0x1C; "frozenAi" -> 0x1E
                 "grappleAi" -> 0x1A; "deathAnim" -> 0x22
                 else -> continue
             }
-
             val codeBytes = entry.hexBytes.trim().split("\\s+".toRegex())
                 .filter { it.isNotEmpty() }
                 .mapNotNull { it.toIntOrNull(16)?.toByte() }
                 .toByteArray()
             if (codeBytes.isEmpty()) continue
 
-            // Find free space in bank $A0 (scan backwards from end)
             val bankStart = romParser.snesToPc(0xA08000)
             val bankEnd = romParser.snesToPc(0xA0FFFF) + 1
-            var freePtr = bankEnd
-            while (freePtr > bankStart && romData[freePtr - 1] == 0xFF.toByte()) freePtr--
-            freePtr++ // leave 1 byte gap
+            val freePtr = scanFreeSpaceEnd(romData, bankStart, bankEnd)
 
             if (freePtr + codeBytes.size > bankEnd) {
                 onLog("[EXPORT] WARN: Not enough free space in bank \$A0 for custom ASM ($key)")
                 continue
             }
 
-            // Write code bytes
             System.arraycopy(codeBytes, 0, romData, freePtr, codeBytes.size)
-
-            // Calculate SNES address
             val newSnesPtr = 0x8000 + (freePtr - bankStart)
-
-            // Update species header pointer
             val headerPc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
-            if (headerPc + headerOffset + 1 < romData.size) {
-                romData[headerPc + headerOffset] = (newSnesPtr and 0xFF).toByte()
-                romData[headerPc + headerOffset + 1] = ((newSnesPtr shr 8) and 0xFF).toByte()
-            }
-
-            asmPatched++
+            writeU16(romData, headerPc + headerOffset, newSnesPtr)
+            patched++
             val label = entry.label.ifEmpty { fieldName }
             onLog("[EXPORT] Custom ASM: $label → \$A0:${newSnesPtr.toString(16).uppercase()} (${codeBytes.size} bytes) for species \$${parts[0]}")
         }
-        if (asmPatched > 0) onLog("[EXPORT] Embedded $asmPatched custom ASM routine(s)")
+        if (patched > 0) onLog("[EXPORT] Embedded $patched custom ASM routine(s)")
+        return patched
+    }
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
-            val orig = File(romPath)
-            val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
-            out.writeBytes(romData)
-            onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
-            return out.absolutePath
+    /**
+     * Combined per-frame hook: boss-defeated + hyper beam + infinite blue suit.
+     * Writes a single routine at $DF:F040 (PC $2FF040) and hooks $82:896E.
+     */
+    private fun applyPerFrameHook(romData: ByteArray) {
+        val enabledBosses = mutableSetOf<String>()
+        var hyperBeam = false
+        var infiniteBlueSuit = false
+        for (patch in project.patches) {
+            if (!patch.enabled) continue
+            if (patch.configType == "boss_defeated") {
+                val data = patch.configData ?: continue
+                enabledBosses.addAll(data.filter { it.value != 0 }.keys)
+            }
+            if (patch.configType == "hyper_beam") hyperBeam = true
+            if (patch.id == "bundled_infinite_blue_suit") infiniteBlueSuit = true
         }
+        if (enabledBosses.isNotEmpty() || hyperBeam || infiniteBlueSuit) {
+            onLog("[EXPORT] Per-frame hook active: bosses=${enabledBosses.ifEmpty { "none" }}, hyperBeam=$hyperBeam, infiniteBlueSuit=$infiniteBlueSuit")
+            val code = mutableListOf<Int>()
+            // Chain to original: JSL $8289EF
+            code.addAll(listOf(0x22, 0xEF, 0x89, 0x82))
+            code.add(0x08) // PHP
+            code.addAll(listOf(0xC2, 0x20)) // REP #$20
 
-        // ─── Export verification pass ───────────────────────────────
-        // Re-read all modified data from the export copy and validate.
+            // Skip flag-setting in Mother Brain's room ($8F:DD58).
+            // MB's AI uses event flags at $D820-$D821 for its multi-phase
+            // state machine (MB1→MB2→Baby Metroid→escape). Force-ORing
+            // boss/Tourian event bits every frame prevents these transitions.
+            // Flags are already in WRAM from prior rooms, so skipping here is safe.
+            code.addAll(listOf(0xAD, 0x9B, 0x07))         // LDA $079B (room_ptr)
+            code.addAll(listOf(0xC9, 0x58, 0xDD))         // CMP #$DD58
+            // BEQ to the PLP;RTL at the end — offset will be patched below
+            val beqPos = code.size
+            code.addAll(listOf(0xF0, 0x00))                // BEQ .done (placeholder)
+
+            // Boss flags + associated event flags (long addressing for WRAM from bank $DF)
+            if (enabledBosses.isNotEmpty()) {
+                val byAddr = mutableMapOf<Int, Int>()
+                for (flag in BOSS_FLAG_DEFS) {
+                    if (flag.key in enabledBosses) {
+                        byAddr[flag.wramAddr] = (byAddr[flag.wramAddr] ?: 0) or flag.bit
+                    }
+                }
+
+                // Per-boss golden-statue events ($7E:D820-D821 event bitfield)
+                val bossStatueEvents = mapOf(
+                    "phantoon" to (0xD820 to 0x40), // Event 0x06
+                    "ridley"   to (0xD820 to 0x80), // Event 0x07
+                    "draygon"  to (0xD821 to 0x01), // Event 0x08
+                    "kraid"    to (0xD821 to 0x02), // Event 0x09
+                )
+                for ((boss, addrBit) in bossStatueEvents) {
+                    if (boss in enabledBosses) {
+                        byAddr[addrBit.first] = (byAddr[addrBit.first] ?: 0) or addrBit.second
+                    }
+                }
+                val mainBosses = setOf("kraid", "phantoon", "ridley", "draygon")
+                if (mainBosses.all { it in enabledBosses }) {
+                    byAddr[0xD821] = (byAddr[0xD821] ?: 0) or 0x04 // Event 0x0A: Path to Tourian open
+                }
+
+                for ((addr, bits) in byAddr) {
+                    code.addAll(listOf(0xAF, addr and 0xFF, (addr shr 8) and 0xFF, 0x7E))
+                    code.addAll(listOf(0x09, bits and 0xFF, 0x00))
+                    code.addAll(listOf(0x8F, addr and 0xFF, (addr shr 8) and 0xFF, 0x7E))
+                }
+            }
+
+            // Hyper beam (long addressing: STA $7E:0A76)
+            if (hyperBeam) {
+                code.addAll(listOf(0xA9, 0x00, 0x80))             // LDA #$8000
+                code.addAll(listOf(0x8F, 0x76, 0x0A, 0x7E))      // STA $7E0A76
+            }
+
+            // Infinite blue suit: force dash counter to $0400 every frame
+            if (infiniteBlueSuit) {
+                code.addAll(listOf(0xA9, 0x00, 0x04))             // LDA #$0400
+                code.addAll(listOf(0x8F, 0x3E, 0x0B, 0x7E))      // STA $7E0B3E
+            }
+
+            code.add(0x28) // PLP
+            code.add(0x6B) // RTL
+
+            // Patch the BEQ offset to jump to PLP (skip the flag-setting body)
+            val plpPos = code.size - 2  // position of PLP
+            val branchOffset = plpPos - (beqPos + 2)  // +2 for the BEQ instruction size
+            if (branchOffset in 0..127) {
+                code[beqPos + 1] = branchOffset
+            }
+
+            // Write payload at PC $2FF040
+            for ((i, b) in code.withIndex()) {
+                val addr = 0x2FF040 + i
+                if (addr < romData.size) romData[addr] = b.toByte()
+            }
+            // Hook $82:896E (PC $1096E): JSL $DFF040
+            val hook = listOf(0x22, 0x40, 0xF0, 0xDF)
+            for ((i, b) in hook.withIndex()) {
+                val addr = 0x1096E + i
+                if (addr < romData.size) romData[addr] = b.toByte()
+            }
+            onLog("[EXPORT]   Per-frame hook: ${code.size} bytes at \$DF:F040, hook at \$82:896E")
+        } else {
+            onLog("[EXPORT] Per-frame hook: not needed (no boss flags, hyper beam, or blue suit)")
+        }
+    }
+
+    /** Re-reads all modified data from the patched ROM and logs any integrity errors. */
+    private fun verifyExportedRom(romData: ByteArray, roomsPatched: Set<String>) {
         onLog("\n=== Export Verification ===")
         var verifyErrors = 0
         val exportParser = RomParser(romData)
@@ -2317,7 +1821,7 @@ internal class RomExporter(
             val room = romParser.readRoomHeader(roomId) ?: continue
             val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
 
-            // Collect per-state data from the EXPORT copy
+            // Collect per-state data from the export copy
             val stateInfos = mutableListOf<String>()
             val distinctLevelPtrs = mutableSetOf<Int>()
             val distinctPlmPtrs = mutableSetOf<Int>()
@@ -2385,14 +1889,6 @@ internal class RomExporter(
             onLog("EXPORT VERIFICATION: all checks passed")
         }
         onLog("=== End Verification ===\n")
-
-        val orig = File(romPath)
-        val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
-        out.writeBytes(romData)
-        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
-        onLog(msg)
-        onStatus(msg)
-        return out.absolutePath
     }
 
     /**
