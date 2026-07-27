@@ -1,4 +1,11 @@
-import type { BuildRequest, GeneratorRequest, RandomizationRequest, ServiceMetadata, ServicePatchResponse } from './types';
+import type {
+  BuildRequest,
+  GeneratorRequest,
+  RandomizationRequest,
+  ServiceMetadata,
+  ServicePatchResponse,
+  ServiceRomMetadata,
+} from './types';
 
 export type PatchServiceInput = {
   serviceUrl: string;
@@ -25,6 +32,30 @@ export async function fetchMetadata(serviceUrl: string, signal?: AbortSignal): P
   }
 
   return response.json() as Promise<ServiceMetadata>;
+}
+
+export async function fetchRomMetadata(
+  serviceUrl: string,
+  rom: Blob,
+  signal?: AbortSignal,
+): Promise<ServiceRomMetadata> {
+  const baseUrl = serviceBaseUrl(serviceUrl);
+  const response = await fetchService(baseUrl, '/metadata/rom', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ romBase64: await blobToBase64(rom) }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(errorMessageFromResponse(text, response.status));
+  }
+
+  return response.json() as Promise<ServiceRomMetadata>;
 }
 
 export async function patchRom(input: PatchServiceInput): Promise<ServicePatchResponse> {
@@ -121,6 +152,18 @@ export function downloadBlob(blob: Blob, filename: string): void {
     URL.revokeObjectURL(href);
     anchor.remove();
   }, 1000);
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read ROM file.'));
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      resolve(result.includes(',') ? result.substring(result.indexOf(',') + 1) : result);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function stripEmpty<T>(value: T): T {

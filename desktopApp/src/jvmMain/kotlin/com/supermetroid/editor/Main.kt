@@ -58,7 +58,6 @@ import androidx.compose.ui.window.rememberWindowState
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.RomPreferences
 import com.supermetroid.editor.data.RoomInfo
-import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
@@ -85,6 +84,7 @@ import com.supermetroid.editor.ui.PatchEditorCanvas
 import com.supermetroid.editor.ui.PatchListPanel
 import com.supermetroid.editor.ui.PatternEditorCanvas
 import com.supermetroid.editor.ui.RoomsTabSidebar
+import com.supermetroid.editor.ui.RoomListView
 import com.supermetroid.editor.ui.SettingsPopup
 import com.supermetroid.editor.ui.SoundEditorCanvas
 import com.supermetroid.editor.ui.SoundEditorState
@@ -123,13 +123,14 @@ private const val TAB_BOSS = 9
 
 
 fun main() = application {
-    val roomRepository = remember { RoomRepository() }
     val scope = rememberCoroutineScope()
     var romParser by remember { mutableStateOf<RomParser?>(null) }
     var romFileName by remember { mutableStateOf<String?>(null) }
     var selectedRoom by remember { mutableStateOf<RoomInfo?>(null) }
     var rooms by remember { mutableStateOf<List<RoomInfo>>(emptyList()) }
     var romLoadInFlight by remember { mutableStateOf(false) }
+    var romLoadMessage by remember { mutableStateOf<String?>(null) }
+    var romLoadMessageIsError by remember { mutableStateOf(false) }
     val editorState = remember { EditorState() }
 
     fun pickDefaultRoom(allRooms: List<RoomInfo>, romPath: String): RoomInfo? {
@@ -155,25 +156,33 @@ fun main() = application {
         RomParser.loadRom(path)
     }
 
-    // Load rooms on startup
+    // Load requested ROM on startup.
     LaunchedEffect(Unit) {
-        rooms = withContext(Dispatchers.IO) { roomRepository.getAllRooms() }
-
         // Auto-load requested ROM first, then fall back to last ROM if available.
         val bootRomPath = RomPreferences.getLastRomPath()
         if (bootRomPath != null) {
             try {
                 romLoadInFlight = true
                 TilesetProfileCache.invalidate()
-                romParser = loadRomParser(bootRomPath)
+                val parser = loadRomParser(bootRomPath)
+                val catalog = parser.roomCatalog
+                romParser = parser
+                rooms = catalog.rooms
                 romFileName = File(bootRomPath).nameWithoutExtension
+                romLoadMessage = catalog.loadNotice(File(bootRomPath).name)
+                romLoadMessageIsError = false
                 RomPreferences.setLastRomPath(bootRomPath)
-                editorState.initForRom(bootRomPath)
+                if (catalog.editable) editorState.initForRom(bootRomPath)
                 if (selectedRoom == null) {
                     selectedRoom = pickDefaultRoom(rooms, bootRomPath)
                 }
             } catch (e: Exception) {
                 mainLog.error(e) { "Failed to auto-load ROM: ${e.message}" }
+                romLoadMessage = e.message ?: "Failed to auto-load ROM."
+                romLoadMessageIsError = true
+                romParser = null
+                rooms = emptyList()
+                selectedRoom = null
             } finally {
                 romLoadInFlight = false
             }
@@ -210,7 +219,10 @@ fun main() = application {
         onPreviewKeyEvent = { keyEvent ->
             if (keyEvent.type == KeyEventType.KeyDown && keyEvent.key == Key.S &&
                 (keyEvent.isCtrlPressed || keyEvent.isMetaPressed)) {
-                editorState.saveProject(romParser)
+                val parser = romParser
+                if (parser?.roomCatalog?.editable == true) {
+                    editorState.saveProject(parser)
+                }
                 true
             } else false
         }
@@ -234,6 +246,9 @@ fun main() = application {
             var validationIssues by remember { mutableStateOf<List<RomValidator.Issue>?>(null) }
             var validationTimeMs by remember { mutableStateOf(0L) }
             val fs = editorThemeState.fontSize.value
+            val romCatalog = romParser?.roomCatalog
+            val romEditable = romCatalog?.editable == true
+            val romReadOnly = romCatalog?.readOnly == true
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -268,13 +283,24 @@ fun main() = application {
                                         romLoadInFlight = true
                                         try {
                                             TilesetProfileCache.invalidate()
-                                            romParser = loadRomParser(file.absolutePath)
+                                            val parser = loadRomParser(file.absolutePath)
+                                            val catalog = parser.roomCatalog
+                                            romParser = parser
+                                            rooms = catalog.rooms
                                             romFileName = file.nameWithoutExtension
+                                            romLoadMessage = catalog.loadNotice(file.name)
+                                            romLoadMessageIsError = false
                                             RomPreferences.setLastRomPath(file.absolutePath)
-                                            editorState.initForRom(file.absolutePath)
+                                            if (catalog.editable) editorState.initForRom(file.absolutePath)
                                             selectedRoom = pickDefaultRoom(rooms, file.absolutePath)
                                         } catch (e: Exception) {
                                             mainLog.error(e) { "Failed to load selected ROM: ${e.message}" }
+                                            romParser = null
+                                            romFileName = null
+                                            rooms = emptyList()
+                                            selectedRoom = null
+                                            romLoadMessage = e.message ?: "Failed to load selected ROM."
+                                            romLoadMessageIsError = true
                                         } finally {
                                             romLoadInFlight = false
                                         }
@@ -283,7 +309,11 @@ fun main() = application {
                             }
                         ) { Text(if (romLoadInFlight) "Loading ROM..." else "Open ROM...", fontSize = fs.body) }
                         if (romFileName != null) {
-                            Text("Loaded: $romFileName", fontSize = fs.detail, color = MaterialTheme.colorScheme.onBackground)
+                            Text(
+                                "Loaded: $romFileName${if (romReadOnly) " (read-only)" else ""}",
+                                fontSize = fs.detail,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
                         }
                     }
                     Spacer(modifier = Modifier.weight(1f))
@@ -314,13 +344,13 @@ fun main() = application {
                                     val parser = romParser
                                     if (parser != null) {
                                         val start = System.currentTimeMillis()
-                                        val roomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+                                        val roomIds = rooms.map { it.getRoomIdAsInt() }
                                         validationIssues = RomValidator.validate(parser, roomIds, editorState.project)
                                         validationTimeMs = System.currentTimeMillis() - start
                                         validationOpen = true
                                     }
                                 },
-                                enabled = romParser != null,
+                                enabled = romEditable,
                                 shape = RoundedCornerShape(6.dp),
                             ) { Text("Validate", fontSize = fs.body) }
                             if (validationOpen && validationIssues != null) {
@@ -333,21 +363,21 @@ fun main() = application {
                         }
                         Button(
                             onClick = { editorState.saveProject(romParser) },
-                            enabled = romParser != null,
+                            enabled = romEditable,
                             shape = RoundedCornerShape(6.dp),
                         ) { Text(if (editorState.dirty) "Save*" else "Save", fontSize = fs.body) }
                         Button(
                             onClick = {
                                 romParser?.let { editorState.exportToRom(it) }
                             },
-                            enabled = romParser != null,
+                            enabled = romEditable,
                             shape = RoundedCornerShape(6.dp),
                         ) { Text("Export ROM", fontSize = fs.body) }
                         Button(
                             onClick = {
                                 romParser?.let { editorState.exportToIps(it) }
                             },
-                            enabled = romParser != null,
+                            enabled = romEditable,
                             shape = RoundedCornerShape(6.dp),
                         ) { Text("Export IPS", fontSize = fs.body) }
                         Box {
@@ -390,12 +420,45 @@ fun main() = application {
                         }
                     }
                 }
+                romLoadMessage?.let { message ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        color = if (romLoadMessageIsError) {
+                            MaterialTheme.colorScheme.errorContainer
+                        } else {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        },
+                        contentColor = if (romLoadMessageIsError) {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        },
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                            Text(
+                                "ROM Compatibility Report",
+                                fontSize = fs.body,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                message,
+                                fontSize = fs.detail,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
                 
                 // Main content: resizable left column + right canvas
                 var leftColumnWidthDp by remember { mutableStateOf(330f) }
                 var tilesetHeightInitialized by remember { mutableStateOf(false) }
                 var tilesetHeightDp by remember { mutableStateOf(400f) }
                 var leftTab by remember { mutableStateOf(0) }
+                LaunchedEffect(romReadOnly) {
+                    if (romReadOnly) leftTab = TAB_ROOMS
+                }
                 var itemKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 val mainContentFocusRequester = remember { FocusRequester() }
@@ -485,14 +548,18 @@ fun main() = application {
                                 val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
                                 tabNames.forEachIndexed { idx, name ->
                                     val selected = leftTab == idx
+                                    val tabEnabled = !romReadOnly || idx == TAB_ROOMS
                                     Text(
                                         text = name,
                                         fontSize = fs.tabLabel,
-                                        color = if (selected) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = when {
+                                            !tabEnabled -> MaterialTheme.colorScheme.outlineVariant
+                                            selected -> MaterialTheme.colorScheme.primary
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
                                         fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
                                         modifier = Modifier
-                                            .clickable {
+                                            .clickable(enabled = tabEnabled) {
                                                 leftTab = idx
                                                 if (idx == TAB_PATCHES || idx == TAB_ITEMS) editorState.seedDefaultPatches()
                                             }
@@ -503,21 +570,36 @@ fun main() = application {
 
                             key(leftTab) {
                             when (leftTab) {
-                                TAB_ROOMS -> RoomsTabSidebar(
-                                    rooms = rooms,
-                                    selectedRoom = selectedRoom,
-                                    onRoomSelected = { room ->
-                                        selectedRoom = room
-                                        val romPath = RomPreferences.getLastRomPath()
-                                        if (romPath != null) saveLastRoom(romPath, room)
-                                    },
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    tilesetHeightDp = tilesetHeightDp,
-                                    onTilesetHeightChange = { tilesetHeightDp = it },
-                                    onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
-                                    onNavigateToMap = { leftTab = TAB_MAP },
-                                )
+                                TAB_ROOMS -> if (romReadOnly) {
+                                    RoomListView(
+                                        rooms = rooms,
+                                        selectedRoom = selectedRoom,
+                                        romParser = romParser,
+                                        editorState = null,
+                                        onRoomSelected = { room ->
+                                            selectedRoom = room
+                                            val romPath = RomPreferences.getLastRomPath()
+                                            if (romPath != null) saveLastRoom(romPath, room)
+                                        },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                } else {
+                                    RoomsTabSidebar(
+                                        rooms = rooms,
+                                        selectedRoom = selectedRoom,
+                                        onRoomSelected = { room ->
+                                            selectedRoom = room
+                                            val romPath = RomPreferences.getLastRomPath()
+                                            if (romPath != null) saveLastRoom(romPath, room)
+                                        },
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        tilesetHeightDp = tilesetHeightDp,
+                                        onTilesetHeightChange = { tilesetHeightDp = it },
+                                        onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
+                                        onNavigateToMap = { leftTab = TAB_MAP },
+                                    )
+                                }
                                 TAB_ITEMS -> ItemLocationPanel(
                                     rooms = rooms,
                                     selectedRoom = selectedRoom,
@@ -607,7 +689,7 @@ fun main() = application {
                                         MapCanvas(
                                             room = selectedRoom,
                                             romParser = romParser,
-                                            editorState = editorState,
+                                            editorState = editorState.takeIf { romEditable },
                                             rooms = rooms,
                                             samusPosition = samusPos,
                                             emulatorConnected = emuRunning,

@@ -6,7 +6,6 @@ import com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_GFX
 import com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_SET
 import com.supermetroid.editor.rom.RomConstants.BANK_FX
 import com.supermetroid.editor.rom.RomConstants.BANK_ROOM_DATA
-import com.supermetroid.editor.rom.RomConstants.ROM_SIZE
 import com.supermetroid.editor.rom.RomConstants.ROM_SIZE_WITH_HEADER
 import com.supermetroid.editor.rom.RomConstants.SMC_HEADER_SIZE
 import com.supermetroid.editor.rom.RomConstants.STATE_DATA_SIZE
@@ -25,10 +24,24 @@ import com.supermetroid.editor.util.EditorLog
  */
 class RomParser(internal val romData: ByteArray) {
     private val hasHeader: Boolean
-        get() = romData.size == ROM_SIZE_WITH_HEADER
+        get() = romData.size % 0x8000 == SMC_HEADER_SIZE
 
     private val romStartOffset: Int
         get() = if (hasHeader) SMC_HEADER_SIZE else 0x0
+
+    val compatibilityReport: RomCompatibility.Report by lazy {
+        RomCompatibility.analyze(romData)
+    }
+
+    val roomCatalog: RomRoomCatalog by lazy {
+        RomRoomCatalogDetector.detect(this, compatibilityReport)
+    }
+
+    val graphicsCatalog: RomGraphicsCatalog by lazy {
+        RomGraphicsCatalogDetector.detect(this)
+    }
+
+    internal fun romStartOffsetForLayout(): Int = romStartOffset
     
     /**
      * Convert SNES address to PC offset using LoROM mapping.
@@ -2027,10 +2040,11 @@ class RomParser(internal val romData: ByteArray) {
                 throw IllegalArgumentException("ROM file not found: $filePath")
             }
             val romData = file.readBytes()
-            if (romData.size != ROM_SIZE && romData.size != ROM_SIZE_WITH_HEADER) {
-                throw IllegalArgumentException("Invalid ROM size: ${romData.size} bytes")
+            val parser = RomParser(romData)
+            if (!parser.roomCatalog.readable) {
+                throw IllegalArgumentException(parser.compatibilityReport.userMessage(file.name))
             }
-            return RomParser(romData)
+            return parser
         }
     }
 }

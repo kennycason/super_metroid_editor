@@ -26,7 +26,7 @@ For Gradle-delegated IntelliJ runs, set `SMEDIT_SERVICE_PORT=8090` in the run co
 
 The caller supplies the ROM in the request. The service does not read, store, or host ROM files. For command-line tools and web forms, prefer `multipart/form-data` with a `rom` file field. JSON with `romBase64` is also supported for SDK-style callers and tests.
 
-ROM uploads must be either a normal 3 MB Super Metroid ROM (`3145728` bytes) or a 3 MB ROM with a 512-byte SMC copier header (`3146240` bytes). Headered ROMs are patched at the correct file offsets; generated IPS patches use normal headerless offsets.
+Patch uploads must be editable vanilla-layout Super Metroid ROMs: a normal 3 MB ROM (`3145728` bytes) or a 3 MB ROM with a 512-byte SMC copier header (`3146240` bytes). Headered ROMs are patched at the correct file offsets; generated IPS patches use normal headerless offsets. Expanded ROMs can be inspected through `POST /metadata/rom`, but `/patch` rejects them until SMEDIT has write-safe expanded layout support.
 
 Multipart fields:
 
@@ -49,6 +49,23 @@ curl -sS http://localhost:8080/metadata | jq '.rooms[] | select(.name == "Landin
 curl -sS http://localhost:8080/metadata | jq '.randomization.enemyCategories'
 curl -sS http://localhost:8080/metadata | jq '.colorize.effects[].id'
 ```
+
+## POST /metadata/rom
+
+Use ROM metadata when a caller needs the room catalog for a specific uploaded ROM. This endpoint does not write or patch the ROM. Vanilla ROMs return the normal editable room catalog; expanded ROMs return a read-only discovered catalog when SMEDIT can identify room headers and level-data pointers:
+
+```bash
+ROM=path/to/hack.smc
+ROM_B64="$(base64 < "$ROM" | tr -d '\n')"
+jq -nc --arg romBase64 "$ROM_B64" '{romBase64: $romBase64}' |
+  curl -sS -X POST \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    http://localhost:8080/metadata/rom |
+  jq '.layout, .rooms[0:5]'
+```
+
+The `layout.editable` flag is the authority for whether `/patch` should be attempted. If `layout.readOnly` is true, treat the response as inspection-only.
 
 ### Quick File Upload
 

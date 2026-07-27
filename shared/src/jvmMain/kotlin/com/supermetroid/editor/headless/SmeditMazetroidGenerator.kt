@@ -238,7 +238,7 @@ object SmeditMazetroidGenerator {
             .map { it.plm.param }
             .filterTo(mutableSetOf()) { it > 0 }
         val morph = placement("Morph Ball", MORPH_BALL_VISIBLE_PLM, x = 67, y = 69, param = nextItemParam(usedParams))
-        val bombs = placement("Bombs", BOMB_VISIBLE_PLM, x = 75, y = 69, param = nextItemParam(usedParams))
+        val bombs = placement("Bombs", BOMB_VISIBLE_PLM, x = 75, y = 68, param = nextItemParam(usedParams))
         val landingSite = project.getOrCreateRoom(LANDING_SITE_ROOM_ID)
         for (placement in listOf(morph, bombs)) {
             landingSite.plmChanges.removeAll { it.action == "add" && it.x == placement.x && it.y == placement.y }

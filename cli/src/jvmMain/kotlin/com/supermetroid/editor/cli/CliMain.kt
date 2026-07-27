@@ -1,7 +1,6 @@
 package com.supermetroid.editor.cli
 
 import com.supermetroid.editor.data.SmEditProject
-import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.headless.SmeditBuildReport
 import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBuildService
@@ -57,8 +56,7 @@ fun main(args: Array<String>) {
             "rooms", "room", "graph", "export" -> {
                 val requiredRomPath = romPath ?: error("ROM path was already validated")
                 val parser = RomParser.loadRom(requiredRomPath)
-                val repo = RoomRepository()
-                val roomExporter = RoomExporter(parser, repo)
+                val roomExporter = RoomExporter(parser)
                 when (command) {
                     "rooms" -> cmdRooms(roomExporter, json)
                     "room" -> cmdRoom(roomExporter, json, commandArgs)

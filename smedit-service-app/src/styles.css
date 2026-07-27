@@ -593,6 +593,10 @@ h3 {
   margin-top: 6px;
 }
 
+.message.compatibility {
+  white-space: pre-line;
+}
+
 .inline-note {
   color: #ffdca8;
   font-size: 12px;
