@@ -38,7 +38,9 @@ import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -67,6 +69,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -79,6 +82,38 @@ import com.supermetroid.editor.rom.RomParser
 
 /** Tile indices that are background/empty in the SNES tilemap. */
 private val EMPTY_TILES = setOf(0x00, 0x1F)
+private const val MINIMAP_MIN_CELL_SIZE = 4f
+private const val MINIMAP_MAX_CELL_SIZE = 64f
+private const val MINIMAP_ZOOM_EPSILON = 0.0005f
+private val inMemoryMinimapCellSizes = mutableStateMapOf<Int, Float>()
+
+internal fun fitMinimapCellSizeForViewport(
+    viewportWidthPx: Int,
+    viewportHeightPx: Int,
+    density: Float,
+    mapWidthCells: Int,
+    mapHeightCells: Int,
+    minCellSize: Float = MINIMAP_MIN_CELL_SIZE,
+    maxCellSize: Float = MINIMAP_MAX_CELL_SIZE,
+): Float? {
+    if (viewportWidthPx <= 0 || viewportHeightPx <= 0 || density <= 0f ||
+        mapWidthCells <= 0 || mapHeightCells <= 0
+    ) {
+        return null
+    }
+    val viewportWidthDp = viewportWidthPx / density
+    val viewportHeightDp = viewportHeightPx / density
+    val fitWidth = viewportWidthDp / mapWidthCells
+    val fitHeight = viewportHeightDp / mapHeightCells
+    return minOf(fitWidth, fitHeight).coerceIn(minCellSize, maxCellSize)
+}
+
+internal fun shouldSaveMinimapCellSize(
+    hasSavedCellSize: Boolean,
+    cellSize: Float,
+    fitCellSize: Float,
+): Boolean =
+    hasSavedCellSize || kotlin.math.abs(cellSize - fitCellSize) > MINIMAP_ZOOM_EPSILON
 
 /** 2bpp pixel value → Color for each of the 4 minimap palettes.
  *  pixel 0 = background, 1 = room fill, 2 = border, 3 = bg accent. */
@@ -136,8 +171,8 @@ fun MinimapSidebar(
             Spacer(Modifier.width(4.dp))
             MmIconBtn(Icons.Default.Undo, "Undo", state.undoStack.isNotEmpty()) { state.undo(editorState) }
             MmIconBtn(Icons.Default.Redo, "Redo", state.redoStack.isNotEmpty()) { state.redo(editorState) }
-            MmIconBtn(Icons.Default.ZoomIn, "+", true) { state.cellSize = (state.cellSize + 4).coerceAtMost(64f) }
-            MmIconBtn(Icons.Default.ZoomOut, "-", true) { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f) }
+            MmIconBtn(Icons.Default.ZoomIn, "+", true) { state.cellSize = (state.cellSize + 4).coerceAtMost(MINIMAP_MAX_CELL_SIZE) }
+            MmIconBtn(Icons.Default.ZoomOut, "-", true) { state.cellSize = (state.cellSize - 4).coerceAtLeast(MINIMAP_MIN_CELL_SIZE) }
         }
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
@@ -294,26 +329,64 @@ fun MinimapSidebar(
 @Composable
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
     val focusRequester = remember { FocusRequester() }
-    androidx.compose.runtime.LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
         val hScroll = rememberScrollState()
         val vScroll = rememberScrollState()
         val coroutineScope = rememberCoroutineScope()
         val density = androidx.compose.ui.platform.LocalDensity.current
+        var viewportWidthPx by remember { androidx.compose.runtime.mutableStateOf(0) }
+        var viewportHeightPx by remember { androidx.compose.runtime.mutableStateOf(0) }
+        var zoomInitializedArea by remember { androidx.compose.runtime.mutableStateOf<Int?>(null) }
+        val fitCellSize = fitMinimapCellSizeForViewport(
+            viewportWidthPx = viewportWidthPx,
+            viewportHeightPx = viewportHeightPx,
+            density = density.density,
+            mapWidthCells = MinimapData.MAP_WIDTH,
+            mapHeightCells = MinimapData.MAP_HEIGHT,
+        )
+        LaunchedEffect(state.selectedArea, fitCellSize) {
+            val targetFit = fitCellSize ?: return@LaunchedEffect
+            val savedCellSize = inMemoryMinimapCellSizes[state.selectedArea]
+            val switchingAreas = zoomInitializedArea != state.selectedArea
+            state.cellSize = (savedCellSize ?: targetFit).coerceIn(MINIMAP_MIN_CELL_SIZE, MINIMAP_MAX_CELL_SIZE)
+            zoomInitializedArea = state.selectedArea
+            if (switchingAreas || savedCellSize == null) {
+                hScroll.scrollTo(0)
+                vScroll.scrollTo(0)
+            }
+        }
+        LaunchedEffect(state.selectedArea, state.cellSize, fitCellSize, zoomInitializedArea) {
+            val targetFit = fitCellSize ?: return@LaunchedEffect
+            if (zoomInitializedArea != state.selectedArea) return@LaunchedEffect
+            val hasSavedCellSize = inMemoryMinimapCellSizes.containsKey(state.selectedArea)
+            if (shouldSaveMinimapCellSize(hasSavedCellSize, state.cellSize, targetFit)) {
+                inMemoryMinimapCellSizes[state.selectedArea] =
+                    state.cellSize.coerceIn(MINIMAP_MIN_CELL_SIZE, MINIMAP_MAX_CELL_SIZE)
+            }
+        }
         val canvasW = (state.cellSize * MinimapData.MAP_WIDTH).dp
         val canvasH = (state.cellSize * MinimapData.MAP_HEIGHT).dp
         // Pixel cell size for pointer coordinate conversion (dp cellSize * density)
         val csPx = with(density) { state.cellSize.dp.toPx() }
         Box(Modifier.fillMaxSize()
+            .onSizeChanged { size ->
+                viewportWidthPx = size.width
+                viewportHeightPx = size.height
+            }
             .onPointerEvent(PointerEventType.Scroll) { event ->
                 val ne = event.nativeEvent as? MouseEvent
-                val isZoom = ne?.let { it.isControlDown || it.isMetaDown } ?: false
+                val isZoom = isZoomModifierPressed(event.nativeEvent)
                 val sd = event.changes.first().scrollDelta
                 if (isZoom) {
                     val mousePos = event.changes.first().position
                     val oldCs = csPx
-                    val factor = if (sd.y < 0) 1.15f else 1f / 1.15f
-                    val newCsDp = (state.cellSize * factor).coerceIn(4f, 64f)
+                    val newCsDp = zoomAfterScroll(
+                        currentZoom = state.cellSize,
+                        scrollDeltaY = sd.y,
+                        minZoom = MINIMAP_MIN_CELL_SIZE,
+                        maxZoom = MINIMAP_MAX_CELL_SIZE,
+                    )
                     val newCsPx = newCsDp * density.density
                     val contentXBefore = (hScroll.value + mousePos.x) / oldCs
                     val contentYBefore = (vScroll.value + mousePos.y) / oldCs
@@ -349,8 +422,8 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
                         Key.Z -> if (ctrl) { state.undo(editorState); true } else false
                         Key.Y -> if (ctrl) { state.redo(editorState); true } else false
-                        Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(64f); true }
-                        Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(4f); true }
+                        Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(MINIMAP_MAX_CELL_SIZE); true }
+                        Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(MINIMAP_MIN_CELL_SIZE); true }
                         Key.DirectionLeft -> if (state.selectedRoom != null) { state.moveRoom(-1, 0, editorState); true } else false
                         Key.DirectionRight -> if (state.selectedRoom != null) { state.moveRoom(1, 0, editorState); true } else false
                         Key.DirectionUp -> if (state.selectedRoom != null) { state.moveRoom(0, -1, editorState); true } else false

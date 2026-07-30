@@ -6,6 +6,7 @@ import com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_GFX
 import com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_SET
 import com.supermetroid.editor.rom.RomConstants.BANK_FX
 import com.supermetroid.editor.rom.RomConstants.BANK_ROOM_DATA
+import com.supermetroid.editor.rom.RomConstants.ROM_SIZE
 import com.supermetroid.editor.rom.RomConstants.ROM_SIZE_WITH_HEADER
 import com.supermetroid.editor.rom.RomConstants.SMC_HEADER_SIZE
 import com.supermetroid.editor.rom.RomConstants.STATE_DATA_SIZE
@@ -87,8 +88,7 @@ class RomParser(internal val romData: ByteArray) {
             if (width == 0 || height == 0 || width > 16 || height > 16) return null
             if (area > 6) return null
             
-            // Find default state data
-            val stateDataOffset = findDefaultStateData(pcOffset + 11)
+            val stateDataOffset = findInitialStateData(roomId, pcOffset + 11)
             
             var levelDataPtr = 0
             var tileset = 0
@@ -154,19 +154,39 @@ class RomParser(internal val romData: ByteArray) {
         }
     }
     
+    private fun findInitialStateData(roomId: Int, stateListOffset: Int): Int? {
+        if (!usesVanillaEditableLayout()) {
+            firstReadableStateData(roomId)?.let { return it }
+        }
+        return findDefaultStateData(stateListOffset)
+    }
+
+    private fun usesVanillaEditableLayout(): Boolean =
+        romData.size - romStartOffset == ROM_SIZE
+
+    private fun firstReadableStateData(roomId: Int): Int? =
+        parseRoomStates(roomId)
+            .firstOrNull { state -> isReadableStateDataOffset(state.stateDataPcOffset) }
+            ?.stateDataPcOffset
+
+    private fun isReadableStateDataOffset(stateDataOffset: Int): Boolean {
+        if (stateDataOffset < 0 || stateDataOffset + STATE_DATA_SIZE > romData.size) return false
+        val levelDataPtr = readUInt24At(stateDataOffset)
+        val tileset = romData[stateDataOffset + 3].toInt() and 0xFF
+        if (tileset !in 0 until TileGraphics.NUM_TILESETS) return false
+        return runCatching { decompressLZ2(levelDataPtr).size >= 2 }.getOrDefault(false)
+    }
+
     /**
-     * Find room state data. Uses the first E629 (morph ball) conditional state
-     * if available, otherwise falls back to the default E5E6 state.
-     * 
-     * E629 represents "normal gameplay" (Wrecked Ship powered on, etc.).
-     * We use a byte-scan for E5E6 as the reliable way to find the default,
-     * and specifically look for E629 as the first condition.
-     * 
-     * E629 entry format: condition(2) + arg(1) + statePtr(2) = 5 bytes.
-     * The statePtr points to 26 bytes of state data in bank $8F.
+     * Find room state data for vanilla-layout editing. Uses the first E629
+     * conditional state if available, otherwise falls back to the default E5E6
+     * state. This preserves the existing editable-ROM behavior; expanded
+     * read-only ROMs use [findInitialStateData] so their preview stays aligned
+     * with the first readable state/GFX pair in the ROM.
      */
     private fun findDefaultStateData(stateListOffset: Int): Int? {
-        // Check if first condition is E629 (morph ball check)
+        // Preserve the legacy editable-ROM preview behavior: prefer a leading
+        // E629 boss-dead state, then fall back to the inline default state.
         if (stateListOffset + 5 <= romData.size) {
             val firstCondition = readUInt16At(stateListOffset)
             if (firstCondition == 0xE629) {
@@ -521,13 +541,13 @@ class RomParser(internal val romData: ByteArray) {
             val STATE_CONDITION_NAMES = mapOf(
                 0xE5E6 to "Standard (default)",
                 0xE5EB to "Door Event",
-                0xE5FF to "Event Check",
-                0xE612 to "Boss Check",
-                0xE629 to "Morph Ball Check",
-                0xE640 to "Power Bombs",
-                0xE652 to "Speed Booster",
-                0xE669 to "Landing Site Wake",
-                0xE678 to "Tourian Access",
+                0xE5FF to "Tourian Boss",
+                0xE612 to "Event Check",
+                0xE629 to "Boss Check",
+                0xE640 to "Unused Check",
+                0xE652 to "Morph Ball / Missiles",
+                0xE669 to "Power Bombs",
+                0xE678 to "Unused Check",
             )
 
             val EVENT_NAMES = mapOf(
@@ -662,7 +682,7 @@ class RomParser(internal val romData: ByteArray) {
     fun getStateDataPcOffset(roomId: Int): Int? {
         val pcOffset = roomIdToPc(roomId)
         if (pcOffset < 0 || pcOffset + 11 > romData.size) return null
-        return findDefaultStateData(pcOffset + 11)
+        return findInitialStateData(roomId, pcOffset + 11)
     }
 
     /**

@@ -13,9 +13,11 @@ package com.supermetroid.editor.rom
  *   4. Load palette: 8 sub-palettes × 16 colors (BGR555)
  *   5. Render: level data tile index → metatile → 4 sub-tiles → pixels
  *
- * CRE (Common Room Elements) are always loaded from fixed addresses:
+ * Vanilla CRE (Common Room Elements) defaults:
  *   GFX:        $B9:8000 (PC: $1C8000)
  *   Tile table: $B9:A09D (PC: $1CA09D)
+ * Expanded/relocated layouts may repoint these; RomGraphicsCatalog detects
+ * those pointers and loadTileset() uses the catalog values.
  *
  * Sources:
  *   - SMILE legacy: DecompressTiles.vb, DecompressTtable.vb, DrawTiles
@@ -164,7 +166,7 @@ class TileGraphics(private val romParser: RomParser) {
             cachedVarTableStartMetatile = 0
             cachedVarTableMetatileCount = METATILE_COUNT
         } else {
-            val creTileTable = romParser.decompressLZ2(CRE_TILE_TABLE_SNES)
+            val creTileTable = romParser.decompressLZ2(romParser.graphicsCatalog.creTileTablePtr)
             metatiles = parseTileTable(varTileTable, creTileTable)
             cachedCreTableMetatileCount = CRE_METATILE_COUNT
             cachedVarTableStartMetatile = CRE_METATILE_COUNT
@@ -181,7 +183,7 @@ class TileGraphics(private val romParser: RomParser) {
         val varCopyLen = minOf(varGfx.size, combinedGfx.size)
         System.arraycopy(varGfx, 0, combinedGfx, 0, varCopyLen)
         if (tilesetId != KRAID_TILESET) {
-            val creGfx = romParser.decompressLZ2(CRE_GFX_SNES)
+            val creGfx = romParser.decompressLZ2(romParser.graphicsCatalog.creGfxPtr)
             val copyLen = minOf(creGfx.size, combinedGfx.size - CRE_GFX_OFFSET)
             if (copyLen > 0) {
                 System.arraycopy(creGfx, 0, combinedGfx, CRE_GFX_OFFSET, copyLen)

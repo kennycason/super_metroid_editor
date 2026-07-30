@@ -1,5 +1,6 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.data.Room
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -62,6 +63,18 @@ class RomCompatibilityTest {
     }
 
     @Test
+    fun `expanded room headers use first readable state`() {
+        val rom = syntheticRom(0x400000)
+        writeCandidateRoomHeaderWithConditionalState(rom)
+
+        val parser = RomParser(rom)
+        val room = requireNotNull(parser.readRoomHeader(0x8094))
+
+        assertEquals(0xE18000, room.levelDataPtr)
+        assertEquals(2, room.tileset)
+    }
+
+    @Test
     fun `tile graphics loads from relocated bank 8F tileset table`() {
         val rom = syntheticRom(0x400000)
         writeCandidateRoomHeaderWithExpandedLevelData(rom)
@@ -80,6 +93,74 @@ class RomCompatibilityTest {
     }
 
     @Test
+    fun `tile graphics loads relocated CRE data from expanded rom loader references`() {
+        val rom = syntheticRom(0x400000)
+        writeCandidateRoomHeaderWithExpandedLevelData(rom)
+        writeRelocatedTilesetTable(rom)
+        val creTileTableSnes = 0xE19000
+        val creGfxSnes = 0xE1A000
+        writeRelocatedCreData(rom, creTileTableSnes, creGfxSnes)
+        writeDecompressionPointerReference(rom, 0x1000, creGfxSnes)
+        writeDecompressionPointerReference(rom, 0x1020, creTileTableSnes)
+
+        val parser = RomParser(rom)
+        val tileGraphics = TileGraphics(parser)
+
+        assertEquals(creTileTableSnes, parser.graphicsCatalog.creTileTablePtr)
+        assertEquals(creGfxSnes, parser.graphicsCatalog.creGfxPtr)
+        assertTrue(tileGraphics.loadTileset(0))
+        val pixels = assertNotNull(tileGraphics.renderMetatile(0))
+        assertTrue(pixels.any { (it ushr 24) != 0 })
+    }
+
+    @Test
+    fun `map renderer uses collision fallback for placeholder metatiles`() {
+        val rom = syntheticRom(0x400000)
+        writeCandidateRoomHeaderWithExpandedLevelData(rom)
+        writeRelocatedTilesetTable(rom)
+        val creTileTableSnes = 0xE19000
+        val creGfxSnes = 0xE1A000
+        writeRelocatedCreData(rom, creTileTableSnes, creGfxSnes, placeholderFirstMetatile = true)
+        writeDecompressionPointerReference(rom, 0x1000, creGfxSnes)
+        writeDecompressionPointerReference(rom, 0x1020, creTileTableSnes)
+        val parser = RomParser(rom)
+        val room = syntheticRoom(area = 1, tileset = 0)
+        val levelData = singleScreenLevelData(firstBlockWord = 0x8000)
+
+        val render = requireNotNull(
+            MapRenderer(parser).renderRoomFromLevelData(
+                room,
+                levelData,
+                plmOverrides = emptyList(),
+                enemyOverrides = emptyList(),
+            )
+        )
+
+        assertEquals(0xFF4A6848.toInt(), render.pixels[0])
+    }
+
+    @Test
+    fun `map renderer uses collision fallback for transparent metatiles`() {
+        val rom = syntheticRom(0x400000)
+        writeCandidateRoomHeaderWithExpandedLevelData(rom)
+        writeRelocatedTilesetTable(rom, blankGfx = true)
+        val parser = RomParser(rom)
+        val room = syntheticRoom(area = 1, tileset = 0)
+        val levelData = singleScreenLevelData(firstBlockWord = 0x8100)
+
+        val render = requireNotNull(
+            MapRenderer(parser).renderRoomFromLevelData(
+                room,
+                levelData,
+                plmOverrides = emptyList(),
+                enemyOverrides = emptyList(),
+            )
+        )
+
+        assertEquals(0xFF4A6848.toInt(), render.pixels[0])
+    }
+
+    @Test
     fun `expanded rom fixture discovers graphics table and renders room tiles`() {
         val path = System.getProperty("smedit.expandedRomFixture").orEmpty()
         if (path.isBlank()) return
@@ -95,6 +176,44 @@ class RomCompatibilityTest {
 
         val render = requireNotNull(MapRenderer(parser).renderRoom(room))
         assertTrue(render.pixels.toSet().size > 8)
+    }
+
+    @Test
+    fun `expanded rom fixture reports room state graphics diagnostics`() {
+        val path = System.getProperty("smedit.expandedRomFixture").orEmpty()
+        if (path.isBlank()) return
+        val parser = RomParser.loadRom(path)
+        val renderOut = System.getProperty("smedit.expandedRomRenderOut").orEmpty()
+        println(
+            "graphicsCatalog source=${parser.graphicsCatalog.source} " +
+                "table=${hex24(parser.graphicsCatalog.tableSnesAddress)} " +
+                "creTable=${hex24(parser.graphicsCatalog.creTileTablePtr)} " +
+                "creGfx=${hex24(parser.graphicsCatalog.creGfxPtr)}"
+        )
+
+        val fixedCreTableSize = runCatching { parser.decompressLZ2(TileGraphics.CRE_TILE_TABLE_SNES).size }.getOrNull()
+        val fixedCreGfxSize = runCatching { parser.decompressLZ2(TileGraphics.CRE_GFX_SNES).size }.getOrNull()
+        if (fixedCreTableSize != TileGraphics.CRE_METATILE_COUNT * 8) {
+            assertTrue(parser.graphicsCatalog.creTileTablePtr != TileGraphics.CRE_TILE_TABLE_SNES)
+        }
+        if (fixedCreGfxSize != (TileGraphics.TOTAL_TILES - TileGraphics.CRE_TILE_START) * TileGraphics.BYTES_PER_TILE) {
+            assertTrue(parser.graphicsCatalog.creGfxPtr != TileGraphics.CRE_GFX_SNES)
+        }
+
+        for (roomId in listOf(0x8120, 0x89E0, 0x8BCA, 0xB2EE)) {
+            val room = parser.readRoomHeader(roomId) ?: continue
+            val states = parser.parseRoomStatesWithData(roomId)
+            println(
+                "room ${hex16(roomId)} selected=level=${hex24(room.levelDataPtr)} " +
+                    "tileset=${room.tileset} states=${states.size}"
+            )
+            assertTrue(TileGraphics(parser).loadTileset(room.tileset))
+            val render = requireNotNull(MapRenderer(parser).renderRoom(room))
+            assertTrue(render.pixels.toSet().size > 1)
+            if (renderOut.isNotBlank()) {
+                writeRoomRenderPng(parser, room, File(renderOut, "room_${hex16(roomId)}.png"))
+            }
+        }
     }
 
     @Test
@@ -158,7 +277,37 @@ class RomCompatibilityTest {
         rom[levelDataPc + 3] = 0xFF.toByte()
     }
 
-    private fun writeRelocatedTilesetTable(rom: ByteArray) {
+    private fun writeCandidateRoomHeaderWithConditionalState(rom: ByteArray) {
+        val roomPc = 0x78094
+        rom[roomPc] = 0x01
+        rom[roomPc + 1] = 0x00
+        rom[roomPc + 2] = 0x12
+        rom[roomPc + 3] = 0x03
+        rom[roomPc + 4] = 0x01
+        rom[roomPc + 5] = 0x01
+        rom[roomPc + 6] = 0x70
+        rom[roomPc + 7] = 0xA0.toByte()
+        rom[roomPc + 8] = 0x00
+        write16(rom, roomPc + 9, 0x9000)
+
+        write16(rom, roomPc + 11, 0xE612)
+        rom[roomPc + 13] = 0x00
+        write16(rom, roomPc + 14, 0x9000)
+        write16(rom, roomPc + 16, 0xE5E6)
+        writeStateData(rom, roomPc + 18, levelDataPtr = 0xE18020, tileset = 3)
+
+        val conditionalStatePc = 0x79000
+        writeStateData(rom, conditionalStatePc, levelDataPtr = 0xE18000, tileset = 2)
+        writeBytesAtSnes(rom, 0xE18000, lz5Direct(byteArrayOf(0x00, 0x00)))
+        writeBytesAtSnes(rom, 0xE18020, lz5Direct(byteArrayOf(0x00, 0x00)))
+    }
+
+    private fun writeStateData(rom: ByteArray, pc: Int, levelDataPtr: Int, tileset: Int) {
+        write24(rom, pc, levelDataPtr)
+        rom[pc + 3] = tileset.toByte()
+    }
+
+    private fun writeRelocatedTilesetTable(rom: ByteArray, blankGfx: Boolean = false) {
         rom[0x78094 + 13 + 3] = 0
         val tablePc = 0x7A000
         val tileTableSnes = 0xE18020
@@ -176,14 +325,61 @@ class RomCompatibilityTest {
         writeBytesAtSnes(rom, tileTableSnes, lz5Direct(tileTable))
 
         val gfx = ByteArray(TileGraphics.BYTES_PER_TILE)
-        for (row in 0 until 8) {
-            gfx[row * 2] = 0xFF.toByte()
+        if (!blankGfx) {
+            for (row in 0 until 8) {
+                gfx[row * 2] = 0xFF.toByte()
+            }
         }
         writeBytesAtSnes(rom, gfxSnes, lz5Direct(gfx))
 
         val palette = ByteArray(256)
         write16(palette, (1 * 16 + 1) * 2, 0x001F)
         writeBytesAtSnes(rom, paletteSnes, lz5Direct(palette))
+    }
+
+    private fun writeRelocatedCreData(
+        rom: ByteArray,
+        tileTableSnes: Int,
+        gfxSnes: Int,
+        placeholderFirstMetatile: Boolean = false,
+    ) {
+        val tileTable = ByteArray(TileGraphics.CRE_METATILE_COUNT * 8)
+        for (wordIndex in 0 until TileGraphics.CRE_METATILE_COUNT * 4) {
+            val tile = if (placeholderFirstMetatile && wordIndex < 4) {
+                0x3FF
+            } else {
+                TileGraphics.CRE_TILE_START +
+                    (wordIndex % (TileGraphics.TOTAL_TILES - TileGraphics.CRE_TILE_START))
+            }
+            write16(tileTable, wordIndex * 2, TileGraphics.encodeMetatileWord(tileNum = tile, palette = 1))
+        }
+        writeBytesAtSnes(rom, tileTableSnes, lz5Direct(tileTable))
+
+        val gfx = ByteArray((TileGraphics.TOTAL_TILES - TileGraphics.CRE_TILE_START) * TileGraphics.BYTES_PER_TILE)
+        for (i in gfx.indices) {
+            gfx[i] = ((i * 37 + 11) and 0xFF).toByte()
+        }
+        for (row in 0 until 8) {
+            gfx[row * 2] = 0xFF.toByte()
+        }
+        writeBytesAtSnes(rom, gfxSnes, lz5Direct(gfx))
+    }
+
+    private fun writeDecompressionPointerReference(rom: ByteArray, pc: Int, snesAddress: Int) {
+        val bank = (snesAddress ushr 16) and 0xFF
+        val lowWord = snesAddress and 0xFFFF
+        rom[pc] = 0xA9.toByte()
+        write16(rom, pc + 1, bank shl 8)
+        rom[pc + 3] = 0x85.toByte()
+        rom[pc + 4] = 0x48
+        rom[pc + 5] = 0xA9.toByte()
+        write16(rom, pc + 6, lowWord)
+        rom[pc + 8] = 0x85.toByte()
+        rom[pc + 9] = 0x47
+        rom[pc + 10] = 0x22
+        rom[pc + 11] = 0xFF.toByte()
+        rom[pc + 12] = 0xB0.toByte()
+        rom[pc + 13] = 0x80.toByte()
     }
 
     private fun writeBytesAtSnes(rom: ByteArray, snesAddress: Int, bytes: ByteArray) {
@@ -215,5 +411,50 @@ class RomCompatibilityTest {
         rom[offset] = (value and 0xFF).toByte()
         rom[offset + 1] = ((value ushr 8) and 0xFF).toByte()
         rom[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+    }
+
+    private fun syntheticRoom(area: Int, tileset: Int): Room =
+        Room(
+            roomId = 0x8094,
+            name = "Synthetic Room",
+            handle = "syntheticRoom",
+            index = 0,
+            area = area,
+            mapX = 0,
+            mapY = 0,
+            width = 1,
+            height = 1,
+            upScroller = 0,
+            downScroller = 0,
+            creBitflag = 0,
+            doorOut = 0,
+            levelDataPtr = 0,
+            tileset = tileset,
+            plmSetPtr = 0,
+            enemySetPtr = 0,
+        )
+
+    private fun singleScreenLevelData(firstBlockWord: Int): ByteArray {
+        val totalBlocks = 16 * 16
+        val layer1Size = totalBlocks * 2
+        val data = ByteArray(2 + layer1Size + totalBlocks)
+        write16(data, 0, layer1Size)
+        write16(data, 2, firstBlockWord)
+        return data
+    }
+
+    private fun hex16(value: Int): String =
+        "0x${(value and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
+
+    private fun hex24(value: Int): String =
+        "0x${(value and 0xFFFFFF).toString(16).uppercase().padStart(6, '0')}"
+
+    private fun writeRoomRenderPng(parser: RomParser, room: Room, file: File) {
+        val render = MapRenderer(parser).renderRoom(room) ?: return
+        file.parentFile.mkdirs()
+        val image = java.awt.image.BufferedImage(render.width, render.height, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(0, 0, render.width, render.height, render.pixels, 0, render.width)
+        javax.imageio.ImageIO.write(image, "png", file)
+        println("wrote render ${file.absolutePath}")
     }
 }

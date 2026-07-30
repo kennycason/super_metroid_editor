@@ -122,6 +122,8 @@ kotlin {
     jvm {
         testRuns["test"].executionTask.configure {
             useJUnitPlatform()
+            systemProperty("smedit.expandedRomFixture", System.getProperty("smedit.expandedRomFixture", ""))
+            systemProperty("smedit.expandedRomRenderOut", System.getProperty("smedit.expandedRomRenderOut", ""))
         }
     }
     
