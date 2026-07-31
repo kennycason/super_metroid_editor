@@ -1977,9 +1977,21 @@ class EditorState {
         } else {
             project = SmEditProject(romPath = romPath)
         }
+        resetForLoadedProject(seedPatches = true)
+    }
+
+    fun initForReadOnlyRom(romPath: String) {
+        projectFilePath = ""
+        project = SmEditProject(romPath = romPath)
+        resetForLoadedProject(seedPatches = false)
+    }
+
+    private fun resetForLoadedProject(seedPatches: Boolean) {
         dirty = false
         patchesSeeded = false
-        seedDefaultPatches(forceRefreshBundled = true)
+        if (seedPatches) {
+            seedDefaultPatches(forceRefreshBundled = true)
+        }
         tileGraphics = null
         editorTileGraphics = null
         editorSelectedMetatile = -1

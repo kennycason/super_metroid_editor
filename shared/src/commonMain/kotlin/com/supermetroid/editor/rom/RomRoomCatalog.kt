@@ -80,14 +80,27 @@ object RomRoomCatalogDetector {
         }
 
         val vanillaById = vanillaRooms.associateBy { it.getRoomIdAsInt() }
+        val vanillaByAreaIndex = buildVanillaAreaIndexLookup(vanillaRooms)
         val rooms = discovered.map { room ->
-            val known = vanillaById[room.roomId]
+            val exact = vanillaById[room.roomId]
+            val indexed = vanillaByAreaIndex[room.header.area to room.header.index]
+            val known = exact ?: indexed
             val id = hexRoomId(room.roomId)
+            val handle = when {
+                exact != null -> exact.handle
+                indexed != null -> "${indexed.handle}_${id.removePrefix("0x").lowercase()}"
+                else -> "room_${id.removePrefix("0x").lowercase()}"
+            }
+            val comment = when {
+                exact != null -> exact.comment
+                indexed != null -> "Discovered from ROM room table scan; matched ${indexed.id} by area/index"
+                else -> "Discovered from ROM room table scan"
+            }
             RoomInfo(
                 id = id,
-                handle = known?.handle ?: "room_${id.removePrefix("0x").lowercase()}",
+                handle = handle,
                 name = known?.name ?: "Room $id",
-                comment = known?.comment ?: "Discovered from ROM room table scan",
+                comment = comment,
             )
         }.sortedBy { it.getRoomIdAsInt() }
 
@@ -104,6 +117,31 @@ object RomRoomCatalogDetector {
 
     private fun hexRoomId(roomId: Int): String =
         "0x${(roomId and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
+
+    private fun buildVanillaAreaIndexLookup(vanillaRooms: List<RoomInfo>): Map<Pair<Int, Int>, RoomInfo> {
+        val countersByArea = IntArray(7)
+        val roomsBySlot = LinkedHashMap<Pair<Int, Int>, MutableList<RoomInfo>>()
+        for (room in vanillaRooms.sortedBy { it.getRoomIdAsInt() }) {
+            val area = vanillaAreaForRoomId(room.getRoomIdAsInt()) ?: continue
+            val slot = area to countersByArea[area]++
+            roomsBySlot.getOrPut(slot) { mutableListOf() }.add(room)
+        }
+        return roomsBySlot.mapNotNull { (slot, rooms) ->
+            rooms.singleOrNull()?.let { slot to it }
+        }.toMap()
+    }
+
+    private fun vanillaAreaForRoomId(roomId: Int): Int? =
+        when (roomId and 0xFFFF) {
+            in 0x91F8 until 0x9AD9 -> 0
+            in 0x9AD9 until 0xA75D -> 1
+            in 0xA75D until 0xCA08 -> 2
+            in 0xCA08 until 0xCED2 -> 3
+            in 0xCED2 until 0xDAAE -> 4
+            in 0xDAAE until 0xDF45 -> 5
+            in 0xDF45 until 0xE82C -> 6
+            else -> null
+        }
 }
 
 object RomRoomScanner {

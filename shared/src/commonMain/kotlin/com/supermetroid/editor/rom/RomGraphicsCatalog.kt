@@ -6,6 +6,7 @@ import com.supermetroid.editor.rom.RomConstants.ROM_SIZE
 enum class RomGraphicsCatalogSource {
     VANILLA_FIXED,
     DISCOVERED_BANK_8F,
+    DISCOVERED_BANK_8F_INDIRECT,
 }
 
 data class TilesetPointerEntry(
@@ -42,7 +43,81 @@ object RomGraphicsCatalogDetector {
         )
         if (fixed.usableFor(usedTilesets)) return fixed.withCrePointers(parser)
 
-        return (scanBank8F(parser, usedTilesets, validator) ?: fixed).withCrePointers(parser)
+        return (
+            scanBank8FIndirect(parser, usedTilesets, validator)
+                ?: scanBank8F(parser, usedTilesets, validator)
+                ?: fixed
+            ).withCrePointers(parser)
+    }
+
+    private fun scanBank8FIndirect(
+        parser: RomParser,
+        usedTilesets: Set<Int>,
+        validator: TilesetEntryValidator,
+    ): RomGraphicsCatalog? {
+        val romData = parser.getRomData()
+        val bankStart = runCatching { parser.snesToPc(BANK_ROOM_DATA or 0x8000) }.getOrNull() ?: return null
+        val bankEndExclusive = runCatching { parser.snesToPc(BANK_ROOM_DATA or 0xFFFF) + 1 }.getOrNull() ?: return null
+        val start = maxOf(bankStart, 0)
+        val end = minOf(bankEndExclusive, romData.size)
+        val tableBytes = TileGraphics.NUM_TILESETS * 2
+        val required = usedTilesets.size.takeIf { it > 0 } ?: requiredValidEntries(usedTilesets)
+        var best: TableCandidate? = null
+
+        for (pc in start..(end - tableBytes)) {
+            val cheapValid = cheapValidIndirectEntryCount(parser, pc)
+            if (cheapValid < required) continue
+            val table = readIndirectTableAt(
+                parser = parser,
+                pointerTablePc = pc,
+                validator = validator,
+            )
+            val usedValid = table.validEntryCount(usedTilesets)
+            if (usedValid < required) continue
+            val candidate = TableCandidate(
+                table = table,
+                usedValid = usedValid,
+                prefixValid = table.validPrefixCount(),
+                totalValid = table.entries.count { it.valid },
+            )
+            val currentBest = best
+            if (currentBest == null || candidate.isBetterThan(currentBest)) {
+                best = candidate
+            }
+        }
+
+        return best?.table
+    }
+
+    private fun readIndirectTableAt(
+        parser: RomParser,
+        pointerTablePc: Int,
+        validator: TilesetEntryValidator,
+    ): RomGraphicsCatalog {
+        val romData = parser.getRomData()
+        val entries = MutableList(TileGraphics.NUM_TILESETS) {
+            TilesetPointerEntry(0, 0, 0, valid = false)
+        }
+        val pointerTableBytes = TileGraphics.NUM_TILESETS * 2
+        if (pointerTablePc < 0 || pointerTablePc + pointerTableBytes > romData.size) {
+            return RomGraphicsCatalog(RomGraphicsCatalogSource.DISCOVERED_BANK_8F_INDIRECT, 0, entries)
+        }
+
+        for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
+            val entryOffset = readU16(romData, pointerTablePc + tilesetId * 2)
+            if (entryOffset !in 0x8000..0xFFFF) continue
+            val entryPc = runCatching { parser.snesToPc(BANK_ROOM_DATA or entryOffset) }.getOrNull() ?: continue
+            if (entryPc < 0 || entryPc + TILESET_ENTRY_BYTES > romData.size) continue
+
+            val entry = readEntryAt(parser, entryPc)
+            entries[tilesetId] = entry.copy(valid = validator.isValid(entry))
+        }
+
+        return RomGraphicsCatalog(
+            source = RomGraphicsCatalogSource.DISCOVERED_BANK_8F_INDIRECT,
+            tableSnesAddress = runCatching { parser.pcToSnes(pointerTablePc) }.getOrDefault(0),
+            entries = entries,
+        )
     }
 
     private fun scanBank8F(
@@ -100,12 +175,7 @@ object RomGraphicsCatalogDetector {
 
         for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
             val offset = tablePc + tilesetId * TILESET_ENTRY_BYTES
-            val entry = TilesetPointerEntry(
-                tileTablePtr = readU24(romData, offset),
-                gfxPtr = readU24(romData, offset + 3),
-                palettePtr = readU24(romData, offset + 6),
-                valid = false,
-            )
+            val entry = readEntryAt(parser, offset)
             entries[tilesetId] = entry.copy(valid = validator.isValid(entry))
         }
         return RomGraphicsCatalog(
@@ -174,10 +244,44 @@ object RomGraphicsCatalogDetector {
         return pc in parser.getRomData().indices
     }
 
+    private fun cheapValidIndirectEntryCount(parser: RomParser, pointerTablePc: Int): Int {
+        val romData = parser.getRomData()
+        val pointerTableBytes = TileGraphics.NUM_TILESETS * 2
+        if (pointerTablePc < 0 || pointerTablePc + pointerTableBytes > romData.size) return 0
+        var valid = 0
+        for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
+            val entryOffset = readU16(romData, pointerTablePc + tilesetId * 2)
+            if (entryOffset !in 0x8000..0xFFFF) continue
+            val entryPc = runCatching { parser.snesToPc(BANK_ROOM_DATA or entryOffset) }.getOrNull() ?: continue
+            if (entryPc < 0 || entryPc + TILESET_ENTRY_BYTES > romData.size) continue
+            if (pointerLooksReadable(parser, readU24(romData, entryPc)) &&
+                pointerLooksReadable(parser, readU24(romData, entryPc + 3)) &&
+                pointerLooksReadable(parser, readU24(romData, entryPc + 6))
+            ) {
+                valid++
+            }
+        }
+        return valid
+    }
+
+    private fun readEntryAt(parser: RomParser, entryPc: Int): TilesetPointerEntry {
+        val romData = parser.getRomData()
+        return TilesetPointerEntry(
+            tileTablePtr = readU24(romData, entryPc),
+            gfxPtr = readU24(romData, entryPc + 3),
+            palettePtr = readU24(romData, entryPc + 6),
+            valid = false,
+        )
+    }
+
     private fun readU24(data: ByteArray, offset: Int): Int =
         (data[offset].toInt() and 0xFF) or
             ((data[offset + 1].toInt() and 0xFF) shl 8) or
             ((data[offset + 2].toInt() and 0xFF) shl 16)
+
+    private fun readU16(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or
+            ((data[offset + 1].toInt() and 0xFF) shl 8)
 
     private data class TableCandidate(
         val table: RomGraphicsCatalog,

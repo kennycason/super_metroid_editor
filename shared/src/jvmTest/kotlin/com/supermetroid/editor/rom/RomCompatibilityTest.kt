@@ -56,6 +56,7 @@ class RomCompatibilityTest {
             assertTrue(catalog.readOnly)
             assertEquals(1, catalog.rooms.size)
             assertEquals(0x8094, catalog.rooms.single().getRoomIdAsInt())
+            assertEquals("Gauntlet Entrance", catalog.rooms.single().name)
             assertContains(catalog.loadNotice(file.name).orEmpty(), "Read-only expanded ROM layout loaded")
         } finally {
             file.delete()
@@ -88,6 +89,24 @@ class RomCompatibilityTest {
         assertEquals(0x8FA000, catalog.tableSnesAddress)
         assertTrue(tileGraphics.loadTileset(0))
         assertEquals(TileGraphics.CRE_METATILE_COUNT, tileGraphics.variableMetatileStart())
+        val pixels = assertNotNull(tileGraphics.renderMetatile(TileGraphics.CRE_METATILE_COUNT))
+        assertTrue(pixels.any { (it ushr 24) != 0 })
+    }
+
+    @Test
+    fun `tile graphics loads from relocated bank 8F indirect tileset entry table`() {
+        val rom = syntheticRom(0x400000)
+        writeCandidateRoomHeaderWithExpandedLevelData(rom)
+        writeIndirectTilesetEntryTable(rom)
+
+        val parser = RomParser(rom)
+        val catalog = parser.graphicsCatalog
+        val tileGraphics = TileGraphics(parser)
+
+        assertEquals(RomGraphicsCatalogSource.DISCOVERED_BANK_8F_INDIRECT, catalog.source)
+        assertEquals(0x8F8E24, catalog.tableSnesAddress)
+        assertEquals(0xE18020, catalog.entry(0)?.tileTablePtr)
+        assertTrue(tileGraphics.loadTileset(0))
         val pixels = assertNotNull(tileGraphics.renderMetatile(TileGraphics.CRE_METATILE_COUNT))
         assertTrue(pixels.any { (it ushr 24) != 0 })
     }
@@ -329,6 +348,43 @@ class RomCompatibilityTest {
             for (row in 0 until 8) {
                 gfx[row * 2] = 0xFF.toByte()
             }
+        }
+        writeBytesAtSnes(rom, gfxSnes, lz5Direct(gfx))
+
+        val palette = ByteArray(256)
+        write16(palette, (1 * 16 + 1) * 2, 0x001F)
+        writeBytesAtSnes(rom, paletteSnes, lz5Direct(palette))
+    }
+
+    private fun writeIndirectTilesetEntryTable(rom: ByteArray) {
+        rom[0x78094 + 13 + 3] = 0
+        val pointerTablePc = 0x78E24
+        val firstEntryPc = 0x7A2C8
+        val firstEntryOffset = 0xA2C8
+        val tileTableSnes = 0xE18020
+        val gfxSnes = 0xE18080
+        val paletteSnes = 0xE18120
+
+        // SMART-style layouts keep a 29-entry pointer table in bank $8F;
+        // each 16-bit offset points to the 9-byte graphics entry record.
+        for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
+            val entryPc = firstEntryPc + tilesetId * 9
+            write16(rom, pointerTablePc + tilesetId * 2, firstEntryOffset + tilesetId * 9)
+            write24(rom, entryPc, tileTableSnes)
+            write24(rom, entryPc + 3, gfxSnes)
+            write24(rom, entryPc + 6, paletteSnes)
+        }
+
+        val tileTable = ByteArray(8)
+        write16(tileTable, 0, TileGraphics.encodeMetatileWord(tileNum = 0, palette = 1))
+        write16(tileTable, 2, TileGraphics.encodeMetatileWord(tileNum = 0, palette = 1))
+        write16(tileTable, 4, TileGraphics.encodeMetatileWord(tileNum = 0, palette = 1))
+        write16(tileTable, 6, TileGraphics.encodeMetatileWord(tileNum = 0, palette = 1))
+        writeBytesAtSnes(rom, tileTableSnes, lz5Direct(tileTable))
+
+        val gfx = ByteArray(TileGraphics.BYTES_PER_TILE)
+        for (row in 0 until 8) {
+            gfx[row * 2] = 0xFF.toByte()
         }
         writeBytesAtSnes(rom, gfxSnes, lz5Direct(gfx))
 

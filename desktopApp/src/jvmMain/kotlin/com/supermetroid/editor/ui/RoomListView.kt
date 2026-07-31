@@ -32,6 +32,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,7 +75,8 @@ fun RoomListView(
     romParser: RomParser?,
     editorState: EditorState?,
     onRoomSelected: (RoomInfo) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(RoomSortMode.AREA) }
@@ -124,6 +127,81 @@ fun RoomListView(
     }
 
     val showAreaHeaders = sortMode == RoomSortMode.AREA && searchQuery.isBlank()
+    val groupedRooms = remember(filteredSortedRooms, roomAreas, showAreaHeaders) {
+        if (!showAreaHeaders) {
+            emptyMap()
+        } else {
+            // Use LinkedHashMap to preserve the sorted order from filteredSortedRooms
+            val map = LinkedHashMap<Int, MutableList<RoomInfo>>()
+            for (room in filteredSortedRooms) {
+                val area = roomAreas[room.handle] ?: -1
+                map.getOrPut(area) { mutableListOf() }.add(room)
+            }
+            map
+        }
+    }
+    val selectedRoomId = selectedRoom?.getRoomIdAsInt()
+    val selectedIndex = remember(filteredSortedRooms, selectedRoomId) {
+        filteredSortedRooms.indexOfFirst { it.getRoomIdAsInt() == selectedRoomId }
+    }
+    val roomListFocusRequester = rememberVerticalSelectionFocusRequester(
+        enabled = filteredSortedRooms.isNotEmpty(),
+        requestFocusOnReady = searchQuery.isBlank(),
+        requestFocusKey = rooms,
+    )
+    val listModifier = Modifier
+        .fillMaxSize()
+        .verticalSelectionKeyNavigation(
+            focusRequester = roomListFocusRequester,
+            itemCount = filteredSortedRooms.size,
+            selectedIndex = selectedIndex,
+            enabled = filteredSortedRooms.isNotEmpty(),
+            onSelectIndex = { nextIndex -> onRoomSelected(filteredSortedRooms[nextIndex]) },
+        )
+    DisposableEffect(filteredSortedRooms, selectedIndex) {
+        if (filteredSortedRooms.isEmpty()) {
+            onKeyboardNavigatorChanged(null)
+            onDispose { onKeyboardNavigatorChanged(null) }
+        } else {
+            val navigator: (Int) -> Boolean = { delta ->
+                val step = if (delta < 0) -1 else 1
+                val nextIndex = if (selectedIndex in filteredSortedRooms.indices) {
+                    (selectedIndex + step + filteredSortedRooms.size) % filteredSortedRooms.size
+                } else if (step < 0) {
+                    filteredSortedRooms.lastIndex
+                } else {
+                    0
+                }
+                onRoomSelected(filteredSortedRooms[nextIndex])
+                true
+            }
+            onKeyboardNavigatorChanged(navigator)
+            onDispose { onKeyboardNavigatorChanged(null) }
+        }
+    }
+    LaunchedEffect(selectedRoomId, filteredSortedRooms, groupedRooms, showAreaHeaders) {
+        val targetIndex = if (!showAreaHeaders) {
+            selectedIndex
+        } else {
+            var lazyIndex = 0
+            var foundIndex = -1
+            for ((area, areaRooms) in groupedRooms) {
+                if (area >= 0) lazyIndex += 1
+                for (room in areaRooms) {
+                    if (room.getRoomIdAsInt() == selectedRoomId) {
+                        foundIndex = lazyIndex
+                        break
+                    }
+                    lazyIndex += 1
+                }
+                if (foundIndex >= 0) break
+            }
+            foundIndex
+        }
+        if (targetIndex >= 0) {
+            runCatching { listState.animateScrollToItem(targetIndex) }
+        }
+    }
     val totalRoomCount = rooms.size
 
     val fs = LocalEditorTheme.current.fontSize.value
@@ -251,17 +329,7 @@ fun RoomListView(
                     )
                 }
             } else if (showAreaHeaders) {
-                val groupedRooms = remember(filteredSortedRooms, roomAreas) {
-                    // Use LinkedHashMap to preserve the sorted order from filteredSortedRooms
-                    val map = LinkedHashMap<Int, MutableList<RoomInfo>>()
-                    for (room in filteredSortedRooms) {
-                        val area = roomAreas[room.handle] ?: -1
-                        map.getOrPut(area) { mutableListOf() }.add(room)
-                    }
-                    map
-                }
-
-                LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+                LazyColumn(modifier = listModifier, state = listState) {
                     groupedRooms.forEach { (area, areaRooms) ->
                         if (area >= 0) {
                             item(key = "header_$area") {
@@ -272,7 +340,7 @@ fun RoomListView(
                             RoomListItem(
                                 room = room,
                                 area = roomAreas[room.handle] ?: -1,
-                                isSelected = selectedRoom?.handle == room.handle,
+                                isSelected = selectedRoomId == room.getRoomIdAsInt(),
                                 isEdited = room.getRoomIdAsInt() in editedRoomIds,
                                 onClick = { onRoomSelected(room) }
                             )
@@ -280,12 +348,12 @@ fun RoomListView(
                     }
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize(), state = listState) {
+                LazyColumn(modifier = listModifier, state = listState) {
                     items(filteredSortedRooms, key = { it.handle }) { room ->
                         RoomListItem(
                             room = room,
                             area = roomAreas[room.handle] ?: -1,
-                            isSelected = selectedRoom?.handle == room.handle,
+                            isSelected = selectedRoomId == room.getRoomIdAsInt(),
                             isEdited = room.getRoomIdAsInt() in editedRoomIds,
                             onClick = { onRoomSelected(room) }
                         )

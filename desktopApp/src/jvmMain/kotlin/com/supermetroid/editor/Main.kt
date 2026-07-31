@@ -19,15 +19,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -121,6 +125,21 @@ private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
 
+private val READ_ONLY_INSPECTABLE_TABS = setOf(
+    TAB_ROOMS,
+    TAB_ITEMS,
+    TAB_TILES,
+    TAB_SOUND,
+    TAB_SPRITES,
+    TAB_MAP,
+    TAB_TEXT,
+    TAB_ENEMY,
+    TAB_BOSS,
+)
+
+private fun isTabAvailableForRom(tab: Int, romReadOnly: Boolean): Boolean =
+    !romReadOnly || tab in READ_ONLY_INSPECTABLE_TABS
+
 
 fun main() = application {
     val scope = rememberCoroutineScope()
@@ -172,7 +191,11 @@ fun main() = application {
                 romLoadMessage = catalog.loadNotice(File(bootRomPath).name)
                 romLoadMessageIsError = false
                 RomPreferences.setLastRomPath(bootRomPath)
-                if (catalog.editable) editorState.initForRom(bootRomPath)
+                if (catalog.editable) {
+                    editorState.initForRom(bootRomPath)
+                } else {
+                    editorState.initForReadOnlyRom(bootRomPath)
+                }
                 if (selectedRoom == null) {
                     selectedRoom = pickDefaultRoom(rooms, bootRomPath)
                 }
@@ -245,10 +268,15 @@ fun main() = application {
             var validationOpen by remember { mutableStateOf(false) }
             var validationIssues by remember { mutableStateOf<List<RomValidator.Issue>?>(null) }
             var validationTimeMs by remember { mutableStateOf(0L) }
+            var romLoadMessageDetailsOpen by remember { mutableStateOf(false) }
+            var romLoadMessageDismissedFor by remember { mutableStateOf<String?>(null) }
             val fs = editorThemeState.fontSize.value
             val romCatalog = romParser?.roomCatalog
             val romEditable = romCatalog?.editable == true
             val romReadOnly = romCatalog?.readOnly == true
+            LaunchedEffect(romLoadMessage) {
+                romLoadMessageDetailsOpen = false
+            }
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -291,7 +319,11 @@ fun main() = application {
                                             romLoadMessage = catalog.loadNotice(file.name)
                                             romLoadMessageIsError = false
                                             RomPreferences.setLastRomPath(file.absolutePath)
-                                            if (catalog.editable) editorState.initForRom(file.absolutePath)
+                                            if (catalog.editable) {
+                                                editorState.initForRom(file.absolutePath)
+                                            } else {
+                                                editorState.initForReadOnlyRom(file.absolutePath)
+                                            }
                                             selectedRoom = pickDefaultRoom(rooms, file.absolutePath)
                                         } catch (e: Exception) {
                                             mainLog.error(e) { "Failed to load selected ROM: ${e.message}" }
@@ -420,33 +452,90 @@ fun main() = application {
                         }
                     }
                 }
-                romLoadMessage?.let { message ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        color = if (romLoadMessageIsError) {
-                            MaterialTheme.colorScheme.errorContainer
-                        } else {
-                            MaterialTheme.colorScheme.secondaryContainer
-                        },
-                        contentColor = if (romLoadMessageIsError) {
-                            MaterialTheme.colorScheme.onErrorContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        },
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                            Text(
-                                "ROM Compatibility Report",
-                                fontSize = fs.body,
-                                fontFamily = FontFamily.Monospace,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                message,
-                                fontSize = fs.detail,
-                                fontFamily = FontFamily.Monospace,
-                            )
+                romLoadMessage?.takeIf { romLoadMessageDismissedFor != it }?.let { message ->
+                    val noticeColor = if (romLoadMessageIsError) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    }
+                    val noticeContentColor = if (romLoadMessageIsError) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    }
+                    val noticeTitle = if (romLoadMessageIsError) {
+                        "ROM load issue"
+                    } else {
+                        "Expanded ROM loaded read-only"
+                    }
+                    val noticeSummary = message
+                        .lineSequence()
+                        .filter { it.isNotBlank() && !it.startsWith("Read-only expanded ROM layout loaded") }
+                        .firstOrNull()
+                        ?: message.lineSequence().firstOrNull().orEmpty()
+                    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = noticeColor,
+                            contentColor = noticeContentColor,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        noticeTitle,
+                                        fontSize = fs.body,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                    Text(
+                                        noticeSummary,
+                                        fontSize = fs.detail,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { romLoadMessageDetailsOpen = !romLoadMessageDetailsOpen },
+                                ) {
+                                    Text(if (romLoadMessageDetailsOpen) "Hide" else "Details", fontSize = fs.detail)
+                                }
+                                IconButton(
+                                    onClick = {
+                                        romLoadMessageDismissedFor = message
+                                        romLoadMessageDetailsOpen = false
+                                    },
+                                    modifier = Modifier.size(28.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Dismiss ROM compatibility notice",
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            }
+                        }
+                        if (romLoadMessageDetailsOpen) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                shape = RoundedCornerShape(6.dp),
+                            ) {
+                                Text(
+                                    message,
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(10.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -456,9 +545,10 @@ fun main() = application {
                 var tilesetHeightInitialized by remember { mutableStateOf(false) }
                 var tilesetHeightDp by remember { mutableStateOf(400f) }
                 var leftTab by remember { mutableStateOf(0) }
-                LaunchedEffect(romReadOnly) {
-                    if (romReadOnly) leftTab = TAB_ROOMS
+                LaunchedEffect(romReadOnly, leftTab) {
+                    if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
                 }
+                var roomKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 var itemKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
                 val mainContentFocusRequester = remember { FocusRequester() }
@@ -489,7 +579,7 @@ fun main() = application {
                     tilesetSubTab = 2
                 }
                 LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
-                    if (leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
+                    if (leftTab == TAB_ROOMS || leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
                         requestVerticalSelectionFocus(mainContentFocusRequester)
                     }
                 }
@@ -503,6 +593,15 @@ fun main() = application {
                                 return@onPreviewKeyEvent false
                             }
                             when (leftTab) {
+                                TAB_ROOMS -> if (romReadOnly) {
+                                    when (keyEvent.key) {
+                                        Key.DirectionUp -> roomKeyboardNavigator?.invoke(-1) ?: false
+                                        Key.DirectionDown -> roomKeyboardNavigator?.invoke(1) ?: false
+                                        else -> false
+                                    }
+                                } else {
+                                    false
+                                }
                                 TAB_ITEMS -> when (keyEvent.key) {
                                     Key.DirectionUp -> itemKeyboardNavigator?.invoke(-1) ?: false
                                     Key.DirectionDown -> itemKeyboardNavigator?.invoke(1) ?: false
@@ -548,7 +647,7 @@ fun main() = application {
                                 val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
                                 tabNames.forEachIndexed { idx, name ->
                                     val selected = leftTab == idx
-                                    val tabEnabled = !romReadOnly || idx == TAB_ROOMS
+                                    val tabEnabled = isTabAvailableForRom(idx, romReadOnly)
                                     Text(
                                         text = name,
                                         fontSize = fs.tabLabel,
@@ -561,7 +660,9 @@ fun main() = application {
                                         modifier = Modifier
                                             .clickable(enabled = tabEnabled) {
                                                 leftTab = idx
-                                                if (idx == TAB_PATCHES || idx == TAB_ITEMS) editorState.seedDefaultPatches()
+                                                if (!romReadOnly && (idx == TAB_PATCHES || idx == TAB_ITEMS)) {
+                                                    editorState.seedDefaultPatches()
+                                                }
                                             }
                                             .padding(horizontal = 8.dp, vertical = 6.dp)
                                     )
@@ -582,6 +683,7 @@ fun main() = application {
                                             if (romPath != null) saveLastRoom(romPath, room)
                                         },
                                         modifier = Modifier.fillMaxSize(),
+                                        onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
                                     )
                                 } else {
                                     RoomsTabSidebar(
