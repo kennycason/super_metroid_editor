@@ -17,6 +17,9 @@ class PhantoonSpritemap(private val romParser: RomParser) {
 
     companion object {
         const val PHANTOON_ROOM_SNES = 0x8FCD13
+        private const val PHANTOON_ROOM_HANDLE = "phantoon"
+        private const val PHANTOON_ROOM_NAME = "Phantoon's Room"
+        private const val PHANTOON_SPECIES_ID = 0xE4BF
         const val EMPTY_TILE = RomConstants.EMPTY_TILE
         const val PALETTE_ROW = 7
         /** Phantoon in-game palette: $A7:CA21, 16 BGR555 words. */
@@ -88,9 +91,8 @@ class PhantoonSpritemap(private val romParser: RomParser) {
     /** Load the Phantoon room's tileset and the in-game palette. Returns true on success. */
     fun load(): Boolean {
         val rom = romParser.getRomData()
-        val stateOffsets = romParser.findAllStateDataOffsets(PHANTOON_ROOM_SNES)
-        if (stateOffsets.isEmpty()) return false
-        tilesetId = rom[stateOffsets.last() + 3].toInt() and 0xFF
+        val stateOffset = findPhantoonStateOffset() ?: return false
+        tilesetId = rom[stateOffset + 3].toInt() and 0xFF
 
         val tg = getTileGraphics()
         if (!tg.loadTileset(tilesetId)) return false
@@ -105,6 +107,49 @@ class PhantoonSpritemap(private val romParser: RomParser) {
         }
         palette = pal
         return true
+    }
+
+    private fun findPhantoonStateOffset(): Int? =
+        findStateOffsetByPhantoonEnemyData()
+            ?: findRoomStateOffsets().lastOrNull()
+
+    private fun findStateOffsetByPhantoonEnemyData(): Int? {
+        for (roomInfo in romParser.roomCatalog.rooms) {
+            val roomId = roomInfo.getRoomIdAsInt()
+            for (state in romParser.parseRoomStatesWithData(roomId)) {
+                if (state.tileset !in 0 until TileGraphics.NUM_TILESETS) continue
+                val hasPhantoonGfx = romParser.parseEnemyGfxSet(state.enemyGfxPtr)
+                    .any { it.speciesId == PHANTOON_SPECIES_ID }
+                val hasPhantoonEnemy = romParser.parseEnemyPopulation(state.enemySetPtr)
+                    .any { it.id == PHANTOON_SPECIES_ID }
+                if (hasPhantoonGfx || hasPhantoonEnemy) {
+                    return state.stateInfo.stateDataPcOffset
+                }
+            }
+        }
+        return null
+    }
+
+    private fun findRoomStateOffsets(): List<Int> {
+        val catalog = romParser.roomCatalog
+        if (catalog.source != RomRoomCatalogSource.VANILLA) {
+            val catalogRoom = catalog.rooms.firstOrNull { room ->
+                room.handle == PHANTOON_ROOM_HANDLE ||
+                    room.handle.startsWith("${PHANTOON_ROOM_HANDLE}_") ||
+                    room.name.equals(PHANTOON_ROOM_NAME, ignoreCase = true)
+            }
+            val catalogOffsets = catalogRoom
+                ?.let { romParser.findAllStateDataOffsets(it.getRoomIdAsInt()) }
+                .orEmpty()
+            if (catalogOffsets.isNotEmpty()) return catalogOffsets
+        }
+
+        val vanillaRoomId = PHANTOON_ROOM_SNES and 0xFFFF
+        return if (romParser.readRoomHeader(vanillaRoomId) != null) {
+            romParser.findAllStateDataOffsets(vanillaRoomId)
+        } else {
+            emptyList()
+        }
     }
 
     fun getTileGraphics(): TileGraphics {

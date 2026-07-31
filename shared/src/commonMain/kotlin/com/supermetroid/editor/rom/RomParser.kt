@@ -1279,12 +1279,26 @@ class RomParser(internal val romData: ByteArray) {
     /**
      * Read the minimap tile data for a given area (0-6).
      *
-     * ROM layout: each area has 0x1000 bytes stored as two 32×32 halves.
+     * Vanilla ROM layout: each area has 0x1000 bytes stored as two 32×32 halves.
      * Left half (x=0..31) at offset base, right half (x=32..63) at base+0x800.
      * Each tile is a 16-bit LE word at: halfBase + ((y+1) * 32 + (x % 32)) * 2
+     *
+     * SMART-built expanded ROMs may store each area as one contiguous 64×32
+     * row-major tilemap near the end of the ROM; detect that layout first.
      */
     fun readMinimapTiles(area: Int): MinimapData {
         require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        smartRowMajorMinimapPc(area)?.let { basePc ->
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            for (i in 0 until MinimapData.TILE_COUNT) {
+                val offset = basePc + i * 2
+                if (offset + 1 < romData.size) {
+                    tiles[i] = readU16(romData, offset)
+                }
+            }
+            return MinimapData(area, tiles)
+        }
+
         val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[area])
         val tiles = IntArray(MinimapData.TILE_COUNT)
 
@@ -1303,21 +1317,26 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     /**
-     * Read the 256 minimap 2bpp tile graphics from ROM PC $D3200.
-     * Returns a 256-element array where each element is an IntArray of 64 pixel values (0-3).
+     * Read the 256 minimap 4bpp tile graphics from the pause-map graphics sheet.
+     * Returns a 256-element array where each element is an IntArray of 64 pixel values (0-15).
      * Pixel layout is row-major: pixels[row * 8 + col].
      */
     fun readMinimapTileGraphics(): Array<IntArray> {
-        val base = 0xD3200
+        val base = romStartOffset + PAUSE_MAP_GFX_PC
         return Array(256) { tileIdx ->
-            val offset = base + tileIdx * 16
+            val offset = base + tileIdx * RomConstants.BYTES_PER_4BPP_TILE
             val pixels = IntArray(64)
             for (row in 0 until 8) {
                 val bp0 = if (offset + row * 2 < romData.size) romData[offset + row * 2].toInt() and 0xFF else 0
                 val bp1 = if (offset + row * 2 + 1 < romData.size) romData[offset + row * 2 + 1].toInt() and 0xFF else 0
+                val bp2 = if (offset + 16 + row * 2 < romData.size) romData[offset + 16 + row * 2].toInt() and 0xFF else 0
+                val bp3 = if (offset + 16 + row * 2 + 1 < romData.size) romData[offset + 16 + row * 2 + 1].toInt() and 0xFF else 0
                 for (col in 0 until 8) {
                     val bit = 7 - col
-                    pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
+                    pixels[row * 8 + col] = ((bp0 shr bit) and 1) or
+                        (((bp1 shr bit) and 1) shl 1) or
+                        (((bp2 shr bit) and 1) shl 2) or
+                        (((bp3 shr bit) and 1) shl 3)
                 }
             }
             pixels
@@ -1531,6 +1550,17 @@ class RomParser(internal val romData: ByteArray) {
      * Returns a list of (pcOffset, byte) pairs for the changed bytes.
      */
     fun writeMinimapTiles(data: MinimapData): List<Pair<Int, Byte>> {
+        smartRowMajorMinimapPc(data.area)?.let { basePc ->
+            val patches = mutableListOf<Pair<Int, Byte>>()
+            for (i in 0 until MinimapData.TILE_COUNT) {
+                val word = data.tiles[i]
+                val offset = basePc + i * 2
+                patches.add(offset to (word and 0xFF).toByte())
+                patches.add((offset + 1) to ((word shr 8) and 0xFF).toByte())
+            }
+            return patches
+        }
+
         val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[data.area])
         val patches = mutableListOf<Pair<Int, Byte>>()
 
@@ -1545,6 +1575,40 @@ class RomParser(internal val romData: ByteArray) {
             }
         }
         return patches
+    }
+
+    private fun smartRowMajorMinimapPc(area: Int): Int? {
+        if (area !in 0 until MinimapData.NUM_AREAS) return null
+        val base = romStartOffset + SMART_ROW_MAJOR_MINIMAP_BASE_PC
+        val end = base + MinimapData.NUM_AREAS * SMART_ROW_MAJOR_MINIMAP_AREA_BYTES
+        if (end > romData.size) return null
+        if (!hasSmartRowMajorMinimapLayout(base)) return null
+        return base + (MinimapData.NUM_AREAS - 1 - area) * SMART_ROW_MAJOR_MINIMAP_AREA_BYTES
+    }
+
+    private fun hasSmartRowMajorMinimapLayout(basePc: Int): Boolean {
+        for (area in 0 until MinimapData.NUM_AREAS) {
+            val areaPc = basePc + area * SMART_ROW_MAJOR_MINIMAP_AREA_BYTES
+            if (!looksLikeRowMajorMinimapBlock(areaPc)) return false
+        }
+        return true
+    }
+
+    private fun looksLikeRowMajorMinimapBlock(pc: Int): Boolean {
+        if (pc < 0 || pc + SMART_ROW_MAJOR_MINIMAP_AREA_BYTES > romData.size) return false
+        var emptyTiles = 0
+        var knownTiles = 0
+        var nonZero = 0
+        for (i in 0 until MinimapData.TILE_COUNT) {
+            val word = readU16(romData, pc + i * 2)
+            val tile = MinimapData.tileIndex(word)
+            if (tile == MinimapTiles.EMPTY) emptyTiles++
+            if (tile in SMART_MINIMAP_COMMON_TILES) knownTiles++
+            if (word != 0) nonZero++
+        }
+        return nonZero > 0 &&
+            emptyTiles >= MinimapData.TILE_COUNT / 4 &&
+            knownTiles >= MinimapData.TILE_COUNT / 3
     }
 
     /**
@@ -1568,6 +1632,38 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     companion object {
+        private const val PAUSE_MAP_GFX_PC = 0x1B0000
+        private const val SMART_ROW_MAJOR_MINIMAP_BASE_PC = 0x3F9000
+        private const val SMART_ROW_MAJOR_MINIMAP_AREA_BYTES = MinimapData.TILE_COUNT * 2
+        private val SMART_MINIMAP_COMMON_TILES = setOf(
+            MinimapTiles.EMPTY,
+            MinimapTiles.ROOM_OPEN,
+            MinimapTiles.WALLS_TBLR,
+            MinimapTiles.WALLS_TBL,
+            MinimapTiles.WALLS_TB,
+            MinimapTiles.WALLS_LR,
+            MinimapTiles.WALLS_TLR,
+            MinimapTiles.WALLS_TL,
+            MinimapTiles.WALL_TOP,
+            MinimapTiles.WALL_RIGHT,
+            MinimapTiles.WALL_BOTTOM,
+            MinimapTiles.DIAG_BL,
+            MinimapTiles.DIAG_TL,
+            MinimapTiles.DIAG_BR,
+            MinimapTiles.DIAG_TR,
+            MinimapTiles.WALLS_TBLR_B,
+            MinimapTiles.WALLS_TLR_B,
+            MinimapTiles.WALLS_TLR_C,
+            MinimapTiles.WALLS_TBLR_C,
+            MinimapTiles.ITEM_OPEN,
+            MinimapTiles.ITEM_WALL_TOP,
+            MinimapTiles.ITEM_WALL_BOTTOM,
+            MinimapTiles.ITEM_WALL_LEFT,
+            MinimapTiles.ITEM_WALL_RIGHT,
+            MinimapTiles.ELEVATOR_SHAFT,
+            MinimapTiles.ELEVATOR,
+        )
+
         // ─── Item PLM catalog ──────────────────────────────────────
         data class ItemDef(val name: String, val shortLabel: String, val chozoId: Int, val visibleId: Int, val hiddenId: Int)
 

@@ -236,6 +236,61 @@ class RomCompatibilityTest {
     }
 
     @Test
+    fun `expanded rom fixture reads smart minimap text and music layouts`() {
+        val path = System.getProperty("smedit.expandedRomFixture").orEmpty()
+        if (path.isBlank()) return
+        val parser = RomParser.loadRom(path)
+
+        val crateriaMap = parser.readMinimapTiles(0)
+        assertEquals(0x0C1F, crateriaMap.getTile(0, 0))
+        assertEquals(0x0C25, crateriaMap.getTile(25, 1))
+        assertEquals(0x0C22, crateriaMap.getTile(9, 5))
+
+        val pauseMapTiles = parser.readMinimapTileGraphics()
+        assertTrue(
+            pauseMapTiles[MinimapTiles.WALLS_TBLR].any { it != 0 },
+            "Pause-map wall tile graphics should not be blank"
+        )
+
+        val text = TextData.readAllText(parser.getRomData())
+        assertEquals("CRATERIA", text.first { it.id == "area_0" }.text)
+        assertEquals("TOURIAN", text.first { it.id == "area_5" }.text)
+        assertEquals("COLONY", text.first { it.id == "area_6" }.text)
+        assertEquals(
+            "SELF DESTRUCT SEQUENCE\nACTIVATED EVACUATE\nCOLONY IMMEDIATELY",
+            text.first { it.id == "ceres_escape" }.text,
+        )
+        val intro = text.filter { it.category == TextCategory.INTRO_STORY }
+        assertEquals(6, intro.size, "SMART intro story should parse from relocated green-text records")
+        assertTrue(intro.none { it.text.contains("?") }, "SMART intro story should not contain unknown glyphs")
+        assertTrue(intro[0].text.startsWith("I FIRST BATTLED"), "Intro part 1 should decode from relocated records")
+        assertTrue(intro[5].text.contains("ATTACK"), "Intro part 6 should decode from relocated records")
+
+        val titleBlocks = SpcData.findSongSetTransferData(parser, 0x03)
+        assertTrue(titleBlocks.isNotEmpty(), "Title song set should parse from relocated SMART table")
+        assertEquals(0x40, titleBlocks.first().data.size)
+        assertEquals(0x6D60, titleBlocks.first().destAddr)
+    }
+
+    @Test
+    fun `expanded rom fixture renders special boss tilemap sprites`() {
+        val path = System.getProperty("smedit.expandedRomFixture").orEmpty()
+        if (path.isBlank()) return
+        val parser = RomParser.loadRom(path)
+
+        val phantoon = PhantoonSpritemap(parser)
+        assertTrue(phantoon.load(), "Phantoon special spritemap should load")
+        assertEquals(5, phantoon.getTilesetId(), "SMART Phantoon renderer should resolve the state containing enemy \$E4BF")
+        val phantoonBody = requireNotNull(phantoon.renderComponent(PhantoonSpritemap.COMPONENT_TILEMAPS[0]))
+        assertTrue(phantoonBody.pixels.count { it != 0 } > 100, "Phantoon body should have visible pixels")
+
+        val kraid = KraidSpritemap(parser)
+        assertTrue(kraid.load(), "Kraid special spritemap should load")
+        val kraidBody = requireNotNull(kraid.renderBodyTilemap(KraidSpritemap.BODY_TILEMAPS.last()))
+        assertTrue(kraidBody.pixels.count { it != 0 } > 100, "Kraid body should have visible pixels")
+    }
+
+    @Test
     fun `loadRom reports compatibility details for unsupported sizes`() {
         val rom = syntheticRom(0x400000)
         val file = File.createTempFile("smedit-expanded-rom-", ".smc")

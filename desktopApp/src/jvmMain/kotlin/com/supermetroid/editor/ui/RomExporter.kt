@@ -1643,6 +1643,10 @@ internal class RomExporter(
         val allText = if (project.textEdits.isNotEmpty()) TextData.readAllText(romParser.getRomData()) else emptyList()
         for ((id, newText) in project.textEdits) {
             val entry = allText.find { it.id == id } ?: continue
+            if (!entry.writable || entry.pcOffset < 0) {
+                onLog("[EXPORT] Skipped text entry '${entry.label}': ROM location is not writable")
+                continue
+            }
             val encoded = when (entry.category) {
                 TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
                 TextCategory.ESCAPE_TEXT -> TextData.encodeEscapeText(newText, entry.rawBytes)
@@ -1651,7 +1655,8 @@ internal class RomExporter(
                 TextCategory.INTRO_STORY -> TextData.encodeGreenText(newText, entry.rawBytes)
             }
             for (i in encoded.indices) {
-                if (entry.pcOffset + i < romData.size) romData[entry.pcOffset + i] = encoded[i]
+                val offset = entry.pcOffset + i
+                if (offset in romData.indices) romData[offset] = encoded[i]
             }
             patched++
         }

@@ -8,7 +8,6 @@ import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.RoomInfo
-import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.MapStationData
 import com.supermetroid.editor.rom.RomParser
@@ -44,7 +43,7 @@ class MinimapEditorState {
     /** The currently selected room (null if none selected). */
     val selectedRoom: Room? get() = areaRooms.getOrNull(selectedRoomIndex)
 
-    /** Cached 2bpp tile graphics: 256 tiles, each IntArray(64) of pixel values 0-3. */
+    /** Cached 4bpp tile graphics: 256 tiles, each IntArray(64) of pixel values 0-15. */
     var tileGraphics by mutableStateOf<Array<IntArray>?>(null)
 
     val undoStack = mutableStateListOf<MinimapData>()
@@ -72,7 +71,7 @@ class MinimapEditorState {
 
     /** Rebuild areaRooms applying any header edits from the project. */
     fun refreshAreaRooms(parser: RomParser, area: Int, editorState: EditorState) {
-        areaRooms = RoomRepository().getAllRooms().mapNotNull { info ->
+        areaRooms = parser.roomCatalog.rooms.mapNotNull { info ->
             val roomId = info.getRoomIdAsInt()
             val room = parser.readRoomHeader(roomId) ?: return@mapNotNull null
             val named = RoomInfo.fromRoomInfo(info, room)

@@ -10,9 +10,13 @@ package com.supermetroid.editor.rom
  *   Bit 15:     Vertical flip
  *
  * The grid is stored as two 32×32 halves (left half, right half).
- * ROM addresses per area (PC offsets via snesToPc):
+ * Vanilla ROM addresses per area (PC offsets via snesToPc):
  *   Crateria=$1A9000, Brinstar=$1A8000, Norfair=$1AA000,
  *   Wrecked Ship=$1AB000, Maridia=$1AC000, Tourian=$1AD000, Ceres=$1AE000
+ *
+ * SMART-built expanded ROMs may instead store full 64x32 row-major area maps
+ * near the end of the ROM; RomParser detects that layout before falling back
+ * to the vanilla two-half layout.
  */
 data class MinimapData(
     val area: Int,
@@ -161,7 +165,7 @@ object MinimapTiles {
     // Passable room tiles (no walls)
     const val ROOM_OPEN = 0x1B
 
-    // Wall assignments verified from actual 2bpp pixel data at ROM PC $D3200.
+    // Wall assignments verified from actual pause-map 4bpp pixel data at ROM PC $1B0000.
     // Names reflect TRUE wall configuration, not assumed positions.
 
     // Four walls (fully enclosed)

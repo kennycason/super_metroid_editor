@@ -17,6 +17,7 @@ data class TextEntry(
     val maxLength: Int,
     val text: String,
     val rawBytes: ByteArray,
+    val writable: Boolean = true,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -68,6 +69,15 @@ object TextData {
     private const val MARKER_MOVIE4 = 0xB19B
     private const val MARKER_WAIT = 0xB228
     private val SECTION_MARKERS = setOf(MARKER_MOVIE1, MARKER_MOVIE2, MARKER_MOVIE3, MARKER_MOVIE4, MARKER_WAIT)
+    private val INTRO_PAGE_START_MARKERS = listOf(0xAE43, MARKER_MOVIE1, MARKER_MOVIE2, MARKER_MOVIE3, MARKER_MOVIE4, MARKER_WAIT)
+    private val INTRO_RUN_MARKERS = setOf(
+        0xAE43, 0xAE5B, MARKER_MOVIE1, 0xAE91,
+        MARKER_MOVIE2, 0xB08C, MARKER_MOVIE3, 0xB0CB,
+        MARKER_MOVIE4, 0xB1B3, MARKER_WAIT, 0xADD4, 0xB240,
+    )
+    private val INTRO_START_RECORD = byteArrayOf(
+        0x01.toByte(), 0x00.toByte(), 0x01.toByte(), 0x01.toByte(), 0x83.toByte(), 0xD6.toByte(),
+    )
 
     // Area name tile encoding: 0x30='A', 0x31='B', ..., 0x49='Z'
     // Blank/padding = 0x01, space separator = 0x01
@@ -80,6 +90,10 @@ object TextData {
     val AREA_LABELS = listOf(
         "Crateria", "Brinstar", "Norfair", "Wrecked Ship",
         "Maridia", "Tourian", "Ceres"
+    )
+    private val AREA_DEFAULT_TEXT = listOf(
+        "CRATERIA", "BRINSTAR", "NORFAIR", "WRECKED SHIP",
+        "MARIDIA", "TOURIAN", "COLONY"
     )
 
     // Escape timer messages — mostly ASCII with control bytes
@@ -203,7 +217,15 @@ object TextData {
 
     /** Decode an area name from ROM bytes. */
     fun decodeAreaName(rom: ByteArray, areaIndex: Int): String {
-        val offset = AREA_NAMES_PC + areaIndex * AREA_NAME_ENTRY_SIZE
+        val offset = resolveAreaNameEntries(rom).getOrNull(areaIndex)?.pcOffset
+            ?: (AREA_NAMES_PC + areaIndex * AREA_NAME_ENTRY_SIZE)
+        if (offset < 0 || offset + AREA_NAME_ENTRY_SIZE > rom.size) {
+            return AREA_DEFAULT_TEXT.getOrElse(areaIndex) { "" }
+        }
+        return decodeAreaNameAt(rom, offset)
+    }
+
+    private fun decodeAreaNameAt(rom: ByteArray, offset: Int): String {
         val sb = StringBuilder()
         for (i in 0 until AREA_NAME_CHAR_COUNT) {
             val tile = rom[offset + i * 2].toInt() and 0xFF
@@ -227,43 +249,116 @@ object TextData {
     /** Decode escape text from ROM bytes. Control bytes are stripped. */
     fun decodeEscapeText(rom: ByteArray, pc: Int, size: Int): String {
         val sb = StringBuilder()
-        for (i in 0 until size) {
+        var i = 0
+        var atLineStart = true
+        var lineControlSkipped = false
+        var sawVisible = false
+        while (i < size && pc + i < rom.size) {
             val b = rom[pc + i].toInt() and 0xFF
+            val controlLength = if (atLineStart && !lineControlSkipped) {
+                escapeLineControlLength(rom, pc, size, i)
+            } else {
+                0
+            }
             when {
-                b == 0x0D -> sb.append('\n')
-                b in 0x20..0x7E -> sb.append(b.toChar())
+                b == 0x00 -> {
+                    if (sawVisible && i + 1 < size && pc + i + 1 < rom.size &&
+                        (rom[pc + i + 1].toInt() and 0xFF) == 0x00
+                    ) {
+                        break
+                    }
+                    i++
+                }
+                b == 0x0D -> {
+                    if (sb.isNotEmpty() && sb.last() != '\n') sb.append('\n')
+                    atLineStart = true
+                    lineControlSkipped = false
+                    i++
+                }
+                controlLength > 0 -> {
+                    i += controlLength
+                    lineControlSkipped = true
+                }
+                b in 0x20..0x7E -> {
+                    sb.append(b.toChar())
+                    sawVisible = true
+                    atLineStart = false
+                    i++
+                }
                 // Skip control bytes (0x00-0x1F except 0x0D)
+                else -> i++
             }
         }
-        return sb.toString().trim()
+        return sb.toString()
+            .lines()
+            .joinToString("\n") { it.trimEnd() }
+            .trim()
     }
 
     /** Encode escape text back to ROM bytes, preserving control byte positions. */
     fun encodeEscapeText(text: String, originalBytes: ByteArray): ByteArray {
         val result = originalBytes.copyOf()
+        val upper = text.uppercase()
         var textIdx = 0
-        val lines = text.uppercase()
-        for (i in result.indices) {
+        var i = 0
+        var atLineStart = true
+        var lineControlSkipped = false
+        var sawVisible = false
+        while (i < result.size) {
             val orig = result[i].toInt() and 0xFF
+            val controlLength = if (atLineStart && !lineControlSkipped) {
+                escapeLineControlLength(result, 0, result.size, i)
+            } else {
+                0
+            }
             when {
+                orig == 0x00 -> {
+                    if (sawVisible && i + 1 < result.size && (result[i + 1].toInt() and 0xFF) == 0x00) {
+                        break
+                    }
+                    i++
+                }
                 orig == 0x0D -> {
                     // Keep newline control byte
-                    if (textIdx < lines.length && lines[textIdx] == '\n') textIdx++
+                    if (textIdx < upper.length && upper[textIdx] == '\n') textIdx++
+                    atLineStart = true
+                    lineControlSkipped = false
+                    i++
+                }
+                controlLength > 0 -> {
+                    i += controlLength
+                    lineControlSkipped = true
                 }
                 orig in 0x20..0x7E -> {
+                    while (textIdx < upper.length && upper[textIdx] == '\n') textIdx++
                     // Replace with new character or space if text is shorter
-                    result[i] = if (textIdx < lines.length && lines[textIdx] != '\n') {
-                        val ch = lines[textIdx++]
+                    result[i] = if (textIdx < upper.length) {
+                        val ch = upper[textIdx++]
                         if (ch in ' '..'~') ch.code.toByte() else 0x20.toByte()
                     } else {
-                        textIdx++
                         0x20.toByte() // pad with spaces
                     }
+                    atLineStart = false
+                    sawVisible = true
+                    i++
                 }
                 // Preserve control bytes as-is
+                else -> i++
             }
         }
         return result
+    }
+
+    private fun escapeLineControlLength(bytes: ByteArray, pc: Int, size: Int, localIndex: Int): Int {
+        if (localIndex + 1 >= size || pc + localIndex + 1 >= bytes.size) return 0
+        val command = bytes[pc + localIndex].toInt() and 0xFF
+        val parameter = bytes[pc + localIndex + 1].toInt() and 0xFF
+        if (parameter !in 0x20..0x7E) return 0
+        return when (command) {
+            0x05, 0x85 -> 2
+            0x45 -> 2
+            else -> 0
+        }
     }
 
     /**
@@ -300,6 +395,14 @@ object TextData {
 
     /** Decode green text records into story sections (split by markers). */
     fun decodeGreenText(rom: ByteArray): List<GreenTextSection> {
+        val fixed = decodeContiguousGreenText(rom)
+        if (greenTextLooksValid(fixed)) return fixed
+
+        val relocated = decodeRelocatedGreenText(rom)
+        return if (greenTextLooksValid(relocated)) relocated else fixed
+    }
+
+    private fun decodeContiguousGreenText(rom: ByteArray): List<GreenTextSection> {
         val sections = mutableListOf<GreenTextSection>()
         val sectionNames = listOf("Intro Part 1", "Intro Part 2", "Intro Part 3", "Intro Part 4", "Intro Part 5", "Intro Part 6")
         var currentLines = mutableListOf<String>()
@@ -322,6 +425,7 @@ object TextData {
                         name = sectionNames.getOrElse(sectionIdx) { "Part ${sectionIdx + 1}" },
                         text = currentLines.joinToString("\n"),
                         pcOffset = sectionStart,
+                        snesAddress = GREEN_TEXT_SNES + (sectionStart - GREEN_TEXT_PC),
                         rawSize = rawSize,
                     ))
                     sectionIdx++
@@ -352,13 +456,125 @@ object TextData {
                 name = sectionNames.getOrElse(sectionIdx) { "Part ${sectionIdx + 1}" },
                 text = currentLines.joinToString("\n"),
                 pcOffset = sectionStart,
+                snesAddress = GREEN_TEXT_SNES + (sectionStart - GREEN_TEXT_PC),
                 rawSize = GREEN_TEXT_PC + GREEN_TEXT_MAX_RECORDS * GREEN_TEXT_RECORD_SIZE - sectionStart,
             ))
         }
         return sections
     }
 
-    data class GreenTextSection(val name: String, val text: String, val pcOffset: Int, val rawSize: Int)
+    private fun decodeRelocatedGreenText(rom: ByteArray): List<GreenTextSection> {
+        val sectionNames = listOf("Intro Part 1", "Intro Part 2", "Intro Part 3", "Intro Part 4", "Intro Part 5", "Intro Part 6")
+        return INTRO_PAGE_START_MARKERS.mapIndexedNotNull { index, marker ->
+            findIntroPageStarts(rom, marker)
+                .asSequence()
+                .map { startPc -> decodeGreenTextPageAt(rom, startPc, sectionNames[index]) }
+                .filter { it.text.isNotBlank() }
+                .minByOrNull { section -> greenTextScore(section.text) }
+        }
+    }
+
+    private fun findIntroPageStarts(rom: ByteArray, marker: Int): List<Int> {
+        val lo = marker and 0xFF
+        val hi = (marker shr 8) and 0xFF
+        val starts = mutableListOf<Int>()
+        var pc = 0
+        while (pc + 2 + INTRO_START_RECORD.size <= rom.size) {
+            if ((rom[pc].toInt() and 0xFF) == lo && (rom[pc + 1].toInt() and 0xFF) == hi &&
+                matchesIntroStartRecord(rom, pc + 2)
+            ) {
+                starts += pc + 2
+                pc += 2 + INTRO_START_RECORD.size
+            } else {
+                pc++
+            }
+        }
+        return starts
+    }
+
+    private fun matchesIntroStartRecord(rom: ByteArray, pc: Int): Boolean {
+        if (pc < 0 || pc + INTRO_START_RECORD.size > rom.size) return false
+        for (i in INTRO_START_RECORD.indices) {
+            if (rom[pc + i] != INTRO_START_RECORD[i]) return false
+        }
+        return true
+    }
+
+    private fun decodeGreenTextPageAt(rom: ByteArray, startPc: Int, name: String): GreenTextSection {
+        val currentLines = mutableListOf<String>()
+        val currentLine = StringBuilder()
+        var lastY = -1
+        var off = startPc
+        var records = 0
+
+        while (records < GREEN_TEXT_MAX_RECORDS && off + GREEN_TEXT_RECORD_SIZE <= rom.size) {
+            val charPtr = (rom[off + 4].toInt() and 0xFF) or ((rom[off + 5].toInt() and 0xFF) shl 8)
+            if (charPtr in INTRO_RUN_MARKERS) break
+            if (!isPlausibleGreenTextRecord(rom, off, charPtr)) break
+
+            if (charPtr == MARKER_NEW) {
+                off += GREEN_TEXT_RECORD_SIZE
+                records++
+                continue
+            }
+
+            val y = rom[off + 3].toInt() and 0xFF
+            val ch = CHAR_POINTER_MAP[charPtr] ?: '?'
+            if (lastY >= 0 && y != lastY) {
+                currentLines.add(currentLine.toString())
+                currentLine.clear()
+            }
+            currentLine.append(ch)
+            lastY = y
+            off += GREEN_TEXT_RECORD_SIZE
+            records++
+        }
+
+        if (currentLine.isNotEmpty()) currentLines.add(currentLine.toString())
+        return GreenTextSection(
+            name = name,
+            text = currentLines.joinToString("\n"),
+            pcOffset = startPc,
+            snesAddress = pcToGreenTextSnes(startPc),
+            rawSize = off - startPc,
+        )
+    }
+
+    private fun isPlausibleGreenTextRecord(rom: ByteArray, off: Int, charPtr: Int): Boolean {
+        if (charPtr != MARKER_NEW && charPtr !in CHAR_POINTER_MAP) return false
+        val delay = (rom[off].toInt() and 0xFF) or ((rom[off + 1].toInt() and 0xFF) shl 8)
+        val x = rom[off + 2].toInt() and 0xFF
+        val y = rom[off + 3].toInt() and 0xFF
+        return delay in 0..0x20 && x in 0..0x30 && y in 0..0x30
+    }
+
+    private fun greenTextLooksValid(sections: List<GreenTextSection>): Boolean {
+        if (sections.size < 6) return false
+        val text = sections.joinToString("\n") { it.text }
+        if (text.length < 100) return false
+        val unknowns = text.count { it == '?' }
+        return unknowns * 20 < text.length
+    }
+
+    private fun greenTextScore(text: String): Int {
+        val unknownPenalty = text.count { it == '?' } * 100
+        val lengthPenalty = kotlin.math.abs(260 - text.count { it != '\n' })
+        return unknownPenalty + lengthPenalty
+    }
+
+    private fun pcToGreenTextSnes(pc: Int): Int {
+        val bank = pc / 0x8000 + 0x80
+        val addr = pc % 0x8000 + 0x8000
+        return (bank shl 16) or addr
+    }
+
+    data class GreenTextSection(
+        val name: String,
+        val text: String,
+        val pcOffset: Int,
+        val snesAddress: Int,
+        val rawSize: Int,
+    )
 
     /** Read all text entries from the ROM. */
     fun readAllText(rom: ByteArray): List<TextEntry> {
@@ -375,7 +591,7 @@ object TextData {
                 label = section.name,
                 category = TextCategory.INTRO_STORY,
                 pcOffset = section.pcOffset,
-                snesAddress = GREEN_TEXT_SNES + (section.pcOffset - GREEN_TEXT_PC),
+                snesAddress = section.snesAddress,
                 maxLength = section.text.length + 20, // allow some extra
                 text = section.text,
                 rawBytes = raw,
@@ -383,18 +599,19 @@ object TextData {
         }
 
         // Area names
+        val areaNameEntries = resolveAreaNameEntries(rom)
         for (i in 0 until AREA_LABELS.size) {
-            val pc = AREA_NAMES_PC + i * AREA_NAME_ENTRY_SIZE
-            val raw = rom.copyOfRange(pc, pc + AREA_NAME_ENTRY_SIZE)
+            val areaName = areaNameEntries[i]
             entries.add(TextEntry(
                 id = "area_$i",
                 label = AREA_LABELS[i],
                 category = TextCategory.AREA_NAME,
-                pcOffset = pc,
-                snesAddress = AREA_NAMES_SNES + i * AREA_NAME_ENTRY_SIZE,
+                pcOffset = areaName.pcOffset,
+                snesAddress = areaName.snesAddress,
                 maxLength = AREA_NAME_CHAR_COUNT,
-                text = decodeAreaName(rom, i),
-                rawBytes = raw,
+                text = areaName.text,
+                rawBytes = areaName.rawBytes,
+                writable = areaName.writable,
             ))
         }
 
@@ -451,6 +668,100 @@ object TextData {
     }
 
     private data class EscapeDef(val id: String, val label: String, val pc: Int, val snes: Int, val size: Int)
+
+    private data class AreaNameEntry(
+        val pcOffset: Int,
+        val snesAddress: Int,
+        val text: String,
+        val rawBytes: ByteArray,
+        val writable: Boolean,
+    )
+
+    private fun resolveAreaNameEntries(rom: ByteArray): List<AreaNameEntry> {
+        val vanilla = (0 until AREA_LABELS.size).map { i ->
+            val pc = AREA_NAMES_PC + i * AREA_NAME_ENTRY_SIZE
+            areaNameEntryAt(rom, pc, fallbackText = AREA_DEFAULT_TEXT[i])
+        }
+        if (vanilla.all { it.writable && areaNameRawLooksValid(it.rawBytes) }) {
+            return vanilla
+        }
+
+        return AREA_DEFAULT_TEXT.map { expected ->
+            val pc = findAreaNamePcByText(rom, expected)
+            if (pc >= 0) {
+                areaNameEntryAt(rom, pc, fallbackText = expected)
+            } else {
+                AreaNameEntry(
+                    pcOffset = -1,
+                    snesAddress = 0,
+                    text = expected,
+                    rawBytes = ByteArray(0),
+                    writable = false,
+                )
+            }
+        }
+    }
+
+    private fun areaNameEntryAt(rom: ByteArray, pc: Int, fallbackText: String): AreaNameEntry {
+        if (pc < 0 || pc + AREA_NAME_ENTRY_SIZE > rom.size) {
+            return AreaNameEntry(-1, 0, fallbackText, ByteArray(0), writable = false)
+        }
+        val raw = rom.copyOfRange(pc, pc + AREA_NAME_ENTRY_SIZE)
+        val text = decodeAreaNameAt(rom, pc)
+        return AreaNameEntry(
+            pcOffset = pc,
+            snesAddress = pcToSnes(rom, pc),
+            text = text.ifBlank { fallbackText },
+            rawBytes = raw,
+            writable = true,
+        )
+    }
+
+    private fun findAreaNamePcByText(rom: ByteArray, expected: String): Int {
+        val limit = rom.size - AREA_NAME_ENTRY_SIZE
+        for (pc in 0..limit) {
+            if (!areaNameRawLooksValid(rom, pc)) continue
+            if (decodeAreaNameAt(rom, pc) == expected) return pc
+        }
+        return -1
+    }
+
+    private fun areaNameRawLooksValid(raw: ByteArray): Boolean {
+        if (raw.size < AREA_NAME_ENTRY_SIZE) return false
+        var letters = 0
+        var validProps = 0
+        for (i in 0 until AREA_NAME_CHAR_COUNT) {
+            val tile = raw[i * 2].toInt() and 0xFF
+            val props = raw[i * 2 + 1].toInt() and 0xFF
+            if (!(tile == 0x01 || tile in 0x30..0x49)) return false
+            if (tile in 0x30..0x49) letters++
+            if (props == 0x28 || props == 0x38) validProps++
+        }
+        return letters >= 3 && validProps >= AREA_NAME_CHAR_COUNT - 1
+    }
+
+    private fun areaNameRawLooksValid(rom: ByteArray, pc: Int): Boolean {
+        if (pc < 0 || pc + AREA_NAME_ENTRY_SIZE > rom.size) return false
+        var letters = 0
+        var validProps = 0
+        for (i in 0 until AREA_NAME_CHAR_COUNT) {
+            val tile = rom[pc + i * 2].toInt() and 0xFF
+            val props = rom[pc + i * 2 + 1].toInt() and 0xFF
+            if (!(tile == 0x01 || tile in 0x30..0x49)) return false
+            if (tile in 0x30..0x49) letters++
+            if (props == 0x28 || props == 0x38) validProps++
+        }
+        return letters >= 3 && validProps >= AREA_NAME_CHAR_COUNT - 1
+    }
+
+    private fun pcToSnes(rom: ByteArray, pcOffset: Int): Int {
+        val startOffset = if (rom.size % 0x8000 == 0x200) 0x200 else 0
+        val adjusted = pcOffset - startOffset
+        if (adjusted < 0) return 0
+        val bank = (adjusted / 0x8000) or 0x80
+        val offset = (adjusted % 0x8000) + 0x8000
+        return (bank shl 16) or offset
+    }
 
     private fun tileToChar(tile: Int): Char = when {
         tile in 0x30..0x49 -> ('A' + (tile - 0x30))

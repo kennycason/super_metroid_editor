@@ -129,6 +129,7 @@ private val READ_ONLY_INSPECTABLE_TABS = setOf(
     TAB_ROOMS,
     TAB_ITEMS,
     TAB_TILES,
+    TAB_PATCHES,
     TAB_SOUND,
     TAB_SPRITES,
     TAB_MAP,
@@ -623,7 +624,7 @@ fun main() = application {
                         }
                 ) {
                     if (!tilesetHeightInitialized) {
-                        tilesetHeightDp = (maxHeight.value * 0.65f).coerceIn(120f, 700f)
+                        tilesetHeightDp = (maxHeight.value * 0.35f).coerceIn(120f, 700f)
                         tilesetHeightInitialized = true
                     }
                     val maxLeftWidth = maxWidth.value - 100f
@@ -669,94 +670,85 @@ fun main() = application {
                                 }
                             }
 
-                            key(leftTab) {
-                            when (leftTab) {
-                                TAB_ROOMS -> if (romReadOnly) {
-                                    RoomListView(
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                key(leftTab) {
+                                when (leftTab) {
+                                    TAB_ROOMS -> {
+                                        RoomsTabSidebar(
+                                            rooms = rooms,
+                                            selectedRoom = selectedRoom,
+                                            onRoomSelected = { room ->
+                                                selectedRoom = room
+                                                val romPath = RomPreferences.getLastRomPath()
+                                                if (romPath != null) saveLastRoom(romPath, room)
+                                            },
+                                            romParser = romParser,
+                                            editorState = editorState,
+                                            tilesetHeightDp = tilesetHeightDp,
+                                            onTilesetHeightChange = { tilesetHeightDp = it },
+                                            onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
+                                            onNavigateToMap = { leftTab = TAB_MAP },
+                                            onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
+                                    TAB_ITEMS -> ItemLocationPanel(
                                         rooms = rooms,
                                         selectedRoom = selectedRoom,
                                         romParser = romParser,
-                                        editorState = null,
+                                        editorState = editorState,
                                         onRoomSelected = { room ->
                                             selectedRoom = room
                                             val romPath = RomPreferences.getLastRomPath()
                                             if (romPath != null) saveLastRoom(romPath, room)
                                         },
                                         modifier = Modifier.fillMaxSize(),
-                                        onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
+                                        onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
                                     )
-                                } else {
-                                    RoomsTabSidebar(
-                                        rooms = rooms,
-                                        selectedRoom = selectedRoom,
-                                        onRoomSelected = { room ->
-                                            selectedRoom = room
-                                            val romPath = RomPreferences.getLastRomPath()
-                                            if (romPath != null) saveLastRoom(romPath, room)
-                                        },
+                                    TAB_TILES -> TilesTabSidebar(
+                                        tilesetSubTab = tilesetSubTab,
+                                        onSubTabChange = { tilesetSubTab = it },
                                         romParser = romParser,
                                         editorState = editorState,
+                                        tilesetEditorState = tilesetEditorState,
+                                        selectedRoom = selectedRoom,
                                         tilesetHeightDp = tilesetHeightDp,
                                         onTilesetHeightChange = { tilesetHeightDp = it },
                                         onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
-                                        onNavigateToMap = { leftTab = TAB_MAP },
+                                        onReloadPaletteBackedViews = ::reloadPaletteBackedViews,
+                                        onRefreshTilesetGrid = ::refreshCurrentEditorTilesetGrid,
+                                        modifier = Modifier.fillMaxSize(),
                                     )
+                                    TAB_PATCHES -> PatchListPanel(
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    TAB_SOUND -> SoundListPanel(
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        soundEditorState = soundEditorState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
+                                    )
+                                    TAB_SPRITES -> SpritesTabSidebar(
+                                        selectedSpriteIdx = selectedSpriteIdx,
+                                        onSelectSprite = { selectedSpriteIdx = it },
+                                    )
+                                    TAB_MAP -> MinimapSidebar(
+                                        state = minimapEditorState,
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    TAB_TEXT -> TextEditorSidebar(
+                                        romParser = romParser,
+                                        editorState = editorState,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
+                                    TAB_BOSS -> BossTabSidebar(editorState = editorState, romParser = romParser)
                                 }
-                                TAB_ITEMS -> ItemLocationPanel(
-                                    rooms = rooms,
-                                    selectedRoom = selectedRoom,
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    onRoomSelected = { room ->
-                                        selectedRoom = room
-                                        val romPath = RomPreferences.getLastRomPath()
-                                        if (romPath != null) saveLastRoom(romPath, room)
-                                    },
-                                    modifier = Modifier.fillMaxSize(),
-                                    onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
-                                )
-                                TAB_TILES -> TilesTabSidebar(
-                                    tilesetSubTab = tilesetSubTab,
-                                    onSubTabChange = { tilesetSubTab = it },
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    tilesetEditorState = tilesetEditorState,
-                                    selectedRoom = selectedRoom,
-                                    tilesetHeightDp = tilesetHeightDp,
-                                    onTilesetHeightChange = { tilesetHeightDp = it },
-                                    onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
-                                    onReloadPaletteBackedViews = ::reloadPaletteBackedViews,
-                                    onRefreshTilesetGrid = ::refreshCurrentEditorTilesetGrid,
-                                )
-                                TAB_PATCHES -> PatchListPanel(
-                                    editorState = editorState,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                TAB_SOUND -> SoundListPanel(
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    soundEditorState = soundEditorState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
-                                )
-                                TAB_SPRITES -> SpritesTabSidebar(
-                                    selectedSpriteIdx = selectedSpriteIdx,
-                                    onSelectSprite = { selectedSpriteIdx = it },
-                                )
-                                TAB_MAP -> MinimapSidebar(
-                                    state = minimapEditorState,
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                TAB_TEXT -> TextEditorSidebar(
-                                    romParser = romParser,
-                                    editorState = editorState,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                                TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
-                                TAB_BOSS -> BossTabSidebar(editorState = editorState, romParser = romParser)
-                            }
+                                }
                             }
                         }
 

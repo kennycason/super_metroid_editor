@@ -115,18 +115,40 @@ internal fun shouldSaveMinimapCellSize(
 ): Boolean =
     hasSavedCellSize || kotlin.math.abs(cellSize - fitCellSize) > MINIMAP_ZOOM_EPSILON
 
-/** 2bpp pixel value → Color for each of the 4 minimap palettes.
- *  pixel 0 = background, 1 = room fill, 2 = border, 3 = bg accent. */
+/** 4bpp pixel value -> Color for each of the 4 minimap preview palettes. */
 private val MINIMAP_PALETTES = arrayOf(
     // Palette 0: black/dark
-    arrayOf(Color(0xFF000008), Color(0xFF101020), Color(0xFF383850), Color(0xFF0C0C18)),
+    arrayOf(
+        Color(0xFF000008), Color(0xFF101020), Color(0xFF383850), Color(0xFF0C0C18),
+        Color(0xFF202030), Color(0xFF2C2C40), Color(0xFF484860), Color(0xFF606078),
+        Color(0xFF080810), Color(0xFF181828), Color(0xFF303048), Color(0xFF505068),
+        Color(0xFF686880), Color(0xFF808098), Color(0xFFA0A0B8), Color(0xFFC0C0D8),
+    ),
     // Palette 1: blue
-    arrayOf(Color(0xFF000830), Color(0xFF2850A0), Color(0xFF80B0E8), Color(0xFF102858)),
+    arrayOf(
+        Color(0xFF000830), Color(0xFF2850A0), Color(0xFF80B0E8), Color(0xFF102858),
+        Color(0xFF183C78), Color(0xFF3868B8), Color(0xFF5890D8), Color(0xFFA8D8F8),
+        Color(0xFF081840), Color(0xFF204890), Color(0xFF4078C8), Color(0xFF68A0E0),
+        Color(0xFF90C0F0), Color(0xFFB8E0FF), Color(0xFFD0ECFF), Color(0xFFE8F8FF),
+    ),
     // Palette 2: white/gray
-    arrayOf(Color(0xFF181820), Color(0xFF808898), Color(0xFFD0D0E8), Color(0xFF404050)),
+    arrayOf(
+        Color(0xFF181820), Color(0xFF808898), Color(0xFFD0D0E8), Color(0xFF404050),
+        Color(0xFF585868), Color(0xFF707080), Color(0xFF9898A8), Color(0xFFE8E8F8),
+        Color(0xFF202028), Color(0xFF383840), Color(0xFF606070), Color(0xFF9090A0),
+        Color(0xFFA8A8B8), Color(0xFFC0C0D0), Color(0xFFF0F0F8), Color(0xFFFFFFFF),
+    ),
     // Palette 3: red (explored)
-    arrayOf(Color(0xFF180008), Color(0xFFA03030), Color(0xFFE08888), Color(0xFF481018)),
+    arrayOf(
+        Color(0xFF180008), Color(0xFFA03030), Color(0xFFE08888), Color(0xFF481018),
+        Color(0xFF702020), Color(0xFFB84848), Color(0xFFD86868), Color(0xFFFFB0B0),
+        Color(0xFF300008), Color(0xFF581010), Color(0xFF882828), Color(0xFFC05050),
+        Color(0xFFE07878), Color(0xFFFF9898), Color(0xFFFFC8C8), Color(0xFFFFE8E8),
+    ),
 )
+
+private fun minimapPixelColor(palette: Int, pixelValue: Int): Color =
+    MINIMAP_PALETTES[palette.coerceIn(0, MINIMAP_PALETTES.lastIndex)][pixelValue.coerceIn(0, 15)]
 
 /** Left sidebar for the minimap editor. */
 @Composable
@@ -507,19 +529,18 @@ private fun DrawScope.drawMinimapGrid(
         val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
         drawTileDetails(idx, px, py, cs, hFlip, vFlip)
     }
-    // 1b. Pixel view — actual 2bpp tile graphics from ROM
+    // 1b. Pixel view — actual 4bpp tile graphics from ROM
     if (showPixelView && tileGfx != null) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
         val w = data.getTile(x, y); val idx = MinimapData.tileIndex(w); val p = MinimapData.tilePalette(w)
         if (w == 0 || idx in EMPTY_TILES) continue
         val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
         val pixels = tileGfx[idx.coerceIn(0, 255)]
-        val palColors = MINIMAP_PALETTES[p.coerceIn(0, 3)]
         val px = x * cs; val py = y * cs; val ps = cs / 8f
         for (pr in 0 until 8) for (pc in 0 until 8) {
             val sr = if (vFlip) 7 - pr else pr
             val sc = if (hFlip) 7 - pc else pc
             val pv = pixels[sr * 8 + sc]
-            val color = palColors[pv]
+            val color = minimapPixelColor(p, pv)
             drawRect(color, Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
         }
     }
@@ -542,11 +563,10 @@ private fun DrawScope.drawMinimapGrid(
             val px = mx * cs; val py = my * cs
             val hFlip = MinimapData.tileHFlip(w); val vFlip = MinimapData.tileVFlip(w)
             val pixels = tileGfx[idx.coerceIn(0, 255)]
-            val palColors = MINIMAP_PALETTES[p.coerceIn(0, 3)]
             val ps = cs / 8f
             for (pr in 0 until 8) for (pc in 0 until 8) {
                 val sr = if (vFlip) 7 - pr else pr; val sc = if (hFlip) 7 - pc else pc
-                val color = palColors[pixels[sr * 8 + sc]]
+                val color = minimapPixelColor(p, pixels[sr * 8 + sc])
                 drawRect(color.copy(alpha = 0.7f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
             }
         }
@@ -576,10 +596,9 @@ private fun DrawScope.drawMinimapGrid(
         // Paint preview: show faded version of the tile that will be painted
         if (tool == MinimapTool.PAINT && tileGfx != null && selectedTile in 0..255) {
             val previewPixels = tileGfx[selectedTile]
-            val palColors = MINIMAP_PALETTES[selectedPalette.coerceIn(0, 3)]
             val ps = cs / 8f
             for (pr in 0 until 8) for (pc in 0 until 8) {
-                val color = palColors[previewPixels[pr * 8 + pc]]
+                val color = minimapPixelColor(selectedPalette, previewPixels[pr * 8 + pc])
                 drawRect(color.copy(alpha = 0.5f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
             }
         }
@@ -589,7 +608,7 @@ private fun DrawScope.drawMinimapGrid(
 
 private fun DrawScope.drawTileDetails(t: Int, px: Float, py: Float, cs: Float, hFlip: Boolean = false, vFlip: Boolean = false) {
     val wc = Color.White.copy(alpha = 0.8f); val w = (cs / 6f).coerceAtLeast(1f)
-    // Wall sets derived from actual 2bpp pixel data at ROM $D3200 (border = pixel value 2 on full edge)
+    // Wall sets derived from actual 4bpp pause-map pixel data.
     var top = t in setOf(0x20,0x21,0x22,0x24,0x25,0x26, 0x4D,0x4F,0x5E,0x6E,0x6F, 0x76,0x8E,0x8F)
     var bot = t in setOf(0x20,0x21,0x22, 0x4D,0x5E,0x5F,0x6F, 0x8F)
     var left = t in setOf(0x10,0x20,0x21,0x23,0x24,0x25, 0x4D,0x4F,0x6E,0x6F, 0x77,0x8E,0x8F)
@@ -690,11 +709,10 @@ private fun MinimapTilePalette(selectedTile: Int, tileGfx: Array<IntArray>?, onS
                                 val cs = size.width
                                 val pixels = tileGfx?.getOrNull(tile)
                                 if (pixels != null) {
-                                    // Render actual 2bpp tile graphics (palette 1 = blue for preview)
-                                    val palColors = MINIMAP_PALETTES[1]
+                                    // Render actual 4bpp tile graphics (palette 1 = blue for preview)
                                     val ps = cs / 8f
                                     for (pr in 0 until 8) for (pc in 0 until 8) {
-                                        drawRect(palColors[pixels[pr * 8 + pc]], Offset(pc * ps, pr * ps), Size(ps + 0.5f, ps + 0.5f))
+                                        drawRect(minimapPixelColor(1, pixels[pr * 8 + pc]), Offset(pc * ps, pr * ps), Size(ps + 0.5f, ps + 0.5f))
                                     }
                                 } else {
                                     // Fallback: simplified icon

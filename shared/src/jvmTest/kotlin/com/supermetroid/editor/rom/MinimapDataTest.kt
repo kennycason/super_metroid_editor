@@ -287,23 +287,21 @@ class MinimapDataTest {
         }
 
         @Test
-        fun `tile graphics pixel values are in range 0-3`() {
+        fun `tile graphics pixel values are in range 0-15`() {
             val parser = romParser ?: return
             val gfx = parser.readMinimapTileGraphics()
             for (i in gfx.indices) for (p in gfx[i]) {
-                assertTrue(p in 0..3, "Tile $i pixel value $p should be 0-3")
+                assertTrue(p in 0..15, "Tile $i pixel value $p should be 0-15")
             }
         }
 
         @Test
-        fun `tile 0x1F (empty) is not all-zero`() {
-            // 0x1F is the "empty" background tile but has actual pixel data
+        fun `wall tile graphics are not all-zero`() {
             val parser = romParser ?: return
             val gfx = parser.readMinimapTileGraphics()
-            val empty = gfx[0x1F]
-            // It should have SOME non-zero pixels (it's a solid fill or pattern)
-            val nonZero = empty.count { it != 0 }
-            assertTrue(nonZero > 0, "Tile 0x1F should have non-zero pixels (it's a background pattern)")
+            val wall = gfx[MinimapTiles.WALLS_TBLR]
+            val nonZero = wall.count { it != 0 }
+            assertTrue(nonZero > 0, "Wall tile graphics should have non-zero pixels")
         }
 
         @Test
@@ -319,7 +317,7 @@ class MinimapDataTest {
             val parser = romParser ?: return
             val gfx = parser.readMinimapTileGraphics()
             assertEquals(64, gfx[0].size)
-            for (p in gfx[0]) assertTrue(p in 0..3)
+            for (p in gfx[0]) assertTrue(p in 0..15)
         }
 
         @Test

@@ -1983,7 +1983,7 @@ class EditorState {
     fun initForReadOnlyRom(romPath: String) {
         projectFilePath = ""
         project = SmEditProject(romPath = romPath)
-        resetForLoadedProject(seedPatches = false)
+        resetForLoadedProject(seedPatches = true)
     }
 
     private fun resetForLoadedProject(seedPatches: Boolean) {
