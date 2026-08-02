@@ -14,9 +14,8 @@ package com.supermetroid.editor.rom
  *   Crateria=$1A9000, Brinstar=$1A8000, Norfair=$1AA000,
  *   Wrecked Ship=$1AB000, Maridia=$1AC000, Tourian=$1AD000, Ceres=$1AE000
  *
- * SMART-built expanded ROMs may instead store full 64x32 row-major area maps
- * near the end of the ROM; RomParser detects that layout before falling back
- * to the vanilla two-half layout.
+ * SMART-built expanded ROMs may relocate the same two-half map layout near
+ * the end of the ROM; RomParser detects that before falling back to vanilla.
  */
 data class MinimapData(
     val area: Int,
@@ -253,8 +252,8 @@ object MinimapTiles {
         // Row 6: Items
         ITEM_OPEN, ITEM_WALL_TOP, ITEM_WALL_BOTTOM,
         ITEM_WALL_LEFT, ITEM_WALL_RIGHT,
-        // Row 7: Stations + elevator
-        SAVE_STATION, MAP_STATION, ENERGY_STATION, MISSILE_STATION,
+        // Row 7: elevator tiles. Station/recharge icons live in separate map
+        // metadata on SMART ROMs, so keep them out of the default paint palette.
         ELEVATOR_SHAFT, ELEVATOR,
     )
 

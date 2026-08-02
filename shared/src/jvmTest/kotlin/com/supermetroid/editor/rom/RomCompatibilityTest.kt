@@ -243,8 +243,9 @@ class RomCompatibilityTest {
 
         val crateriaMap = parser.readMinimapTiles(0)
         assertEquals(0x0C1F, crateriaMap.getTile(0, 0))
-        assertEquals(0x0C25, crateriaMap.getTile(25, 1))
-        assertEquals(0x0C22, crateriaMap.getTile(9, 5))
+        assertEquals(0x0C25, crateriaMap.getTile(25, 2))
+        assertEquals(0x0C25, crateriaMap.getTile(38, 2))
+        assertEquals(0x0C77, crateriaMap.getTile(38, 4))
 
         val pauseMapTiles = parser.readMinimapTileGraphics()
         assertTrue(
