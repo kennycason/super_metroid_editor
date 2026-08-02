@@ -25,10 +25,24 @@ import com.supermetroid.editor.util.EditorLog
  */
 class RomParser(internal val romData: ByteArray) {
     private val hasHeader: Boolean
-        get() = romData.size == ROM_SIZE_WITH_HEADER
+        get() = romData.size % 0x8000 == SMC_HEADER_SIZE
 
     private val romStartOffset: Int
         get() = if (hasHeader) SMC_HEADER_SIZE else 0x0
+
+    val compatibilityReport: RomCompatibility.Report by lazy {
+        RomCompatibility.analyze(romData)
+    }
+
+    val roomCatalog: RomRoomCatalog by lazy {
+        RomRoomCatalogDetector.detect(this, compatibilityReport)
+    }
+
+    val graphicsCatalog: RomGraphicsCatalog by lazy {
+        RomGraphicsCatalogDetector.detect(this)
+    }
+
+    internal fun romStartOffsetForLayout(): Int = romStartOffset
     
     /**
      * Convert SNES address to PC offset using LoROM mapping.
@@ -74,8 +88,7 @@ class RomParser(internal val romData: ByteArray) {
             if (width == 0 || height == 0 || width > 16 || height > 16) return null
             if (area > 6) return null
             
-            // Find default state data
-            val stateDataOffset = findDefaultStateData(pcOffset + 11)
+            val stateDataOffset = findInitialStateData(roomId, pcOffset + 11)
             
             var levelDataPtr = 0
             var tileset = 0
@@ -141,19 +154,39 @@ class RomParser(internal val romData: ByteArray) {
         }
     }
     
+    private fun findInitialStateData(roomId: Int, stateListOffset: Int): Int? {
+        if (!usesVanillaEditableLayout()) {
+            firstReadableStateData(roomId)?.let { return it }
+        }
+        return findDefaultStateData(stateListOffset)
+    }
+
+    private fun usesVanillaEditableLayout(): Boolean =
+        romData.size - romStartOffset == ROM_SIZE
+
+    private fun firstReadableStateData(roomId: Int): Int? =
+        parseRoomStates(roomId)
+            .firstOrNull { state -> isReadableStateDataOffset(state.stateDataPcOffset) }
+            ?.stateDataPcOffset
+
+    private fun isReadableStateDataOffset(stateDataOffset: Int): Boolean {
+        if (stateDataOffset < 0 || stateDataOffset + STATE_DATA_SIZE > romData.size) return false
+        val levelDataPtr = readUInt24At(stateDataOffset)
+        val tileset = romData[stateDataOffset + 3].toInt() and 0xFF
+        if (tileset !in 0 until TileGraphics.NUM_TILESETS) return false
+        return runCatching { decompressLZ2(levelDataPtr).size >= 2 }.getOrDefault(false)
+    }
+
     /**
-     * Find room state data. Uses the first E629 (morph ball) conditional state
-     * if available, otherwise falls back to the default E5E6 state.
-     * 
-     * E629 represents "normal gameplay" (Wrecked Ship powered on, etc.).
-     * We use a byte-scan for E5E6 as the reliable way to find the default,
-     * and specifically look for E629 as the first condition.
-     * 
-     * E629 entry format: condition(2) + arg(1) + statePtr(2) = 5 bytes.
-     * The statePtr points to 26 bytes of state data in bank $8F.
+     * Find room state data for vanilla-layout editing. Uses the first E629
+     * conditional state if available, otherwise falls back to the default E5E6
+     * state. This preserves the existing editable-ROM behavior; expanded
+     * read-only ROMs use [findInitialStateData] so their preview stays aligned
+     * with the first readable state/GFX pair in the ROM.
      */
     private fun findDefaultStateData(stateListOffset: Int): Int? {
-        // Check if first condition is E629 (morph ball check)
+        // Preserve the legacy editable-ROM preview behavior: prefer a leading
+        // E629 boss-dead state, then fall back to the inline default state.
         if (stateListOffset + 5 <= romData.size) {
             val firstCondition = readUInt16At(stateListOffset)
             if (firstCondition == 0xE629) {
@@ -508,13 +541,13 @@ class RomParser(internal val romData: ByteArray) {
             val STATE_CONDITION_NAMES = mapOf(
                 0xE5E6 to "Standard (default)",
                 0xE5EB to "Door Event",
-                0xE5FF to "Event Check",
-                0xE612 to "Boss Check",
-                0xE629 to "Morph Ball Check",
-                0xE640 to "Power Bombs",
-                0xE652 to "Speed Booster",
-                0xE669 to "Landing Site Wake",
-                0xE678 to "Tourian Access",
+                0xE5FF to "Tourian Boss",
+                0xE612 to "Event Check",
+                0xE629 to "Boss Check",
+                0xE640 to "Unused Check",
+                0xE652 to "Morph Ball / Missiles",
+                0xE669 to "Power Bombs",
+                0xE678 to "Unused Check",
             )
 
             val EVENT_NAMES = mapOf(
@@ -649,7 +682,7 @@ class RomParser(internal val romData: ByteArray) {
     fun getStateDataPcOffset(roomId: Int): Int? {
         val pcOffset = roomIdToPc(roomId)
         if (pcOffset < 0 || pcOffset + 11 > romData.size) return null
-        return findDefaultStateData(pcOffset + 11)
+        return findInitialStateData(roomId, pcOffset + 11)
     }
 
     /**
@@ -1246,12 +1279,29 @@ class RomParser(internal val romData: ByteArray) {
     /**
      * Read the minimap tile data for a given area (0-6).
      *
-     * ROM layout: each area has 0x1000 bytes stored as two 32×32 halves.
+     * Vanilla ROM layout: each area has 0x1000 bytes stored as two 32×32 halves.
      * Left half (x=0..31) at offset base, right half (x=32..63) at base+0x800.
      * Each tile is a 16-bit LE word at: halfBase + ((y+1) * 32 + (x % 32)) * 2
+     *
+     * SMART-built expanded ROMs may relocate the pause-map data near the end
+     * of the ROM. They keep the SNES BG-map ordering there: left 32×32 half,
+     * followed by right 32×32 half.
      */
     fun readMinimapTiles(area: Int): MinimapData {
         require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        smartMinimapPc(area)?.let { basePc ->
+            val tiles = IntArray(MinimapData.TILE_COUNT)
+            for (y in 0 until MinimapData.MAP_HEIGHT) {
+                for (x in 0 until MinimapData.MAP_WIDTH) {
+                    val offset = smartMinimapTilePc(basePc, x, y)
+                    if (offset + 1 < romData.size) {
+                        tiles[y * MinimapData.MAP_WIDTH + x] = readU16(romData, offset)
+                    }
+                }
+            }
+            return MinimapData(area, tiles)
+        }
+
         val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[area])
         val tiles = IntArray(MinimapData.TILE_COUNT)
 
@@ -1270,21 +1320,26 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     /**
-     * Read the 256 minimap 2bpp tile graphics from ROM PC $D3200.
-     * Returns a 256-element array where each element is an IntArray of 64 pixel values (0-3).
+     * Read the 256 minimap 4bpp tile graphics from the pause-map graphics sheet.
+     * Returns a 256-element array where each element is an IntArray of 64 pixel values (0-15).
      * Pixel layout is row-major: pixels[row * 8 + col].
      */
     fun readMinimapTileGraphics(): Array<IntArray> {
-        val base = 0xD3200
+        val base = romStartOffset + PAUSE_MAP_GFX_PC
         return Array(256) { tileIdx ->
-            val offset = base + tileIdx * 16
+            val offset = base + tileIdx * RomConstants.BYTES_PER_4BPP_TILE
             val pixels = IntArray(64)
             for (row in 0 until 8) {
                 val bp0 = if (offset + row * 2 < romData.size) romData[offset + row * 2].toInt() and 0xFF else 0
                 val bp1 = if (offset + row * 2 + 1 < romData.size) romData[offset + row * 2 + 1].toInt() and 0xFF else 0
+                val bp2 = if (offset + 16 + row * 2 < romData.size) romData[offset + 16 + row * 2].toInt() and 0xFF else 0
+                val bp3 = if (offset + 16 + row * 2 + 1 < romData.size) romData[offset + 16 + row * 2 + 1].toInt() and 0xFF else 0
                 for (col in 0 until 8) {
                     val bit = 7 - col
-                    pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
+                    pixels[row * 8 + col] = ((bp0 shr bit) and 1) or
+                        (((bp1 shr bit) and 1) shl 1) or
+                        (((bp2 shr bit) and 1) shl 2) or
+                        (((bp3 shr bit) and 1) shl 3)
                 }
             }
             pixels
@@ -1498,6 +1553,19 @@ class RomParser(internal val romData: ByteArray) {
      * Returns a list of (pcOffset, byte) pairs for the changed bytes.
      */
     fun writeMinimapTiles(data: MinimapData): List<Pair<Int, Byte>> {
+        smartMinimapPc(data.area)?.let { basePc ->
+            val patches = mutableListOf<Pair<Int, Byte>>()
+            for (y in 0 until MinimapData.MAP_HEIGHT) {
+                for (x in 0 until MinimapData.MAP_WIDTH) {
+                    val word = data.getTile(x, y)
+                    val offset = smartMinimapTilePc(basePc, x, y)
+                    patches.add(offset to (word and 0xFF).toByte())
+                    patches.add((offset + 1) to ((word shr 8) and 0xFF).toByte())
+                }
+            }
+            return patches
+        }
+
         val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[data.area])
         val patches = mutableListOf<Pair<Int, Byte>>()
 
@@ -1512,6 +1580,45 @@ class RomParser(internal val romData: ByteArray) {
             }
         }
         return patches
+    }
+
+    private fun smartMinimapPc(area: Int): Int? {
+        if (area !in 0 until MinimapData.NUM_AREAS) return null
+        val base = romStartOffset + SMART_MINIMAP_BASE_PC
+        val end = base + MinimapData.NUM_AREAS * SMART_MINIMAP_AREA_BYTES
+        if (end > romData.size) return null
+        if (!hasSmartMinimapLayout(base)) return null
+        return base + (MinimapData.NUM_AREAS - 1 - area) * SMART_MINIMAP_AREA_BYTES
+    }
+
+    private fun smartMinimapTilePc(basePc: Int, x: Int, y: Int): Int {
+        val halfBase = if (x < 32) basePc else basePc + 0x800
+        return halfBase + (y * 32 + (x % 32)) * 2
+    }
+
+    private fun hasSmartMinimapLayout(basePc: Int): Boolean {
+        for (area in 0 until MinimapData.NUM_AREAS) {
+            val areaPc = basePc + area * SMART_MINIMAP_AREA_BYTES
+            if (!looksLikeSmartMinimapBlock(areaPc)) return false
+        }
+        return true
+    }
+
+    private fun looksLikeSmartMinimapBlock(pc: Int): Boolean {
+        if (pc < 0 || pc + SMART_MINIMAP_AREA_BYTES > romData.size) return false
+        var emptyTiles = 0
+        var knownTiles = 0
+        var nonZero = 0
+        for (i in 0 until MinimapData.TILE_COUNT) {
+            val word = readU16(romData, pc + i * 2)
+            val tile = MinimapData.tileIndex(word)
+            if (tile == MinimapTiles.EMPTY) emptyTiles++
+            if (tile in SMART_MINIMAP_COMMON_TILES) knownTiles++
+            if (word != 0) nonZero++
+        }
+        return nonZero > 0 &&
+            emptyTiles >= MinimapData.TILE_COUNT / 4 &&
+            knownTiles >= MinimapData.TILE_COUNT / 3
     }
 
     /**
@@ -1535,6 +1642,38 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     companion object {
+        private const val PAUSE_MAP_GFX_PC = 0x1B0000
+        private const val SMART_MINIMAP_BASE_PC = 0x3F9000
+        private const val SMART_MINIMAP_AREA_BYTES = MinimapData.TILE_COUNT * 2
+        private val SMART_MINIMAP_COMMON_TILES = setOf(
+            MinimapTiles.EMPTY,
+            MinimapTiles.ROOM_OPEN,
+            MinimapTiles.WALLS_TBLR,
+            MinimapTiles.WALLS_TBL,
+            MinimapTiles.WALLS_TB,
+            MinimapTiles.WALLS_LR,
+            MinimapTiles.WALLS_TLR,
+            MinimapTiles.WALLS_TL,
+            MinimapTiles.WALL_TOP,
+            MinimapTiles.WALL_RIGHT,
+            MinimapTiles.WALL_BOTTOM,
+            MinimapTiles.DIAG_BL,
+            MinimapTiles.DIAG_TL,
+            MinimapTiles.DIAG_BR,
+            MinimapTiles.DIAG_TR,
+            MinimapTiles.WALLS_TBLR_B,
+            MinimapTiles.WALLS_TLR_B,
+            MinimapTiles.WALLS_TLR_C,
+            MinimapTiles.WALLS_TBLR_C,
+            MinimapTiles.ITEM_OPEN,
+            MinimapTiles.ITEM_WALL_TOP,
+            MinimapTiles.ITEM_WALL_BOTTOM,
+            MinimapTiles.ITEM_WALL_LEFT,
+            MinimapTiles.ITEM_WALL_RIGHT,
+            MinimapTiles.ELEVATOR_SHAFT,
+            MinimapTiles.ELEVATOR,
+        )
+
         // ─── Item PLM catalog ──────────────────────────────────────
         data class ItemDef(val name: String, val shortLabel: String, val chozoId: Int, val visibleId: Int, val hiddenId: Int)
 
@@ -2027,10 +2166,11 @@ class RomParser(internal val romData: ByteArray) {
                 throw IllegalArgumentException("ROM file not found: $filePath")
             }
             val romData = file.readBytes()
-            if (romData.size != ROM_SIZE && romData.size != ROM_SIZE_WITH_HEADER) {
-                throw IllegalArgumentException("Invalid ROM size: ${romData.size} bytes")
+            val parser = RomParser(romData)
+            if (!parser.roomCatalog.readable) {
+                throw IllegalArgumentException(parser.compatibilityReport.userMessage(file.name))
             }
-            return RomParser(romData)
+            return parser
         }
     }
 }

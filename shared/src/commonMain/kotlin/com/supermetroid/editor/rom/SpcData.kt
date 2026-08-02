@@ -479,28 +479,25 @@ object SpcData {
 
     /**
      * Read the 3-byte pointer for a given song set from the pointer table.
-     * Tries the vanilla table at $8F:E7E1 first, then scans for a relocated table.
+     * Prefers a repointed loader table when present, then falls back to vanilla $8F:E7E1.
      */
     fun readSongSetPointer(romParser: RomParser, songSet: Int): Int {
         val rom = romParser.romData
 
-        // Try vanilla table location first
-        val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
-        val ptr = readPointerAt(rom, vanillaPc + songSet)
-        if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
-            return ptr
-        }
-
-        // Table may have been relocated by a ROM hack.
-        // The loader code at $80:8F72 uses LDA $XXXXXX,X (opcode BF).
-        // Scan for the pattern: BF xx xx 8F 85 00 BF yy yy 8F 85 01
-        // where yy = xx+1 (the overlapping 3-byte read pattern).
+        // If the loader has been repointed, prefer the table it actually reads.
         val tableAddr = findRelocatedTable(rom, romParser)
         if (tableAddr >= 0) {
             val relocPtr = readPointerAt(rom, tableAddr + songSet)
             if (relocPtr > 0 && isValidTransferBlockPointer(rom, romParser, relocPtr)) {
                 return relocPtr
             }
+        }
+
+        // Try vanilla table location for unmodified ROMs.
+        val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
+        val ptr = readPointerAt(rom, vanillaPc + songSet)
+        if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
+            return ptr
         }
 
         EditorLog.warn("[SPC] no valid pointer for songSet 0x${songSet.toString(16).padStart(2, '0')}")
@@ -514,19 +511,19 @@ object SpcData {
     fun findSongSetPointerEntryPc(romParser: RomParser, songSet: Int): Int {
         val rom = romParser.romData
 
-        val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
-        if (vanillaPc >= 0 && vanillaPc + songSet + 2 < rom.size) {
-            val ptr = readPointerAt(rom, vanillaPc + songSet)
-            if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
-                return vanillaPc + songSet
-            }
-        }
-
         val tableAddr = findRelocatedTable(rom, romParser)
         if (tableAddr >= 0 && tableAddr + songSet + 2 < rom.size) {
             val ptr = readPointerAt(rom, tableAddr + songSet)
             if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
                 return tableAddr + songSet
+            }
+        }
+
+        val vanillaPc = romParser.snesToPc(VANILLA_TABLE_SNES)
+        if (vanillaPc >= 0 && vanillaPc + songSet + 2 < rom.size) {
+            val ptr = readPointerAt(rom, vanillaPc + songSet)
+            if (ptr > 0 && isValidTransferBlockPointer(rom, romParser, ptr)) {
+                return vanillaPc + songSet
             }
         }
 
@@ -564,6 +561,9 @@ object SpcData {
     }
 
     private fun isValidTransferBlockPointer(rom: ByteArray, romParser: RomParser, snesPtr: Int): Boolean {
+        val bank = (snesPtr ushr 16) and 0xFF
+        val address = snesPtr and 0xFFFF
+        if (bank < 0x80 || address < 0x8000) return false
         val pc = romParser.snesToPc(snesPtr)
         if (pc < 0 || pc + 4 >= rom.size) return false
         val blkSize = (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)
@@ -599,9 +599,7 @@ object SpcData {
             val addr1 = (hi1 shl 16) or (mid1 shl 8) or lo1
             val addr2 = (hi2 shl 16) or (mid2 shl 8) or lo2
             if (addr2 == addr1 + 1) {
-                val tablePc = romParser.snesToPc(addr1)
-                EditorLog.info("[SPC] Found relocated table at \$${addr1.toString(16).uppercase()} (PC 0x${tablePc.toString(16)})")
-                return tablePc
+                return romParser.snesToPc(addr1)
             }
         }
         return -1

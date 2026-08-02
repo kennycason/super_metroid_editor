@@ -14,7 +14,7 @@ import com.supermetroid.editor.headless.SmeditRandomizationReport
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.PaletteEffects
-import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
 import io.ktor.http.ContentType
@@ -74,6 +74,11 @@ data class SmeditServicePatchRequest(
 )
 
 @Serializable
+data class SmeditServiceRomMetadataRequest(
+    val romBase64: String,
+)
+
+@Serializable
 data class SmeditServicePatchResponse(
     val romBase64: String,
     val ipsBase64: String,
@@ -96,6 +101,25 @@ data class SmeditServiceMetadataResponse(
     val rooms: List<SmeditServiceRoomMetadata>,
     val randomization: SmeditServiceRandomizationMetadata,
     val colorize: SmeditServiceColorizeMetadata,
+)
+
+@Serializable
+data class SmeditServiceRomMetadataResponse(
+    val schemaVersion: Int = 1,
+    val layout: SmeditServiceRomLayoutMetadata,
+    val rooms: List<SmeditServiceRoomMetadata>,
+)
+
+@Serializable
+data class SmeditServiceRomLayoutMetadata(
+    val source: String,
+    val editable: Boolean,
+    val readOnly: Boolean,
+    val message: String? = null,
+    val discoveredRooms: Int,
+    val discoveredStates: Int,
+    val parsedLevelDataStates: Int,
+    val expandedLevelPointers: Int,
 )
 
 @Serializable
@@ -324,6 +348,11 @@ fun Application.smeditServiceModule(
             call.respond(serviceMetadata())
         }
 
+        post("/metadata/rom") {
+            val request = call.receive<SmeditServiceRomMetadataRequest>()
+            call.respond(romMetadata(decodeRomBase64(request.romBase64)))
+        }
+
         post("/patch") {
             val request = call.receiveDecodedPatchRequest()
             val response = buildPatchedRom(request, buildService)
@@ -439,6 +468,36 @@ private fun serviceMetadata(): SmeditServiceMetadataResponse {
                 )
             },
         ),
+    )
+}
+
+private fun romMetadata(romBytes: ByteArray): SmeditServiceRomMetadataResponse {
+    val parser = RomParser(romBytes)
+    val catalog = parser.roomCatalog
+    require(catalog.readable) {
+        parser.compatibilityReport.userMessage("uploaded ROM")
+    }
+    return SmeditServiceRomMetadataResponse(
+        layout = SmeditServiceRomLayoutMetadata(
+            source = catalog.source.name.lowercase(),
+            editable = catalog.editable,
+            readOnly = catalog.readOnly,
+            message = catalog.loadNotice("uploaded ROM"),
+            discoveredRooms = catalog.discoveredRoomCount,
+            discoveredStates = catalog.discoveredStateCount,
+            parsedLevelDataStates = catalog.parsedLevelDataStateCount,
+            expandedLevelPointers = catalog.expandedLevelPointerCount,
+        ),
+        rooms = catalog.rooms
+            .map {
+                SmeditServiceRoomMetadata(
+                    id = it.id,
+                    roomId = it.getRoomIdAsInt(),
+                    handle = it.handle,
+                    name = it.name,
+                )
+            }
+            .sortedBy { it.roomId },
     )
 }
 
@@ -562,9 +621,9 @@ private fun buildPatchedRom(
         "Project file paths are not supported by the service endpoint; include patch settings directly in build."
     }
     val romBytes = request.romBytes
-    require(romBytes.size == RomConstants.ROM_SIZE || romBytes.size == RomConstants.ROM_SIZE_WITH_HEADER) {
-        "ROM input must be ${RomConstants.ROM_SIZE} bytes headerless or " +
-            "${RomConstants.ROM_SIZE_WITH_HEADER} bytes with a 512-byte SMC header."
+    val parser = RomParser(romBytes)
+    require(parser.roomCatalog.editable) {
+        parser.compatibilityReport.userMessage("uploaded ROM")
     }
     val randomized = SmeditPatchRandomizer.apply(request.build.copy(project = null), request.randomize)
     val generated = if (request.generator.mazetroid) {

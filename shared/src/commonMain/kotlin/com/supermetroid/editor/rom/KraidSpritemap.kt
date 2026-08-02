@@ -16,6 +16,8 @@ class KraidSpritemap(private val romParser: RomParser) {
 
     companion object {
         const val KRAID_ROOM_SNES = 0x8FA59F
+        private const val KRAID_ROOM_HANDLE = "kraid"
+        private const val KRAID_ROOM_NAME = "Kraid's Room"
         const val TILE_GFX_SNES = 0xB9FA38
         const val TILE_GFX_PC = 0x1CFA38
         const val NAMETABLE_SNES = 0xB9FE3E
@@ -126,7 +128,7 @@ class KraidSpritemap(private val romParser: RomParser) {
      */
     private fun setupTileGraphics(): TileGraphics? {
         val rom = romParser.getRomData()
-        val stateOffsets = romParser.findAllStateDataOffsets(KRAID_ROOM_SNES)
+        val stateOffsets = findRoomStateOffsets()
         if (stateOffsets.isEmpty()) return null
         tilesetId = rom[stateOffsets.last() + 3].toInt() and 0xFF
 
@@ -143,6 +145,28 @@ class KraidSpritemap(private val romParser: RomParser) {
 
         cachedTileGfx = tg
         return tg
+    }
+
+    private fun findRoomStateOffsets(): List<Int> {
+        val catalog = romParser.roomCatalog
+        if (catalog.source != RomRoomCatalogSource.VANILLA) {
+            val catalogRoom = catalog.rooms.firstOrNull { room ->
+                room.handle == KRAID_ROOM_HANDLE ||
+                    room.handle.startsWith("${KRAID_ROOM_HANDLE}_") ||
+                    room.name.equals(KRAID_ROOM_NAME, ignoreCase = true)
+            }
+            val catalogOffsets = catalogRoom
+                ?.let { romParser.findAllStateDataOffsets(it.getRoomIdAsInt()) }
+                .orEmpty()
+            if (catalogOffsets.isNotEmpty()) return catalogOffsets
+        }
+
+        val vanillaRoomId = KRAID_ROOM_SNES and 0xFFFF
+        return if (romParser.readRoomHeader(vanillaRoomId) != null) {
+            romParser.findAllStateDataOffsets(vanillaRoomId)
+        } else {
+            emptyList()
+        }
     }
 
     /**

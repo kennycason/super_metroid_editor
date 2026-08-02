@@ -153,6 +153,59 @@ class SmeditServiceTest {
     }
 
     @Test
+    fun `rom metadata endpoint reports editable vanilla room catalog`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+
+        val response = client.post("/metadata/rom") {
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            setBody(
+                json.encodeToString(
+                    SmeditServiceRomMetadataRequest(
+                        romBase64 = Base64.getEncoder().encodeToString(ByteArray(RomConstants.ROM_SIZE)),
+                    )
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServiceRomMetadataResponse>(response.body())
+        assertTrue(body.layout.editable)
+        assertFalse(body.layout.readOnly)
+        assertTrue(body.rooms.any { it.id == "0x91F8" && it.name == "Landing Site" })
+    }
+
+    @Test
+    fun `rom metadata endpoint reports read only expanded discovered catalog`() = testApplication {
+        application {
+            smeditServiceModule()
+        }
+        val rom = expandedReadableRom()
+
+        val response = client.post("/metadata/rom") {
+            contentType(ContentType.Application.Json)
+            accept(ContentType.Application.Json)
+            setBody(
+                json.encodeToString(
+                    SmeditServiceRomMetadataRequest(
+                        romBase64 = Base64.getEncoder().encodeToString(rom),
+                    )
+                )
+            )
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<SmeditServiceRomMetadataResponse>(response.body())
+        assertFalse(body.layout.editable)
+        assertTrue(body.layout.readOnly)
+        assertEquals(1, body.layout.discoveredRooms)
+        assertEquals(0x8094, body.rooms.single().roomId)
+        assertTrue(body.layout.message.orEmpty().contains("Read-only expanded ROM layout loaded"))
+    }
+
+    @Test
     fun `patch endpoint applies colorize build option`() = testApplication {
         application {
             smeditServiceModule()
@@ -571,6 +624,43 @@ class SmeditServiceTest {
             .map(::File)
             .firstOrNull { it.exists() }
             ?.readBytes()
+    }
+
+    private fun expandedReadableRom(): ByteArray =
+        ByteArray(0x400000) { 0xFF.toByte() }.also { rom ->
+            val roomPc = 0x78094
+            rom[roomPc] = 0x01
+            rom[roomPc + 1] = 0x00
+            rom[roomPc + 2] = 0x12
+            rom[roomPc + 3] = 0x03
+            rom[roomPc + 4] = 0x05
+            rom[roomPc + 5] = 0x01
+            rom[roomPc + 6] = 0x70
+            rom[roomPc + 7] = 0xA0.toByte()
+            rom[roomPc + 8] = 0x00
+            write16(rom, roomPc + 9, 0x9000)
+            write16(rom, roomPc + 11, 0xE5E6)
+
+            val statePc = roomPc + 13
+            write24(rom, statePc, 0xE18000)
+            rom[statePc + 3] = 0x04
+
+            val levelDataPc = 0x308000
+            rom[levelDataPc] = 0x01
+            rom[levelDataPc + 1] = 0x00
+            rom[levelDataPc + 2] = 0x00
+            rom[levelDataPc + 3] = 0xFF.toByte()
+        }
+
+    private fun write16(rom: ByteArray, offset: Int, value: Int) {
+        rom[offset] = (value and 0xFF).toByte()
+        rom[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+    }
+
+    private fun write24(rom: ByteArray, offset: Int, value: Int) {
+        rom[offset] = (value and 0xFF).toByte()
+        rom[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+        rom[offset + 2] = ((value ushr 16) and 0xFF).toByte()
     }
 
     private fun ByteArray.readBytes(offset: Int, count: Int): List<Int> =

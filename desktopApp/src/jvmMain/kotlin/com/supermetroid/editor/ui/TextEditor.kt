@@ -95,7 +95,7 @@ fun TextEditorSidebar(
                                 color = if (isModified) Color(0xFFFFCC00) else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                "$${entry.snesAddress.toString(16).uppercase()}",
+                                if (entry.writable) "$${entry.snesAddress.toString(16).uppercase()}" else "unmapped",
                                 fontSize = 9.sp,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -177,7 +177,7 @@ private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
     var currentText by remember(entry.id, editedText, editVersion) { mutableStateOf(editedText ?: entry.text) }
     val isModified = currentText != entry.text
     val singleLine = entry.category in listOf(TextCategory.AREA_NAME, TextCategory.ITEM_NAME, TextCategory.UI_MESSAGE)
-    val isReadOnly = false // all text categories are now editable
+    val isReadOnly = !entry.writable
 
     val textField = @Composable { modifier: Modifier ->
         TextField(
@@ -242,4 +242,3 @@ private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
         }
     }
 }
-

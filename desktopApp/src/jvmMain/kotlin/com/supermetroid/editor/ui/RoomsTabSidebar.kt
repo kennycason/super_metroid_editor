@@ -42,6 +42,7 @@ internal fun RoomsTabSidebar(
     onSeedPatterns: () -> Unit,
     onNavigateToMap: () -> Unit,
     modifier: Modifier = Modifier,
+    onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     var bottomPaneTab by remember { mutableStateOf(BOTTOM_TAB_TILESET) }
@@ -53,39 +54,57 @@ internal fun RoomsTabSidebar(
             romParser = romParser,
             editorState = editorState,
             onRoomSelected = onRoomSelected,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
+            onKeyboardNavigatorChanged = onKeyboardNavigatorChanged,
         )
         DraggableDividerHorizontal(onDelta = { dy ->
             onTilesetHeightChange((tilesetHeightDp - dy).coerceIn(120f, 700f))
         })
         Column(modifier = Modifier.fillMaxWidth().height(tilesetHeightDp.dp)) {
             TabRow(selectedTabIndex = bottomPaneTab, modifier = Modifier.fillMaxWidth().height(26.dp)) {
-                Tab(selected = bottomPaneTab == BOTTOM_TAB_TILESET, onClick = { bottomPaneTab = BOTTOM_TAB_TILESET },
-                    modifier = Modifier.height(26.dp)) {
+                Tab(
+                    selected = bottomPaneTab == BOTTOM_TAB_TILESET,
+                    onClick = { bottomPaneTab = BOTTOM_TAB_TILESET },
+                    modifier = Modifier.height(26.dp),
+                ) {
                     Text("Tileset", fontSize = fs.tabLabel)
                 }
-                Tab(selected = bottomPaneTab == BOTTOM_TAB_PATTERNS, onClick = {
-                    onSeedPatterns(); bottomPaneTab = BOTTOM_TAB_PATTERNS
-                }, modifier = Modifier.height(26.dp)) {
+                Tab(
+                    selected = bottomPaneTab == BOTTOM_TAB_PATTERNS,
+                    onClick = {
+                        onSeedPatterns()
+                        bottomPaneTab = BOTTOM_TAB_PATTERNS
+                    },
+                    modifier = Modifier.height(26.dp),
+                ) {
                     Text("Patterns", fontSize = fs.tabLabel)
                 }
-                Tab(selected = bottomPaneTab == BOTTOM_TAB_ROOM_INFO, onClick = { bottomPaneTab = BOTTOM_TAB_ROOM_INFO },
-                    modifier = Modifier.height(26.dp)) {
+                Tab(
+                    selected = bottomPaneTab == BOTTOM_TAB_ROOM_INFO,
+                    onClick = { bottomPaneTab = BOTTOM_TAB_ROOM_INFO },
+                    modifier = Modifier.height(26.dp),
+                ) {
                     Text("Room Info", fontSize = fs.tabLabel)
                 }
-                Tab(selected = bottomPaneTab == BOTTOM_TAB_GENERATE, onClick = { bottomPaneTab = BOTTOM_TAB_GENERATE },
-                    modifier = Modifier.height(26.dp)) {
+                Tab(
+                    selected = bottomPaneTab == BOTTOM_TAB_GENERATE,
+                    onClick = { bottomPaneTab = BOTTOM_TAB_GENERATE },
+                    modifier = Modifier.height(26.dp),
+                ) {
                     Text("Generate", fontSize = fs.tabLabel)
                 }
             }
             key(bottomPaneTab) {
                 when (bottomPaneTab) {
                     BOTTOM_TAB_TILESET -> TilesetPreview(
-                        room = selectedRoom, romParser = romParser, editorState = editorState,
+                        room = selectedRoom,
+                        romParser = romParser,
+                        editorState = editorState,
                         modifier = Modifier.fillMaxSize()
                     )
                     BOTTOM_TAB_PATTERNS -> PatternThumbnailList(
-                        editorState = editorState, modifier = Modifier.fillMaxSize()
+                        editorState = editorState,
+                        modifier = Modifier.fillMaxSize()
                     )
                     BOTTOM_TAB_ROOM_INFO -> {
                         val rp = romParser
@@ -94,22 +113,35 @@ internal fun RoomsTabSidebar(
                             val roomHeader = remember(sr) { rp.readRoomHeader(sr.getRoomIdAsInt()) }
                             if (roomHeader != null) {
                                 RoomPropertiesPanel(
-                                    room = roomHeader, romParser = rp, editorState = editorState,
-                                    modifier = Modifier.fillMaxSize(), onNavigateToMap = onNavigateToMap,
+                                    room = roomHeader,
+                                    romParser = rp,
+                                    editorState = editorState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    onNavigateToMap = onNavigateToMap,
                                 )
                             } else {
                                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text("Could not parse room header", fontSize = fs.detail, color = MaterialTheme.colorScheme.error)
+                                    Text(
+                                        "Could not parse room header",
+                                        fontSize = fs.detail,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
                                 }
                             }
                         } else {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("Select a room", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "Select a room",
+                                    fontSize = fs.detail,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                     }
                     BOTTOM_TAB_GENERATE -> BiomeGeneratorPanel(
-                        editorState = editorState, romParser = romParser, rooms = rooms,
+                        editorState = editorState,
+                        romParser = romParser,
+                        rooms = rooms,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

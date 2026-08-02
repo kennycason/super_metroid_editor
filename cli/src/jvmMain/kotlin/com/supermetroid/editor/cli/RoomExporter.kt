@@ -7,9 +7,10 @@ import com.supermetroid.editor.rom.RomParser
 
 class RoomExporter(
     private val parser: RomParser,
-    private val repo: RoomRepository,
+    private val allRoomInfos: List<RoomInfo> = parser.roomCatalog.rooms,
 ) {
-    private val allRoomInfos: List<RoomInfo> = repo.getAllRooms()
+    constructor(parser: RomParser, repo: RoomRepository) : this(parser, repo.getAllRooms())
+
     private val roomInfoById: Map<Int, RoomInfo> = allRoomInfos.associateBy { it.getRoomIdAsInt() }
 
     fun exportRoomSummaries(): List<RoomSummary> {
@@ -162,8 +163,11 @@ class RoomExporter(
         val asHex = idOrHandle.removePrefix("0x").removePrefix("0X")
         asHex.toIntOrNull(16)?.let { return it }
 
-        // Try handle lookup
-        val info = repo.getRoomByHandle(idOrHandle) ?: return null
+        // Try handle/name lookup from this ROM's catalog.
+        val lookup = idOrHandle.trim().lowercase()
+        val info = allRoomInfos.firstOrNull {
+            it.handle.lowercase() == lookup || it.name.lowercase() == lookup
+        } ?: return null
         return info.getRoomIdAsInt()
     }
 

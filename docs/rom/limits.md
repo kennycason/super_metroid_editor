@@ -40,6 +40,38 @@ footprint requires relocating to free space within the same bank.
 | `$B4` | `$B48000`–`$B4FFFF` | 32 KB | Enemy graphics sets |
 | `$C0`–`$CE` | `$xx8000`–`$xxFFFF` each | 32 KB × 15 | Compressed level data (tiles) |
 
+## Supported ROM Layouts
+
+SMEDIT's editable ROM path currently supports vanilla-layout Super Metroid ROMs:
+
+| Layout | Size | Editing |
+|--------|------|---------|
+| Headerless LoROM | `0x300000` bytes | Supported |
+| 512-byte SMC header + LoROM | `0x300200` bytes | Supported |
+| Expanded LoROM | e.g. `0x310000`, `0x400000` | Read-only inspection when room discovery succeeds |
+
+Expanded hacks can be valid in-game, especially SMART/SMILE-family hacks that
+relocate room headers, state data, or compressed level data into extra banks.
+SMEDIT rejects those as editable because the writer/exporter still assumes the
+vanilla room map and vanilla-style free-space model. Loading a relocated ROM as
+if it were safely editable can corrupt room data on export.
+
+When an expanded ROM is selected, SMEDIT runs a compatibility scan and then tries
+to build a ROM-derived room catalog from plausible room headers in bank `$8F`.
+If that succeeds, the ROM opens in read-only mode: room listing, door metadata,
+tile/collision map rendering, PLM/enemy parsing, and CLI room export can inspect
+the ROM without writing changes. Room rendering still uses the normal SMEDIT
+renderer. Expanded ROM support adds adapters that discover ROM-specific room and
+tileset pointer catalogs, then feed the resolved room headers, level data,
+tileset tables, graphics, and palettes through the same pipeline used for
+vanilla ROMs. If discovery fails, SMEDIT reports the compatibility details and
+does not load the ROM.
+
+Read-only mode intentionally disables project save/export and editor tabs that
+would create writeable room edits. Write support should be added feature by
+feature only after the corresponding data family is understood for expanded
+layouts.
+
 ## Export Behavior
 
 When our editor writes data back to ROM:

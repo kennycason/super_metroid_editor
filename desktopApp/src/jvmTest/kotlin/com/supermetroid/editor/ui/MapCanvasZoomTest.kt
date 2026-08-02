@@ -63,4 +63,61 @@ class MapCanvasZoomTest {
         assertTrue(shouldSaveRoomZoom(hasSavedZoom = false, zoomLevel = 0.75f, fitZoom = 0.5f))
         assertTrue(shouldSaveRoomZoom(hasSavedZoom = true, zoomLevel = 0.5f, fitZoom = 0.5f))
     }
+
+    @Test
+    fun `minimap fit cell size uses the limiting viewport dimension`() {
+        val cellSize = fitMinimapCellSizeForViewport(
+            viewportWidthPx = 1280,
+            viewportHeightPx = 720,
+            density = 2f,
+            mapWidthCells = 64,
+            mapHeightCells = 32,
+        )
+
+        assertEquals(10f, cellSize)
+    }
+
+    @Test
+    fun `minimap fit cell size clamps to supported range`() {
+        assertEquals(
+            64f,
+            fitMinimapCellSizeForViewport(
+                viewportWidthPx = 5000,
+                viewportHeightPx = 5000,
+                density = 1f,
+                mapWidthCells = 64,
+                mapHeightCells = 32,
+            ),
+        )
+        assertEquals(
+            4f,
+            fitMinimapCellSizeForViewport(
+                viewportWidthPx = 200,
+                viewportHeightPx = 100,
+                density = 1f,
+                mapWidthCells = 64,
+                mapHeightCells = 32,
+            ),
+        )
+    }
+
+    @Test
+    fun `minimap fit cell size is unavailable until viewport and content sizes are known`() {
+        assertNull(
+            fitMinimapCellSizeForViewport(
+                viewportWidthPx = 800,
+                viewportHeightPx = 0,
+                density = 1f,
+                mapWidthCells = 64,
+                mapHeightCells = 32,
+            )
+        )
+    }
+
+    @Test
+    fun `minimap zoom persistence ignores automatic fit until user changes zoom`() {
+        assertFalse(shouldSaveMinimapCellSize(hasSavedCellSize = false, cellSize = 10f, fitCellSize = 10f))
+        assertTrue(shouldSaveMinimapCellSize(hasSavedCellSize = false, cellSize = 14f, fitCellSize = 10f))
+        assertTrue(shouldSaveMinimapCellSize(hasSavedCellSize = true, cellSize = 10f, fitCellSize = 10f))
+    }
 }

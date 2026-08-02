@@ -95,10 +95,16 @@ class TextDataTest {
         assertEquals(2, escapes.size, "Should have 2 escape messages")
 
         // Ceres escape
-        assertTrue(escapes[0].text.contains("SELF DESTRUCT"), "Ceres should mention SELF DESTRUCT")
+        assertEquals(
+            "SELF DESTRUCT SEQUENCE\nACTIVATED EVACUATE\nCOLONY IMMEDIATELY",
+            escapes[0].text,
+        )
 
         // Tourian escape
-        assertTrue(escapes[1].text.contains("TIME BOMB"), "Tourian should mention TIME BOMB")
+        assertEquals(
+            "TIME BOMB SET!\nESCAPE IMMEDIATELY!",
+            escapes[1].text,
+        )
     }
 
     @Test

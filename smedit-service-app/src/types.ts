@@ -204,6 +204,23 @@ export type ServiceRoomMetadata = {
   name: string;
 };
 
+export type ServiceRomLayoutMetadata = {
+  source: string;
+  editable: boolean;
+  readOnly: boolean;
+  message?: string;
+  discoveredRooms: number;
+  discoveredStates: number;
+  parsedLevelDataStates: number;
+  expandedLevelPointers: number;
+};
+
+export type ServiceRomMetadata = {
+  schemaVersion: number;
+  layout: ServiceRomLayoutMetadata;
+  rooms: ServiceRoomMetadata[];
+};
+
 export type ServicePatchMetadata = {
   id: string;
   internalId: string;

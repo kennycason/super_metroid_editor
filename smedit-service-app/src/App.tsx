@@ -8,7 +8,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { base64ToBlob, downloadBlob, fetchMetadata, patchIps, patchRom, stripEmpty } from './api';
+import { base64ToBlob, downloadBlob, fetchMetadata, fetchRomMetadata, patchIps, patchRom, stripEmpty } from './api';
 import { clearRoms, getRom, listRoms, saveRomFile } from './storage';
 import type {
   BuildRequest,
@@ -19,6 +19,7 @@ import type {
   RandomizationRequest,
   ServiceMetadata,
   ServicePatchResponse,
+  ServiceRomMetadata,
   StoredRomSummary,
 } from './types';
 
@@ -180,6 +181,9 @@ export function App() {
   const [selectedRomId, setSelectedRomId] = useState<string>(savedSettings.selectedRomId ?? '');
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [romMetadata, setRomMetadata] = useState<ServiceRomMetadata | null>(null);
+  const [romMetadataError, setRomMetadataError] = useState<string | null>(null);
+  const [romMetadataLoading, setRomMetadataLoading] = useState(false);
   const [isDragging, setDragging] = useState(false);
   const [selectedPatchId, setSelectedPatchId] = useState<PatchId | null>(
     savedSettings.selectedPatchId && patchHasOptions(savedSettings.selectedPatchId) ? savedSettings.selectedPatchId : null,
@@ -286,7 +290,7 @@ export function App() {
       } catch (err) {
         if (controller.signal.aborted) return;
         setMetadata(null);
-        setMetadataError(`Metadata unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        setMetadataError(`Service metadata unavailable: ${errorText(err)}`);
       }
     }
 
@@ -414,12 +418,53 @@ export function App() {
   ]);
 
   const selectedRom = storedRoms.find((item) => item.id === selectedRomId);
+  useEffect(() => {
+    if (!selectedRom) {
+      setRomMetadata(null);
+      setRomMetadataError(null);
+      setRomMetadataLoading(false);
+      return;
+    }
+
+    const romId = selectedRom.id;
+    const controller = new AbortController();
+    async function loadRomMetadata() {
+      setRomMetadata(null);
+      setRomMetadataError(null);
+      setRomMetadataLoading(true);
+      try {
+        const record = await getRom(romId);
+        if (controller.signal.aborted) return;
+        if (!record) {
+          setRomMetadataError('Selected ROM was not found locally.');
+          return;
+        }
+        const loaded = await fetchRomMetadata(serviceUrl, record.blob, controller.signal);
+        if (controller.signal.aborted) return;
+        setRomMetadata(loaded);
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setRomMetadataError(`ROM metadata unavailable: ${errorText(err)}`);
+      } finally {
+        if (!controller.signal.aborted) {
+          setRomMetadataLoading(false);
+        }
+      }
+    }
+
+    void loadRomMetadata();
+    return () => controller.abort();
+  }, [selectedRom?.id, serviceUrl]);
+
   const availablePatchIds = useMemo(() => new Set(metadata?.patches.map((patch) => patch.id)), [metadata]);
   const visiblePatchOptions = useMemo(
     () => patchOptions.filter((option) => !metadata || availablePatchIds.has(option.id)),
     [availablePatchIds, metadata],
   );
-  const roomOptions = metadata?.rooms ?? [];
+  const romLayout = romMetadata?.layout;
+  const romReadOnly = romLayout?.readOnly === true;
+  const romPatchBlocked = !!selectedRom && (romMetadataLoading || !!romMetadataError || romReadOnly);
+  const roomOptions = romMetadata?.rooms ?? metadata?.rooms ?? [];
   const colorEffectOptions = metadata?.colorize.effects ?? fallbackColorEffects;
   const beamOptions = metadata?.randomization.beams ?? fallbackBeamOptions;
   const categoryOptions = metadata?.randomization.enemyCategories ?? fallbackCategoryOptions;
@@ -809,6 +854,7 @@ export function App() {
       ),
     [buildRequest, generatorRequest, randomizationRequest],
   );
+  const canGenerate = !busy && !!selectedRom && !romPatchBlocked && validationErrors.length === 0;
 
   async function refreshStoredRoms(nextSelectedId?: string) {
     try {
@@ -864,6 +910,18 @@ export function App() {
     setResult(null);
     if (!selectedRom) {
       setError('Select a ROM first.');
+      return;
+    }
+    if (romMetadataLoading) {
+      setError('SMEDIT is still reading the selected ROM layout.');
+      return;
+    }
+    if (romReadOnly) {
+      setError('This expanded ROM loaded read-only. Patch output is disabled until SMEDIT has write-safe expanded layout support.');
+      return;
+    }
+    if (romMetadataError) {
+      setError(romMetadataError);
       return;
     }
     if (validationErrors.length > 0) {
@@ -931,7 +989,7 @@ export function App() {
           <div className="generate-buttons">
             <button
               className="primary-button"
-              disabled={busy || !selectedRom || validationErrors.length > 0}
+              disabled={!canGenerate}
               onClick={() => void generateOutput('ips')}
             >
               {busyMode === 'ips' && <Loader2 className="spin" size={18} />}
@@ -939,7 +997,7 @@ export function App() {
             </button>
             <button
               className="primary-button"
-              disabled={busy || !selectedRom || validationErrors.length > 0}
+              disabled={!canGenerate}
               onClick={() => void generateOutput('rom')}
             >
               {busyMode === 'rom' && <Loader2 className="spin" size={18} />}
@@ -949,9 +1007,19 @@ export function App() {
         </div>
       </header>
 
-      {(metadataError || error || notice || validationErrors.length > 0 || result) && (
+      {(metadataError ||
+        romMetadataLoading ||
+        romMetadataError ||
+        romLayout?.message ||
+        error ||
+        notice ||
+        validationErrors.length > 0 ||
+        result) && (
         <section className="top-feedback">
           {metadataError && <div className="message warning">{metadataError}</div>}
+          {romMetadataLoading && <div className="message notice">Reading selected ROM layout...</div>}
+          {romMetadataError && <div className="message warning">{romMetadataError}</div>}
+          {romLayout?.message && <div className="message warning compatibility">{romLayout.message}</div>}
           {error && <div className="message error">{error}</div>}
           {notice && <div className="message notice">{notice}</div>}
           {validationErrors.length > 0 && (

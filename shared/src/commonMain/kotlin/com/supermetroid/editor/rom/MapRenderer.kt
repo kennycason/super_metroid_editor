@@ -124,9 +124,10 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
             val px = bx * BLOCK_SIZE
             val py = by * BLOCK_SIZE
             
-            if (hasTileGraphics) {
+            val shouldUseTileGraphics = hasTileGraphics && !tileGraphics.isPlaceholderMetatile(metatileIndex)
+            if (shouldUseTileGraphics) {
                 val metatilePixels = tileGraphics.renderMetatile(metatileIndex)
-                if (metatilePixels != null) {
+                if (metatilePixels != null && metatilePixels.any { it != 0 }) {
                     for (ty in 0 until 16) {
                         for (tx in 0 until 16) {
                             val sx = if (hFlip != 0) 15 - tx else tx
@@ -137,19 +138,11 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
                             }
                         }
                     }
+                } else {
+                    renderFallbackBlock(room, blockType, pixels, pixelWidth, pixelHeight, px, py)
                 }
             } else {
-                // Fallback: block type coloring
-                val terrainColors = areaTerrainColors[room.area] ?: areaTerrainColors[0]!!
-                val color = when {
-                    isDoor(blockType) -> doorColor
-                    isSpike(blockType) -> spikeColor
-                    isSolid(blockType) -> terrainColors[0]
-                    else -> bgColor
-                }
-                if (color != bgColor) {
-                    fillBlock(pixels, pixelWidth, pixelHeight, px, py, color)
-                }
+                renderFallbackBlock(room, blockType, pixels, pixelWidth, pixelHeight, px, py)
             }
             
             // Tint door cap blocks: recolor blue pixels to the correct door color
@@ -231,6 +224,31 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
             for (x in 0 until BLOCK_SIZE) {
                 setPixel(pixels, w, h, px + x, py + y, color)
             }
+        }
+    }
+
+    private fun renderFallbackBlock(
+        room: Room,
+        blockType: Int,
+        pixels: IntArray,
+        w: Int,
+        h: Int,
+        px: Int,
+        py: Int,
+    ) {
+        val color = fallbackBlockColor(room, blockType)
+        if (color != bgColor) {
+            fillBlock(pixels, w, h, px, py, color)
+        }
+    }
+
+    private fun fallbackBlockColor(room: Room, blockType: Int): Int {
+        val terrainColors = areaTerrainColors[room.area] ?: areaTerrainColors[0]!!
+        return when {
+            isDoor(blockType) -> doorColor
+            isSpike(blockType) -> spikeColor
+            isSolid(blockType) -> terrainColors[0]
+            else -> bgColor
         }
     }
     

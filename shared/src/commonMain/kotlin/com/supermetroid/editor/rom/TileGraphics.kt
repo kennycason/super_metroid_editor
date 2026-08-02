@@ -13,9 +13,11 @@ package com.supermetroid.editor.rom
  *   4. Load palette: 8 sub-palettes × 16 colors (BGR555)
  *   5. Render: level data tile index → metatile → 4 sub-tiles → pixels
  *
- * CRE (Common Room Elements) are always loaded from fixed addresses:
+ * Vanilla CRE (Common Room Elements) defaults:
  *   GFX:        $B9:8000 (PC: $1C8000)
  *   Tile table: $B9:A09D (PC: $1CA09D)
+ * Expanded/relocated layouts may repoint these; RomGraphicsCatalog detects
+ * those pointers and loadTileset() uses the catalog values.
  *
  * Sources:
  *   - SMILE legacy: DecompressTiles.vb, DecompressTtable.vb, DrawTiles
@@ -49,6 +51,7 @@ class TileGraphics(private val romParser: RomParser) {
         // Tile counts
         const val VARIABLE_TILE_COUNT = 640   // Tiles 0-639
         const val CRE_TILE_START = 640        // CRE tiles start at index 640
+        const val CRE_METATILE_COUNT = 256    // CRE metatile definitions occupy slots 0-255
         const val TOTAL_TILES = 1024          // 0-1023
         const val METATILE_COUNT = 1024       // Number of metatile definitions
         
@@ -134,21 +137,23 @@ class TileGraphics(private val romParser: RomParser) {
      *     cleanly as standard 4bpp — this is a known limitation shared by SMILE.
      */
     fun loadTileset(tilesetId: Int, @Suppress("UNUSED_PARAMETER") noCre: Boolean = false): Boolean {
+        if (tilesetId !in 0 until NUM_TILESETS) return false
         if (tilesetId == cachedTilesetId && rawTileData != null) return true
 
-        val romData = romParser.getRomData()
-
-        val tablePC = romParser.snesToPc(TILESET_TABLE_SNES)
-        val entryOffset = tablePC + tilesetId * 9
-        if (entryOffset + 9 > romData.size) return false
-
-        val tileTablePtr = readUInt24(romData, entryOffset)
-        val gfxPtr = readUInt24(romData, entryOffset + 3)
-        val palettePtr = readUInt24(romData, entryOffset + 6)
+        val entry = romParser.graphicsCatalog.entry(tilesetId) ?: return false
+        val tileTablePtr = entry.tileTablePtr
+        val gfxPtr = entry.gfxPtr
+        val palettePtr = entry.palettePtr
 
         val varTileTable = romParser.decompressLZ2(tileTablePtr)
         val varGfx = romParser.decompressLZ2(gfxPtr)
         val paletteDecompressed = romParser.decompressLZ2(palettePtr)
+        if (varTileTable.size < 8 || varTileTable.size % 8 != 0 ||
+            varGfx.size < BYTES_PER_TILE || varGfx.size % BYTES_PER_TILE != 0 ||
+            paletteDecompressed.size < 64
+        ) {
+            return false
+        }
         cachedPalette = parsePalette(paletteDecompressed)
 
         // Tile table: if variable table already covers all 1024 metatiles, use it directly.
@@ -161,12 +166,12 @@ class TileGraphics(private val romParser: RomParser) {
             cachedVarTableStartMetatile = 0
             cachedVarTableMetatileCount = METATILE_COUNT
         } else {
-            val creTileTable = romParser.decompressLZ2(CRE_TILE_TABLE_SNES)
+            val creTileTable = romParser.decompressLZ2(romParser.graphicsCatalog.creTileTablePtr)
             metatiles = parseTileTable(varTileTable, creTileTable)
-            cachedDefinedMetatiles = minOf((creTileTable.size + varTileTable.size) / 8, METATILE_COUNT)
-            cachedCreTableMetatileCount = minOf(creTileTable.size / 8, METATILE_COUNT)
-            cachedVarTableStartMetatile = cachedCreTableMetatileCount
+            cachedCreTableMetatileCount = CRE_METATILE_COUNT
+            cachedVarTableStartMetatile = CRE_METATILE_COUNT
             cachedVarTableMetatileCount = minOf(varTileTable.size / 8, METATILE_COUNT - cachedVarTableStartMetatile)
+            cachedDefinedMetatiles = minOf(cachedVarTableStartMetatile + cachedVarTableMetatileCount, METATILE_COUNT)
         }
 
         // Graphics: variable tiles first, CRE overlays at offset 0x5000 (tiles 640-1023).
@@ -178,7 +183,7 @@ class TileGraphics(private val romParser: RomParser) {
         val varCopyLen = minOf(varGfx.size, combinedGfx.size)
         System.arraycopy(varGfx, 0, combinedGfx, 0, varCopyLen)
         if (tilesetId != KRAID_TILESET) {
-            val creGfx = romParser.decompressLZ2(CRE_GFX_SNES)
+            val creGfx = romParser.decompressLZ2(romParser.graphicsCatalog.creGfxPtr)
             val copyLen = minOf(creGfx.size, combinedGfx.size - CRE_GFX_OFFSET)
             if (copyLen > 0) {
                 System.arraycopy(creGfx, 0, combinedGfx, CRE_GFX_OFFSET, copyLen)
@@ -771,11 +776,20 @@ class TileGraphics(private val romParser: RomParser) {
      * Each entry = 8 bytes = 4 × 16-bit LE words (TL, TR, BL, BR).
      */
     private fun parseTileTable(varTable: ByteArray, creTable: ByteArray): Array<IntArray> {
-        val creSize = creTable.size
-        val combined = ByteArray(creSize + varTable.size)
-        System.arraycopy(creTable, 0, combined, 0, creSize)
-        System.arraycopy(varTable, 0, combined, creSize, varTable.size)
-        return parseTileTableRaw(combined)
+        val result = Array(METATILE_COUNT) { IntArray(4) }
+        copyTileTableEntries(
+            source = creTable,
+            target = result,
+            targetStart = 0,
+            maxEntries = CRE_METATILE_COUNT,
+        )
+        copyTileTableEntries(
+            source = varTable,
+            target = result,
+            targetStart = CRE_METATILE_COUNT,
+            maxEntries = METATILE_COUNT - CRE_METATILE_COUNT,
+        )
+        return result
     }
 
 
@@ -791,6 +805,23 @@ class TileGraphics(private val romParser: RomParser) {
             }
         }
         return result
+    }
+
+    private fun copyTileTableEntries(
+        source: ByteArray,
+        target: Array<IntArray>,
+        targetStart: Int,
+        maxEntries: Int,
+    ) {
+        val entryCount = minOf(source.size / 8, maxEntries, target.size - targetStart)
+        for (i in 0 until entryCount) {
+            val offset = i * 8
+            for (q in 0..3) {
+                val lo = source[offset + q * 2].toInt() and 0xFF
+                val hi = source[offset + q * 2 + 1].toInt() and 0xFF
+                target[targetStart + i][q] = (hi shl 8) or lo
+            }
+        }
     }
 
     private fun exportTileTableRange(startMetatile: Int, metatileCount: Int): ByteArray? {
@@ -907,7 +938,6 @@ class TileGraphics(private val romParser: RomParser) {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
     
-    private fun readUInt24(data: ByteArray, offset: Int): Int = readU24(data, offset)
 }
 
 /**
