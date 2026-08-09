@@ -491,76 +491,76 @@ fun BiomeGeneratorPanel(
         ) {
             Text("Reset room", fontSize = 11.sp)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = omitSpecialRooms, onCheckedChange = { omitSpecialRooms = it })
-            Text("Omit utility and boss rooms", fontSize = 10.sp)
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            OutlinedButton(
-                enabled = prof != null && romParser != null && !bulkActionRunning && !seedInputInvalid,
-                onClick = { confirmGenerateAll = true },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-            ) {
-                Text("Generate all", fontSize = 11.sp)
-            }
-            OutlinedButton(
-                enabled = romParser != null && !bulkActionRunning,
-                onClick = { confirmRevertAll = true },
-                modifier = Modifier.weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-            ) {
-                Text("Revert all", fontSize = 11.sp)
-            }
-        }
+//        Row(verticalAlignment = Alignment.CenterVertically) {
+//            Checkbox(checked = omitSpecialRooms, onCheckedChange = { omitSpecialRooms = it })
+//            Text("Omit utility and boss rooms", fontSize = 10.sp)
+//        }
+//        Row(
+//            horizontalArrangement = Arrangement.spacedBy(8.dp),
+//            verticalAlignment = Alignment.CenterVertically,
+//            modifier = Modifier.fillMaxWidth(),
+//        ) {
+//            OutlinedButton(
+//                enabled = prof != null && romParser != null && !bulkActionRunning && !seedInputInvalid,
+//                onClick = { confirmGenerateAll = true },
+//                modifier = Modifier.weight(1f),
+//                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+//            ) {
+//                Text("Generate all", fontSize = 11.sp)
+//            }
+//            OutlinedButton(
+//                enabled = romParser != null && !bulkActionRunning,
+//                onClick = { confirmRevertAll = true },
+//                modifier = Modifier.weight(1f),
+//                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+//            ) {
+//                Text("Revert all", fontSize = 11.sp)
+//            }
+//        }
     }
 
-    if (confirmGenerateAll) {
-        AlertDialog(
-            onDismissRequest = { confirmGenerateAll = false },
-            title = { Text("Generate all rooms?") },
-            text = {
-                Text(
-                    buildString {
-                        append("This will replace generated biome edits across supported rooms using the current style and theme.")
-                        if (pinnedSeed != null) append(" Seed $pinnedSeed will be used.")
-                        else append(" A fresh random seed will be used.")
-                        if (omitSpecialRooms) append(" Utility and boss rooms will be skipped.")
-                        append(" Rooms with manual edits will be skipped; use Generate room for those.")
-                    }
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val runSeed = nextRunSeed()
-                        confirmGenerateAll = false
-                        pendingGenerateAll = PendingGenerateAllBiome(
-                            rulesForSeed(runSeed),
-                            theme.resolve(runSeed),
-                            runSeed,
-                            currentWfcOptions(),
-                            omitSpecialRooms,
-                        )
-                        rememberUsedSeed(runSeed)
-                    },
-                    enabled = !seedInputInvalid,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Text("Generate all")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmGenerateAll = false }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
+//    if (confirmGenerateAll) {
+//        AlertDialog(
+//            onDismissRequest = { confirmGenerateAll = false },
+//            title = { Text("Generate all rooms?") },
+//            text = {
+//                Text(
+//                    buildString {
+//                        append("This will replace generated biome edits across supported rooms using the current style and theme.")
+//                        if (pinnedSeed != null) append(" Seed $pinnedSeed will be used.")
+//                        else append(" A fresh random seed will be used.")
+//                        if (omitSpecialRooms) append(" Utility and boss rooms will be skipped.")
+//                        append(" Rooms with manual edits will be skipped; use Generate room for those.")
+//                    }
+//                )
+//            },
+//            confirmButton = {
+//                Button(
+//                    onClick = {
+//                        val runSeed = nextRunSeed()
+//                        confirmGenerateAll = false
+//                        pendingGenerateAll = PendingGenerateAllBiome(
+//                            rulesForSeed(runSeed),
+//                            theme.resolve(runSeed),
+//                            runSeed,
+//                            currentWfcOptions(),
+//                            omitSpecialRooms,
+//                        )
+//                        rememberUsedSeed(runSeed)
+//                    },
+//                    enabled = !seedInputInvalid,
+//                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+//                ) {
+//                    Text("Generate all")
+//                }
+//            },
+//            dismissButton = {
+//                TextButton(onClick = { confirmGenerateAll = false }) {
+//                    Text("Cancel")
+//                }
+//            },
+//        )
+//    }
 
     if (confirmRevertAll) {
         AlertDialog(

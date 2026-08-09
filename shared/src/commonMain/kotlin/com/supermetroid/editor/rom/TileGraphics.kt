@@ -54,6 +54,7 @@ class TileGraphics(private val romParser: RomParser) {
         const val CRE_METATILE_COUNT = 256    // CRE metatile definitions occupy slots 0-255
         const val TOTAL_TILES = 1024          // 0-1023
         const val METATILE_COUNT = 1024       // Number of metatile definitions
+        const val AIR_METATILE_INDEX = 0x0FF  // Canonical transparent room air metatile
         
         /** @see RomConstants.BYTES_PER_4BPP_TILE */
         const val BYTES_PER_TILE = RomConstants.BYTES_PER_4BPP_TILE
@@ -112,6 +113,10 @@ class TileGraphics(private val romParser: RomParser) {
      * True when [index] is undefined for the loaded tileset, or when every
      * quadrant uses the sparse CRE placeholder tile ($3FF).
      *
+     * Metatile $FF is the canonical room air/empty metatile. It often resolves
+     * to fully transparent art while still carrying meaningful collision in
+     * vanilla rooms, so it must not be treated as missing graphics.
+     *
      * Do not reject metatiles merely because they reference CRE tiles
      * $3C6-$3C9: those tile numbers are also used by visible pipe art in
      * real tilesets, and the room renderer must draw that art.
@@ -119,6 +124,7 @@ class TileGraphics(private val romParser: RomParser) {
     fun isPlaceholderMetatile(index: Int): Boolean {
         val metas = metatiles ?: return true
         if (index < 0 || index >= metas.size || index >= cachedDefinedMetatiles) return true
+        if (index == AIR_METATILE_INDEX) return false
         if (!cachedHasCre) return false
         return metas[index].all { (it and 0x3FF) == 0x3FF }
     }

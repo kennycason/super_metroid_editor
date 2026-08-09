@@ -251,6 +251,20 @@ class TileGraphicsTest {
         }
 
         @Test
+        fun `Crateria air metatile is valid transparent art not a placeholder`() {
+            val g = gfx ?: return
+            assertTrue(g.loadTileset(0))
+
+            assertFalse(g.isPlaceholderMetatile(TileGraphics.AIR_METATILE_INDEX))
+            val pixels = g.renderMetatile(TileGraphics.AIR_METATILE_INDEX)
+            assertNotNull(pixels)
+            assertTrue(
+                pixels!!.all { it == 0 },
+                "metatile ${TileGraphics.AIR_METATILE_INDEX} should render transparent, not collision fallback",
+            )
+        }
+
+        @Test
         fun `setMetatileWords updates raw variable tile table`() {
             val g = gfx ?: return
             g.invalidateCache()

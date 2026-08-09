@@ -205,6 +205,38 @@ class MapRendererTest {
                 }
             }
         }
+
+        @Test
+        fun `renderRoomFromLevelData leaves air metatile transparent even with solid collision`() {
+            val mr = renderer ?: return
+            val levelData = oneScreenLevelData(0x8000 or TileGraphics.AIR_METATILE_INDEX)
+
+            val result = mr.renderRoomFromLevelData(
+                syntheticCrateriaRoom(),
+                levelData,
+                plmOverrides = emptyList(),
+                enemyOverrides = emptyList(),
+            )
+            assertNotNull(result)
+
+            assertEquals(RomConstants.ROM_BG_COLOR, result!!.pixels[0])
+        }
+
+        @Test
+        fun `renderRoomFromLevelData leaves air metatile transparent even with door collision`() {
+            val mr = renderer ?: return
+            val levelData = oneScreenLevelData(0x9000 or TileGraphics.AIR_METATILE_INDEX)
+
+            val result = mr.renderRoomFromLevelData(
+                syntheticCrateriaRoom(),
+                levelData,
+                plmOverrides = emptyList(),
+                enemyOverrides = emptyList(),
+            )
+            assertNotNull(result)
+
+            assertEquals(RomConstants.ROM_BG_COLOR, result!!.pixels[0])
+        }
     }
 
     // ── Multiple rooms across areas ──────────────────────────────

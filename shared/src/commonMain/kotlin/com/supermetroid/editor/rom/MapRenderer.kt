@@ -127,16 +127,20 @@ class MapRenderer(private val romParser: RomParser, customTileGraphics: TileGrap
             val shouldUseTileGraphics = hasTileGraphics && !tileGraphics.isPlaceholderMetatile(metatileIndex)
             if (shouldUseTileGraphics) {
                 val metatilePixels = tileGraphics.renderMetatile(metatileIndex)
-                if (metatilePixels != null && metatilePixels.any { it != 0 }) {
-                    for (ty in 0 until 16) {
-                        for (tx in 0 until 16) {
-                            val sx = if (hFlip != 0) 15 - tx else tx
-                            val sy = if (vFlip != 0) 15 - ty else ty
-                            val argb = metatilePixels[sy * 16 + sx]
-                            if (argb != 0) {
-                                setPixel(pixels, pixelWidth, pixelHeight, px + tx, py + ty, argb)
+                if (metatilePixels != null) {
+                    if (metatilePixels.any { it != 0 }) {
+                        for (ty in 0 until 16) {
+                            for (tx in 0 until 16) {
+                                val sx = if (hFlip != 0) 15 - tx else tx
+                                val sy = if (vFlip != 0) 15 - ty else ty
+                                val argb = metatilePixels[sy * 16 + sx]
+                                if (argb != 0) {
+                                    setPixel(pixels, pixelWidth, pixelHeight, px + tx, py + ty, argb)
+                                }
                             }
                         }
+                    } else if (metatileIndex != TileGraphics.AIR_METATILE_INDEX) {
+                        renderFallbackBlock(room, blockType, pixels, pixelWidth, pixelHeight, px, py)
                     }
                 } else {
                     renderFallbackBlock(room, blockType, pixels, pixelWidth, pixelHeight, px, py)
