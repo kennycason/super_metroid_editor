@@ -238,6 +238,19 @@ class TileGraphicsTest {
         }
 
         @Test
+        fun `Crateria pipe metatiles are rendered art not placeholders`() {
+            val g = gfx ?: return
+            assertTrue(g.loadTileset(0))
+
+            for (metatile in listOf(157, 158)) {
+                assertFalse(g.isPlaceholderMetatile(metatile), "metatile $metatile should render as visible pipe art")
+                val pixels = g.renderMetatile(metatile)
+                assertNotNull(pixels)
+                assertTrue(pixels!!.any { it != 0 }, "metatile $metatile should have visible pixels")
+            }
+        }
+
+        @Test
         fun `setMetatileWords updates raw variable tile table`() {
             val g = gfx ?: return
             g.invalidateCache()

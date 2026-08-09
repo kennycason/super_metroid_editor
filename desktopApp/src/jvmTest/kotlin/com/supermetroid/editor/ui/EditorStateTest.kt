@@ -48,6 +48,45 @@ class EditorStateTest {
     }
 
     @Nested
+    inner class ProjectLifecycle {
+        @Test
+        fun `loading a new ROM clears transient editing state from the previous ROM`() {
+            state.setBrushForTest(TileBrush.single(0x09D, blockType = 0x8, bts = 1))
+            state.beginFloatingSelectionFromBrushAt(2, 2)
+            state.activeTool = EditorTool.PAINT
+            state.mapSelStart = 0 to 0
+            state.mapSelEnd = 1 to 1
+            state.updateHover(1, 1)
+            writeWord(0, 0, 0x8063)
+            state.setTileProperties(0, 0, blockType = 0xA, bts = 0)
+
+            assertNotNull(state.brush)
+            assertNotNull(state.floatingSelection)
+            assertTrue(state.metatileBlockTypePresets.isNotEmpty())
+            assertTrue(state.undoStack.isNotEmpty())
+
+            state.initForReadOnlyRom("/tmp/smart-readonly.smc")
+
+            assertNull(state.brush)
+            assertEquals(EditorTool.SELECT, state.activeTool)
+            assertNull(state.mapSelStart)
+            assertNull(state.mapSelEnd)
+            assertNull(state.floatingSelection)
+            assertEquals(-1, state.hoverBlockX)
+            assertEquals(-1, state.hoverBlockY)
+            assertEquals(0, state.hoverTileWord)
+            assertTrue(state.metatileBlockTypePresets.isEmpty())
+            assertTrue(state.undoStack.isEmpty())
+            assertTrue(state.redoStack.isEmpty())
+            assertNull(state.workingLevelData)
+            assertNull(state.originalLevelData)
+            assertEquals(0, state.workingBlocksWide)
+            assertEquals(0, state.workingBlocksTall)
+            assertEquals(0, state.currentRoomId)
+        }
+    }
+
+    @Nested
     inner class Layer2Editing {
         @Test
         fun `paint edits embedded layer 2 without changing layer 1`() {

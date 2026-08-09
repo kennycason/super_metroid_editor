@@ -2,6 +2,8 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.collectVanillaEnemyGfxDestinations
+import com.supermetroid.editor.rom.selectEnemyGfxVramDestination
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

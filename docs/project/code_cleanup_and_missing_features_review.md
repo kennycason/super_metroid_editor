@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-08
 
-Scope: static review of the current codebase, docs, and test structure. SMART experimental support is intentionally excluded. I did not run the full test suite for this pass.
+Scope: static review of the current codebase, docs, and test structure. SMART experimental support is intentionally excluded. The original review pass was static; the 2026-08-08 implementation follow-up ran shared and desktop JVM tests.
 
 Primary assumption: the desktop app is currently the canonical editing/export surface because it supports the broadest project export behavior.
 
@@ -10,42 +10,43 @@ Primary assumption: the desktop app is currently the canonical editing/export su
 
 ### P0: Export Can Knowingly Corrupt ROM Data
 
-- Status: Open
+- Status: Addressed on 2026-08-08
 - Area: desktop ROM export
 - References:
-  - [`RomExporter.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/RomExporter.kt#L765)
-  - [`RomExporter.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/RomExporter.kt#L788)
+  - [`ProjectRoomExporter.kt`](../../shared/src/commonMain/kotlin/com/supermetroid/editor/rom/ProjectRoomExporter.kt)
+  - [`ProjectRoomExporterTest.kt`](../../shared/src/jvmTest/kotlin/com/supermetroid/editor/rom/ProjectRoomExporterTest.kt)
 
-When expanded scroll data cannot be relocated, the exporter logs that it will corrupt adjacent data and then writes the expanded data in place anyway. This should be a hard export blocker, not a warning.
+When expanded scroll data cannot be relocated, export now throws `ProjectRoomExportException` before a ROM file is written. A regression test exhausts bank `$8F` free space and verifies the export aborts instead of writing expanded scroll data in place.
 
 Done when:
 
-- Export fails before writing whenever expanded data cannot be safely relocated.
-- The error is reported through the same validation/export issue model used by the UI.
-- A regression test covers the no-free-space case.
+- [x] Export fails before writing whenever expanded data cannot be safely relocated.
+- [x] The desktop UI reports the export failure through the export status/log path.
+- [x] A regression test covers the no-free-space case.
 
 ### P1: Desktop And Headless Export Pipelines Are Divergent
 
-- Status: Open
+- Status: Partially addressed on 2026-08-08
 - Area: export architecture
 - References:
-  - [`RomExporter.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/RomExporter.kt#L81)
-  - [`SmeditBuildService.kt`](../../shared/src/jvmMain/kotlin/com/supermetroid/editor/headless/SmeditBuildService.kt#L596)
-  - [`SmeditBuildService.kt`](../../shared/src/jvmMain/kotlin/com/supermetroid/editor/headless/SmeditBuildService.kt#L246)
-  - [`SmeditBuildService.kt`](../../shared/src/jvmMain/kotlin/com/supermetroid/editor/headless/SmeditBuildService.kt#L2057)
+  - [`ProjectRoomExporter.kt`](../../shared/src/commonMain/kotlin/com/supermetroid/editor/rom/ProjectRoomExporter.kt)
+  - [`RomExporter.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/RomExporter.kt)
+  - [`SmeditBuildService.kt`](../../shared/src/jvmMain/kotlin/com/supermetroid/editor/headless/SmeditBuildService.kt)
 
-Desktop export handles many project edit types. Headless build only applies a subset and reports unsupported project data as warnings. This creates feature skew and makes it easy for CLI/service exports to silently omit work users expected to be included.
+The room-edit export core is now shared. Desktop export and headless ROM builds both call `ProjectRoomExporter` for room level data, PLMs, custom scroll commands, doors, enemy population/GFX sets, scroll data, FX, room headers, state data, and save station spawns. Patch-only headless builds still require `--rom` for room edits because compressed room data cannot be produced safely without ROM context.
+
+Remaining work: patch/config export, custom graphics, music, text, minimap, and custom ASM still have separate desktop/headless implementations or partial support.
 
 Done when:
 
-- A shared export engine or patch planner lives in `shared`.
-- Desktop, CLI, and service builds call the same core pipeline.
-- Unsupported project data is either fully supported or treated as an explicit blocking issue.
-- Export reports have structured issue data instead of ad hoc logs.
+- [x] Shared room export engine lives in `shared`.
+- [x] Desktop ROM export and service/headless ROM builds call the same room-edit core.
+- [ ] Continue unifying patch/config, graphics, music, text, minimap, and custom ASM export.
+- [ ] Replace ad hoc logs/warnings with structured export issues.
 
 ### P1: `EditorState` Is A God Object
 
-- Status: Open
+- Status: Partially addressed on 2026-08-08
 - Area: desktop editor architecture
 - References:
   - [`EditorState.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/EditorState.kt#L107)
@@ -53,15 +54,16 @@ Done when:
   - [`EditorState.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/EditorState.kt#L4027)
   - [`EditorState.kt`](../../desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/EditorState.kt#L4083)
 
-`EditorState` is over 4,000 lines and mixes Compose state, project persistence, ROM loading, room editing, graphics editing, sprite state, image IO, and export orchestration. It wraps a mutable project in Compose state, then mutates nested maps/lists directly, which forces manual version counters and makes correctness harder to reason about.
+`EditorState` is still large, but project file load/save and desktop ROM/IPS export orchestration have been moved into `ProjectFileService`. `EditorState` now keeps thin public methods for those workflows while no longer owning file serialization, custom graphics PNG side effects, or export file writing.
 
 Done when:
 
-- Project persistence is moved into a `ProjectStore` or equivalent.
-- Room editing session state is separated from global app state.
-- Graphics/sprite editor sessions are separated from room editing state.
-- Export orchestration is a service/coordinator, not a method on UI state.
-- Compose state wraps stable immutable values or explicit observable stores.
+- [x] Project file load/save and desktop export orchestration moved into a service.
+- [ ] Project persistence should still become a fuller `ProjectStore` or equivalent.
+- [ ] Room editing session state is separated from global app state.
+- [ ] Graphics/sprite editor sessions are separated from room editing state.
+- [x] Export orchestration is delegated to a service/coordinator.
+- [ ] Compose state wraps stable immutable values or explicit observable stores.
 
 ### P1: Map Rendering Recomputes Too Much
 

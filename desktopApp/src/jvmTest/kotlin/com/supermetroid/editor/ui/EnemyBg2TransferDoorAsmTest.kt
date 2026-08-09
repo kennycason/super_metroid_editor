@@ -1,6 +1,10 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.rom.DoorScrollWrite
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.buildDoorAsmClearingEnemyBg2Transfer
+import com.supermetroid.editor.rom.parseDoorScrollWrites
+import com.supermetroid.editor.rom.shouldClearEnemyBg2TransferOnDoor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

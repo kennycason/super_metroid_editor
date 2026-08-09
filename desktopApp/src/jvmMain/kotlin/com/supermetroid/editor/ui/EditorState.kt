@@ -54,8 +54,9 @@ import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
+import com.supermetroid.editor.rom.toSigned16
+import com.supermetroid.editor.rom.toUnsigned16
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.serialization.json.Json
 import java.io.File
 
 private val editorStateLog = KotlinLogging.logger {}
@@ -1964,7 +1965,7 @@ class EditorState {
         val file = File(projectFilePath)
         if (file.exists()) {
             try {
-                project = json.decodeFromString(SmEditProject.serializer(), file.readText())
+                project = ProjectFileService.loadProject(file)
                 val enabledPatches = project.patches.filter { it.enabled }
                 editorLog("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
                 if (enabledPatches.isNotEmpty()) {
@@ -1992,6 +1993,8 @@ class EditorState {
         if (seedPatches) {
             seedDefaultPatches(forceRefreshBundled = true)
         }
+        brush = null
+        activeTool = EditorTool.SELECT
         tileGraphics = null
         editorTileGraphics = null
         editorSelectedMetatile = -1
@@ -2001,6 +2004,11 @@ class EditorState {
         sampledPaletteCol = -1
         workingLevelData = null
         originalLevelData = null
+        workingBlocksWide = 0
+        workingBlocksTall = 0
+        currentRoomId = 0
+        currentTilesetId = 0
+        romTilesetId = 0
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
@@ -2011,6 +2019,35 @@ class EditorState {
         currentAreaRomSaveEntries = emptyMap()
         currentAreaSaveEntryCount = 0
         vanillaSaveIndicesByArea = emptyMap()
+        currentStateIndex = -1
+        hoverBlockX = -1
+        hoverBlockY = -1
+        hoverTileWord = 0
+        scrollTargetBlockX = -1
+        scrollTargetBlockY = -1
+        metatileBlockTypePresets = emptyMap()
+        undoStack.clear()
+        redoStack.clear()
+        undoVersion++
+        pendingEdits.clear()
+        pendingPositions.clear()
+        pendingPlmAdds.clear()
+        pendingPlmRemoves.clear()
+        _workingPlms.clear()
+        originalPlmCount = 0
+        _workingDoors.clear()
+        _workingEnemies.clear()
+        _workingScrolls = IntArray(0)
+        _originalScrolls = IntArray(0)
+        scrollVersion++
+        selectedPatternId = null
+        activePattern = null
+        patternUndoStack.clear()
+        patternRedoStack.clear()
+        pendingPatEdits.clear()
+        pendingPatPositions.clear()
+        patternEditVersion++
+        patUndoVersion++
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         phantoonSprite.invalidate()
@@ -3944,20 +3981,6 @@ class EditorState {
 
     // ─── Project file I/O ───────────────────────────────────────
 
-    private val json = Json {
-        // Project files can contain hundreds of thousands of generated tile edits.
-        // Keep saves compact; use jq or an editor formatter when human-readable JSON is needed.
-        prettyPrint = false
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        encodeDefaults = true
-    }
-
-    /**
-     * Save project to .smedit file. When romParser is provided, also export
-     * custom tileset graphics as PNGs to a project-specific folder
-     * ({romBase}_smedit/) so different ROMs don't overwrite each other.
-     */
     // ─── Room JSON Export/Import ────────────────────────────────
     fun exportRoomToJson(roomId: Int, romParser: RomParser): String {
         val room = romParser.readRoomHeader(roomId) ?: error("Room not found")
@@ -4025,57 +4048,20 @@ class EditorState {
     }
 
     fun saveProject(romParser: RomParser? = null): Boolean {
-        if (projectFilePath.isEmpty()) return false
-        return try {
-            // Prune rooms with no actual edits before saving
-            val emptyKeys = project.rooms.entries.filter { !it.value.hasEdits }.map { it.key }
-            for (k in emptyKeys) project.rooms.remove(k)
-
-            File(projectFilePath).writeText(json.encodeToString(SmEditProject.serializer(), project))
+        val saved = ProjectFileService.saveProject(
+            project = project,
+            projectFilePath = projectFilePath,
+            romParser = romParser,
+            savePatternLibrary = !testMode,
+            onLog = ::editorLog,
+        )
+        if (saved) {
             dirty = false
-            editorLog("Project saved: $projectFilePath")
             postStatus("Project saved: $projectFilePath")
-            romParser?.let { exportCustomGfxPngs(it) }
-            if (!testMode) PatternLibrary.saveAll(project.patterns)
-            true
-        } catch (e: Exception) { editorLog("Save failed: ${e.message}"); postStatus("Save failed: ${e.message}"); false }
-    }
-
-    /** Export custom tileset graphics as PNGs to project folder. Folder is per-ROM so projects don't overwrite each other. */
-    private fun exportCustomGfxPngs(romParser: RomParser) {
-        val gfx = project.customGfx
-        val hasVar = gfx.varGfx.isNotEmpty()
-        val hasCre = gfx.creGfx != null
-        if (!hasVar && !hasCre) return
-        val projectFile = File(projectFilePath)
-        val folder = File(projectFile.parentFile, "${projectFile.nameWithoutExtension}_smedit")
-        folder.mkdirs()
-        val tg = TileGraphics(romParser)
-        for ((tilesetId, b64) in gfx.varGfx) {
-            if (!tg.loadTileset(tilesetId.toIntOrNull() ?: continue)) continue
-            try {
-                tg.applyCustomVarGfx(java.util.Base64.getDecoder().decode(b64))
-                val result = tg.renderTileSheet(0, tg.getVarTileCount())
-                if (result != null) {
-                    val (pixels, w, h) = result
-                    val out = File(folder, "ure_$tilesetId.png")
-                    if (writePng(out.absolutePath, pixels, w, h)) editorLog("Exported $out")
-                }
-            } catch (_: Exception) {}
+        } else {
+            postStatus("Save failed")
         }
-        if (hasCre && gfx.creGfx != null) {
-            if (tg.loadTileset(0)) {
-                try {
-                    tg.applyCustomCreGfx(java.util.Base64.getDecoder().decode(gfx.creGfx))
-                    val result = tg.renderTileSheet(tg.getCreOffset(), tg.getCreTileCount())
-                    if (result != null) {
-                        val (pixels, w, h) = result
-                        val out = File(folder, "cre.png")
-                        if (writePng(out.absolutePath, pixels, w, h)) editorLog("Exported $out")
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        return saved
     }
 
     // ─── Export: patch ROM ──────────────────────────────────────
@@ -4084,28 +4070,14 @@ class EditorState {
         seedDefaultPatches(forceRefreshBundled = true)
         if (project.romPath.isEmpty()) return null
         saveProject(romParser)
-        return RomExporter(project, romParser, ::editorLog, ::postStatus).export()
+        return ProjectFileService.exportToRom(project, romParser, ::editorLog, ::postStatus)
     }
 
     fun exportToIps(romParser: RomParser): String? {
-        val smcPath = exportToRom(romParser) ?: return null
-        val original = romParser.getRomData()
-        val patched = File(smcPath).readBytes()
-        if (original.size != patched.size) {
-            editorLog("[IPS] ROM size mismatch: ${original.size} vs ${patched.size}")
-            return null
-        }
-        val ipsData = buildIpsPatch(original, patched)
-        val orig = File(project.romPath)
-        val version = "v${project.versionMajor}.${project.versionMinor}"
-        val build = project.buildName.trim()
-        val suffix = if (build.isNotEmpty()) "$build-$version" else version
-        val ipsFile = File(orig.parent, "${orig.nameWithoutExtension}-$suffix.ips")
-        ipsFile.writeBytes(ipsData)
-        val msg = "Exported IPS: ${ipsFile.absolutePath} (${ipsData.size} bytes)"
-        editorLog(msg)
-        postStatus(msg)
-        return ipsFile.absolutePath
+        seedDefaultPatches(forceRefreshBundled = true)
+        if (project.romPath.isEmpty()) return null
+        saveProject(romParser)
+        return ProjectFileService.exportToIps(project, romParser, ::editorLog, ::postStatus)
     }
 
 }

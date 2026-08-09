@@ -1,8 +1,13 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.DoorChange
+import com.supermetroid.editor.rom.DoorDependentBgTransfer
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.buildBgDataWithClonedDoorDependentTransfer
+import com.supermetroid.editor.rom.findMatchingDoorDependentBgTransfer
+import com.supermetroid.editor.rom.parseDoorDependentBgTransfers
+import com.supermetroid.editor.rom.readDoorEntryAtDoorDefPtr
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue

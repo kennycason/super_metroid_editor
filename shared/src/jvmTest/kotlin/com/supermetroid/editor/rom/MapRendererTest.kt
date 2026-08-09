@@ -25,6 +25,35 @@ class MapRendererTest {
         return rp.readRoomHeader(roomId)
     }
 
+    private fun oneScreenLevelData(firstBlockWord: Int): ByteArray {
+        val totalBlocks = 16 * 16
+        val layer1Size = totalBlocks * 2
+        val data = ByteArray(2 + layer1Size + totalBlocks)
+        data[0] = (layer1Size and 0xFF).toByte()
+        data[1] = ((layer1Size shr 8) and 0xFF).toByte()
+        data[2] = (firstBlockWord and 0xFF).toByte()
+        data[3] = ((firstBlockWord shr 8) and 0xFF).toByte()
+        return data
+    }
+
+    private fun syntheticCrateriaRoom(tileset: Int = 0): Room =
+        Room(
+            roomId = 0x91F8,
+            name = "Synthetic Crateria",
+            handle = "syntheticCrateria",
+            index = 0,
+            area = 0,
+            mapX = 0,
+            mapY = 0,
+            width = 1,
+            height = 1,
+            upScroller = 0,
+            downScroller = 0,
+            creBitflag = 0,
+            doorOut = 0,
+            tileset = tileset,
+        )
+
     // ── Basic room rendering ─────────────────────────────────────
 
     @Nested
@@ -150,6 +179,31 @@ class MapRendererTest {
             val result = mr.renderRoomFromLevelData(room, levelData, plmOverrides = emptyList())
             assertNotNull(result)
             assertTrue(result!!.plmEntries.isEmpty(), "Should use the overrides")
+        }
+
+        @Test
+        fun `renderRoomFromLevelData draws Crateria pipe metatiles instead of collision fallback`() {
+            val rp = romParser ?: return
+            val mr = renderer ?: return
+            val tileGraphics = TileGraphics(rp)
+            assertTrue(tileGraphics.loadTileset(0))
+            val expected = tileGraphics.renderMetatile(157)
+            assertNotNull(expected)
+            val levelData = oneScreenLevelData(0x809D)
+
+            val result = mr.renderRoomFromLevelData(
+                syntheticCrateriaRoom(),
+                levelData,
+                plmOverrides = emptyList(),
+                enemyOverrides = emptyList(),
+            )
+            assertNotNull(result)
+
+            for (y in 0 until 16) {
+                for (x in 0 until 16) {
+                    assertEquals(expected!![y * 16 + x], result!!.pixels[y * result.width + x])
+                }
+            }
         }
     }
 

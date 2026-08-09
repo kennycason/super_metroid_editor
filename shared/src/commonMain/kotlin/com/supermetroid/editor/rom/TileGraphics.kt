@@ -109,16 +109,18 @@ class TileGraphics(private val romParser: RomParser) {
     fun definedMetatileCount(): Int = cachedDefinedMetatiles
 
     /**
-     * True when [index] is undefined for the loaded tileset, or any of its
-     * sub-tiles draws a CRE "X block" character (0x3C6-0x3C9 dense X, 0x3FF
-     * sparse X) — vanilla's solid-but-invisible markers, only used where
-     * layer 2 hides them. Generators should skip these.
+     * True when [index] is undefined for the loaded tileset, or when every
+     * quadrant uses the sparse CRE placeholder tile ($3FF).
+     *
+     * Do not reject metatiles merely because they reference CRE tiles
+     * $3C6-$3C9: those tile numbers are also used by visible pipe art in
+     * real tilesets, and the room renderer must draw that art.
      */
     fun isPlaceholderMetatile(index: Int): Boolean {
         val metas = metatiles ?: return true
         if (index < 0 || index >= metas.size || index >= cachedDefinedMetatiles) return true
-        if (!cachedHasCre) return false  // Kraid tileset: chars 0x280+ are real graphics
-        return metas[index].any { (it and 0x3FF) in 0x3C6..0x3C9 || (it and 0x3FF) == 0x3FF }
+        if (!cachedHasCre) return false
+        return metas[index].all { (it and 0x3FF) == 0x3FF }
     }
 
     /**

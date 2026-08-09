@@ -1,9 +1,6 @@
-package com.supermetroid.editor.ui
+package com.supermetroid.editor.rom
 
-import com.supermetroid.editor.rom.RomConstants
-import com.supermetroid.editor.rom.RomParser
-
-internal data class DoorScrollWrite(
+data class DoorScrollWrite(
     val scrollValue: Int,
     val addressLowByte: Int,
 )
@@ -12,10 +9,10 @@ private const val MOTHER_BRAIN_ROOM_ID = 0xDD58
 private const val NMI_FLAG_BG2_ENEMY_VRAM_TRANSFER_ADDR = 0x0E1E
 private const val ENEMY_BG2_TILEMAP_SIZE_ADDR = 0x179A
 
-internal fun shouldClearEnemyBg2TransferOnDoor(sourceRoomId: Int, destRoomId: Int): Boolean =
+fun shouldClearEnemyBg2TransferOnDoor(sourceRoomId: Int, destRoomId: Int): Boolean =
     sourceRoomId == MOTHER_BRAIN_ROOM_ID && destRoomId != MOTHER_BRAIN_ROOM_ID
 
-internal fun parseDoorScrollWrites(
+fun parseDoorScrollWrites(
     romParser: RomParser,
     entryCode: Int,
     maxBytes: Int = 80,
@@ -54,8 +51,9 @@ internal fun parseDoorScrollWrites(
     return writes
 }
 
-internal fun buildDoorAsmClearingEnemyBg2Transfer(scrollWrites: List<DoorScrollWrite>): ByteArray {
+fun buildDoorAsmClearingEnemyBg2Transfer(scrollWrites: List<DoorScrollWrite>): ByteArray {
     val bytes = mutableListOf<Int>()
+
     fun addWordAddress(address: Int) {
         bytes.add(address and 0xFF)
         bytes.add((address shr 8) and 0xFF)
@@ -87,7 +85,7 @@ internal fun buildDoorAsmClearingEnemyBg2Transfer(scrollWrites: List<DoorScrollW
     return bytes.map { it.toByte() }.toByteArray()
 }
 
-internal data class DoorDependentBgTransfer(
+data class DoorDependentBgTransfer(
     val doorDefPtr: Int,
     val srcAddr: Int,
     val vramDst: Int,
@@ -103,7 +101,7 @@ private fun bgDataCommandSize(command: Int): Int? = when (command) {
     else -> null
 }
 
-internal fun readDoorEntryAtDoorDefPtr(
+fun readDoorEntryAtDoorDefPtr(
     romParser: RomParser,
     doorDefPtr: Int,
 ): RomParser.DoorEntry? {
@@ -123,7 +121,7 @@ internal fun readDoorEntryAtDoorDefPtr(
     )
 }
 
-internal fun parseDoorDependentBgTransfers(
+fun parseDoorDependentBgTransfers(
     romParser: RomParser,
     bgDataPtr: Int,
     maxCommands: Int = 64,
@@ -162,7 +160,7 @@ private fun sameDoorDependentBgEntrance(a: RomParser.DoorEntry, b: RomParser.Doo
         a.screenX == b.screenX &&
         a.screenY == b.screenY
 
-internal fun findMatchingDoorDependentBgTransfer(
+fun findMatchingDoorDependentBgTransfer(
     romParser: RomParser,
     bgDataPtr: Int,
     newDoor: RomParser.DoorEntry,
@@ -175,7 +173,7 @@ internal fun findMatchingDoorDependentBgTransfer(
     }
 }
 
-internal fun buildBgDataWithClonedDoorDependentTransfer(
+fun buildBgDataWithClonedDoorDependentTransfer(
     romParser: RomParser,
     bgDataPtr: Int,
     newDoorDefPtr: Int,

@@ -1,6 +1,7 @@
 package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
@@ -8,6 +9,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
+import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.TileGraphics
 import java.util.Base64
 import kotlin.test.Test
@@ -445,6 +447,25 @@ class SmeditBuildServiceTest {
         val wrapperSnes = firstHook[1] or (firstHook[2] shl 8) or (firstHook[3] shl 16)
         assertEquals(0x22, result.romBytes[parser.snesToPc(wrapperSnes)].toInt() and 0xFF)
         assertTrue(result.report.applied.first { it.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE }.bytes > 100)
+    }
+
+    @Test
+    fun `rom build applies project room edits through shared exporter`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+        val roomId = 0x91F8
+        val room = parser.readRoomHeader(roomId) ?: return
+        val newMapX = (room.mapX + 1).coerceAtMost(63)
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).roomHeaderChange = RoomHeaderChange(mapX = newMapX)
+        }
+
+        val result = SmeditBuildService().build(original, SmeditBuildRequest(), project)
+        val headerPc = parser.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
+
+        assertEquals(newMapX, result.romBytes[headerPc + 2].toInt() and 0xFF)
+        assertTrue(result.report.applied.any { it.identifier == "project_room_edits" })
+        assertTrue(result.report.warnings.none { it.contains("unsupported room edits") })
     }
 
     @Test
