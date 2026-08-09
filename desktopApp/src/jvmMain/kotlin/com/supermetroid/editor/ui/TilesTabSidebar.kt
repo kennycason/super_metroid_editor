@@ -67,15 +67,21 @@ internal fun TilesTabSidebar(
                 modifier = Modifier.fillMaxSize()
             )
             1 -> {
-                PatternListPanel(editorState = editorState, modifier = Modifier.weight(1f))
-                DraggableDividerHorizontal(onDelta = { dy ->
-                    onTilesetHeightChange((tilesetHeightDp - dy).coerceIn(120f, 700f))
-                })
-                TilesetPreview(
-                    room = selectedRoom,
-                    romParser = romParser,
-                    editorState = editorState,
-                    modifier = Modifier.fillMaxWidth().height(tilesetHeightDp.dp)
+                SidebarVerticalSplit(
+                    bottomPaneHeightDp = tilesetHeightDp,
+                    onBottomPaneHeightChange = onTilesetHeightChange,
+                    modifier = Modifier.fillMaxSize(),
+                    topPane = { topModifier ->
+                        PatternListPanel(editorState = editorState, modifier = topModifier)
+                    },
+                    bottomPane = { bottomModifier ->
+                        TilesetPreview(
+                            room = selectedRoom,
+                            romParser = romParser,
+                            editorState = editorState,
+                            modifier = bottomModifier,
+                        )
+                    },
                 )
             }
             2 -> PaletteSubTab(

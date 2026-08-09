@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -30,6 +32,7 @@ fun DraggableDividerVertical(
     modifier: Modifier = Modifier,
     width: Dp = 10.dp
 ) {
+    val currentOnDelta by rememberUpdatedState(onDelta)
     Box(
         modifier = modifier
             .width(width)
@@ -45,7 +48,7 @@ fun DraggableDividerVertical(
                         if (event.type == PointerEventType.Move) {
                             val change = event.changes.firstOrNull() ?: continue
                             val dx = change.position.x - change.previousPosition.x
-                            if (dx != 0f) onDelta(dx)
+                            if (dx != 0f) currentOnDelta(dx)
                         }
                     }
                 }
@@ -63,6 +66,7 @@ fun DraggableDividerHorizontal(
     modifier: Modifier = Modifier,
     height: Dp = 10.dp
 ) {
+    val currentOnDelta by rememberUpdatedState(onDelta)
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -78,7 +82,7 @@ fun DraggableDividerHorizontal(
                         if (event.type == PointerEventType.Move) {
                             val change = event.changes.firstOrNull() ?: continue
                             val dy = change.position.y - change.previousPosition.y
-                            if (dy != 0f) onDelta(dy)
+                            if (dy != 0f) currentOnDelta(dy)
                         }
                     }
                 }

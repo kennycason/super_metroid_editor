@@ -543,8 +543,7 @@ fun main() = application {
                 
                 // Main content: resizable left column + right canvas
                 var leftColumnWidthDp by remember { mutableStateOf(330f) }
-                var tilesetHeightInitialized by remember { mutableStateOf(false) }
-                var tilesetHeightDp by remember { mutableStateOf(400f) }
+                var tilesetHeightDp by remember { mutableStateOf(Float.NaN) }
                 var leftTab by remember { mutableStateOf(0) }
                 LaunchedEffect(romReadOnly, leftTab) {
                     if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
@@ -623,10 +622,6 @@ fun main() = application {
                             }
                         }
                 ) {
-                    if (!tilesetHeightInitialized) {
-                        tilesetHeightDp = (maxHeight.value * 0.35f).coerceIn(120f, 700f)
-                        tilesetHeightInitialized = true
-                    }
                     val maxLeftWidth = maxWidth.value - 100f
                     Row(
                         modifier = Modifier.fillMaxSize(),
