@@ -119,6 +119,7 @@ class Bank90Writer:
     def php(self) -> None: self.emit(0x08)
     def plp(self) -> None: self.emit(0x28)
     def rts(self) -> None: self.emit(0x60)
+    def rtl(self) -> None: self.emit(0x6B)
     def pha(self) -> None: self.emit(0x48)
     def pla(self) -> None: self.emit(0x68)
     def rep_30(self) -> None: self.emit(0xC2, 0x30)
@@ -161,7 +162,10 @@ DOWN_BINDING = 0x09AC
 LEFT_BINDING = 0x09AE
 RIGHT_BINDING = 0x09B0
 JUMP_BINDING = 0x09B4
+POSE = 0x0A1C
 MOVEMENT_TYPE = 0x0A1F
+SAMUS_TILES_TOP_HALF_TILES_DEF = 0x071F
+SAMUS_TILES_BOTTOM_HALF_TILES_DEF = 0x0721
 SAMUS_X_POSITION = 0x0AF6
 SAMUS_X_SUBPOSITION = 0x0AF8
 SAMUS_Y_POSITION = 0x0AFA
@@ -193,6 +197,7 @@ ORIG_MORPH_FALLING = 0xA5CA
 ORIG_SPRING_GROUND = 0xA69F
 ORIG_SPRING_AIR = 0xA6F1
 ORIG_SPRING_FALLING = 0xA703
+SET_SAMUS_TILES_DEFINITIONS_FOR_CURRENT_ANIMATION = 0x928000
 
 # Existing bank $91 pose input handlers.
 ORIG_POSE_MORPH_GROUND = 0x807E
@@ -218,6 +223,38 @@ SPIDER_BALL_PLM_LIST_START = 0xF20C
 SPIDER_BALL_ITEM_GFX_SOURCE = 0x8700
 SPIDER_BALL_ITEM_GFX_ADDR = 0xF000
 SPIDER_BALL_ITEM_GFX_SIZE = 0x100
+
+# Spider-specific Samus morph ball graphics. The wrapper leaves vanilla pose,
+# spritemap, collision, and animation timing alone; it only swaps the DMA
+# definition pointers after the vanilla renderer has selected them.
+SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR = 0xEDF4
+SPIDER_BALL_SAMUS_TILE_DEFS_ADDR = 0xF100
+SPIDER_BALL_SAMUS_TILE_GFX_ADDR = 0xF740
+SAMUS_MORPH_TOP_TILE_DEF_ADDRS = tuple(0xD613 + i * 7 for i in range(8)) + (0xD6AD,)
+SAMUS_MORPH_BOTTOM_TILE_DEF_ADDR = 0xD19E
+SPIDER_BALL_SAMUS_TOP_TILE_DEF_ADDRS = tuple(
+    SPIDER_BALL_SAMUS_TILE_DEFS_ADDR + i * 7
+    for i in range(len(SAMUS_MORPH_TOP_TILE_DEF_ADDRS))
+)
+SPIDER_BALL_SAMUS_BOTTOM_TILE_DEF_ADDR = (
+    SPIDER_BALL_SAMUS_TILE_DEFS_ADDR + len(SAMUS_MORPH_TOP_TILE_DEF_ADDRS) * 7
+)
+SPIDER_MORPH_POSES = (
+    0x001D,  # Facing right - morph ball - no springball - on ground
+    0x001E,  # Moving right - morph ball - no springball - on ground
+    0x001F,  # Moving left - morph ball - no springball - on ground
+    0x0031,  # Facing right - morph ball - no springball - in air
+    0x0032,  # Facing left - morph ball - no springball - in air
+    0x0041,  # Facing left - morph ball - no springball - on ground
+    0x0079,  # Facing right - morph ball - spring ball - on ground
+    0x007A,  # Facing left - morph ball - spring ball - on ground
+    0x007B,  # Moving right - morph ball - spring ball - on ground
+    0x007C,  # Moving left - morph ball - spring ball - on ground
+    0x007D,  # Facing right - morph ball - spring ball - falling
+    0x007E,  # Facing left - morph ball - spring ball - falling
+    0x007F,  # Facing right - morph ball - spring ball - in air
+    0x0080,  # Facing left - morph ball - spring ball - in air
+)
 
 MESSAGE_BOX_TABLE_ORIGINAL = 0x869B
 MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES = 29
@@ -854,6 +891,47 @@ def build_spider_code() -> bytes:
     return w.resolve()
 
 
+def build_spider_render_wrapper_code() -> bytes:
+    w = Bank90Writer(start_addr=SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR)
+
+    w.label("SetSamusTilesDefinitionsSpiderWrapper")
+    w.jsl_long(SET_SAMUS_TILES_DEFINITIONS_FOR_CURRENT_ANIMATION)
+    w.php()
+    w.rep_30()
+    w.lda_abs(SPIDER_ACTIVE)
+    w.cmp_imm(SPIDER_ACTIVE_MAGIC)
+    w.branch_long(0xD0, "SpiderTilesDone")  # BNE
+    w.lda_abs(POSE)
+    for pose in SPIDER_MORPH_POSES:
+        w.cmp_imm(pose)
+        w.branch(0xF0, "SpiderTilesPoseMatched")  # BEQ
+    w.jmp_label("SpiderTilesDone")
+
+    w.label("SpiderTilesPoseMatched")
+    w.lda_abs(SAMUS_TILES_TOP_HALF_TILES_DEF)
+    for i, vanilla_addr in enumerate(SAMUS_MORPH_TOP_TILE_DEF_ADDRS):
+        w.cmp_imm(vanilla_addr)
+        w.branch(0xF0, f"SpiderTilesTop{i}")  # BEQ
+    w.jmp_label("SpiderTilesApplyBottom")
+    for i, spider_addr in enumerate(SPIDER_BALL_SAMUS_TOP_TILE_DEF_ADDRS):
+        w.label(f"SpiderTilesTop{i}")
+        w.lda_imm(spider_addr)
+        w.sta_abs(SAMUS_TILES_TOP_HALF_TILES_DEF)
+        w.jmp_label("SpiderTilesApplyBottom")
+
+    w.label("SpiderTilesApplyBottom")
+    w.lda_abs(SAMUS_TILES_BOTTOM_HALF_TILES_DEF)
+    w.cmp_imm(SAMUS_MORPH_BOTTOM_TILE_DEF_ADDR)
+    w.branch(0xD0, "SpiderTilesDone")  # BNE
+    w.lda_imm(SPIDER_BALL_SAMUS_BOTTOM_TILE_DEF_ADDR)
+    w.sta_abs(SAMUS_TILES_BOTTOM_HALF_TILES_DEF)
+    w.label("SpiderTilesDone")
+    w.plp()
+    w.rtl()
+
+    return w.resolve()
+
+
 def build_pose_guard_code() -> bytes:
     w = Bank90Writer(start_addr=POSE_GUARD_ADDR)
 
@@ -906,9 +984,46 @@ def read_bank89(base: bytes, addr: int, length: int) -> bytes:
     return base[pc : pc + length]
 
 
+def read_bank92(base: bytes, addr: int, length: int) -> bytes:
+    pc = lorom_pc(0x92, addr)
+    return base[pc : pc + length]
+
+
 def read_bankb6(base: bytes, addr: int, length: int) -> bytes:
     pc = lorom_pc(0xB6, addr)
     return base[pc : pc + length]
+
+
+def read_snes(base: bytes, snes_addr: int, length: int) -> bytes:
+    bank = (snes_addr >> 16) & 0xFF
+    addr = snes_addr & 0xFFFF
+    pc = lorom_pc(bank, addr)
+    data = base[pc : pc + length]
+    if len(data) != length:
+        raise ValueError(f"short read from ${snes_addr:06X}: expected {length}, got {len(data)}")
+    return data
+
+
+def spider_ball_palette_map() -> list[int]:
+    palette_map = list(range(16))
+    # Keep transparency at 0 and rotate Morph's used colours so the shape
+    # remains readable while clearly not being vanilla Morph Ball.
+    palette_map[1] = 9
+    palette_map[9] = 12
+    palette_map[12] = 13
+    palette_map[13] = 15
+    palette_map[15] = 1
+    return palette_map
+
+
+def spider_ball_samus_palette_map() -> list[int]:
+    palette_map = list(range(16))
+    # Samus' morph ball tiles use 10/11 for most of the shell, unlike the item
+    # pickup icon. Shift those dominant shell colours only to nearby suit
+    # palette entries so active Spider Ball reads as accented, not recoloured.
+    palette_map[10] = 12
+    palette_map[11] = 13
+    return palette_map
 
 
 def remap_4bpp_tile(tile: bytes, palette_map: list[int]) -> bytes:
@@ -944,6 +1059,15 @@ def remap_4bpp_tile(tile: bytes, palette_map: list[int]) -> bytes:
             if color & 0x8:
                 out[16 + row * 2 + 1] |= mask
     return bytes(out)
+
+
+def remap_4bpp_tiles(data: bytes, palette_map: list[int]) -> bytes:
+    if len(data) % 32 != 0:
+        raise ValueError(f"expected whole 4bpp SNES tiles, got {len(data)} bytes")
+    return b"".join(
+        remap_4bpp_tile(data[offset : offset + 32], palette_map)
+        for offset in range(0, len(data), 32)
+    )
 
 
 PAUSE_LABEL_FONT = {
@@ -1006,18 +1130,33 @@ def build_pause_label_tiles(text: str) -> bytes:
 
 def build_spider_item_gfx(base: bytes) -> bytes:
     morph_gfx = read_bank89(base, SPIDER_BALL_ITEM_GFX_SOURCE, SPIDER_BALL_ITEM_GFX_SIZE)
-    palette_map = list(range(16))
-    # Keep transparency at 0 and rotate Morph's used colours so the icon shape
-    # remains readable while clearly not being the Morph Ball pickup.
-    palette_map[1] = 9
-    palette_map[9] = 12
-    palette_map[12] = 13
-    palette_map[13] = 15
-    palette_map[15] = 1
-    return b"".join(
-        remap_4bpp_tile(morph_gfx[offset : offset + 32], palette_map)
-        for offset in range(0, len(morph_gfx), 32)
-    )
+    return remap_4bpp_tiles(morph_gfx, spider_ball_palette_map())
+
+
+def build_spider_samus_morph_tiles(base: bytes) -> tuple[bytes, bytes]:
+    palette_map = spider_ball_samus_palette_map()
+    custom_defs = bytearray()
+    custom_gfx = bytearray()
+    source_def_addrs = SAMUS_MORPH_TOP_TILE_DEF_ADDRS + (SAMUS_MORPH_BOTTOM_TILE_DEF_ADDR,)
+
+    for source_def_addr in source_def_addrs:
+        dma = read_bank92(base, source_def_addr, 7)
+        source_addr = dma[0] | (dma[1] << 8) | (dma[2] << 16)
+        part_1_size = dma[3] | (dma[4] << 8)
+        part_2_size = dma[5] | (dma[6] << 8)
+        total_size = part_1_size + part_2_size
+        if total_size == 0:
+            raise ValueError(f"unexpected empty Samus DMA definition at $92:{source_def_addr:04X}")
+
+        source_gfx = read_snes(base, source_addr, total_size)
+        remapped_gfx = remap_4bpp_tiles(source_gfx, palette_map)
+        destination_addr = 0x9F0000 | (SPIDER_BALL_SAMUS_TILE_GFX_ADDR + len(custom_gfx))
+        custom_defs += long_le(destination_addr)
+        custom_defs += u16(part_1_size)
+        custom_defs += u16(part_2_size)
+        custom_gfx += remapped_gfx
+
+    return bytes(custom_defs), bytes(custom_gfx)
 
 
 def encode_small_message_tilemap(text: str) -> bytes:
@@ -1227,9 +1366,11 @@ def apply_ips(rom: bytearray, ips: bytes) -> None:
 def main() -> None:
     base = BASE_ROM.read_bytes()
     code = build_spider_code()
+    spider_render_wrapper = build_spider_render_wrapper_code()
     pose_guard = build_pose_guard_code()
     spider_item_plms = build_spider_item_plms(base)
     spider_item_gfx = build_spider_item_gfx(base)
+    spider_samus_tile_defs, spider_samus_tile_gfx = build_spider_samus_morph_tiles(base)
     message_box_table = build_message_box_table(base)
     spider_ball_message = encode_small_message_tilemap("spider ball")
     pause_spider_label_tiles = build_pause_label_tiles("SPIDER BALL")
@@ -1238,10 +1379,29 @@ def main() -> None:
     free_len = 0x10000 - CODE_ADDR
     if len(code) > free_len:
         raise SystemExit(f"Spider Ball code is {len(code)} bytes, exceeds free space {free_len}")
+    spider_render_wrapper_end = SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR + len(spider_render_wrapper)
+    if spider_render_wrapper_end > SPIDER_BALL_SAMUS_TILE_DEFS_ADDR:
+        raise SystemExit(
+            "Spider Ball render wrapper overlaps Samus tile definitions: "
+            f"$92:{spider_render_wrapper_end:04X} > $92:{SPIDER_BALL_SAMUS_TILE_DEFS_ADDR:04X}"
+        )
+    spider_tiles_wrapper_jsl = (
+        bytes((0x22,)) + long_le(0x920000 | SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR)
+    )
     pose_guard_len = ORIG_POSE_MORPH_FALLING - POSE_GUARD_ADDR
     if len(pose_guard) > pose_guard_len:
         raise SystemExit(
             f"Spider Ball pose guard is {len(pose_guard)} bytes, exceeds unused bank $91 space {pose_guard_len}"
+        )
+    samus_tile_defs_end = SPIDER_BALL_SAMUS_TILE_DEFS_ADDR + len(spider_samus_tile_defs)
+    if samus_tile_defs_end > 0x10000:
+        raise SystemExit(
+            f"Spider Ball Samus tile definitions end at $92:{samus_tile_defs_end:04X}, outside bank $92"
+        )
+    samus_tile_gfx_end = SPIDER_BALL_SAMUS_TILE_GFX_ADDR + len(spider_samus_tile_gfx)
+    if samus_tile_gfx_end > 0x10000:
+        raise SystemExit(
+            f"Spider Ball Samus tile graphics end at $9F:{samus_tile_gfx_end:04X}, outside bank $9F"
         )
     pause_data_end = PAUSE_EQUIPMENT_DATA_ADDR + len(pause_equipment_data)
     if pause_data_end > 0x10000:
@@ -1257,6 +1417,15 @@ def main() -> None:
         (lorom_pc(0x90, 0xA36F), u16(CODE_ADDR)),
         (lorom_pc(0x90, 0xA371), u16(CODE_ADDR)),
         (lorom_pc(0x90, CODE_ADDR), code),
+        # Samus draw routines now call a wrapper that first runs vanilla tile
+        # definition selection, then swaps morph ball DMA pointers when Spider
+        # Ball is latched.
+        (lorom_pc(0x90, 0x8647), spider_tiles_wrapper_jsl),
+        (lorom_pc(0x90, 0x89F9), spider_tiles_wrapper_jsl),
+        (lorom_pc(0x90, 0x8A45), spider_tiles_wrapper_jsl),
+        (lorom_pc(0x92, SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR), spider_render_wrapper),
+        (lorom_pc(0x92, SPIDER_BALL_SAMUS_TILE_DEFS_ADDR), spider_samus_tile_defs),
+        (lorom_pc(0x9F, SPIDER_BALL_SAMUS_TILE_GFX_ADDR), spider_samus_tile_gfx),
         # NormalSamusPoseInputHandler dispatch table entries for morph/spring ball.
         (lorom_pc(0x91, 0x801C), u16(POSE_GUARD_ADDR)),
         (lorom_pc(0x91, 0x8024), u16(POSE_GUARD_ADDR)),
@@ -1316,6 +1485,12 @@ def main() -> None:
         lorom_pc(0x90, 0xA36F): bytes.fromhex("F1 A6"),
         lorom_pc(0x90, 0xA371): bytes.fromhex("03 A7"),
         lorom_pc(0x90, CODE_ADDR): b"\xFF" * min(64, len(code)),
+        lorom_pc(0x90, 0x8647): bytes.fromhex("22 00 80 92"),
+        lorom_pc(0x90, 0x89F9): bytes.fromhex("22 00 80 92"),
+        lorom_pc(0x90, 0x8A45): bytes.fromhex("22 00 80 92"),
+        lorom_pc(0x92, SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR): b"\xFF" * len(spider_render_wrapper),
+        lorom_pc(0x92, SPIDER_BALL_SAMUS_TILE_DEFS_ADDR): b"\xFF" * len(spider_samus_tile_defs),
+        lorom_pc(0x9F, SPIDER_BALL_SAMUS_TILE_GFX_ADDR): b"\xFF" * len(spider_samus_tile_gfx),
         lorom_pc(0x91, 0x801C): bytes.fromhex("7E 80"),
         lorom_pc(0x91, 0x8024): bytes.fromhex("0A 81"),
         lorom_pc(0x91, 0x8036): bytes.fromhex("4F 81"),
@@ -1387,6 +1562,10 @@ def main() -> None:
 
     print(f"Wrote {OUT_IPS.relative_to(ROOT)}")
     print(f"Spider Ball code: {len(code)} bytes at $90:{CODE_ADDR:04X}")
+    print(
+        "Spider Ball render wrapper: "
+        f"{len(spider_render_wrapper)} bytes at $92:{SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR:04X}"
+    )
     print(f"Spider Ball pose guard: {len(pose_guard)} bytes at $91:{POSE_GUARD_ADDR:04X}")
     print(
         "Spider Ball PLMs: "
@@ -1395,6 +1574,11 @@ def main() -> None:
         f"hidden ${SPIDER_BALL_PLM_HIDDEN:04X})"
     )
     print(f"Spider Ball item graphics: {len(spider_item_gfx)} bytes at $89:{SPIDER_BALL_ITEM_GFX_ADDR:04X}")
+    print(
+        "Spider Ball Samus graphics: "
+        f"{len(spider_samus_tile_defs)} bytes defs at $92:{SPIDER_BALL_SAMUS_TILE_DEFS_ADDR:04X}, "
+        f"{len(spider_samus_tile_gfx)} bytes tiles at $9F:{SPIDER_BALL_SAMUS_TILE_GFX_ADDR:04X}"
+    )
     print(
         "Spider Ball message: "
         f"id ${SPIDER_BALL_MESSAGE_ID:02X}, table ${MESSAGE_BOX_TABLE_RELOCATED:04X}, "
