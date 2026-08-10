@@ -38,11 +38,13 @@ core.*
 *.pyc
 __pycache__/
 
-# ROM files (don't commit ROMs)
+# ROM files
 *.smc
 *.sfc
 *.rom
 *.wav
+# Project builds are source-controlled.
+!projects/**/*.smc
 # But keep test-resources directory structure
 !test-resources/.gitkeep
 
