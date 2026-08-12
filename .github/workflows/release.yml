@@ -19,7 +19,9 @@ jobs:
             path: desktopApp/build/compose/binaries/main/msi/*.msi
           - os: ubuntu-latest
             artifact: super-metroid-editor-linux
-            path: desktopApp/build/compose/binaries/main/deb/*.deb
+            path: |
+              desktopApp/build/compose/binaries/main/deb/*.deb
+              desktopApp/build/compose/binaries/main/rpm/*.rpm
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -45,6 +47,10 @@ jobs:
         with:
           msystem: MINGW64
           install: mingw-w64-x86_64-gcc make
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -100,6 +106,10 @@ jobs:
 
           for f in super-metroid-editor-linux/*.deb; do
             [ -f "$f" ] && cp "$f" release-assets/SuperMetroidEditor-Linux.deb
+          done
+
+          for f in super-metroid-editor-linux/*.rpm; do
+            [ -f "$f" ] && cp "$f" release-assets/SuperMetroidEditor-Fedora.rpm
           done
 
           ls -lh release-assets/
