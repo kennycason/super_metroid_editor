@@ -246,6 +246,7 @@ internal fun buildCompositeImage(
     layer2Pixels: IntArray? = null,
     customItems: List<CustomItemDef> = emptyList(),
     showItemNames: Boolean = true,
+    highlightItems: Boolean = true,
     showEnemyNames: Boolean = true,
     showFlatSlopeSurfaces: Boolean = true,
 ): BufferedImage {
@@ -501,10 +502,12 @@ internal fun buildCompositeImage(
             if (isItem) {
                 val sprite = itemDef?.sprite
                 if (itemSpriteSheet != null && sprite != null) {
-                    g2.color = java.awt.Color(0, 0, 0, 160)
-                    g2.fillRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
-                    g2.color = itemColor
-                    g2.drawRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                    if (highlightItems) {
+                        g2.color = java.awt.Color(0, 0, 0, 160)
+                        g2.fillRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                        g2.color = itemColor
+                        g2.drawRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                    }
                     g2.drawImage(
                         itemSpriteSheet,
                         cx - 8,

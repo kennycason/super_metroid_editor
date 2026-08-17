@@ -144,9 +144,9 @@ class TileGraphics(private val romParser: RomParser) {
      *     These tilesets' variable tiles 0-639 contain data that doesn't render
      *     cleanly as standard 4bpp — this is a known limitation shared by SMILE.
      */
-    fun loadTileset(tilesetId: Int, @Suppress("UNUSED_PARAMETER") noCre: Boolean = false): Boolean {
+    fun loadTileset(tilesetId: Int, @Suppress("unused") noCre: Boolean = false): Boolean {
         if (tilesetId !in 0 until NUM_TILESETS) return false
-        if (tilesetId == cachedTilesetId && rawTileData != null) return true
+        if (tilesetId == cachedTilesetId && rawTileData != null && !noCre) return true
 
         val entry = romParser.graphicsCatalog.entry(tilesetId) ?: return false
         val tileTablePtr = entry.tileTablePtr
@@ -183,14 +183,26 @@ class TileGraphics(private val romParser: RomParser) {
         }
 
         // Graphics: variable tiles first, CRE overlays at offset 0x5000 (tiles 640-1023).
-        // Per SMILE source (UGraphics.bas line 120-123): CRE is always placed at 0x5000,
-        // even for tilesets with 32K variable GFX (Ceres 17-20). The extra variable data
-        // beyond 0x5000 is overwritten by CRE tiles.
-        // Exception: tileset 27 (Kraid) places CRE at 0x8000 (effectively no CRE overlay).
+        //
+        // Skip CRE overlay when:
+        //  - Variable GFX fills all 1024 tile slots (>= 32K) AND the tile table
+        //    doesn't cover all metatiles (CRE metatile defs are prepended and may
+        //    reference tiles 640+, e.g. tileset 26 / Kraid's room)
+        //  - Tileset 27 (Kraid sprite), per SMILE source
+        //  - Caller explicitly requested noCre
+        //
+        // Ceres tilesets (17-20) also have 32K GFX but their tile tables cover all
+        // 1024 metatiles and reference only tiles 0-639, so CRE overlay is harmless
+        // (it overwrites unreferenced tile slots). The varTableCoversAll check
+        // ensures CRE is still applied for those tilesets.
+        val varGfxFull = varGfx.size >= TOTAL_TILES * BYTES_PER_TILE
+        val skipCre = noCre ||
+            tilesetId == KRAID_TILESET ||
+            (varGfxFull && !varTableCoversAll)
         val combinedGfx = ByteArray(TOTAL_TILES * BYTES_PER_TILE)
         val varCopyLen = minOf(varGfx.size, combinedGfx.size)
         System.arraycopy(varGfx, 0, combinedGfx, 0, varCopyLen)
-        if (tilesetId != KRAID_TILESET) {
+        if (!skipCre) {
             val creGfx = romParser.decompressLZ2(romParser.graphicsCatalog.creGfxPtr)
             val copyLen = minOf(creGfx.size, combinedGfx.size - CRE_GFX_OFFSET)
             if (copyLen > 0) {
@@ -198,7 +210,7 @@ class TileGraphics(private val romParser: RomParser) {
             }
         }
         rawTileData = combinedGfx
-        cachedHasCre = tilesetId != KRAID_TILESET
+        cachedHasCre = !skipCre
 
         cachedTilesetId = tilesetId
         return true

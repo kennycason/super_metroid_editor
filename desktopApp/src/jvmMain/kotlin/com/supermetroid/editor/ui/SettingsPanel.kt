@@ -45,9 +45,11 @@ fun SettingsPopup(
     emulatorWorkspaceState: EmulatorWorkspaceState,
     editorState: EditorState? = null,
     showRoomItemNames: Boolean = true,
+    highlightRoomItems: Boolean = true,
     showRoomEnemyNames: Boolean = true,
     showRoomFlatSlopeSurfaces: Boolean = true,
     onShowRoomItemNamesChange: (Boolean) -> Unit = {},
+    onHighlightRoomItemsChange: (Boolean) -> Unit = {},
     onShowRoomEnemyNamesChange: (Boolean) -> Unit = {},
     onShowRoomFlatSlopeSurfacesChange: (Boolean) -> Unit = {},
 ) {
@@ -117,9 +119,11 @@ fun SettingsPopup(
                         },
                         editorState = editorState,
                         showRoomItemNames = showRoomItemNames,
+                        highlightRoomItems = highlightRoomItems,
                         showRoomEnemyNames = showRoomEnemyNames,
                         showRoomFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                         onShowRoomItemNamesChange = onShowRoomItemNamesChange,
+                        onHighlightRoomItemsChange = onHighlightRoomItemsChange,
                         onShowRoomEnemyNamesChange = onShowRoomEnemyNamesChange,
                         onShowRoomFlatSlopeSurfacesChange = onShowRoomFlatSlopeSurfacesChange,
                     )
@@ -138,9 +142,11 @@ private fun GeneralSettingsTab(
     onFontSizeChange: (FontSize) -> Unit,
     editorState: EditorState? = null,
     showRoomItemNames: Boolean,
+    highlightRoomItems: Boolean,
     showRoomEnemyNames: Boolean,
     showRoomFlatSlopeSurfaces: Boolean,
     onShowRoomItemNamesChange: (Boolean) -> Unit,
+    onHighlightRoomItemsChange: (Boolean) -> Unit,
     onShowRoomEnemyNamesChange: (Boolean) -> Unit,
     onShowRoomFlatSlopeSurfacesChange: (Boolean) -> Unit,
 ) {
@@ -229,6 +235,13 @@ private fun GeneralSettingsTab(
         description = "Draw item name badges under room item icons.",
         checked = showRoomItemNames,
         onCheckedChange = onShowRoomItemNamesChange,
+        fontSize = currentFontSize,
+    )
+    SettingsCheckboxRow(
+        label = "Highlight items",
+        description = "Draw a bordered background behind item icons.",
+        checked = highlightRoomItems,
+        onCheckedChange = onHighlightRoomItemsChange,
         fontSize = currentFontSize,
     )
     SettingsCheckboxRow(

@@ -165,16 +165,18 @@ private fun cmdExport(
 private fun cmdRenderRooms(parser: RomParser, args: List<String>) {
     var outPath: String? = null
     var showItems = false
+    var highlightItems = false
     val iter = args.iterator()
     while (iter.hasNext()) {
         val arg = iter.next()
         when {
             (arg == "-o" || arg == "--output") && iter.hasNext() -> outPath = iter.next()
             arg == "--items" -> showItems = true
+            arg == "--highlight-items" -> highlightItems = true
         }
     }
     if (outPath == null) {
-        System.err.println("Usage: render-rooms -o <output.zip> [--items]")
+        System.err.println("Usage: render-rooms -o <output.zip> [--items] [--highlight-items]")
         exitProcess(1)
     }
 
@@ -183,7 +185,7 @@ private fun cmdRenderRooms(parser: RomParser, args: List<String>) {
 
     val exporter = RoomMapExporter(parser)
     val result = FileOutputStream(outFile).use { fos ->
-        exporter.renderToZip(fos, showItems = showItems)
+        exporter.renderToZip(fos, showItems = showItems, highlightItems = highlightItems)
     }
 
     System.err.println("Rendered ${result.renderedCount} rooms (${result.failedCount} failed) → ${outFile.absolutePath}")
@@ -369,9 +371,10 @@ Commands:
   room <id|handle>   Export single room with full collision grid
   graph              Export navigation graph (nodes + edges)
   export -o <dir>    Export everything: rooms.json, nav_graph.json, rooms/*.json
-  render-rooms -o <zip> [--items]
+  render-rooms -o <zip> [--items] [--highlight-items]
                      Render every room map to PNG and bundle into a ZIP with rooms.json
-                     --items overlays visible item icons (Energy Tank, Screw Attack, etc.)
+                     --items overlays item icons (Energy Tank, Screw Attack, etc.)
+                     --highlight-items adds a bordered background behind item icons
   patches            List built-in patch IDs and headless support status
   schemas            List supported config patch schemas
   schema <id|type>   Show one config patch schema

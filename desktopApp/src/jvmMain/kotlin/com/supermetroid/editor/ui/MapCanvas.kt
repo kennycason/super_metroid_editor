@@ -292,6 +292,7 @@ fun MapCanvas(
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     roomKeyboardNavigationEnabled: Boolean = true,
     showItemNames: Boolean = true,
+    highlightItems: Boolean = true,
     showEnemyNames: Boolean = true,
     showFlatSlopeSurfaces: Boolean = true,
     modifier: Modifier = Modifier
@@ -895,10 +896,10 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames, showFlatSlopeSurfaces) {
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
                                     layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
-                                    showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                    highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                             }
 
                             val hScrollState = rememberScrollState()
@@ -963,7 +964,7 @@ fun MapCanvas(
                             }
 
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showEnemyNames, showFlatSlopeSurfaces) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
@@ -971,7 +972,7 @@ fun MapCanvas(
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
                                         if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
                                             layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
-                                            showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                            highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                     }
                                 }
                                 compositeImage

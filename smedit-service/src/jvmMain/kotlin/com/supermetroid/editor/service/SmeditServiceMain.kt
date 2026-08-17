@@ -370,6 +370,7 @@ fun Application.smeditServiceModule(
 
         post("/rooms/render") {
             val showItems = call.request.queryParameters["items"]?.lowercase() in listOf("true", "1", "yes")
+            val highlightItems = call.request.queryParameters["highlightItems"]?.lowercase() in listOf("true", "1", "yes")
             val romBytes = call.receiveRomBytes()
             val parser = RomParser(romBytes)
             require(parser.roomCatalog.readable) {
@@ -377,7 +378,7 @@ fun Application.smeditServiceModule(
             }
             val exporter = RoomMapExporter(parser)
             val baos = ByteArrayOutputStream()
-            val result = exporter.renderToZip(baos, showItems = showItems)
+            val result = exporter.renderToZip(baos, showItems = showItems, highlightItems = highlightItems)
             call.response.header(
                 HttpHeaders.ContentDisposition,
                 ContentDisposition.Attachment.withParameter(

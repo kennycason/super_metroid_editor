@@ -100,6 +100,7 @@ class RoomMapExporter(private val parser: RomParser) {
         output: OutputStream,
         roomInfos: List<RoomInfo> = parser.roomCatalog.rooms,
         showItems: Boolean = false,
+        highlightItems: Boolean = false,
     ): RoomMapExportResult {
         val renderer = MapRenderer(parser)
         val metadata = mutableListOf<RoomMapMetadata>()
@@ -137,7 +138,7 @@ class RoomMapExporter(private val parser: RomParser) {
 
                 if (showItems) {
                     val allPlms = parser.getAllPlmEntriesForRoom(roomId)
-                    drawItemIcons(img, allPlms, spriteSheet)
+                    drawItemIcons(img, allPlms, spriteSheet, highlightItems)
                 }
 
                 val filename = "${roomId.toString(16).lowercase()}.png"
@@ -160,6 +161,7 @@ class RoomMapExporter(private val parser: RomParser) {
         img: BufferedImage,
         plms: List<RomParser.PlmEntry>,
         spriteSheet: BufferedImage?,
+        highlight: Boolean,
     ) {
         val g2 = img.createGraphics()
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -172,11 +174,13 @@ class RoomMapExporter(private val parser: RomParser) {
             val cy = plm.y * 16 + 8
 
             if (spriteSheet != null && sprite != null) {
-                g2.color = Color(0, 0, 0, 160)
-                g2.fillRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
-                g2.color = itemColor
-                g2.stroke = BasicStroke(1f)
-                g2.drawRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                if (highlight) {
+                    g2.color = Color(0, 0, 0, 160)
+                    g2.fillRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                    g2.color = itemColor
+                    g2.stroke = BasicStroke(1f)
+                    g2.drawRoundRect(cx - 10, cy - 10, 20, 20, 4, 4)
+                }
                 g2.drawImage(
                     spriteSheet,
                     cx - 8, cy - 8, cx + 8, cy + 8,

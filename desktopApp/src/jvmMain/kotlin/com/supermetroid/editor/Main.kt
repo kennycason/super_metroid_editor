@@ -215,6 +215,7 @@ fun main() = application {
     
     val appSettings = remember { AppConfig.load() }
     var showRoomItemNames by remember { mutableStateOf(appSettings.roomEditorShowItemNames) }
+    var highlightRoomItems by remember { mutableStateOf(appSettings.roomEditorHighlightItems) }
     var showRoomEnemyNames by remember { mutableStateOf(appSettings.roomEditorShowEnemyNames) }
     var showRoomFlatSlopeSurfaces by remember { mutableStateOf(appSettings.roomEditorShowFlatSlopeSurfaces) }
     val windowState = rememberWindowState(
@@ -434,11 +435,16 @@ fun main() = application {
                                     emulatorWorkspaceState = emulatorWorkspaceState,
                                     editorState = editorState,
                                     showRoomItemNames = showRoomItemNames,
+                                    highlightRoomItems = highlightRoomItems,
                                     showRoomEnemyNames = showRoomEnemyNames,
                                     showRoomFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                                     onShowRoomItemNamesChange = { enabled ->
                                         showRoomItemNames = enabled
                                         AppConfig.update { copy(roomEditorShowItemNames = enabled) }
+                                    },
+                                    onHighlightRoomItemsChange = { enabled ->
+                                        highlightRoomItems = enabled
+                                        AppConfig.update { copy(roomEditorHighlightItems = enabled) }
                                     },
                                     onShowRoomEnemyNamesChange = { enabled ->
                                         showRoomEnemyNames = enabled
@@ -792,6 +798,7 @@ fun main() = application {
                                             },
                                             roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             showItemNames = showRoomItemNames,
+                                            highlightItems = highlightRoomItems,
                                             showEnemyNames = showRoomEnemyNames,
                                             showFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                                             modifier = Modifier.fillMaxSize()
