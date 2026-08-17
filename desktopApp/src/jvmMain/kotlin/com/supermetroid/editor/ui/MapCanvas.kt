@@ -292,6 +292,7 @@ fun MapCanvas(
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     roomKeyboardNavigationEnabled: Boolean = true,
     showItemNames: Boolean = true,
+    showMetaNames: Boolean = true,
     highlightItems: Boolean = true,
     showEnemyNames: Boolean = true,
     showFlatSlopeSurfaces: Boolean = true,
@@ -313,6 +314,9 @@ fun MapCanvas(
         TileOverlay.LIQUID to true,
     ) }
     val overlayCount = overlayToggles.values.count { it }
+    val customItems = remember(editorState?.patchVersion, editorState?.project?.patches) {
+        editorState?.enabledCustomItems().orEmpty()
+    }
 
     val mapFocusReq = remember { FocusRequester() }
     Card(
@@ -761,12 +765,15 @@ fun MapCanvas(
                                                     val img = if (es != null && es.workingLevelData != null && rh != null) {
                                                         val edited = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
                                                         if (edited != null) buildCompositeImage(edited, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
-                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                                            customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
+                                                            highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                                         else buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
-                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                                            customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
+                                                            highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                                     } else {
                                                         buildCompositeImage(rd, activeOvs, showGrid, scrollDataForSave, rWidthScreens, rHeightScreens,
-                                                            showFlatSlopeSurfaces = showFlatSlopeSurfaces)
+                                                            customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
+                                                            highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                                     }
                                                     ImageIO.write(img, "PNG", file)
                                                 }
@@ -834,9 +841,6 @@ fun MapCanvas(
                                 overlayToggles.filter { it.value }.keys +
                                     if (editorState?.activeRoomLayer == RoomEditLayer.LAYER2) setOf(TileOverlay.LAYER2) else emptySet()
                                 ).toSet()
-                            val customItems = remember(editorState?.patchVersion, editorState?.project?.patches) {
-                                editorState?.enabledCustomItems().orEmpty()
-                            }
 
                             val roomHeader = remember(room, editVersion) {
                                 room?.let { r ->
@@ -896,9 +900,9 @@ fun MapCanvas(
                                 }
                             }
 
-                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
+                            val compositeImage = remember(data, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), layer2Data?.contentHashCode(), customItems, showItemNames, showMetaNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
                                 buildCompositeImage(data, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
+                                    layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
                                     highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                             }
 
@@ -964,14 +968,14 @@ fun MapCanvas(
                             }
 
                             // Re-render from working data (reacts to editVersion from EditorState)
-                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
+                            val compositeForEdit = remember(data, editVersion, activeOverlays.toSet(), showGrid, scrollDataForOverlay?.contentHashCode(), scrollVer, layer2Data?.contentHashCode(), customItems, showItemNames, showMetaNames, highlightItems, showEnemyNames, showFlatSlopeSurfaces) {
                                 val es = editorState
                                 if (es != null && es.workingLevelData != null) {
                                     val rh = roomHeader
                                     if (rh != null) {
                                         val r = MapRenderer(romParser, es.tileGraphics).renderRoomFromLevelData(rh, es.workingLevelData!!, es.workingPlms, es.workingEnemies)
                                         if (r != null) return@remember buildCompositeImage(r, activeOverlays, showGrid, scrollDataForOverlay, rWidthScreens, rHeightScreens,
-                                            layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames,
+                                            layer2Pixels = layer2Data, customItems = customItems, showItemNames = showItemNames, showMetaNames = showMetaNames,
                                             highlightItems = highlightItems, showEnemyNames = showEnemyNames, showFlatSlopeSurfaces = showFlatSlopeSurfaces)
                                     }
                                 }
@@ -1696,4 +1700,3 @@ private data class SaveSpawnMarker(
     val label: String,
     val source: String,
 )
-

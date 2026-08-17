@@ -2156,6 +2156,23 @@ class RomParser(internal val romData: ByteArray) {
 
         fun enemyName(id: Int): String = ENEMY_NAMES[id] ?: "${id.toString(16).uppercase().padStart(4, '0')}"
 
+        private val MAP_META_ENEMY_IDS = setOf(
+            0xD07F, // Samus' Ship
+            0xD0BF, // Samus' Ship (firing)
+            0xD4FF, // Door Shutter
+            0xD53F, // Door Shutter 2
+            0xD57F, // Door Shutter 2 (variant)
+            0xD5BF, // Door Shutter 2 (variant 2)
+            0xD5FF, // Door Shutter 2 (variant 3)
+            0xD73F, // Elevator
+            0xD83F, // Suspensor Platform
+            0xF0BF, // Shattered Glass
+            0xE1FF, // Ceres Smoke/Steam
+            0xE23F, // Ceres Door FX
+        )
+
+        fun isMapMetaEnemy(id: Int): Boolean = id in MAP_META_ENEMY_IDS
+
         val ENEMY_CATALOG: List<Pair<Int, String>> by lazy {
             ENEMY_NAMES.entries.sortedBy { it.value }.map { it.key to it.value }
         }

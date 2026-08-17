@@ -246,6 +246,7 @@ internal fun buildCompositeImage(
     layer2Pixels: IntArray? = null,
     customItems: List<CustomItemDef> = emptyList(),
     showItemNames: Boolean = true,
+    showMetaNames: Boolean = true,
     highlightItems: Boolean = true,
     showEnemyNames: Boolean = true,
     showFlatSlopeSurfaces: Boolean = true,
@@ -330,11 +331,13 @@ internal fun buildCompositeImage(
                 g2.stroke = java.awt.BasicStroke(2f)
                 g2.drawRect(px + 1, py + 1, SCREEN_PX - 3, SCREEN_PX - 3)
                 g2.stroke = java.awt.BasicStroke(1f)
-                val fm = g2.fontMetrics
-                val label = scrollLabels[scrollVal]
-                val tw = fm.stringWidth(label)
-                g2.color = java.awt.Color(255, 255, 255, 100)
-                g2.drawString(label, px + (SCREEN_PX - tw) / 2, py + 16)
+                if (showMetaNames) {
+                    val fm = g2.fontMetrics
+                    val label = scrollLabels[scrollVal]
+                    val tw = fm.stringWidth(label)
+                    g2.color = java.awt.Color(255, 255, 255, 100)
+                    g2.drawString(label, px + (SCREEN_PX - tw) / 2, py + 16)
+                }
             }
         }
     }
@@ -531,7 +534,8 @@ internal fun buildCompositeImage(
                     g2.drawString(label, cx - labelW / 2, cy + (fm.ascent - fm.descent) / 2)
                 }
             }
-            if (!isItem || showItemNames) {
+            val shouldDrawName = if (isItem) showItemNames else showMetaNames
+            if (shouldDrawName) {
                 val textWidth = fm.stringWidth(name)
                 val badgeW = textWidth + 6
                 val badgeH = fm.height + 2
@@ -550,7 +554,7 @@ internal fun buildCompositeImage(
     }
 
     // Draw scroll PLM badges (positioned at PLM block coordinates)
-    if (activeOverlays.contains(TileOverlay.SCROLL_PLMS) && data.plmEntries.isNotEmpty()) {
+    if (showMetaNames && activeOverlays.contains(TileOverlay.SCROLL_PLMS) && data.plmEntries.isNotEmpty()) {
         val g2 = g as java.awt.Graphics2D
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
         val labelFont = java.awt.Font("SansSerif", java.awt.Font.BOLD, 9)
@@ -617,7 +621,7 @@ internal fun buildCompositeImage(
                 g2.stroke = java.awt.BasicStroke(1f)
             }
 
-            if (showEnemyNames) {
+            if (showEnemyNames && (showMetaNames || !RomParser.isMapMetaEnemy(enemy.id))) {
                 val textWidth = fm.stringWidth(name)
                 val badgeW = textWidth + 6
                 val badgeH = fm.height + 2

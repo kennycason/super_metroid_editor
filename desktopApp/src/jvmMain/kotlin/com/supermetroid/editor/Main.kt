@@ -215,6 +215,7 @@ fun main() = application {
     
     val appSettings = remember { AppConfig.load() }
     var showRoomItemNames by remember { mutableStateOf(appSettings.roomEditorShowItemNames) }
+    var showRoomMetaNames by remember { mutableStateOf(appSettings.roomEditorShowMetaNames) }
     var highlightRoomItems by remember { mutableStateOf(appSettings.roomEditorHighlightItems) }
     var showRoomEnemyNames by remember { mutableStateOf(appSettings.roomEditorShowEnemyNames) }
     var showRoomFlatSlopeSurfaces by remember { mutableStateOf(appSettings.roomEditorShowFlatSlopeSurfaces) }
@@ -435,12 +436,17 @@ fun main() = application {
                                     emulatorWorkspaceState = emulatorWorkspaceState,
                                     editorState = editorState,
                                     showRoomItemNames = showRoomItemNames,
+                                    showRoomMetaNames = showRoomMetaNames,
                                     highlightRoomItems = highlightRoomItems,
                                     showRoomEnemyNames = showRoomEnemyNames,
                                     showRoomFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
                                     onShowRoomItemNamesChange = { enabled ->
                                         showRoomItemNames = enabled
                                         AppConfig.update { copy(roomEditorShowItemNames = enabled) }
+                                    },
+                                    onShowRoomMetaNamesChange = { enabled ->
+                                        showRoomMetaNames = enabled
+                                        AppConfig.update { copy(roomEditorShowMetaNames = enabled) }
                                     },
                                     onHighlightRoomItemsChange = { enabled ->
                                         highlightRoomItems = enabled
@@ -798,6 +804,7 @@ fun main() = application {
                                             },
                                             roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             showItemNames = showRoomItemNames,
+                                            showMetaNames = showRoomMetaNames,
                                             highlightItems = highlightRoomItems,
                                             showEnemyNames = showRoomEnemyNames,
                                             showFlatSlopeSurfaces = showRoomFlatSlopeSurfaces,
