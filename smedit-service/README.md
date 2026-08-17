@@ -22,6 +22,42 @@ lsof -nP -iTCP:8080 -sTCP:LISTEN
 
 For Gradle-delegated IntelliJ runs, set `SMEDIT_SERVICE_PORT=8090` in the run configuration environment variables, or pass `-Dsmedit.service.port=8090` as a Gradle VM/system property if you want to force one port. Set SMEDIT Lite's API URL to the port printed by the service.
 
+## POST /rooms/metadata
+
+Returns room metadata JSON for a specific uploaded ROM. Uses vanilla SM room names unless the ROM has a room-names patch applied. Accepts multipart (`rom` file field) or JSON (`romBase64`):
+
+```bash
+ROM=path/to/rom.smc
+curl -sS -X POST -F rom=@"$ROM" http://localhost:8080/rooms/metadata | jq '.[0:3]'
+```
+
+```bash
+ROM=path/to/rom.smc
+ROM_B64="$(base64 < "$ROM" | tr -d '\n')"
+jq -nc --arg romBase64 "$ROM_B64" '{romBase64: $romBase64}' |
+  curl -sS -X POST \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    http://localhost:8080/rooms/metadata | jq '.[0:3]'
+```
+
+## POST /rooms/render
+
+Renders every room map to PNG and returns a ZIP file containing all room images (named by room ID, e.g. `91f8.png`) and a `rooms.json` metadata file. Accepts multipart (`rom` file field) or JSON (`romBase64`):
+
+```bash
+ROM=path/to/rom.smc
+curl -sS -X POST -F rom=@"$ROM" http://localhost:8080/rooms/render --output rooms.zip
+```
+
+Add `?items=true` to overlay visible item icons (Energy Tank, Screw Attack, etc.) on each room map:
+
+```bash
+curl -sS -X POST -F rom=@"$ROM" 'http://localhost:8080/rooms/render?items=true' --output rooms.zip
+```
+
+Response headers include `X-SMEDIT-Rendered-Rooms` and `X-SMEDIT-Failed-Rooms` counts.
+
 ## POST /patch
 
 The caller supplies the ROM in the request. The service does not read, store, or host ROM files. For command-line tools and web forms, prefer `multipart/form-data` with a `rom` file field. JSON with `romBase64` is also supported for SDK-style callers and tests.

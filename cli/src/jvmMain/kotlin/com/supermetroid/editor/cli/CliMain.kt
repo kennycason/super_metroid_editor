@@ -6,11 +6,13 @@ import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBuildService
 import com.supermetroid.editor.headless.SmeditColorizeRequest
 import com.supermetroid.editor.headless.SmeditPatchCatalog
+import com.supermetroid.editor.rom.RoomMapExporter
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import java.io.File
+import java.io.FileOutputStream
 import kotlin.system.exitProcess
 
 private val jsonPretty = Json { prettyPrint = true }
@@ -53,15 +55,21 @@ fun main(args: Array<String>) {
     val json = if (compact) jsonCompact else jsonPretty
     try {
         when (command) {
-            "rooms", "room", "graph", "export" -> {
+            "rooms", "room", "graph", "export", "render-rooms", "rooms-metadata" -> {
                 val requiredRomPath = romPath ?: error("ROM path was already validated")
                 val parser = RomParser.loadRom(requiredRomPath)
-                val roomExporter = RoomExporter(parser)
                 when (command) {
-                    "rooms" -> cmdRooms(roomExporter, json)
-                    "room" -> cmdRoom(roomExporter, json, commandArgs)
-                    "graph" -> cmdGraph(roomExporter, json)
-                    "export" -> cmdExport(roomExporter, json, commandArgs)
+                    "render-rooms" -> cmdRenderRooms(parser, commandArgs)
+                    "rooms-metadata" -> cmdRoomsMetadata(parser, json)
+                    else -> {
+                        val roomExporter = RoomExporter(parser)
+                        when (command) {
+                            "rooms" -> cmdRooms(roomExporter, json)
+                            "room" -> cmdRoom(roomExporter, json, commandArgs)
+                            "graph" -> cmdGraph(roomExporter, json)
+                            "export" -> cmdExport(roomExporter, json, commandArgs)
+                        }
+                    }
                 }
             }
             "build" -> cmdBuild(json, romPath, commandArgs)
@@ -152,6 +160,39 @@ private fun cmdExport(
     }
     val failed = summaries.size - roomExports.size
     System.err.println("Wrote ${roomExports.size} room files to rooms/ ($failed failed)")
+}
+
+private fun cmdRenderRooms(parser: RomParser, args: List<String>) {
+    var outPath: String? = null
+    var showItems = false
+    val iter = args.iterator()
+    while (iter.hasNext()) {
+        val arg = iter.next()
+        when {
+            (arg == "-o" || arg == "--output") && iter.hasNext() -> outPath = iter.next()
+            arg == "--items" -> showItems = true
+        }
+    }
+    if (outPath == null) {
+        System.err.println("Usage: render-rooms -o <output.zip> [--items]")
+        exitProcess(1)
+    }
+
+    val outFile = File(outPath)
+    outFile.parentFile?.mkdirs()
+
+    val exporter = RoomMapExporter(parser)
+    val result = FileOutputStream(outFile).use { fos ->
+        exporter.renderToZip(fos, showItems = showItems)
+    }
+
+    System.err.println("Rendered ${result.renderedCount} rooms (${result.failedCount} failed) → ${outFile.absolutePath}")
+}
+
+private fun cmdRoomsMetadata(parser: RomParser, json: Json) {
+    val exporter = RoomMapExporter(parser)
+    val metadata = exporter.exportMetadata()
+    println(json.encodeToString(metadata))
 }
 
 private fun cmdPatches(json: Json) {
@@ -324,9 +365,13 @@ Usage: [--rom <path.smc>] [--compact] <command> [options]
 
 Commands:
   rooms              List all rooms with metadata (JSON to stdout)
+  rooms-metadata     Export room metadata JSON (IDs, names, areas, positions)
   room <id|handle>   Export single room with full collision grid
   graph              Export navigation graph (nodes + edges)
   export -o <dir>    Export everything: rooms.json, nav_graph.json, rooms/*.json
+  render-rooms -o <zip> [--items]
+                     Render every room map to PNG and bundle into a ZIP with rooms.json
+                     --items overlays visible item icons (Energy Tank, Screw Attack, etc.)
   patches            List built-in patch IDs and headless support status
   schemas            List supported config patch schemas
   schema <id|type>   Show one config patch schema
@@ -340,10 +385,13 @@ Options:
 
 Examples:
   ... --rom rom.smc rooms
+  ... --rom rom.smc rooms-metadata
   ... --rom rom.smc room 0x91F8
   ... --rom rom.smc room landingSite
   ... --rom rom.smc graph
   ... --rom rom.smc export -o /tmp/sm_export
+  ... --rom rom.smc render-rooms -o rooms.zip
+  ... --rom rom.smc render-rooms -o rooms.zip --items
   ... patches
   ... schema enemy_stats
   ... --rom base.smc build --config build.json --output patched.smc --patch patched.ips

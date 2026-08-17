@@ -14,9 +14,11 @@ import com.supermetroid.editor.headless.SmeditRandomizationReport
 import com.supermetroid.editor.headless.SmeditRandomizationRequest
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.PaletteEffects
+import com.supermetroid.editor.rom.RoomMapExporter
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
+import io.ktor.http.ContentDisposition
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
@@ -45,6 +47,7 @@ import io.ktor.server.routing.routing
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.net.BindException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -314,6 +317,8 @@ fun Application.smeditServiceModule(
         exposeHeader("X-SMEDIT-Randomization-Preset")
         exposeHeader("X-SMEDIT-Randomized-Config-Types")
         exposeHeader("X-SMEDIT-Randomized-Field-Counts")
+        exposeHeader("X-SMEDIT-Rendered-Rooms")
+        exposeHeader("X-SMEDIT-Failed-Rooms")
         exposeHeader(HttpHeaders.ContentDisposition)
 
         allowHost("localhost:5173", schemes = listOf("http"))
@@ -351,6 +356,37 @@ fun Application.smeditServiceModule(
         post("/metadata/rom") {
             val request = call.receive<SmeditServiceRomMetadataRequest>()
             call.respond(romMetadata(decodeRomBase64(request.romBase64)))
+        }
+
+        post("/rooms/metadata") {
+            val romBytes = call.receiveRomBytes()
+            val parser = RomParser(romBytes)
+            require(parser.roomCatalog.readable) {
+                parser.compatibilityReport.userMessage("uploaded ROM")
+            }
+            val exporter = RoomMapExporter(parser)
+            call.respond(exporter.exportMetadata())
+        }
+
+        post("/rooms/render") {
+            val showItems = call.request.queryParameters["items"]?.lowercase() in listOf("true", "1", "yes")
+            val romBytes = call.receiveRomBytes()
+            val parser = RomParser(romBytes)
+            require(parser.roomCatalog.readable) {
+                parser.compatibilityReport.userMessage("uploaded ROM")
+            }
+            val exporter = RoomMapExporter(parser)
+            val baos = ByteArrayOutputStream()
+            val result = exporter.renderToZip(baos, showItems = showItems)
+            call.response.header(
+                HttpHeaders.ContentDisposition,
+                ContentDisposition.Attachment.withParameter(
+                    ContentDisposition.Parameters.FileName, "rooms.zip",
+                ).toString(),
+            )
+            call.response.header("X-SMEDIT-Rendered-Rooms", result.renderedCount.toString())
+            call.response.header("X-SMEDIT-Failed-Rooms", result.failedCount.toString())
+            call.respondBytes(baos.toByteArray(), ContentType("application", "zip"))
         }
 
         post("/patch") {
@@ -644,6 +680,26 @@ private fun decodeRomBase64(value: String): ByteArray =
         Base64.getDecoder().decode(value)
     } catch (e: IllegalArgumentException) {
         throw IllegalArgumentException("romBase64 is not valid base64.", e)
+    }
+
+private suspend fun ApplicationCall.receiveRomBytes(): ByteArray =
+    if (request.contentType().match(ContentType.MultiPart.FormData)) {
+        var romBytes: ByteArray? = null
+        val multipart = receiveMultipart()
+        while (true) {
+            val part = multipart.readPart() ?: break
+            try {
+                if (part is PartData.FileItem && part.name == "rom") {
+                    romBytes = part.streamProvider().use { it.readBytes() }
+                }
+            } finally {
+                part.dispose()
+            }
+        }
+        requireNotNull(romBytes) { "multipart/form-data request must include a rom file field." }
+    } else {
+        val request = receive<SmeditServiceRomMetadataRequest>()
+        decodeRomBase64(request.romBase64)
     }
 
 private fun ApplicationCall.acceptsJson(): Boolean {
