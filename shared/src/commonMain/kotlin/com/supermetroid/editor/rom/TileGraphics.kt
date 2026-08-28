@@ -38,6 +38,8 @@ class TileGraphics(private val romParser: RomParser) {
 
     enum class MetatileTableSource { VARIABLE, CRE, INVALID }
 
+    private enum class GfxLayout { STANDARD_4BPP, SPLIT_PLANES_4BPP }
+
     
     companion object {
         // Tileset pointer table: SNES $8F:E6A2, 29 entries × 9 bytes
@@ -64,8 +66,13 @@ class TileGraphics(private val romParser: RomParser) {
 
         const val CERES_AREA = 6
 
+        // Mode 7 Ceres/Ridley tilesets store 4bpp bitplanes as two global halves:
+        // [bp0/bp2 for all tiles][bp1/bp3 for all tiles], not 32-byte per-tile chunks.
+        val MODE7_CERES_TILESETS = 17..20
+
         // Standard CRE graphics placement offset (tiles 640-1023)
         private const val CRE_GFX_OFFSET = 0x5000  // 640 tiles × 32 bytes
+        private const val SPLIT_PLANE_OFFSET = TOTAL_TILES * BYTES_PER_TILE / 2
 
         fun encodeMetatileWord(
             tileNum: Int,
@@ -97,6 +104,7 @@ class TileGraphics(private val romParser: RomParser) {
     private var rawTileData: ByteArray? = null          // Combined 4bpp tile graphics (var + CRE)
     private var metatiles: Array<IntArray>? = null       // metatile[idx] = 4 sub-tile words
     private var cachedPalette: Array<IntArray>? = null   // 8 palettes × 16 ARGB colors
+    private var cachedGfxLayout: GfxLayout = GfxLayout.STANDARD_4BPP
     private var cachedDefinedMetatiles: Int = 0          // Entries actually present in the tile table
     private var cachedCreTableMetatileCount: Int = 0
     private var cachedVarTableStartMetatile: Int = 0
@@ -137,12 +145,11 @@ class TileGraphics(private val romParser: RomParser) {
      *   - Tile table: if variable table has 1024+ metatiles (8192+ bytes),
      *     it covers all slots — CRE table is NOT prepended.
      *     Otherwise CRE (256 metatiles) is prepended: [CRE 0-255][VAR 256-1023].
-     *   - Graphics: CRE always overlays at offset 0x5000 (tiles 640-1023),
-     *     except tileset 27 (Kraid) which has no CRE overlay.
-     *     Note: Ceres tilesets 17-20 have 32K variable GFX, but only the first
-     *     0x5000 bytes are used as tile characters; CRE overwrites the rest.
-     *     These tilesets' variable tiles 0-639 contain data that doesn't render
-     *     cleanly as standard 4bpp — this is a known limitation shared by SMILE.
+     *   - Graphics: CRE normally overlays at offset 0x5000 (tiles 640-1023).
+     *     Exceptions:
+     *       * Tileset 27 (Kraid) has no CRE overlay.
+     *       * Mode 7 Ceres/Ridley tilesets 17-20 use a split-plane 32K layout, so
+     *         byte 0x5000 is area tile plane data, not a CRE boundary.
      */
     fun loadTileset(tilesetId: Int, @Suppress("unused") noCre: Boolean = false): Boolean {
         if (tilesetId !in 0 until NUM_TILESETS) return false
@@ -185,18 +192,21 @@ class TileGraphics(private val romParser: RomParser) {
         // Graphics: variable tiles first, CRE overlays at offset 0x5000 (tiles 640-1023).
         //
         // Skip CRE overlay when:
+        //  - Mode 7 Ceres/Ridley tilesets use a global split-plane layout where
+        //    0x5000 is still area graphics data.
         //  - Variable GFX fills all 1024 tile slots (>= 32K) AND the tile table
         //    doesn't cover all metatiles (CRE metatile defs are prepended and may
         //    reference tiles 640+, e.g. tileset 26 / Kraid's room)
         //  - Tileset 27 (Kraid sprite), per SMILE source
         //  - Caller explicitly requested noCre
-        //
-        // Ceres tilesets (17-20) also have 32K GFX but their tile tables cover all
-        // 1024 metatiles and reference only tiles 0-639, so CRE overlay is harmless
-        // (it overwrites unreferenced tile slots). The varTableCoversAll check
-        // ensures CRE is still applied for those tilesets.
+        val gfxLayout = if (usesMode7SplitPlaneLayout(tilesetId, varGfx.size)) {
+            GfxLayout.SPLIT_PLANES_4BPP
+        } else {
+            GfxLayout.STANDARD_4BPP
+        }
         val varGfxFull = varGfx.size >= TOTAL_TILES * BYTES_PER_TILE
         val skipCre = noCre ||
+            gfxLayout == GfxLayout.SPLIT_PLANES_4BPP ||
             tilesetId == KRAID_TILESET ||
             (varGfxFull && !varTableCoversAll)
         val combinedGfx = ByteArray(TOTAL_TILES * BYTES_PER_TILE)
@@ -211,6 +221,7 @@ class TileGraphics(private val romParser: RomParser) {
         }
         rawTileData = combinedGfx
         cachedHasCre = !skipCre
+        cachedGfxLayout = gfxLayout
 
         cachedTilesetId = tilesetId
         return true
@@ -426,7 +437,7 @@ class TileGraphics(private val romParser: RomParser) {
             val tileNum = startTile + i
             val paletteRow = tilePalMap.getOrNull(tileNum)
                 ?: findBestPaletteForTile(tilePixels, pal)
-            encode4bppTile(tilePixels, pal[paletteRow], result, i * BYTES_PER_TILE)
+            encode4bppTile(tilePixels, pal[paletteRow], result, i)
         }
         return result
     }
@@ -517,7 +528,14 @@ class TileGraphics(private val romParser: RomParser) {
     }
 
     /** Force tileset to re-load from ROM on next call. */
-    fun invalidateCache() { cachedTilesetId = -1; rawTileData = null; metatiles = null; cachedPalette = null }
+    fun invalidateCache() {
+        cachedTilesetId = -1
+        cachedHasCre = false
+        rawTileData = null
+        metatiles = null
+        cachedPalette = null
+        cachedGfxLayout = GfxLayout.STANDARD_4BPP
+    }
 
     // ─── Pixel-level read / write for inline editor ────────────────────
 
@@ -526,15 +544,13 @@ class TileGraphics(private val romParser: RomParser) {
      * Returns -1 if the tile or data is out of range.
      */
     fun readPixelIndex(tileNum: Int, px: Int, py: Int): Int {
-        val data = rawTileData ?: return -1
         if (tileNum < 0 || tileNum >= TOTAL_TILES) return -1
-        val offset = tileNum * BYTES_PER_TILE
-        if (offset + 32 > data.size) return -1
         val bit = 7 - px
-        val bp0 = (data[offset + py * 2].toInt() shr bit) and 1
-        val bp1 = (data[offset + py * 2 + 1].toInt() shr bit) and 1
-        val bp2 = (data[offset + py * 2 + 16].toInt() shr bit) and 1
-        val bp3 = (data[offset + py * 2 + 17].toInt() shr bit) and 1
+        val row = read4bppTileRow(tileNum, py) ?: return -1
+        val bp0 = (row.bp0 shr bit) and 1
+        val bp1 = (row.bp1 shr bit) and 1
+        val bp2 = (row.bp2 shr bit) and 1
+        val bp3 = (row.bp3 shr bit) and 1
         return bp0 or (bp1 shl 1) or (bp2 shl 2) or (bp3 shl 3)
     }
 
@@ -544,17 +560,31 @@ class TileGraphics(private val romParser: RomParser) {
     fun writePixelIndex(tileNum: Int, px: Int, py: Int, colorIdx: Int) {
         val data = rawTileData ?: return
         if (tileNum < 0 || tileNum >= TOTAL_TILES) return
-        val offset = tileNum * BYTES_PER_TILE
-        if (offset + 32 > data.size) return
+        if (px !in 0..7 || py !in 0..7) return
         val bit = 7 - px
         val mask = (1 shl bit).inv()
         fun setBit(byteOff: Int, bitVal: Int) {
             data[byteOff] = ((data[byteOff].toInt() and 0xFF and mask) or ((bitVal and 1) shl bit)).toByte()
         }
-        setBit(offset + py * 2, colorIdx)
-        setBit(offset + py * 2 + 1, colorIdx shr 1)
-        setBit(offset + py * 2 + 16, colorIdx shr 2)
-        setBit(offset + py * 2 + 17, colorIdx shr 3)
+        when (cachedGfxLayout) {
+            GfxLayout.STANDARD_4BPP -> {
+                val offset = tileNum * BYTES_PER_TILE
+                if (offset + BYTES_PER_TILE > data.size) return
+                setBit(offset + py * 2, colorIdx)
+                setBit(offset + py * 2 + 1, colorIdx shr 1)
+                setBit(offset + py * 2 + 16, colorIdx shr 2)
+                setBit(offset + py * 2 + 17, colorIdx shr 3)
+            }
+            GfxLayout.SPLIT_PLANES_4BPP -> {
+                val lowOffset = tileNum * 16
+                val highOffset = SPLIT_PLANE_OFFSET + tileNum * 16
+                if (lowOffset + 16 > data.size || highOffset + 16 > data.size) return
+                setBit(lowOffset + py, colorIdx)
+                setBit(highOffset + py, colorIdx shr 1)
+                setBit(lowOffset + 8 + py, colorIdx shr 2)
+                setBit(highOffset + 8 + py, colorIdx shr 3)
+            }
+        }
     }
 
     /**
@@ -728,6 +758,45 @@ class TileGraphics(private val romParser: RomParser) {
 
     // ─── Internal helpers ──────────────────────────────────────────────
 
+    private data class TileRowBitplanes(
+        val bp0: Int,
+        val bp1: Int,
+        val bp2: Int,
+        val bp3: Int,
+    )
+
+    private fun usesMode7SplitPlaneLayout(tilesetId: Int, gfxSize: Int): Boolean =
+        tilesetId in MODE7_CERES_TILESETS && gfxSize >= TOTAL_TILES * BYTES_PER_TILE
+
+    private fun read4bppTileRow(tileNum: Int, row: Int): TileRowBitplanes? {
+        val data = rawTileData ?: return null
+        if (tileNum !in 0 until TOTAL_TILES || row !in 0..7) return null
+
+        return when (cachedGfxLayout) {
+            GfxLayout.STANDARD_4BPP -> {
+                val offset = tileNum * BYTES_PER_TILE
+                if (offset + BYTES_PER_TILE > data.size) return null
+                TileRowBitplanes(
+                    bp0 = data[offset + row * 2].toInt() and 0xFF,
+                    bp1 = data[offset + row * 2 + 1].toInt() and 0xFF,
+                    bp2 = data[offset + row * 2 + 16].toInt() and 0xFF,
+                    bp3 = data[offset + row * 2 + 17].toInt() and 0xFF,
+                )
+            }
+            GfxLayout.SPLIT_PLANES_4BPP -> {
+                val lowOffset = tileNum * 16
+                val highOffset = SPLIT_PLANE_OFFSET + tileNum * 16
+                if (lowOffset + 16 > data.size || highOffset + 16 > data.size) return null
+                TileRowBitplanes(
+                    bp0 = data[lowOffset + row].toInt() and 0xFF,
+                    bp1 = data[highOffset + row].toInt() and 0xFF,
+                    bp2 = data[lowOffset + 8 + row].toInt() and 0xFF,
+                    bp3 = data[highOffset + 8 + row].toInt() and 0xFF,
+                )
+            }
+        }
+    }
+
     private fun findBestPaletteForTile(tilePixels: IntArray, palettes: Array<IntArray>): Int {
         var bestPal = 0; var bestScore = Int.MAX_VALUE
         for (p in palettes.indices) {
@@ -754,7 +823,15 @@ class TileGraphics(private val romParser: RomParser) {
         return best
     }
 
-    private fun encode4bppTile(tilePixels: IntArray, palette: IntArray, out: ByteArray, outOffset: Int) {
+    private fun encode4bppTile(tilePixels: IntArray, palette: IntArray, out: ByteArray, tileIndex: Int) {
+        when (cachedGfxLayout) {
+            GfxLayout.STANDARD_4BPP -> encodeStandard4bppTile(tilePixels, palette, out, tileIndex * BYTES_PER_TILE)
+            GfxLayout.SPLIT_PLANES_4BPP -> encodeSplitPlane4bppTile(tilePixels, palette, out, tileIndex)
+        }
+    }
+
+    private fun encodeStandard4bppTile(tilePixels: IntArray, palette: IntArray, out: ByteArray, outOffset: Int) {
+        if (outOffset < 0 || outOffset + BYTES_PER_TILE > out.size) return
         for (y in 0..7) {
             var bp0 = 0; var bp1 = 0; var bp2 = 0; var bp3 = 0
             for (x in 0..7) {
@@ -770,6 +847,30 @@ class TileGraphics(private val romParser: RomParser) {
             out[outOffset + y * 2 + 1] = bp1.toByte()
             out[outOffset + y * 2 + 16] = bp2.toByte()
             out[outOffset + y * 2 + 17] = bp3.toByte()
+        }
+    }
+
+    private fun encodeSplitPlane4bppTile(tilePixels: IntArray, palette: IntArray, out: ByteArray, tileIndex: Int) {
+        val splitOffset = out.size / 2
+        val lowOffset = tileIndex * 16
+        val highOffset = splitOffset + tileIndex * 16
+        if (lowOffset < 0 || lowOffset + 16 > splitOffset || highOffset + 16 > out.size) return
+
+        for (y in 0..7) {
+            var bp0 = 0; var bp1 = 0; var bp2 = 0; var bp3 = 0
+            for (x in 0..7) {
+                val argb = tilePixels[y * 8 + x]
+                val ci = if ((argb ushr 24) < 128) 0 else findClosestPaletteIndex(argb, palette)
+                val bit = 7 - x
+                if (ci and 1 != 0) bp0 = bp0 or (1 shl bit)
+                if (ci and 2 != 0) bp1 = bp1 or (1 shl bit)
+                if (ci and 4 != 0) bp2 = bp2 or (1 shl bit)
+                if (ci and 8 != 0) bp3 = bp3 or (1 shl bit)
+            }
+            out[lowOffset + y] = bp0.toByte()
+            out[highOffset + y] = bp1.toByte()
+            out[lowOffset + 8 + y] = bp2.toByte()
+            out[highOffset + 8 + y] = bp3.toByte()
         }
     }
 
@@ -888,25 +989,18 @@ class TileGraphics(private val romParser: RomParser) {
      */
     private fun decode4bppTileWithPalette(tileNum: Int, palette: Array<IntArray>, paletteIdx: Int): IntArray {
         val pixels = IntArray(64)
-        val data = rawTileData ?: return pixels
-        val offset = tileNum * BYTES_PER_TILE
-        
-        if (offset + 32 > data.size) return pixels
-        
+
         val palIdx = minOf(paletteIdx, palette.size - 1)
-        
+
         for (y in 0 until 8) {
-            val bp0 = data[offset + y * 2].toInt() and 0xFF
-            val bp1 = data[offset + y * 2 + 1].toInt() and 0xFF
-            val bp2 = data[offset + y * 2 + 16].toInt() and 0xFF
-            val bp3 = data[offset + y * 2 + 17].toInt() and 0xFF
+            val row = read4bppTileRow(tileNum, y) ?: return pixels
             
             for (x in 0 until 8) {
                 val bit = 7 - x
-                val colorIdx = ((bp0 shr bit) and 1) or
-                    (((bp1 shr bit) and 1) shl 1) or
-                    (((bp2 shr bit) and 1) shl 2) or
-                    (((bp3 shr bit) and 1) shl 3)
+                val colorIdx = ((row.bp0 shr bit) and 1) or
+                    (((row.bp1 shr bit) and 1) shl 1) or
+                    (((row.bp2 shr bit) and 1) shl 2) or
+                    (((row.bp3 shr bit) and 1) shl 3)
                 
                 // Color index 0 = transparent
                 if (colorIdx == 0) {

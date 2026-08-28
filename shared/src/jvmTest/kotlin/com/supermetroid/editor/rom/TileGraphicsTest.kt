@@ -564,12 +564,15 @@ class TileGraphicsTest {
         }
 
         @Test
-        fun `getCreOffset returns 640 for Ceres tileset (CRE overlays at 0x5000)`() {
+        fun `getCreOffset returns 1024 for mode 7 Ceres tilesets`() {
             val g = gfx ?: return
-            g.loadTileset(17) // Ceres tileset — CRE always overlays per SMILE behavior
-            assertEquals(640, g.getCreOffset())
-            assertEquals(640, g.getVarTileCount())
-            assertEquals(384, g.getCreTileCount())
+            for (tilesetId in TileGraphics.MODE7_CERES_TILESETS) {
+                g.invalidateCache()
+                g.loadTileset(tilesetId)
+                assertEquals(1024, g.getCreOffset(), "tileset $tilesetId should not overlay CRE")
+                assertEquals(1024, g.getVarTileCount(), "tileset $tilesetId should keep all area tiles")
+                assertEquals(0, g.getCreTileCount(), "tileset $tilesetId should not expose CRE tiles")
+            }
         }
 
         @Test
