@@ -22,21 +22,28 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FormatColorFill
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Undo
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.NearMe
-import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -61,11 +69,11 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +81,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.rom.MinimapData
@@ -177,26 +186,6 @@ fun MinimapSidebar(
             }
         }
 
-        Spacer(Modifier.height(6.dp)); Divider(); Spacer(Modifier.height(4.dp))
-
-        // Tools — single row: paint, sample, fill, undo, redo, zoom+, zoom-
-        Text("Tool", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-        Spacer(Modifier.height(2.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MmToolBtn(Icons.Default.NearMe, "Select", state.tool == MinimapTool.SELECT) { state.tool = MinimapTool.SELECT }
-            MmToolBtn(Icons.Default.Brush, "Paint", state.tool == MinimapTool.PAINT) { state.tool = MinimapTool.PAINT }
-            MmToolBtn(Icons.Default.Colorize, "Sample", state.tool == MinimapTool.EYEDROPPER) { state.tool = MinimapTool.EYEDROPPER }
-            MmToolBtn(Icons.Default.FormatColorFill, "Fill", state.tool == MinimapTool.FILL) { state.tool = MinimapTool.FILL }
-            Spacer(Modifier.width(4.dp))
-            MmIconBtn(Icons.Default.Undo, "Undo", state.undoStack.isNotEmpty()) { state.undo(editorState) }
-            MmIconBtn(Icons.Default.Redo, "Redo", state.redoStack.isNotEmpty()) { state.redo(editorState) }
-            MmIconBtn(Icons.Default.ZoomIn, "+", true) { state.cellSize = (state.cellSize + 4).coerceAtMost(MINIMAP_MAX_CELL_SIZE) }
-            MmIconBtn(Icons.Default.ZoomOut, "-", true) { state.cellSize = (state.cellSize - 4).coerceAtLeast(MINIMAP_MIN_CELL_SIZE) }
-        }
-
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Display toggles
@@ -221,7 +210,13 @@ fun MinimapSidebar(
 
         // Tile palette — fills available width
         Text("Tile", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-        MinimapTilePalette(selectedTile = state.selectedTile, tileGfx = state.tileGraphics, onSelect = { state.selectedTile = it })
+        MinimapTilePalette(
+            selectedTile = state.selectedTile,
+            selectedHFlip = state.selectedHFlip,
+            selectedVFlip = state.selectedVFlip,
+            tileGfx = state.tileGraphics,
+            onSelect = { state.selectedTile = it },
+        )
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
@@ -269,7 +264,7 @@ fun MinimapSidebar(
                 for ((i, room) in rooms.withIndex()) {
                     androidx.compose.material3.DropdownMenuItem(
                         text = { Text("0x${room.roomId.toString(16).uppercase()} ${room.name}", fontSize = 10.sp) },
-                        onClick = { state.selectedRoomIndex = i; roomDropdownExpanded = false },
+                        onClick = { state.selectRoomByIndex(i, editorState); roomDropdownExpanded = false },
                     )
                 }
             }
@@ -284,6 +279,35 @@ fun MinimapSidebar(
                 Text("${selRoom.mapY}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                 Text("${selRoom.width}x${selRoom.height}", fontSize = 9.sp, fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            var areaMenuExpanded by remember(selRoom.roomId) { androidx.compose.runtime.mutableStateOf(false) }
+            Box {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(26.dp).clickable { areaMenuExpanded = true },
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(3.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("Area: ${MinimapData.AREA_NAMES[state.selectedArea]}", fontSize = 10.sp)
+                        Text("Move… ▾", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                DropdownMenu(expanded = areaMenuExpanded, onDismissRequest = { areaMenuExpanded = false }) {
+                    for (area in 0 until MinimapData.NUM_AREAS) {
+                        DropdownMenuItem(
+                            text = { Text(MinimapData.AREA_NAMES[area], fontSize = 10.sp) },
+                            enabled = area != selRoom.area,
+                            onClick = {
+                                areaMenuExpanded = false
+                                state.reassignRoomArea(selRoom.roomId, area, editorState)
+                            },
+                        )
+                    }
+                }
             }
             // D-pad: 3x3 grid of arrow buttons
             Row(horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
@@ -346,13 +370,140 @@ fun MinimapSidebar(
     }
 }
 
+@Composable
+private fun MinimapToolbar(
+    state: MinimapEditorState,
+    editorState: EditorState,
+    requestFocus: () -> Unit,
+) {
+    Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "Area Map — ${MinimapData.AREA_NAMES[state.selectedArea]}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+
+            MinimapToolChip(Icons.Default.SelectAll, "Select (S)", state.tool == MinimapTool.SELECT) {
+                state.activateTool(MinimapTool.SELECT, editorState); requestFocus()
+            }
+            MinimapToolChip(Icons.Default.Brush, "Paint (P)", state.tool == MinimapTool.PAINT) {
+                state.activateTool(MinimapTool.PAINT, editorState); requestFocus()
+            }
+            MinimapToolChip(Icons.Default.FormatColorFill, "Fill (G)", state.tool == MinimapTool.FILL) {
+                state.activateTool(MinimapTool.FILL, editorState); requestFocus()
+            }
+            MinimapToolChip(Icons.Outlined.Delete, "Erase (E)", state.tool == MinimapTool.ERASE) {
+                state.activateTool(MinimapTool.ERASE, editorState); requestFocus()
+            }
+            MinimapToolChip(Icons.Default.Colorize, "Sample (I)", state.tool == MinimapTool.EYEDROPPER) {
+                state.activateTool(MinimapTool.EYEDROPPER, editorState); requestFocus()
+            }
+            MinimapToolChip(Icons.Default.Map, "Station reveal", state.tool == MinimapTool.REVEAL) {
+                state.activateTool(MinimapTool.REVEAL, editorState)
+                state.showStationOverlay = true
+                requestFocus()
+            }
+
+            Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+            IconButton(
+                onClick = { state.undo(editorState); requestFocus() },
+                enabled = state.undoStack.isNotEmpty(),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(Icons.Default.Undo, "Undo (Ctrl/Cmd+Z)", Modifier.size(16.dp))
+            }
+            IconButton(
+                onClick = { state.redo(editorState); requestFocus() },
+                enabled = state.redoStack.isNotEmpty(),
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(Icons.Default.Redo, "Redo (Ctrl/Cmd+Y)", Modifier.size(16.dp))
+            }
+
+            Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+            IconButton(
+                onClick = { state.flipSelectedHorizontal(); requestFocus() },
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(
+                    Icons.Default.Flip,
+                    "Flip selected map tile horizontally (H)",
+                    Modifier.size(16.dp),
+                    tint = if (state.selectedHFlip) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            IconButton(
+                onClick = { state.flipSelectedVertical(); requestFocus() },
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(
+                    Icons.Default.Flip,
+                    "Flip selected map tile vertically (V)",
+                    Modifier.size(16.dp).graphicsLayer(rotationZ = 90f),
+                    tint = if (state.selectedVFlip) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            IconButton(
+                onClick = { state.rotateSelected(clockwise = true, editorState); requestFocus() },
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(Icons.Default.RotateRight, "Rotate selected map tile (R / Shift+R)", Modifier.size(16.dp))
+            }
+
+            Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+            IconButton(
+                onClick = { state.cellSize = (state.cellSize - 4).coerceAtLeast(MINIMAP_MIN_CELL_SIZE); requestFocus() },
+                enabled = state.cellSize > MINIMAP_MIN_CELL_SIZE,
+                modifier = Modifier.size(28.dp),
+            ) { Text("−", fontSize = 14.sp) }
+            Text("${state.cellSize.toInt()}x", fontSize = 10.sp, modifier = Modifier.width(32.dp))
+            IconButton(
+                onClick = { state.cellSize = (state.cellSize + 4).coerceAtMost(MINIMAP_MAX_CELL_SIZE); requestFocus() },
+                enabled = state.cellSize < MINIMAP_MAX_CELL_SIZE,
+                modifier = Modifier.size(28.dp),
+            ) { Text("+", fontSize = 14.sp) }
+        }
+    }
+}
+
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun MinimapToolChip(icon: ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Icon(icon, description, Modifier.size(14.dp)) },
+        modifier = Modifier.height(28.dp),
+    )
+}
+
 /** Main canvas for the minimap editor. */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier: Modifier = Modifier) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
+    state.areaReassignmentError?.let { message ->
+        AlertDialog(
+            onDismissRequest = state::dismissAreaReassignmentError,
+            title = { Text("Room area unchanged") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = state::dismissAreaReassignmentError) { Text("OK") }
+            },
+        )
+    }
+    Column(modifier = modifier.fillMaxSize().background(Color(0xFF0A0A14))) {
+        MinimapToolbar(state, editorState) { focusRequester.requestFocus() }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         val hScroll = rememberScrollState()
         val vScroll = rememberScrollState()
         val coroutineScope = rememberCoroutineScope()
@@ -360,6 +511,10 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
         var viewportWidthPx by remember { androidx.compose.runtime.mutableStateOf(0) }
         var viewportHeightPx by remember { androidx.compose.runtime.mutableStateOf(0) }
         var zoomInitializedArea by remember { androidx.compose.runtime.mutableStateOf<Int?>(null) }
+        var contextMenuExpanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+        var contextMenuRoomId by remember { androidx.compose.runtime.mutableStateOf<Int?>(null) }
+        var contextMenuOffset by remember { androidx.compose.runtime.mutableStateOf(DpOffset.Zero) }
+        var primaryCanvasPress by remember { androidx.compose.runtime.mutableStateOf(false) }
         val fitCellSize = fitMinimapCellSizeForViewport(
             viewportWidthPx = viewportWidthPx,
             viewportHeightPx = viewportHeightPx,
@@ -438,11 +593,18 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val ctrl = event.isCtrlPressed || event.isMetaPressed
                     when (event.key) {
-                        Key.S -> { state.tool = MinimapTool.SELECT; true }
-                        Key.P -> { state.tool = MinimapTool.PAINT; true }
-                        Key.F -> { state.tool = MinimapTool.FILL; true }
-                        Key.I -> { state.tool = MinimapTool.EYEDROPPER; true }
-                        Key.Z -> if (ctrl) { state.undo(editorState); true } else false
+                        Key.S -> { state.activateTool(MinimapTool.SELECT, editorState); true }
+                        Key.P -> { state.activateTool(MinimapTool.PAINT, editorState); true }
+                        Key.G -> { state.activateTool(MinimapTool.FILL, editorState); true }
+                        Key.E -> { state.activateTool(MinimapTool.ERASE, editorState); true }
+                        Key.I -> { state.activateTool(MinimapTool.EYEDROPPER, editorState); true }
+                        Key.H -> { state.flipSelectedHorizontal(); true }
+                        Key.V -> { state.flipSelectedVertical(); true }
+                        Key.R -> { state.rotateSelected(clockwise = !event.isShiftPressed, editorState); true }
+                        Key.Z -> if (ctrl) {
+                            if (event.isShiftPressed) state.redo(editorState) else state.undo(editorState)
+                            true
+                        } else false
                         Key.Y -> if (ctrl) { state.redo(editorState); true } else false
                         Key.Equals -> { state.cellSize = (state.cellSize + 4).coerceAtMost(MINIMAP_MAX_CELL_SIZE); true }
                         Key.Minus -> { state.cellSize = (state.cellSize - 4).coerceAtLeast(MINIMAP_MIN_CELL_SIZE); true }
@@ -451,41 +613,124 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         Key.DirectionUp -> if (state.selectedRoom != null) { state.moveRoom(0, -1, editorState); true } else false
                         Key.DirectionDown -> if (state.selectedRoom != null) { state.moveRoom(0, 1, editorState); true } else false
                         Key.Escape -> if (state.isMovingRoom) { state.cancelMove(editorState); true }
-                            else if (state.selectedRoomIndex >= 0) { state.selectedRoomIndex = -1; true }
+                            else if (state.selectedRoomIndex >= 0) { state.clearRoomSelection(editorState); true }
                             else false
                         Key.Enter -> if (state.isMovingRoom) { state.applyMove(editorState); true } else false
                         else -> false
                     }
                 }
                 .pointerHoverIcon(PixelEditorCursors.forMinimapTool(state.tool))
-                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, csPx) {
+                .onPointerEvent(PointerEventType.Press) { event ->
+                    val native = event.nativeEvent as? MouseEvent
+                    if (native?.button == MouseEvent.BUTTON2) {
+                        primaryCanvasPress = false
+                        // Middle-drag moves rooms from any tool and must not
+                        // leak into paint/erase drag gesture detection.
+                        event.changes.forEach { it.consume() }
+                        focusRequester.requestFocus()
+                        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+                        state.beginMiddleRoomDrag(
+                            (position.x / csPx).toInt(),
+                            (position.y / csPx).toInt(),
+                            editorState,
+                        )
+                    } else if (native?.button == MouseEvent.BUTTON3) {
+                        primaryCanvasPress = false
+                        // Keep the secondary click from also reaching the tap/paint gesture below.
+                        event.changes.forEach { it.consume() }
+                        focusRequester.requestFocus()
+                        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+                        val x = (position.x / csPx).toInt()
+                        val y = (position.y / csPx).toInt()
+                        state.selectRoomAt(x, y, editorState)
+                        val contextRoom = state.selectedRoom
+                        contextMenuRoomId = contextRoom?.roomId
+                        if (contextRoom != null) {
+                            contextMenuOffset = DpOffset(
+                                ((position.x - hScroll.value).coerceAtLeast(0f) / density.density).dp,
+                                ((position.y - vScroll.value).coerceAtLeast(0f) / density.density).dp,
+                            )
+                            contextMenuExpanded = true
+                        }
+                    } else {
+                        // The generic Compose tap detector also sees mouse
+                        // buttons on Desktop. Gate its action explicitly so a
+                        // context click can never lift, paint, or erase behind
+                        // the popup.
+                        primaryCanvasPress = native == null || native.button == MouseEvent.BUTTON1
+                    }
+                }
+                .onPointerEvent(PointerEventType.Move) { event ->
+                    if (state.isMiddleDraggingRoom) {
+                        event.changes.forEach { it.consume() }
+                        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+                        state.updatePointerRoomMove(
+                            (position.x / csPx).toInt(),
+                            (position.y / csPx).toInt(),
+                        )
+                    }
+                }
+                .onPointerEvent(PointerEventType.Release) { event ->
+                    if (state.isMiddleDraggingRoom) {
+                        event.changes.forEach { it.consume() }
+                        val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+                        state.endMiddleRoomDrag(
+                            (position.x / csPx).toInt(),
+                            (position.y / csPx).toInt(),
+                            editorState,
+                        )
+                    }
+                }
+                .pointerInput(state.tool, state.selectedTileWord, csPx) {
                     detectTapGestures { offset ->
+                        if (!primaryCanvasPress) return@detectTapGestures
+                        primaryCanvasPress = false
                         focusRequester.requestFocus()
                         val x = (offset.x / csPx).toInt(); val y = (offset.y / csPx).toInt()
                         when (state.tool) {
                             MinimapTool.PAINT -> state.paintTile(x, y, editorState)
                             MinimapTool.EYEDROPPER -> state.sampleTile(x, y)
                             MinimapTool.FILL -> state.fillTile(x, y, editorState)
-                            MinimapTool.SELECT -> state.selectRoomAt(x, y, editorState)
+                            MinimapTool.SELECT -> state.handleSelectClick(x, y, editorState)
+                            MinimapTool.ERASE -> state.eraseTile(x, y, editorState)
+                            MinimapTool.REVEAL -> state.toggleReveal(x, y, editorState)
                         }
                     }
                 }
-                .pointerInput(state.tool, state.selectedTile, state.selectedPalette, csPx) {
+                .pointerInput(state.tool, state.selectedTileWord, csPx) {
                     detectDragGestures(
                         onDragStart = { offset ->
-                            val x = (offset.x / csPx).toInt(); val y = (offset.y / csPx).toInt()
-                            if (state.tool == MinimapTool.PAINT && x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
-                                state.pendingStroke = state.mapData.withTile(x, y, MinimapData.makeTileWord(state.selectedTile, state.selectedPalette))
+                            if (primaryCanvasPress) {
+                                val x = (offset.x / csPx).toInt(); val y = (offset.y / csPx).toInt()
+                                if ((state.tool == MinimapTool.PAINT || state.tool == MinimapTool.ERASE) &&
+                                    x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT
+                                ) {
+                                    val word = if (state.tool == MinimapTool.ERASE) MinimapTiles.EMPTY else state.selectedTileWord
+                                    state.pendingStroke = state.mapData.withTile(x, y, word)
+                                }
+                            }
                         },
                         onDrag = { change, _ ->
-                            change.consume()
-                            val x = (change.position.x / csPx).toInt(); val y = (change.position.y / csPx).toInt()
-                            if (state.tool == MinimapTool.PAINT && x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT)
-                                state.pendingStroke = (state.pendingStroke ?: state.mapData).withTile(x, y, MinimapData.makeTileWord(state.selectedTile, state.selectedPalette))
-                            state.hoverX = x; state.hoverY = y
+                            if (primaryCanvasPress) {
+                                change.consume()
+                                val x = (change.position.x / csPx).toInt(); val y = (change.position.y / csPx).toInt()
+                                if ((state.tool == MinimapTool.PAINT || state.tool == MinimapTool.ERASE) &&
+                                    x in 0 until MinimapData.MAP_WIDTH && y in 0 until MinimapData.MAP_HEIGHT
+                                ) {
+                                    val word = if (state.tool == MinimapTool.ERASE) MinimapTiles.EMPTY else state.selectedTileWord
+                                    state.pendingStroke = (state.pendingStroke ?: state.mapData).withTile(x, y, word)
+                                }
+                                state.hoverX = x; state.hoverY = y
+                            }
                         },
-                        onDragEnd = { state.commitStroke(editorState) },
-                        onDragCancel = { state.pendingStroke = null },
+                        onDragEnd = {
+                            if (primaryCanvasPress) state.commitStroke(editorState)
+                            primaryCanvasPress = false
+                        },
+                        onDragCancel = {
+                            state.pendingStroke = null
+                            primaryCanvasPress = false
+                        },
                     )
                 }
                 .pointerInput(csPx) {
@@ -493,7 +738,13 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         while (true) {
                             val event = awaitPointerEvent()
                             val pos = event.changes.firstOrNull()?.position
-                            if (pos != null) { state.hoverX = (pos.x / csPx).toInt(); state.hoverY = (pos.y / csPx).toInt() }
+                            if (pos != null) {
+                                val x = (pos.x / csPx).toInt()
+                                val y = (pos.y / csPx).toInt()
+                                state.hoverX = x
+                                state.hoverY = y
+                                if (state.isClickFollowingRoom) state.updatePointerRoomMove(x, y)
+                            }
                         }
                     }
                 }
@@ -503,7 +754,50 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
             drawMinimapGrid(state.displayData, csPixels, state.showGrid, state.showRoomOutlines,
                 state.showRoomTiles, state.showPixelView, state.tileGraphics, state.showStationOverlay,
                 state.stationData, state.areaRooms, state.hoverX, state.hoverY,
-                state.tool, state.selectedTile, state.selectedPalette, state.selectedRoom, state.moveBuffer)
+                state.tool, state.selectedTileWord, state.selectedRoom, state.moveBuffer)
+        }
+        }
+        DropdownMenu(
+            expanded = contextMenuExpanded,
+            onDismissRequest = {
+                contextMenuExpanded = false
+                contextMenuRoomId = null
+                focusRequester.requestFocus()
+            },
+            offset = contextMenuOffset,
+        ) {
+            val room = contextMenuRoomId?.let { roomId ->
+                state.areaRooms.firstOrNull { it.roomId == roomId }
+            }
+            if (room != null) {
+                DropdownMenuItem(
+                    text = { Text("Move ${room.name} to…", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    onClick = {},
+                    enabled = false,
+                )
+                for (area in 0 until MinimapData.NUM_AREAS) {
+                    DropdownMenuItem(
+                        text = { Text(MinimapData.AREA_NAMES[area], fontSize = 10.sp) },
+                        enabled = area != room.area,
+                        onClick = {
+                            contextMenuExpanded = false
+                            contextMenuRoomId = null
+                            state.reassignRoomArea(room.roomId, area, editorState)
+                            focusRequester.requestFocus()
+                        },
+                    )
+                }
+                Divider()
+                DropdownMenuItem(
+                    text = { Text("Hide room map graphics", fontSize = 10.sp) },
+                    onClick = {
+                        contextMenuExpanded = false
+                        contextMenuRoomId = null
+                        state.clearRoomMap(room.roomId, editorState)
+                        focusRequester.requestFocus()
+                    },
+                )
+            }
         }
         }
     }
@@ -516,7 +810,7 @@ private fun DrawScope.drawMinimapGrid(
     showTiles: Boolean, showPixelView: Boolean, tileGfx: Array<IntArray>?,
     showStation: Boolean, stationData: MapStationData,
     rooms: List<Room>, hx: Int, hy: Int,
-    tool: MinimapTool = MinimapTool.PAINT, selectedTile: Int = 0, selectedPalette: Int = 0,
+    tool: MinimapTool = MinimapTool.PAINT, selectedWord: Int = 0,
     selectedRoom: Room? = null, moveBuf: RoomMoveBuffer? = null,
 ) {
     val pal = arrayOf(Color(0xFF18182C), Color(0xFF3060A0), Color(0xFFC0C0D0), Color(0xFFA03030))
@@ -590,15 +884,30 @@ private fun DrawScope.drawMinimapGrid(
     // 4. Station reveal overlay
     if (showStation) for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH)
         if (stationData.isRevealed(x, y)) drawRect(Color(0x40FF69B4), Offset(x * cs, y * cs), Size(cs, cs))
+    if (showStation && moveBuf != null) {
+        for (ry in moveBuf.revealed.indices) for (rx in moveBuf.revealed[ry].indices) {
+            if (moveBuf.revealed[ry][rx]) {
+                drawRect(
+                    Color(0x60FF69B4),
+                    Offset((moveBuf.currentX + rx) * cs, (moveBuf.currentY + ry) * cs),
+                    Size(cs, cs),
+                )
+            }
+        }
+    }
     // 5. Hover cursor + paint preview
     if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT) {
         val px = hx * cs; val py = hy * cs
         // Paint preview: show faded version of the tile that will be painted
+        val selectedTile = MinimapData.tileIndex(selectedWord)
+        val selectedPalette = MinimapData.tilePalette(selectedWord)
         if (tool == MinimapTool.PAINT && tileGfx != null && selectedTile in 0..255) {
             val previewPixels = tileGfx[selectedTile]
             val ps = cs / 8f
             for (pr in 0 until 8) for (pc in 0 until 8) {
-                val color = minimapPixelColor(selectedPalette, previewPixels[pr * 8 + pc])
+                val sourceRow = if (MinimapData.tileVFlip(selectedWord)) 7 - pr else pr
+                val sourceCol = if (MinimapData.tileHFlip(selectedWord)) 7 - pc else pc
+                val color = minimapPixelColor(selectedPalette, previewPixels[sourceRow * 8 + sourceCol])
                 drawRect(color.copy(alpha = 0.5f), Offset(px + pc * ps, py + pr * ps), Size(ps + 0.5f, ps + 0.5f))
             }
         }
@@ -652,20 +961,6 @@ private fun DrawScope.drawArr(px: Float, py: Float, cs: Float, w: Float, d: Int)
 // ─── Sidebar widgets ───
 
 @Composable
-private fun MmToolBtn(icon: ImageVector, label: String, sel: Boolean, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.size(44.dp).clickable(onClick = onClick)
-            .border(if (sel) 1.5.dp else 0.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(3.dp)),
-        color = Color.Transparent, shape = RoundedCornerShape(3.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(icon, label, modifier = Modifier.size(32.dp),
-                tint = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-        }
-    }
-}
-
-@Composable
 private fun DpadBtn(label: String, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.size(28.dp).clickable(onClick = onClick),
@@ -679,14 +974,13 @@ private fun DpadBtn(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun MmIconBtn(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(44.dp)) {
-        Icon(icon, label, modifier = Modifier.size(28.dp))
-    }
-}
-
-@Composable
-private fun MinimapTilePalette(selectedTile: Int, tileGfx: Array<IntArray>?, onSelect: (Int) -> Unit) {
+private fun MinimapTilePalette(
+    selectedTile: Int,
+    selectedHFlip: Boolean,
+    selectedVFlip: Boolean,
+    tileGfx: Array<IntArray>?,
+    onSelect: (Int) -> Unit,
+) {
     val tiles = MinimapTiles.PALETTE_TILES
     val cols = 7
     val cellDp = 24.dp
@@ -712,7 +1006,9 @@ private fun MinimapTilePalette(selectedTile: Int, tileGfx: Array<IntArray>?, onS
                                     // Render actual 4bpp tile graphics (palette 1 = blue for preview)
                                     val ps = cs / 8f
                                     for (pr in 0 until 8) for (pc in 0 until 8) {
-                                        drawRect(minimapPixelColor(1, pixels[pr * 8 + pc]), Offset(pc * ps, pr * ps), Size(ps + 0.5f, ps + 0.5f))
+                                        val sourceRow = if (sel && selectedVFlip) 7 - pr else pr
+                                        val sourceCol = if (sel && selectedHFlip) 7 - pc else pc
+                                        drawRect(minimapPixelColor(1, pixels[sourceRow * 8 + sourceCol]), Offset(pc * ps, pr * ps), Size(ps + 0.5f, ps + 0.5f))
                                     }
                                 } else {
                                     // Fallback: simplified icon
@@ -726,6 +1022,16 @@ private fun MinimapTilePalette(selectedTile: Int, tileGfx: Array<IntArray>?, onS
             }
         }
         val name = MinimapTiles.TILE_NAMES[selectedTile]
-        if (name != null) Text(name, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (name != null) {
+            val transform = buildList {
+                if (selectedHFlip) add("H-flip")
+                if (selectedVFlip) add("V-flip")
+            }.joinToString(", ")
+            Text(
+                if (transform.isEmpty()) name else "$name · $transform",
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

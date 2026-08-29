@@ -29,7 +29,7 @@ Examples:
 ```
 Offset  Size  Field
   0      1    Room index
-  1      1    Room area (00=Crateria, 01=Brinstar, 02=Norfair, 03=WS, 04=Maridia, 05=Tourian, 06=Ceres)
+  1      1    Room area (00=Crateria, 01=Brinstar, 02=Norfair, 03=WS, 04=Maridia, 05=Tourian, 06=Ceres; there is no unassigned value)
   2      1    X position on minimap
   3      1    Y position on minimap
   4      1    Width (in screens, 0-indexed: 00 = 1 screen)

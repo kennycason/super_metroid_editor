@@ -1274,6 +1274,27 @@ class EditorStateTest {
     @Nested
     inner class SaveStationSpawns {
         @Test
+        fun `repainting an existing save station preserves its AreaSave index`() {
+            state.setRoomIdForTest(0x93D5)
+            state.addPlm(0xB76F, 5, 11, 2)
+            val brush = TileBrush(
+                tiles = listOf(listOf(0x40)),
+                blockType = 0x8,
+                plmOverrides = mapOf(0L to Pair(0xB76F, 0x8000)),
+            )
+            state.setBrushForTest(brush)
+
+            state.beginStroke()
+            state.paintAt(5, 11)
+            state.endStroke()
+
+            val station = state.workingPlms.single { it.id == 0xB76F && it.x == 5 && it.y == 11 }
+            assertEquals(2, station.param and 0xFF)
+            val spawns = state.project.rooms.getValue(state.project.roomKey(0x93D5)).saveStationSpawns
+            assertEquals(listOf(2), spawns.map { it.saveIndex })
+        }
+
+        @Test
         fun `adding save station creates auto-derived spawn override`() {
             state.setRoomIdForTest(0x93D5)
 

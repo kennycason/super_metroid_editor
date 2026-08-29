@@ -88,6 +88,8 @@ object PixelEditorCursors {
         MinimapTool.FILL -> fill
         MinimapTool.EYEDROPPER -> eyedropper
         MinimapTool.SELECT -> select
+        MinimapTool.ERASE -> eraser
+        MinimapTool.REVEAL -> select
     }
 
     /** Returns the appropriate cursor for the given EditorTool. */

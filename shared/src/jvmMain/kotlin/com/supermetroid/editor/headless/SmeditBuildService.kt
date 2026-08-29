@@ -244,6 +244,7 @@ class SmeditBuildService(
         }
         if (project != null) {
             applied.addAll(applyProjectRoomEdits(project, context))
+            applied.addAll(applyProjectMinimapEdits(project, context))
         }
         createItemPlacementProject(request.items, patchEntries, context)?.let { itemProject ->
             applied.addAll(
@@ -352,7 +353,12 @@ class SmeditBuildService(
         if (project.tileDefaults.isNotEmpty()) ignored.add("tile defaults: ${project.tileDefaults.size}")
         ignored.addAll(project.customGfx.unsupportedDescriptions(hasRom = context.outputRom != null))
         if (project.patterns.isNotEmpty()) ignored.add("patterns: ${project.patterns.size}")
-        if (project.minimapEdits.isNotEmpty()) ignored.add("minimap edits: ${project.minimapEdits.size}")
+        if (context.outputRom == null && project.minimapEdits.isNotEmpty()) {
+            ignored.add("minimap edits requiring --rom: ${project.minimapEdits.size}")
+        }
+        if (context.outputRom == null && project.mapStationEdits.isNotEmpty()) {
+            ignored.add("map-station edits requiring --rom: ${project.mapStationEdits.size}")
+        }
         if (project.textEdits.isNotEmpty()) ignored.add("text edits: ${project.textEdits.size}")
         if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
             ignored.add("room name overrides: ${project.roomNameOverrides.size}")
@@ -727,6 +733,10 @@ class SmeditBuildService(
                     project = roomProject,
                     romParser = RomParser(rom),
                     romData = rom,
+                    roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->
+                        val roomId = key.toIntOrNull(16) ?: return@mapNotNull null
+                        edits.roomHeaderChange?.area?.let { roomId to it }
+                    }.toMap(),
                     extraItemPlmIds = itemPlmIds,
                     onLog = { message ->
                         if (message.startsWith("WARN") || message.startsWith("ERROR")) {
@@ -775,6 +785,82 @@ class SmeditBuildService(
                 context.warnings.add("Project room edits were present but no room data could be written.")
             }
         }
+    }
+
+    private fun applyProjectMinimapEdits(
+        project: SmEditProject,
+        context: ApplyContext,
+    ): List<SmeditAppliedPatchReport> {
+        if (project.minimapEdits.isEmpty() && project.mapStationEdits.isEmpty()) return emptyList()
+        val rom = context.outputRom
+        val parser = context.parser
+        if (rom == null || parser == null) {
+            context.warnings.add("Project minimap and map-station edits require --rom.")
+            return emptyList()
+        }
+
+        val beforeRecords = context.patchWrites.size
+        val beforeBytes = context.patchWrites.totalByteCount()
+        val beforeRom = rom.copyOf()
+
+        for ((areaKey, edits) in project.minimapEdits.toSortedMap()) {
+            val area = areaKey.toIntOrNull()
+                ?: throw IllegalArgumentException("Invalid minimap area key '$areaKey'.")
+            require(area in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                "Invalid minimap area $area; expected 0-6."
+            }
+            var data = parser.readMinimapTiles(area)
+            for (edit in edits) {
+                require(edit.x in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
+                    edit.y in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) { "Minimap edit ($area:${edit.x},${edit.y}) is outside the 64x32 map." }
+                require(edit.tileWord in 0..0xFFFF) {
+                    "Minimap tile word ${edit.tileWord} at ($area:${edit.x},${edit.y}) is outside 0x0000-0xFFFF."
+                }
+                data = data.withTile(edit.x, edit.y, edit.tileWord)
+            }
+            for ((offset, byte) in parser.writeMinimapTiles(data)) rom[offset] = byte
+        }
+
+        for ((areaKey, edits) in project.mapStationEdits.toSortedMap()) {
+            val area = areaKey.toIntOrNull()
+                ?: throw IllegalArgumentException("Invalid map-station area key '$areaKey'.")
+            require(area in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                "Invalid map-station area $area; expected 0-6."
+            }
+            var data = parser.readMapStationData(area)
+            for (edit in edits) {
+                require(edit.x in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
+                    edit.y in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) { "Map-station edit ($area:${edit.x},${edit.y}) is outside the 64x32 map." }
+                if (data.isRevealed(edit.x, edit.y) != edit.revealed) {
+                    data = data.withToggle(edit.x, edit.y)
+                }
+            }
+            for ((offset, byte) in parser.writeMapStationData(data)) rom[offset] = byte
+        }
+
+        context.writePlan.recordExternalMutation(
+            owner = "minimap:project",
+            label = "Project minimap and map-station edits",
+            before = beforeRom,
+            kind = RomWriteKind.MINIMAP,
+        )
+        val writes = diffPatchWrites(beforeRom, rom, context.romHeaderOffset)
+        context.patchWrites.addAll(writes)
+        context.appliedWriteCount += writes.size
+
+        val recordCount = context.patchWrites.size - beforeRecords
+        if (recordCount == 0) return emptyList()
+        return listOf(
+            SmeditAppliedPatchReport(
+                identifier = "project_minimap_edits",
+                name = "Project Minimap Edits",
+                source = "project",
+                writes = recordCount,
+                bytes = context.patchWrites.totalByteCount() - beforeBytes,
+            )
+        )
     }
 
     private fun applyTilesetPaletteColorize(

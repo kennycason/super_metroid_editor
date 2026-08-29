@@ -427,7 +427,7 @@ private fun collectItemLocations(
             continue
         }
         val roomHeader = try {
-            romParser.readRoomHeader(roomId)
+            romParser.readRoomHeader(roomId)?.let(editorState::applyHeaderChanges)
         } catch (_: Exception) {
             null
         }

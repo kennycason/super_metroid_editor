@@ -42,6 +42,7 @@
 - TestRomHelper migration — 73 test files, eliminated hardcoded ROM paths
 - FlowRow tab navigation — Tabs wrap when column is narrow
 - Minimap Room Move — Buffer-based with Apply/Cancel
+- Minimap Area/Transform Hardening — Shared safe area reassignment, context actions, station-reveal migration, exact flip/rotation UX, and coherent undo/redo
 - Transactional ROM write planner — desktop/headless byte ownership, overlap and bounds failures, base-ROM hashes, expected-hook bytes, full allocation claims, runtime-resource declarations, and ownership reports
 
 ---
@@ -55,7 +56,7 @@
 | 1 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
 | 2 | **New Room Creation** | Medium | Allocate room header in $8F, door table, level data, enemy/PLM/scroll pointers. Auto-repointing foundation already exists. |
 | 3 | **Room JSON Import** | Small | Export done; import creates RoomEdits from JSON file. |
-| 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing writes existing slots; table expansion and collision resolution remain. |
+| 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
 | 5 | **SMART XML Interop** | Medium | Export rooms in SMART XML format. Plugs into Map Randomizer ecosystem — no other modern editor has this. |
 
 ### Tier 2: Medium Impact

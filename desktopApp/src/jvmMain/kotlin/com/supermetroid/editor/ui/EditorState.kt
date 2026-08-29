@@ -45,6 +45,7 @@ import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.procgen.WfcOptions
 import com.supermetroid.editor.procgen.WfcSample
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
@@ -96,6 +97,28 @@ data class EffectiveSaveStationSpawn(
     val samusXSigned: Int get() = samusX.toSigned16()
     val samusYSigned: Int get() = samusY.toSigned16()
 }
+
+data class RoomAreaReassignmentResult(
+    val success: Boolean,
+    val message: String,
+    val sourceArea: Int,
+    val targetArea: Int,
+    val updatedDoorCount: Int = 0,
+    val destinationMapX: Int? = null,
+    val destinationMapY: Int? = null,
+)
+
+private data class AreaSaveMigrationPlan(
+    val plmReplacements: List<Pair<RomParser.PlmEntry, Int>> = emptyList(),
+    val spawnOverrides: List<SaveStationSpawnChange> = emptyList(),
+    val migratedSlotCount: Int = 0,
+    val reconstructedSlotCount: Int = 0,
+)
+
+private data class AreaSaveMigrationPlanning(
+    val plan: AreaSaveMigrationPlan? = null,
+    val error: String? = null,
+)
 
 private data class MapSelectionBounds(
     val minX: Int,
@@ -185,6 +208,41 @@ class EditorState {
     fun markDirty() {
         dirty = true
         _roomEditOrder[currentRoomId] = ++_editCounter
+    }
+
+    internal fun notifyProjectMutation(romParser: RomParser? = null) {
+        dirty = true
+        if (romParser != null && currentRoomId != 0) {
+            val baseRoom = romParser.readRoomHeader(currentRoomId)
+            if (baseRoom != null) {
+                currentArea = project.rooms[project.roomKey(currentRoomId)]?.roomHeaderChange?.area ?: baseRoom.area
+                refreshVanillaSaveIndices(romParser)
+                currentAreaSaveEntryCount = romParser.saveEntryCount(currentArea)
+                currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(0x10))
+                    .mapNotNull { index -> romParser.readSaveEntry(currentArea, index)?.let { index to it } }
+                    .toMap()
+
+                val effectiveDoors = romParser.parseDoorList(baseRoom.doorOut).toMutableList()
+                for (change in project.rooms[project.roomKey(currentRoomId)]?.doorChanges.orEmpty()) {
+                    val romDoor = effectiveDoors.getOrNull(change.doorIndex) ?: continue
+                    effectiveDoors[change.doorIndex] = RomParser.DoorEntry(
+                        destRoomPtr = change.destRoomPtr,
+                        bitflag = change.bitflag,
+                        doorCapCode = change.doorCapCode,
+                        screenX = change.screenX,
+                        screenY = change.screenY,
+                        distFromDoor = change.distFromDoor,
+                        entryCode = change.entryCode,
+                        doorDefPtr = romDoor.doorDefPtr,
+                    )
+                }
+                _workingDoors.clear()
+                _workingDoors.addAll(effectiveDoors)
+                _workingPlms.clear()
+                _workingPlms.addAll(effectiveRoomPlms(currentRoomId, romParser))
+            }
+        }
+        editVersion++
     }
 
     // ── Sprite editor state objects ───────────────────────────────────────
@@ -2501,12 +2559,19 @@ class EditorState {
                         project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
                         pendingPlmRemoves.add(rc)
                     }
-                    val actualParam = autoAssignParam(plmId, param)
+                    // Repainting an existing save-station pattern must retain its
+                    // AreaSave index. Older builds treated the pattern's 0x8000
+                    // parameter as a request for a new index, which could leave
+                    // the PLM pointing at another room's save record.
+                    val retainedSaveParam = existing.singleOrNull()
+                        ?.takeIf { plmId == 0xB76F && param == 0x8000 }
+                        ?.param
+                    val actualParam = retainedSaveParam ?: autoAssignParam(plmId, param)
                     _workingPlms.add(RomParser.PlmEntry(plmId, tx, ty, actualParam))
                     val addChange = PlmChange("add", plmId, tx, ty, actualParam)
                     project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
                     pendingPlmAdds.add(addChange)
-                    if (plmId == 0xB76F) {
+                    if (plmId == 0xB76F && retainedSaveParam == null) {
                         ensureAutoSaveStationSpawn(tx, ty, actualParam and 0xFF)
                     }
                 }
@@ -2838,6 +2903,9 @@ class EditorState {
 
     fun addPlm(plmId: Int, x: Int, y: Int, param: Int) {
         val existing = _workingPlms.filter { it.x == x && it.y == y && it.id == plmId }
+        val retainedSaveParam = existing.singleOrNull()
+            ?.takeIf { plmId == 0xB76F && param == 0x8000 }
+            ?.param
         val removedChanges = mutableListOf<PlmChange>()
         for (old in existing) {
             _workingPlms.remove(old)
@@ -2846,11 +2914,11 @@ class EditorState {
             removedChanges.add(rc)
         }
 
-        val actualParam = autoAssignParam(plmId, param)
+        val actualParam = retainedSaveParam ?: autoAssignParam(plmId, param)
         _workingPlms.add(RomParser.PlmEntry(plmId, x, y, actualParam))
         val addChange = PlmChange("add", plmId, x, y, actualParam)
         project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
-        if (plmId == 0xB76F) {
+        if (plmId == 0xB76F && retainedSaveParam == null) {
             ensureAutoSaveStationSpawn(x, y, actualParam and 0xFF)
         }
 
@@ -3087,6 +3155,458 @@ class EditorState {
         roomEdits.roomHeaderChange = change
         dirty = true
         editVersion++
+    }
+
+    /**
+     * Move a room to another real ROM area and keep area-coupled data coherent.
+     *
+     * The room header has no "unassigned" area value: 0 is Crateria. This method
+     * therefore accepts only the seven real areas, migrates the room's visible
+     * minimap and map-station reveal rectangle, and recomputes the cross-area bit
+     * for every incoming and outgoing door. Standard save-station AreaSave
+     * entries are migrated into an unused preallocated destination slot.
+     */
+    private fun effectiveRoomPlms(roomId: Int, romParser: RomParser): List<RomParser.PlmEntry> {
+        val effective = romParser.getAllPlmEntriesForRoom(roomId).toMutableList()
+        for (change in project.rooms[project.roomKey(roomId)]?.plmChanges.orEmpty()) {
+            when (change.action) {
+                "add" -> effective.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                "remove" -> effective.removeAll {
+                    it.id == change.plmId && it.x == change.x && it.y == change.y
+                }
+            }
+        }
+        return effective.distinctBy { listOf(it.id, it.x, it.y, it.param) }
+    }
+
+    private fun effectiveIncomingDoorPtr(roomId: Int, romParser: RomParser): Int? {
+        for (info in romParser.roomCatalog.rooms) {
+            val sourceRoomId = info.getRoomIdAsInt()
+            val sourceRoom = romParser.readRoomHeader(sourceRoomId) ?: continue
+            val changesByIndex = project.rooms[project.roomKey(sourceRoomId)]?.doorChanges.orEmpty()
+                .associateBy { it.doorIndex }
+            for ((doorIndex, romDoor) in romParser.parseDoorList(sourceRoom.doorOut).withIndex()) {
+                val destinationRoomId = changesByIndex[doorIndex]?.destRoomPtr ?: romDoor.destRoomPtr
+                if (destinationRoomId == roomId && romDoor.doorDefPtr != 0) return romDoor.doorDefPtr
+            }
+        }
+        return null
+    }
+
+    private fun planAreaSaveMigration(
+        roomId: Int,
+        sourceArea: Int,
+        targetArea: Int,
+        effectiveRooms: List<Room>,
+        romParser: RomParser,
+    ): AreaSaveMigrationPlanning {
+        val allOverrides = project.rooms.values.flatMap { it.saveStationSpawns }
+        val overridesBySlot = allOverrides.groupBy { it.area to it.saveIndex }
+        val duplicateSlot = overridesBySlot.entries.firstOrNull { (_, entries) -> entries.size > 1 }
+        if (duplicateSlot != null) {
+            val (area, index) = duplicateSlot.key
+            return AreaSaveMigrationPlanning(error = "Cannot migrate AreaSave: slot $area:$index already has conflicting project overrides.")
+        }
+
+        fun overrideAt(area: Int, index: Int): SaveStationSpawnChange? =
+            overridesBySlot[area to index]?.singleOrNull()
+
+        fun effectiveSlot(area: Int, index: Int): SaveStationSpawnChange? {
+            val override = overrideAt(area, index)
+            if (override != null) return override
+            val rom = romParser.readSaveEntry(area, index) ?: return null
+            return SaveStationSpawnChange(
+                area = area,
+                saveIndex = index,
+                roomId = rom.roomId,
+                doorPtr = rom.doorPtr,
+                scrollX = rom.scrollX,
+                scrollY = rom.scrollY,
+                samusY = rom.samusY,
+                samusX = rom.samusX,
+            )
+        }
+
+        val savePlms = effectiveRoomPlms(roomId, romParser).filter { it.id == 0xB76F }
+        val effectiveReferences = buildList {
+            for (area in 0 until MinimapData.NUM_AREAS) {
+                for (index in 0 until romParser.saveEntryCount(area)) {
+                    val slot = effectiveSlot(area, index) ?: continue
+                    if (!slot.clearSlot && slot.roomId == roomId) add(slot)
+                }
+            }
+        }
+        val invalidProjectReference = allOverrides.firstOrNull {
+            !it.clearSlot && it.roomId == roomId &&
+                (it.area !in 0 until MinimapData.NUM_AREAS || romParser.readSaveEntry(it.area, it.saveIndex) == null)
+        }
+        if (invalidProjectReference != null) {
+            return AreaSaveMigrationPlanning(error = "Cannot migrate AreaSave: project slot ${invalidProjectReference.area}:${invalidProjectReference.saveIndex} is not writable.")
+        }
+        if (savePlms.isEmpty() && effectiveReferences.isEmpty()) return AreaSaveMigrationPlanning(plan = AreaSaveMigrationPlan())
+        if (savePlms.isEmpty()) {
+            return AreaSaveMigrationPlanning(
+                error = "Cannot move this room yet: its AreaSave reference is a start/elevator entry rather than a save-station PLM.",
+            )
+        }
+
+        val unrelatedReference = effectiveReferences.firstOrNull { it.area != sourceArea }
+        if (unrelatedReference != null) {
+            return AreaSaveMigrationPlanning(
+                error = "Cannot migrate AreaSave: room reference ${unrelatedReference.area}:${unrelatedReference.saveIndex} is outside its current area $sourceArea.",
+            )
+        }
+
+        // AreaSave entries are authoritative for room ownership. A few projects
+        // created by older editor builds contain a save PLM whose low parameter
+        // byte was reassigned while repainting the station, without a matching
+        // AreaSave override. Reconcile the unique unmatched PLM/index pair here
+        // so the move repairs that project instead of permanently blocking it.
+        val plmsByParameterIndex = savePlms.groupBy { it.param and 0xFF }
+        val sourceIndexByParameterIndex = mutableMapOf<Int, Int>()
+        val sourceSlots: List<Pair<Int, SaveStationSpawnChange>>
+        val sourceIndicesToClear: Set<Int>
+        var reconstructedSlotCount = 0
+        if (effectiveReferences.isEmpty()) {
+            val legacyPlm = savePlms.singleOrNull()
+            val wasAddedByProject = legacyPlm != null &&
+                project.rooms[project.roomKey(roomId)]?.plmChanges.orEmpty().any { change ->
+                    change.action == "add" && change.plmId == legacyPlm.id &&
+                        change.x == legacyPlm.x && change.y == legacyPlm.y && change.param == legacyPlm.param
+                }
+            if (!wasAddedByProject || legacyPlm == null) {
+                return AreaSaveMigrationPlanning(
+                    error = "Cannot move this room yet: its save-station PLMs have no room-owned AreaSave reference.",
+                )
+            }
+            val incomingDoorPtr = effectiveIncomingDoorPtr(roomId, romParser)
+                ?: return AreaSaveMigrationPlanning(
+                    error = "Cannot reconstruct this added save station because the room has no incoming door for its resume record.",
+                )
+            val parameterIndex = legacyPlm.param and 0xFF
+            val scrollX = (legacyPlm.x / 16) * 256
+            val scrollY = (legacyPlm.y / 16) * 256
+            sourceIndexByParameterIndex[parameterIndex] = parameterIndex
+            sourceSlots = listOf(
+                parameterIndex to SaveStationSpawnChange(
+                    area = sourceArea,
+                    saveIndex = parameterIndex,
+                    roomId = roomId,
+                    doorPtr = incomingDoorPtr,
+                    scrollX = scrollX.toUnsigned16(),
+                    scrollY = scrollY.toUnsigned16(),
+                    samusY = (legacyPlm.y * 16 - scrollY - 24).toUnsigned16(),
+                    samusX = (legacyPlm.x * 16 - scrollX - 112).toUnsigned16(),
+                    autoDerived = true,
+                ),
+            )
+            sourceIndicesToClear = emptySet()
+            reconstructedSlotCount = 1
+        } else {
+            val referencesByIndex = effectiveReferences.associateBy { it.saveIndex }
+            val claimedReferenceIndices = mutableSetOf<Int>()
+            for (parameterIndex in plmsByParameterIndex.keys.sorted()) {
+                if (parameterIndex in referencesByIndex) {
+                    sourceIndexByParameterIndex[parameterIndex] = parameterIndex
+                    claimedReferenceIndices.add(parameterIndex)
+                }
+            }
+            val unmatchedParameterIndices = plmsByParameterIndex.keys - sourceIndexByParameterIndex.keys
+            val unmatchedReferences = effectiveReferences.filter { it.saveIndex !in claimedReferenceIndices }
+            if (unmatchedParameterIndices.size == 1 && unmatchedReferences.size == 1) {
+                sourceIndexByParameterIndex[unmatchedParameterIndices.single()] = unmatchedReferences.single().saveIndex
+                claimedReferenceIndices.add(unmatchedReferences.single().saveIndex)
+            }
+            if (sourceIndexByParameterIndex.size != plmsByParameterIndex.size ||
+                claimedReferenceIndices.size != effectiveReferences.size
+            ) {
+                return AreaSaveMigrationPlanning(
+                    error = "Cannot move this room yet: its save-station PLMs and AreaSave references cannot be paired unambiguously.",
+                )
+            }
+            sourceSlots = claimedReferenceIndices.sorted().map { index ->
+                index to referencesByIndex.getValue(index)
+            }
+            sourceIndicesToClear = claimedReferenceIndices
+        }
+
+        val targetPlmIndices = effectiveRooms.asSequence()
+            .filter { it.roomId != roomId && it.area == targetArea }
+            .flatMap { room -> effectiveRoomPlms(room.roomId, romParser).asSequence() }
+            .filter { it.id == 0xB76F }
+            .map { it.param and 0xFF }
+            .toMutableSet()
+        val allocated = mutableSetOf<Int>()
+        val destinationBySource = mutableMapOf<Int, Int>()
+        for ((sourceIndex, _) in sourceSlots) {
+            val candidates = (0 until romParser.saveEntryCount(targetArea)).filter { index ->
+                if (index in targetPlmIndices || index in allocated) return@filter false
+                val slot = effectiveSlot(targetArea, index) ?: return@filter false
+                slot.clearSlot || slot.roomId == 0
+            }
+            val destinationIndex = when {
+                sourceIndex in candidates -> sourceIndex
+                candidates.isNotEmpty() -> candidates.first()
+                else -> return AreaSaveMigrationPlanning(
+                    error = "Cannot move this save station to ${MinimapData.AREA_NAMES[targetArea]}: it has no empty preallocated AreaSave slot. Table expansion is required for this destination.",
+                )
+            }
+            allocated.add(destinationIndex)
+            destinationBySource[sourceIndex] = destinationIndex
+        }
+
+        val replacements = savePlms.map { plm ->
+            val sourceIndex = sourceIndexByParameterIndex.getValue(plm.param and 0xFF)
+            val destinationIndex = destinationBySource.getValue(sourceIndex)
+            plm to ((plm.param and 0xFF00) or destinationIndex)
+        }
+        val overrides = buildList {
+            for ((sourceIndex, sourceSlot) in sourceSlots) {
+                if (sourceIndex in sourceIndicesToClear) {
+                    add(
+                        SaveStationSpawnChange(
+                            area = sourceArea,
+                            saveIndex = sourceIndex,
+                            roomId = 0,
+                            doorPtr = 0,
+                            scrollX = 0x0400,
+                            scrollY = 0x0400,
+                            samusY = 0x00B0,
+                            samusX = 0,
+                            autoDerived = true,
+                            clearSlot = true,
+                        ),
+                    )
+                }
+                add(
+                    sourceSlot.copy(
+                        area = targetArea,
+                        saveIndex = destinationBySource.getValue(sourceIndex),
+                        clearSlot = false,
+                    ),
+                )
+            }
+        }
+        return AreaSaveMigrationPlanning(
+            plan = AreaSaveMigrationPlan(
+                plmReplacements = replacements,
+                spawnOverrides = overrides,
+                migratedSlotCount = sourceIndicesToClear.size,
+                reconstructedSlotCount = reconstructedSlotCount,
+            ),
+        )
+    }
+
+    private fun applyAreaSaveMigration(roomId: Int, plan: AreaSaveMigrationPlan) {
+        if (plan.migratedSlotCount == 0 && plan.reconstructedSlotCount == 0) return
+        val roomEdits = project.getOrCreateRoom(roomId)
+        for ((plm, newParam) in plan.plmReplacements) {
+            roomEdits.plmChanges.add(PlmChange("remove", plm.id, plm.x, plm.y, plm.param))
+            roomEdits.plmChanges.add(PlmChange("add", plm.id, plm.x, plm.y, newParam))
+        }
+        for (override in plan.spawnOverrides) {
+            for (edits in project.rooms.values) {
+                edits.saveStationSpawns.removeAll {
+                    it.area == override.area && it.saveIndex == override.saveIndex
+                }
+            }
+            roomEdits.saveStationSpawns.add(override)
+        }
+    }
+
+    fun reassignRoomArea(
+        roomId: Int,
+        targetArea: Int,
+        romParser: RomParser,
+    ): RoomAreaReassignmentResult {
+        val baseRoom = romParser.readRoomHeader(roomId)
+            ?: return RoomAreaReassignmentResult(false, "Room 0x${roomId.toString(16).uppercase()} could not be read.", -1, targetArea)
+        val sourceArea = applyHeaderChanges(baseRoom).area
+        if (targetArea !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+            return RoomAreaReassignmentResult(false, "Area $targetArea is invalid; rooms must use Crateria through Ceres.", sourceArea, targetArea)
+        }
+        if (sourceArea == targetArea) {
+            return RoomAreaReassignmentResult(true, "${baseRoom.name} is already in ${com.supermetroid.editor.rom.MinimapData.AREA_NAMES[targetArea]}.", sourceArea, targetArea)
+        }
+
+        val effectiveRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
+            val id = info.getRoomIdAsInt()
+            romParser.readRoomHeader(id)?.let(::applyHeaderChanges)
+        }
+        val areaSavePlanning = planAreaSaveMigration(roomId, sourceArea, targetArea, effectiveRooms, romParser)
+        if (areaSavePlanning.error != null) {
+            val message = "Cannot move ${baseRoom.name}: ${areaSavePlanning.error}"
+            postStatus(message)
+            return RoomAreaReassignmentResult(false, message, sourceArea, targetArea)
+        }
+        val areaSavePlan = areaSavePlanning.plan ?: AreaSaveMigrationPlan()
+        val movingRoom = applyHeaderChanges(baseRoom)
+        val sourceOwnership = roomMapOwnershipMask(
+            movingRoom,
+            effectiveRooms.filter { it.area == sourceArea },
+        )
+        val sourceMap = effectiveMinimapData(romParser, project, sourceArea)
+        val destinationMap = effectiveMinimapData(romParser, project, targetArea)
+        val roomTiles = extractRoomTiles(
+            sourceMap,
+            movingRoom.mapX,
+            movingRoom.mapY,
+            movingRoom.width,
+            movingRoom.height,
+            sourceOwnership,
+        )
+        val sourceStation = effectiveMapStationData(romParser, project, sourceArea)
+        val destinationStation = effectiveMapStationData(romParser, project, targetArea)
+        val destinationPosition = findAvailableRoomMapPosition(
+            mapData = destinationMap,
+            stationData = destinationStation,
+            rooms = effectiveRooms.filter { it.roomId != roomId && it.area == targetArea },
+            width = movingRoom.width,
+            height = movingRoom.height,
+            preferredX = movingRoom.mapX,
+            preferredY = movingRoom.mapY,
+        )
+        if (destinationPosition == null) {
+            val message = "Cannot move ${baseRoom.name}: ${com.supermetroid.editor.rom.MinimapData.AREA_NAMES[targetArea]} has no safe ${movingRoom.width}x${movingRoom.height} map rectangle available."
+            postStatus(message)
+            return RoomAreaReassignmentResult(false, message, sourceArea, targetArea)
+        }
+        val (destinationX, destinationY) = destinationPosition
+        val stationRect = extractMapStationRect(
+            sourceStation,
+            movingRoom.mapX,
+            movingRoom.mapY,
+            movingRoom.width,
+            movingRoom.height,
+            sourceOwnership,
+        )
+        persistMinimapData(
+            romParser,
+            project,
+            clearRoomTiles(
+                sourceMap,
+                movingRoom.mapX,
+                movingRoom.mapY,
+                movingRoom.width,
+                movingRoom.height,
+                sourceOwnership,
+            ),
+        )
+        persistMinimapData(
+            romParser,
+            project,
+            placeRoomTilesNonEmpty(
+                destinationMap,
+                destinationX,
+                destinationY,
+                movingRoom.width,
+                movingRoom.height,
+                roomTiles,
+            ),
+        )
+        persistMapStationData(
+            romParser,
+            project,
+            clearMapStationRect(
+                sourceStation,
+                movingRoom.mapX,
+                movingRoom.mapY,
+                movingRoom.width,
+                movingRoom.height,
+                sourceOwnership,
+            ),
+        )
+        persistMapStationData(
+            romParser,
+            project,
+            placeMapStationRect(destinationStation, destinationX, destinationY, stationRect),
+        )
+
+        val roomEdits = project.getOrCreateRoom(roomId)
+        val updatedHeader = (roomEdits.roomHeaderChange ?: RoomHeaderChange()).copy(
+            area = targetArea.takeIf { it != baseRoom.area },
+            mapX = destinationX.takeIf { it != baseRoom.mapX },
+            mapY = destinationY.takeIf { it != baseRoom.mapY },
+        )
+        roomEdits.roomHeaderChange = updatedHeader.takeUnless { it == RoomHeaderChange() }
+        applyAreaSaveMigration(roomId, areaSavePlan)
+
+        var updatedDoors = 0
+        for (sourceRoom in effectiveRooms) {
+            val sourceId = sourceRoom.roomId
+            val sourceBase = romParser.readRoomHeader(sourceId) ?: continue
+            val effectiveSourceArea = if (sourceId == roomId) targetArea else sourceRoom.area
+            val savedDoorChanges = project.rooms[project.roomKey(sourceId)]?.doorChanges.orEmpty()
+                .associateBy { it.doorIndex }
+            val doors = romParser.parseDoorList(sourceBase.doorOut)
+            for ((doorIndex, romDoor) in doors.withIndex()) {
+                val saved = savedDoorChanges[doorIndex]
+                val door = if (saved == null) romDoor else RomParser.DoorEntry(
+                    destRoomPtr = saved.destRoomPtr,
+                    bitflag = saved.bitflag,
+                    doorCapCode = saved.doorCapCode,
+                    screenX = saved.screenX,
+                    screenY = saved.screenY,
+                    distFromDoor = saved.distFromDoor,
+                    entryCode = saved.entryCode,
+                    doorDefPtr = romDoor.doorDefPtr,
+                )
+                val destination = effectiveRooms.firstOrNull { it.roomId == door.destRoomPtr } ?: continue
+                val effectiveDestinationArea = if (destination.roomId == roomId) targetArea else destination.area
+                val desiredBitflag = if (effectiveSourceArea != effectiveDestinationArea) {
+                    door.bitflag or 0x40
+                } else {
+                    door.bitflag and 0x40.inv()
+                }
+                if (desiredBitflag == door.bitflag) continue
+                val sourceEdits = project.getOrCreateRoom(sourceId)
+                sourceEdits.doorChanges.removeAll { it.doorIndex == doorIndex }
+                val updatedDoor = DoorChange(
+                    doorIndex = doorIndex,
+                    destRoomPtr = door.destRoomPtr,
+                    bitflag = desiredBitflag,
+                    doorCapCode = door.doorCapCode,
+                    screenX = door.screenX,
+                    screenY = door.screenY,
+                    distFromDoor = door.distFromDoor,
+                    entryCode = door.entryCode,
+                )
+                val matchesRom = updatedDoor.destRoomPtr == romDoor.destRoomPtr &&
+                    updatedDoor.bitflag == romDoor.bitflag &&
+                    updatedDoor.doorCapCode == romDoor.doorCapCode &&
+                    updatedDoor.screenX == romDoor.screenX &&
+                    updatedDoor.screenY == romDoor.screenY &&
+                    updatedDoor.distFromDoor == romDoor.distFromDoor &&
+                    updatedDoor.entryCode == romDoor.entryCode
+                if (!matchesRom) sourceEdits.doorChanges.add(updatedDoor)
+                updatedDoors++
+            }
+        }
+
+        notifyProjectMutation(romParser)
+        val repositioned = destinationX != movingRoom.mapX || destinationY != movingRoom.mapY
+        val placementMessage = if (repositioned) {
+            " and placed it at the nearest free map position ($destinationX, $destinationY)"
+        } else ""
+        val saveMessage = buildList {
+            if (areaSavePlan.migratedSlotCount > 0) {
+                add("migrated ${areaSavePlan.migratedSlotCount} AreaSave slot(s)")
+            }
+            if (areaSavePlan.reconstructedSlotCount > 0) {
+                add("reconstructed ${areaSavePlan.reconstructedSlotCount} missing AreaSave slot(s)")
+            }
+        }.takeIf { it.isNotEmpty() }?.joinToString(prefix = ", ") ?: ""
+        val message = "Moved ${baseRoom.name} to ${com.supermetroid.editor.rom.MinimapData.AREA_NAMES[targetArea]}$placementMessage; migrated map data$saveMessage and updated $updatedDoors door flag(s)."
+        postStatus(message)
+        return RoomAreaReassignmentResult(
+            success = true,
+            message = message,
+            sourceArea = sourceArea,
+            targetArea = targetArea,
+            updatedDoorCount = updatedDoors,
+            destinationMapX = destinationX,
+            destinationMapY = destinationY,
+        )
     }
 
     /**

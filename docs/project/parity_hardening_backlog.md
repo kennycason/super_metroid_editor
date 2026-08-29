@@ -15,7 +15,7 @@ This file captures the current SMILE/local-reference audit so the next work can 
    - Project save and ROM export must preserve changed variable tile tables and shared CRE tile tables.
 3. AreaSave/save-station hardening.
    - Auto-derived spawn overrides and manual X/Y/scroll editing now exist.
-   - Remaining work is AreaSave table expansion, duplicate slot conflict UI, and emulator-validated resume paths.
+   - Existing empty slots now support save-station editing and safe cross-area migration. Remaining work is AreaSave table expansion, duplicate slot conflict UI, special start/elevator migration, and emulator-validated resume paths.
 4. Enemy sprite correctness and export hardening.
    - Close the remaining assembled-sprite/spritemap mismatch risks documented in `docs/OPENAI_REVIEW.md`.
    - Prefer raw 4bpp tile-sheet import/export over legacy PNG sprite replacement for ROM-critical paths.
@@ -57,6 +57,10 @@ Next up after the current save-station slice:
 
 ## Recent Progress
 
+- Minimap editing now has a room/sprite-style top toolbar, consistent shortcuts,
+  flip and exact-representable rotation, map-station reveal editing, full
+  minimap history, and safe room-area reassignment from Room Info or a minimap
+  right-click. See `docs/project/minimap_editor_hardening.md`.
 - Shared transactional ROM write planning now rejects byte overlaps, stale fixed-write preconditions, out-of-bounds writes, allocation reuse, incompatible ROM hashes, and declared runtime-resource conflicts before output is emitted. See `docs/rom/write_safety.md`.
 - Room, minimap, text, graphics, and custom-ASM adapters use logical sub-owners. Stateful room-graph rebuilds have an explicit same-owner policy for shared door/BG aggregates; that policy cannot overwrite another subsystem.
 - The real Spike Olympics project exports with Room Names and Spider Ball through both safety paths. Their Varia-only rendering symptom is not a direct ROM-byte collision and remains a separate emulator/debugger investigation.

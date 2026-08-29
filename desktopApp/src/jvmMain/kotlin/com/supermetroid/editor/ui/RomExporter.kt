@@ -135,6 +135,10 @@ internal class RomExporter(
                             project = roomProject,
                             romParser = RomParser(workingRom),
                             romData = workingRom,
+                            roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->
+                                val roomId = key.toIntOrNull(16) ?: return@mapNotNull null
+                                edits.roomHeaderChange?.area?.let { roomId to it }
+                            }.toMap(),
                             onLog = onLog,
                         ).exportRooms()
                     }
@@ -955,11 +959,24 @@ internal class RomExporter(
         val romData = writePlan.romData
         var patched = 0
         for ((areaKey, edits) in project.minimapEdits) {
-            val area = areaKey.toIntOrNull() ?: continue
-            if (area !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) continue
+            val area = areaKey.toIntOrNull()
+                ?: throw RomWritePlanException("Invalid minimap area key '$areaKey'; expected 0-6")
+            if (area !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                throw RomWritePlanException("Invalid minimap area $area; expected 0-6")
+            }
             val baseline = romParser.readMinimapTiles(area)
             var tiles = baseline
             for (edit in edits) {
+                if (edit.x !in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH ||
+                    edit.y !in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) {
+                    throw RomWritePlanException("Minimap edit ($area:${edit.x},${edit.y}) is outside the 64x32 map")
+                }
+                if (edit.tileWord !in 0..0xFFFF) {
+                    throw RomWritePlanException(
+                        "Minimap tile word ${edit.tileWord} at ($area:${edit.x},${edit.y}) is outside 0x0000-0xFFFF"
+                    )
+                }
                 tiles = tiles.withTile(edit.x, edit.y, edit.tileWord)
             }
             writePlan.capture(
@@ -973,6 +990,33 @@ internal class RomExporter(
             }
             patched += edits.size
             onLog("Minimap area $area: patched ${edits.size} tiles")
+        }
+        for ((areaKey, edits) in project.mapStationEdits) {
+            val area = areaKey.toIntOrNull()
+                ?: throw RomWritePlanException("Invalid map-station area key '$areaKey'; expected 0-6")
+            if (area !in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                throw RomWritePlanException("Invalid map-station area $area; expected 0-6")
+            }
+            var station = romParser.readMapStationData(area)
+            for (edit in edits) {
+                if (edit.x !in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH ||
+                    edit.y !in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) {
+                    throw RomWritePlanException("Map-station edit ($area:${edit.x},${edit.y}) is outside the 64x32 map")
+                }
+                station = station.withValue(edit.x, edit.y, edit.revealed)
+            }
+            writePlan.capture(
+                owner = "minimap:station-area-$area",
+                label = "Map-station reveal area $area",
+                kind = RomWriteKind.MINIMAP,
+            ) { _ ->
+                for ((offset, byte) in romParser.writeMapStationData(station)) {
+                    romData[offset] = byte
+                }
+            }
+            patched += edits.size
+            onLog("Map-station area $area: patched ${edits.size} reveal cells")
         }
         return patched
     }

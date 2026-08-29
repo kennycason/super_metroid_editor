@@ -87,6 +87,8 @@ data class SaveStationSpawnChange(
     val samusY: Int,
     val samusX: Int,
     val autoDerived: Boolean = false,
+    /** True when this override intentionally releases an old AreaSave slot. */
+    val clearSlot: Boolean = false,
 )
 
 /**
@@ -365,6 +367,20 @@ data class MinimapTileEdit(
 )
 
 /**
+ * A map-station reveal override for one pause-map cell.
+ *
+ * Reveal data is stored separately from the visible minimap tilemap in the ROM.
+ * Keeping it in the project prevents room moves and area reassignment from
+ * leaving stale map-station coverage behind.
+ */
+@Serializable
+data class MapStationTileEdit(
+    val x: Int,
+    val y: Int,
+    val revealed: Boolean,
+)
+
+/**
  * Custom ASM code to be embedded in the ROM at export time.
  * The bytes are written to free space in the appropriate bank,
  * and the species header pointer is updated to the new address.
@@ -469,6 +485,7 @@ data class SmEditProject(
     val customGfx: TilesetGfxData = TilesetGfxData(),
     val patterns: MutableList<TilePattern> = mutableListOf(),
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
+    val mapStationEdits: MutableMap<String, MutableList<MapStationTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")

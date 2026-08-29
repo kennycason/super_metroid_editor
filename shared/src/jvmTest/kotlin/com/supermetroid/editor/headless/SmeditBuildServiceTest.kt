@@ -2,10 +2,13 @@ package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.MapStationTileEdit
+import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.LZ5Compressor
+import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
@@ -566,6 +569,30 @@ class SmeditBuildServiceTest {
         assertEquals(newMapX, result.romBytes[headerPc + 2].toInt() and 0xFF)
         assertTrue(result.report.applied.any { it.identifier == "project_room_edits" })
         assertTrue(result.report.warnings.none { it.contains("unsupported room edits") })
+    }
+
+    @Test
+    fun `rom build applies project minimap and map station edits`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+        val area = 0
+        val x = 4
+        val y = 3
+        val originalWord = parser.readMinimapTiles(area).getTile(x, y)
+        val editedWord = originalWord xor MinimapData.HFLIP_BIT
+        val originalReveal = parser.readMapStationData(area).isRevealed(x, y)
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.minimapEdits[area.toString()] = mutableListOf(MinimapTileEdit(x, y, editedWord))
+            it.mapStationEdits[area.toString()] = mutableListOf(MapStationTileEdit(x, y, !originalReveal))
+        }
+
+        val result = SmeditBuildService().build(original, SmeditBuildRequest(), project)
+        val exported = RomParser(result.romBytes)
+
+        assertEquals(editedWord, exported.readMinimapTiles(area).getTile(x, y))
+        assertEquals(!originalReveal, exported.readMapStationData(area).isRevealed(x, y))
+        assertTrue(result.report.applied.any { it.identifier == "project_minimap_edits" })
+        assertTrue(result.report.warnings.none { it.contains("minimap edits requiring --rom") })
     }
 
     @Test

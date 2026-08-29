@@ -1,6 +1,9 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.data.MapStationTileEdit
+import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.SaveStationSpawnChange
+import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -134,6 +137,66 @@ class RomValidatorTest {
 
     @Nested
     inner class ProjectValidation {
+        @Test
+        fun `project room header validation rejects an unassigned sentinel area`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val room = rooms.values.first()
+            val project = SmEditProject(romPath = "test.smc")
+            project.getOrCreateRoom(room.roomId).roomHeaderChange = RoomHeaderChange(area = 7)
+
+            val issues = RomValidator.checkProjectRoomHeaders(parser, project, rooms)
+
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR && it.message.contains("There is no unassigned area value")
+            })
+        }
+
+        @Test
+        fun `project room header validation blocks moving an AreaSave room`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val saveRoomId = (0..6).firstNotNullOfOrNull { area ->
+                (0 until parser.saveEntryCount(area)).firstNotNullOfOrNull { index ->
+                    parser.readSaveEntry(area, index)?.roomId
+                }
+            } ?: return
+            val room = rooms[saveRoomId] ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            project.getOrCreateRoom(room.roomId).roomHeaderChange =
+                RoomHeaderChange(area = (room.area + 1) % MinimapData.NUM_AREAS)
+
+            val issues = RomValidator.checkProjectRoomHeaders(parser, project, rooms)
+
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR && it.category == "AreaSave" &&
+                    it.message.contains("Migrate and validate")
+            })
+        }
+
+        @Test
+        fun `project minimap validation catches malformed sparse edits`() {
+            val project = SmEditProject(romPath = "test.smc").also {
+                it.minimapEdits["7"] = mutableListOf(MinimapTileEdit(0, 0, 0x1F))
+                it.minimapEdits["0"] = mutableListOf(
+                    MinimapTileEdit(64, 0, 0x1F),
+                    MinimapTileEdit(2, 2, 0x1_0000),
+                    MinimapTileEdit(3, 3, 0x1F),
+                    MinimapTileEdit(3, 3, 0x20),
+                )
+                it.mapStationEdits["bad"] = mutableListOf(MapStationTileEdit(0, 0, true))
+                it.mapStationEdits["1"] = mutableListOf(MapStationTileEdit(-1, 0, true))
+            }
+
+            val issues = RomValidator.checkProjectMinimapEdits(project)
+
+            assertTrue(issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("area key '7'") })
+            assertTrue(issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("area key 'bad'") })
+            assertTrue(issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("outside the 64x32") })
+            assertTrue(issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("outside 0x0000-0xFFFF") })
+            assertTrue(issues.any { it.severity == RomValidator.Severity.WARNING && it.message.contains("multiple edits") })
+        }
+
         @Test
         fun `project save station validation catches duplicate slots and missing AreaSave entry`() {
             val parser = romParser ?: return

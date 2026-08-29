@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -117,7 +118,9 @@ fun RoomPropertiesPanel(
     val scrollVer = editorState.scrollVersion
     val scrollData = remember(scrollVer, room.roomId) { editorState.workingScrolls.copyOf() }
 
-    // Track FX edit state locally, sync to EditorState
+    // Track project-backed property changes reactively, including edits made
+    // from the minimap editor while this room remains selected.
+    @Suppress("UNUSED_VARIABLE") val headerEditVersion = editorState.editVersion
     val roomEdits = editorState.project.rooms[editorState.project.roomKey(room.roomId)]
     val savedFx = roomEdits?.fxChange
     val savedState = roomEdits?.stateDataChange
@@ -182,7 +185,7 @@ fun RoomPropertiesPanel(
 
     // Room header edit state — all 11 bytes
     val savedHeader = roomEdits?.roomHeaderChange
-    var editArea by remember(room.roomId) { mutableStateOf(savedHeader?.area ?: room.area) }
+    val effectiveArea = savedHeader?.area ?: room.area
     val displayMapX = savedHeader?.mapX ?: room.mapX
     val displayMapY = savedHeader?.mapY ?: room.mapY
     var editUpScroller by remember(room.roomId) { mutableStateOf(savedHeader?.upScroller ?: room.upScroller) }
@@ -190,10 +193,7 @@ fun RoomPropertiesPanel(
     var editCreBitflag by remember(room.roomId) { mutableStateOf(savedHeader?.creBitflag ?: room.creBitflag) }
 
     fun syncHeaderToState() {
-        val change = RoomHeaderChange(
-            area = editArea.takeIf { it != room.area },
-            mapX = savedHeader?.mapX,
-            mapY = savedHeader?.mapY,
+        val change = (savedHeader ?: RoomHeaderChange()).copy(
             upScroller = editUpScroller.takeIf { it != room.upScroller },
             downScroller = editDownScroller.takeIf { it != room.downScroller },
             creBitflag = editCreBitflag.takeIf { it != room.creBitflag },
@@ -216,8 +216,9 @@ fun RoomPropertiesPanel(
         SectionHeader("Room Header")
         PropertyRow("Room ID", "0x${room.roomId.toString(16).uppercase().padStart(4, '0')}")
         PropertyRow("Room Index", "0x${room.index.toString(16).uppercase().padStart(2, '0')}")
-        EditableIntRow("Area", editArea, 0, 6) { editArea = it; syncHeaderToState() }
-        PropertyRow("Area Name", AREA_NAMES.getOrElse(editArea) { "Unknown" })
+        AreaDropdown(effectiveArea) { targetArea ->
+            editorState.reassignRoomArea(room.roomId, targetArea, romParser)
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -625,6 +626,58 @@ private fun BgScrollDropdown(selectedValue: Int, onSelect: (Int) -> Unit) {
 }
 
 // ── Shared UI Components ──────────────────────────────────────────
+
+@Composable
+private fun AreaDropdown(selectedArea: Int, onSelect: (Int) -> Unit) {
+    var expanded by remember(selectedArea) { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Area",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(100.dp),
+        )
+        Box(modifier = Modifier.weight(1f)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(24.dp).clickable { expanded = true },
+                shape = MaterialTheme.shapes.extraSmall,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(AREA_NAMES.getOrElse(selectedArea) { "Invalid area $selectedArea" }, fontSize = 10.sp)
+                    Text("▾", fontSize = 9.sp)
+                }
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AREA_NAMES.forEachIndexed { area, name ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "$area — $name",
+                                fontSize = 10.sp,
+                                fontWeight = if (area == selectedArea) FontWeight.Bold else FontWeight.Normal,
+                                color = if (area == selectedArea) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                        },
+                        enabled = area != selectedArea,
+                        onClick = {
+                            expanded = false
+                            onSelect(area)
+                        },
+                        modifier = Modifier.height(26.dp),
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun SectionHeader(title: String) {

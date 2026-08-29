@@ -22,6 +22,51 @@ object RomValidator {
         val message: String,
     )
 
+    private fun hasCompleteAreaSaveMigration(
+        parser: RomParser,
+        project: SmEditProject,
+        roomId: Int,
+        sourceArea: Int,
+        targetArea: Int,
+    ): Boolean {
+        val edits = project.rooms[project.roomKey(roomId)] ?: return false
+        val effectivePlms = parser.getAllPlmEntriesForRoom(roomId).toMutableList()
+        for (change in edits.plmChanges) {
+            when (change.action) {
+                "add" -> effectivePlms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                "remove" -> effectivePlms.removeAll {
+                    it.id == change.plmId && it.x == change.x && it.y == change.y
+                }
+            }
+        }
+        val effectiveSaveIndices = effectivePlms.filter { it.id == 0xB76F }
+            .map { it.param and 0xFF }
+            .toSet()
+        if (effectiveSaveIndices.isEmpty()) return false
+
+        val allOverrides = project.rooms.values.flatMap { it.saveStationSpawns }
+        val destinationSpawns = allOverrides.filter {
+            !it.clearSlot && it.roomId == roomId && it.area == targetArea
+        }
+        if (destinationSpawns.isEmpty() || destinationSpawns.any { it.saveIndex !in effectiveSaveIndices }) {
+            return false
+        }
+        if (effectiveSaveIndices.any { index -> destinationSpawns.none { it.saveIndex == index } }) return false
+
+        val romReferences = buildList {
+            for (area in 0 until MinimapData.NUM_AREAS) {
+                for (index in 0 until parser.saveEntryCount(area)) {
+                    if (parser.readSaveEntry(area, index)?.roomId == roomId) add(area to index)
+                }
+            }
+        }
+        return romReferences.all { (area, index) ->
+            area == sourceArea && allOverrides.any {
+                it.clearSlot && it.area == area && it.saveIndex == index
+            }
+        }
+    }
+
     /**
      * Run all validations and return a list of issues found.
      */
@@ -39,6 +84,8 @@ object RomValidator {
         issues.addAll(checkRoomDimensions(rooms))
         issues.addAll(checkPlmSets(parser, rooms))
         if (project != null) {
+            issues.addAll(checkProjectRoomHeaders(parser, project, rooms))
+            issues.addAll(checkProjectMinimapEdits(project))
             issues.addAll(checkProjectSaveStationSpawns(parser, project, rooms))
             issues.addAll(checkProjectGraphicsExportFit(parser, project))
             issues.addAll(checkProjectEnemyTileEdits(parser, project))
@@ -46,6 +93,112 @@ object RomValidator {
         }
 
         return issues.sortedWith(compareBy({ it.severity }, { it.category }, { it.roomName }))
+    }
+
+    fun checkProjectRoomHeaders(
+        parser: RomParser,
+        project: SmEditProject,
+        rooms: Map<Int, Room>,
+    ): List<Issue> {
+        val issues = mutableListOf<Issue>()
+        for ((roomKey, edits) in project.rooms) {
+            val roomId = roomKey.toIntOrNull(16) ?: continue
+            val room = rooms[roomId] ?: parser.readRoomHeader(roomId) ?: continue
+            val header = edits.roomHeaderChange ?: continue
+            val area = header.area ?: room.area
+            val width = header.width ?: room.width
+            val height = header.height ?: room.height
+            val mapX = header.mapX ?: room.mapX
+            val mapY = header.mapY ?: room.mapY
+            if (area !in 0 until MinimapData.NUM_AREAS) {
+                issues.add(Issue(
+                    Severity.ERROR, "Room Header", roomId, room.name,
+                    "Room area $area is invalid; 0 is Crateria and valid room areas are 0-6. There is no unassigned area value."
+                ))
+            }
+            if (mapX !in 0..(MinimapData.MAP_WIDTH - width).coerceAtLeast(0) ||
+                mapY !in 0..(MinimapData.MAP_HEIGHT - height).coerceAtLeast(0)
+            ) {
+                issues.add(Issue(
+                    Severity.ERROR, "Room Header", roomId, room.name,
+                    "Map rectangle ($mapX,$mapY ${width}x$height) exceeds the 64x32 area map."
+                ))
+            }
+            if (area != room.area) {
+                val areaSaveReference = (0 until MinimapData.NUM_AREAS).any { saveArea ->
+                    (0 until parser.saveEntryCount(saveArea)).any { index ->
+                        parser.readSaveEntry(saveArea, index)?.roomId == roomId
+                    }
+                }
+                val stationPlm = parser.getAllPlmEntriesForRoom(roomId).any { it.id == 0xB76F } ||
+                    edits.plmChanges.any { it.plmId == 0xB76F && it.action == "add" }
+                val hasAreaSaveDependency = areaSaveReference || stationPlm || edits.saveStationSpawns.isNotEmpty()
+                if (hasAreaSaveDependency &&
+                    !hasCompleteAreaSaveMigration(parser, project, roomId, room.area, area)
+                ) {
+                    issues.add(Issue(
+                        Severity.ERROR, "AreaSave", roomId, room.name,
+                        "Room was reassigned from area ${room.area} to $area but is tied to AreaSave. Migrate and validate its save slot before export."
+                    ))
+                }
+            }
+        }
+        return issues
+    }
+
+    fun checkProjectMinimapEdits(project: SmEditProject): List<Issue> {
+        val issues = mutableListOf<Issue>()
+
+        fun validateAreaAndCoordinates(
+            areaKey: String,
+            coordinates: List<Pair<Int, Int>>,
+            label: String,
+        ) {
+            val area = areaKey.toIntOrNull()
+            if (area == null || area !in 0 until MinimapData.NUM_AREAS) {
+                issues.add(Issue(
+                    Severity.ERROR, "Minimap", null, "Project",
+                    "$label area key '$areaKey' is invalid; expected 0-6."
+                ))
+                return
+            }
+            val areaName = MinimapData.AREA_NAMES[area]
+            for ((x, y) in coordinates) {
+                if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) {
+                    issues.add(Issue(
+                        Severity.ERROR, "Minimap", null, areaName,
+                        "$label coordinate ($x,$y) is outside the 64x32 area map."
+                    ))
+                }
+            }
+            val duplicates = coordinates.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+            for ((x, y) in duplicates) {
+                issues.add(Issue(
+                    Severity.WARNING, "Minimap", null, areaName,
+                    "$label contains multiple edits for ($x,$y); only the last value will be exported."
+                ))
+            }
+        }
+
+        for ((areaKey, edits) in project.minimapEdits) {
+            validateAreaAndCoordinates(areaKey, edits.map { it.x to it.y }, "Minimap")
+            val areaName = areaKey.toIntOrNull()
+                ?.takeIf { it in 0 until MinimapData.NUM_AREAS }
+                ?.let { MinimapData.AREA_NAMES[it] }
+                ?: "Project"
+            for (edit in edits) {
+                if (edit.tileWord !in 0..0xFFFF) {
+                    issues.add(Issue(
+                        Severity.ERROR, "Minimap", null, areaName,
+                        "Tile word ${edit.tileWord} at (${edit.x},${edit.y}) is outside 0x0000-0xFFFF."
+                    ))
+                }
+            }
+        }
+        for ((areaKey, edits) in project.mapStationEdits) {
+            validateAreaAndCoordinates(areaKey, edits.map { it.x to it.y }, "Map-station reveal")
+        }
+        return issues
     }
 
     /**
@@ -248,12 +401,30 @@ object RomValidator {
                     ))
                 }
 
+                if (spawn.clearSlot) {
+                    if (spawn.roomId != 0) {
+                        issues.add(Issue(
+                            Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
+                            "Cleared AreaSave slot area=${spawn.area} index=${spawn.saveIndex} must use room ID 0."
+                        ))
+                    }
+                    continue
+                }
+
                 val targetRoom = rooms[spawn.roomId] ?: parser.readRoomHeader(spawn.roomId)
                 if (targetRoom == null) {
                     issues.add(Issue(
                         Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
                         "Save station override points to missing room 0x${spawn.roomId.toString(16).uppercase()}."
                     ))
+                } else {
+                    val targetArea = project.rooms[project.roomKey(spawn.roomId)]?.roomHeaderChange?.area ?: targetRoom.area
+                    if (spawn.area != targetArea) {
+                        issues.add(Issue(
+                            Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
+                            "Save station override uses area ${spawn.area}, but room 0x${spawn.roomId.toString(16).uppercase()} is assigned to area $targetArea."
+                        ))
+                    }
                 }
 
                 if (spawn.doorPtr == 0) {
