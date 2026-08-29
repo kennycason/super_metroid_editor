@@ -412,8 +412,8 @@ internal fun TilePropertiesPanel(
                                                     currentDoor.screenX, currentDoor.screenY
                                                 )
                                                 // Auto-set cross-area flag when dest is in a different area
-                                                val srcArea = romParser.readRoomHeader(roomId)?.area
-                                                val destArea = romParser.readRoomHeader(rid)?.area
+                                                val srcArea = romParser.readRoomHeader(roomId)?.let(editorState::applyHeaderChanges)?.area
+                                                val destArea = romParser.readRoomHeader(rid)?.let(editorState::applyHeaderChanges)?.area
                                                 val crossAreaBit = if (srcArea != null && destArea != null && srcArea != destArea) 0x40 else 0
                                                 val newBitflag = mergeDoorBitflagWithMatchedOrientation(
                                                     currentDoor.bitflag,
@@ -495,8 +495,8 @@ internal fun TilePropertiesPanel(
                                         },
                                         onClick = {
                                             entranceDropExpanded = false
-                                            val srcArea = romParser.readRoomHeader(roomId)?.area
-                                            val destArea = romParser.readRoomHeader(currentDoor.destRoomPtr)?.area
+                                            val srcArea = romParser.readRoomHeader(roomId)?.let(editorState::applyHeaderChanges)?.area
+                                            val destArea = romParser.readRoomHeader(currentDoor.destRoomPtr)?.let(editorState::applyHeaderChanges)?.area
                                             val crossArea = srcArea != null && destArea != null && srcArea != destArea
                                             editorState.updateDoor(
                                                 propsBts,

@@ -133,6 +133,7 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
     {
       "address": "pc:0x1234",
       "bytes": [1, 2, 3],
+      "expectedBytes": [234, 234, 234],
       "label": "example PC write"
     }
   ]
@@ -144,6 +145,13 @@ Use `schemas` or `schema` to discover valid config keys, value ranges, defaults,
 `items` places item PLMs in ROM-backed builds. Use `roomId` values from the service metadata room list, or pass `room` as a room hex string, handle, or name. `kind` accepts `visible`, `chozo`, or `hidden`. Patch-defined items such as `spider_ball` require their owning patch to be enabled in `patches`.
 
 `project` is optional. Relative project paths are resolved from the build config file's directory.
+
+For production raw writes, provide `expectedBytes` and/or
+`compatibleRomHashes`. A ROM build fails if the current bytes or headerless ROM
+SHA-256 do not match. Raw ASM can also declare `resources` using the same
+`namespace`, `start`, `endInclusive`, `access`, and `sharedGroup` fields as
+bundled patch metadata. Patch-only output cannot verify a base ROM and reports
+that limitation.
 
 For ROM-backed builds, add `colorize` to apply one of the shared palette effects to area tileset palettes and fixed sprite palettes:
 

@@ -12,6 +12,8 @@ class ProjectRoomExportException(message: String) : IllegalStateException(messag
 
 data class ProjectRoomExportResult(
     val roomsPatched: Set<String>,
+    /** Complete reserved ranges, including payload bytes whose value remains $FF. */
+    val allocations: List<RomAllocation> = emptyList(),
 )
 
 /**
@@ -25,6 +27,10 @@ class ProjectRoomExporter(
     private val romParser: RomParser,
     private val romData: ByteArray,
     private val extraItemPlmIds: Set<Int> = emptySet(),
+    private val roomAreaOverrides: Map<Int, Int> = project.rooms.mapNotNull { (roomKey, edits) ->
+        val roomId = roomKey.toIntOrNull(16) ?: return@mapNotNull null
+        edits.roomHeaderChange?.area?.let { roomId to it }
+    }.toMap(),
     private val onLog: (String) -> Unit = {},
 ) {
     companion object {
@@ -32,11 +38,14 @@ class ProjectRoomExporter(
             project.rooms.values.any { it.hasEdits }
     }
 
+    private val allocations = mutableListOf<RomAllocation>()
+
     private val roomDataAllocator = RomFreeSpaceAllocator(
         romData = romData,
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val levelDataAllocator = RomFreeSpaceAllocator(
@@ -44,6 +53,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val enemyAllocator = RomFreeSpaceAllocator(
@@ -51,6 +61,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val enemyGfxAllocator = RomFreeSpaceAllocator(
@@ -58,6 +69,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 2,
+        onReserve = allocations::add,
     )
 
     private val vanillaEnemyGfxDestinationsBySpecies by lazy {
@@ -143,7 +155,10 @@ class ProjectRoomExporter(
             }
         }
 
-        return ProjectRoomExportResult(roomsPatched = roomsPatched)
+        return ProjectRoomExportResult(
+            roomsPatched = roomsPatched,
+            allocations = allocations.toList(),
+        )
     }
 
     private fun applyLevelDataEdits(
@@ -461,9 +476,16 @@ class ProjectRoomExporter(
             }
 
             var finalBitflag = change.bitflag
-            if (destRoom != null && room.area != destRoom.area && finalBitflag and 0x40 == 0) {
-                finalBitflag = finalBitflag or 0x40
-                onLog("  FIX: auto-set cross-area flag (area ${room.area} -> ${destRoom.area})")
+            if (destRoom != null) {
+                val sourceArea = roomAreaOverrides[roomId] ?: room.area
+                val destinationArea = roomAreaOverrides[change.destRoomPtr] ?: destRoom.area
+                val expectedCrossArea = sourceArea != destinationArea
+                val correctedBitflag = if (expectedCrossArea) finalBitflag or 0x40 else finalBitflag and 0x40.inv()
+                if (correctedBitflag != finalBitflag) {
+                    val action = if (expectedCrossArea) "set" else "cleared"
+                    onLog("  FIX: $action cross-area flag (area $sourceArea -> $destinationArea)")
+                    finalBitflag = correctedBitflag
+                }
             }
 
             var finalEntryCode = change.entryCode

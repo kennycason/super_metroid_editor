@@ -87,6 +87,8 @@ data class SaveStationSpawnChange(
     val samusY: Int,
     val samusX: Int,
     val autoDerived: Boolean = false,
+    /** True when this override intentionally releases an old AreaSave slot. */
+    val clearSlot: Boolean = false,
 )
 
 /**
@@ -234,7 +236,20 @@ data class TileDefaultOverride(
 @Serializable
 data class PatchWrite(
     val offset: Long,         // unheadered PC offset (not SNES address)
-    val bytes: List<Int>      // byte values 0x00-0xFF
+    val bytes: List<Int>,     // byte values 0x00-0xFF
+    /** Optional bytes that must be present before this fixed write is applied. */
+    val expectedBytes: List<Int>? = null,
+)
+
+/** A patch's claim on a non-ROM runtime or identifier resource. */
+@Serializable
+data class PatchResourceClaim(
+    val namespace: String,
+    val start: Int,
+    val endInclusive: Int = start,
+    val label: String = "",
+    val access: String = "exclusive",
+    val sharedGroup: String? = null,
 )
 
 /**
@@ -273,7 +288,11 @@ data class SmPatch(
     var configType: String? = null,
     var configValue: Int? = null,
     var configData: MutableMap<String, Int>? = null,
-    val customItems: MutableList<CustomItemDef> = mutableListOf()
+    val customItems: MutableList<CustomItemDef> = mutableListOf(),
+    /** Headerless input-ROM SHA-256 values this fixed patch was authored for. */
+    val compatibleRomHashes: MutableList<String> = mutableListOf(),
+    /** Runtime/identifier resources used even when ROM write ranges do not overlap. */
+    val resources: MutableList<PatchResourceClaim> = mutableListOf(),
 )
 
 /**
@@ -345,6 +364,20 @@ data class MinimapTileEdit(
     val x: Int,
     val y: Int,
     val tileWord: Int,
+)
+
+/**
+ * A map-station reveal override for one pause-map cell.
+ *
+ * Reveal data is stored separately from the visible minimap tilemap in the ROM.
+ * Keeping it in the project prevents room moves and area reassignment from
+ * leaving stale map-station coverage behind.
+ */
+@Serializable
+data class MapStationTileEdit(
+    val x: Int,
+    val y: Int,
+    val revealed: Boolean,
 )
 
 /**
@@ -452,6 +485,7 @@ data class SmEditProject(
     val customGfx: TilesetGfxData = TilesetGfxData(),
     val patterns: MutableList<TilePattern> = mutableListOf(),
     val minimapEdits: MutableMap<String, MutableList<MinimapTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
+    val mapStationEdits: MutableMap<String, MutableList<MapStationTileEdit>> = mutableMapOf(), // key = area index "0"-"6"
     val textEdits: MutableMap<String, String> = mutableMapOf(), // key = text entry id (e.g. "area_0", "ceres_escape")
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")

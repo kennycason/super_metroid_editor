@@ -14,6 +14,12 @@ import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomWriteKind
+import com.supermetroid.editor.rom.RomOverlapPolicy
+import com.supermetroid.editor.rom.RomWritePlan
+import com.supermetroid.editor.rom.RomWritePlanReport as CoreRomWritePlanReport
+import com.supermetroid.editor.rom.RomResourceAccess
+import com.supermetroid.editor.rom.RomResourceClaim
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.TileGraphics
@@ -37,14 +43,24 @@ class SmeditBuildService(
         request: SmeditBuildRequest,
         project: SmEditProject? = null,
     ): SmeditBuildResult {
-        val outputRom = inputRom.copyOf()
+        val writePlan = RomWritePlan(inputRom, inputRom.smcHeaderOffset())
+        val outputRom = writePlan.romData
         val context = ApplyContext(
             outputRom = outputRom,
             parser = RomParser(outputRom),
             warnings = mutableListOf(),
             strictConfigValidation = request.strictConfigValidation,
+            writePlan = writePlan,
+            inputRomHash = inputRom.headerlessRomBytes().sha256(),
         )
         val applied = applyRequest(request, project, context)
+        val planReport = writePlan.report()
+        if (planReport.unverifiedFixedWrites.isNotEmpty()) {
+            context.warnings.add(
+                "${planReport.unverifiedFixedWrites.size} fixed ROM write(s) lack expected-before bytes; " +
+                    "address conflicts were checked, but base-ROM compatibility is not fully proven."
+            )
+        }
         val changedBytes = outputRom.changedByteCountFrom(inputRom)
 
         return SmeditBuildResult(
@@ -58,6 +74,7 @@ class SmeditBuildService(
                 patchBytes = context.patchWrites.totalByteCount(),
                 applied = applied,
                 warnings = context.warnings.distinct(),
+                writePlan = planReport.toHeadlessReport(),
             ),
         )
     }
@@ -66,13 +83,23 @@ class SmeditBuildService(
         request: SmeditBuildRequest,
         project: SmEditProject? = null,
     ): SmeditPatchBuildResult {
+        val writePlan = RomWritePlan(ByteArray(IPS_ADDRESS_SPACE_SIZE), verifyPreconditions = false)
         val context = ApplyContext(
             outputRom = null,
             parser = null,
             warnings = mutableListOf(),
             strictConfigValidation = request.strictConfigValidation,
+            writePlan = writePlan,
+            inputRomHash = null,
         )
         val applied = applyRequest(request, project, context)
+        val planReport = writePlan.report()
+        if (planReport.unverifiedFixedWrites.isNotEmpty()) {
+            context.warnings.add(
+                "${planReport.unverifiedFixedWrites.size} fixed ROM write(s) lack expected-before bytes; " +
+                    "address conflicts were checked, but patch-only mode cannot prove base-ROM compatibility."
+            )
+        }
         val patchBytes = context.patchWrites.totalByteCount()
 
         return SmeditPatchBuildResult(
@@ -85,6 +112,7 @@ class SmeditBuildService(
                 patchBytes = patchBytes,
                 applied = applied,
                 warnings = context.warnings.distinct(),
+                writePlan = planReport.toHeadlessReport(),
             ),
         )
     }
@@ -109,15 +137,33 @@ class SmeditBuildService(
             val patch = entry.patch
             if (!patch.enabled) continue
 
+            claimPatchResources(context, patch)
+            if (patch.writes.isNotEmpty() && patch.compatibleRomHashes.isNotEmpty()) {
+                val inputHash = context.inputRomHash
+                if (inputHash == null) {
+                    context.warnings.add(
+                        "Patch '${patch.name}' declares input-ROM compatibility hashes, but patch-only mode " +
+                            "cannot verify them."
+                    )
+                } else if (patch.compatibleRomHashes.none { it.equals(inputHash, ignoreCase = true) }) {
+                    throw IllegalArgumentException(
+                        "Patch '${patch.name}' is not compatible with input ROM SHA-256 $inputHash; " +
+                            "supported hashes: ${patch.compatibleRomHashes.joinToString()}."
+                    )
+                }
+            }
+
             val beforePatchBytes = context.patchWrites.totalByteCount()
             val beforeWrites = context.appliedWriteCount
-            validateConfigPatch(patch, context)
-            val handledConfig = if (patch.configType.isDeferredGeneratedConfigType()) {
-                patch.configType
-            } else {
-                applyConfigPatch(patch, context)
+            val (handledConfig, writeCount) = context.withOwner("patch:${patch.id}") {
+                validateConfigPatch(patch, context)
+                val handled = if (patch.configType.isDeferredGeneratedConfigType()) {
+                    patch.configType
+                } else {
+                    applyConfigPatch(patch, context)
+                }
+                handled to applyRawPatchWrites(patch, context)
             }
-            val writeCount = applyRawPatchWrites(patch, context)
             val wroteConfig = handledConfig != null
 
             if (patch.configType != null && !wroteConfig && writeCount == 0) {
@@ -146,8 +192,36 @@ class SmeditBuildService(
 
         for (write in request.rawWrites) {
             val offset = resolveRawWriteOffset(write, context)
-            val bytes = write.bytes.map { it.coerceIn(0, 255) }
-            if (writeBytes(context, offset, bytes, write.label.ifBlank { "raw write" })) {
+            val bytes = write.bytes.toList()
+            val rawLabel = write.label.ifBlank { "raw write" }
+            val rawOwner = "request:$rawLabel"
+            claimResources(context, rawOwner, rawLabel, write.resources)
+            if (write.compatibleRomHashes.isNotEmpty()) {
+                val inputHash = context.inputRomHash
+                if (inputHash == null) {
+                    context.warnings.add(
+                        "Raw write '$rawLabel' declares input-ROM compatibility hashes, but patch-only mode " +
+                            "cannot verify them."
+                    )
+                } else if (write.compatibleRomHashes.none { it.equals(inputHash, ignoreCase = true) }) {
+                    throw IllegalArgumentException(
+                        "Raw write '$rawLabel' is not compatible with input ROM SHA-256 $inputHash; " +
+                            "supported hashes: ${write.compatibleRomHashes.joinToString()}."
+                    )
+                }
+            }
+            if (context.withOwner(rawOwner) {
+                    writeBytes(
+                        context,
+                        offset,
+                        bytes,
+                        rawLabel,
+                        kind = RomWriteKind.RAW,
+                        expectedBefore = write.expectedBytes,
+                        preconditionRecommended = write.compatibleRomHashes.isEmpty(),
+                    )
+                }
+            ) {
                 applied.add(
                     SmeditAppliedPatchReport(
                         identifier = write.label.ifBlank { "raw_write_${offset.toString(16)}" },
@@ -164,10 +238,13 @@ class SmeditBuildService(
             applied.addAll(applyProjectCustomGraphics(project.customGfx, context))
         }
         request.colorize?.let { colorize ->
-            applyColorizeRequest(colorize, context)?.let(applied::add)
+            context.withOwner("request:colorize") {
+                applyColorizeRequest(colorize, context)
+            }?.let(applied::add)
         }
         if (project != null) {
             applied.addAll(applyProjectRoomEdits(project, context))
+            applied.addAll(applyProjectMinimapEdits(project, context))
         }
         createItemPlacementProject(request.items, patchEntries, context)?.let { itemProject ->
             applied.addAll(
@@ -208,7 +285,10 @@ class SmeditBuildService(
 
         if (project != null) {
             for (patch in project.patches) {
-                entries[patch.id] = PatchEntry(patch.deepCopy(), "project")
+                val hydrated = patch.deepCopy()
+                val catalogPatch = entries[patch.id]?.patch
+                if (catalogPatch != null) hydrateSafetyMetadata(hydrated, catalogPatch)
+                entries[patch.id] = PatchEntry(hydrated, "project")
             }
         }
 
@@ -242,6 +322,22 @@ class SmeditBuildService(
         return entries.values.toList()
     }
 
+    private fun hydrateSafetyMetadata(target: SmPatch, catalogPatch: SmPatch) {
+        if (target.compatibleRomHashes.isEmpty()) {
+            target.compatibleRomHashes.addAll(catalogPatch.compatibleRomHashes)
+        }
+        if (target.resources.isEmpty()) {
+            target.resources.addAll(catalogPatch.resources.map { it.copy() })
+        }
+        val catalogWrites = catalogPatch.writes.associateBy { it.offset to it.bytes }
+        for (index in target.writes.indices) {
+            val current = target.writes[index]
+            if (current.expectedBytes != null) continue
+            val expected = catalogWrites[current.offset to current.bytes]?.expectedBytes ?: continue
+            target.writes[index] = current.copy(expectedBytes = expected.toList())
+        }
+    }
+
     private fun addUnsupportedProjectWarnings(
         project: SmEditProject,
         context: ApplyContext,
@@ -257,7 +353,12 @@ class SmeditBuildService(
         if (project.tileDefaults.isNotEmpty()) ignored.add("tile defaults: ${project.tileDefaults.size}")
         ignored.addAll(project.customGfx.unsupportedDescriptions(hasRom = context.outputRom != null))
         if (project.patterns.isNotEmpty()) ignored.add("patterns: ${project.patterns.size}")
-        if (project.minimapEdits.isNotEmpty()) ignored.add("minimap edits: ${project.minimapEdits.size}")
+        if (context.outputRom == null && project.minimapEdits.isNotEmpty()) {
+            ignored.add("minimap edits requiring --rom: ${project.minimapEdits.size}")
+        }
+        if (context.outputRom == null && project.mapStationEdits.isNotEmpty()) {
+            ignored.add("map-station edits requiring --rom: ${project.mapStationEdits.size}")
+        }
         if (project.textEdits.isNotEmpty()) ignored.add("text edits: ${project.textEdits.size}")
         if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
             ignored.add("room name overrides: ${project.roomNameOverrides.size}")
@@ -481,7 +582,9 @@ class SmeditBuildService(
 
         val beforeTilesetRecords = context.patchWrites.size
         val beforeTilesetBytes = context.patchWrites.totalByteCount()
-        applyTilesetPaletteOverrides(gfx, context)
+        context.withOwner("project:tileset-palettes") {
+            applyTilesetPaletteOverrides(gfx, context)
+        }
         val tilesetRecords = context.patchWrites.size - beforeTilesetRecords
         val tilesetBytes = context.patchWrites.totalByteCount() - beforeTilesetBytes
         if (tilesetRecords > 0) {
@@ -498,7 +601,9 @@ class SmeditBuildService(
 
         val beforeSpriteRecords = context.patchWrites.size
         val beforeSpriteBytes = context.patchWrites.totalByteCount()
-        applySpritePaletteOverrides(gfx, context)
+        context.withOwner("project:sprite-palettes") {
+            applySpritePaletteOverrides(gfx, context)
+        }
         val spriteRecords = context.patchWrites.size - beforeSpriteRecords
         val spriteBytes = context.patchWrites.totalByteCount() - beforeSpriteBytes
         if (spriteRecords > 0) {
@@ -618,18 +723,45 @@ class SmeditBuildService(
         val beforeRecords = context.patchWrites.size
         val beforeBytes = context.patchWrites.totalByteCount()
         val beforeRom = rom.copyOf()
-        val roomExportResult = try {
-            ProjectRoomExporter(
-                project = project,
-                romParser = parser,
-                romData = rom,
-                extraItemPlmIds = itemPlmIds,
-                onLog = { message ->
-                    if (message.startsWith("WARN") || message.startsWith("ERROR")) {
-                        context.warnings.add(message)
-                    }
-                },
-            ).exportRooms()
+        val roomsPatched = linkedSetOf<String>()
+        try {
+            for ((roomKey, roomEdits) in project.rooms) {
+                if (!roomEdits.hasEdits) continue
+                val roomProject = project.copy(rooms = mutableMapOf(roomKey to roomEdits))
+                val beforeRoom = rom.copyOf()
+                val roomExportResult = ProjectRoomExporter(
+                    project = roomProject,
+                    romParser = RomParser(rom),
+                    romData = rom,
+                    roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->
+                        val roomId = key.toIntOrNull(16) ?: return@mapNotNull null
+                        edits.roomHeaderChange?.area?.let { roomId to it }
+                    }.toMap(),
+                    extraItemPlmIds = itemPlmIds,
+                    onLog = { message ->
+                        if (message.startsWith("WARN") || message.startsWith("ERROR")) {
+                            context.warnings.add(message)
+                        }
+                    },
+                ).exportRooms()
+                val owner = "room-graph:$identifier"
+                context.writePlan.recordExternalMutation(
+                    owner = owner,
+                    label = "$name room 0x$roomKey",
+                    before = beforeRoom,
+                    kind = RomWriteKind.ROOM,
+                    overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+                )
+                for (allocation in roomExportResult.allocations) {
+                    context.writePlan.claimCurrentRange(
+                        owner = owner,
+                        label = allocation.label,
+                        offset = allocation.pcOffset - context.romHeaderOffset,
+                        size = allocation.size,
+                    )
+                }
+                roomsPatched.addAll(roomExportResult.roomsPatched)
+            }
         } catch (e: ProjectRoomExportException) {
             throw IllegalStateException("Project room edits could not be written safely: ${e.message}", e)
         }
@@ -649,10 +781,86 @@ class SmeditBuildService(
                 bytes = context.patchWrites.totalByteCount() - beforeBytes,
             )
         ).also {
-            if (roomExportResult.roomsPatched.isEmpty()) {
+            if (roomsPatched.isEmpty()) {
                 context.warnings.add("Project room edits were present but no room data could be written.")
             }
         }
+    }
+
+    private fun applyProjectMinimapEdits(
+        project: SmEditProject,
+        context: ApplyContext,
+    ): List<SmeditAppliedPatchReport> {
+        if (project.minimapEdits.isEmpty() && project.mapStationEdits.isEmpty()) return emptyList()
+        val rom = context.outputRom
+        val parser = context.parser
+        if (rom == null || parser == null) {
+            context.warnings.add("Project minimap and map-station edits require --rom.")
+            return emptyList()
+        }
+
+        val beforeRecords = context.patchWrites.size
+        val beforeBytes = context.patchWrites.totalByteCount()
+        val beforeRom = rom.copyOf()
+
+        for ((areaKey, edits) in project.minimapEdits.toSortedMap()) {
+            val area = areaKey.toIntOrNull()
+                ?: throw IllegalArgumentException("Invalid minimap area key '$areaKey'.")
+            require(area in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                "Invalid minimap area $area; expected 0-6."
+            }
+            var data = parser.readMinimapTiles(area)
+            for (edit in edits) {
+                require(edit.x in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
+                    edit.y in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) { "Minimap edit ($area:${edit.x},${edit.y}) is outside the 64x32 map." }
+                require(edit.tileWord in 0..0xFFFF) {
+                    "Minimap tile word ${edit.tileWord} at ($area:${edit.x},${edit.y}) is outside 0x0000-0xFFFF."
+                }
+                data = data.withTile(edit.x, edit.y, edit.tileWord)
+            }
+            for ((offset, byte) in parser.writeMinimapTiles(data)) rom[offset] = byte
+        }
+
+        for ((areaKey, edits) in project.mapStationEdits.toSortedMap()) {
+            val area = areaKey.toIntOrNull()
+                ?: throw IllegalArgumentException("Invalid map-station area key '$areaKey'.")
+            require(area in 0 until com.supermetroid.editor.rom.MinimapData.NUM_AREAS) {
+                "Invalid map-station area $area; expected 0-6."
+            }
+            var data = parser.readMapStationData(area)
+            for (edit in edits) {
+                require(edit.x in 0 until com.supermetroid.editor.rom.MinimapData.MAP_WIDTH &&
+                    edit.y in 0 until com.supermetroid.editor.rom.MinimapData.MAP_HEIGHT
+                ) { "Map-station edit ($area:${edit.x},${edit.y}) is outside the 64x32 map." }
+                if (data.isRevealed(edit.x, edit.y) != edit.revealed) {
+                    data = data.withToggle(edit.x, edit.y)
+                }
+            }
+            for ((offset, byte) in parser.writeMapStationData(data)) rom[offset] = byte
+        }
+
+        context.writePlan.recordExternalMutation(
+            owner = "minimap:project",
+            label = "Project minimap and map-station edits",
+            before = beforeRom,
+            kind = RomWriteKind.MINIMAP,
+        )
+        val writes = diffPatchWrites(beforeRom, rom, context.romHeaderOffset)
+        context.patchWrites.addAll(writes)
+        context.appliedWriteCount += writes.size
+
+        val recordCount = context.patchWrites.size - beforeRecords
+        if (recordCount == 0) return emptyList()
+        return listOf(
+            SmeditAppliedPatchReport(
+                identifier = "project_minimap_edits",
+                name = "Project Minimap Edits",
+                source = "project",
+                writes = recordCount,
+                bytes = context.patchWrites.totalByteCount() - beforeBytes,
+            )
+        )
     }
 
     private fun applyTilesetPaletteColorize(
@@ -834,6 +1042,7 @@ class SmeditBuildService(
                 offset = target.palettePc,
                 bytes = (compressed + ByteArray(target.originalSize - compressed.size) { 0xFF.toByte() }).toIntList(),
                 label = "tileset ${target.tilesetId} palette",
+                overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
             )
             return
         }
@@ -858,12 +1067,14 @@ class SmeditBuildService(
             context.fileToPcOffset(allocation.pcOffset),
             compressed.toIntList(),
             "tileset ${target.tilesetId} relocated palette",
+            overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
         )
         writeBytes(
             context,
             target.entryPc + TILESET_PALETTE_PTR_OFFSET,
             u24Bytes(allocation.snesAddress),
             "tileset ${target.tilesetId} palette pointer",
+            overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
         )
         if (clearOriginalOnRelocate) {
             writeBytes(
@@ -871,6 +1082,7 @@ class SmeditBuildService(
                 offset = target.palettePc,
                 bytes = List(target.originalSize) { 0xFF },
                 label = "tileset ${target.tilesetId} old palette free fill",
+                overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
             )
         }
     }
@@ -1227,6 +1439,7 @@ class SmeditBuildService(
         }
 
         val patch = entry.patch
+        val beforeRom = rom.copyOf()
         val result = try {
             RoomNamePauseMapPatch.install(
                 romData = rom,
@@ -1241,10 +1454,26 @@ class SmeditBuildService(
         } catch (e: Exception) {
             throw IllegalArgumentException("Room-name pause-map patch could not be written safely: ${e.message}", e)
         }
-
         val logicalWrites = result.writes.map { write ->
-            PatchWrite(context.fileToPcOffset(write.offset.toInt()).toLong(), write.bytes)
+            PatchWrite(
+                context.fileToPcOffset(write.offset.toInt()).toLong(),
+                write.bytes,
+                write.expectedBytes,
+            )
         }
+        context.writePlan.recordDeclaredMutation(
+            before = beforeRom,
+            declaredWrites = logicalWrites.mapIndexed { index, write ->
+                com.supermetroid.editor.rom.RomWriteIntent(
+                    owner = "patch:${patch.id}",
+                    label = if (index == 0) "${patch.name} payload" else "${patch.name} hook $index",
+                    offset = write.offset.toInt(),
+                    bytes = write.bytes,
+                    kind = if (index == 0) RomWriteKind.ALLOCATION else RomWriteKind.HOOK,
+                    expectedBefore = write.expectedBytes,
+                )
+            },
+        )
         context.patchWrites.addAll(logicalWrites)
         context.appliedWriteCount += result.writes.size
         return listOf(
@@ -1257,6 +1486,47 @@ class SmeditBuildService(
                 bytes = logicalWrites.totalByteCount(),
             )
         )
+    }
+
+    private fun claimPatchResources(context: ApplyContext, patch: SmPatch) {
+        val owner = "patch:${patch.id}"
+        claimResources(context, owner, patch.name, patch.resources)
+        if (patch.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE) {
+            context.writePlan.claimResource(
+                RomResourceClaim(owner, "rom_hook", 0x10D25, 0x10D28, "Pause-map load hook")
+            )
+            context.writePlan.claimResource(
+                RomResourceClaim(owner, "rom_hook", 0x111DD, 0x111E0, "Pause-map load hook")
+            )
+            context.writePlan.claimResource(
+                RomResourceClaim(owner, "vram", 0x38C0, 0x38EF, "Pause-map room-name row")
+            )
+        }
+    }
+
+    private fun claimResources(
+        context: ApplyContext,
+        owner: String,
+        fallbackLabel: String,
+        resources: List<com.supermetroid.editor.data.PatchResourceClaim>,
+    ) {
+        for (resource in resources) {
+            context.writePlan.claimResource(
+                RomResourceClaim(
+                    owner = owner,
+                    namespace = resource.namespace,
+                    start = resource.start,
+                    endInclusive = resource.endInclusive,
+                    label = resource.label.ifBlank { fallbackLabel },
+                    access = if (resource.access.equals("shared", ignoreCase = true)) {
+                        RomResourceAccess.SHARED
+                    } else {
+                        RomResourceAccess.EXCLUSIVE
+                    },
+                    sharedGroup = resource.sharedGroup,
+                )
+            )
+        }
     }
 
     private fun applyCombinedPerFrameHook(
@@ -1276,13 +1546,51 @@ class SmeditBuildService(
         val code = buildHeadlessPerFrameHook(enabledBosses, hyperBeam, infiniteBlueSuit)
         if (code.isEmpty()) return null
 
+        for (entry in patchEntries.filter {
+            it.patch.enabled && (
+                it.patch.configType == BOSS_DEFEATED_CONFIG_TYPE ||
+                    it.patch.configType == HYPER_BEAM_CONFIG_TYPE ||
+                    it.patch.id == INFINITE_BLUE_SUIT_PATCH_ID
+                )
+        }) {
+            context.writePlan.claimResource(
+                RomResourceClaim(
+                    owner = "patch:${entry.patch.id}",
+                    namespace = "rom_hook",
+                    start = PER_FRAME_HOOK_PATCH_PC,
+                    endInclusive = PER_FRAME_HOOK_PATCH_PC + PER_FRAME_HOOK_JSL.lastIndex,
+                    label = "Combined per-frame hook",
+                    access = RomResourceAccess.SHARED,
+                    sharedGroup = "combined-per-frame-hook",
+                )
+            )
+        }
+
         val beforePatchBytes = context.patchWrites.totalByteCount()
         val beforeWrites = context.appliedWriteCount
-        if (writeBytes(context, PER_FRAME_HOOK_PAYLOAD_PC, code, "combined per-frame hook payload")) {
-            context.appliedWriteCount++
-        }
-        if (writeBytes(context, PER_FRAME_HOOK_PATCH_PC, PER_FRAME_HOOK_JSL, "combined per-frame hook JSL")) {
-            context.appliedWriteCount++
+        context.withOwner("generated:per-frame-hook") {
+            if (writeBytes(
+                    context,
+                    PER_FRAME_HOOK_PAYLOAD_PC,
+                    code,
+                    "combined per-frame hook payload",
+                    kind = RomWriteKind.HOOK,
+                    expectedBefore = List(code.size) { 0xFF },
+                )
+            ) {
+                context.appliedWriteCount++
+            }
+            if (writeBytes(
+                    context,
+                    PER_FRAME_HOOK_PATCH_PC,
+                    PER_FRAME_HOOK_JSL,
+                    "combined per-frame hook JSL",
+                    kind = RomWriteKind.HOOK,
+                    expectedBefore = PER_FRAME_ORIGINAL_JSL,
+                )
+            ) {
+                context.appliedWriteCount++
+            }
         }
         val writes = context.appliedWriteCount - beforeWrites
         val bytes = context.patchWrites.totalByteCount() - beforePatchBytes
@@ -1386,10 +1694,20 @@ class SmeditBuildService(
         patch: SmPatch,
         context: ApplyContext,
     ): Int {
+        if (patch.id == INFINITE_BLUE_SUIT_PATCH_ID) return 0
         var writes = 0
         for (write in patch.writes) {
             val offset = write.offset.toInt()
-            if (writeBytes(context, offset, write.bytes, patch.name)) {
+            if (writeBytes(
+                    context = context,
+                    offset = offset,
+                    bytes = write.bytes,
+                    label = patch.name,
+                    kind = RomWriteKind.FIXED_PATCH,
+                    expectedBefore = write.expectedBytes,
+                    preconditionRecommended = patch.compatibleRomHashes.isEmpty(),
+                )
+            ) {
                 writes++
                 context.appliedWriteCount++
             }
@@ -1458,32 +1776,23 @@ class SmeditBuildService(
         offset: Int,
         bytes: List<Int>,
         label: String,
+        kind: RomWriteKind = RomWriteKind.CONFIG,
+        expectedBefore: List<Int>? = null,
+        preconditionRecommended: Boolean = false,
+        overlapPolicy: RomOverlapPolicy = RomOverlapPolicy.DENY,
     ): Boolean {
-        val normalizedBytes = bytes.map { it.coerceIn(0, 255) }
-        if (normalizedBytes.isEmpty()) {
-            context.warnings.add("$label write has no bytes")
-            return false
-        }
-        val endOffset = offset.toLong() + normalizedBytes.size - 1
-        if (offset < 0 || offset > 0xFFFFFF || endOffset > 0xFFFFFF) {
-            context.warnings.add("$label write out of IPS range at 0x${offset.toString(16)} (${bytes.size} bytes)")
-            return false
-        }
-
-        val rom = context.outputRom
-        if (rom != null) {
-            val fileOffset = context.pcToFileOffset(offset)
-            val fileEndOffset = fileOffset.toLong() + normalizedBytes.size - 1
-            if (fileOffset < 0 || fileEndOffset >= rom.size) {
-                context.warnings.add("$label write out of ROM range at 0x${offset.toString(16)} (${bytes.size} bytes)")
-                return false
-            }
-            for (i in normalizedBytes.indices) {
-                rom[fileOffset + i] = normalizedBytes[i].toByte()
-            }
-        }
-
-        context.patchWrites.add(PatchWrite(offset.toLong(), normalizedBytes))
+        if (bytes.isEmpty()) return false
+        context.writePlan.add(
+            owner = context.currentOwner,
+            label = label,
+            offset = offset,
+            bytes = bytes,
+            kind = kind,
+            expectedBefore = expectedBefore,
+            preconditionRecommended = preconditionRecommended,
+            overlapPolicy = overlapPolicy,
+        )
+        context.patchWrites.add(PatchWrite(offset.toLong(), bytes.toList(), expectedBefore?.toList()))
         return true
     }
 
@@ -1526,8 +1835,11 @@ class SmeditBuildService(
         val parser: RomParser?,
         val warnings: MutableList<String>,
         val strictConfigValidation: Boolean,
+        val writePlan: RomWritePlan,
+        val inputRomHash: String?,
         val patchWrites: MutableList<PatchWrite> = mutableListOf(),
         var appliedWriteCount: Int = 0,
+        var currentOwner: String = "headless",
     ) {
         val romHeaderOffset: Int = outputRom?.smcHeaderOffset() ?: 0
 
@@ -1542,6 +1854,16 @@ class SmeditBuildService(
 
         fun readByteOrNull(pcOffset: Int): Int? =
             outputRom?.readByteOrNull(pcToFileOffset(pcOffset))
+
+        fun <T> withOwner(owner: String, block: () -> T): T {
+            val previous = currentOwner
+            currentOwner = owner
+            return try {
+                block()
+            } finally {
+                currentOwner = previous
+            }
+        }
 
         fun readWordOrNull(pcOffset: Int): Int? =
             outputRom?.readWordOrNull(pcToFileOffset(pcOffset))
@@ -1711,6 +2033,11 @@ private fun ByteArray.smcHeaderOffset(): Int =
 private fun ByteArray.headerlessRomBytes(): ByteArray =
     if (smcHeaderOffset() == 0) this else copyOfRange(RomConstants.SMC_HEADER_SIZE, size)
 
+private fun ByteArray.sha256(): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(this)
+    return digest.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+}
+
 private fun ByteArray.readByteOrNull(offset: Int): Int? =
     if (offset in indices) this[offset].toInt() and 0xFF else null
 
@@ -1759,6 +2086,29 @@ private const val ENEMY_PALETTE_BYTES = 32
 private const val ENEMY_HEADER_PALETTE_PTR_OFFSET = 2
 private const val ENEMY_HEADER_AI_BANK_OFFSET = 0x0C
 private const val INFINITE_BLUE_SUIT_PATCH_ID = "bundled_infinite_blue_suit"
+private const val IPS_ADDRESS_SPACE_SIZE = 0x1000000
+
+private fun CoreRomWritePlanReport.toHeadlessReport(): SmeditWritePlanReport =
+    SmeditWritePlanReport(
+        writes = totalWrites,
+        bytes = totalBytes,
+        owners = owners.map {
+            SmeditWriteOwnerReport(it.owner, it.writes, it.bytes, it.startOffset, it.endInclusive)
+        },
+        resourceClaims = resources.size,
+        resources = resources.map {
+            SmeditResourceClaimReport(
+                owner = it.owner,
+                namespace = it.namespace,
+                start = it.start,
+                endInclusive = it.endInclusive,
+                label = it.label,
+                access = it.access.name.lowercase(),
+                sharedGroup = it.sharedGroup,
+            )
+        },
+        unverifiedFixedWrites = unverifiedFixedWrites.size,
+    )
 
 private fun SmPatch.deepCopy(): SmPatch =
     SmPatch(
@@ -1766,9 +2116,13 @@ private fun SmPatch.deepCopy(): SmPatch =
         name = name,
         description = description,
         enabled = enabled,
-        writes = writes.map { PatchWrite(it.offset, it.bytes.toList()) }.toMutableList(),
+        writes = writes.map {
+            PatchWrite(it.offset, it.bytes.toList(), it.expectedBytes?.toList())
+        }.toMutableList(),
         configType = configType,
         configValue = configValue,
         configData = configData?.toMutableMap(),
         customItems = customItems.map { it.copy() }.toMutableList(),
+        compatibleRomHashes = compatibleRomHashes.toMutableList(),
+        resources = resources.map { it.copy() }.toMutableList(),
     )

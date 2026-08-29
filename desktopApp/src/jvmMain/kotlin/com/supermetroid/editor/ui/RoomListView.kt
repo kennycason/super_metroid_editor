@@ -82,17 +82,18 @@ fun RoomListView(
     var sortMode by remember { mutableStateOf(RoomSortMode.AREA) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val editVersion = editorState?.editVersion ?: 0
 
-    val roomAreas = remember(romParser, rooms) {
+    val roomAreas = remember(romParser, rooms, editVersion) {
         if (romParser == null) return@remember emptyMap<String, Int>()
         rooms.associate { room ->
             val header = try { romParser.readRoomHeader(room.getRoomIdAsInt()) } catch (_: Exception) { null }
-            room.handle to (header?.area ?: -1)
+            val effective = header?.let { editorState?.applyHeaderChanges(it) ?: it }
+            room.handle to (effective?.area ?: -1)
         }
     }
 
     val editOrder = editorState?.roomEditOrder ?: emptyMap()
-    val editVersion = editorState?.editVersion ?: 0
     val editedRoomIds = remember(editOrder, editVersion) { editOrder.keys }
 
     val filteredSortedRooms = remember(rooms, roomAreas, searchQuery, sortMode, editOrder, editVersion) {

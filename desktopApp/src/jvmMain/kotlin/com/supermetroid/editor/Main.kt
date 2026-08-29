@@ -694,7 +694,14 @@ fun main() = application {
                                             tilesetHeightDp = tilesetHeightDp,
                                             onTilesetHeightChange = { tilesetHeightDp = it },
                                             onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
-                                            onNavigateToMap = { leftTab = TAB_MAP },
+                                            onNavigateToMap = {
+                                                val parser = romParser
+                                                val roomId = selectedRoom?.getRoomIdAsInt()
+                                                if (parser != null && roomId != null) {
+                                                    minimapEditorState.openRoom(parser, roomId, editorState)
+                                                }
+                                                leftTab = TAB_MAP
+                                            },
                                             onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
                                             modifier = Modifier.fillMaxSize(),
                                         )

@@ -23,6 +23,42 @@
     "file": "spider_ball.ips",
     "name": "Spider Ball",
     "description": "Prototype Spider Ball: press d-pad while morphed near a solid surface to attach and rotate around it; press Jump or Up from floor/air to detach. Requires the Spider Ball custom item.",
+    "resources": [
+      {
+        "namespace": "wram",
+        "start": 2844,
+        "endInclusive": 2847,
+        "label": "Spider Ball active/state words"
+      },
+      {
+        "namespace": "wram",
+        "start": 2856,
+        "endInclusive": 2859,
+        "label": "Spider Ball contact words"
+      },
+      {
+        "namespace": "samus_item_bit",
+        "start": 16,
+        "label": "Spider Ball item bit"
+      },
+      {
+        "namespace": "message_id",
+        "start": 30,
+        "label": "Spider Ball acquisition message"
+      },
+      {
+        "namespace": "plm_id",
+        "start": 61952,
+        "endInclusive": 61960,
+        "label": "Spider Ball item PLMs"
+      },
+      {
+        "namespace": "pause_bg_tile",
+        "start": 478,
+        "endInclusive": 485,
+        "label": "SPIDER BALL label tiles"
+      }
+    ],
     "customItems": [
       {
         "id": "spider_ball",

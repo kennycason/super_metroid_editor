@@ -62,7 +62,8 @@ class SmeditServiceTest {
                 patches = mapOf(
                     "higher_jump" to SmeditPatchRequest(),
                 )
-            )
+            ),
+            romBytes = higherJumpBaseRom(),
         )
         val response = client.post("/patch") {
             contentType(ContentType.Application.Json)
@@ -87,7 +88,8 @@ class SmeditServiceTest {
                 patches = mapOf(
                     "higher_jump" to SmeditPatchRequest(),
                 )
-            )
+            ),
+            romBytes = higherJumpBaseRom(),
         )
         val response = client.post("/patch?format=json") {
             contentType(ContentType.Application.Json)
@@ -114,7 +116,8 @@ class SmeditServiceTest {
                 patches = mapOf(
                     "higher_jump" to SmeditPatchRequest(),
                 )
-            )
+            ),
+            romBytes = higherJumpBaseRom(),
         )
         val response = client.post("/patch?format=ips") {
             contentType(ContentType.Application.Json)
@@ -353,6 +356,7 @@ class SmeditServiceTest {
         val response = client.post("/patch") {
             setBody(
                 multipartPatchBody(
+                    romBytes = higherJumpBaseRom(),
                     build = SmeditBuildRequest(
                         patches = mapOf(
                             "higher_jump" to SmeditPatchRequest(),
@@ -625,6 +629,9 @@ class SmeditServiceTest {
             .firstOrNull { it.exists() }
             ?.readBytes()
     }
+
+    private fun higherJumpBaseRom(): ByteArray =
+        ByteArray(RomConstants.ROM_SIZE).also { it[0x81EB9] = 0x04 }
 
     private fun expandedReadableRom(): ByteArray =
         ByteArray(0x400000) { 0xFF.toByte() }.also { rom ->
