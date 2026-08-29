@@ -657,11 +657,24 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                         // buttons on Desktop. Gate its action explicitly so a
                         // context click can never lift, paint, or erase behind
                         // the popup.
-                        primaryCanvasPress = native == null || native.button == MouseEvent.BUTTON1
+                        val isPrimary = native == null || native.button == MouseEvent.BUTTON1
+                        if (isPrimary && state.tool == MinimapTool.SELECT) {
+                            primaryCanvasPress = false
+                            event.changes.forEach { it.consume() }
+                            focusRequester.requestFocus()
+                            val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
+                            state.beginPrimaryRoomDrag(
+                                (position.x / csPx).toInt(),
+                                (position.y / csPx).toInt(),
+                                editorState,
+                            )
+                        } else {
+                            primaryCanvasPress = isPrimary
+                        }
                     }
                 }
                 .onPointerEvent(PointerEventType.Move) { event ->
-                    if (state.isMiddleDraggingRoom) {
+                    if (state.isPointerDraggingRoom) {
                         event.changes.forEach { it.consume() }
                         val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
                         state.updatePointerRoomMove(
@@ -671,14 +684,16 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                     }
                 }
                 .onPointerEvent(PointerEventType.Release) { event ->
-                    if (state.isMiddleDraggingRoom) {
+                    if (state.isPointerDraggingRoom) {
                         event.changes.forEach { it.consume() }
                         val position = event.changes.firstOrNull()?.position ?: return@onPointerEvent
-                        state.endMiddleRoomDrag(
-                            (position.x / csPx).toInt(),
-                            (position.y / csPx).toInt(),
-                            editorState,
-                        )
+                        val x = (position.x / csPx).toInt()
+                        val y = (position.y / csPx).toInt()
+                        if (state.isPrimaryDraggingRoom) {
+                            state.endPrimaryRoomDrag(x, y, editorState)
+                        } else {
+                            state.endMiddleRoomDrag(x, y, editorState)
+                        }
                     }
                 }
                 .pointerInput(state.tool, state.selectedTileWord, csPx) {
@@ -691,7 +706,7 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                             MinimapTool.PAINT -> state.paintTile(x, y, editorState)
                             MinimapTool.EYEDROPPER -> state.sampleTile(x, y)
                             MinimapTool.FILL -> state.fillTile(x, y, editorState)
-                            MinimapTool.SELECT -> state.handleSelectClick(x, y, editorState)
+                            MinimapTool.SELECT -> Unit // Select uses press-drag-release above.
                             MinimapTool.ERASE -> state.eraseTile(x, y, editorState)
                             MinimapTool.REVEAL -> state.toggleReveal(x, y, editorState)
                         }
@@ -743,7 +758,6 @@ fun MinimapCanvas(state: MinimapEditorState, editorState: EditorState, modifier:
                                 val y = (pos.y / csPx).toInt()
                                 state.hoverX = x
                                 state.hoverY = y
-                                if (state.isClickFollowingRoom) state.updatePointerRoomMove(x, y)
                             }
                         }
                     }

@@ -61,10 +61,9 @@ Canvas actions now live in a top toolbar, matching the room and sprite editors:
 
 Rooms can also be repositioned entirely with the mouse:
 
-- In Select mode, click a room once to attach it to the pointer, then click
-  again to place and deselect it.
+- In Select mode, primary-drag a room and release to place it.
 - Middle-drag a room from any tool and release to place it.
-- Invalid click placements and middle-button drops restore the room to its
+- Invalid primary- and middle-button drops restore the room to its
   original location. Switching away from Select, choosing another room,
   pressing Escape, or Cancel also restores an uncommitted floating room.
 

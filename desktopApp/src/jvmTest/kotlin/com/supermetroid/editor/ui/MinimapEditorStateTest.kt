@@ -774,7 +774,7 @@ class MinimapEditorStateTest {
     @Nested
     inner class RoomMovementSafety {
         @Test
-        fun `select click follows pointer and second click places then deselects`() {
+        fun `primary drag in select mode moves and deselects on release`() {
             val parser = TestRomHelper.loadRomParser()
             assumeTrue(parser != null, "Test ROM not found")
             parser!!
@@ -783,15 +783,15 @@ class MinimapEditorStateTest {
             val (room, grabX, grabY, dx, dy) = candidate!!
             val editor = EditorState().also {
                 it.testMode = true
-                it.initForRom("/tmp/minimap-click-follow-test.smc")
+                it.initForRom("/tmp/minimap-primary-drag-test.smc")
             }
             val state = MinimapEditorState()
             state.initIfNeeded(parser, editor)
             state.loadArea(parser, room.area, editor)
 
-            state.handleSelectClick(room.mapX + grabX, room.mapY + grabY, editor)
+            assertTrue(state.beginPrimaryRoomDrag(room.mapX + grabX, room.mapY + grabY, editor))
 
-            assertTrue(state.isClickFollowingRoom)
+            assertTrue(state.isPrimaryDraggingRoom)
             assertTrue(state.isMovingRoom)
             assertEquals(room.roomId, state.selectedRoom?.roomId)
 
@@ -799,15 +799,45 @@ class MinimapEditorStateTest {
             assertEquals(room.mapX + dx, state.moveBuffer?.currentX)
             assertEquals(room.mapY + dy, state.moveBuffer?.currentY)
 
-            state.handleSelectClick(room.mapX + dx + grabX, room.mapY + dy + grabY, editor)
+            state.endPrimaryRoomDrag(room.mapX + dx + grabX, room.mapY + dy + grabY, editor)
 
-            assertFalse(state.isClickFollowingRoom)
+            assertFalse(state.isPrimaryDraggingRoom)
             assertFalse(state.isMovingRoom)
             assertEquals(null, state.selectedRoom)
             val moved = editor.applyHeaderChanges(room)
             assertEquals(room.mapX + dx, moved.mapX)
             assertEquals(room.mapY + dy, moved.mapY)
             assertTrue(state.undoStack.isNotEmpty())
+        }
+
+        @Test
+        fun `primary click without drag does not leave a room following the pointer`() {
+            val parser = TestRomHelper.loadRomParser()
+            assumeTrue(parser != null, "Test ROM not found")
+            parser!!
+            val candidate = findPointerMoveCandidate(parser)
+            assumeTrue(candidate != null, "No selectable room fixture found")
+            val (room, grabX, grabY) = candidate!!
+            val editor = EditorState().also {
+                it.testMode = true
+                it.initForRom("/tmp/minimap-primary-click-test.smc")
+            }
+            val state = MinimapEditorState()
+            state.initIfNeeded(parser, editor)
+            state.loadArea(parser, room.area, editor)
+            val originalMap = state.mapData.tiles.copyOf()
+            val originalStation = state.stationData.revealed.copyOf()
+
+            assertTrue(state.beginPrimaryRoomDrag(room.mapX + grabX, room.mapY + grabY, editor))
+            state.endPrimaryRoomDrag(room.mapX + grabX, room.mapY + grabY, editor)
+
+            assertFalse(state.isPointerDraggingRoom)
+            assertFalse(state.isMovingRoom)
+            assertEquals(null, state.selectedRoom)
+            assertArrayEquals(originalMap, state.mapData.tiles)
+            assertArrayEquals(originalStation, state.stationData.revealed)
+            assertTrue(editor.project.minimapEdits.isEmpty())
+            assertTrue(editor.project.mapStationEdits.isEmpty())
         }
 
         @Test
@@ -857,14 +887,14 @@ class MinimapEditorStateTest {
             state.loadArea(parser, room.area, editor)
             val originalMap = state.mapData.tiles.copyOf()
             val originalStation = state.stationData.revealed.copyOf()
-            state.handleSelectClick(room.mapX + grabX, room.mapY + grabY, editor)
+            assertTrue(state.beginPrimaryRoomDrag(room.mapX + grabX, room.mapY + grabY, editor))
             assertTrue(state.isMovingRoom)
 
             state.activateTool(MinimapTool.ERASE, editor)
 
             assertEquals(MinimapTool.ERASE, state.tool)
             assertFalse(state.isMovingRoom)
-            assertFalse(state.isClickFollowingRoom)
+            assertFalse(state.isPrimaryDraggingRoom)
             assertEquals(null, state.selectedRoom)
             assertArrayEquals(originalMap, state.mapData.tiles)
             assertArrayEquals(originalStation, state.stationData.revealed)

@@ -19,7 +19,7 @@ import com.supermetroid.editor.rom.RomParser
 
 enum class MinimapTool { SELECT, PAINT, FILL, ERASE, EYEDROPPER, REVEAL }
 
-private enum class RoomPointerMoveMode { CLICK_FOLLOW, MIDDLE_DRAG }
+private enum class RoomPointerMoveMode { PRIMARY_DRAG, MIDDLE_DRAG }
 
 /**
  * Shared state for the minimap editor.
@@ -67,8 +67,9 @@ class MinimapEditorState {
     private var pointerMoveMode by mutableStateOf<RoomPointerMoveMode?>(null)
     private var pointerGrabOffsetX: Int = 0
     private var pointerGrabOffsetY: Int = 0
-    internal val isClickFollowingRoom: Boolean get() = pointerMoveMode == RoomPointerMoveMode.CLICK_FOLLOW
+    internal val isPrimaryDraggingRoom: Boolean get() = pointerMoveMode == RoomPointerMoveMode.PRIMARY_DRAG
     internal val isMiddleDraggingRoom: Boolean get() = pointerMoveMode == RoomPointerMoveMode.MIDDLE_DRAG
+    internal val isPointerDraggingRoom: Boolean get() = pointerMoveMode != null
 
     private var loadedParser: RomParser? = null
     private var observedEditorEditVersion: Int = -1
@@ -306,40 +307,12 @@ class MinimapEditorState {
         selectedRoomIndex = -1
     }
 
-    /**
-     * Select-tool click interaction: first click lifts a room and attaches it
-     * to the pointer; the next click commits and deselects. Invalid placement
-     * restores the original room before deselecting.
-     */
-    fun handleSelectClick(x: Int, y: Int, editorState: EditorState) {
-        if (tool != MinimapTool.SELECT ||
-            x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT
-        ) return
-
-        if (isClickFollowingRoom && moveBuffer != null) {
-            updatePointerRoomMove(x, y)
-            if (!applyMove(editorState)) cancelMove(editorState)
-            selectedRoomIndex = -1
-            clearPointerMoveMode()
-            return
-        }
-
-        if (moveBuffer != null) cancelMove(editorState)
-        val index = roomIndexAt(x, y)
-        if (index < 0) {
-            selectedRoomIndex = -1
-            return
-        }
-        selectedRoomIndex = index
-        val room = areaRooms[index]
-        pointerGrabOffsetX = x - room.mapX
-        pointerGrabOffsetY = y - room.mapY
-        liftRoom(room)
-        pointerMoveMode = RoomPointerMoveMode.CLICK_FOLLOW
-    }
-
-    /** Begin a transient middle-button room drag from any active tool. */
-    fun beginMiddleRoomDrag(x: Int, y: Int, editorState: EditorState): Boolean {
+    private fun beginPointerRoomDrag(
+        x: Int,
+        y: Int,
+        mode: RoomPointerMoveMode,
+        editorState: EditorState,
+    ): Boolean {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return false
         if (moveBuffer != null) cancelMove(editorState)
         val index = roomIndexAt(x, y)
@@ -349,11 +322,24 @@ class MinimapEditorState {
         pointerGrabOffsetX = x - room.mapX
         pointerGrabOffsetY = y - room.mapY
         liftRoom(room)
-        pointerMoveMode = RoomPointerMoveMode.MIDDLE_DRAG
+        pointerMoveMode = mode
         return true
     }
 
-    /** Move the active click-follow or middle-drag preview to the pointer cell. */
+    /** Begin a primary-button room drag while the Select tool is active. */
+    fun beginPrimaryRoomDrag(x: Int, y: Int, editorState: EditorState): Boolean {
+        if (tool != MinimapTool.SELECT) return false
+        val started = beginPointerRoomDrag(x, y, RoomPointerMoveMode.PRIMARY_DRAG, editorState)
+        if (!started) selectedRoomIndex = -1
+        return started
+    }
+
+    /** Begin a transient middle-button room drag from any active tool. */
+    fun beginMiddleRoomDrag(x: Int, y: Int, editorState: EditorState): Boolean {
+        return beginPointerRoomDrag(x, y, RoomPointerMoveMode.MIDDLE_DRAG, editorState)
+    }
+
+    /** Move the active primary- or middle-drag preview to the pointer cell. */
     fun updatePointerRoomMove(x: Int, y: Int) {
         if (pointerMoveMode == null) return
         val buffer = moveBuffer ?: run {
@@ -367,13 +353,27 @@ class MinimapEditorState {
         }
     }
 
-    /** Finish a middle drag. Rejected drops are restored automatically. */
-    fun endMiddleRoomDrag(x: Int, y: Int, editorState: EditorState) {
-        if (!isMiddleDraggingRoom) return
+    private fun endPointerRoomDrag(
+        x: Int,
+        y: Int,
+        mode: RoomPointerMoveMode,
+        editorState: EditorState,
+    ) {
+        if (pointerMoveMode != mode) return
         updatePointerRoomMove(x, y)
         if (!applyMove(editorState)) cancelMove(editorState)
         selectedRoomIndex = -1
         clearPointerMoveMode()
+    }
+
+    /** Finish a primary drag. Rejected drops are restored automatically. */
+    fun endPrimaryRoomDrag(x: Int, y: Int, editorState: EditorState) {
+        endPointerRoomDrag(x, y, RoomPointerMoveMode.PRIMARY_DRAG, editorState)
+    }
+
+    /** Finish a middle drag. Rejected drops are restored automatically. */
+    fun endMiddleRoomDrag(x: Int, y: Int, editorState: EditorState) {
+        endPointerRoomDrag(x, y, RoomPointerMoveMode.MIDDLE_DRAG, editorState)
     }
 
     fun initIfNeeded(parser: RomParser, editorState: EditorState) {
@@ -406,8 +406,7 @@ class MinimapEditorState {
     fun selectRoomAt(x: Int, y: Int, editorState: EditorState) {
         if (x !in 0 until MinimapData.MAP_WIDTH || y !in 0 until MinimapData.MAP_HEIGHT) return
         // Right-click/context selection and programmatic selection must not
-        // secretly place a click-follow room. Only the explicit second primary
-        // click, middle release, Enter, or Apply commits a move.
+        // commit a pending pointer drag.
         if (moveBuffer != null) cancelMove(editorState)
         val idx = areaRooms.indexOfFirst { r ->
             x in r.mapX until (r.mapX + r.width) && y in r.mapY until (r.mapY + r.height)
