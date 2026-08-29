@@ -1,5 +1,6 @@
 package com.supermetroid.editor.headless
 
+import com.supermetroid.editor.data.PatchResourceClaim
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -29,6 +30,9 @@ data class SmeditRawWriteRequest(
     val address: String? = null,
     val bytes: List<Int> = emptyList(),
     val label: String = "",
+    val expectedBytes: List<Int>? = null,
+    val compatibleRomHashes: List<String> = emptyList(),
+    val resources: List<PatchResourceClaim> = emptyList(),
 )
 
 @Serializable
@@ -87,6 +91,37 @@ data class SmeditBuildReport(
     val patchBytes: Int = changedBytes,
     val applied: List<SmeditAppliedPatchReport>,
     val warnings: List<String> = emptyList(),
+    val writePlan: SmeditWritePlanReport? = null,
+)
+
+@Serializable
+data class SmeditWritePlanReport(
+    val writes: Int,
+    val bytes: Int,
+    val owners: List<SmeditWriteOwnerReport>,
+    val resourceClaims: Int = 0,
+    val resources: List<SmeditResourceClaimReport> = emptyList(),
+    val unverifiedFixedWrites: Int = 0,
+)
+
+@Serializable
+data class SmeditWriteOwnerReport(
+    val owner: String,
+    val writes: Int,
+    val bytes: Int,
+    val startOffset: Int,
+    val endInclusive: Int,
+)
+
+@Serializable
+data class SmeditResourceClaimReport(
+    val owner: String,
+    val namespace: String,
+    val start: Int,
+    val endInclusive: Int,
+    val label: String,
+    val access: String,
+    val sharedGroup: String? = null,
 )
 
 @Serializable

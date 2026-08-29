@@ -234,7 +234,20 @@ data class TileDefaultOverride(
 @Serializable
 data class PatchWrite(
     val offset: Long,         // unheadered PC offset (not SNES address)
-    val bytes: List<Int>      // byte values 0x00-0xFF
+    val bytes: List<Int>,     // byte values 0x00-0xFF
+    /** Optional bytes that must be present before this fixed write is applied. */
+    val expectedBytes: List<Int>? = null,
+)
+
+/** A patch's claim on a non-ROM runtime or identifier resource. */
+@Serializable
+data class PatchResourceClaim(
+    val namespace: String,
+    val start: Int,
+    val endInclusive: Int = start,
+    val label: String = "",
+    val access: String = "exclusive",
+    val sharedGroup: String? = null,
 )
 
 /**
@@ -273,7 +286,11 @@ data class SmPatch(
     var configType: String? = null,
     var configValue: Int? = null,
     var configData: MutableMap<String, Int>? = null,
-    val customItems: MutableList<CustomItemDef> = mutableListOf()
+    val customItems: MutableList<CustomItemDef> = mutableListOf(),
+    /** Headerless input-ROM SHA-256 values this fixed patch was authored for. */
+    val compatibleRomHashes: MutableList<String> = mutableListOf(),
+    /** Runtime/identifier resources used even when ROM write ranges do not overlap. */
+    val resources: MutableList<PatchResourceClaim> = mutableListOf(),
 )
 
 /**

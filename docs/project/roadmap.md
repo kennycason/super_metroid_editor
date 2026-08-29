@@ -2,7 +2,7 @@
 
 **See also:** `smile_parity.md` for complete SMILE vs SMEDIT feature comparison.
 **See also:** `plan.md` for detailed implementation notes per feature.
-**Last updated:** 2026-07-13
+**Last updated:** 2026-08-28
 
 ---
 
@@ -42,6 +42,7 @@
 - TestRomHelper migration — 73 test files, eliminated hardcoded ROM paths
 - FlowRow tab navigation — Tabs wrap when column is narrow
 - Minimap Room Move — Buffer-based with Apply/Cancel
+- Transactional ROM write planner — desktop/headless byte ownership, overlap and bounds failures, base-ROM hashes, expected-hook bytes, full allocation claims, runtime-resource declarations, and ownership reports
 
 ---
 
@@ -61,7 +62,7 @@
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 6 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |
+| 6 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
 | 7 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
 | 8 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
 | 9 | **Validation Suite** | Medium | PLM index scanner, door validator, item bitflag checker, GFX limit warnings. |

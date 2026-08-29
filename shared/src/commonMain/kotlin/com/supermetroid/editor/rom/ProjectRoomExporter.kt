@@ -12,6 +12,8 @@ class ProjectRoomExportException(message: String) : IllegalStateException(messag
 
 data class ProjectRoomExportResult(
     val roomsPatched: Set<String>,
+    /** Complete reserved ranges, including payload bytes whose value remains $FF. */
+    val allocations: List<RomAllocation> = emptyList(),
 )
 
 /**
@@ -32,11 +34,14 @@ class ProjectRoomExporter(
             project.rooms.values.any { it.hasEdits }
     }
 
+    private val allocations = mutableListOf<RomAllocation>()
+
     private val roomDataAllocator = RomFreeSpaceAllocator(
         romData = romData,
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val levelDataAllocator = RomFreeSpaceAllocator(
@@ -44,6 +49,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val enemyAllocator = RomFreeSpaceAllocator(
@@ -51,6 +57,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 1,
+        onReserve = allocations::add,
     )
 
     private val enemyGfxAllocator = RomFreeSpaceAllocator(
@@ -58,6 +65,7 @@ class ProjectRoomExporter(
         snesToPc = romParser::snesToPc,
         pcToSnes = romParser::pcToSnes,
         guardBytes = 2,
+        onReserve = allocations::add,
     )
 
     private val vanillaEnemyGfxDestinationsBySpecies by lazy {
@@ -143,7 +151,10 @@ class ProjectRoomExporter(
             }
         }
 
-        return ProjectRoomExportResult(roomsPatched = roomsPatched)
+        return ProjectRoomExportResult(
+            roomsPatched = roomsPatched,
+            allocations = allocations.toList(),
+        )
     }
 
     private fun applyLevelDataEdits(

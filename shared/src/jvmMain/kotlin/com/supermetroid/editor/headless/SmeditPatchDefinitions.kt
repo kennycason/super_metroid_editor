@@ -346,3 +346,4 @@ internal const val CONTROLLER_TABLE_PC = 0x017575
 internal const val PER_FRAME_HOOK_PAYLOAD_PC = 0x2FF040
 internal const val PER_FRAME_HOOK_PATCH_PC = 0x01096E
 internal val PER_FRAME_HOOK_JSL = listOf(0x22, 0x40, 0xF0, 0xDF)
+internal val PER_FRAME_ORIGINAL_JSL = listOf(0x22, 0xEF, 0x89, 0x82)

@@ -1,8 +1,10 @@
 package com.supermetroid.editor.headless
 
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomConstants
@@ -22,6 +24,7 @@ class SmeditBuildServiceTest {
     @Test
     fun `build applies catalog config and raw writes`() {
         val original = ByteArray(0x300000)
+        original[0x81EB9] = 0x04
         val request = SmeditBuildRequest(
             patches = mapOf(
                 "higher_jump" to SmeditPatchRequest(),
@@ -95,6 +98,7 @@ class SmeditBuildServiceTest {
     fun `build applies writes to headered rom body and emits headerless ips`() {
         val original = ByteArray(RomConstants.ROM_SIZE_WITH_HEADER)
         original.fill(0xA5.toByte(), 0, RomConstants.SMC_HEADER_SIZE)
+        original[RomConstants.SMC_HEADER_SIZE + 0x81EB9] = 0x04
         writeWord(original, RomConstants.SMC_HEADER_SIZE + FANFARE_MESSAGE_BOX_WAIT_PC, 0x1234)
 
         val request = SmeditBuildRequest(
@@ -143,7 +147,6 @@ class SmeditBuildServiceTest {
                 patches = mapOf(
                     "higher_jump" to SmeditPatchRequest(),
                     "skip_intro" to SmeditPatchRequest(),
-                    "skip_intro_and_ceres" to SmeditPatchRequest(),
                     "fast_elevators" to SmeditPatchRequest(),
                     "energy_free_shinesparks" to SmeditPatchRequest(),
                     "infinite_power_bombs" to SmeditPatchRequest(),
@@ -155,7 +158,6 @@ class SmeditBuildServiceTest {
                 patches = mapOf(
                     "hex_higher_jump" to SmeditPatchRequest(),
                     "bundled_skip_intro_ceres" to SmeditPatchRequest(),
-                    "bundled_skip_intro" to SmeditPatchRequest(),
                     "bundled_elevators_speed" to SmeditPatchRequest(),
                     "bundled_energy_free_shinesparks" to SmeditPatchRequest(),
                     "hex_infinite_pbs" to SmeditPatchRequest(),
@@ -166,10 +168,76 @@ class SmeditBuildServiceTest {
         assertContentEquals(internal.ipsPatchBytes, clean.ipsPatchBytes)
         assertTrue(clean.report.applied.any { it.identifier == "higher_jump" })
         assertTrue(clean.report.applied.any { it.identifier == "skip_intro" })
-        assertTrue(clean.report.applied.any { it.identifier == "skip_intro_and_ceres" })
         assertTrue(clean.report.applied.any { it.identifier == "fast_elevators" })
         assertTrue(clean.report.applied.any { it.identifier == "energy_free_shinesparks" })
         assertTrue(clean.report.applied.any { it.identifier == "infinite_power_bombs" })
+
+        val cleanSkipCeres = service.buildPatch(
+            SmeditBuildRequest(patches = mapOf("skip_intro_and_ceres" to SmeditPatchRequest()))
+        )
+        val internalSkipCeres = service.buildPatch(
+            SmeditBuildRequest(patches = mapOf("bundled_skip_intro" to SmeditPatchRequest()))
+        )
+        assertContentEquals(internalSkipCeres.ipsPatchBytes, cleanSkipCeres.ipsPatchBytes)
+        assertTrue(cleanSkipCeres.report.applied.any { it.identifier == "skip_intro_and_ceres" })
+    }
+
+    @Test
+    fun `patch only build rejects overlapping bundled patches`() {
+        val error = assertFailsWith<com.supermetroid.editor.rom.RomWriteConflictException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        "skip_intro" to SmeditPatchRequest(),
+                        "skip_intro_and_ceres" to SmeditPatchRequest(),
+                    )
+                )
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("bundled_skip_intro"))
+        assertTrue(error.message.orEmpty().contains("bundled_skip_intro_ceres"))
+    }
+
+    @Test
+    fun `rom build rejects a fixed patch authored for a different base rom`() {
+        val patch = SmPatch(
+            id = "base-specific",
+            name = "Base-specific patch",
+            writes = mutableListOf(PatchWrite(0x100, listOf(0xEA))),
+            compatibleRomHashes = mutableListOf("not-the-input-hash"),
+        )
+        val service = SmeditBuildService(listOf(patch))
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            service.build(
+                ByteArray(0x300000),
+                SmeditBuildRequest(patches = mapOf("base-specific" to SmeditPatchRequest())),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("not compatible with input ROM SHA-256"))
+    }
+
+    @Test
+    fun `rom build rejects a raw write with stale expected bytes`() {
+        val error = assertFailsWith<com.supermetroid.editor.rom.RomWritePreconditionException> {
+            SmeditBuildService().build(
+                ByteArray(0x300000),
+                SmeditBuildRequest(
+                    rawWrites = listOf(
+                        SmeditRawWriteRequest(
+                            pcOffset = 0x1234,
+                            bytes = listOf(0xEA),
+                            expectedBytes = listOf(0x60),
+                            label = "safe hook",
+                        )
+                    )
+                ),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("expected 0x60, found 0x00"))
     }
 
     @Test
@@ -447,6 +515,38 @@ class SmeditBuildServiceTest {
         val wrapperSnes = firstHook[1] or (firstHook[2] shl 8) or (firstHook[3] shl 16)
         assertEquals(0x22, result.romBytes[parser.snesToPc(wrapperSnes)].toInt() and 0xFF)
         assertTrue(result.report.applied.first { it.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE }.bytes > 100)
+    }
+
+    @Test
+    fun `spider ball and room names produce a conflict-free owned write plan`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+        val project = SmEditProject(
+            romPath = "base.smc",
+            roomNameOverrides = mutableMapOf("91F8" to "LANDING TEST"),
+        )
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf(
+                    "spider_ball" to SmeditPatchRequest(),
+                    ROOM_NAME_PAUSE_MAP_CONFIG_TYPE to SmeditPatchRequest(),
+                )
+            ),
+            project = project,
+        )
+
+        assertTrue(result.report.applied.any { it.identifier == "spider_ball" })
+        assertTrue(result.report.applied.any { it.configType == ROOM_NAME_PAUSE_MAP_CONFIG_TYPE })
+        val owners = result.report.writePlan?.owners.orEmpty().map { it.owner }.toSet()
+        assertTrue("patch:bundled_spider_ball" in owners)
+        assertTrue("patch:config_room_name_pause_map" in owners)
+        assertTrue((result.report.writePlan?.resourceClaims ?: 0) >= 9)
+
+        val hook = result.romBytes.readBytes(parser.snesToPc(0x828D25), 4)
+        assertEquals(0x22, hook[0])
+        assertTrue(hook[3] in 0x82..0xBE)
     }
 
     @Test

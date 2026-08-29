@@ -59,10 +59,22 @@ object RoomNamePauseMapPatch {
 
         val wrapperSnes = allocation.snesAddress
         val hookBytes = listOf(0x22, wrapperSnes and 0xFF, (wrapperSnes shr 8) and 0xFF, (wrapperSnes shr 16) and 0xFF)
-        val payloadWrite = PatchWrite(allocation.pcOffset.toLong(), payload.map { it.toInt() and 0xFF })
+        val payloadWrite = PatchWrite(
+            allocation.pcOffset.toLong(),
+            payload.map { it.toInt() and 0xFF },
+            List(payload.size) { 0xFF },
+        )
         val hookWrites = listOf(
-            PatchWrite(snesToPc(LOAD_PAUSE_MAP_CALL_1).toLong(), hookBytes),
-            PatchWrite(snesToPc(LOAD_PAUSE_MAP_CALL_2).toLong(), hookBytes),
+            PatchWrite(
+                snesToPc(LOAD_PAUSE_MAP_CALL_1).toLong(),
+                hookBytes,
+                ORIGINAL_LOAD_MAP_JSL.map { it.toInt() and 0xFF },
+            ),
+            PatchWrite(
+                snesToPc(LOAD_PAUSE_MAP_CALL_2).toLong(),
+                hookBytes,
+                ORIGINAL_LOAD_MAP_JSL.map { it.toInt() and 0xFF },
+            ),
         )
 
         for (write in hookWrites) verifyHookIsUnmodified(romData, write.offset.toInt(), pcToSnes(write.offset.toInt()))

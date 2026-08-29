@@ -3,6 +3,7 @@ package com.supermetroid.editor.headless
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 
 const val CERES_ESCAPE_CONFIG_TYPE = "ceres_escape_seconds"
@@ -64,7 +65,8 @@ const val CONTROLLER_CONFIG_TYPE = "controller_config"
 
 object SmeditPatchCatalog {
     fun defaultPatches(): List<SmPatch> =
-        hardcodedPatches() + configPatches() + unsupportedConfigPatches() + PatchRepository.loadBundledPatches()
+        withVanillaHexPatchPreconditions(hardcodedPatches()) +
+            configPatches() + unsupportedConfigPatches() + PatchRepository.loadBundledPatches()
 
     fun resolvePatchKey(key: String): String =
         patchAliasesByPublicId()[key] ?: key

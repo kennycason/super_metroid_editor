@@ -487,7 +487,7 @@ Same rules apply. Setup writes BTS `0x4B`/`0x4C` instead. Activation checks
 
 ## Export Process Summary
 
-Our `EditorState.exportToRom()` follows this order:
+Desktop and headless ROM builds now stage this order through `RomWritePlan`:
 
 1. **Apply IPS patches** — custom code/data written to ROM first
 2. **Scan free space** — banks `$8F` (PLM sets), `$A1` (enemies), `$C0-$CE` (level data)
@@ -498,9 +498,13 @@ Our `EditorState.exportToRom()` follows this order:
    - Update door-out table entries as needed
 4. **Apply GFX patches** — tileset modifications
 
-Patches are applied **before** free space scanning to prevent conflicts
-(e.g., `skip_intro` patch writes ASM to bank `$A1` that must not be overwritten
-by relocated enemy data).
+Patches are applied **before** free space scanning so fixed code/data is visible
+to allocators (for example, `skip_intro` writes ASM to bank `$A1`). Ordering alone
+is not the safety mechanism: every mutation is assigned an owner and replayed
+through bounds, expected-byte, overlap, and declared-resource validation. Full
+allocation ranges are claimed even when payload bytes remain `$FF`. Export is
+transactional and no output file is written if validation fails. See
+[`write_safety.md`](write_safety.md).
 
 ---
 

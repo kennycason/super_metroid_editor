@@ -1,12 +1,44 @@
 # Code Cleanup And Missing Features Review
 
-Last updated: 2026-08-08
+Last updated: 2026-08-28
 
 Scope: static review of the current codebase, docs, and test structure. SMART experimental support is intentionally excluded. The original review pass was static; the 2026-08-08 implementation follow-up ran shared and desktop JVM tests.
 
 Primary assumption: the desktop app is currently the canonical editing/export surface because it supports the broadest project export behavior.
 
 ## Top Findings
+
+### P0: Patch And Export Writes Could Silently Stomp Each Other
+
+- Status: Core safety layer addressed on 2026-08-28; semantic/emulator hardening remains
+- Area: desktop and headless ROM export
+- References:
+  - [`RomWritePlan.kt`](../../shared/src/commonMain/kotlin/com/supermetroid/editor/rom/RomWritePlan.kt)
+  - [`write_safety.md`](../rom/write_safety.md)
+
+All export categories now pass through one transactional ownership plan. The
+plan rejects overlapping owners, out-of-bounds writes, stale expected bytes,
+incompatible curated-patch ROM hashes, duplicate allocation use, and declared
+WRAM/VRAM/hook/ID resource conflicts before a file is emitted. Desktop logs an
+owner/range report and headless builds expose the report structurally.
+
+The real Spike Olympics project is an integration fixture for Room Names plus
+Spider Ball. It revealed one byte-identical shared tileset-palette alias, which
+is now permitted only through an explicit identical-overlap policy. The
+Varia-only rendering artifact is not a direct ROM-byte collision; runtime
+resource declarations and emulator state-matrix tests still need expansion.
+
+Done when:
+
+- [x] Desktop and headless exports stage writes against an immutable input copy.
+- [x] Cross-feature byte overlaps and out-of-range writes fail closed.
+- [x] Generated allocations claim unchanged `$FF` payload bytes.
+- [x] Curated patches declare compatible base-ROM hashes; small fixed hex edits and generated hooks have exact preconditions.
+- [x] Complex patches can declare non-ROM resources and shared hook groups.
+- [x] External IPS parsing rejects truncated records and invalid trailing data.
+- [ ] Every complex bundled ASM patch declares all meaningful runtime resources.
+- [ ] Automated emulator combinations cover equipment, pause, room transition, and draw-state interactions.
+- [ ] All legacy captured writers emit direct planned writes through one shared allocation registry.
 
 ### P0: Export Can Knowingly Corrupt ROM Data
 
@@ -35,12 +67,15 @@ Done when:
 
 The room-edit export core is now shared. Desktop export and headless ROM builds both call `ProjectRoomExporter` for room level data, PLMs, custom scroll commands, doors, enemy population/GFX sets, scroll data, FX, room headers, state data, and save station spawns. Patch-only headless builds still require `--rom` for room edits because compressed room data cannot be produced safely without ROM context.
 
-Remaining work: patch/config export, custom graphics, music, text, minimap, and custom ASM still have separate desktop/headless implementations or partial support.
+Remaining work: both paths now share write validation and ownership reporting,
+but patch/config generation, custom graphics, music, text, minimap, and custom
+ASM still have separate implementations or partial support.
 
 Done when:
 
 - [x] Shared room export engine lives in `shared`.
 - [x] Desktop ROM export and service/headless ROM builds call the same room-edit core.
+- [x] Both paths use the shared transactional ROM write plan.
 - [ ] Continue unifying patch/config, graphics, music, text, minimap, and custom ASM export.
 - [ ] Replace ad hoc logs/warnings with structured export issues.
 
@@ -150,7 +185,7 @@ Done when:
 
 ### Highest Priority
 
-- [ ] ROM expansion and safer free-space allocation.
+- [ ] Managed ROM expansion and one layout-aware free-space allocation registry. Transactional allocation ownership is implemented; independent scanners remain to be unified.
 - [ ] New room creation/deletion with room header, state, door, level, enemy, PLM, scroll, and minimap allocation.
 - [ ] Room JSON import with conflict handling and validation.
 - [ ] AreaSave expansion and duplicate-slot conflict UI.
@@ -172,13 +207,13 @@ Done when:
 
 ## Suggested Work Order
 
-1. Make corruption impossible: turn unsafe scroll-data in-place writes into hard export failures.
-2. Introduce a structured export issue model and start routing desktop exporter warnings through it.
-3. Extract a shared export planner/engine for one narrow slice, then move additional desktop/headless behavior into it incrementally.
+1. Expand complex-patch runtime resource declarations and add emulator-backed patch/equipment combination tests.
+2. Move legacy capture adapters to direct planned writes and unify independent free-space scanners behind one allocation registry.
+3. Introduce a structured desktop export issue/preflight model using the existing write-plan report.
 4. Add parser indexes for room headers and door graph, then update room load/list code to use them.
-5. Split the first piece out of `EditorState`, preferably project persistence or export orchestration.
+5. Split room and graphics sessions out of `EditorState`.
 6. Make the service patch UI metadata-driven.
-7. Separate diagnostics from default tests and add focused regression fixtures for export safety.
+7. Separate diagnostics from default tests and add focused synthetic/ROM integration fixtures.
 
 ## Quality Gates To Add
 

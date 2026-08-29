@@ -11,6 +11,7 @@ class RomFreeSpaceAllocator(
     private val snesToPc: (Int) -> Int,
     private val pcToSnes: (Int) -> Int,
     private val guardBytes: Int = 1,
+    private val onReserve: (RomAllocation) -> Unit = {},
 ) {
     private val nextFreeByBank = mutableMapOf<Int, Int>()
 
@@ -85,7 +86,7 @@ class RomFreeSpaceAllocator(
             snesAddress = pcToSnes(cursor),
             size = size,
             label = label,
-        )
+        ).also(onReserve)
     }
 
     private fun scanTrailingFreeStart(bankStart: Int, bankEndExclusive: Int): Int {

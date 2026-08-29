@@ -11,6 +11,7 @@ import com.supermetroid.editor.data.EnemyChange
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.ScrollChange
@@ -1578,9 +1579,23 @@ class EditorState {
         }
 
         // 2. Hardcoded hex-tweak patches (popular ones first via list order)
-        for (def in HARDCODED_PATCHES) {
+        for (def in withVanillaHexPatchPreconditions(HARDCODED_PATCHES)) {
             if (def.id !in existingIds) {
                 ordered.add(def.copy(writes = def.writes.toMutableList()))
+            } else {
+                project.patches.find { it.id == def.id }?.let { existing ->
+                    val expectedByWrite = def.writes.associateBy { it.offset to it.bytes }
+                    var expectedChanged = false
+                    for (index in existing.writes.indices) {
+                        val current = existing.writes[index]
+                        val expected = expectedByWrite[current.offset to current.bytes]?.expectedBytes
+                        if (current.expectedBytes != expected && expected != null) {
+                            existing.writes[index] = current.copy(expectedBytes = expected.toList())
+                            expectedChanged = true
+                        }
+                    }
+                    if (expectedChanged) refreshed++
+                }
             }
         }
 
@@ -1601,17 +1616,39 @@ class EditorState {
                             it.customItems.addAll(patch.customItems.map { customItem -> customItem.copy() })
                             refreshed++
                         }
+                        if (it.compatibleRomHashes != patch.compatibleRomHashes) {
+                            it.compatibleRomHashes.clear()
+                            it.compatibleRomHashes.addAll(patch.compatibleRomHashes)
+                            refreshed++
+                        }
+                        if (it.resources != patch.resources) {
+                            it.resources.clear()
+                            it.resources.addAll(patch.resources.map { resource -> resource.copy() })
+                            refreshed++
+                        }
                         val oldHash = bytesSha256(it.writes.flatMap { write -> write.bytes })
                         val newHash = bytesSha256(patch.writes.flatMap { write -> write.bytes })
                         if (oldHash != newHash || it.writes.size != patch.writes.size) {
                             it.writes.clear()
                             it.writes.addAll(patch.writes.map { write ->
-                                PatchWrite(write.offset, write.bytes.toList())
+                                PatchWrite(write.offset, write.bytes.toList(), write.expectedBytes?.toList())
                             })
                             refreshed++
                             if (patch.id == "bundled_spider_ball") {
                                 editorLog("[PATCH-SEED] Refreshed Spider Ball bundled writes: ${patch.writes.size} records, sha256=$newHash")
                             }
+                        } else {
+                            val expectedByWrite = patch.writes.associateBy { write -> write.offset to write.bytes }
+                            var expectedChanged = false
+                            for (index in it.writes.indices) {
+                                val current = it.writes[index]
+                                val expected = expectedByWrite[current.offset to current.bytes]?.expectedBytes
+                                if (current.expectedBytes != expected && expected != null) {
+                                    it.writes[index] = current.copy(expectedBytes = expected.toList())
+                                    expectedChanged = true
+                                }
+                            }
+                            if (expectedChanged) refreshed++
                         }
                     }
                 }
