@@ -85,10 +85,11 @@ tasks.named("jvmMainClasses") {
     dependsOn(rootProject.tasks.named("buildLibretroCore"))
 }
 
-// Wire the copy into packaging tasks so the core is bundled in the app
+// Wire the copy into packaging tasks so the core (and worker, if present) is bundled
 afterEvaluate {
     tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach {
         dependsOn(copyLibretroToAppResources)
+        dependsOn(copyLsnesWorkerToAppResources)
     }
 }
 
@@ -114,6 +115,24 @@ val copyLibretroToAppResources by tasks.registering(Copy::class) {
     from(coreFile)
     into(project.layout.buildDirectory.dir("appResources/$platformDir"))
     onlyIf { coreFile.exists() }
+}
+
+// ── Copy lsnes worker into app resources for packaging (optional) ─────
+val copyLsnesWorkerToAppResources by tasks.registering(Copy::class) {
+    val os = System.getProperty("os.name").lowercase()
+    val arch = System.getProperty("os.arch").lowercase()
+    val exe = if (os.contains("win")) "smedit-lsnes-worker.exe" else "smedit-lsnes-worker"
+    val platformDir = when {
+        os.contains("mac") && (arch == "aarch64" || arch == "arm64") -> "macos-arm64"
+        os.contains("mac") -> "macos-x64"
+        os.contains("win") -> "windows-x64"
+        else -> "linux-x64"
+    }
+    val workerFile = rootProject.file("tools/lsnes-smedit/bin/$exe")
+
+    from(workerFile)
+    into(project.layout.buildDirectory.dir("appResources/$platformDir"))
+    onlyIf { workerFile.exists() }
 }
 
 compose.desktop {

@@ -14,14 +14,17 @@ import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorCapabilities
 import com.supermetroid.editor.emulator.EmulatorInput
 import com.supermetroid.editor.emulator.EmulatorRegistry
+import com.supermetroid.editor.emulator.AudioControllableBackend
 import com.supermetroid.editor.emulator.FrameHolder
+import com.supermetroid.editor.emulator.FrameProvidingBackend
 import com.supermetroid.editor.emulator.GameSnapshot
-import com.supermetroid.editor.emulator.LibretroBackend
+import com.supermetroid.editor.emulator.LsnesDiscovery
 import com.supermetroid.editor.emulator.RetroArchBackend
 import com.supermetroid.editor.emulator.SessionConfig
 import com.supermetroid.editor.emulator.SessionState
 import com.supermetroid.editor.emulator.StateInfo
 import com.supermetroid.editor.emulator.StepResult
+import com.supermetroid.editor.emulator.StateDirectoryBackend
 import com.supermetroid.editor.emulator.TracePoint
 import com.supermetroid.editor.integration.EditorDoorExport
 import com.supermetroid.editor.integration.EditorNavGraph
@@ -153,7 +156,7 @@ class EmulatorWorkspaceState(
         private set
     /** True when the audio buffer has headroom (emulator is ahead of real-time playback) */
     val audioHasHeadroom: Boolean
-        get() = (backend as? LibretroBackend)?.audioHasHeadroom ?: true
+        get() = (backend as? AudioControllableBackend)?.audioHasHeadroom ?: true
     private var stepInFlight = false
     private val pressedKeys = mutableSetOf<Key>()
     val gamepadManager = com.supermetroid.editor.controller.GamepadManager()
@@ -176,8 +179,21 @@ class EmulatorWorkspaceState(
     )
     var retroArchNwaPort by mutableStateOf(AppConfig.load().retroArchNwaPort)
 
-    /** True when using an external emulator backend (no in-editor video). */
-    val isExternalBackend: Boolean get() = selectedBackendName == "retroarch"
+    // lsnes rr2-beta25 TAS configuration
+    var lsnesPath by mutableStateOf(
+        AppConfig.load().lsnesPath ?: LsnesDiscovery.findWorker() ?: ""
+    )
+    var lsnesMoviePath by mutableStateOf(AppConfig.load().lsnesMoviePath ?: "")
+    var lsnesLuaScriptPath by mutableStateOf(AppConfig.load().lsnesLuaScriptPath ?: "")
+
+    /** True when the selected backend cannot render frames inside SMEDIT. */
+    val isExternalBackend: Boolean
+        get() = capabilities?.supportsFrames == false ||
+            (capabilities == null && selectedBackendName == "retroarch")
+    val supportsAudio: Boolean get() = capabilities?.supportsAudio == true
+    val supportsSaveStates: Boolean get() = capabilities?.supportsSaveStates != false
+    val isTasMoviePlayback: Boolean
+        get() = selectedBackendName == "lsnes-b25" && lsnesMoviePath.isNotBlank()
 
     var statusMessage by mutableStateOf("Click Play to start the emulator.")
         internal set
@@ -262,7 +278,7 @@ class EmulatorWorkspaceState(
             val b = backendFactory?.invoke()
                 ?: EmulatorRegistry.create(selectedBackendName)
             backend = b
-            frameHolder = (b as? LibretroBackend)?.frameHolder
+            frameHolder = (b as? FrameProvidingBackend)?.frameHolder
             val caps = b.connect()
             capabilities = caps
             configureBridge()
@@ -337,6 +353,11 @@ class EmulatorWorkspaceState(
                 SessionConfig(
                     romPath = currentRomPath,
                     stateName = stateName,
+                    moviePath = lsnesMoviePath.trim().takeIf { selectedBackendName == "lsnes-b25" && it.isNotEmpty() },
+                    luaScriptPaths = lsnesLuaScriptPath.trim()
+                        .takeIf { selectedBackendName == "lsnes-b25" && it.isNotEmpty() }
+                        ?.let(::listOf)
+                        ?: emptyList(),
                     navExportDir = navExportDir,
                     controlMode = requestedControlMode,
                 )
@@ -415,6 +436,7 @@ class EmulatorWorkspaceState(
             val result = b.step(
                 EmulatorInput(
                     buttons = currentAction(),
+                    applyButtons = !isTasMoviePlayback,
                     repeat = repeat,
                     includeFrame = includeFrame,
                     includeTrace = includeTrace,
@@ -702,7 +724,7 @@ class EmulatorWorkspaceState(
     }
 
     fun toggleAudioMute() {
-        val b = backend as? LibretroBackend ?: return
+        val b = backend as? AudioControllableBackend ?: return
         audioMuted = !audioMuted
         b.audioMuted = audioMuted
         persistConfig()
@@ -710,7 +732,7 @@ class EmulatorWorkspaceState(
 
     fun updateAudioVolume(vol: Float) {
         audioVolume = vol.coerceIn(0f, 1f)
-        (backend as? LibretroBackend)?.audioVolume = audioVolume
+        (backend as? AudioControllableBackend)?.audioVolume = audioVolume
         persistConfig()
     }
 
@@ -727,7 +749,7 @@ class EmulatorWorkspaceState(
 
     /** Propagate current audio settings to the backend (call after reconnect). */
     fun propagateAudioState() {
-        val b = backend as? LibretroBackend ?: return
+        val b = backend as? AudioControllableBackend ?: return
         b.audioMuted = audioMuted
         b.audioVolume = audioVolume
     }
@@ -897,12 +919,12 @@ class EmulatorWorkspaceState(
             ?.replace(Regex("[^a-zA-Z0-9_\\-.]"), "_")
             ?: "default"
         val base = File(System.getProperty("user.home"), ".smedit")
-        return File(File(File(base, "states"), "libretro"), projectSlug)
+        return File(File(File(base, "states"), selectedBackendName), projectSlug)
     }
 
     /** Point save states at a project-specific subdirectory. */
     private fun updateStateDirForProject() {
-        val b = backend as? LibretroBackend ?: return
+        val b = backend as? StateDirectoryBackend ?: return
         b.setStateDir(projectStateDir())
     }
 
@@ -1145,6 +1167,26 @@ class EmulatorWorkspaceState(
         persistConfig()
     }
 
+    fun updateSelectedBackendName(value: String) {
+        selectedBackendName = value
+        persistConfig()
+    }
+
+    fun updateLsnesPath(value: String) {
+        lsnesPath = value
+        persistConfig()
+    }
+
+    fun updateLsnesMoviePath(value: String) {
+        lsnesMoviePath = value
+        persistConfig()
+    }
+
+    fun updateLsnesLuaScriptPath(value: String) {
+        lsnesLuaScriptPath = value
+        persistConfig()
+    }
+
     private fun persistConfig() {
         AppConfig.update {
             copy(
@@ -1154,6 +1196,9 @@ class EmulatorWorkspaceState(
                 retroArchPath = this@EmulatorWorkspaceState.retroArchPath.takeIf { it.isNotBlank() },
                 retroArchCorePath = this@EmulatorWorkspaceState.retroArchCorePath.takeIf { it.isNotBlank() },
                 retroArchNwaPort = this@EmulatorWorkspaceState.retroArchNwaPort,
+                lsnesPath = this@EmulatorWorkspaceState.lsnesPath.takeIf { it.isNotBlank() },
+                lsnesMoviePath = this@EmulatorWorkspaceState.lsnesMoviePath.takeIf { it.isNotBlank() },
+                lsnesLuaScriptPath = this@EmulatorWorkspaceState.lsnesLuaScriptPath.takeIf { it.isNotBlank() },
                 emulatorAudioVolume = this@EmulatorWorkspaceState.audioVolume,
                 emulatorAudioMuted = this@EmulatorWorkspaceState.audioMuted,
             )

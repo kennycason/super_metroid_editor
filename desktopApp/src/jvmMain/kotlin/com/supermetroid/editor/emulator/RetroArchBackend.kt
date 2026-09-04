@@ -41,6 +41,7 @@ class RetroArchBackend : EmulatorBackend {
             supportsFrames = false,
             supportsMemoryAccess = true,
             supportsSaveStates = false,
+            supportsHostInput = false,
         )
     }
 

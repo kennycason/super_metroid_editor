@@ -428,7 +428,7 @@ private fun EmulatorSettingsTab(
                     if (workspaceState.isConnected) {
                         workspaceState.disconnectBridge()
                     }
-                    workspaceState.selectedBackendName = backend
+                    workspaceState.updateSelectedBackendName(backend)
                 },
                 shape = RoundedCornerShape(6.dp),
                 color = if (selected) MaterialTheme.colorScheme.primaryContainer
@@ -505,6 +505,53 @@ private fun EmulatorSettingsTab(
         "libretro" -> {
             Text(
                 "Embedded SNES emulator via libretro core. No external setup required.",
+                fontSize = currentFontSize.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        "lsnes-b25" -> {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "lsnes Worker",
+                fontSize = currentFontSize.body,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            AppTextInput(
+                value = workspaceState.lsnesPath,
+                onValueChange = { workspaceState.updateLsnesPath(it) },
+                placeholder = "Path to smedit-lsnes-worker",
+                modifier = Modifier.fillMaxWidth(),
+                monospace = true,
+            )
+            Text(
+                "TAS Movie",
+                fontSize = currentFontSize.body,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            AppTextInput(
+                value = workspaceState.lsnesMoviePath,
+                onValueChange = { workspaceState.updateLsnesMoviePath(it) },
+                placeholder = "Path to TASVideos movie (*.lsmv)",
+                modifier = Modifier.fillMaxWidth(),
+                monospace = true,
+            )
+            Text(
+                "Extra Lua Script",
+                fontSize = currentFontSize.body,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            AppTextInput(
+                value = workspaceState.lsnesLuaScriptPath,
+                onValueChange = { workspaceState.updateLsnesLuaScriptPath(it) },
+                placeholder = "Optional extra Lua script",
+                modifier = Modifier.fillMaxWidth(),
+                monospace = true,
+            )
+            Text(
+                "Stock lsnes is rejected. Movies must be TASVideos .lsmv. Play boots ROM+movie together.",
                 fontSize = currentFontSize.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

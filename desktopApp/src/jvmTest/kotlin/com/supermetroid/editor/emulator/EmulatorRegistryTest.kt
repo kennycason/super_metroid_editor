@@ -21,6 +21,7 @@ class EmulatorRegistryTest {
     fun `registry lists available backends`() {
         val backends = EmulatorRegistry.availableBackends()
         assertTrue(backends.contains("libretro"))
+        assertTrue(backends.contains("lsnes-b25"))
     }
 
     @Test

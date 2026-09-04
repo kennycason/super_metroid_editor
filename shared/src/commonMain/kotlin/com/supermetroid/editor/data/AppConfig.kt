@@ -44,6 +44,9 @@ data class AppSettings(
     val retroArchPath: String? = null,
     val retroArchCorePath: String? = null,
     val retroArchNwaPort: Int = 55355,
+    val lsnesPath: String? = null,
+    val lsnesMoviePath: String? = null,
+    val lsnesLuaScriptPath: String? = null,
     val theme: String = "DARK",
     val fontSize: String = "MEDIUM",
     val emulatorAudioVolume: Float = 1.0f,
@@ -69,6 +72,9 @@ object AppConfig {
         return settings.copy(
             emulatorBackend = env("SMEDIT_EMULATOR_BACKEND") ?: settings.emulatorBackend,
             emulatorNavExportDir = env("SMEDIT_NAV_EXPORT_DIR") ?: settings.emulatorNavExportDir,
+            lsnesPath = env("SMEDIT_LSNES_PATH") ?: settings.lsnesPath,
+            lsnesMoviePath = env("SMEDIT_LSNES_MOVIE") ?: settings.lsnesMoviePath,
+            lsnesLuaScriptPath = env("SMEDIT_LSNES_LUA") ?: settings.lsnesLuaScriptPath,
         )
     }
 

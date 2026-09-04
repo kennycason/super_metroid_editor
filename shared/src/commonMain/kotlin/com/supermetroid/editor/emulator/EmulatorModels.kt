@@ -8,6 +8,10 @@ data class EmulatorCapabilities(
     val supportsFrames: Boolean = true,
     val supportsMemoryAccess: Boolean = false,
     val supportsSaveStates: Boolean = true,
+    val supportsAudio: Boolean = false,
+    val supportsHostInput: Boolean = true,
+    val supportsMoviePlayback: Boolean = false,
+    val supportsLuaScripting: Boolean = false,
     val supportsMultiPlayer: Boolean = false,
     val supportsRecording: Boolean = false,
     val supportsAgentControl: Boolean = false,
@@ -17,6 +21,8 @@ data class EmulatorCapabilities(
 data class SessionConfig(
     val romPath: String? = null,
     val stateName: String? = null,
+    val moviePath: String? = null,
+    val luaScriptPaths: List<String> = emptyList(),
     val playerCount: Int = 1,
     val navExportDir: String? = null,
     val controlMode: String = "manual",
@@ -38,6 +44,7 @@ data class SessionState(
 @Serializable
 data class EmulatorInput(
     val buttons: List<Int> = List(12) { 0 },
+    val applyButtons: Boolean = true,
     val repeat: Int = 1,
     val includeFrame: Boolean = true,
     val includeTrace: Boolean = true,

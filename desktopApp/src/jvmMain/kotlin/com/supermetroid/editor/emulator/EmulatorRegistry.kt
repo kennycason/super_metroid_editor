@@ -7,6 +7,7 @@ object EmulatorRegistry {
     private val factories = mutableMapOf<String, () -> EmulatorBackend>(
         "libretro" to { LibretroBackend() },
         "retroarch" to { RetroArchBackend() },
+        "lsnes-b25" to { LsnesBackend() },
     )
 
     fun create(name: String): EmulatorBackend {

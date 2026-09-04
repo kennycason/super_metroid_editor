@@ -41,3 +41,26 @@ tasks.register("cleanLibretroCore", Exec::class) {
     workingDir = file("tools/snes9x/libretro")
     commandLine("make", "clean")
 }
+
+// ── Build popup-free lsnes rr2-beta25 worker ───────────────────────────────
+
+val buildLsnesWorker by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Compile popup-free lsnes rr2-beta25 worker (smedit-lsnes-worker)"
+    workingDir = file("tools/lsnes-smedit")
+    val os = System.getProperty("os.name").lowercase()
+    val exe = if (os.contains("win")) "smedit-lsnes-worker.exe" else "smedit-lsnes-worker"
+    val outputFile = file("tools/lsnes-smedit/bin/$exe")
+    inputs.dir("tools/lsnes-smedit")
+    inputs.dir("tools/lsnes")
+    outputs.file(outputFile)
+    val cpuCount = Runtime.getRuntime().availableProcessors()
+    commandLine("make", "-j$cpuCount")
+}
+
+tasks.register("cleanLsnesWorker", Exec::class) {
+    group = "build"
+    description = "Clean popup-free lsnes rr2-beta25 worker build artifacts"
+    workingDir = file("tools/lsnes-smedit")
+    commandLine("make", "clean")
+}
