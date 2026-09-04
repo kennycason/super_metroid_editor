@@ -24,6 +24,8 @@ local done_path = outbox_dir .. "/done"
 local pending_action = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 local live_input = false
 local current_cmd = nil
+local target_frame = nil
+local last_emulated_frame = nil
 local finished = false
 local initialized = false
 
@@ -76,6 +78,7 @@ local function parse_cmd(text)
     includeFrame = not text:match('"includeFrame"%s*:%s*false'),
     includeWram = not text:match('"includeWram"%s*:%s*false'),
     applyButtons = not text:match('"applyButtons"%s*:%s*false'),
+    repeatFrames = tonumber(text:match('"repeat"%s*:%s*(%d+)')) or 1,
     action = parse_number_array(text, "action"),
     data = parse_number_array(text, "data"),
   }
@@ -87,6 +90,10 @@ end
 local function frame_now()
   if movie and movie.currentframe then return movie.currentframe() end
   return 0
+end
+
+local function reply_frame()
+  return last_emulated_frame or frame_now()
 end
 
 local function set_paused(paused)
@@ -123,7 +130,7 @@ local function write_error(cmd, err)
   write_file(
     reply_path,
     string.format('{"id":"%s","ok":false,"error":"%s","frame":%d}\n',
-      json_escape(cmd and cmd.id or ""), json_escape(err), frame_now())
+      json_escape(cmd and cmd.id or ""), json_escape(err), reply_frame())
   )
   write_file(done_path, "error\n")
 end
@@ -141,7 +148,7 @@ local function write_reply(cmd)
     local pose = memory.readword(WRAM + ADDR_POSE)
     local header = string.format(
       '{"id":"%s","ok":true,"frame":%d,"version":"lsnes-rr2-beta25","core":"lsnes-bsnes-v085","width":256,"height":224,"action":%s,"pose":%d,"wramBinaryLength":%d}\n',
-      json_escape(cmd.id), frame_now(), action_json(cmd.action or pending_action), pose, wram and #wram or 0
+      json_escape(cmd.id), reply_frame(), action_json(cmd.action or pending_action), pose, wram and #wram or 0
     )
     assert(write_file(reply_path, header), "cannot write reply")
     assert(write_file(done_path, "ok\n"), "cannot write completion marker")
@@ -155,10 +162,11 @@ local function apply_joyset(action)
   input.joyset(1, controls)
 end
 
-local function complete_after_frame(cmd)
+local function complete_after_frame(cmd, frame_count)
   current_cmd = cmd
-  -- Unpause and let frame_emulated re-pause. +advance-frame invoked from Lua
-  -- ACKs the current frame without advancing under dummy graphics.
+  local base_frame = last_emulated_frame or frame_now()
+  target_frame = frame_count and (base_frame + math.max(1, math.floor(frame_count))) or nil
+  -- Unpause once; frame_emulated re-pauses after the requested batch.
   set_paused(false)
 end
 
@@ -193,7 +201,7 @@ local function handle_cmd(cmd)
   elseif cmd.cmd == "step" then
     pending_action = cmd.action
     live_input = cmd.applyButtons
-    complete_after_frame(cmd)
+    complete_after_frame(cmd, cmd.repeatFrames)
   else
     write_error(cmd, "unknown command: " .. tostring(cmd.cmd))
   end
@@ -212,9 +220,12 @@ local function on_worker_input()
 end
 
 local function on_worker_frame()
+  last_emulated_frame = frame_now()
   if current_cmd then
+    if target_frame and last_emulated_frame < target_frame then return end
     local cmd = current_cmd
     current_cmd = nil
+    target_frame = nil
     set_paused(true)
     write_reply(cmd)
   end

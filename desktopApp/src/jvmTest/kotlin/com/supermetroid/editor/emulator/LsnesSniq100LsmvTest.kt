@@ -53,17 +53,12 @@ class LsnesSniq100LsmvTest {
         )
         try {
             backend.connect()
-            val started = try {
-                backend.startSession(
-                    SessionConfig(
-                        romPath = rom!!.absolutePath,
-                        moviePath = movie.absolutePath,
-                    ),
-                )
-            } catch (error: Exception) {
-                assumeTrue(false, "lsnes worker did not complete hello/startSession: ${error.message}")
-                return@runBlocking
-            }
+            val started = backend.startSession(
+                SessionConfig(
+                    romPath = rom!!.absolutePath,
+                    moviePath = movie.absolutePath,
+                ),
+            )
             assertTrue(started.session.frameCounter >= 0)
             val snapshot = backend.snapshot()
             val roomId: Int = requireNotNull(snapshot.roomId) { "roomId should be an Int at boot, was null" }
@@ -86,8 +81,8 @@ class LsnesSniq100LsmvTest {
     @Test
     @Tag("lsnes-integration")
     @EnabledIfEnvironmentVariable(named = "SMEDIT_LSNES_IT", matches = "1")
-    @Timeout(value = 4, unit = TimeUnit.MINUTES)
-    fun `sniq movie reaches Ceres elevator at frame 8319`() = runBlocking {
+    @Timeout(value = 2, unit = TimeUnit.MINUTES)
+    fun `sniq movie reaches Ceres elevator and Landing Site markers`() = runBlocking {
         val worker = LsnesDiscovery.findWorker()
         assumeTrue(worker != null, "smedit-lsnes-worker not built")
         val rom = TestRomHelper.romFile()
@@ -97,6 +92,18 @@ class LsnesSniq100LsmvTest {
         }
 
         val movie = fixtureFile()
+        val extraLuaMarker = File(tempDir, "extra-lua-ran.txt")
+        val extraLua = File(tempDir, "extra.lua").apply {
+            val markerPath = extraLuaMarker.absolutePath.replace("\\", "\\\\").replace("\"", "\\\"")
+            writeText(
+                """
+                local marker = assert(io.open("$markerPath", "w"))
+                marker:write("loaded")
+                marker:close()
+                callback.register("frame_emulated", function() end)
+                """.trimIndent(),
+            )
+        }
         var recordedCommand: List<String> = emptyList()
         val backend = LsnesBackend(
             executableOverride = File(worker!!),
@@ -109,33 +116,47 @@ class LsnesSniq100LsmvTest {
         )
         try {
             backend.connect()
-            backend.startSession(
+            val started = backend.startSession(
                 SessionConfig(
                     romPath = rom.absolutePath,
                     moviePath = movie.absolutePath,
+                    luaScriptPaths = listOf(extraLua.absolutePath),
                 ),
             )
             assertTrue(recordedCommand.any { it.startsWith("--rom-a=") }) { "expected --rom-a=: $recordedCommand" }
             assertTrue(recordedCommand.drop(1).any { !it.startsWith("-") && it.endsWith(".lsmv") }) {
                 "expected positional .lsmv: $recordedCommand"
             }
+            assertEquals("loaded", extraLuaMarker.readText())
+            assertNotNull(backend.frameHolder.latestFrame) { "headless worker did not return a frame PNG" }
 
-            val deadline = System.currentTimeMillis() + REPLAY_TIMEOUT_MILLIS
-            var frame = 0
-            while (frame < CERES_ELEVATOR_FRAME && System.currentTimeMillis() < deadline) {
-                val remaining = CERES_ELEVATOR_FRAME - frame
-                val repeat = remaining.coerceAtMost(16)
+            var frame = started.session.frameCounter
+            suspend fun advanceTo(targetFrame: Int) {
+                val remaining = targetFrame - frame
+                assertTrue(remaining > 0) { "cannot advance from frame $frame to $targetFrame" }
                 val result = backend.step(
-                    EmulatorInput(applyButtons = false, includeFrame = false, repeat = repeat),
+                    EmulatorInput(applyButtons = false, includeFrame = false, repeat = remaining),
                 )
                 frame = result.session.frameCounter
+                assertEquals(targetFrame, frame)
             }
-            assertTrue(frame >= CERES_ELEVATOR_FRAME) {
-                "timed out fast-forwarding Sniq movie: frame=$frame"
+
+            advanceTo(CERES_ELEVATOR_FRAME)
+            val ceresElevator = backend.snapshot()
+            assertEquals(CERES_ELEVATOR_FRAME, ceresElevator.frameCounter) {
+                "worker advanced after acknowledging frame $CERES_ELEVATOR_FRAME"
             }
-            val snapshot = backend.snapshot()
-            assertEquals(CERES_ELEVATOR_ROOM, snapshot.roomId) {
-                "expected Ceres elevator 0x${CERES_ELEVATOR_ROOM.toString(16).uppercase()} at frame $frame, got roomId=${snapshot.roomId}"
+            assertEquals(CERES_ELEVATOR_ROOM, ceresElevator.roomId) {
+                "expected Ceres elevator 0x${CERES_ELEVATOR_ROOM.toString(16).uppercase()} at frame $frame, got roomId=${ceresElevator.roomId}"
+            }
+
+            advanceTo(LANDING_SITE_FRAME)
+            val landingSite = backend.snapshot()
+            assertEquals(LANDING_SITE_FRAME, landingSite.frameCounter) {
+                "worker advanced after acknowledging frame $LANDING_SITE_FRAME"
+            }
+            assertEquals(LANDING_SITE_ROOM, landingSite.roomId) {
+                "expected Landing Site 0x${LANDING_SITE_ROOM.toString(16).uppercase()} at frame $frame, got roomId=${landingSite.roomId}"
             }
         } finally {
             backend.close()
@@ -163,7 +184,8 @@ class LsnesSniq100LsmvTest {
             "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72"
         private const val CERES_ELEVATOR_FRAME = 8319
         private const val CERES_ELEVATOR_ROOM = 0xDF45
-        private const val REPLAY_TIMEOUT_MILLIS = 180_000L
+        private const val LANDING_SITE_FRAME = 15198
+        private const val LANDING_SITE_ROOM = 0x91F8
 
         private fun sha256Hex(bytes: ByteArray): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(bytes)

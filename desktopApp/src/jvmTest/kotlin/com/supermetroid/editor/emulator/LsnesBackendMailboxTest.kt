@@ -6,6 +6,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -69,7 +70,7 @@ class LsnesBackendMailboxTest {
         val movie = File(tempDir, "tape.lsmv").apply { writeText("PK") }
         try {
             harness.backend.connect()
-            harness.backend.startSession(
+            val started = harness.backend.startSession(
                 SessionConfig(romPath = harness.rom.absolutePath, moviePath = movie.absolutePath),
             )
             val command = harness.lastCommand()
@@ -77,6 +78,9 @@ class LsnesBackendMailboxTest {
             val positional = command.drop(1).filter { !it.startsWith("-") }
             assertTrue(positional.any { it.endsWith(".lsmv") && File(it).absolutePath == movie.absolutePath }) {
                 "expected positional movie path ${movie.absolutePath} in $command"
+            }
+            assertTrue(started.message.orEmpty().contains("readonly")) {
+                "movie session status must identify readonly playback, got ${started.message}"
             }
         } finally {
             harness.close()
@@ -93,6 +97,65 @@ class LsnesBackendMailboxTest {
             val step = harness.inboxes.last { it.cmd == "step" }
             assertFalse(step.applyButtons)
             assertTrue(step.raw.contains("\"applyButtons\":false"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `step advances every requested repeat frame`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+
+            val result = harness.backend.step(
+                EmulatorInput(applyButtons = false, includeFrame = false, repeat = 17),
+            )
+
+            assertEquals(17, result.session.frameCounter)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `live session with existing state file sends load_state`() = runBlocking {
+        val harness = startHarness()
+        val stateDir = File(tempDir, "states").apply { mkdirs() }
+        val state = File(stateDir, "boot.lsmv").apply { writeText("PK") }
+        try {
+            harness.backend.setStateDir(stateDir)
+            harness.backend.connect()
+            harness.backend.startSession(
+                SessionConfig(romPath = harness.rom.absolutePath, stateName = "boot"),
+            )
+            val load = harness.inboxes.last { it.cmd == "load_state" }
+            assertEquals(state.absolutePath, load.path)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `movie session with stateName does not send load_state`() = runBlocking {
+        val harness = startHarness()
+        val movie = File(tempDir, "tape.lsmv").apply { writeText("PK") }
+        val stateDir = File(tempDir, "states-movie").apply { mkdirs() }
+        File(stateDir, "boot.lsmv").writeText("PK")
+        try {
+            harness.backend.setStateDir(stateDir)
+            harness.backend.connect()
+            harness.backend.startSession(
+                SessionConfig(
+                    romPath = harness.rom.absolutePath,
+                    stateName = "boot",
+                    moviePath = movie.absolutePath,
+                ),
+            )
+            assertTrue(harness.inboxes.none { it.cmd == "load_state" }) {
+                "movie sessions must not restore a save state, got ${harness.inboxes.map { it.cmd }}"
+            }
         } finally {
             harness.close()
         }
@@ -138,6 +201,104 @@ class LsnesBackendMailboxTest {
             assertTrue(error.message.orEmpty().contains("exited during")) {
                 "expected 'exited during' in ${error.message}"
             }
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `failed start terminates worker and preserves diagnostic log`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val stageRoot = File(tempDir, "sessions-timeout")
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = stageRoot,
+            timeoutMillis = 30L,
+            processStarter = { builder ->
+                builder.redirectOutput().file()?.writeText("worker boot diagnostics\n")
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, ConcurrentLinkedQueue()).also { spawnedProcess = it }
+            },
+        )
+        try {
+            backend.connect()
+
+            val error = assertThrows<IllegalStateException> {
+                runBlocking {
+                    backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+                }
+            }
+
+            assertFalse(requireNotNull(spawnedProcess).isAlive, "timed-out worker must be terminated")
+            assertTrue(error.message.orEmpty().contains("lsnes-worker.log")) {
+                "timeout should identify the preserved worker log, got ${error.message}"
+            }
+            val log = stageRoot.walkTopDown().firstOrNull { it.name == "lsnes-worker.log" }
+            assertTrue(log?.readText()?.contains("worker boot diagnostics") == true)
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `stale reply id fails startup and terminates worker`() = runBlocking {
+        val worker = dummyWorkerFile()
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions-stale"),
+            timeoutMillis = 5_000L,
+            processStarter = { builder ->
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, ConcurrentLinkedQueue()) { "stale-$it" }
+                    .also {
+                        spawnedProcess = it
+                        it.signalReady()
+                    }
+            },
+        )
+        try {
+            backend.connect()
+
+            val error = assertThrows<IllegalStateException> {
+                runBlocking {
+                    backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+                }
+            }
+
+            assertTrue(error.message.orEmpty().contains("Stale lsnes reply"))
+            assertFalse(requireNotNull(spawnedProcess).isAlive)
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `closeSession sends quit and waits for worker exit`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val inboxes = ConcurrentLinkedQueue<InboxCommand>()
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions-quit"),
+            timeoutMillis = 5_000L,
+            processStarter = { builder ->
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, inboxes).also {
+                    spawnedProcess = it
+                    it.signalReady()
+                }
+            },
+        )
+        try {
+            backend.connect()
+            backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+
+            backend.closeSession()
+
+            assertTrue(inboxes.any { it.cmd == "quit" })
+            assertFalse(requireNotNull(spawnedProcess).isAlive)
         } finally {
             backend.close()
         }
@@ -209,6 +370,7 @@ private data class InboxCommand(
     val cmd: String,
     val id: String,
     val applyButtons: Boolean,
+    val repeat: Int,
     val path: String?,
 )
 
@@ -224,6 +386,7 @@ private fun inertProcessHandle(): ProcessHandle {
 private class FakeLsnesWorkerProcess(
     private val mailboxDir: File,
     private val inboxes: ConcurrentLinkedQueue<InboxCommand>,
+    private val replyId: (String) -> String = { it },
 ) : Process() {
     private val alive = AtomicBoolean(true)
     private val exitCode = AtomicInteger(0)
@@ -264,6 +427,7 @@ private class FakeLsnesWorkerProcess(
         val cmd = obj["cmd"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val id = obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val applyButtons = obj["applyButtons"]?.jsonPrimitive?.booleanOrNull ?: true
+        val repeat = obj["repeat"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
         val path = obj["path"]?.jsonPrimitive?.contentOrNull
         val includeWram = obj["includeWram"]?.jsonPrimitive?.booleanOrNull ?: true
         inboxes.add(
@@ -272,13 +436,14 @@ private class FakeLsnesWorkerProcess(
                 cmd = cmd,
                 id = id,
                 applyButtons = applyButtons,
+                repeat = repeat,
                 path = path,
             ),
         )
-        if (cmd == "step") frame.incrementAndGet()
+        if (cmd == "step") frame.addAndGet(repeat)
         val outbox = File(mailboxDir, "outbox").apply { mkdirs() }
         File(outbox, "reply.json").writeText(
-            """{"id":"$id","ok":true,"frame":${frame.get()},"width":256,"height":224}""",
+            """{"id":"${replyId(id)}","ok":true,"frame":${frame.get()},"width":256,"height":224}""",
         )
         if (includeWram) {
             File(outbox, "wram.bin").writeBytes(ByteArray(WRAM_SIZE))

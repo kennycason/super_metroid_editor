@@ -25,6 +25,16 @@ class EmulatorRegistryTest {
     }
 
     @Test
+    fun `lsnes descriptor is optional extra headless child`() {
+        val descriptor = EmulatorRegistry.descriptor("lsnes-b25")
+        assertEquals("lsnes-b25", descriptor.id)
+        assertEquals("lsnes b25 extra", descriptor.displayName)
+        assertEquals(EmulatorInstallKind.OptionalExtra, descriptor.installKind)
+        assertEquals(EmulatorPresentation.HeadlessChild, descriptor.presentation)
+        assertTrue(EmulatorRegistry.descriptors().any { it.id == "lsnes-b25" })
+    }
+
+    @Test
     fun `unknown backend throws`() {
         assertThrows<IllegalArgumentException> {
             EmulatorRegistry.create("nonexistent")

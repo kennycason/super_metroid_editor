@@ -22,9 +22,15 @@ class LsnesDiscoveryTest {
         }
         assertTrue(normalized.any { it.endsWith("/opt/smedit/resources/smedit-lsnes-worker") })
         assertTrue(normalized.any { it.endsWith("/home/smedit/.smedit/lsnes/smedit-lsnes-worker") })
+        assertTrue(normalized.any { it.endsWith("/home/smedit/.smedit/extras/lsnes/smedit-lsnes-worker") })
         assertTrue(normalized.any { it.endsWith("/usr/local/bin/smedit-lsnes-worker") })
         assertTrue(normalized.none { it.endsWith(".exe") })
         assertTrue(normalized.all { File(it).name == "smedit-lsnes-worker" })
+        val extraHome = normalized.indexOfFirst { it.endsWith("/home/smedit/.smedit/lsnes/smedit-lsnes-worker") }
+        val resources = normalized.indexOfFirst { it.endsWith("/opt/smedit/resources/smedit-lsnes-worker") }
+        assertTrue(extraHome >= 0 && resources > extraHome) {
+            "extra install path should be searched before app resources, got $normalized"
+        }
     }
 
     @Test

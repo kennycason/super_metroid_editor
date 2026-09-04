@@ -24,7 +24,7 @@ class LibretroBackend(
     stateDirOverride: File? = null,
 ) : EmulatorBackend, FrameProvidingBackend, StateDirectoryBackend, AudioControllableBackend {
 
-    override val name: String = "libretro"
+    override val name: String = EmulatorBackendIds.LIBRETRO
     override var isConnected: Boolean = false
         private set
 

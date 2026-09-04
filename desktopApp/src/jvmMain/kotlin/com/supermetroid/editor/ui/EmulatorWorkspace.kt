@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.RoomInfo
+import com.supermetroid.editor.emulator.EmulatorPresentation
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -377,12 +378,16 @@ private fun EmulatorControlCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                if (workspaceState.isExternalBackend) "External Emulator" else "Embedded Emulator",
+                when (workspaceState.selectedBackendDescriptor.presentation) {
+                    EmulatorPresentation.InProcess -> "Embedded Emulator"
+                    EmulatorPresentation.HeadlessChild -> "lsnes TAS extra"
+                    EmulatorPresentation.ExternalHost -> "External Emulator"
+                },
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,
             )
             Text(
-                "Backend: ${workspaceState.selectedBackendName}",
+                "Backend: ${workspaceState.selectedBackendDescriptor.displayName}",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -525,19 +530,25 @@ private fun EmulatorControlCard(
                     ) {
                         Text(if (workspaceState.session.recording) "Stop Rec" else "Record", fontSize = 12.sp)
                     }
-                    OutlinedButton(
-                        onClick = { onAction("toggle_mute") },
-                        enabled = workspaceState.isConnected,
-                    ) {
-                        Text(if (workspaceState.audioMuted) "Unmute" else "Mute", fontSize = 12.sp)
+                    if (workspaceState.supportsAudio) {
+                        OutlinedButton(
+                            onClick = { onAction("toggle_mute") },
+                            enabled = workspaceState.isConnected,
+                        ) {
+                            Text(if (workspaceState.audioMuted) "Unmute" else "Mute", fontSize = 12.sp)
+                        }
                     }
                 }
             }
             Text(
-                if (workspaceState.isExternalBackend)
-                    "External RetroArch via NWA. Enable Network Commands in RetroArch (Settings > Network). Editor syncs room & position."
-                else
-                    "In-process SNES emulator via libretro. Click Play to start, then focus the viewport for keyboard input.",
+                when (workspaceState.selectedBackendDescriptor.presentation) {
+                    EmulatorPresentation.InProcess ->
+                        "In-process SNES emulator via libretro. Click Play to start, then focus the viewport for keyboard input."
+                    EmulatorPresentation.HeadlessChild ->
+                        "Headless optional TAS extra. Frames come from the user-installed lsnes worker; it is not bundled with SMEDIT."
+                    EmulatorPresentation.ExternalHost ->
+                        "External RetroArch via NWA. Enable Network Commands in RetroArch (Settings > Network). Editor syncs room & position."
+                },
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

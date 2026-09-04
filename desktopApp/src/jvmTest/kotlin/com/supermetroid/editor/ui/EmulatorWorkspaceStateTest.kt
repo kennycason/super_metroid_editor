@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.ui.input.key.Key
+import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorCapabilities
@@ -131,6 +132,32 @@ class EmulatorWorkspaceStateTest {
         state.startSession()
 
         assertEquals("/tmp/StandaloneSuperMetroid.sfc", backend.lastSessionConfig?.romPath)
+    }
+
+    @Test
+    fun `movie session keeps host input disabled when configured path changes`() = runBlocking {
+        val savedSettings = AppConfig.load()
+        val backend = FakeBackend().apply {
+            connectResult = EmulatorCapabilities(backendName = "fake")
+            startSessionResult = StepResult(
+                session = SessionState(active = true, frameCounter = 0),
+                snapshot = GameSnapshot(frameCounter = 0),
+            )
+        }
+        try {
+            val state = EmulatorWorkspaceState(backendFactory = { backend })
+            state.selectedBackendName = "lsnes-b25"
+            state.lsnesMoviePath = "/tmp/sniq.lsmv"
+            state.connectBridge()
+            state.startSession()
+
+            state.lsnesMoviePath = ""
+            state.stepFrame(includeFrame = false)
+
+            assertFalse(requireNotNull(backend.lastInput).applyButtons)
+        } finally {
+            AppConfig.save(savedSettings)
+        }
     }
 
     @Test
@@ -386,6 +413,7 @@ class EmulatorWorkspaceStateTest {
         var lastCommand: String? = null
         var lastStateName: String? = null
         var lastSessionConfig: SessionConfig? = null
+        var lastInput: EmulatorInput? = null
 
         override suspend fun connect(): EmulatorCapabilities {
             isConnected = true
@@ -410,6 +438,7 @@ class EmulatorWorkspaceStateTest {
 
         override suspend fun step(input: EmulatorInput): StepResult {
             lastCommand = "step"
+            lastInput = input
             return StepResult()
         }
 

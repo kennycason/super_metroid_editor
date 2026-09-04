@@ -28,9 +28,9 @@ private val lsnesLog = KotlinLogging.logger {}
 /**
  * Popup-free lsnes rr2-beta25 adapter.
  *
- * SMEDIT starts a dedicated headless build of the b25 common core. A bundled
- * Lua adapter provides deterministic frame stepping, screenshots, WRAM, save
- * states, movie playback, and additional Lua scripts through a file mailbox.
+ * SMEDIT talks to a user-installed headless worker (optional TAS extra). A
+ * bundled Lua adapter provides deterministic frame stepping, screenshots, WRAM,
+ * save states, movie playback, and additional Lua scripts through a file mailbox.
  */
 class LsnesBackend(
     private val executableOverride: File? = null,
@@ -39,7 +39,7 @@ class LsnesBackend(
     private val processStarter: (ProcessBuilder) -> Process = { it.start() },
 ) : EmulatorBackend, FrameProvidingBackend, StateDirectoryBackend {
 
-    override val name: String = "lsnes-b25"
+    override val name: String = EmulatorBackendIds.LSNES_B25
     override var isConnected: Boolean = false
         private set
     override val frameHolder = FrameHolder()
@@ -65,10 +65,7 @@ class LsnesBackend(
     override suspend fun connect(): EmulatorCapabilities = withContext(Dispatchers.IO) {
         val configured = AppConfig.load().lsnesPath
         val worker = executableOverride ?: LsnesDiscovery.findWorker(configured)?.let(::File)
-            ?: throw IllegalStateException(
-                "Popup-free lsnes b25 worker not found. Build it with ./gradlew buildLsnesWorker " +
-                    "or set SMEDIT_LSNES_PATH."
-            )
+            ?: throw IllegalStateException(LsnesDiscovery.MISSING_EXTRA_MESSAGE)
         require(worker.isFile) { "lsnes b25 worker not found: ${worker.absolutePath}" }
         require(LsnesDiscovery.isWorkerExecutable(worker)) {
             "Refusing to launch '${worker.name}': stock lsnes opens windows. " +
@@ -144,26 +141,38 @@ class LsnesBackend(
         }
 
         lsnesLog.info { "Starting popup-free lsnes b25 worker for ${rom.name}" }
-        process = processStarter(builder)
-        waitForMarker(File(mailbox, "outbox/done"), "startup")
-        File(mailbox, "outbox/done").delete()
+        try {
+            process = processStarter(builder)
+            waitForMarker(File(mailbox, "outbox/done"), "startup")
+            File(mailbox, "outbox/done").delete()
 
-        var reply = rpcBlocking(command = "hello", includeFrame = true, includeWram = true)
-        for (scriptPath in config.luaScriptPaths.filter { it.isNotBlank() }) {
-            val script = File(scriptPath)
-            require(script.isFile) { "Lua script not found: ${script.absolutePath}" }
-            reply = rpcBlocking(
-                command = "load_script",
-                path = script.absolutePath,
-                includeFrame = false,
-                includeWram = true,
+            var reply = rpcBlocking(command = "hello", includeFrame = true, includeWram = true)
+            for (scriptPath in config.luaScriptPaths.filter { it.isNotBlank() }) {
+                val script = File(scriptPath)
+                require(script.isFile) { "Lua script not found: ${script.absolutePath}" }
+                reply = rpcBlocking(
+                    command = "load_script",
+                    path = script.absolutePath,
+                    includeFrame = false,
+                    includeWram = true,
+                )
+            }
+            val stateName = config.stateName?.trim().orEmpty()
+            if (movie == null && stateName.isNotEmpty()) {
+                val state = File(stateDir, "$stateName.lsmv")
+                if (state.isFile) {
+                    reply = rpcBlocking(command = "load_state", path = state.absolutePath)
+                }
+            }
+            sessionActive = true
+            buildStepResult(
+                reply,
+                if (movie == null) "lsnes b25 session started" else "Playing ${movie.name} (readonly)",
             )
+        } catch (error: Exception) {
+            closeProcessBlocking(graceful = false, deleteSessionDir = false)
+            throw error
         }
-        sessionActive = true
-        buildStepResult(
-            reply,
-            if (movie == null) "lsnes b25 session started" else "Playing ${movie.name} in lsnes b25",
-        )
     }
 
     override suspend fun closeSession(): StepResult {
@@ -176,19 +185,15 @@ class LsnesBackend(
 
     override suspend fun step(input: EmulatorInput): StepResult = withContext(Dispatchers.IO) {
         check(sessionActive) { "No active lsnes session" }
-        val repeat = input.repeat.coerceIn(1, MAX_REPEAT)
-        var reply: LsnesReply? = null
-        repeat(repeat) { index ->
-            val last = index == repeat - 1
-            reply = rpcBlocking(
-                command = "step",
-                action = input.buttons,
-                applyButtons = input.applyButtons,
-                includeFrame = input.includeFrame && last,
-                includeWram = last,
-            )
-        }
-        buildStepResult(reply ?: error("lsnes did not return a frame"))
+        val reply = rpcBlocking(
+            command = "step",
+            action = input.buttons,
+            applyButtons = input.applyButtons,
+            repeatFrames = input.repeat.coerceAtLeast(1),
+            includeFrame = input.includeFrame,
+            includeWram = true,
+        )
+        buildStepResult(reply)
     }
 
     override suspend fun snapshot(): GameSnapshot = withContext(Dispatchers.IO) {
@@ -250,7 +255,7 @@ class LsnesBackend(
         closeProcessBlocking(graceful)
     }
 
-    private fun closeProcessBlocking(graceful: Boolean) {
+    private fun closeProcessBlocking(graceful: Boolean, deleteSessionDir: Boolean = true) {
         val activeProcess = process
         if (graceful && sessionActive && activeProcess?.isAlive == true) {
             runCatching {
@@ -271,7 +276,7 @@ class LsnesBackend(
         mailboxDir = null
         val runDir = sessionDir
         sessionDir = null
-        if (runDir != null) {
+        if (deleteSessionDir && runDir != null) {
             runCatching { runDir.deleteRecursively() }
         }
     }
@@ -283,6 +288,7 @@ class LsnesBackend(
         path: String? = null,
         address: Int? = null,
         data: ByteArray? = null,
+        repeatFrames: Int? = null,
         includeFrame: Boolean = true,
         includeWram: Boolean = true,
     ): LsnesReply = synchronized(rpcLock) {
@@ -306,6 +312,7 @@ class LsnesBackend(
             put("applyButtons", JsonPrimitive(applyButtons))
             path?.let { put("path", JsonPrimitive(it)) }
             address?.let { put("address", JsonPrimitive(it)) }
+            repeatFrames?.let { put("repeat", JsonPrimitive(it)) }
             action?.let { values ->
                 put("action", buildJsonArray {
                     repeat(12) { add(JsonPrimitive(values.getOrElse(it) { 0 })) }
@@ -361,7 +368,8 @@ class LsnesBackend(
             }
             Thread.sleep(POLL_INTERVAL_MILLIS)
         }
-        throw IllegalStateException("lsnes b25 worker timed out during $operation")
+        val logPath = sessionDir?.let { File(it, "lsnes-worker.log").absolutePath }
+        throw IllegalStateException("lsnes b25 worker timed out during $operation; log: $logPath")
     }
 
     private fun buildStepResult(reply: LsnesReply, message: String? = null): StepResult = StepResult(
@@ -444,6 +452,5 @@ class LsnesBackend(
         private const val DEFAULT_TIMEOUT_MILLIS = 30_000L
         private const val POLL_INTERVAL_MILLIS = 2L
         private const val PROCESS_EXIT_GRACE_MILLIS = 2_000L
-        private const val MAX_REPEAT = 16
     }
 }

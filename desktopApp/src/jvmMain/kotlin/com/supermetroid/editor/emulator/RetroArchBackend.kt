@@ -18,7 +18,7 @@ private val retroArchLog = KotlinLogging.logger {}
  */
 class RetroArchBackend : EmulatorBackend {
 
-    override val name: String = "retroarch"
+    override val name: String = EmulatorBackendIds.RETROARCH
     override var isConnected: Boolean = false
         private set
 

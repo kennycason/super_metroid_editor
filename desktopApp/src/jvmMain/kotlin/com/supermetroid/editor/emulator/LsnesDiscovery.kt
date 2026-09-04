@@ -2,8 +2,14 @@ package com.supermetroid.editor.emulator
 
 import java.io.File
 
-/** Locates SMEDIT's popup-free worker build of lsnes rr2-beta25. */
+/** Locates a user-installed popup-free worker build of lsnes rr2-beta25. */
 object LsnesDiscovery {
+    const val MISSING_EXTRA_MESSAGE =
+        "lsnes b25 extra is not installed. It is not bundled with SMEDIT. On Linux: " +
+            "git submodule update --init --recursive tools/lsnes && " +
+            "./gradlew buildLsnesWorker installLsnesWorker " +
+            "(or set SMEDIT_LSNES_PATH / browse in Settings)."
+
     private const val UNIX_NAME = "smedit-lsnes-worker"
     private const val WINDOWS_NAME = "$UNIX_NAME.exe"
 
@@ -15,7 +21,7 @@ object LsnesDiscovery {
         }
         return candidates.asSequence()
             .map(::File)
-            .firstOrNull { it.isFile && it.canExecute() }
+            .firstOrNull { it.isFile && it.canExecute() && isWorkerExecutable(it) }
             ?.absolutePath
     }
 
@@ -29,10 +35,10 @@ object LsnesDiscovery {
         val windows = osName.lowercase().contains("win")
         val executableName = if (windows) WINDOWS_NAME else UNIX_NAME
         return buildList {
-            resourcesDir?.let { add(File(it, executableName).path) }
+            add(File(userHome, ".smedit/lsnes/$executableName").path)
+            add(File(userHome, ".smedit/extras/lsnes/$executableName").path)
             add(File(userDir, "tools/lsnes-smedit/bin/$executableName").path)
             add(File(userDir, "../tools/lsnes-smedit/bin/$executableName").path)
-            add(File(userHome, ".smedit/lsnes/$executableName").path)
             if (windows) {
                 System.getenv("LOCALAPPDATA")?.let { add(File(it, "SMEDIT/lsnes/$executableName").path) }
             } else {
@@ -42,6 +48,8 @@ object LsnesDiscovery {
             path.orEmpty().split(File.pathSeparatorChar)
                 .filter { it.isNotBlank() }
                 .forEach { add(File(it, executableName).path) }
+            // Last resort: a user-copied worker next to the app, not a shipped extra.
+            resourcesDir?.let { add(File(it, executableName).path) }
         }.distinct()
     }
 

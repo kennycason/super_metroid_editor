@@ -695,38 +695,40 @@ fun FloatingEmulatorWindow(
 
                         Spacer(Modifier.width(2.dp))
 
-                        // Mute toggle
-                        IconButton(
-                            onClick = { workspaceState.toggleAudioMute() },
-                            enabled = workspaceState.isConnected,
-                            modifier = Modifier.size(24.dp).clip(btnShape),
-                        ) {
-                            Icon(
-                                if (workspaceState.audioMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
-                                contentDescription = "Toggle mute",
-                                modifier = Modifier.size(14.dp),
+                        if (workspaceState.supportsAudio) {
+                            // Mute toggle
+                            IconButton(
+                                onClick = { workspaceState.toggleAudioMute() },
+                                enabled = workspaceState.isConnected,
+                                modifier = Modifier.size(24.dp).clip(btnShape),
+                            ) {
+                                Icon(
+                                    if (workspaceState.audioMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                                    contentDescription = "Toggle mute",
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+
+                            // Volume slider
+                            Slider(
+                                value = if (workspaceState.audioMuted) 0f else workspaceState.audioVolume,
+                                onValueChange = { v ->
+                                    if (workspaceState.audioMuted && v > 0f) {
+                                        // Unmute when dragging slider up from muted
+                                        workspaceState.toggleAudioMute()
+                                    }
+                                    workspaceState.updateAudioVolume(v)
+                                },
+                                modifier = Modifier.width(60.dp).height(20.dp),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                ),
                             )
+
+                            Spacer(Modifier.width(2.dp))
                         }
-
-                        // Volume slider
-                        Slider(
-                            value = if (workspaceState.audioMuted) 0f else workspaceState.audioVolume,
-                            onValueChange = { v ->
-                                if (workspaceState.audioMuted && v > 0f) {
-                                    // Unmute when dragging slider up from muted
-                                    workspaceState.toggleAudioMute()
-                                }
-                                workspaceState.updateAudioVolume(v)
-                            },
-                            modifier = Modifier.width(60.dp).height(20.dp),
-                            colors = SliderDefaults.colors(
-                                thumbColor = MaterialTheme.colorScheme.primary,
-                                activeTrackColor = MaterialTheme.colorScheme.primary,
-                                inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                            ),
-                        )
-
-                        Spacer(Modifier.width(2.dp))
 
                         Text(
                             "|",
