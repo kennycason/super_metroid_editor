@@ -3,6 +3,8 @@ package com.supermetroid.editor.benchmark
 import com.supermetroid.editor.emulator.EmulatorBackend
 import com.supermetroid.editor.emulator.EmulatorInput
 import com.supermetroid.editor.emulator.LibretroBackend
+import com.supermetroid.editor.emulator.LsnesBackend
+import com.supermetroid.editor.emulator.RealtimePlayBackend
 import com.supermetroid.editor.emulator.SessionConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
@@ -127,6 +129,7 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
     val backend: EmulatorBackend = when (backendName) {
         "libretro" -> LibretroBackend()
         "libretro-no-audio" -> LibretroBackend(audioEnabledOverride = false)
+        "lsnes-b25" -> LsnesBackend()
         else -> throw IllegalArgumentException("Unknown backend: $backendName")
     }
 
@@ -142,7 +145,7 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
 
             // Warmup
             benchLog("  Warming up ($warmupFrames frames)...")
-            val noFrameInput = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false)
+            val noFrameInput = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false, includeWram = false)
             for (i in 0 until warmupFrames) {
                 backend.step(noFrameInput)
             }
@@ -150,7 +153,7 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
 
             // Benchmark: step WITHOUT frame (pure emulation speed)
             benchLog("  Benchmarking no-frame ($benchFrames frames)...")
-            val noFrameInputBench = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false)
+            val noFrameInputBench = EmulatorInput(repeat = 1, includeFrame = false, includeTrace = false, includeWram = false)
             val noFrameTimes = LongArray(benchFrames)
 
             val noFrameStart = System.nanoTime()
@@ -179,6 +182,32 @@ fun benchmarkBackend(backendName: String, romPath: String, warmupFrames: Int, be
             }
             val totalNanos = System.nanoTime() - totalStart
             benchLog("done")
+
+            val realtime = backend as? RealtimePlayBackend
+            if (realtime != null) {
+                benchLog("  Benchmarking realtime (1.0s wall)...")
+                realtime.startRealtime(applyButtons = true)
+                var startFrame = 0
+                val readyDeadline = System.nanoTime() + 500_000_000L
+                while (System.nanoTime() < readyDeadline && startFrame == 0) {
+                    startFrame = realtime.pollRealtime()?.session?.frameCounter ?: 0
+                    Thread.sleep(1)
+                }
+                val wallStart = System.nanoTime()
+                var workerFrame = startFrame
+                while (System.nanoTime() - wallStart < 1_000_000_000L) {
+                    val live = realtime.pollRealtime()
+                    if (live != null) workerFrame = live.session.frameCounter
+                    Thread.sleep(1)
+                }
+                val wallSeconds = (System.nanoTime() - wallStart) / 1_000_000_000.0
+                val delta = (workerFrame - startFrame).coerceAtLeast(0)
+                realtime.stopRealtime()
+                benchLog(
+                    "  [realtime] frames=$delta in ${String.format("%.2f", wallSeconds)}s  " +
+                        "FPS: ${String.format("%.1f", delta / wallSeconds)}",
+                )
+            }
 
             // Compute stats
             val stepMs = stepTimes.map { it / 1_000_000.0 }.sorted()

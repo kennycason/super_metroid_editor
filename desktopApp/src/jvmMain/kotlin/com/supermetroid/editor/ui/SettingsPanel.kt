@@ -37,7 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.emulator.EmulatorBackendIds
+import com.supermetroid.editor.emulator.EmulatorInstallKind
 import com.supermetroid.editor.emulator.EmulatorRegistry
+import com.supermetroid.editor.emulator.LsnesDiscovery
+import com.supermetroid.editor.emulator.LsnesTapes
+import java.io.File
+import javax.swing.JFileChooser
+import javax.swing.filechooser.FileFilter
+import javax.swing.filechooser.FileNameExtensionFilter
 
 @Composable
 fun SettingsPopup(
@@ -421,21 +429,25 @@ private fun EmulatorSettingsTab(
         color = MaterialTheme.colorScheme.onSurface
     )
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        EmulatorRegistry.availableBackends().forEach { backend ->
-            val selected = backend == workspaceState.selectedBackendName
+        EmulatorRegistry.descriptors().forEach { descriptor ->
+            val selected = descriptor.id == workspaceState.selectedBackendName
             Surface(
                 modifier = Modifier.clickable {
                     if (workspaceState.isConnected) {
                         workspaceState.disconnectBridge()
                     }
-                    workspaceState.selectedBackendName = backend
+                    workspaceState.updateSelectedBackendName(descriptor.id)
                 },
                 shape = RoundedCornerShape(6.dp),
                 color = if (selected) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surfaceVariant,
             ) {
                 Text(
-                    backend,
+                    if (descriptor.installKind == EmulatorInstallKind.OptionalExtra) {
+                        descriptor.displayName
+                    } else {
+                        descriptor.id
+                    },
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     fontSize = currentFontSize.body,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
@@ -455,7 +467,7 @@ private fun EmulatorSettingsTab(
 
     // ── Backend-specific config ──
     when (workspaceState.selectedBackendName) {
-        "retroarch" -> {
+        EmulatorBackendIds.RETROARCH -> {
             Spacer(Modifier.height(2.dp))
             Text(
                 "RetroArch Path",
@@ -502,12 +514,15 @@ private fun EmulatorSettingsTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        "libretro" -> {
+        EmulatorBackendIds.LIBRETRO -> {
             Text(
                 "Embedded SNES emulator via libretro core. No external setup required.",
                 fontSize = currentFontSize.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        EmulatorBackendIds.LSNES_B25 -> {
+            LsnesExtraSettings(workspaceState, currentFontSize)
         }
     }
 
@@ -546,4 +561,240 @@ private fun EmulatorSettingsTab(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+}
+
+@Composable
+private fun LsnesExtraSettings(
+    workspaceState: EmulatorWorkspaceState,
+    currentFontSize: FontSize,
+) {
+    var lsnesBrowseStatus by remember { mutableStateOf<String?>(null) }
+    val installedPath = LsnesDiscovery.findWorker(
+        workspaceState.lsnesPath.takeIf { it.isNotBlank() },
+    )
+    Spacer(Modifier.height(2.dp))
+    Text(
+        "lsnes b25 extra",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Text(
+        "Optional TAS extra, not bundled with SMEDIT. Linux worker only. Stock lsnes is rejected.",
+        fontSize = currentFontSize.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Text(
+        if (installedPath != null) "Installed: $installedPath" else "not installed",
+        fontSize = currentFontSize.detail,
+        color = if (installedPath != null) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.error
+    )
+    if (installedPath == null) {
+        Text(
+            "Install: git submodule update --init --recursive tools/lsnes && ./gradlew buildLsnesWorker installLsnesWorker",
+            fontSize = currentFontSize.detail,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Text(
+        "lsnes Worker",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppTextInput(
+            value = workspaceState.lsnesPath,
+            onValueChange = {
+                lsnesBrowseStatus = null
+                workspaceState.updateLsnesPath(it)
+            },
+            placeholder = "Path to smedit-lsnes-worker",
+            modifier = Modifier.weight(1f),
+            monospace = true,
+        )
+        SettingsBrowseChip(currentFontSize) {
+            val chosen = chooseLsnesWorkerFile(workspaceState.lsnesPath)
+            if (chosen == null) return@SettingsBrowseChip
+            if (!LsnesDiscovery.isWorkerExecutable(chosen)) {
+                lsnesBrowseStatus =
+                    "Rejected '${chosen.name}': stock lsnes is not supported. Select smedit-lsnes-worker."
+                return@SettingsBrowseChip
+            }
+            lsnesBrowseStatus = null
+            workspaceState.updateLsnesPath(chosen.absolutePath)
+        }
+    }
+    Text(
+        "TAS Movie",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val selectedTape = LsnesTapes.match(workspaceState.lsnesMoviePath)
+        SettingsTapeChip("Live", selected = selectedTape == null && workspaceState.lsnesMoviePath.isBlank(), currentFontSize) {
+            workspaceState.applyLsnesTape(null)
+        }
+        for (tape in LsnesTapes.all()) {
+            SettingsTapeChip(tape.displayName, selected = selectedTape?.id == tape.id, currentFontSize) {
+                runCatching { workspaceState.applyLsnesTape(tape) }
+                    .onFailure { lsnesBrowseStatus = it.message }
+            }
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppTextInput(
+            value = workspaceState.lsnesMoviePath,
+            onValueChange = { workspaceState.updateLsnesMoviePath(it) },
+            placeholder = "Path to TASVideos movie (*.lsmv)",
+            modifier = Modifier.weight(1f),
+            monospace = true,
+        )
+        SettingsBrowseChip(currentFontSize) {
+            chooseExistingFile(
+                title = "Select TASVideos movie",
+                currentPath = workspaceState.lsnesMoviePath,
+                filter = FileNameExtensionFilter("TASVideos movie (*.lsmv)", "lsmv"),
+            )?.let { workspaceState.updateLsnesMoviePath(it.absolutePath) }
+        }
+    }
+    Text(
+        "Extra Lua Script",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppTextInput(
+            value = workspaceState.lsnesLuaScriptPath,
+            onValueChange = { workspaceState.updateLsnesLuaScriptPath(it) },
+            placeholder = "Optional extra Lua script",
+            modifier = Modifier.weight(1f),
+            monospace = true,
+        )
+        SettingsBrowseChip(currentFontSize) {
+            chooseExistingFile(
+                title = "Select extra Lua script",
+                currentPath = workspaceState.lsnesLuaScriptPath,
+                filter = FileNameExtensionFilter("Lua script (*.lua)", "lua"),
+            )?.let { workspaceState.updateLsnesLuaScriptPath(it.absolutePath) }
+        }
+    }
+    lsnesBrowseStatus?.let { message ->
+        Text(
+            message,
+            fontSize = currentFontSize.detail,
+            color = MaterialTheme.colorScheme.error
+        )
+    }
+    Text(
+        "Movies must be TASVideos .lsmv. Play boots ROM+movie together.",
+        fontSize = currentFontSize.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun SettingsTapeChip(
+    label: String,
+    selected: Boolean,
+    currentFontSize: FontSize,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            fontSize = currentFontSize.body,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SettingsBrowseChip(
+    currentFontSize: FontSize,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(6.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(
+            "Browse",
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            fontSize = currentFontSize.body,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun chooseLsnesWorkerFile(currentPath: String): File? {
+    val filter = object : FileFilter() {
+        override fun accept(file: File): Boolean {
+            if (file.isDirectory) return true
+            if (LsnesDiscovery.isWorkerExecutable(file)) return true
+            val name = file.name.lowercase()
+            return name == "lsnes" || name == "lsnes.exe" || name == "lsnes-bsnes.exe"
+        }
+
+        override fun getDescription(): String = "smedit-lsnes-worker"
+    }
+    return chooseExistingFile(
+        title = "Select smedit-lsnes-worker",
+        currentPath = currentPath,
+        filter = filter,
+        acceptAll = true,
+    )
+}
+
+private fun chooseExistingFile(
+    title: String,
+    currentPath: String,
+    filter: FileFilter,
+    acceptAll: Boolean = true,
+): File? {
+    val chooser = JFileChooser().apply {
+        dialogTitle = title
+        fileFilter = filter
+        isAcceptAllFileFilterUsed = acceptAll
+        currentPath.trim().takeIf { it.isNotEmpty() }?.let { path ->
+            val file = File(path)
+            when {
+                file.isFile -> {
+                    currentDirectory = file.parentFile
+                    selectedFile = file
+                }
+                file.isDirectory -> currentDirectory = file
+            }
+        }
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
 }

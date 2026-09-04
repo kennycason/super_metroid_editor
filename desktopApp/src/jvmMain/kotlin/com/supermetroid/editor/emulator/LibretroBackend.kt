@@ -22,24 +22,24 @@ private val libretroBackendLog = KotlinLogging.logger {}
 class LibretroBackend(
     private val audioEnabledOverride: Boolean? = null,
     stateDirOverride: File? = null,
-) : EmulatorBackend {
+) : EmulatorBackend, FrameProvidingBackend, StateDirectoryBackend, AudioControllableBackend {
 
-    override val name: String = "libretro"
+    override val name: String = EmulatorBackendIds.LIBRETRO
     override var isConnected: Boolean = false
         private set
 
-    val frameHolder = FrameHolder()
+    override val frameHolder = FrameHolder()
 
-    var audioMuted: Boolean
+    override var audioMuted: Boolean
         get() = audio?.muted ?: false
         set(value) { audio?.muted = value }
 
-    var audioVolume: Float
+    override var audioVolume: Float
         get() = audio?.volume ?: 1.0f
         set(value) { audio?.volume = value }
 
     /** True when audio buffer has room — emulator is running ahead of real-time */
-    val audioHasHeadroom: Boolean
+    override val audioHasHeadroom: Boolean
         get() = audio?.hasHeadroom() ?: true
 
     private var core: LibretroCore? = null
@@ -61,7 +61,7 @@ class LibretroBackend(
         ?: File(File(File(System.getProperty("user.home"), ".smedit"), "states"), "libretro")).apply { mkdirs() }
 
     /** Update the save state directory (e.g. when switching projects). */
-    fun setStateDir(dir: File) {
+    override fun setStateDir(dir: File) {
         val nextDir = dir.absoluteFile
         if (sessionActive && nextDir.path != stateDir.absoluteFile.path) {
             persistSaveRamIfChangedSync()
@@ -101,6 +101,7 @@ class LibretroBackend(
                 supportsFrames = true,
                 supportsMemoryAccess = true,
                 supportsSaveStates = true,
+                supportsAudio = audioEnabled,
             )
         } catch (e: Exception) {
             runCatching { startedAudio?.close() }

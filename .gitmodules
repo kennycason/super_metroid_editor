@@ -4,3 +4,6 @@
 [submodule "tools/snes9x"]
 	path = tools/snes9x
 	url = https://github.com/libretro/snes9x.git
+[submodule "tools/lsnes"]
+	path = tools/lsnes
+	url = https://repo.or.cz/lsnes.git

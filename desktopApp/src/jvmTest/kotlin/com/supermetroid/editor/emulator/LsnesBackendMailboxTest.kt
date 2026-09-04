@@ -1,0 +1,605 @@
+package com.supermetroid.editor.emulator
+
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.io.TempDir
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+
+class LsnesBackendMailboxTest {
+
+    @TempDir
+    lateinit var tempDir: File
+
+    @Test
+    fun `connect succeeds with dummy smedit-lsnes-worker file`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val backend = mailboxBackend(worker)
+        try {
+            val caps = backend.connect()
+            assertTrue(backend.isConnected)
+            assertTrue(caps.supportsMoviePlayback)
+            assertTrue(caps.supportsLuaScripting)
+            assertTrue(caps.backendName.contains("lsnes"))
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `startSession without movie uses rom flag and no positional lsmv`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            val command = harness.lastCommand()
+            // Live (no-movie) sessions use --rom= so construct_rom_nofile() sees a ROM.
+            assertTrue(command.any { it.startsWith("--rom=") && !it.startsWith("--rom-a=") }) {
+                "expected --rom= for no-movie sessions, got $command"
+            }
+            assertTrue(command.none { it.startsWith("--rom-a=") }) {
+                "no-movie argv must not use --rom-a=, got $command"
+            }
+            assertTrue(command.none { !it.startsWith("-") && it.endsWith(".lsmv") }) {
+                "no-movie argv must not include a positional .lsmv: $command"
+            }
+            assertTrue(command.any { it.startsWith("--lua=") })
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `startSession with movie uses rom-a and positional lsmv`() = runBlocking {
+        val harness = startHarness()
+        val movie = File(tempDir, "tape.lsmv").apply { writeText("PK") }
+        try {
+            harness.backend.connect()
+            val started = harness.backend.startSession(
+                SessionConfig(romPath = harness.rom.absolutePath, moviePath = movie.absolutePath),
+            )
+            val command = harness.lastCommand()
+            assertTrue(command.any { it.startsWith("--rom-a=") }) { "expected --rom-a=, got $command" }
+            val positional = command.drop(1).filter { !it.startsWith("-") }
+            assertTrue(positional.any { it.endsWith(".lsmv") && File(it).absolutePath == movie.absolutePath }) {
+                "expected positional movie path ${movie.absolutePath} in $command"
+            }
+            assertTrue(started.message.orEmpty().contains("readonly")) {
+                "movie session status must identify readonly playback, got ${started.message}"
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `step with applyButtons false is forwarded in inbox json`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.step(EmulatorInput(applyButtons = false, includeFrame = false))
+            val step = harness.inboxes.last { it.cmd == "step" }
+            assertFalse(step.applyButtons)
+            assertTrue(step.raw.contains("\"applyButtons\":false"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `seek jumps to the requested movie frame`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.seekToFrame(8319)
+            val seek = harness.inboxes.last { it.cmd == "seek" }
+            assertTrue(seek.raw.contains("\"targetFrame\":8319"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `realtime buttons json carries watch speed up to 16x`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.writeRealtimeButtons(
+                listOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                applyButtons = false,
+                speed = 16,
+            )
+            val payload = File(harness.mailboxDir, "buttons.json").readText()
+            assertTrue(payload.contains("\"speed\":16"), payload)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `realtime run publishes live frames without stepped rpc`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.startRealtime(applyButtons = true)
+            assertTrue(harness.inboxes.any { it.cmd == "run" })
+            assertTrue(harness.backend.realtimeActive)
+
+            var latest: com.supermetroid.editor.emulator.StepResult? = null
+            val deadline = System.nanoTime() + 2_000_000_000L
+            while (System.nanoTime() < deadline) {
+                latest = harness.backend.pollRealtime() ?: latest
+                if ((latest?.session?.frameCounter ?: 0) >= 2) break
+                Thread.sleep(5)
+            }
+            assertTrue((latest?.session?.frameCounter ?: 0) >= 2) {
+                "expected live frames, last=$latest"
+            }
+
+            harness.backend.writeRealtimeButtons(listOf(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), applyButtons = true)
+            harness.backend.stopRealtime()
+            assertTrue(harness.inboxes.any { it.cmd == "pause" })
+            assertFalse(harness.backend.realtimeActive)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `step can skip WRAM dump`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.step(EmulatorInput(includeFrame = false, includeWram = false))
+            val step = harness.inboxes.last { it.cmd == "step" }
+            assertFalse(step.includeWram)
+            assertTrue(step.raw.contains("\"includeWram\":false"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `step advances every requested repeat frame`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+
+            val result = harness.backend.step(
+                EmulatorInput(applyButtons = false, includeFrame = false, repeat = 17),
+            )
+
+            assertEquals(17, result.session.frameCounter)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `live session with existing state file sends load_state`() = runBlocking {
+        val harness = startHarness()
+        val stateDir = File(tempDir, "states").apply { mkdirs() }
+        val state = File(stateDir, "boot.lsmv").apply { writeText("PK") }
+        try {
+            harness.backend.setStateDir(stateDir)
+            harness.backend.connect()
+            harness.backend.startSession(
+                SessionConfig(romPath = harness.rom.absolutePath, stateName = "boot"),
+            )
+            val load = harness.inboxes.last { it.cmd == "load_state" }
+            assertEquals(state.absolutePath, load.path)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `movie session with stateName does not send load_state`() = runBlocking {
+        val harness = startHarness()
+        val movie = File(tempDir, "tape.lsmv").apply { writeText("PK") }
+        val stateDir = File(tempDir, "states-movie").apply { mkdirs() }
+        File(stateDir, "boot.lsmv").writeText("PK")
+        try {
+            harness.backend.setStateDir(stateDir)
+            harness.backend.connect()
+            harness.backend.startSession(
+                SessionConfig(
+                    romPath = harness.rom.absolutePath,
+                    stateName = "boot",
+                    moviePath = movie.absolutePath,
+                ),
+            )
+            assertTrue(harness.inboxes.none { it.cmd == "load_state" }) {
+                "movie sessions must not restore a save state, got ${harness.inboxes.map { it.cmd }}"
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `load_script path is forwarded`() = runBlocking {
+        val harness = startHarness()
+        val script = File(tempDir, "extra.lua").apply { writeText("-- extra lua\nreturn true\n") }
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(
+                SessionConfig(
+                    romPath = harness.rom.absolutePath,
+                    luaScriptPaths = listOf(script.absolutePath),
+                ),
+            )
+            val load = harness.inboxes.last { it.cmd == "load_script" }
+            assertTrue(load.path == script.absolutePath) {
+                "expected load_script path ${script.absolutePath}, got ${load.path} from ${load.raw}"
+            }
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `worker death during wait throws with exited during`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions-dead"),
+            timeoutMillis = 3_000L,
+            processStarter = { DeadLsnesProcess() },
+        )
+        try {
+            backend.connect()
+            val error = assertThrows<IllegalStateException> {
+                runBlocking {
+                    backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+                }
+            }
+            assertTrue(error.message.orEmpty().contains("exited during")) {
+                "expected 'exited during' in ${error.message}"
+            }
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `failed start terminates worker and preserves diagnostic log`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val stageRoot = File(tempDir, "sessions-timeout")
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = stageRoot,
+            timeoutMillis = 30L,
+            processStarter = { builder ->
+                builder.redirectOutput().file()?.writeText("worker boot diagnostics\n")
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, ConcurrentLinkedQueue()).also { spawnedProcess = it }
+            },
+        )
+        try {
+            backend.connect()
+
+            val error = assertThrows<IllegalStateException> {
+                runBlocking {
+                    backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+                }
+            }
+
+            assertFalse(requireNotNull(spawnedProcess).isAlive, "timed-out worker must be terminated")
+            assertTrue(error.message.orEmpty().contains("lsnes-worker.log")) {
+                "timeout should identify the preserved worker log, got ${error.message}"
+            }
+            val log = stageRoot.walkTopDown().firstOrNull { it.name == "lsnes-worker.log" }
+            assertTrue(log?.readText()?.contains("worker boot diagnostics") == true)
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `stale reply id fails startup and terminates worker`() = runBlocking {
+        val worker = dummyWorkerFile()
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions-stale"),
+            timeoutMillis = 5_000L,
+            processStarter = { builder ->
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, ConcurrentLinkedQueue()) { "stale-$it" }
+                    .also {
+                        spawnedProcess = it
+                        it.signalReady()
+                    }
+            },
+        )
+        try {
+            backend.connect()
+
+            val error = assertThrows<IllegalStateException> {
+                runBlocking {
+                    backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+                }
+            }
+
+            assertTrue(error.message.orEmpty().contains("Stale lsnes reply"))
+            assertFalse(requireNotNull(spawnedProcess).isAlive)
+        } finally {
+            backend.close()
+        }
+    }
+
+    @Test
+    fun `closeSession sends quit and waits for worker exit`() = runBlocking {
+        val worker = dummyWorkerFile()
+        val inboxes = ConcurrentLinkedQueue<InboxCommand>()
+        var spawnedProcess: FakeLsnesWorkerProcess? = null
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions-quit"),
+            timeoutMillis = 5_000L,
+            processStarter = { builder ->
+                val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+                FakeLsnesWorkerProcess(mailbox, inboxes).also {
+                    spawnedProcess = it
+                    it.signalReady()
+                }
+            },
+        )
+        try {
+            backend.connect()
+            backend.startSession(SessionConfig(romPath = dummyRom().absolutePath))
+
+            backend.closeSession()
+
+            assertTrue(inboxes.any { it.cmd == "quit" })
+            assertFalse(requireNotNull(spawnedProcess).isAlive)
+        } finally {
+            backend.close()
+        }
+    }
+
+    private fun startHarness(): MailboxHarness {
+        val worker = dummyWorkerFile()
+        val rom = dummyRom()
+        val commands = ConcurrentLinkedQueue<List<String>>()
+        val inboxes = ConcurrentLinkedQueue<InboxCommand>()
+        val mailboxRef = AtomicReference<File?>(null)
+        val backend = LsnesBackend(
+            executableOverride = worker,
+            stageRootOverride = File(tempDir, "sessions"),
+            timeoutMillis = 5_000L,
+            processStarter = { builder ->
+                commands.add(builder.command().toList())
+                val mailbox = File(
+                    requireNotNull(builder.environment()["LSNES_WORKER_DIR"]) {
+                        "LSNES_WORKER_DIR must be set on the worker ProcessBuilder"
+                    },
+                )
+                mailboxRef.set(mailbox)
+                FakeLsnesWorkerProcess(mailbox, inboxes).also { it.signalReady() }
+            },
+        )
+        return MailboxHarness(backend, rom, commands, inboxes, mailboxRef)
+    }
+
+    private fun dummyWorkerFile(): File {
+        val worker = File(tempDir, "smedit-lsnes-worker")
+        if (!worker.isFile) {
+            worker.writeText("#!/bin/sh\nexit 0\n")
+            worker.setExecutable(true)
+            if (!worker.canExecute()) {
+                Runtime.getRuntime().exec(arrayOf("chmod", "+x", worker.absolutePath)).waitFor()
+            }
+        }
+        return worker
+    }
+
+    private fun dummyRom(): File {
+        val rom = File(tempDir, "dummy.smc")
+        if (!rom.isFile) rom.writeBytes(ByteArray(32))
+        return rom
+    }
+
+    private fun mailboxBackend(worker: File): LsnesBackend = LsnesBackend(
+        executableOverride = worker,
+        stageRootOverride = File(tempDir, "sessions"),
+        timeoutMillis = 5_000L,
+        processStarter = { builder ->
+            val mailbox = File(requireNotNull(builder.environment()["LSNES_WORKER_DIR"]))
+            FakeLsnesWorkerProcess(mailbox, ConcurrentLinkedQueue()).also { it.signalReady() }
+        },
+    )
+
+    private class MailboxHarness(
+        val backend: LsnesBackend,
+        val rom: File,
+        private val commands: ConcurrentLinkedQueue<List<String>>,
+        val inboxes: ConcurrentLinkedQueue<InboxCommand>,
+        private val mailboxRef: AtomicReference<File?>,
+    ) {
+        val mailboxDir: File
+            get() = requireNotNull(mailboxRef.get()) { "mailbox not created yet" }
+
+        fun lastCommand(): List<String> = commands.last()
+        fun close() = backend.close()
+    }
+}
+
+private data class InboxCommand(
+    val raw: String,
+    val cmd: String,
+    val id: String,
+    val applyButtons: Boolean,
+    val repeat: Int,
+    val path: String?,
+    val includeWram: Boolean = true,
+)
+
+private fun inertProcessHandle(): ProcessHandle {
+    val command = if (System.getProperty("os.name", "").lowercase().contains("win")) {
+        listOf("cmd", "/c", "exit", "0")
+    } else {
+        listOf("true")
+    }
+    return ProcessBuilder(command).start().also { it.waitFor() }.toHandle()
+}
+
+private class FakeLsnesWorkerProcess(
+    private val mailboxDir: File,
+    private val inboxes: ConcurrentLinkedQueue<InboxCommand>,
+    private val replyId: (String) -> String = { it },
+) : Process() {
+    private val alive = AtomicBoolean(true)
+    private val live = AtomicBoolean(false)
+    private val exitCode = AtomicInteger(0)
+    private val frame = AtomicInteger(0)
+    private val json = Json { ignoreUnknownKeys = true }
+    private val thread = Thread(
+        {
+            try {
+                while (alive.get() && !Thread.currentThread().isInterrupted) {
+                    val inbox = File(mailboxDir, "inbox.json")
+                    if (inbox.isFile) {
+                        val text = runCatching { inbox.readText() }.getOrNull()
+                        if (text != null) {
+                            inbox.delete()
+                            handleInbox(text)
+                        }
+                    } else {
+                        if (live.get()) {
+                            val published = frame.incrementAndGet()
+                            val outbox = File(mailboxDir, "outbox").apply { mkdirs() }
+                            File(outbox, "live.json").writeText(
+                                """{"frame":$published,"width":256,"height":224}""",
+                            )
+                        }
+                        Thread.sleep(2)
+                    }
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        },
+        "fake-lsnes-worker",
+    ).apply {
+        isDaemon = true
+        start()
+    }
+
+    fun signalReady() {
+        File(mailboxDir, "outbox").mkdirs()
+        File(mailboxDir, "outbox/done").writeText("ready\n")
+    }
+
+    private fun handleInbox(text: String) {
+        val obj = json.parseToJsonElement(text).jsonObject
+        val cmd = obj["cmd"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val id = obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val applyButtons = obj["applyButtons"]?.jsonPrimitive?.booleanOrNull ?: true
+        val repeat = obj["repeat"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
+        val path = obj["path"]?.jsonPrimitive?.contentOrNull
+        val includeWram = obj["includeWram"]?.jsonPrimitive?.booleanOrNull ?: true
+        val targetFrame = obj["targetFrame"]?.jsonPrimitive?.intOrNull
+        inboxes.add(
+            InboxCommand(
+                raw = text,
+                cmd = cmd,
+                id = id,
+                applyButtons = applyButtons,
+                repeat = repeat,
+                path = path,
+                includeWram = includeWram,
+            ),
+        )
+        if (cmd == "step") frame.addAndGet(repeat)
+        if (cmd == "seek" && targetFrame != null) frame.set(targetFrame)
+        if (cmd == "run") live.set(true)
+        if (cmd == "pause" || cmd == "quit") live.set(false)
+        val outbox = File(mailboxDir, "outbox").apply { mkdirs() }
+        File(outbox, "reply.json").writeText(
+            """{"id":"${replyId(id)}","ok":true,"frame":${frame.get()},"width":256,"height":224}""",
+        )
+        if (includeWram) {
+            File(outbox, "wram.bin").writeBytes(ByteArray(WRAM_SIZE))
+        }
+        if (cmd == "quit") {
+            alive.set(false)
+        }
+        File(outbox, "done").writeText("ok\n")
+    }
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun waitFor(): Int {
+        thread.join()
+        return exitCode.get()
+    }
+
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean {
+        thread.join(unit.toMillis(timeout))
+        return !alive.get()
+    }
+
+    override fun exitValue(): Int {
+        if (alive.get()) throw IllegalThreadStateException("process hasn't exited")
+        return exitCode.get()
+    }
+
+    override fun destroy() {
+        alive.set(false)
+        thread.interrupt()
+    }
+
+    override fun destroyForcibly(): Process {
+        destroy()
+        return this
+    }
+
+    override fun isAlive(): Boolean = alive.get()
+
+    override fun toHandle(): ProcessHandle = handle
+
+    companion object {
+        private const val WRAM_SIZE = 0x2000
+        private val handle: ProcessHandle by lazy { inertProcessHandle() }
+    }
+}
+
+private class DeadLsnesProcess : Process() {
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun waitFor(): Int = 1
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = true
+    override fun exitValue(): Int = 1
+    override fun destroy() {}
+    override fun destroyForcibly(): Process = this
+    override fun isAlive(): Boolean = false
+    override fun toHandle(): ProcessHandle = inertProcessHandle()
+}
