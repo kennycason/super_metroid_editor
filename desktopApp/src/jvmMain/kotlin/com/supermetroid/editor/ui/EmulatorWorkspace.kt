@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.RoomInfo
+import com.supermetroid.editor.emulator.EmulatorFramePacer
 import com.supermetroid.editor.emulator.EmulatorPresentation
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.delay
@@ -163,6 +164,17 @@ fun EmulatorWorkspace(
                 workspaceState.pollExternalSnapshot()
                 delay(EXTERNAL_POLL_INTERVAL_MS)
             }
+        } else if (workspaceState.usesRealtimePlay) {
+            if (!workspaceState.isRunning || !workspaceState.session.active) return@LaunchedEffect
+            try {
+                workspaceState.startRealtime()
+                while (workspaceState.isRunning && workspaceState.session.active) {
+                    workspaceState.pumpRealtime()
+                    delay(8L)
+                }
+            } finally {
+                workspaceState.stopRealtime()
+            }
         } else {
             // Embedded backend (libretro): run at 60fps frame loop
             var tick = 0L
@@ -187,12 +199,18 @@ fun EmulatorWorkspace(
                     delay(waitMs)
                     continue
                 }
-                val repeat = pendingFrames.toInt().coerceIn(1, MAX_STEP_REPEAT)
-                pendingFrames = (pendingFrames - repeat).coerceAtMost(MAX_STEP_REPEAT.toDouble())
+                val presentation = workspaceState.selectedBackendDescriptor.presentation
+                val maxCatchUp = EmulatorFramePacer.maxCatchUp(presentation)
+                val repeat = EmulatorFramePacer.repeat(pendingFrames, maxCatchUp)
+                pendingFrames = (pendingFrames - repeat).coerceAtMost(maxCatchUp.toDouble())
+                if (presentation == EmulatorPresentation.HeadlessChild) {
+                    pendingFrames = pendingFrames.coerceAtMost(1.0)
+                }
                 workspaceState.stepFrame(
                     repeat = repeat,
-                    includeFrame = tick % FRAME_REFRESH_INTERVAL == 0L,
+                    includeFrame = EmulatorFramePacer.includeFrame(presentation, tick),
                     includeTrace = tick % TRACE_REFRESH_INTERVAL == 0L,
+                    includeWram = EmulatorFramePacer.includeWram(presentation, tick),
                 )
                 tick += 1
                 if (pendingFrames > MAX_STEP_REPEAT * 2) {
@@ -378,11 +396,7 @@ private fun EmulatorControlCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                when (workspaceState.selectedBackendDescriptor.presentation) {
-                    EmulatorPresentation.InProcess -> "Embedded Emulator"
-                    EmulatorPresentation.HeadlessChild -> "lsnes TAS extra"
-                    EmulatorPresentation.ExternalHost -> "External Emulator"
-                },
+                workspaceState.selectedBackendDescriptor.workspaceTitle,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,
             )
@@ -541,14 +555,7 @@ private fun EmulatorControlCard(
                 }
             }
             Text(
-                when (workspaceState.selectedBackendDescriptor.presentation) {
-                    EmulatorPresentation.InProcess ->
-                        "In-process SNES emulator via libretro. Click Play to start, then focus the viewport for keyboard input."
-                    EmulatorPresentation.HeadlessChild ->
-                        "Headless optional TAS extra. Frames come from the user-installed lsnes worker; it is not bundled with SMEDIT."
-                    EmulatorPresentation.ExternalHost ->
-                        "External RetroArch via NWA. Enable Network Commands in RetroArch (Settings > Network). Editor syncs room & position."
-                },
+                workspaceState.selectedBackendDescriptor.workspaceHelp,
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

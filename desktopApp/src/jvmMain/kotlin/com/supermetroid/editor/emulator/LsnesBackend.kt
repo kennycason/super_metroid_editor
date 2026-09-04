@@ -37,7 +37,7 @@ class LsnesBackend(
     stageRootOverride: File? = null,
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
     private val processStarter: (ProcessBuilder) -> Process = { it.start() },
-) : EmulatorBackend, FrameProvidingBackend, StateDirectoryBackend {
+) : EmulatorBackend, FrameProvidingBackend, StateDirectoryBackend, RealtimePlayBackend {
 
     override val name: String = EmulatorBackendIds.LSNES_B25
     override var isConnected: Boolean = false
@@ -57,6 +57,11 @@ class LsnesBackend(
     private var frameCounter = 0
     private var sessionActive = false
     private var requestCounter = 0L
+    @Volatile
+    override var realtimeActive: Boolean = false
+        private set
+    private var lastLiveFrame = -1
+    private val buttonsLock = Any()
 
     override fun setStateDir(dir: File) {
         stateDir = dir.absoluteFile.apply { mkdirs() }
@@ -185,15 +190,93 @@ class LsnesBackend(
 
     override suspend fun step(input: EmulatorInput): StepResult = withContext(Dispatchers.IO) {
         check(sessionActive) { "No active lsnes session" }
+        if (realtimeActive) stopRealtimeBlocking()
         val reply = rpcBlocking(
             command = "step",
             action = input.buttons,
             applyButtons = input.applyButtons,
             repeatFrames = input.repeat.coerceAtLeast(1),
             includeFrame = input.includeFrame,
-            includeWram = true,
+            includeWram = input.includeWram,
         )
         buildStepResult(reply)
+    }
+
+    override suspend fun startRealtime(applyButtons: Boolean) = withContext(Dispatchers.IO) {
+        check(sessionActive) { "No active lsnes session" }
+        if (realtimeActive) return@withContext
+        rpcBlocking(command = "run", applyButtons = applyButtons, includeFrame = false, includeWram = false)
+        lastLiveFrame = -1
+        realtimeActive = true
+    }
+
+    override suspend fun stopRealtime() = withContext(Dispatchers.IO) {
+        stopRealtimeBlocking()
+    }
+
+    override fun writeRealtimeButtons(buttons: List<Int>, applyButtons: Boolean, speed: Int) {
+        val mailbox = mailboxDir ?: return
+        val payload = buildString {
+            append("{\"apply\":")
+            append(applyButtons)
+            append(",\"speed\":")
+            append(EmulatorPlaybackSpeed.clamp(speed))
+            append(",\"action\":[")
+            repeat(12) { index ->
+                if (index > 0) append(',')
+                append(buttons.getOrElse(index) { 0 })
+            }
+            append("]}")
+        }
+        synchronized(buttonsLock) {
+            val target = File(mailbox, "buttons.json")
+            val temporary = File(mailbox, "buttons.json.tmp")
+            temporary.writeText(payload)
+            try {
+                Files.move(
+                    temporary.toPath(), target.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+
+    override fun pollRealtime(): StepResult? {
+        if (!sessionActive || !realtimeActive) return null
+        val mailbox = mailboxDir ?: return null
+        val outbox = File(mailbox, "outbox")
+        val live = File(outbox, "live.json")
+        if (!live.isFile) return null
+        val header = runCatching { json.parseToJsonElement(live.readText()).jsonObject }.getOrNull() ?: return null
+        val frame = header["frame"]?.jsonPrimitive?.intOrNull ?: return null
+        if (frame <= lastLiveFrame) return null
+        lastLiveFrame = frame
+        frameCounter = frame
+        val wramFile = File(outbox, "live_wram.bin")
+        if (wramFile.isFile) {
+            val wram = runCatching { wramFile.readBytes() }.getOrNull()
+            if (wram != null && wram.size == WRAM_SIZE) lastWram = wram
+        }
+        val frameFile = File(outbox, "live_frame.png")
+        if (frameFile.isFile) {
+            runCatching { ImageIO.read(frameFile)?.let { frameHolder.pushFrame(it.toComposeImageBitmap()) } }
+        }
+        return buildStepResult(LsnesReply(frame = frame, header = header, wram = lastWram))
+    }
+
+    override suspend fun seekToFrame(frame: Int) = withContext(Dispatchers.IO) {
+        check(sessionActive) { "No active lsnes session" }
+        require(frame >= 0) { "seek frame must be >= 0" }
+        val reply = rpcBlocking(
+            command = "seek",
+            targetFrame = frame,
+            includeFrame = false,
+            includeWram = false,
+        )
+        lastLiveFrame = -1
+        frameCounter = reply.frame
     }
 
     override suspend fun snapshot(): GameSnapshot = withContext(Dispatchers.IO) {
@@ -255,8 +338,18 @@ class LsnesBackend(
         closeProcessBlocking(graceful)
     }
 
+    private fun stopRealtimeBlocking() {
+        if (!realtimeActive) return
+        runCatching {
+            rpcBlocking(command = "pause", includeFrame = false, includeWram = false)
+        }
+        realtimeActive = false
+    }
+
     private fun closeProcessBlocking(graceful: Boolean, deleteSessionDir: Boolean = true) {
         val activeProcess = process
+        realtimeActive = false
+        lastLiveFrame = -1
         if (graceful && sessionActive && activeProcess?.isAlive == true) {
             runCatching {
                 rpcBlocking(command = "quit", includeFrame = false, includeWram = false)
@@ -289,6 +382,7 @@ class LsnesBackend(
         address: Int? = null,
         data: ByteArray? = null,
         repeatFrames: Int? = null,
+        targetFrame: Int? = null,
         includeFrame: Boolean = true,
         includeWram: Boolean = true,
     ): LsnesReply = synchronized(rpcLock) {
@@ -313,6 +407,7 @@ class LsnesBackend(
             path?.let { put("path", JsonPrimitive(it)) }
             address?.let { put("address", JsonPrimitive(it)) }
             repeatFrames?.let { put("repeat", JsonPrimitive(it)) }
+            targetFrame?.let { put("targetFrame", JsonPrimitive(it)) }
             action?.let { values ->
                 put("action", buildJsonArray {
                     repeat(12) { add(JsonPrimitive(values.getOrElse(it) { 0 })) }

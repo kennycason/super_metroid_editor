@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import com.supermetroid.editor.emulator.EmulatorPlaybackSpeed
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.RoomInfo
@@ -28,7 +29,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +82,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.supermetroid.editor.emulator.EmulatorFramePacer
+import com.supermetroid.editor.emulator.EmulatorPresentation
+import com.supermetroid.editor.emulator.LsnesTapes
 import com.supermetroid.editor.rom.RomParser
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -109,7 +113,6 @@ private const val BEAM_PLASMA = 0x0008
 private const val BEAM_CHARGE = 0x1000
 
 private const val TARGET_EMU_FPS = 60.0
-private const val MAX_STEP_REPEAT = 4
 private const val FRAME_REFRESH_INTERVAL = 2
 private const val TRACE_REFRESH_INTERVAL = 10
 private const val FRAME_DURATION_NANOS = (1_000_000_000.0 / TARGET_EMU_FPS).toLong()
@@ -141,8 +144,8 @@ fun FloatingEmulatorWindow(
     // Resizable width (height derived from aspect ratio, persisted)
     var windowWidth by remember { mutableStateOf(savedConfig.emulatorWindowWidth) }
 
-    // Fast forward state
-    var fastForwarding by remember { mutableStateOf(false) }
+    var playbackSpeed by remember { mutableStateOf(1) }
+    val currentPlaybackSpeed by rememberUpdatedState(playbackSpeed)
 
     // Save/load slot dropdown state
     var showSaveMenu by remember { mutableStateOf(false) }
@@ -196,6 +199,27 @@ fun FloatingEmulatorWindow(
                 workspaceState.pollExternalSnapshot()
                 delay(100L)
             }
+        } else if (workspaceState.usesRealtimePlay) {
+            if (!workspaceState.isRunning || !workspaceState.session.active) return@LaunchedEffect
+            try {
+                workspaceState.startRealtime()
+                while (workspaceState.isRunning && workspaceState.session.active) {
+                    workspaceState.pumpRealtime(speed = currentPlaybackSpeed)
+                    delay(8L)
+                    workspaceState.pendingComboAction?.let { combo ->
+                        workspaceState.pendingComboAction = null
+                        val ws = workspaceState
+                        when (combo) {
+                            "save" -> ws.saveQuickState("slot_${ws.saveSlotIndex}")
+                            "load" -> ws.loadNamedState("slot_${ws.saveSlotIndex}")
+                            "slot_up" -> ws.saveSlotIndex = (ws.saveSlotIndex + 1) % 129
+                            "slot_down" -> ws.saveSlotIndex = (ws.saveSlotIndex - 1 + 129) % 129
+                        }
+                    }
+                }
+            } finally {
+                workspaceState.stopRealtime()
+            }
         } else {
             var tick = 0L
             var pendingFrames = 0.0
@@ -206,11 +230,11 @@ fun FloatingEmulatorWindow(
                 val elapsedNanos = now - lastWallClockNanos
                 lastWallClockNanos = now
                 val effectiveNanos = if (tick < warmupTicks) minOf(elapsedNanos, FRAME_DURATION_NANOS) else elapsedNanos
-                pendingFrames += effectiveNanos.toDouble() / FRAME_DURATION_NANOS.toDouble()
+                pendingFrames += effectiveNanos.toDouble() / FRAME_DURATION_NANOS.toDouble() * currentPlaybackSpeed
 
                 // Audio-aware pacing: if audio buffer is nearly full, the emulator
                 // is running ahead of real-time. Yield to let audio drain.
-                if (!fastForwarding && !workspaceState.audioHasHeadroom && pendingFrames < 2.0) {
+                if (currentPlaybackSpeed == 1 && !workspaceState.audioHasHeadroom && pendingFrames < 2.0) {
                     delay(2L)
                     continue
                 }
@@ -220,12 +244,17 @@ fun FloatingEmulatorWindow(
                     delay(waitMs)
                     continue
                 }
-                val baseRepeat = pendingFrames.toInt().coerceIn(1, MAX_STEP_REPEAT)
-                val repeat = if (fastForwarding) (baseRepeat * 4).coerceAtMost(16) else baseRepeat
-                pendingFrames = (pendingFrames - baseRepeat).coerceAtMost(MAX_STEP_REPEAT.toDouble())
+                val presentation = workspaceState.selectedBackendDescriptor.presentation
+                val maxCatchUp = EmulatorFramePacer.maxCatchUp(presentation, currentPlaybackSpeed)
+                val repeat = EmulatorFramePacer.repeat(pendingFrames, maxCatchUp)
+                pendingFrames = (pendingFrames - repeat).coerceAtMost(maxCatchUp.toDouble())
+                if (currentPlaybackSpeed == 1 && presentation == EmulatorPresentation.HeadlessChild) {
+                    pendingFrames = pendingFrames.coerceAtMost(1.0)
+                }
                 workspaceState.stepFrame(
                     repeat = repeat,
-                    includeFrame = tick % FRAME_REFRESH_INTERVAL == 0L,
+                    includeFrame = EmulatorFramePacer.includeFrame(presentation, tick),
+                    includeWram = EmulatorFramePacer.includeWram(presentation, tick),
                     includeTrace = tick % TRACE_REFRESH_INTERVAL == 0L,
                 )
                 workspaceState.pendingComboAction?.let { combo ->
@@ -239,8 +268,8 @@ fun FloatingEmulatorWindow(
                     }
                 }
                 tick += 1
-                if (pendingFrames > MAX_STEP_REPEAT * 2) {
-                    pendingFrames = MAX_STEP_REPEAT.toDouble()
+                if (pendingFrames > maxCatchUp * 2) {
+                    pendingFrames = maxCatchUp.toDouble()
                 }
             }
         }
@@ -292,11 +321,21 @@ fun FloatingEmulatorWindow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            "Emulator",
+                            workspaceState.selectedBackendDescriptor.workspaceTitle,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (workspaceState.selectedBackendDescriptor.presentation ==
+                            EmulatorPresentation.HeadlessChild
+                        ) {
+                            val tapeName = LsnesTapes.match(workspaceState.lsnesMoviePath)?.displayName ?: "Live"
+                            Text(
+                                tapeName,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                         if (workspaceState.session.active) {
                             Text(
                                 "${workspaceState.emulatedFps.toInt()} fps",
@@ -426,6 +465,9 @@ fun FloatingEmulatorWindow(
                                         } else if (event.key == Key.Grave) {
                                             scope.launch { workspaceState.reloadLastCheckpoint() }
                                             true
+                                        } else if (event.key == Key.Equals) {
+                                            playbackSpeed = EmulatorPlaybackSpeed.next(playbackSpeed)
+                                            true
                                         } else {
                                             workspaceState.updateKey(event.key, down = true)
                                             false
@@ -462,16 +504,55 @@ fun FloatingEmulatorWindow(
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    "Arrows + Z/X/A/S/Q/W | F1-F4 save/load",
+                                    workspaceState.selectedBackendDescriptor.workspaceHelp,
                                     color = EditorColors.emulatorText,
                                     fontSize = 11.sp,
                                 )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "Controller: R+Y+Sel save | L+Y+Sel load | L+R+Y+\u2191\u2193 slot",
-                                    color = EditorColors.emulatorText,
-                                    fontSize = 11.sp,
-                                )
+                                if (workspaceState.selectedBackendDescriptor.presentation ==
+                                    EmulatorPresentation.HeadlessChild
+                                ) {
+                                    Spacer(Modifier.height(10.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        val selectedTape = LsnesTapes.match(workspaceState.lsnesMoviePath)
+                                        FloatingTapeChip(
+                                            "Live",
+                                            selected = selectedTape == null && workspaceState.lsnesMoviePath.isBlank(),
+                                        ) { workspaceState.applyLsnesTape(null) }
+                                        for (tape in LsnesTapes.all()) {
+                                            FloatingTapeChip(tape.displayName, selected = selectedTape?.id == tape.id) {
+                                                runCatching { workspaceState.applyLsnesTape(tape) }
+                                                    .onFailure { workspaceState.setStatus(it.message ?: "Tape failed") }
+                                            }
+                                        }
+                                        if (selectedTape?.skipToFrame != null && workspaceState.session.active) {
+                                            FloatingTapeChip("Skip intro", selected = false) {
+                                                scope.launch { workspaceState.skipLsnesIntro() }
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "= cycle 1×–16× | Space pause",
+                                        color = EditorColors.emulatorText,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                                if (workspaceState.selectedBackendDescriptor.presentation ==
+                                    EmulatorPresentation.InProcess
+                                ) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "Arrows + Z/X/A/S/Q/W | F1-F4 save/load | = speed",
+                                        color = EditorColors.emulatorText,
+                                        fontSize = 11.sp,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "Controller: R+Y+Sel save | L+Y+Sel load | L+R+Y+\u2191\u2193 slot",
+                                        color = EditorColors.emulatorText,
+                                        fontSize = 11.sp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -533,17 +614,19 @@ fun FloatingEmulatorWindow(
                     if (!workspaceState.isExternalBackend) {
                         Spacer(Modifier.width(4.dp))
 
-                        // Fast forward
-                        IconButton(
-                            onClick = { fastForwarding = !fastForwarding },
+                        Surface(
+                            onClick = { playbackSpeed = EmulatorPlaybackSpeed.next(playbackSpeed) },
                             enabled = workspaceState.session.active && !workspaceState.isBusy,
-                            modifier = Modifier.size(30.dp).clip(btnShape),
+                            color = Color.Transparent,
+                            shape = btnShape,
                         ) {
-                            Icon(
-                                Icons.Default.FastForward, "Fast forward",
-                                Modifier.size(18.dp),
-                                tint = if (fastForwarding) MaterialTheme.colorScheme.primary
+                            Text(
+                                EmulatorPlaybackSpeed.label(playbackSpeed),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (playbackSpeed > 1) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                             )
                         }
                     }
@@ -591,7 +674,6 @@ fun FloatingEmulatorWindow(
 
                         Spacer(Modifier.width(4.dp))
 
-                        // SAVE text button
                         Surface(
                             onClick = {
                                 scope.launch { workspaceState.saveQuickState("slot_${workspaceState.saveSlotIndex}") }
@@ -611,30 +693,10 @@ fun FloatingEmulatorWindow(
 
                         Spacer(Modifier.width(2.dp))
 
-                        // LOAD text button
-                        Surface(
-                            onClick = {
-                                scope.launch { workspaceState.loadNamedState("slot_${workspaceState.saveSlotIndex}") }
-                            },
-                            enabled = workspaceState.session.active && !workspaceState.isBusy,
-                            color = Color.Transparent,
-                            shape = btnShape,
-                        ) {
-                            Text(
-                                "LOAD",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                            )
-                        }
-
-                        Spacer(Modifier.width(2.dp))
-
-                        // Slot number + dropdown with metadata
                         Box {
                             Surface(
                                 onClick = { showSaveMenu = !showSaveMenu },
+                                enabled = workspaceState.session.active && !workspaceState.isBusy,
                                 color = Color.Transparent,
                                 shape = btnShape,
                             ) {
@@ -643,14 +705,13 @@ fun FloatingEmulatorWindow(
                                     modifier = Modifier.padding(horizontal = 2.dp),
                                 ) {
                                     Text(
-                                        "${workspaceState.saveSlotIndex}",
+                                        "LOAD",
                                         fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Icon(
-                                        Icons.Default.ArrowDropDown, "Select slot",
+                                        Icons.Default.ArrowDropDown, "Load save slot",
                                         Modifier.size(14.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -659,7 +720,7 @@ fun FloatingEmulatorWindow(
                             DropdownMenu(
                                 expanded = showSaveMenu,
                                 onDismissRequest = { showSaveMenu = false },
-                                modifier = Modifier.widthIn(min = 520.dp),
+                                modifier = Modifier.widthIn(min = windowWidth.coerceAtMost(520f).dp),
                             ) {
                                 for (i in 0..128) {
                                     val meta = workspaceState.getSlotMeta(i)
@@ -686,10 +747,34 @@ fun FloatingEmulatorWindow(
                                                 SaveSlotRow(slotIndex = i, meta = meta, customItems = customItems)
                                             }
                                         },
-                                        onClick = { workspaceState.saveSlotIndex = i; showSaveMenu = false },
+                                        enabled = meta != null,
+                                        onClick = {
+                                            workspaceState.saveSlotIndex = i
+                                            showSaveMenu = false
+                                            scope.launch { workspaceState.loadNamedState("slot_$i") }
+                                        },
                                         modifier = Modifier.height(if (meta != null) 36.dp else 28.dp),
                                     )
                                 }
+                            }
+                        }
+
+                        val skipTape = LsnesTapes.match(workspaceState.lsnesMoviePath)
+                        if (skipTape?.skipToFrame != null) {
+                            Spacer(Modifier.width(2.dp))
+                            Surface(
+                                onClick = { scope.launch { workspaceState.skipLsnesIntro() } },
+                                enabled = workspaceState.session.active && !workspaceState.isBusy,
+                                color = Color.Transparent,
+                                shape = btnShape,
+                            ) {
+                                Text(
+                                    "SKIP",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                )
                             }
                         }
 
@@ -738,22 +823,21 @@ fun FloatingEmulatorWindow(
 
                         Spacer(Modifier.width(2.dp))
 
-                        // Dev tools toggle + popup
+                        // Room warp panel
                         Box {
-                            IconButton(
+                            Surface(
                                 onClick = { showDevTools = !showDevTools },
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(btnShape)
-                                    .background(
-                                        if (showDevTools) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                                        else Color.Transparent
-                                    ),
+                                color = if (showDevTools) MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                    else Color.Transparent,
+                                shape = btnShape,
                             ) {
                                 Text(
-                                    "⚙",
-                                    fontSize = 18.sp,
-                                    color = if (showDevTools) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "WARP",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (showDevTools) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                                 )
                             }
                             DropdownMenu(
@@ -797,6 +881,29 @@ fun FloatingEmulatorWindow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun FloatingTapeChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

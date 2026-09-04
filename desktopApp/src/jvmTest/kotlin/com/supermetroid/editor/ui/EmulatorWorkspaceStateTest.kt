@@ -161,6 +161,21 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
+    fun `applyLsnesTape extracts bundled sniq 100 and clears for live`() = runBlocking {
+        val savedSettings = AppConfig.load()
+        try {
+            val state = EmulatorWorkspaceState()
+            state.applyLsnesTape(com.supermetroid.editor.emulator.LsnesTapes.SNIQ_100)
+            assertTrue(state.lsnesMoviePath.endsWith("sniq_100_4010M.lsmv"))
+            assertTrue(java.io.File(state.lsnesMoviePath).isFile)
+            state.applyLsnesTape(null)
+            assertEquals("", state.lsnesMoviePath)
+        } finally {
+            AppConfig.save(savedSettings)
+        }
+    }
+
+    @Test
     fun `closeSession clears active session state`() = runBlocking {
         val backend = FakeBackend()
         backend.connectResult = EmulatorCapabilities(backendName = "fake")
@@ -289,6 +304,7 @@ class EmulatorWorkspaceStateTest {
     @Test
     fun `projectStateDir falls back to ROM slug when no project file`() {
         val state = EmulatorWorkspaceState()
+        state.selectedBackendName = "libretro"
         state.updateRomPath("/Users/kenny/roms/Super Metroid (JU) [!].smc")
         val dir = state.projectStateDir()
         val normalizedPath = dir.path.replace('\\', '/')

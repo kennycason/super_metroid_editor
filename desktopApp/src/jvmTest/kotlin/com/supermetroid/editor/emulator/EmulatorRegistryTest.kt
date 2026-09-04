@@ -31,7 +31,18 @@ class EmulatorRegistryTest {
         assertEquals("lsnes b25 extra", descriptor.displayName)
         assertEquals(EmulatorInstallKind.OptionalExtra, descriptor.installKind)
         assertEquals(EmulatorPresentation.HeadlessChild, descriptor.presentation)
+        assertEquals("lsnes TAS extra", descriptor.workspaceTitle)
+        assertTrue(descriptor.workspaceHelp.contains("not bundled"))
+        assertEquals("Click Play to start the lsnes TAS extra.", descriptor.idleStatus)
         assertTrue(EmulatorRegistry.descriptors().any { it.id == "lsnes-b25" })
+    }
+
+    @Test
+    fun `libretro descriptor stays the embedded emulator`() {
+        val descriptor = EmulatorRegistry.descriptor("libretro")
+        assertEquals("Embedded Emulator", descriptor.workspaceTitle)
+        assertTrue(descriptor.workspaceHelp.contains("libretro"))
+        assertEquals("Click Play to start the emulator.", descriptor.idleStatus)
     }
 
     @Test

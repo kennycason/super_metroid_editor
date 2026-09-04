@@ -23,6 +23,9 @@ import com.supermetroid.editor.emulator.FrameHolder
 import com.supermetroid.editor.emulator.FrameProvidingBackend
 import com.supermetroid.editor.emulator.GameSnapshot
 import com.supermetroid.editor.emulator.LsnesDiscovery
+import com.supermetroid.editor.emulator.LsnesTape
+import com.supermetroid.editor.emulator.LsnesTapes
+import com.supermetroid.editor.emulator.RealtimePlayBackend
 import com.supermetroid.editor.emulator.RetroArchBackend
 import com.supermetroid.editor.emulator.SessionConfig
 import com.supermetroid.editor.emulator.SessionState
@@ -209,7 +212,7 @@ class EmulatorWorkspaceState(
     val isTasMoviePlayback: Boolean
         get() = sessionTasMoviePlayback
 
-    var statusMessage by mutableStateOf("Click Play to start the emulator.")
+    var statusMessage by mutableStateOf(selectedBackendDescriptor.idleStatus)
         internal set
     var statusMessageTimestamp by mutableStateOf(0L)
         private set
@@ -446,6 +449,7 @@ class EmulatorWorkspaceState(
         repeat: Int = 1,
         includeFrame: Boolean = true,
         includeTrace: Boolean = true,
+        includeWram: Boolean = true,
     ) {
         val b = backend ?: return
         if (!session.active || isBusy || stepInFlight) return
@@ -460,6 +464,7 @@ class EmulatorWorkspaceState(
                     repeat = repeat,
                     includeFrame = includeFrame,
                     includeTrace = includeTrace,
+                    includeWram = includeWram,
                 )
             )
             applyStepResult(result)
@@ -741,6 +746,58 @@ class EmulatorWorkspaceState(
 
     fun setLoopRunning(running: Boolean) {
         isRunning = running
+    }
+
+    val usesRealtimePlay: Boolean
+        get() = backend is RealtimePlayBackend
+
+    suspend fun startRealtime() {
+        val rt = backend as? RealtimePlayBackend ?: return
+        try {
+            rt.startRealtime(applyButtons = !isTasMoviePlayback)
+        } catch (e: Exception) {
+            isRunning = false
+            setStatus("Realtime start failed: ${e.message}")
+        }
+    }
+
+    suspend fun stopRealtime() {
+        val rt = backend as? RealtimePlayBackend ?: return
+        runCatching { rt.stopRealtime() }
+    }
+
+    suspend fun skipLsnesIntro() {
+        val tape = LsnesTapes.match(lsnesMoviePath) ?: return
+        val frame = tape.skipToFrame ?: return
+        val rt = backend as? RealtimePlayBackend ?: return
+        if (!session.active) return
+        isBusy = true
+        try {
+            setStatus("Skipping intro to frame $frame...")
+            rt.seekToFrame(frame)
+            setStatus("Skipped intro (frame $frame)")
+        } catch (e: Exception) {
+            setStatus("Skip intro failed: ${e.message}")
+        } finally {
+            isBusy = false
+        }
+    }
+
+    suspend fun pumpRealtime(speed: Int = 1) {
+        val rt = backend as? RealtimePlayBackend ?: return
+        if (!session.active) return
+        rt.writeRealtimeButtons(currentAction(), applyButtons = !isTasMoviePlayback, speed = speed)
+        val previousFrameCounter = session.frameCounter
+        val startedAt = System.nanoTime()
+        val result = rt.pollRealtime() ?: return
+        applyStepResult(result)
+        updateLoopMetrics(
+            previousFrameCounter = previousFrameCounter,
+            currentFrameCounter = result.session.frameCounter,
+            elapsedNanos = System.nanoTime() - startedAt,
+            repeat = 1,
+            frameIncluded = true,
+        )
     }
 
     fun toggleAudioMute() {
@@ -1190,6 +1247,9 @@ class EmulatorWorkspaceState(
     fun updateSelectedBackendName(value: String) {
         selectedBackendName = value
         persistConfig()
+        if (!session.active) {
+            setStatus(selectedBackendDescriptor.idleStatus)
+        }
     }
 
     fun updateLsnesPath(value: String) {
@@ -1200,6 +1260,23 @@ class EmulatorWorkspaceState(
     fun updateLsnesMoviePath(value: String) {
         lsnesMoviePath = value
         persistConfig()
+    }
+
+    fun applyLsnesTape(tape: LsnesTape?) {
+        if (tape == null) {
+            updateLsnesMoviePath("")
+            setStatus(
+                if (session.active) "Tape cleared. Restart Play for live input."
+                else selectedBackendDescriptor.idleStatus,
+            )
+            return
+        }
+        val file = LsnesTapes.extract(tape)
+        updateLsnesMoviePath(file.absolutePath)
+        setStatus(
+            if (session.active) "Tape: ${tape.displayName}. Restart Play to boot this tape."
+            else "Tape: ${tape.displayName}. Play boots ROM+movie together.",
+        )
     }
 
     fun updateLsnesLuaScriptPath(value: String) {

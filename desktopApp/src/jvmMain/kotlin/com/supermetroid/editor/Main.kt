@@ -429,6 +429,8 @@ fun main() = application {
                                     contentDescription = "Settings",
                                     modifier = Modifier.size(16.dp),
                                 )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Settings", fontSize = fs.detail)
                             }
                             if (settingsOpen) {
                                 SettingsPopup(

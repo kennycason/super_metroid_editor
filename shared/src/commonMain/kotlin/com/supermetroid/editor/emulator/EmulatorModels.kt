@@ -48,6 +48,7 @@ data class EmulatorInput(
     val repeat: Int = 1,
     val includeFrame: Boolean = true,
     val includeTrace: Boolean = true,
+    val includeWram: Boolean = true,
 )
 
 @Serializable

@@ -139,6 +139,13 @@ Do **not**:
 Host input stays `applyButtons=false` for the whole movie. Live (no-movie)
 sessions are a second mode and use `--rom=`, not `--rom-a=`.
 
+The floating emulator cycles watch speed **1× / 2× / 4× / 8× / 16×** (button
+or `=` with the viewport focused). **SKIP** seeks Sniq 100% to Ceres elevator
+(frame 8319). 16× is sent to the worker, but live playback tops out around
+400–450 emulated fps (~7× NTSC) because **bsnes v085 Compatibility is the
+limiter**, not the speed control. 8× and 16× both hit that ceiling. A faster
+core would desync TASVideos movies.
+
 Reference publication: [TASVideos #4010M](https://tasvideos.org/4010M)
 (Sniq Super Metroid 100%, authored on lsnes rr2-β23 / bsnes v085 Compatibility).
 

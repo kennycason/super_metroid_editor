@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -20,6 +21,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class LsnesBackendMailboxTest {
 
@@ -97,6 +99,83 @@ class LsnesBackendMailboxTest {
             val step = harness.inboxes.last { it.cmd == "step" }
             assertFalse(step.applyButtons)
             assertTrue(step.raw.contains("\"applyButtons\":false"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `seek jumps to the requested movie frame`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.seekToFrame(8319)
+            val seek = harness.inboxes.last { it.cmd == "seek" }
+            assertTrue(seek.raw.contains("\"targetFrame\":8319"))
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `realtime buttons json carries watch speed up to 16x`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.writeRealtimeButtons(
+                listOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                applyButtons = false,
+                speed = 16,
+            )
+            val payload = File(harness.mailboxDir, "buttons.json").readText()
+            assertTrue(payload.contains("\"speed\":16"), payload)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `realtime run publishes live frames without stepped rpc`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.startRealtime(applyButtons = true)
+            assertTrue(harness.inboxes.any { it.cmd == "run" })
+            assertTrue(harness.backend.realtimeActive)
+
+            var latest: com.supermetroid.editor.emulator.StepResult? = null
+            val deadline = System.nanoTime() + 2_000_000_000L
+            while (System.nanoTime() < deadline) {
+                latest = harness.backend.pollRealtime() ?: latest
+                if ((latest?.session?.frameCounter ?: 0) >= 2) break
+                Thread.sleep(5)
+            }
+            assertTrue((latest?.session?.frameCounter ?: 0) >= 2) {
+                "expected live frames, last=$latest"
+            }
+
+            harness.backend.writeRealtimeButtons(listOf(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), applyButtons = true)
+            harness.backend.stopRealtime()
+            assertTrue(harness.inboxes.any { it.cmd == "pause" })
+            assertFalse(harness.backend.realtimeActive)
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `step can skip WRAM dump`() = runBlocking {
+        val harness = startHarness()
+        try {
+            harness.backend.connect()
+            harness.backend.startSession(SessionConfig(romPath = harness.rom.absolutePath))
+            harness.backend.step(EmulatorInput(includeFrame = false, includeWram = false))
+            val step = harness.inboxes.last { it.cmd == "step" }
+            assertFalse(step.includeWram)
+            assertTrue(step.raw.contains("\"includeWram\":false"))
         } finally {
             harness.close()
         }
@@ -309,6 +388,7 @@ class LsnesBackendMailboxTest {
         val rom = dummyRom()
         val commands = ConcurrentLinkedQueue<List<String>>()
         val inboxes = ConcurrentLinkedQueue<InboxCommand>()
+        val mailboxRef = AtomicReference<File?>(null)
         val backend = LsnesBackend(
             executableOverride = worker,
             stageRootOverride = File(tempDir, "sessions"),
@@ -320,10 +400,11 @@ class LsnesBackendMailboxTest {
                         "LSNES_WORKER_DIR must be set on the worker ProcessBuilder"
                     },
                 )
+                mailboxRef.set(mailbox)
                 FakeLsnesWorkerProcess(mailbox, inboxes).also { it.signalReady() }
             },
         )
-        return MailboxHarness(backend, rom, commands, inboxes)
+        return MailboxHarness(backend, rom, commands, inboxes, mailboxRef)
     }
 
     private fun dummyWorkerFile(): File {
@@ -359,7 +440,11 @@ class LsnesBackendMailboxTest {
         val rom: File,
         private val commands: ConcurrentLinkedQueue<List<String>>,
         val inboxes: ConcurrentLinkedQueue<InboxCommand>,
+        private val mailboxRef: AtomicReference<File?>,
     ) {
+        val mailboxDir: File
+            get() = requireNotNull(mailboxRef.get()) { "mailbox not created yet" }
+
         fun lastCommand(): List<String> = commands.last()
         fun close() = backend.close()
     }
@@ -372,6 +457,7 @@ private data class InboxCommand(
     val applyButtons: Boolean,
     val repeat: Int,
     val path: String?,
+    val includeWram: Boolean = true,
 )
 
 private fun inertProcessHandle(): ProcessHandle {
@@ -389,6 +475,7 @@ private class FakeLsnesWorkerProcess(
     private val replyId: (String) -> String = { it },
 ) : Process() {
     private val alive = AtomicBoolean(true)
+    private val live = AtomicBoolean(false)
     private val exitCode = AtomicInteger(0)
     private val frame = AtomicInteger(0)
     private val json = Json { ignoreUnknownKeys = true }
@@ -404,6 +491,13 @@ private class FakeLsnesWorkerProcess(
                             handleInbox(text)
                         }
                     } else {
+                        if (live.get()) {
+                            val published = frame.incrementAndGet()
+                            val outbox = File(mailboxDir, "outbox").apply { mkdirs() }
+                            File(outbox, "live.json").writeText(
+                                """{"frame":$published,"width":256,"height":224}""",
+                            )
+                        }
                         Thread.sleep(2)
                     }
                 }
@@ -430,6 +524,7 @@ private class FakeLsnesWorkerProcess(
         val repeat = obj["repeat"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
         val path = obj["path"]?.jsonPrimitive?.contentOrNull
         val includeWram = obj["includeWram"]?.jsonPrimitive?.booleanOrNull ?: true
+        val targetFrame = obj["targetFrame"]?.jsonPrimitive?.intOrNull
         inboxes.add(
             InboxCommand(
                 raw = text,
@@ -438,9 +533,13 @@ private class FakeLsnesWorkerProcess(
                 applyButtons = applyButtons,
                 repeat = repeat,
                 path = path,
+                includeWram = includeWram,
             ),
         )
         if (cmd == "step") frame.addAndGet(repeat)
+        if (cmd == "seek" && targetFrame != null) frame.set(targetFrame)
+        if (cmd == "run") live.set(true)
+        if (cmd == "pause" || cmd == "quit") live.set(false)
         val outbox = File(mailboxDir, "outbox").apply { mkdirs() }
         File(outbox, "reply.json").writeText(
             """{"id":"${replyId(id)}","ok":true,"frame":${frame.get()},"width":256,"height":224}""",

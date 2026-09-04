@@ -1,5 +1,30 @@
 # Plan — Finish lsnes rr2-beta25 TAS in SMEDIT
 
+## Current direction
+
+lsnes rr2-beta25 is an **optional Linux extra**, not a bundled emulator. It is
+not shipped in GitHub releases and is not built by default
+`./gradlew :desktopApp:run` or `packageDistributionForCurrentOS`. The worker is
+GPL, heavy to compile, and not needed for ROM editing.
+
+Tracked as **PR #31** on `feature/lsnes-b25-tas`. Users who want native
+TASVideos `.lsmv` playback install the extra themselves:
+
+```bash
+git submodule update --init --recursive tools/lsnes
+./gradlew buildLsnesWorker installLsnesWorker
+```
+
+Install location: `~/.smedit/lsnes/smedit-lsnes-worker`. Filename must be
+`smedit-lsnes-worker`. Stock `lsnes` / `lsnes-bsnes.exe` is rejected.
+Windows/macOS extra install is unsupported in this PR.
+
+See [lsnes-extra.md](lsnes-extra.md) for the user-facing extra-install guide.
+The sections below are the historical bring-up plan; packaging/CI/git bullets
+that still said “bundle the worker” are updated in place.
+
+---
+
 Codex session `01a06a2c-c48a-72f1-a8c3-19984da7032b` (2026-09-04) started `feature/lsnes-b25-tas`, wrote files, then hit the usage limit mid-turn. The last `apply_patch` on `EmulatorWorkspaceState.kt` **did land**. Nothing is committed. There is no PR. Tests were not run. The Euler snapshot in the original paste is a different project and is unrelated.
 
 User request that this branch still has to satisfy:
@@ -17,7 +42,7 @@ Do not treat BizHawk `sniq_100p.bk2` as the authoring movie. Do not convert LSMV
 
 Codex got the skeleton on disk and then stopped. The Kotlin adapter, Lua mailbox, and a custom headless C++ entry point exist as uncommitted work. They are not wired through settings UI, they do not build or discover a worker under the names they claim, they have no tests, and they have not been proven against a TASVideos LSMV.
 
-Safe next action: fix the worker name/build/discovery mismatch, vendor the Sniq LSMV fixture, then write tests that boot that LSMV the TASVideos way. Only after that, finish UI, packaging, and the PR.
+Safe next action: fix the worker name/build/discovery mismatch, vendor the Sniq LSMV fixture, then write tests that boot that LSMV the TASVideos way. Only after that, finish UI, the optional extra-install path (not bundling the worker), and PR #31.
 
 ---
 
@@ -176,8 +201,8 @@ Known follow-ups while bringing the worker up:
 - `dummygraphics.cpp` sets `pausing_allowed = false`; `lsnes-smedit.cpp` sets it back to `true` after `platform::init()`. Keep that order or `pause-emulator` from Lua is a no-op.
 - `gui.screenshot` goes through `emu_framebuffer`, not wx, so dummy graphics can still write PNGs. Verify in the Sniq test.
 - gcc shim (`-include gcc-compat.hpp`) is the right place; do not patch the submodule.
-- Linux is the first bring-up. Windows needs a real recipe (no `pkg-config`/`curl-config`/`-ldl` as-is). macOS is not blocked by the wx `#error` if platform/wxwidgets is not compiled, but Boost/Lua/curl still have to exist. Do not claim cross-platform until each OS has a documented `buildLsnesWorker` path and a smoke test.
-- Package the worker next to the Compose app (`compose.application.resources.dir` is already a discovery candidate). Gradle should copy `smedit-lsnes-worker` into the distribution, not assume the user built it by hand.
+- Linux is the first bring-up and the **only** extra install in this PR. Windows/macOS worker recipes are out of scope; do not invent them. Stock wx lsnes is still rejected on every OS.
+- Do **not** package the worker next to the Compose app. Default run/package must not require `tools/lsnes` or `smedit-lsnes-worker`. Discovery may still look at `compose.application.resources.dir` and `tools/lsnes-smedit/bin/`, but the supported install is `./gradlew buildLsnesWorker installLsnesWorker` → `~/.smedit/lsnes/smedit-lsnes-worker` (or `SMEDIT_LSNES_PATH`).
 
 ### 6. Kotlin adapter polish after the LSMV test is green
 
@@ -187,15 +212,17 @@ Known follow-ups while bringing the worker up:
 - `LsnesBackend` reads `AppConfig.load().lsnesPath` itself instead of taking the path from `SessionConfig` / the workspace field. After settings UI exists, pass the path in so tests do not depend on `~/.smedit/config.json`.
 - `load_script` uses Lua `dofile`. Extra user scripts must not overwrite `on_frame` / `on_idle`. Keep `callback.register` in the worker (already done) and add a regression test.
 
-### 7. Git / PR (only after tests)
+### 7. Git / PR / CI (only after tests)
 
-Codex was asked to push a PR. Do not open one on the current tree.
+Codex was asked to push a PR. The extra-plugin work is **PR #31** from
+`feature/lsnes-b25-tas` against `main`. Do not treat default clone/package as
+an lsnes deliverable.
 
-1. `git submodule status` should stay at `lsnes-rr2-beta25` with a clean gitlink (currently `+96e46fff` / `AM tools/lsnes`)
+1. `tools/lsnes` stays an **optional** submodule at `lsnes-rr2-beta25`. Default clone inits `tools/snes9x` and `tools/snes_spc` only. `git submodule update --init --recursive` is fine if someone already used `--recurse-submodules`, but CI/package must not require that tree.
 2. Do not commit ROM files
 3. Do commit `sniq_100_4010M.lsmv`
-4. Run `./gradlew :shared:jvmTest :desktopApp:jvmTest`
-5. One focused PR from `feature/lsnes-b25-tas` against `main`
+4. Run `./gradlew :shared:jvmTest :desktopApp:jvmTest` without building the worker. Gate the Sniq frame markers on `SMEDIT_LSNES_IT=1`.
+5. Do not copy `smedit-lsnes-worker` into `.dmg` / `.msi` / `.deb` / `.rpm`. `installLsnesWorker` writes `~/.smedit/lsnes/smedit-lsnes-worker` only.
 
 ---
 
@@ -207,8 +234,8 @@ Codex was asked to push a PR. Do not open one on the current tree.
 4. LSMV acceptance test: native `--rom-a` + positional movie, `applyButtons=false`, Ceres elev + Landing Site frames.
 5. Fix no-movie `--rom=` / `--rom-type` so Play without an LSMV still boots.
 6. Settings UI for worker / `.lsmv` / Lua.
-7. Linux packaging path; then Windows/macOS build notes (or explicit “Linux-only in this PR” in the description — do not silently drop the original cross-platform requirement).
-8. Commit, push, open PR.
+7. Document and keep the extra as Linux-only: `buildLsnesWorker` + `installLsnesWorker`, no worker in Compose distributions, no Windows/macOS extra recipes in this PR.
+8. PR #31 from `feature/lsnes-b25-tas` against `main`.
 
 Stop and reassess if step 4 cannot reach `0x91F8` at frame 15198. That means the worker is not on the publication boot path, and UI/packaging will not save it.
 
@@ -221,4 +248,6 @@ Stop and reassess if step 4 cannot reach `0x91F8` at frame 15198. That means the
 - Full 222788-frame CI replay
 - Using snes9x/libretro to “approximate” the LSMV
 - Shipping stock wx lsnes
+- Shipping `smedit-lsnes-worker` in GitHub releases or OS packages
+- Windows/macOS worker install
 - The unrelated Project Euler snapshot from the Codex paste

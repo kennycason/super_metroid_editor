@@ -41,6 +41,7 @@ import com.supermetroid.editor.emulator.EmulatorBackendIds
 import com.supermetroid.editor.emulator.EmulatorInstallKind
 import com.supermetroid.editor.emulator.EmulatorRegistry
 import com.supermetroid.editor.emulator.LsnesDiscovery
+import com.supermetroid.editor.emulator.LsnesTapes
 import java.io.File
 import javax.swing.JFileChooser
 import javax.swing.filechooser.FileFilter
@@ -640,6 +641,22 @@ private fun LsnesExtraSettings(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val selectedTape = LsnesTapes.match(workspaceState.lsnesMoviePath)
+        SettingsTapeChip("Live", selected = selectedTape == null && workspaceState.lsnesMoviePath.isBlank(), currentFontSize) {
+            workspaceState.applyLsnesTape(null)
+        }
+        for (tape in LsnesTapes.all()) {
+            SettingsTapeChip(tape.displayName, selected = selectedTape?.id == tape.id, currentFontSize) {
+                runCatching { workspaceState.applyLsnesTape(tape) }
+                    .onFailure { lsnesBrowseStatus = it.message }
+            }
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         AppTextInput(
             value = workspaceState.lsnesMoviePath,
             onValueChange = { workspaceState.updateLsnesMoviePath(it) },
@@ -693,6 +710,30 @@ private fun LsnesExtraSettings(
         fontSize = currentFontSize.detail,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+@Composable
+private fun SettingsTapeChip(
+    label: String,
+    selected: Boolean,
+    currentFontSize: FontSize,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(6.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            fontSize = currentFontSize.body,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable

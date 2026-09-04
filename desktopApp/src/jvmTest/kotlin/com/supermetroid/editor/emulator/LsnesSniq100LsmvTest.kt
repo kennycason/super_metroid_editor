@@ -169,6 +169,8 @@ class LsnesSniq100LsmvTest {
             return File(URI(resource.toString()))
         }
         val candidates = listOf(
+            File("src/jvmMain/resources/$FIXTURE_RESOURCE"),
+            File("desktopApp/src/jvmMain/resources/$FIXTURE_RESOURCE"),
             File("src/jvmTest/resources/$FIXTURE_RESOURCE"),
             File("desktopApp/src/jvmTest/resources/$FIXTURE_RESOURCE"),
         )
