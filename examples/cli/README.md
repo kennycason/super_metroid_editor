@@ -8,6 +8,7 @@ When using Gradle's `:cli:runCli` task, paths are resolved from the `cli/` modul
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/qol-fast-start.json --patch ../build/cli-examples/qol-fast-start.ips --report ../build/cli-examples/qol-fast-start-report.json'
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/combat-sandbox.json --patch ../build/cli-examples/combat-sandbox.ips --report ../build/cli-examples/combat-sandbox-report.json'
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/boss-lab.json --patch ../build/cli-examples/boss-lab.ips --report ../build/cli-examples/boss-lab-report.json'
+./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/echolocation-beam.json --patch ../build/cli-examples/echolocation-beam.ips --report ../build/cli-examples/echolocation-beam-report.json'
 ```
 
 To emit a patched ROM, add `--rom` and `--output`:

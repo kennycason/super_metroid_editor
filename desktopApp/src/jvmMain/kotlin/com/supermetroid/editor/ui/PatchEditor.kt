@@ -68,6 +68,18 @@ private val SYSTEM_PATCH_PREFIXES = listOf("hex_", "config_", "bundled_")
 fun isSystemPatch(id: String): Boolean =
     SYSTEM_PATCH_PREFIXES.any { id.startsWith(it) }
 
+internal fun importIpsPatch(editorState: EditorState, fileName: String, ipsData: ByteArray): SmPatch {
+    val writes = PatchRepository.parseIps(ipsData)
+    val name = File(fileName).nameWithoutExtension.replace('_', ' ')
+        .replaceFirstChar { it.uppercase() }
+    val patch = editorState.addPatch(name, "Imported from $fileName", enabled = true)
+    editorState.setPatchWrites(
+        patch.id,
+        writes.map { SmPatchWrite(it.offset, it.bytes) },
+    )
+    return patch
+}
+
 @Composable
 fun PatchListPanel(
     editorState: EditorState,
@@ -109,12 +121,7 @@ fun PatchListPanel(
                         if (dir != null && file != null) {
                             try {
                                 val ipsFile = File(dir, file)
-                                val writes = PatchRepository.parseIps(ipsFile.readBytes())
-                                val name = ipsFile.nameWithoutExtension.replace('_', ' ')
-                                    .replaceFirstChar { it.uppercase() }
-                                val patch = editorState.addPatch(name, "Imported from ${ipsFile.name}")
-                                editorState.setPatchWrites(patch.id,
-                                    writes.map { SmPatchWrite(it.offset, it.bytes) })
+                                importIpsPatch(editorState, ipsFile.name, ipsFile.readBytes())
                             } catch (e: Exception) {
                                 patchEditorLog.error(e) { "IPS import failed: ${e.message}" }
                             }
@@ -127,17 +134,7 @@ fun PatchListPanel(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 ) {
-                    Text("IPS", fontSize = 11.sp)
-                }
-                Button(
-                    onClick = {
-                        requestVerticalSelectionFocus(navigationFocusRequester)
-                        editorState.addPatch("New Patch")
-                    },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp)
-                ) {
-                    Text("+ Add", fontSize = 11.sp)
+                    Text("+IPS", fontSize = 11.sp)
                 }
             }
         }
@@ -176,7 +173,7 @@ fun PatchListPanel(
             if (filtered.isEmpty()) {
                 Text(
                     if (searchQuery.isNotBlank()) "No patches match \"$searchQuery\"."
-                    else "No patches yet.\nClick + Add to create one.",
+                    else "No patches yet.\nClick +IPS to import an external patch.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
@@ -283,7 +280,7 @@ fun PatchEditorCanvas(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Select a patch from the left panel", fontSize = 14.sp,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("or click + Add to create a new one.", fontSize = 12.sp,
+                Text("or click +IPS to import an external patch.", fontSize = 12.sp,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

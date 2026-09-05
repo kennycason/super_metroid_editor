@@ -77,6 +77,17 @@ Apply patches to produce a ROM and/or IPS:
 ./gradlew :cli:runCli -Pargs="build --config build.json --patch patch-only.ips"
 ```
 
+For the bundled **Echolocation Beam** patch, a ready-to-use config is included:
+
+```bash
+./gradlew -q :cli:runCli -Pargs="--rom '/path/to/rom/Super Metroid/Super Metroid (JU) [\!].smc' build --config ../examples/cli/echolocation-beam.json --output ../build/echolocation-beam.smc --patch ../build/echolocation-beam.ips"
+```
+
+This patch gives collidable tiles a short, high click for every beam and a
+slightly lower click when Samus lands, hits a ceiling, or runs into a wall. It
+also closes the silent Wave/Hyper Beam gap while preserving their ability to
+pass through tiles; enemy hits and the original landing sounds remain intact.
+
 ### patches / schemas / schema
 
 List available patches and config schemas (no ROM required):

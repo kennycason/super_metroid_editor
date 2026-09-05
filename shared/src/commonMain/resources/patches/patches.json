@@ -10,6 +10,67 @@
     "description": "Press jump while airborne to re-enter spin jump. Full ASM respin from MapRandomizer."
   },
   {
+    "file": "echolocation_beam.ips",
+    "name": "Echolocation Beam",
+    "description": "Play a short high click whenever any beam touches a collidable tile, including Wave and Hyper Beam, plus a slightly lower click when Samus lands, hits a ceiling, or runs into a wall. Wave penetration and vanilla enemy-hit and landing audio are preserved.",
+    "resources": [
+      {
+        "namespace": "rom_hook",
+        "start": 584559,
+        "endInclusive": 584563,
+        "label": "Samus ran-into-wall contact hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 585682,
+        "endInclusive": 585683,
+        "label": "Samus landed handler pointer"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 585688,
+        "endInclusive": 585689,
+        "label": "Samus hit-ceiling handler pointer"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664234,
+        "endInclusive": 664236,
+        "label": "Ordinary beam horizontal block-reaction hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664259,
+        "endInclusive": 664262,
+        "label": "Ordinary beam horizontal tile-kill hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664377,
+        "endInclusive": 664379,
+        "label": "Ordinary beam vertical block-reaction hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664395,
+        "endInclusive": 664398,
+        "label": "Ordinary beam vertical tile-kill hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664528,
+        "endInclusive": 664530,
+        "label": "Wave beam horizontal block-reaction hook"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 664674,
+        "endInclusive": 664676,
+        "label": "Wave beam vertical block-reaction hook"
+      }
+    ]
+  },
+  {
     "file": "fast_doors.ips",
     "name": "Fast Doors",
     "description": "Door transitions run twice per frame, cutting transition time in half."

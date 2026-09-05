@@ -1,14 +1,18 @@
 # Bundled Patch Credits
 
-The IPS patches in this directory are compiled from ASM sources in the
+Most third-party IPS patches in this directory are compiled from ASM sources in the
 [Super Metroid MapRandomizer](https://github.com/blkerby/MapRandomizer) project,
 licensed under the **MIT License** (Copyright 2023 maddo, kyleb).
+
+SMEdit-authored patches and their research sources are identified separately
+in the table below.
 
 ## Original Authors
 
 | Patch | Author(s)                                                    |
 |-------|--------------------------------------------------------------|
 | Respin | Kejardon, P.JBoy                                             |
+| Echolocation Beam | SMEdit (engine references: InsaneFirebat/P.JBoy `sm_disassembly` and snesrev `sm`) |
 | Fast Doors | NobodyNada                                                   |
 | Momentum Conservation | Scyzer, Nodever2, OmegaDragnet7                              |
 | Energy-Free Shinesparks | (community)                                                  |

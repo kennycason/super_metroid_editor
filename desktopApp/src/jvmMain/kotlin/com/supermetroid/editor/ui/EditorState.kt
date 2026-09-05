@@ -849,9 +849,9 @@ class EditorState {
 
     fun selectPatch(id: String?) { selectedPatchId = id }
 
-    fun addPatch(name: String, description: String = ""): SmPatch {
+    fun addPatch(name: String, description: String = "", enabled: Boolean = false): SmPatch {
         val id = java.util.UUID.randomUUID().toString().take(8)
-        val patch = SmPatch(id = id, name = name, description = description)
+        val patch = SmPatch(id = id, name = name, description = description, enabled = enabled)
         project.patches.add(patch)
         dirty = true; patchVersion++
         selectedPatchId = id
