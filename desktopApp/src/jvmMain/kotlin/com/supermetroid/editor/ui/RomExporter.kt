@@ -304,6 +304,22 @@ internal class RomExporter(
                     romData[off + 1] = minsBcd.toByte()
                 }
                 onLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
+            } else if (patch.configType == ZEBES_ESCAPE_CONFIG_TYPE) {
+                val totalSecs = (patch.configValue ?: ZEBES_ESCAPE_DEFAULT_SECONDS)
+                    .coerceIn(ZEBES_ESCAPE_MIN_SECONDS, ZEBES_ESCAPE_MAX_SECONDS)
+                val mins = totalSecs / 60
+                val secs = totalSecs % 60
+                val secsBcd = ((secs / 10) shl 4) or (secs % 10)
+                val minsBcd = ((mins / 10) shl 4) or (mins % 10)
+                writeU16(romData, romParser.snesToPc(ZEBES_TIMER_OPERAND_SNES), (minsBcd shl 8) or secsBcd)
+                onLog("[EXPORT]   Zebes escape timer: ${mins}m${secs}s")
+            } else if (patch.configType == SHORT_CHARGE_CONFIG_TYPE) {
+                val stages = (patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES)
+                    .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
+                val initialCounter = SHORT_CHARGE_MAX_STAGES - stages
+                val initialTimer = (initialCounter shl 8) or 0x0001
+                writeU16(romData, romParser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES), initialTimer)
+                onLog("[EXPORT]   Short charge: $stages stage(s), initial counter=$initialCounter")
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
                 var beamCount = 0

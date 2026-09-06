@@ -82,7 +82,7 @@ Sound
 - **Enemy Editor** — View, place, and edit enemy positions and properties per room.
 - **Tileset Browser** — Browse all 29 tilesets with palette visualization and per-tile defaults.
 - **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
-- **Patch Manager** — Apply, create, and manage IPS patches. Built-in patches for common hacks (beam damage, jump height, Ceres escape time).
+- **Patch Manager** — Apply, create, and manage IPS patches. Built-in patches for common hacks (beam damage, jump height, Ceres/end-game escape times, and Short Charge).
 - **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
 - **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.

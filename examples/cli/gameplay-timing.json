@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "zebes_escape_seconds": {
+      "enabled": true,
+      "configValue": 240
+    },
+    "short_charge_stages": {
+      "enabled": true,
+      "configValue": 2
+    }
+  }
+}

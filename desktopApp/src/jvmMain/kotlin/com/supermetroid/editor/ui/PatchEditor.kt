@@ -294,6 +294,8 @@ fun PatchEditorCanvas(
         // Config panel for GUI patches, hex editor for manual patches
         when (patch.configType) {
             "ceres_escape_seconds" -> CeresEscapeTimeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            ZEBES_ESCAPE_CONFIG_TYPE -> ZebesEscapeTimeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            SHORT_CHARGE_CONFIG_TYPE -> ShortChargeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
@@ -986,6 +988,179 @@ private fun CeresEscapeTimeConfig(
                 )
             }
         }
+    }
+}
+
+// ─── Config patch: end-game Zebes escape time ──────────────────────────
+
+@Composable
+private fun ZebesEscapeTimeConfig(
+    patch: SmPatch,
+    editorState: EditorState,
+    romParser: RomParser?,
+    modifier: Modifier
+) {
+    val currentValue = (patch.configValue ?: ZEBES_ESCAPE_DEFAULT_SECONDS)
+        .coerceIn(ZEBES_ESCAPE_MIN_SECONDS, ZEBES_ESCAPE_MAX_SECONDS)
+    val romValue = remember(romParser) {
+        romParser?.let {
+            val off = it.snesToPc(ZEBES_TIMER_OPERAND_SNES)
+            val rom = it.getRomData()
+            if (off + 1 < rom.size) {
+                val secsBcd = rom[off].toInt() and 0xFF
+                val minsBcd = rom[off + 1].toInt() and 0xFF
+                val secs = (secsBcd shr 4) * 10 + (secsBcd and 0x0F)
+                val mins = (minsBcd shr 4) * 10 + (minsBcd and 0x0F)
+                mins * 60 + secs
+            } else ZEBES_ESCAPE_DEFAULT_SECONDS
+        } ?: ZEBES_ESCAPE_DEFAULT_SECONDS
+    }
+    var inputText by remember(currentValue) { mutableStateOf(currentValue.toString()) }
+
+    Column(modifier = modifier.padding(16.dp)) {
+        Text(
+            "Set the Zebes escape countdown that starts after Mother Brain. Override applies when enabled.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "ROM default: ${formatEscapeTime(romValue)} ($romValue seconds)",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = inputText,
+                onValueChange = { newText ->
+                    val digits = newText.filter { it.isDigit() }
+                    if (digits.length <= 4) {
+                        inputText = digits
+                        val parsed = digits.toIntOrNull()
+                        if (parsed != null && parsed in ZEBES_ESCAPE_MIN_SECONDS..ZEBES_ESCAPE_MAX_SECONDS) {
+                            editorState.setPatchConfigValue(patch.id, parsed)
+                        }
+                    }
+                },
+                textStyle = TextStyle(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontFamily = FontFamily.Monospace
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    Box(
+                        Modifier
+                            .width(80.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        innerTextField()
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "seconds (1–5999)",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        val parsed = inputText.toIntOrNull()
+        if (parsed != null) {
+            Spacer(Modifier.height(6.dp))
+            if (parsed in ZEBES_ESCAPE_MIN_SECONDS..ZEBES_ESCAPE_MAX_SECONDS) {
+                Text(
+                    if (parsed == ZEBES_ESCAPE_DEFAULT_SECONDS) {
+                        "${formatEscapeTime(parsed)} — vanilla Super Metroid default"
+                    } else {
+                        "Countdown: ${formatEscapeTime(parsed)}"
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    "Enter 1–5999 seconds (up to 99:59)",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+}
+
+private fun formatEscapeTime(totalSeconds: Int): String =
+    "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
+
+// ─── Config patch: Short Charge ────────────────────────────────────────
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ShortChargeConfig(
+    patch: SmPatch,
+    editorState: EditorState,
+    romParser: RomParser?,
+    modifier: Modifier
+) {
+    val stages = (patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES)
+        .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
+    val romStages = remember(romParser) {
+        romParser?.let {
+            val off = it.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)
+            val rom = it.getRomData()
+            if (off + 1 < rom.size) {
+                val initialCounter = rom[off + 1].toInt() and 0xFF
+                (SHORT_CHARGE_MAX_STAGES - initialCounter)
+                    .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
+            } else SHORT_CHARGE_DEFAULT_STAGES
+        } ?: SHORT_CHARGE_DEFAULT_STAGES
+    }
+
+    Column(modifier = modifier.padding(16.dp)) {
+        Text(
+            "Choose how many Speed Booster charge stages must complete before Samus gains blue speed.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "ROM default: $romStages stages. Vanilla uses 4; 0 activates blue speed as soon as Dash running begins.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (value in SHORT_CHARGE_MIN_STAGES..SHORT_CHARGE_MAX_STAGES) {
+                FilterChip(
+                    selected = stages == value,
+                    onClick = { editorState.setPatchConfigValue(patch.id, value) },
+                    label = { Text(value.toString(), fontSize = 12.sp) },
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            when (stages) {
+                0 -> "Immediate: pressing Dash while running starts blue speed."
+                1 -> "One charge stage before blue speed."
+                4 -> "Vanilla charge length (four stages)."
+                else -> "$stages charge stages before blue speed."
+            },
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "This changes the engine's charge-stage requirement; it does not automate the advanced tap timing technique.",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+        )
     }
 }
 

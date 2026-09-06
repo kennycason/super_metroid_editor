@@ -9,6 +9,20 @@ import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 const val CERES_ESCAPE_CONFIG_TYPE = "ceres_escape_seconds"
 const val CERES_TIMER_OPERAND_SNES = 0x809E0E
 
+const val ZEBES_ESCAPE_CONFIG_TYPE = "zebes_escape_seconds"
+const val ZEBES_TIMER_OPERAND_SNES = 0x809E21
+const val ZEBES_ESCAPE_DEFAULT_SECONDS = 180
+const val ZEBES_ESCAPE_MIN_SECONDS = 1
+const val ZEBES_ESCAPE_MAX_SECONDS = 5999
+
+const val SHORT_CHARGE_CONFIG_TYPE = "short_charge_stages"
+const val SHORT_CHARGE_STAGES_KEY = "stages"
+const val SHORT_CHARGE_TAPS_KEY = "taps"
+const val SHORT_CHARGE_DEFAULT_STAGES = 4
+const val SHORT_CHARGE_MIN_STAGES = 0
+const val SHORT_CHARGE_MAX_STAGES = 4
+const val SHORT_CHARGE_INITIAL_TIMER_SNES = 0x91B61F
+
 const val BOMB_CONFIG_TYPE = "bombs"
 const val BOMB_MAX_ACTIVE_KEY = "max_active_bombs"
 const val BOMB_FUSE_FRAMES_KEY = "fuse_frames"
@@ -91,6 +105,8 @@ object SmeditPatchCatalog {
     fun supportedConfigTypes(): Set<String> =
         setOf(
             CERES_ESCAPE_CONFIG_TYPE,
+            ZEBES_ESCAPE_CONFIG_TYPE,
+            SHORT_CHARGE_CONFIG_TYPE,
             BOMB_CONFIG_TYPE,
             FANFARE_CONFIG_TYPE,
             BEAM_DAMAGE_CONFIG_TYPE,
@@ -108,6 +124,8 @@ object SmeditPatchCatalog {
     fun configSchemas(): List<SmeditConfigSchema> =
         listOf(
             ceresSchema(),
+            zebesEscapeSchema(),
+            shortChargeSchema(),
             bombsSchema(),
             fanfaresSchema(),
             beamDamageSchema(),
@@ -176,6 +194,11 @@ object SmeditPatchCatalog {
         "space_jump_no_item" to "hex_space_jump_no_item",
         "speed_boost_no_item" to "hex_speed_boost_no_item",
         "supers_dont_open_reds" to "hex_supers_dont_open_reds",
+        "end_game_escape_seconds" to "config_zebes_escape_time",
+        "end_game_escape_timer" to "config_zebes_escape_time",
+        "zebes_escape_time" to "config_zebes_escape_time",
+        "short_charge" to "config_short_charge",
+        "short_charge_taps" to "config_short_charge",
     )
 
     private fun hardcodedPatches(): List<SmPatch> = listOf(
@@ -419,6 +442,22 @@ object SmeditPatchCatalog {
             configValue = 60,
         ),
         SmPatch(
+            id = "config_zebes_escape_time",
+            name = "End-Game Escape Time",
+            description = "Sets the Zebes escape timer after Mother Brain in seconds (vanilla: 180).",
+            enabled = false,
+            configType = ZEBES_ESCAPE_CONFIG_TYPE,
+            configValue = ZEBES_ESCAPE_DEFAULT_SECONDS,
+        ),
+        SmPatch(
+            id = "config_short_charge",
+            name = "Short Charge",
+            description = "Sets the number of Speed Booster charge stages required for blue speed (vanilla: 4).",
+            enabled = false,
+            configType = SHORT_CHARGE_CONFIG_TYPE,
+            configValue = SHORT_CHARGE_DEFAULT_STAGES,
+        ),
+        SmPatch(
             id = "config_bombs",
             name = "Bombs",
             description = "Control active normal bomb count, lay cooldown, bomb fuse timing, and explosion animation timing.",
@@ -520,6 +559,69 @@ object SmeditPatchCatalog {
                 intField("seconds", "Seconds", min = 15, max = 600, defaultValue = 60),
                 intField("total_seconds", "Total Seconds", min = 15, max = 600, defaultValue = 60),
                 intField("totalSeconds", "Total Seconds", min = 15, max = 600, defaultValue = 60),
+            ),
+        )
+
+    private fun zebesEscapeSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = ZEBES_ESCAPE_CONFIG_TYPE,
+            patchId = "config_zebes_escape_time",
+            name = "End-Game Escape Time",
+            description = "Sets the Zebes escape timer after Mother Brain in seconds. configValue is also accepted.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = listOf(
+                intField(
+                    "seconds",
+                    "Seconds",
+                    min = ZEBES_ESCAPE_MIN_SECONDS,
+                    max = ZEBES_ESCAPE_MAX_SECONDS,
+                    defaultValue = ZEBES_ESCAPE_DEFAULT_SECONDS,
+                ),
+                intField(
+                    "total_seconds",
+                    "Total Seconds",
+                    min = ZEBES_ESCAPE_MIN_SECONDS,
+                    max = ZEBES_ESCAPE_MAX_SECONDS,
+                    defaultValue = ZEBES_ESCAPE_DEFAULT_SECONDS,
+                ),
+                intField(
+                    "totalSeconds",
+                    "Total Seconds",
+                    min = ZEBES_ESCAPE_MIN_SECONDS,
+                    max = ZEBES_ESCAPE_MAX_SECONDS,
+                    defaultValue = ZEBES_ESCAPE_DEFAULT_SECONDS,
+                ),
+            ),
+        )
+
+    private fun shortChargeSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = SHORT_CHARGE_CONFIG_TYPE,
+            patchId = "config_short_charge",
+            name = "Short Charge",
+            description = "Sets how many Speed Booster charge stages must complete before blue speed. configValue is also accepted.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = listOf(
+                intField(
+                    SHORT_CHARGE_STAGES_KEY,
+                    "Charge Stages",
+                    min = SHORT_CHARGE_MIN_STAGES,
+                    max = SHORT_CHARGE_MAX_STAGES,
+                    defaultValue = SHORT_CHARGE_DEFAULT_STAGES,
+                    description = "0 grants blue speed when Dash running begins; 4 is vanilla.",
+                ),
+                intField(
+                    SHORT_CHARGE_TAPS_KEY,
+                    "Dash Taps",
+                    min = SHORT_CHARGE_MIN_STAGES,
+                    max = SHORT_CHARGE_MAX_STAGES,
+                    defaultValue = SHORT_CHARGE_DEFAULT_STAGES,
+                    description = "Alias for charge stages.",
+                ),
             ),
         )
 

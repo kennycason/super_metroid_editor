@@ -293,6 +293,43 @@ class RoomExportTest {
     }
 
     @Test
+    fun `escape timer and short charge config export their engine operands`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidGameplayTiming.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
+        val escapePatch = state.findOrCreateConfigPatch(ZEBES_ESCAPE_CONFIG_TYPE)
+        val shortChargePatch = state.findOrCreateConfigPatch(SHORT_CHARGE_CONFIG_TYPE)
+        assertFalse(escapePatch.enabled)
+        assertFalse(shortChargePatch.enabled)
+
+        state.setPatchConfigValue(escapePatch.id, 245)
+        state.setPatchConfigValue(shortChargePatch.id, 0)
+
+        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
+        val exportedRomBytes = File(exportedPath).readBytes()
+        val exportedParser = RomParser(exportedRomBytes)
+
+        assertEquals(
+            0x0405,
+            readU16(exportedRomBytes, exportedParser.snesToPc(ZEBES_TIMER_OPERAND_SNES)),
+            "245 seconds should encode as BCD 04:05",
+        )
+        assertEquals(
+            0x0401,
+            readU16(exportedRomBytes, exportedParser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)),
+            "zero required stages should preload the vanilla full-charge counter",
+        )
+    }
+
+    @Test
     fun `boss stats export enables patch and writes kraid hp to both body stat blocks`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")

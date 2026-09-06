@@ -1196,6 +1196,41 @@ class SmeditBuildService(
                 writeWord(context, context.snesToPc(CERES_TIMER_OPERAND_SNES), value, "Ceres escape timer")
                 CERES_ESCAPE_CONFIG_TYPE
             }
+            ZEBES_ESCAPE_CONFIG_TYPE -> {
+                val data = patch.configData
+                val totalSecs = (
+                    patch.configValue
+                        ?: data?.get("seconds")
+                        ?: data?.get("total_seconds")
+                        ?: data?.get("totalSeconds")
+                        ?: ZEBES_ESCAPE_DEFAULT_SECONDS
+                    ).coerceIn(ZEBES_ESCAPE_MIN_SECONDS, ZEBES_ESCAPE_MAX_SECONDS)
+                val mins = totalSecs / 60
+                val secs = totalSecs % 60
+                val minsBcd = ((mins / 10) shl 4) or (mins % 10)
+                val secsBcd = ((secs / 10) shl 4) or (secs % 10)
+                val value = (minsBcd shl 8) or secsBcd
+                writeWord(context, context.snesToPc(ZEBES_TIMER_OPERAND_SNES), value, "Zebes escape timer")
+                ZEBES_ESCAPE_CONFIG_TYPE
+            }
+            SHORT_CHARGE_CONFIG_TYPE -> {
+                val data = patch.configData
+                val stages = (
+                    patch.configValue
+                        ?: data?.get(SHORT_CHARGE_STAGES_KEY)
+                        ?: data?.get(SHORT_CHARGE_TAPS_KEY)
+                        ?: SHORT_CHARGE_DEFAULT_STAGES
+                    ).coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
+                val initialCounter = SHORT_CHARGE_MAX_STAGES - stages
+                val initialTimer = (initialCounter shl 8) or 0x0001
+                writeWord(
+                    context,
+                    context.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES),
+                    initialTimer,
+                    "Short charge initial Speed Booster counter",
+                )
+                SHORT_CHARGE_CONFIG_TYPE
+            }
             BOMB_CONFIG_TYPE -> {
                 val data = patch.configData
                 val defaults = if (context.outputRom != null) bombDefaults(context) else BombDefaults.vanilla()

@@ -243,6 +243,48 @@ val CERES_ESCAPE_PATCH = SmPatch(
     configValue = 60
 )
 
+/**
+ * End-game Zebes escape timer LDA operand at $80:9E20.
+ * The immediate word is packed BCD: low byte seconds, high byte minutes.
+ * Vanilla = $0300 -> 3 min 0 sec = 180s.
+ */
+const val ZEBES_ESCAPE_CONFIG_TYPE = "zebes_escape_seconds"
+const val ZEBES_TIMER_OPERAND_SNES = 0x809E21
+const val ZEBES_ESCAPE_DEFAULT_SECONDS = 180
+const val ZEBES_ESCAPE_MIN_SECONDS = 1
+const val ZEBES_ESCAPE_MAX_SECONDS = 5999
+
+val ZEBES_ESCAPE_PATCH = SmPatch(
+    id = "config_zebes_escape_time",
+    name = "End-Game Escape Time",
+    description = "Sets the Zebes escape timer after Mother Brain in seconds (vanilla: 180).",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = ZEBES_ESCAPE_CONFIG_TYPE,
+    configValue = ZEBES_ESCAPE_DEFAULT_SECONDS
+)
+
+/**
+ * First word of $91:B61F, loaded when Speed Booster running starts.
+ * Its high byte is the initial boost counter and its low byte is the stage timer.
+ * Vanilla $0001 starts at counter 0 and requires four stages to reach counter 4.
+ */
+const val SHORT_CHARGE_CONFIG_TYPE = "short_charge_stages"
+const val SHORT_CHARGE_DEFAULT_STAGES = 4
+const val SHORT_CHARGE_MIN_STAGES = 0
+const val SHORT_CHARGE_MAX_STAGES = 4
+const val SHORT_CHARGE_INITIAL_TIMER_SNES = 0x91B61F
+
+val SHORT_CHARGE_PATCH = SmPatch(
+    id = "config_short_charge",
+    name = "Short Charge",
+    description = "Sets the number of Speed Booster charge stages required for blue speed (vanilla: 4).",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = SHORT_CHARGE_CONFIG_TYPE,
+    configValue = SHORT_CHARGE_DEFAULT_STAGES
+)
+
 /** Config patch: Beam Damage overrides. Stores per-beam damage values in configData. */
 val BEAM_DAMAGE_PATCH = SmPatch(
     id = "config_beam_damage",

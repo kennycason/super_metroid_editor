@@ -88,6 +88,11 @@ slightly lower click when Samus lands, hits a ceiling, or runs into a wall. It
 also closes the silent Wave/Hyper Beam gap while preserving their ability to
 pass through tiles; enemy hits and the original landing sounds remain intact.
 
+The configurable `zebes_escape_seconds` patch changes the end-game countdown
+after Mother Brain (vanilla: 180 seconds). The `short_charge_stages` patch
+accepts 0–4 charge stages (vanilla: 4); 0 activates blue speed as soon as Dash
+running begins. Both support ROM-free IPS generation through `build --patch`.
+
 ### patches / schemas / schema
 
 List available patches and config schemas (no ROM required):

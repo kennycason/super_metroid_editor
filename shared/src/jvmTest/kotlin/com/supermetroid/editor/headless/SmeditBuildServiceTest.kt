@@ -25,6 +25,51 @@ import kotlin.test.assertTrue
 
 class SmeditBuildServiceTest {
     @Test
+    fun `vanilla ROM uses a three minute Zebes escape and four short charge stages`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+
+        assertEquals(0x0300, original.readWord(parser.snesToPc(ZEBES_TIMER_OPERAND_SNES)))
+        assertEquals(0x0001, original.readWord(parser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)))
+    }
+
+    @Test
+    fun `Zebes escape seconds and short charge stages produce standalone writes`() {
+        val addressSpace = ByteArray(0x300000)
+        val parser = RomParser(addressSpace)
+        val escapePc = parser.snesToPc(ZEBES_TIMER_OPERAND_SNES)
+        val shortChargePc = parser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)
+
+        val escapeResult = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    ZEBES_ESCAPE_CONFIG_TYPE to SmeditPatchRequest(configValue = 245),
+                )
+            )
+        )
+        applyIps(addressSpace, escapeResult.ipsPatchBytes)
+        assertEquals(0x0405, addressSpace.readWord(escapePc), "245 seconds should encode as BCD 04:05")
+
+        for (stages in SHORT_CHARGE_MIN_STAGES..SHORT_CHARGE_MAX_STAGES) {
+            val stageAddressSpace = ByteArray(0x300000)
+            val result = SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        SHORT_CHARGE_CONFIG_TYPE to SmeditPatchRequest(configValue = stages),
+                    )
+                )
+            )
+            applyIps(stageAddressSpace, result.ipsPatchBytes)
+            val expectedInitialCounter = SHORT_CHARGE_MAX_STAGES - stages
+            assertEquals(
+                (expectedInitialCounter shl 8) or 0x0001,
+                stageAddressSpace.readWord(shortChargePc),
+                "$stages required stages should preload counter $expectedInitialCounter",
+            )
+        }
+    }
+
+    @Test
     fun `build applies catalog config and raw writes`() {
         val original = ByteArray(0x300000)
         original[0x81EB9] = 0x04
@@ -617,6 +662,8 @@ class SmeditBuildServiceTest {
         val bossDefeated = SmeditPatchCatalog.configSchema(BOSS_DEFEATED_CONFIG_TYPE)!!
         val roomName = SmeditPatchCatalog.configSchema(ROOM_NAME_PAUSE_MAP_CONFIG_TYPE)!!
         val hyperBeam = SmeditPatchCatalog.configSchema(HYPER_BEAM_CONFIG_TYPE)!!
+        val zebesEscape = SmeditPatchCatalog.configSchema(ZEBES_ESCAPE_CONFIG_TYPE)!!
+        val shortCharge = SmeditPatchCatalog.configSchema(SHORT_CHARGE_CONFIG_TYPE)!!
 
         assertTrue(enemyStats.supportsPatchOnly)
         assertTrue(enemyStats.fields.any { it.key == "zoomer_hp" && it.defaultValue == 15 })
@@ -633,6 +680,11 @@ class SmeditBuildServiceTest {
         assertTrue(roomName.requiresRom)
         assertTrue(roomName.fields.first { it.key == RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY }.choices.any { it.label == "Left" })
         assertTrue(hyperBeam.supportsPatchOnly)
+        assertEquals(ZEBES_ESCAPE_DEFAULT_SECONDS, zebesEscape.fields.first { it.key == "seconds" }.defaultValue)
+        assertEquals(SHORT_CHARGE_MIN_STAGES, shortCharge.fields.first { it.key == SHORT_CHARGE_STAGES_KEY }.min)
+        assertEquals(SHORT_CHARGE_MAX_STAGES, shortCharge.fields.first { it.key == SHORT_CHARGE_STAGES_KEY }.max)
+        assertEquals("config_zebes_escape_time", SmeditPatchCatalog.resolvePatchKey("end_game_escape_timer"))
+        assertEquals("config_short_charge", SmeditPatchCatalog.resolvePatchKey("short_charge"))
     }
 
     @Test
@@ -803,6 +855,14 @@ class SmeditBuildServiceTest {
 
     private fun ByteArray.readBytes(offset: Int, count: Int): List<Int> =
         (0 until count).map { this[offset + it].toInt() and 0xFF }
+
+    private fun applyIps(target: ByteArray, ipsBytes: ByteArray) {
+        for (write in PatchRepository.parseIps(ipsBytes)) {
+            for ((index, byte) in write.bytes.withIndex()) {
+                target[write.offset.toInt() + index] = byte.toByte()
+            }
+        }
+    }
 
     private fun writeU24(data: ByteArray, offset: Int, value: Int) {
         data[offset] = (value and 0xFF).toByte()
