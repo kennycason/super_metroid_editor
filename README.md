@@ -87,6 +87,7 @@ Sound
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
 - **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
 - **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
+- **Optional lsnes TAS extra** — Not bundled. Linux-only extra for native TASVideos `.lsmv` playback on lsnes rr2-beta25 / bsnes v085 compatibility.
 - **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
@@ -107,6 +108,27 @@ Grab the latest release for your platform from [GitHub Releases](https://github.
 
 Requires JDK 17+ and a C++ compiler (Xcode CLI tools on macOS, `g++` on Linux, MinGW on Windows).
 
+Required git submodules for the editor: `tools/snes9x` (embedded emulator) and `tools/snes_spc` (SPC audio). The optional `tools/lsnes` tree is **not** needed to run or package SMEDIT.
+
+```bash
+git clone git@github.com:kennycason/super_metroid_editor.git
+cd super_metroid_editor
+git submodule update --init tools/snes9x tools/snes_spc
+./gradlew :desktopApp:run
+```
+
+```bash
+# Run tests
+./gradlew :shared:jvmTest :desktopApp:jvmTest
+
+# Package for your platform (.dmg / .msi / .deb)
+./gradlew :desktopApp:packageDistributionForCurrentOS
+```
+
+If you already cloned with `--recurse-submodules`, that is fine: lsnes source may be present, but it is still not built or packaged unless you install the extra below. Default `./gradlew :desktopApp:run` and `packageDistributionForCurrentOS` do not require lsnes.
+
+The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
+
 ### Embedded Emulator (snes9x via libretro)
 
 The editor includes an embedded SNES emulator powered by snes9x, loaded in-process via JNA. The snes9x core is built from source as a git submodule (`tools/snes9x`).
@@ -120,27 +142,22 @@ The emulator runs in a floating draggable/resizable window. Click the **EMU** bu
 
 **Keyboard controls:** Arrow keys for D-pad, Z/X/A/S for B/A/Y/X, Q/W for L/R, Enter for Start, Tab for Select.
 
+### Optional lsnes TAS extra (Linux)
+
+lsnes rr2-beta25 is an **optional plugin extra**. It is **not** shipped in GitHub releases and is **not** built or packaged by default `./gradlew :desktopApp:run` or `packageDistributionForCurrentOS`.
+
+Use it only if you want native TASVideos `.lsmv` playback on lsnes rr2-beta25 / bsnes v085 compatibility (publication boot: `--rom-a=` plus a positional `.lsmv`). This extra is Linux-only in this version; Windows/macOS worker install is not supported yet.
+
+Building it may need extra system packages and sudo. Typical build inputs (exact names are distro-dependent): Boost, Lua **5.1** (not 5.5), libcurl, zlib, g++, make, pkg-config. See [docs/project/lsnes-extra.md](docs/project/lsnes-extra.md) for the full extra-install guide.
+
 ```bash
-# Clone with submodules (required for SPC audio)
-git clone --recurse-submodules git@github.com:kennycason/super_metroid_editor.git
-cd super_metroid_editor
-
-# Run the editor
-./gradlew :desktopApp:run
-
-# Run tests
-./gradlew :shared:jvmTest :desktopApp:jvmTest
-
-# Package for your platform (.dmg / .msi / .deb)
-./gradlew :desktopApp:packageDistributionForCurrentOS
+git submodule update --init --recursive tools/lsnes
+./gradlew buildLsnesWorker installLsnesWorker
 ```
 
-If you already cloned without `--recurse-submodules`:
-```bash
-git submodule update --init --recursive
-```
+That installs `smedit-lsnes-worker` to `~/.smedit/lsnes/smedit-lsnes-worker`. Then pick the extra in **Settings → Emulator**, Browse to the worker if needed, and optionally attach a `.lsmv` movie.
 
-The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
+The filename must be `smedit-lsnes-worker`. Stock `lsnes` / `lsnes-bsnes.exe` is rejected (wx popups). You can also set `SMEDIT_LSNES_PATH` to the worker instead of browsing.
 
 ## CLI
 
@@ -208,3 +225,6 @@ Many built-in patches are sourced from or inspired by community work:
 - **[snes_spc](http://www.slack.net/~ant/libs/audio.html#snes_spc)** (Shay Green / blargg) — cycle-accurate SPC700 APU emulator for music playback
 - **Jamepad** — SDL2-based gamepad support for controller input
 - **JNA** — Java Native Access for loading native libraries in-process
+
+### Optional extras
+- **[lsnes](https://tasvideos.org/Lsnes)** / [TASVideos](https://tasvideos.org/) — rr2-beta25 / bsnes v085 compatibility core used by the optional Linux TAS extra for native `.lsmv` playback. Not bundled with SMEDIT.

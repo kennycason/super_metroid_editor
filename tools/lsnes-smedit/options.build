@@ -1,0 +1,64 @@
+# Build only the b25 common libraries and the bsnes v085 Compatibility core.
+# The smedit entry point is linked separately, so no wxWidgets, native window,
+# audio-device, or joystick platform library enters the executable.
+
+CROSS_PREFIX=
+OBJECT_SUFFIX=o
+ARCHIVE_SUFFIX=a
+
+ifeq ($(OS),Windows_NT)
+DOT_EXECUTABLE_SUFFIX=.exe
+else
+DOT_EXECUTABLE_SUFFIX=
+endif
+
+CC=g++
+LD=ld
+RANLIB=ranlib
+HOSTCC=$(CC)
+
+SMEDIT_SUPPORT_DIR := $(abspath ../lsnes-smedit)
+SMEDIT_COMPAT_FLAGS := -include $(SMEDIT_SUPPORT_DIR)/gcc-compat.hpp
+USER_HOSTCCFLAGS=-O2 -fpermissive -Wno-deprecated-declarations -Wno-error $(SMEDIT_COMPAT_FLAGS)
+USER_CFLAGS=-O2 -fpermissive -Wno-deprecated-declarations -Wno-error $(SMEDIT_COMPAT_FLAGS)
+
+ifeq ($(OS),Windows_NT)
+USER_CFLAGS += -mthreads
+USER_LDFLAGS=-mthreads -static-libgcc -static-libstdc++
+else
+USER_LDFLAGS=-static-libgcc -static-libstdc++
+endif
+
+USER_PLATFORM_CFLAGS=
+USER_PLATFORM_LDFLAGS=
+
+FONT_SRC=unifontfull-5.1.20080820.hex
+LUA=$(if $(LSNES_LUA_PKG),$(LSNES_LUA_PKG),lua51)
+REGEX=NATIVE
+THREADS=NATIVE
+# GRAPHICS=WXWIDGETS is unused: the worker Makefile never builds src/platform.
+GRAPHICS=WXWIDGETS
+SOUND=DUMMY
+JOYSTICK=DUMMY
+
+SECRET_RABBIT_CODE=
+BUILD_GAMBATTE=
+BUILD_BSNES=yes
+BSNES_IS_COMPAT=yes
+BOOST_NEEDS_MT=
+HOST_BOOST_NEEDS_MT=
+BOOST_FILESYSTEM3=
+OPUS_CODEC=
+OPUS_CODEC_SUPPORTS_SURROUND=
+USE_LIBGCRYPT=
+USE_LIBLZMA=
+NEED_LIBICONV=
+ARCHITECTURE=
+
+ifeq ($(OS),Windows_NT)
+NO_RDYNAMIC=yes
+NO_DLFCN=yes
+else
+NO_RDYNAMIC=
+NO_DLFCN=
+endif
