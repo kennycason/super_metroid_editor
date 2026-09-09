@@ -4,6 +4,8 @@ import com.supermetroid.editor.data.MapStationTileEdit
 import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.RoomHeaderChange
+import com.supermetroid.editor.data.RoomEdits
+import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -248,8 +250,8 @@ class RomValidatorTest {
                 "Duplicate AreaSave slot should be an error"
             )
             assertTrue(
-                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("has no writable AreaSave slot") },
-                "Out-of-range AreaSave slot should be an error"
+                issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("is unreachable") },
+                "Runtime-unreachable AreaSave slot should be an error"
             )
         }
 
@@ -264,6 +266,82 @@ class RomValidatorTest {
             assertTrue(
                 issues.any { it.severity == RomValidator.Severity.ERROR && it.message.contains("invalid base64") },
                 "Malformed custom metatile table should be reported"
+            )
+        }
+
+        @Test
+        fun `project owner validation rejects duplicate enabled patches and room aliases`() {
+            val project = SmEditProject(romPath = "test.smc")
+            project.patches.add(SmPatch(id = "duplicate", name = "First", enabled = true))
+            project.patches.add(SmPatch(id = "duplicate", name = "Second", enabled = true))
+            project.rooms["91F8"] = RoomEdits(
+                roomId = 0x91F8,
+                roomHeaderChange = RoomHeaderChange(mapX = 1),
+            )
+            project.rooms["91f8"] = RoomEdits(
+                roomId = 0x91F8,
+                roomHeaderChange = RoomHeaderChange(mapY = 1),
+            )
+
+            val issues = RomValidator.checkProjectOwnerIdentities(project)
+
+            assertTrue(issues.any { it.message.contains("enabled patches use ID 'duplicate'") })
+            assertTrue(issues.any { it.message.contains("multiple edited keys") })
+        }
+
+        @Test
+        fun `project graphics validation follows normal and full tileset destinations`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            val oversized = ByteArray(TileGraphics.STANDARD_VAR_GFX_MAX_BYTES + TileGraphics.BYTES_PER_TILE)
+            project.customGfx.varGfx["0"] = Base64.getEncoder().encodeToString(oversized)
+
+            val issues = RomValidator.checkProjectGraphicsExportFit(parser, project)
+
+            assertEquals(
+                TileGraphics.STANDARD_VAR_GFX_MAX_BYTES,
+                RomValidator.variableGraphicsMaxBytes(parser, 0),
+            )
+            assertEquals(
+                TileGraphics.ROOM_GFX_MAX_BYTES,
+                RomValidator.variableGraphicsMaxBytes(parser, TileGraphics.MODE7_CERES_TILESETS.first),
+            )
+            assertTrue(
+                issues.any {
+                    it.severity == RomValidator.Severity.ERROR &&
+                        it.message.contains("20 KiB area-graphics region")
+                },
+                "A normal tileset must preserve the CRE graphics region"
+            )
+        }
+
+        @Test
+        fun `variable table capacity follows the room destination without blocking Ceres tables`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            val ceresUsage = RoomRepository().getAllRooms().mapNotNull { metadata ->
+                val roomId = metadata.getRoomIdAsInt()
+                val room = parser.readRoomHeader(roomId) ?: return@mapNotNull null
+                if (room.area != TileGraphics.CERES_AREA) return@mapNotNull null
+                val tilesets = parser.findAllStateDataOffsets(roomId)
+                    .map { parser.readByteAt(it + 3) }
+                    .toSet()
+                roomId to tilesets
+            }.firstOrNull { (_, tilesets) -> tilesets.isNotEmpty() }
+                ?: return
+            val (ceresRoomId, ceresTilesets) = ceresUsage
+            val ceresTileset = ceresTilesets.first()
+
+            assertEquals(
+                TileGraphics.CERES_VAR_TILE_TABLE_MAX_BYTES,
+                RomValidator.variableTileTableMaxBytes(parser, project, ceresTileset),
+            )
+
+            project.getOrCreateRoom(ceresRoomId).roomHeaderChange = RoomHeaderChange(area = 0)
+            assertEquals(
+                TileGraphics.STANDARD_VAR_TILE_TABLE_MAX_BYTES,
+                RomValidator.variableTileTableMaxBytes(parser, project, ceresTileset),
+                "Moving a room out of Ceres changes the runtime decompression destination to the smaller buffer",
             )
         }
 

@@ -61,6 +61,14 @@ class TileGraphics(private val romParser: RomParser) {
         /** @see RomConstants.BYTES_PER_4BPP_TILE */
         const val BYTES_PER_TILE = RomConstants.BYTES_PER_4BPP_TILE
 
+        /** Maximum decompressed graphics/table sizes supported by the engine destinations. */
+        const val ROOM_GFX_MAX_BYTES = TOTAL_TILES * BYTES_PER_TILE
+        const val STANDARD_VAR_GFX_MAX_BYTES = CRE_TILE_START * BYTES_PER_TILE
+        const val CRE_GFX_MAX_BYTES = (TOTAL_TILES - CRE_TILE_START) * BYTES_PER_TILE
+        const val CRE_TILE_TABLE_MAX_BYTES = CRE_METATILE_COUNT * 8
+        const val STANDARD_VAR_TILE_TABLE_MAX_BYTES = (METATILE_COUNT - CRE_METATILE_COUNT) * 8
+        const val CERES_VAR_TILE_TABLE_MAX_BYTES = METATILE_COUNT * 8
+
         // Kraid's room uses tileset/graphics set 27
         const val KRAID_TILESET = 27
 

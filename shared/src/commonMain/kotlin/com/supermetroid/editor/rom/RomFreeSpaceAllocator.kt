@@ -13,7 +13,41 @@ class RomFreeSpaceAllocator(
     private val guardBytes: Int = 1,
     private val onReserve: (RomAllocation) -> Unit = {},
 ) {
-    private val nextFreeByBank = mutableMapOf<Int, Int>()
+    private class SessionState {
+        val nextFreeByBank = mutableMapOf<Int, Int>()
+    }
+
+    private var sessionState = SessionState()
+
+    private constructor(
+        romData: ByteArray,
+        snesToPc: (Int) -> Int,
+        pcToSnes: (Int) -> Int,
+        guardBytes: Int,
+        onReserve: (RomAllocation) -> Unit,
+        sessionState: SessionState,
+    ) : this(romData, snesToPc, pcToSnes, guardBytes, onReserve) {
+        this.sessionState = sessionState
+    }
+
+    /**
+     * Creates a view that shares this allocator's bank cursors while reporting
+     * reservations to an additional consumer. This lets each exporter retain
+     * precise ownership metadata without starting an independent free-space
+     * scan that could select the same bytes.
+     */
+    fun observing(observer: (RomAllocation) -> Unit): RomFreeSpaceAllocator =
+        RomFreeSpaceAllocator(
+            romData = romData,
+            snesToPc = snesToPc,
+            pcToSnes = pcToSnes,
+            guardBytes = guardBytes,
+            onReserve = { allocation ->
+                onReserve(allocation)
+                observer(allocation)
+            },
+            sessionState = sessionState,
+        )
 
     fun reserve(
         size: Int,
@@ -70,7 +104,7 @@ class RomFreeSpaceAllocator(
             return null
         }
 
-        val rawCursor = nextFreeByBank.getOrPut(bank) {
+        val rawCursor = sessionState.nextFreeByBank.getOrPut(bank) {
             scanTrailingFreeStart(bankStart, bankEndExclusive)
         }
         val cursor = alignUp(rawCursor, alignment)
@@ -79,7 +113,7 @@ class RomFreeSpaceAllocator(
             if ((romData[pc].toInt() and 0xFF) != 0xFF) return null
         }
 
-        nextFreeByBank[bank] = cursor + size
+        sessionState.nextFreeByBank[bank] = cursor + size
         return RomAllocation(
             bank = bank,
             pcOffset = cursor,

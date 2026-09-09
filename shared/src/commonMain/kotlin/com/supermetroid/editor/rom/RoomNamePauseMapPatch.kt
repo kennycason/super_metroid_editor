@@ -39,12 +39,13 @@ object RoomNamePauseMapPatch {
         rooms: List<RoomInfo>,
         overrides: Map<String, String> = emptyMap(),
         alignment: RoomNameAlignment = RoomNameAlignment.CENTER,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): RoomNamePauseMapPatchResult {
         val entries = buildEntries(rooms, overrides, alignment)
         require(entries.isNotEmpty()) { "room-name pause map patch has no room names to write" }
 
         val dryRunPayload = buildPayload(baseSnesAddress = 0x828000, bank = 0x82, entries = entries)
-        val allocator = RomFreeSpaceAllocator(romData, snesToPc, pcToSnes)
+        val allocator = freeSpaceAllocator ?: RomFreeSpaceAllocator(romData, snesToPc, pcToSnes)
         val allocation = allocator.reserve(
             size = dryRunPayload.size,
             banks = ALLOCATION_BANKS,

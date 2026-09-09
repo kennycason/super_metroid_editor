@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
@@ -1309,6 +1310,58 @@ class EditorStateTest {
             assertEquals(0xFFE0, spawn.samusX)
             assertEquals(152, spawn.samusY)
             assertTrue(spawn.autoDerived)
+        }
+
+        @Test
+        fun `adding a ninth save station is rejected without partial editor state`() {
+            state.setRoomIdForTest(0x93D5)
+            for (index in 0 until RomParser.SAVE_STATION_SLOT_COUNT) {
+                state.addPlm(0xB76F, index, 1, 0x8000 or index)
+            }
+            val plmsBefore = state.workingPlms.toList()
+            val editsBefore = state.project.rooms.getValue(state.project.roomKey(0x93D5)).plmChanges.toList()
+            val spawnsBefore = state.project.rooms.getValue(state.project.roomKey(0x93D5)).saveStationSpawns.toList()
+            val undoBefore = state.undoStack.toList()
+
+            state.addPlm(0xB76F, 9, 1, 0x8000)
+
+            assertEquals(plmsBefore, state.workingPlms)
+            assertEquals(editsBefore, state.project.rooms.getValue(state.project.roomKey(0x93D5)).plmChanges)
+            assertEquals(spawnsBefore, state.project.rooms.getValue(state.project.roomKey(0x93D5)).saveStationSpawns)
+            assertEquals(undoBefore, state.undoStack)
+            assertTrue(state.statusMessage.contains("all 8 runtime save slots are in use"))
+        }
+
+        @Test
+        fun `save station brush rolls back its entire stamp when slots are exhausted`() {
+            state.setRoomIdForTest(0x93D5)
+            for (index in 0 until RomParser.SAVE_STATION_SLOT_COUNT) {
+                state.addPlm(0xB76F, index, 1, 0x8000 or index)
+            }
+            val roomKey = state.project.roomKey(0x93D5)
+            val wordsBefore = listOf(state.readBlockWord(0, 0), state.readBlockWord(1, 0))
+            val plmsBefore = state.workingPlms.toList()
+            val editsBefore = state.project.rooms.getValue(roomKey).plmChanges.toList()
+            val spawnsBefore = state.project.rooms.getValue(roomKey).saveStationSpawns.toList()
+            val undoBefore = state.undoStack.toList()
+            state.setBrushForTest(
+                TileBrush(
+                    tiles = listOf(listOf(0x40, 0x41)),
+                    blockType = 0x8,
+                    plmOverrides = mapOf(1L to Pair(0xB76F, 0x8000)),
+                )
+            )
+
+            state.beginStroke()
+            assertFalse(state.paintAt(0, 0))
+            state.endStroke()
+
+            assertEquals(wordsBefore, listOf(state.readBlockWord(0, 0), state.readBlockWord(1, 0)))
+            assertEquals(plmsBefore, state.workingPlms)
+            assertEquals(editsBefore, state.project.rooms.getValue(roomKey).plmChanges)
+            assertEquals(spawnsBefore, state.project.rooms.getValue(roomKey).saveStationSpawns)
+            assertEquals(undoBefore, state.undoStack)
+            assertTrue(state.statusMessage.contains("all 8 runtime save slots are in use"))
         }
 
         @Test

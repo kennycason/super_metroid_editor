@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -84,6 +85,7 @@ object RomValidator {
         issues.addAll(checkRoomDimensions(rooms))
         issues.addAll(checkPlmSets(parser, rooms))
         if (project != null) {
+            issues.addAll(checkProjectOwnerIdentities(project))
             issues.addAll(checkProjectRoomHeaders(parser, project, rooms))
             issues.addAll(checkProjectMinimapEdits(project))
             issues.addAll(checkProjectSaveStationSpawns(parser, project, rooms))
@@ -93,6 +95,62 @@ object RomValidator {
         }
 
         return issues.sortedWith(compareBy({ it.severity }, { it.category }, { it.roomName }))
+    }
+
+    /**
+     * Export ownership uses patch IDs and parsed room IDs. Ambiguous imported
+     * keys must not collapse into one owner and gain same-owner overlap rights.
+     */
+    fun checkProjectOwnerIdentities(project: SmEditProject): List<Issue> {
+        return checkProjectPatchOwnerIdentities(project) + checkProjectRoomOwnerIdentities(project)
+    }
+
+    fun checkProjectPatchOwnerIdentities(project: SmEditProject): List<Issue> {
+        val issues = mutableListOf<Issue>()
+        val duplicateEnabledPatchIds = project.patches
+            .filter { it.enabled }
+            .groupingBy { it.id }
+            .eachCount()
+            .filterValues { it > 1 }
+        for ((id, count) in duplicateEnabledPatchIds) {
+            issues.add(Issue(
+                Severity.ERROR, "Project Identity", null, "Project",
+                "$count enabled patches use ID '$id'. Patch IDs must be unique for safe ownership tracking."
+            ))
+        }
+        return issues
+    }
+
+    private fun checkProjectRoomOwnerIdentities(project: SmEditProject): List<Issue> {
+        val issues = mutableListOf<Issue>()
+        val editedRoomsById = mutableMapOf<Int, MutableList<String>>()
+        for ((key, edits) in project.rooms) {
+            if (!edits.hasEdits) continue
+            val roomId = key.toIntOrNull(16)
+            if (roomId == null || roomId !in 0..0xFFFF) {
+                issues.add(Issue(
+                    Severity.ERROR, "Project Identity", null, "Project",
+                    "Edited room key '$key' is not a 16-bit hexadecimal room ID."
+                ))
+                continue
+            }
+            if (edits.roomId != roomId) {
+                issues.add(Issue(
+                    Severity.ERROR, "Project Identity", roomId, "Room 0x${roomId.toString(16).uppercase()}",
+                    "Room key '$key' identifies 0x${roomId.toString(16).uppercase()}, but its stored roomId is " +
+                        "0x${edits.roomId.toString(16).uppercase()}."
+                ))
+            }
+            editedRoomsById.getOrPut(roomId) { mutableListOf() }.add(key)
+        }
+        for ((roomId, keys) in editedRoomsById.filterValues { it.size > 1 }) {
+            issues.add(Issue(
+                Severity.ERROR, "Project Identity", roomId, "Room 0x${roomId.toString(16).uppercase()}",
+                "Room 0x${roomId.toString(16).uppercase()} has multiple edited keys " +
+                    "(${keys.sorted().joinToString()}); merge them before export."
+            ))
+        }
+        return issues
     }
 
     fun checkProjectRoomHeaders(
@@ -394,7 +452,13 @@ object RomValidator {
 
                 val count = parser.saveEntryCount(spawn.area)
                 val romEntry = parser.readSaveEntry(spawn.area, spawn.saveIndex)
-                if (romEntry == null) {
+                if (spawn.saveIndex !in 0 until RomParser.SAVE_STATION_SLOT_COUNT) {
+                    issues.add(Issue(
+                        Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
+                        "Save station override area=${spawn.area} index=${spawn.saveIndex} is unreachable; " +
+                            "the game masks save PLM indices to 0-${RomParser.SAVE_STATION_SLOT_COUNT - 1}."
+                    ))
+                } else if (romEntry == null) {
                     issues.add(Issue(
                         Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
                         "Save station override area=${spawn.area} index=${spawn.saveIndex} has no writable AreaSave slot (area has $count entries)."
@@ -470,6 +534,8 @@ object RomValidator {
             b64 = gfx.creGfx,
             snesAddress = TileGraphics.CRE_GFX_SNES,
             requiredMultiple = RomConstants.BYTES_PER_4BPP_TILE,
+            maxSize = TileGraphics.CRE_GFX_MAX_BYTES,
+            maxSizeReason = "the engine's 12 KiB CRE graphics destination",
         )
         validateCompressedPayload(
             issues = issues,
@@ -479,6 +545,8 @@ object RomValidator {
             b64 = gfx.creTileTable,
             snesAddress = TileGraphics.CRE_TILE_TABLE_SNES,
             requiredMultiple = 8,
+            maxSize = TileGraphics.CRE_TILE_TABLE_MAX_BYTES,
+            maxSizeReason = "the engine's 2 KiB CRE metatile-table destination",
         )
 
         val tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
@@ -486,6 +554,7 @@ object RomValidator {
         for ((tilesetIdText, b64) in gfx.varGfx) {
             val tilesetId = tilesetIdText.toIntOrNull()
             val snes = tilesetId?.let { tilesetPointer(rom, tablePc, it, offset = 3) }
+            val layoutCapacity = tilesetId?.let { variableGraphicsMaxBytes(parser, it) }
             validateCompressedPayload(
                 issues = issues,
                 parser = parser,
@@ -494,6 +563,13 @@ object RomValidator {
                 b64 = b64,
                 snesAddress = snes,
                 requiredMultiple = RomConstants.BYTES_PER_4BPP_TILE,
+                maxSize = layoutCapacity,
+                maxSizeReason = if (layoutCapacity == TileGraphics.ROOM_GFX_MAX_BYTES) {
+                    "the engine's 32 KiB full room-graphics destination"
+                } else {
+                    "the tileset's 20 KiB area-graphics region (the remaining 12 KiB is reserved for CRE)"
+                },
+                relocationSupported = true,
             )
         }
         for ((tilesetIdText, b64) in gfx.tileTables) {
@@ -507,6 +583,9 @@ object RomValidator {
                 b64 = b64,
                 snesAddress = snes,
                 requiredMultiple = 8,
+                maxSize = tilesetId?.let { variableTileTableMaxBytes(parser, project, it) },
+                maxSizeReason = "the engine's metatile-table work buffer for rooms using this tileset",
+                relocationSupported = true,
             )
         }
         for ((tilesetIdText, b64) in gfx.palettes) {
@@ -520,6 +599,7 @@ object RomValidator {
                 b64 = b64,
                 snesAddress = snes,
                 exactSize = 256,
+                relocationSupported = true,
             )
         }
         for ((key, b64) in gfx.spriteTileBlocks) {
@@ -539,10 +619,27 @@ object RomValidator {
                     b64 = b64,
                     snesAddress = block.snesAddress,
                     requiredMultiple = RomConstants.BYTES_PER_4BPP_TILE,
+                    limitToOriginalRawSize = true,
                 )
             }
         }
         return issues
+    }
+
+    /**
+     * Match the editor's effective graphics layout for this ROM/tileset. Normal
+     * tilesets reserve VRAM byte $5000 onward for CRE; established no-CRE/full
+     * layouts expose all 1024 tile slots to area graphics.
+     */
+    fun variableGraphicsMaxBytes(parser: RomParser, tilesetId: Int): Int {
+        if (tilesetId !in 0 until TileGraphics.NUM_TILESETS) {
+            return TileGraphics.STANDARD_VAR_GFX_MAX_BYTES
+        }
+        val graphics = TileGraphics(parser)
+        if (!graphics.loadTileset(tilesetId)) {
+            return TileGraphics.STANDARD_VAR_GFX_MAX_BYTES
+        }
+        return graphics.getVarTileCount() * TileGraphics.BYTES_PER_TILE
     }
 
     fun checkProjectEnemyTileEdits(parser: RomParser, project: SmEditProject): List<Issue> {
@@ -662,6 +759,10 @@ object RomValidator {
         snesAddress: Int?,
         requiredMultiple: Int? = null,
         exactSize: Int? = null,
+        maxSize: Int? = null,
+        maxSizeReason: String = "the engine destination",
+        limitToOriginalRawSize: Boolean = false,
+        relocationSupported: Boolean = false,
     ) {
         if (b64 == null) return
         val raw = decodeBase64Issue(label, b64) { issues += it.copy(category = category) } ?: return
@@ -681,17 +782,31 @@ object RomValidator {
                 "$label has ${raw.size} bytes; expected exactly $exactSize bytes."
             ))
         }
+        if (maxSize != null && raw.size > maxSize) {
+            issues.add(Issue(
+                Severity.ERROR, category, null, "Project",
+                "$label has ${raw.size} decompressed bytes; $maxSizeReason can hold at most $maxSize bytes."
+            ))
+        }
         if (snesAddress == null) {
             issues.add(Issue(Severity.ERROR, category, null, "Project", "$label has an invalid ROM pointer."))
             return
         }
         try {
             val compressed = LZ5Compressor.compress(raw)
-            val (_, originalSize) = parser.decompressLZ2WithSize(snesAddress)
-            if (compressed.size > originalSize) {
+            val (originalRaw, originalSize) = parser.decompressLZ2WithSize(snesAddress)
+            if (limitToOriginalRawSize && raw.size > originalRaw.size) {
                 issues.add(Issue(
                     Severity.ERROR, category, null, "Project",
-                    "$label compresses to ${compressed.size} bytes but the original allocation is $originalSize bytes; export will skip this edit."
+                    "$label has ${raw.size} decompressed bytes; its fixed sprite DMA region can hold at most " +
+                        "${originalRaw.size} bytes."
+                ))
+            }
+            if (compressed.size > originalSize && !relocationSupported) {
+                issues.add(Issue(
+                    Severity.ERROR, category, null, "Project",
+                    "$label compresses to ${compressed.size} bytes but its fixed engine allocation is " +
+                        "$originalSize bytes and safe relocation is not supported."
                 ))
             }
         } catch (e: Exception) {
@@ -699,6 +814,48 @@ object RomValidator {
                 Severity.ERROR, category, null, "Project",
                 "$label could not be compression-validated: ${e.message ?: e::class.simpleName}"
             ))
+        }
+    }
+
+    /**
+     * Non-Ceres rooms decompress the variable table at $7E:A800 (6 KiB
+     * available). Area 6 skips the separate CRE table and starts at $7E:A000
+     * (8 KiB available). Permit the larger form only when every current room
+     * using the tileset has the Ceres destination, including project header and
+     * state overrides.
+     */
+    fun variableTileTableMaxBytes(
+        parser: RomParser,
+        project: SmEditProject,
+        tilesetId: Int,
+    ): Int {
+        var usedByCeresRoom = false
+        for (metadata in RoomRepository().getAllRooms()) {
+            val roomId = metadata.getRoomIdAsInt()
+            val room = parser.readRoomHeader(roomId) ?: continue
+            val edits = project.rooms[project.roomKey(roomId)]
+            val effectiveArea = edits?.roomHeaderChange?.area ?: room.area
+            val overrideTileset = edits?.stateDataChange?.tileset
+            val stateOffsets = parser.findAllStateDataOffsets(roomId)
+            val usesTileset = if (overrideTileset != null) {
+                overrideTileset == tilesetId
+            } else {
+                stateOffsets.any { offset ->
+                    offset + 3 in parser.getRomData().indices && parser.readByteAt(offset + 3) == tilesetId
+                }
+            }
+            if (!usesTileset) continue
+            if (effectiveArea != TileGraphics.CERES_AREA) {
+                return TileGraphics.STANDARD_VAR_TILE_TABLE_MAX_BYTES
+            }
+            usedByCeresRoom = true
+        }
+        return if (usedByCeresRoom) {
+            TileGraphics.CERES_VAR_TILE_TABLE_MAX_BYTES
+        } else {
+            // An unused table cannot currently overflow a room destination, but
+            // retaining the standard bound makes later reassignment safe too.
+            TileGraphics.STANDARD_VAR_TILE_TABLE_MAX_BYTES
         }
     }
 

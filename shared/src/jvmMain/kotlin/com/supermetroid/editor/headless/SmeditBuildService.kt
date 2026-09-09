@@ -14,6 +14,7 @@ import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomOverlapPolicy
 import com.supermetroid.editor.rom.RomWritePlan
@@ -53,7 +54,39 @@ class SmeditBuildService(
             writePlan = writePlan,
             inputRomHash = inputRom.headerlessRomBytes().sha256(),
         )
+        val validationRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+        val baselineIssues = RomValidator.validate(
+            parser = context.parser!!,
+            roomIds = validationRoomIds,
+        ).toSet()
+        if (project != null) {
+            val projectErrors = RomValidator.validate(
+                parser = context.parser,
+                roomIds = validationRoomIds,
+                project = project,
+            ).filter { issue ->
+                issue.severity == RomValidator.Severity.ERROR && issue !in baselineIssues
+            }
+            if (projectErrors.isNotEmpty()) {
+                throw IllegalArgumentException(
+                    "Headless ROM build blocked by ${projectErrors.size} project preflight error(s): " +
+                        projectErrors.first().message
+                )
+            }
+        }
         val applied = applyRequest(request, project, context)
+        val postflightErrors = RomValidator.validate(
+            parser = RomParser(outputRom),
+            roomIds = validationRoomIds,
+        ).filter { issue ->
+            issue.severity == RomValidator.Severity.ERROR && issue !in baselineIssues
+        }
+        if (postflightErrors.isNotEmpty()) {
+            throw IllegalStateException(
+                "Headless ROM build failed safely with ${postflightErrors.size} new structural error(s): " +
+                    postflightErrors.first().message
+            )
+        }
         val planReport = writePlan.report()
         if (planReport.unverifiedFixedWrites.isNotEmpty()) {
             context.warnings.add(
@@ -83,6 +116,13 @@ class SmeditBuildService(
         request: SmeditBuildRequest,
         project: SmEditProject? = null,
     ): SmeditPatchBuildResult {
+        val projectPatchIdentityErrors = project?.let(RomValidator::checkProjectPatchOwnerIdentities).orEmpty()
+        if (projectPatchIdentityErrors.isNotEmpty()) {
+            throw IllegalArgumentException(
+                "Headless patch build blocked by ${projectPatchIdentityErrors.size} project identity error(s): " +
+                    projectPatchIdentityErrors.first().message
+            )
+        }
         val writePlan = RomWritePlan(ByteArray(IPS_ADDRESS_SPACE_SIZE), verifyPreconditions = false)
         val context = ApplyContext(
             outputRom = null,
@@ -343,6 +383,28 @@ class SmeditBuildService(
         context: ApplyContext,
         roomNameOverridesHandled: Boolean,
     ) {
+        if (context.outputRom != null) {
+            val unsupportedRomEdits = mutableListOf<String>()
+            if (project.customGfx.varGfx.isNotEmpty()) unsupportedRomEdits.add("tileset graphics")
+            if (project.customGfx.creGfx != null) unsupportedRomEdits.add("CRE graphics")
+            if (project.customGfx.tileTables.isNotEmpty()) unsupportedRomEdits.add("tileset metatile tables")
+            if (project.customGfx.creTileTable != null) unsupportedRomEdits.add("CRE metatile table")
+            if (project.customGfx.enemyGfx.isNotEmpty()) unsupportedRomEdits.add("enemy graphics")
+            if (project.customGfx.spriteTileBlocks.isNotEmpty()) unsupportedRomEdits.add("sprite tile blocks")
+            if (project.textEdits.isNotEmpty()) unsupportedRomEdits.add("text edits")
+            if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
+                unsupportedRomEdits.add("room name overrides")
+            }
+            if (project.customAsm.isNotEmpty()) unsupportedRomEdits.add("custom ASM")
+            if (project.musicEdits.isNotEmpty()) unsupportedRomEdits.add("music edits")
+            if (unsupportedRomEdits.isNotEmpty()) {
+                throw IllegalArgumentException(
+                    "Headless ROM build cannot safely export ${unsupportedRomEdits.distinct().joinToString()}; " +
+                        "use the desktop ROM exporter, which currently supports these edits transactionally."
+                )
+            }
+        }
+
         val ignored = mutableListOf<String>()
         val romRequiredRoomEdits = if (context.outputRom == null) {
             project.rooms.values.count { it.hasEdits }
@@ -630,25 +692,35 @@ class SmeditBuildService(
         val writer = createTilesetPaletteWriter(
             context = context,
             missingRomMessage = "Tileset palette overrides require --rom because compressed palette pointers and free space are ROM-dependent.",
-        ) ?: return
+        ) ?: throw IllegalArgumentException(
+            "Tileset palette overrides require --rom because compressed palette pointers and free space are ROM-dependent."
+        )
 
         for ((tilesetKey, paletteBase64) in gfx.palettes) {
             val tilesetId = tilesetKey.toIntOrNull()
             if (tilesetId == null || tilesetId !in 0 until TileGraphics.NUM_TILESETS) {
-                context.warnings.add("Tileset palette '$tilesetKey' is not a valid tileset id.")
-                continue
+                throw IllegalArgumentException("Tileset palette '$tilesetKey' is not a valid tileset id.")
             }
 
-            val rawPalette = decodeBase64(paletteBase64, "tileset $tilesetId palette", context.warnings) ?: continue
+            val rawPalette = try {
+                Base64.getDecoder().decode(paletteBase64)
+            } catch (e: IllegalArgumentException) {
+                throw IllegalArgumentException("Tileset $tilesetId palette is not valid base64: ${e.message}", e)
+            }
             if (rawPalette.size != TILESET_PALETTE_BYTES) {
-                context.warnings.add(
+                throw IllegalArgumentException(
                     "Tileset $tilesetId palette has ${rawPalette.size} bytes; expected $TILESET_PALETTE_BYTES."
                 )
-                continue
             }
 
-            val target = resolveTilesetPaletteTarget(writer, tilesetId, context) ?: continue
-            writeTilesetPalette(writer, target, rawPalette, context, clearOriginalOnRelocate = true)
+            val warningCount = context.warnings.size
+            val target = resolveTilesetPaletteTarget(writer, tilesetId, context)
+            if (target == null) {
+                val detail = context.warnings.drop(warningCount).lastOrNull()
+                    ?: "Tileset $tilesetId palette target could not be resolved."
+                throw IllegalArgumentException(detail)
+            }
+            writeTilesetPalette(writer, target, rawPalette, context)
         }
     }
 
@@ -738,6 +810,7 @@ class SmeditBuildService(
                         edits.roomHeaderChange?.area?.let { roomId to it }
                     }.toMap(),
                     extraItemPlmIds = itemPlmIds,
+                    freeSpaceAllocator = context.freeSpaceAllocator,
                     onLog = { message ->
                         if (message.startsWith("WARN") || message.startsWith("ERROR")) {
                             context.warnings.add(message)
@@ -895,7 +968,6 @@ class SmeditBuildService(
                 target = snapshot.target,
                 rawPalette = SpritePalettes.colorsToBytes(colors),
                 context = context,
-                clearOriginalOnRelocate = false,
             )
         }
     }
@@ -986,12 +1058,9 @@ class SmeditBuildService(
             rom = rom,
             parser = parser,
             tableFileOffset = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES),
-            allocator = RomFreeSpaceAllocator(
-                romData = rom,
-                snesToPc = parser::snesToPc,
-                pcToSnes = parser::pcToSnes,
-                guardBytes = 2,
-            ),
+            allocator = requireNotNull(context.freeSpaceAllocator) {
+                "ROM free-space allocator is unavailable"
+            },
         )
     }
 
@@ -1033,10 +1102,15 @@ class SmeditBuildService(
         target: TilesetPaletteTarget,
         rawPalette: ByteArray,
         context: ApplyContext,
-        clearOriginalOnRelocate: Boolean,
     ) {
         val compressed = LZ5Compressor.compress(rawPalette)
-        if (compressed.size <= target.originalSize) {
+        val sharedPointer = (0 until TileGraphics.NUM_TILESETS).sumOf { tilesetId ->
+            listOf(0, 3, 6).count { fieldOffset ->
+                val pointerOffset = writer.tableFileOffset + tilesetId * TILESET_TABLE_ENTRY_BYTES + fieldOffset
+                pointerOffset + 2 < writer.rom.size && readU24(writer.rom, pointerOffset) == target.paletteSnes
+            }
+        } > 1
+        if (compressed.size <= target.originalSize && !sharedPointer) {
             writeBytes(
                 context = context,
                 offset = target.palettePc,
@@ -1055,11 +1129,11 @@ class SmeditBuildService(
             tilesetId = target.tilesetId,
         )
         if (allocation == null) {
-            context.warnings.add(
-                "Tileset ${target.tilesetId} palette compressed to ${compressed.size} bytes, exceeds original " +
-                    "${target.originalSize} bytes, and no free space was found."
+            throw IllegalArgumentException(
+                "Tileset ${target.tilesetId} palette needs a private ${compressed.size}-byte allocation " +
+                    (if (sharedPointer) "because its source pointer is shared" else "because it exceeds ${target.originalSize} bytes") +
+                    ", and no free space was found."
             )
-            return
         }
 
         writeBytes(
@@ -1076,15 +1150,6 @@ class SmeditBuildService(
             "tileset ${target.tilesetId} palette pointer",
             overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
         )
-        if (clearOriginalOnRelocate) {
-            writeBytes(
-                context = context,
-                offset = target.palettePc,
-                bytes = List(target.originalSize) { 0xFF },
-                label = "tileset ${target.tilesetId} old palette free fill",
-                overlapPolicy = RomOverlapPolicy.ALLOW_IDENTICAL,
-            )
-        }
     }
 
     private fun applySpritePaletteOverrides(
@@ -1101,16 +1166,18 @@ class SmeditBuildService(
 
             val region = SpritePalettes.findRegion(regionId)
             if (region == null) {
-                context.warnings.add("Sprite palette '$regionId' is not a known fixed palette region.")
-                continue
+                throw IllegalArgumentException("Sprite palette '$regionId' is not a known fixed palette region.")
             }
-            val rawBytes = decodeBase64(paletteBase64, "sprite palette ${region.id}", context.warnings) ?: continue
+            val rawBytes = try {
+                Base64.getDecoder().decode(paletteBase64)
+            } catch (e: IllegalArgumentException) {
+                throw IllegalArgumentException("Sprite palette '${region.id}' is not valid base64: ${e.message}", e)
+            }
             val colors = SpritePalettes.bytesToColors(rawBytes)
             if (colors.size != region.colorCount) {
-                context.warnings.add(
+                throw IllegalArgumentException(
                     "Sprite palette '${region.id}' has ${rawBytes.size} bytes; expected ${region.byteSize}."
                 )
-                continue
             }
             writeBytes(context, region.offset, SpritePalettes.colorsToBytes(colors).toIntList(), region.name)
         }
@@ -1123,28 +1190,32 @@ class SmeditBuildService(
     ) {
         val rom = context.outputRom
         if (rom == null) {
-            context.warnings.add("Enemy palette '$regionId' requires --rom because the palette pointer is species-dependent.")
-            return
+            throw IllegalArgumentException(
+                "Enemy palette '$regionId' requires --rom because the palette pointer is species-dependent."
+            )
         }
 
         val speciesHex = regionId.removePrefix(ENEMY_PALETTE_PREFIX)
         val speciesId = speciesHex.toIntOrNull(16)
         if (speciesId == null) {
-            context.warnings.add("Enemy palette '$regionId' has an invalid species id.")
-            return
+            throw IllegalArgumentException("Enemy palette '$regionId' has an invalid species id.")
         }
 
-        val rawBytes = decodeBase64(paletteBase64, "enemy palette $speciesHex", context.warnings) ?: return
+        val rawBytes = try {
+            Base64.getDecoder().decode(paletteBase64)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Enemy palette $speciesHex is not valid base64: ${e.message}", e)
+        }
         if (rawBytes.size != ENEMY_PALETTE_BYTES) {
-            context.warnings.add("Enemy palette $speciesHex has ${rawBytes.size} bytes; expected $ENEMY_PALETTE_BYTES.")
-            return
+            throw IllegalArgumentException(
+                "Enemy palette $speciesHex has ${rawBytes.size} bytes; expected $ENEMY_PALETTE_BYTES."
+            )
         }
 
         val headerPc = context.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
         val headerFileOffset = context.pcToFileOffset(headerPc)
         if (headerFileOffset < 0 || headerFileOffset + ENEMY_HEADER_AI_BANK_OFFSET >= rom.size) {
-            context.warnings.add("Enemy palette $speciesHex has an invalid species header.")
-            return
+            throw IllegalArgumentException("Enemy palette $speciesHex has an invalid species header.")
         }
 
         val palettePtr = readU16(rom, headerFileOffset + ENEMY_HEADER_PALETTE_PTR_OFFSET)
@@ -1153,8 +1224,7 @@ class SmeditBuildService(
         val palettePc = context.snesToPc(paletteSnes)
         val paletteFileOffset = context.pcToFileOffset(palettePc)
         if (paletteFileOffset < 0 || paletteFileOffset + ENEMY_PALETTE_BYTES > rom.size) {
-            context.warnings.add("Enemy palette $speciesHex resolved outside ROM bounds.")
-            return
+            throw IllegalArgumentException("Enemy palette $speciesHex resolved outside ROM bounds.")
         }
 
         writeBytes(context, palettePc, rawBytes.toIntList(), "enemy palette $speciesHex")
@@ -1485,6 +1555,7 @@ class SmeditBuildService(
                 alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
                     patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
                 ),
+                freeSpaceAllocator = context.freeSpaceAllocator,
             )
         } catch (e: Exception) {
             throw IllegalArgumentException("Room-name pause-map patch could not be written safely: ${e.message}", e)
@@ -1877,6 +1948,17 @@ class SmeditBuildService(
         var currentOwner: String = "headless",
     ) {
         val romHeaderOffset: Int = outputRom?.smcHeaderOffset() ?: 0
+        val freeSpaceAllocator: RomFreeSpaceAllocator? =
+            if (outputRom != null && parser != null) {
+                RomFreeSpaceAllocator(
+                    romData = outputRom,
+                    snesToPc = parser::snesToPc,
+                    pcToSnes = parser::pcToSnes,
+                    guardBytes = 2,
+                )
+            } else {
+                null
+            }
 
         fun snesToPc(snesAddress: Int): Int =
             snesToPcLoRom(snesAddress)

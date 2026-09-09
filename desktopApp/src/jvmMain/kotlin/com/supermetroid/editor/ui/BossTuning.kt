@@ -57,6 +57,20 @@ internal fun coerceBossTuningValue(field: BossTuningField, storedValue: Int): In
     return field.storedValue(logical).coerceIn(0, 65535)
 }
 
+/** Validate persisted/export input without silently changing the requested value. */
+internal fun requireBossTuningValue(field: BossTuningField, storedValue: Int): Int {
+    require(storedValue in 0..0xFFFF) {
+        "${field.label} stored value $storedValue is outside the 16-bit format"
+    }
+    val logical = field.logicalValue(storedValue)
+    val min = field.logicalMinValue()
+    val max = field.logicalMaxValue()
+    require(logical in min..max) {
+        "${field.label} value $logical is outside the supported range $min..$max"
+    }
+    return storedValue
+}
+
 internal fun formatBossTuningSnesAddress(snesAddress: Int): String {
     val bank = (snesAddress ushr 16) and 0xFF
     val offset = snesAddress and 0xFFFF

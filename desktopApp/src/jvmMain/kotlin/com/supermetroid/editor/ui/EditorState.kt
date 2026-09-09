@@ -218,7 +218,7 @@ class EditorState {
                 currentArea = project.rooms[project.roomKey(currentRoomId)]?.roomHeaderChange?.area ?: baseRoom.area
                 refreshVanillaSaveIndices(romParser)
                 currentAreaSaveEntryCount = romParser.saveEntryCount(currentArea)
-                currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(0x10))
+                currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(RomParser.SAVE_STATION_SLOT_COUNT))
                     .mapNotNull { index -> romParser.readSaveEntry(currentArea, index)?.let { index to it } }
                     .toMap()
 
@@ -2213,7 +2213,7 @@ class EditorState {
             .filter { it != 0 }
             .distinct()
         currentAreaSaveEntryCount = romParser.saveEntryCount(currentArea)
-        currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(0x10))
+        currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(RomParser.SAVE_STATION_SLOT_COUNT))
             .mapNotNull { idx -> romParser.readSaveEntry(currentArea, idx)?.let { idx to it } }
             .toMap()
         if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
@@ -2526,6 +2526,44 @@ class EditorState {
     fun paintAt(bx: Int, by: Int): Boolean {
         if (activeRoomLayer == RoomEditLayer.LAYER2) return paintLayer2At(bx, by)
         val b = brush ?: return false
+        // A brush stamp may contain both decorative tiles and a functional PLM.
+        // If the PLM cannot be represented (for example, all save slots are in
+        // use), roll back this whole stamp while preserving earlier drag-stroke
+        // stamps that are already pending.
+        val editCheckpoint = pendingEdits.size
+        val plmAddCheckpoint = pendingPlmAdds.size
+        val plmRemoveCheckpoint = pendingPlmRemoves.size
+        val workingPlmsBefore = _workingPlms.toList()
+        val roomKey = project.roomKey(currentRoomId)
+        val existingRoomEdits = project.rooms[roomKey]
+        val roomPlmChangesBefore = existingRoomEdits?.plmChanges?.toList()
+        val roomSaveSpawnsBefore = existingRoomEdits?.saveStationSpawns?.toList()
+        val dirtyBefore = dirty
+        val editVersionBefore = editVersion
+        fun rollbackStamp() {
+            val newEdits = pendingEdits.subList(editCheckpoint, pendingEdits.size).toList()
+            for (edit in newEdits.asReversed()) applyTileEdit(edit, useNew = false)
+            for (edit in newEdits) {
+                pendingPositions.remove(
+                    (edit.blockX.toLong() shl 32) or (edit.blockY.toLong() and 0xFFFFFFFFL)
+                )
+            }
+            pendingEdits.subList(editCheckpoint, pendingEdits.size).clear()
+            pendingPlmAdds.subList(plmAddCheckpoint, pendingPlmAdds.size).clear()
+            pendingPlmRemoves.subList(plmRemoveCheckpoint, pendingPlmRemoves.size).clear()
+            _workingPlms.clear()
+            _workingPlms.addAll(workingPlmsBefore)
+            if (existingRoomEdits == null) {
+                project.rooms.remove(roomKey)
+            } else {
+                existingRoomEdits.plmChanges.clear()
+                existingRoomEdits.plmChanges.addAll(roomPlmChangesBefore.orEmpty())
+                existingRoomEdits.saveStationSpawns.clear()
+                existingRoomEdits.saveStationSpawns.addAll(roomSaveSpawnsBefore.orEmpty())
+            }
+            dirty = dirtyBefore
+            editVersion = editVersionBefore
+        }
         var changed = false
         for (r in 0 until b.rows) {
             for (c in 0 until b.cols) {
@@ -2551,14 +2589,7 @@ class EditorState {
                 if (plm != null && plm.first != 0) {
                     val plmId = plm.first
                     val param = plm.second
-                    // Remove existing PLMs at same position with same ID
                     val existing = _workingPlms.filter { it.x == tx && it.y == ty && it.id == plmId }
-                    for (old in existing) {
-                        _workingPlms.remove(old)
-                        val rc = PlmChange("remove", old.id, old.x, old.y, old.param)
-                        project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
-                        pendingPlmRemoves.add(rc)
-                    }
                     // Repainting an existing save-station pattern must retain its
                     // AreaSave index. Older builds treated the pattern's 0x8000
                     // parameter as a request for a new index, which could leave
@@ -2567,6 +2598,18 @@ class EditorState {
                         ?.takeIf { plmId == 0xB76F && param == 0x8000 }
                         ?.param
                     val actualParam = retainedSaveParam ?: autoAssignParam(plmId, param)
+                    if (actualParam == null) {
+                        rollbackStamp()
+                        return false
+                    }
+                    // Remove existing PLMs at same position with same ID only
+                    // after the replacement parameter has been secured.
+                    for (old in existing) {
+                        _workingPlms.remove(old)
+                        val rc = PlmChange("remove", old.id, old.x, old.y, old.param)
+                        project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
+                        pendingPlmRemoves.add(rc)
+                    }
                     _workingPlms.add(RomParser.PlmEntry(plmId, tx, ty, actualParam))
                     val addChange = PlmChange("add", plmId, tx, ty, actualParam)
                     project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
@@ -2842,7 +2885,7 @@ class EditorState {
 
     fun activeRoomAreaForEditing(): Int = currentArea
 
-    private fun autoAssignParam(plmId: Int, param: Int): Int = when {
+    private fun autoAssignParam(plmId: Int, param: Int): Int? = when {
         param == 0 && isEditorItemPlm(plmId) -> {
             val usedIndices = mutableSetOf<Int>()
             // Replay add/remove history to find NET used params (not ghost entries)
@@ -2868,10 +2911,13 @@ class EditorState {
             var idx = 0x51
             while (idx in usedIndices && idx <= 0x1FF) idx++
             if (idx > 0x1FF) {
-                editorLog("WARN: item collection bit pool exhausted (>431 items)")
-                idx = 0x200
+                val message = "Cannot add item: all 431 safe item collection bits (0x51-0x1FF) are in use."
+                editorLog("ERROR: $message")
+                postStatus(message)
+                null
+            } else {
+                idx
             }
-            idx
         }
         plmId == 0xB76F && param == 0x8000 -> {
             val usedSaveIndices = mutableSetOf<Int>()
@@ -2889,14 +2935,22 @@ class EditorState {
                     if (change.action == "add" && change.plmId == 0xB76F) usedSaveIndices.add(change.param and 0xFF)
                 }
             }
-            val maxSaveIndex = (currentAreaSaveEntryCount - 1).coerceIn(0, 0x0F)
-            var idx = 0
-            while (idx in usedSaveIndices && idx <= maxSaveIndex) idx++
-            if (idx > maxSaveIndex) {
-                editorLog("WARN: no unused AreaSave slot for area $currentArea; reusing save index $maxSaveIndex")
-                idx = maxSaveIndex
+            val slotCount = when {
+                currentAreaSaveEntryCount > 0 -> minOf(currentAreaSaveEntryCount, RomParser.SAVE_STATION_SLOT_COUNT)
+                testMode -> RomParser.SAVE_STATION_SLOT_COUNT
+                else -> 0
             }
-            0x8000 or idx
+            var idx = 0
+            while (idx in usedSaveIndices && idx < slotCount) idx++
+            if (idx >= slotCount) {
+                val areaName = MinimapData.AREA_NAMES.getOrNull(currentArea) ?: "area $currentArea"
+                val message = "Cannot add save station in $areaName: all $slotCount runtime save slots are in use."
+                editorLog("ERROR: $message")
+                postStatus(message)
+                null
+            } else {
+                0x8000 or idx
+            }
         }
         else -> param
     }
@@ -2906,6 +2960,7 @@ class EditorState {
         val retainedSaveParam = existing.singleOrNull()
             ?.takeIf { plmId == 0xB76F && param == 0x8000 }
             ?.param
+        val actualParam = retainedSaveParam ?: autoAssignParam(plmId, param) ?: return
         val removedChanges = mutableListOf<PlmChange>()
         for (old in existing) {
             _workingPlms.remove(old)
@@ -2914,7 +2969,6 @@ class EditorState {
             removedChanges.add(rc)
         }
 
-        val actualParam = retainedSaveParam ?: autoAssignParam(plmId, param)
         _workingPlms.add(RomParser.PlmEntry(plmId, x, y, actualParam))
         val addChange = PlmChange("add", plmId, x, y, actualParam)
         project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
@@ -3228,17 +3282,30 @@ class EditorState {
         }
 
         val savePlms = effectiveRoomPlms(roomId, romParser).filter { it.id == 0xB76F }
-        val effectiveReferences = buildList {
+        val effectiveLoadReferences = buildList {
             for (area in 0 until MinimapData.NUM_AREAS) {
                 for (index in 0 until romParser.saveEntryCount(area)) {
                     val slot = effectiveSlot(area, index) ?: continue
-                    if (!slot.clearSlot && slot.roomId == roomId) add(slot)
+                    if (!slot.clearSlot && slot.roomId == roomId) add(index to slot)
                 }
             }
         }
+        val specialLoadReference = effectiveLoadReferences.firstOrNull {
+            (index, _) -> index !in 0 until RomParser.SAVE_STATION_SLOT_COUNT
+        }
+        if (specialLoadReference != null) {
+            val (index, slot) = specialLoadReference
+            return AreaSaveMigrationPlanning(
+                error = "Cannot move this room yet: AreaSave load-station entry ${slot.area}:$index is an " +
+                    "elevator/start/debug record rather than a save-station slot.",
+            )
+        }
+        val effectiveReferences = effectiveLoadReferences.map { it.second }
         val invalidProjectReference = allOverrides.firstOrNull {
             !it.clearSlot && it.roomId == roomId &&
-                (it.area !in 0 until MinimapData.NUM_AREAS || romParser.readSaveEntry(it.area, it.saveIndex) == null)
+                (it.area !in 0 until MinimapData.NUM_AREAS ||
+                    it.saveIndex !in 0 until RomParser.SAVE_STATION_SLOT_COUNT ||
+                    romParser.readSaveEntry(it.area, it.saveIndex) == null)
         }
         if (invalidProjectReference != null) {
             return AreaSaveMigrationPlanning(error = "Cannot migrate AreaSave: project slot ${invalidProjectReference.area}:${invalidProjectReference.saveIndex} is not writable.")
@@ -3339,7 +3406,7 @@ class EditorState {
         val allocated = mutableSetOf<Int>()
         val destinationBySource = mutableMapOf<Int, Int>()
         for ((sourceIndex, _) in sourceSlots) {
-            val candidates = (0 until romParser.saveEntryCount(targetArea)).filter { index ->
+            val candidates = (0 until romParser.saveStationSlotCount(targetArea)).filter { index ->
                 if (index in targetPlmIndices || index in allocated) return@filter false
                 val slot = effectiveSlot(targetArea, index) ?: return@filter false
                 slot.clearSlot || slot.roomId == 0

@@ -1058,6 +1058,14 @@ class RomParser(internal val romData: ByteArray) {
         return if (bytes > 0) bytes / SAVE_ENTRY_SIZE else 0
     }
 
+    /**
+     * Number of load-station entries that a save-station PLM can address.
+     * The game masks the PLM argument with `AND #$0007`, so elevators and
+     * debug load points at indices 8+ are not additional save capacity.
+     */
+    fun saveStationSlotCount(area: Int): Int =
+        minOf(saveEntryCount(area), SAVE_STATION_SLOT_COUNT)
+
     /** Read a save entry for a given area and save index. */
     fun readSaveEntry(area: Int, saveIndex: Int): SaveEntry? {
         if (saveIndex < 0 || saveIndex >= saveEntryCount(area)) return null
@@ -1770,6 +1778,7 @@ class RomParser(internal val romData: ByteArray) {
         //   +$0A: Samus Y (2B)   +$0C: Samus X (2B)
         const val SAVE_TABLE_PTR_PC = 0x0044B5
         const val SAVE_ENTRY_SIZE = 14
+        const val SAVE_STATION_SLOT_COUNT = 8
 
         data class SaveEntry(
             val roomId: Int, val doorPtr: Int,

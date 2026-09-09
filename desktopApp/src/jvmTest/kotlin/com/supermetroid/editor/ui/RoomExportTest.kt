@@ -15,6 +15,7 @@ import com.supermetroid.editor.rom.TileGraphics
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -388,7 +389,7 @@ class RoomExportTest {
     }
 
     @Test
-    fun `phantoon and kraid behavior export clamps stale unsafe values`() {
+    fun `phantoon behavior export rejects stale unsafe values instead of silently clamping`() {
         val romBytes = TestRomHelper.loadRomBytes()
         assumeTrue(romBytes != null, "Test ROM not found")
         romBytes!!
@@ -408,6 +409,26 @@ class RoomExportTest {
         )
         phantoonPatch.enabled = true
 
+        val exportedPath = state.exportToRom(parser)
+
+        assertNull(exportedPath, "out-of-range persisted values must fail closed")
+        assertTrue(state.statusMessage.contains("outside the supported range"))
+        assertFalse(File(tempDir, "SuperMetroidCustomBossGuardrails-v0.1.smc").exists())
+    }
+
+    @Test
+    fun `kraid behavior export rejects stale unsafe values instead of silently clamping`() {
+        val romBytes = TestRomHelper.loadRomBytes()
+        assumeTrue(romBytes != null, "Test ROM not found")
+        romBytes!!
+
+        val inputRom = File(tempDir, "SuperMetroidCustomKraidGuardrails.smc")
+        inputRom.writeBytes(romBytes)
+        val parser = RomParser(inputRom.readBytes())
+        val state = EditorState()
+        state.testMode = true
+        state.initForRom(inputRom.absolutePath)
+
         val kraidPatch = state.findOrCreateConfigPatch(KRAID_CONFIG_TYPE)
         kraidPatch.configData = mutableMapOf(
             "intro_delay" to 0xFFFF,
@@ -415,20 +436,11 @@ class RoomExportTest {
         )
         kraidPatch.enabled = true
 
-        val exportedPath = state.exportToRom(parser) ?: error("Expected export path")
-        val exportedRomBytes = File(exportedPath).readBytes()
-        val exportedParser = RomParser(exportedRomBytes)
+        val exportedPath = state.exportToRom(parser)
 
-        fun word(snesAddress: Int): Int =
-            readU16(exportedRomBytes, exportedParser.snesToPc(snesAddress))
-
-        assertEquals(0x7FFF, word(0xA7CD53), "Phantoon closed timer should be clamped during export")
-        assertEquals(0x0FFF, word(0xA7CDBF), "Phantoon flame-rain X position should be clamped during export")
-        assertEquals(0xFF01, word(0xA7CD8B), "Phantoon signed reverse movement cap should be clamped during export")
-        assertEquals(0x7FFF, word(0xA7AA6A), "Kraid intro delay should be clamped during export")
-        for (addr in listOf(0xA7BE50, 0xA7BE60, 0xA7BE70, 0xA7BE80)) {
-            assertEquals(0xFF01, word(addr), "Kraid mirrored signed fingernail speed should be clamped at ${addr.toString(16)}")
-        }
+        assertNull(exportedPath, "out-of-range persisted values must fail closed")
+        assertTrue(state.statusMessage.contains("outside the supported range"))
+        assertFalse(File(tempDir, "SuperMetroidCustomKraidGuardrails-v0.1.smc").exists())
     }
 
     @Test
@@ -585,7 +597,7 @@ class RoomExportTest {
         assertFalse(motherBrainPatch.enabled, "mother brain behavior starts disabled in a new project")
         state.setPatchConfigData(motherBrainPatch.id, "attack_cooldown", 0x0050)
         state.setPatchConfigData(motherBrainPatch.id, "max_active_bombs", 0x0002)
-        state.setPatchConfigData(motherBrainPatch.id, "phase1_samus_x_gate", 0xFFFF)
+        state.setPatchConfigData(motherBrainPatch.id, "phase1_samus_x_gate", 0x0FFF)
         state.setPatchConfigData(motherBrainPatch.id, "blue_ring_samus_x_offset", 0x0014)
         state.setPatchConfigData(motherBrainPatch.id, "shitroid_attack_cap", 0x0008)
         state.setPatchConfigData(motherBrainPatch.id, "rainbow_initial_width", 0x0300)
@@ -606,7 +618,7 @@ class RoomExportTest {
             assertEquals(0x0110, word(addr), "Mirrored Torizo fall reset Y speed should be patched at ${addr.toString(16)}")
         }
         assertEquals(0x0080, word(0xAAD4BB), "Golden Torizo forward jump distance should be patched")
-        assertEquals(0x0FFF, word(0xA987F5), "Mother Brain Samus X gate should be clamped during export")
+        assertEquals(0x0FFF, word(0xA987F5), "Mother Brain Samus X gate should be patched")
         assertEquals(0x0050, word(0xA9B65B), "Mother Brain attack cooldown should be patched")
         assertEquals(0x0014, word(0xA99E66), "Mother Brain blue-ring Samus X aim offset should be patched")
         for (addr in listOf(0xA99EA9, 0xA99EAE)) {

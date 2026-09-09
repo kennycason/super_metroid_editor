@@ -9,6 +9,7 @@ import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
 import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomWriteKind
@@ -16,11 +17,47 @@ import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanException
 import com.supermetroid.editor.rom.RomResourceAccess
 import com.supermetroid.editor.rom.RomResourceClaim
+import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.TextCategory
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
+import com.supermetroid.editor.rom.readU24
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
+/**
+ * Preserve an existing build if the final disk write fails. A same-directory
+ * temporary file keeps the move on one filesystem; platforms without atomic
+ * replacement still get a completed temp file before replacement is attempted.
+ */
+internal fun writeBytesAtomically(target: File, bytes: ByteArray) {
+    val parent = target.absoluteFile.parentFile
+        ?: throw IllegalArgumentException("Output '${target.absolutePath}' has no parent directory")
+    require(parent.isDirectory) { "Output directory '${parent.absolutePath}' does not exist" }
+    val temp = File.createTempFile(".${target.name}.", ".tmp", parent)
+    try {
+        FileOutputStream(temp).use { stream ->
+            stream.write(bytes)
+            stream.fd.sync()
+        }
+        try {
+            Files.move(
+                temp.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    } finally {
+        if (temp.exists()) temp.delete()
+    }
+}
 
 private fun ByteArray.hexAt(offset: Int, count: Int): String {
     if (offset < 0 || offset >= size) return "<out-of-range>"
@@ -70,8 +107,6 @@ internal class RomExporter(
     private val onStatus: (String) -> Unit = {},
 ) {
 
-    private val music = MusicRomExporter(project, onLog)
-
     private fun exportSuffix(): String {
         val version = "v${project.versionMajor}.${project.versionMinor}"
         val build = project.buildName.trim()
@@ -92,8 +127,43 @@ internal class RomExporter(
         }
         val writePlan = RomWritePlan(originalRom, headerSize)
         val romData = writePlan.romData
+        val allocationParser = RomParser(romData)
+        val freeSpaceAllocator = RomFreeSpaceAllocator(
+            romData = romData,
+            snesToPc = allocationParser::snesToPc,
+            pcToSnes = allocationParser::pcToSnes,
+            guardBytes = 2,
+        )
         val inputRomHash = bytesSha256(originalRom.copyOfRange(headerSize, originalRom.size))
         val roomsPatched = mutableSetOf<String>()
+
+        val validationRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+        val baselineIssues = RomValidator.validate(
+            parser = romParser,
+            roomIds = validationRoomIds,
+        ).toSet()
+        val preflightIssues = RomValidator.validate(
+            parser = romParser,
+            roomIds = validationRoomIds,
+            project = project,
+        )
+        for (issue in preflightIssues) {
+            val origin = if (issue in baselineIssues) "BASE-ROM " else "PROJECT "
+            onLog("[PREFLIGHT] $origin${issue.severity}: ${issue.category}: ${issue.message}")
+        }
+        // A known issue already present in the input ROM is useful diagnostic
+        // context, but cannot make every unrelated project export impossible.
+        // Only errors introduced by project data block this transaction.
+        val preflightErrors = preflightIssues.filter {
+            it.severity == RomValidator.Severity.ERROR && it !in baselineIssues
+        }
+        if (preflightErrors.isNotEmpty()) {
+            val first = preflightErrors.first()
+            val message = "Export blocked by ${preflightErrors.size} preflight error(s): ${first.message}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
 
         val patchesApplied: Int
         val musicPatched: Int
@@ -104,13 +174,28 @@ internal class RomExporter(
         try {
             // Apply patches FIRST so free-space scanners see code/data already
             // claimed by fixed patches before generated allocators run.
-            patchesApplied = applyPatches(writePlan, inputRomHash) ?: return null
+            patchesApplied = applyPatches(writePlan, inputRomHash, freeSpaceAllocator) ?: return null
 
+            val musicOwner = "music:project"
+            val musicAllocations = mutableListOf<RomAllocation>()
             musicPatched = writePlan.capture(
-                owner = "music:project",
+                owner = musicOwner,
                 label = "Project music edits",
                 kind = RomWriteKind.MUSIC,
-            ) { music.applyMusicEditsToRom(it) }
+            ) {
+                MusicRomExporter(project, onLog).applyMusicEditsToRom(
+                    it,
+                    freeSpaceAllocator.observing(musicAllocations::add),
+                )
+            }
+            for (allocation in musicAllocations) {
+                writePlan.claimCurrentRange(
+                    owner = musicOwner,
+                    label = allocation.label,
+                    offset = allocation.pcOffset - writePlan.headerSize,
+                    size = allocation.size,
+                )
+            }
             if (musicPatched > 0) onLog("[EXPORT] Patched $musicPatched music track edit(s)")
 
             claimPerFrameHookResources(writePlan)
@@ -139,6 +224,7 @@ internal class RomExporter(
                                 val roomId = key.toIntOrNull(16) ?: return@mapNotNull null
                                 edits.roomHeaderChange?.area?.let { roomId to it }
                             }.toMap(),
+                            freeSpaceAllocator = freeSpaceAllocator,
                             onLog = onLog,
                         ).exportRooms()
                     }
@@ -159,10 +245,10 @@ internal class RomExporter(
                 return null
             }
 
-            gfxPatched = applyCustomGfxPatches(writePlan)
+            gfxPatched = applyCustomGfxPatches(writePlan, freeSpaceAllocator)
             minimapPatched = applyMinimapEdits(writePlan)
             textPatched = applyTextEdits(writePlan)
-            asmPatched = applyCustomAsm(writePlan)
+            asmPatched = applyCustomAsm(writePlan, freeSpaceAllocator)
         } catch (e: RomWritePlanException) {
             val message = "Export failed safely: ${e.message}"
             onLog("ERROR: $message")
@@ -180,7 +266,14 @@ internal class RomExporter(
         if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
-            out.writeBytes(romData)
+            try {
+                writeBytesAtomically(out, romData)
+            } catch (e: Exception) {
+                val message = "Export failed safely while writing output: ${e.message ?: e::class.simpleName}"
+                onLog("ERROR: $message")
+                onStatus(message)
+                return null
+            }
             onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
             return out.absolutePath
         }
@@ -200,9 +293,34 @@ internal class RomExporter(
             return null
         }
 
+        val postflightErrors = RomValidator.validate(
+            parser = RomParser(romData),
+            roomIds = validationRoomIds,
+        ).filter { issue ->
+            issue.severity == RomValidator.Severity.ERROR && issue !in baselineIssues
+        }
+        for (issue in postflightErrors) {
+            onLog("[POSTFLIGHT] ERROR: ${issue.category}: ${issue.message}")
+        }
+        if (postflightErrors.isNotEmpty()) {
+            val first = postflightErrors.first()
+            val message =
+                "Export failed safely: ${postflightErrors.size} new structural error(s); ${first.message}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
+
         val orig = File(romPath)
         val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
-        out.writeBytes(romData)
+        try {
+            writeBytesAtomically(out, romData)
+        } catch (e: Exception) {
+            val message = "Export failed safely while writing output: ${e.message ?: e::class.simpleName}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
         val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
         onLog(msg)
         onStatus(msg)
@@ -237,12 +355,36 @@ internal class RomExporter(
      * then applies any deferred generated patches (e.g. room name pause map).
      * Returns total patches applied, or null if a deferred patch fails.
      */
-    private fun applyPatches(writePlan: RomWritePlan, inputRomHash: String): Int? {
+    private fun applyPatches(
+        writePlan: RomWritePlan,
+        inputRomHash: String,
+        freeSpaceAllocator: RomFreeSpaceAllocator,
+    ): Int? {
         val romData = writePlan.romData
         var patchesApplied = 0
         val enabledCount = project.patches.count { it.enabled }
         val disabledCount = project.patches.size - enabledCount
         val deferredGeneratedPatches = mutableListOf<SmPatch>()
+        fun validateConfigKeys(data: Map<String, Int>?, allowed: Set<String>, patch: SmPatch) {
+            if (data == null) return
+            val unknown = data.keys - allowed
+            if (unknown.isNotEmpty()) {
+                throw RomWritePlanException(
+                    "Configured patch '${patch.name}' contains unsupported field(s): " +
+                        unknown.sorted().joinToString() +
+                        ". Reopen the patch editor and save its supported settings."
+                )
+            }
+        }
+        fun requireConfigRange(patch: SmPatch, field: String, value: Int, range: IntRange): Int {
+            if (value !in range) {
+                throw RomWritePlanException(
+                    "Configured patch '${patch.name}' field '$field' is $value; expected " +
+                        "${range.first}..${range.last}."
+                )
+            }
+            return value
+        }
         onLog("[EXPORT] Patches: $enabledCount enabled, $disabledCount disabled (${project.patches.size} total)")
         for (patch in project.patches) {
             if (!patch.enabled) continue
@@ -293,20 +435,21 @@ internal class RomExporter(
 
             val beforePatch = romData.copyOf()
             if (patch.configType == "ceres_escape_seconds") {
-                val totalSecs = (patch.configValue ?: 60).coerceIn(15, 600)
+                val totalSecs = requireConfigRange(patch, "seconds", patch.configValue ?: 60, 15..600)
                 val mins = totalSecs / 60
                 val secs = totalSecs % 60
                 val secsBcd = ((secs / 10) shl 4) or (secs % 10)
                 val minsBcd = ((mins / 10) shl 4) or (mins % 10)
                 val off = romParser.snesToPc(CERES_TIMER_OPERAND_SNES)
-                if (off + 1 < romData.size) {
-                    romData[off] = secsBcd.toByte()
-                    romData[off + 1] = minsBcd.toByte()
-                }
+                writeU16(romData, off, (minsBcd shl 8) or secsBcd)
                 onLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
             } else if (patch.configType == ZEBES_ESCAPE_CONFIG_TYPE) {
-                val totalSecs = (patch.configValue ?: ZEBES_ESCAPE_DEFAULT_SECONDS)
-                    .coerceIn(ZEBES_ESCAPE_MIN_SECONDS, ZEBES_ESCAPE_MAX_SECONDS)
+                val totalSecs = requireConfigRange(
+                    patch,
+                    "seconds",
+                    patch.configValue ?: ZEBES_ESCAPE_DEFAULT_SECONDS,
+                    ZEBES_ESCAPE_MIN_SECONDS..ZEBES_ESCAPE_MAX_SECONDS,
+                )
                 val mins = totalSecs / 60
                 val secs = totalSecs % 60
                 val secsBcd = ((secs / 10) shl 4) or (secs % 10)
@@ -314,68 +457,64 @@ internal class RomExporter(
                 writeU16(romData, romParser.snesToPc(ZEBES_TIMER_OPERAND_SNES), (minsBcd shl 8) or secsBcd)
                 onLog("[EXPORT]   Zebes escape timer: ${mins}m${secs}s")
             } else if (patch.configType == SHORT_CHARGE_CONFIG_TYPE) {
-                val stages = (patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES)
-                    .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
+                val stages = requireConfigRange(
+                    patch,
+                    "stages",
+                    patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES,
+                    SHORT_CHARGE_MIN_STAGES..SHORT_CHARGE_MAX_STAGES,
+                )
                 val initialCounter = SHORT_CHARGE_MAX_STAGES - stages
                 val initialTimer = (initialCounter shl 8) or 0x0001
                 writeU16(romData, romParser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES), initialTimer)
                 onLog("[EXPORT]   Short charge: $stages stage(s), initial counter=$initialCounter")
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, ALL_BEAMS.mapTo(mutableSetOf()) { it.key }, patch)
                 var beamCount = 0
                 for (beam in ALL_BEAMS) {
-                    val dmg = data[beam.key] ?: continue
+                    val dmg = requireConfigRange(patch, beam.key, data[beam.key] ?: continue, 0..9999)
                     val charged = dmg * 3
                     val pcUncharged = romParser.snesToPc(beam.snesAddress)
-                    if (pcUncharged + 1 < romData.size) {
-                        romData[pcUncharged] = (dmg and 0xFF).toByte()
-                        romData[pcUncharged + 1] = ((dmg shr 8) and 0xFF).toByte()
-                    }
+                    writeU16(romData, pcUncharged, dmg)
                     val pcCharged = romParser.snesToPc(beam.chargedSnesAddress)
-                    if (pcCharged + 1 < romData.size) {
-                        romData[pcCharged] = (charged and 0xFF).toByte()
-                        romData[pcCharged + 1] = ((charged shr 8) and 0xFF).toByte()
-                    }
+                    writeU16(romData, pcCharged, charged)
                     beamCount++
                 }
                 onLog("[EXPORT]   Beam damage: $beamCount beams modified")
             } else if (patch.configType == "boss_stats") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, ALL_BOSS_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
                 var fieldCount = 0
                 for (field in ALL_BOSS_FIELDS) {
                     val value = data[field.key] ?: continue
                     for (speciesId in field.writeSpeciesIds) {
                         val snesAddress = RomConstants.BANK_ENEMY_AI or speciesId
                         val pc = romParser.snesToPc(snesAddress) + field.offset
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
+                        writeU16(romData, pc, value)
+                        fieldCount++
                     }
                 }
                 onLog("[EXPORT]   Boss stats: $fieldCount fields modified")
             } else if (patch.configType == "phantoon") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, ALL_PHANTOON_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
                 var fieldCount = 0
                 for (field in ALL_PHANTOON_FIELDS) {
-                    val value = coercePhantoonValue(field, data[field.key] ?: continue)
+                    val value = requireBossTuningValue(field, data[field.key] ?: continue)
                     writeU16(romData, romParser.snesToPc(field.snesAddress), value)
                     fieldCount++
                 }
                 onLog("[EXPORT]   Phantoon behavior: $fieldCount fields modified")
             } else if (patch.configType == KRAID_CONFIG_TYPE) {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, ALL_KRAID_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
                 var fieldCount = 0
                 for (field in ALL_KRAID_FIELDS) {
-                    val value = coerceKraidValue(field, data[field.key] ?: continue)
+                    val value = requireBossTuningValue(field, data[field.key] ?: continue)
                     for (snesAddress in field.writeSnesAddresses) {
                         val pc = romParser.snesToPc(snesAddress)
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
+                        writeU16(romData, pc, value)
+                        fieldCount++
                     }
                 }
                 onLog("[EXPORT]   Kraid behavior: $fieldCount fields modified")
@@ -384,21 +523,36 @@ internal class RomExporter(
                 val configType = patch.configType ?: continue
                 val definition = BOSS_BEHAVIOR_BY_CONFIG_TYPE[configType]
                 val fields = BOSS_BEHAVIOR_FIELDS_BY_CONFIG_TYPE.getValue(configType)
+                validateConfigKeys(data, fields.mapTo(mutableSetOf()) { it.key }, patch)
                 var fieldCount = 0
                 for (field in fields) {
-                    val value = coerceBossBehaviorValue(field, data[field.key] ?: continue)
+                    val value = requireBossTuningValue(field, data[field.key] ?: continue)
                     for (snesAddress in field.writeSnesAddresses) {
                         val pc = romParser.snesToPc(snesAddress)
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            fieldCount++
-                        }
+                        writeU16(romData, pc, value)
+                        fieldCount++
                     }
                 }
                 onLog("[EXPORT]   ${definition?.title ?: "Boss"} behavior: $fieldCount fields modified")
             } else if (patch.configType == "enemy_stats") {
                 val data = patch.configData ?: continue
+                val aiFields = listOf(
+                    "_initAi" to 0x12, "_mainAi" to 0x16, "_touchAi" to 0x30,
+                    "_shotAi" to 0x32, "_hurtAi" to 0x1C, "_frozenAi" to 0x1E,
+                    "_grappleAi" to 0x1A, "_deathAnim" to 0x22,
+                    "_extraGfx" to 0x18, "_pbVuln" to 0x28,
+                )
+                validateConfigKeys(
+                    data,
+                    buildSet {
+                        for (enemy in ENEMY_DEFS) {
+                            add("${enemy.key}_hp")
+                            add("${enemy.key}_dmg")
+                            for ((suffix, _) in aiFields) add("${enemy.key}$suffix")
+                        }
+                    },
+                    patch,
+                )
                 var modCount = 0
                 for (e in ENEMY_DEFS) {
                     val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
@@ -406,65 +560,91 @@ internal class RomExporter(
                     data["${e.key}_hp"]?.let { writeU16(romData, basePc + 4, it); modCount++ }
                     data["${e.key}_dmg"]?.let { writeU16(romData, basePc + 6, it); modCount++ }
                 }
-                val aiFields = listOf(
-                    "_initAi" to 0x12, "_mainAi" to 0x16, "_touchAi" to 0x30,
-                    "_shotAi" to 0x32, "_hurtAi" to 0x1C, "_frozenAi" to 0x1E,
-                    "_grappleAi" to 0x1A, "_deathAnim" to 0x22,
-                    "_extraGfx" to 0x18, "_pbVuln" to 0x28,
-                )
                 for (e in ENEMY_DEFS) {
                     val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
                     for ((suffix, offset) in aiFields) {
                         val value = data["${e.key}$suffix"] ?: continue
                         val pc = romParser.snesToPc(snesAddr) + offset
-                        if (pc + 1 < romData.size) {
-                            romData[pc] = (value and 0xFF).toByte()
-                            romData[pc + 1] = ((value shr 8) and 0xFF).toByte()
-                            modCount++
-                        }
+                        writeU16(romData, pc, value)
+                        modCount++
                     }
                 }
                 onLog("[EXPORT]   Enemy stats: $modCount values modified (HP/DMG + AI/GFX)")
             } else if (patch.configType == "enemy_drops") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(
+                    data,
+                    ENEMY_DEFS.flatMapTo(mutableSetOf()) { enemy ->
+                        (0..5).map { index -> "${enemy.key}_drop$index" }
+                    },
+                    patch,
+                )
                 var modCount = 0
                 for (e in ENEMY_DEFS) {
+                    val requested = (0..5).mapNotNull { index ->
+                        data["${e.key}_drop$index"]?.let { index to it }
+                    }
+                    if (requested.isEmpty()) continue
                     val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
                     val headerPc = romParser.snesToPc(snesAddr)
-                    if (headerPc + 0x3C > romData.size) continue
+                    if (headerPc < 0 || headerPc + 0x3C > romData.size) {
+                        throw RomWritePlanException("Enemy drop edit for ${e.key} has an invalid species header")
+                    }
                     val ptr = (romData[headerPc + 0x3A].toInt() and 0xFF) or
                             ((romData[headerPc + 0x3B].toInt() and 0xFF) shl 8)
-                    if (ptr == 0 || ptr == 0xFFFF) continue
+                    if (ptr == 0 || ptr == 0xFFFF) {
+                        throw RomWritePlanException("Enemy drop edit for ${e.key} has no writable drop-table pointer")
+                    }
                     val dropPc = romParser.snesToPc(0xB40000 or ptr)
-                    if (dropPc + 6 > romData.size) continue
-                    for (i in 0..5) {
-                        val value = data["${e.key}_drop$i"] ?: continue
-                        romData[dropPc + i] = (value and 0xFF).toByte()
+                    if (dropPc < 0 || dropPc + 6 > romData.size) {
+                        throw RomWritePlanException("Enemy drop edit for ${e.key} resolves outside ROM bounds")
+                    }
+                    for ((index, value) in requested) {
+                        writeU8(romData, dropPc + index, value)
                         modCount++
                     }
                 }
                 onLog("[EXPORT]   Enemy drop rates: $modCount values modified")
             } else if (patch.configType == "enemy_vuln") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(
+                    data,
+                    ENEMY_DEFS.flatMapTo(mutableSetOf()) { enemy ->
+                        (0..21).map { index -> "${enemy.key}_vuln$index" }
+                    },
+                    patch,
+                )
                 var modCount = 0
                 for (e in ENEMY_DEFS) {
+                    val requested = (0..21).mapNotNull { index ->
+                        data["${e.key}_vuln$index"]?.let { index to it }
+                    }
+                    if (requested.isEmpty()) continue
                     val snesAddr = RomConstants.BANK_ENEMY_AI or e.speciesId
                     val headerPc = romParser.snesToPc(snesAddr)
-                    if (headerPc + 0x3E > romData.size) continue
+                    if (headerPc < 0 || headerPc + 0x3E > romData.size) {
+                        throw RomWritePlanException("Enemy vulnerability edit for ${e.key} has an invalid species header")
+                    }
                     val ptr = (romData[headerPc + 0x3C].toInt() and 0xFF) or
                             ((romData[headerPc + 0x3D].toInt() and 0xFF) shl 8)
-                    if (ptr == 0 || ptr == 0xFFFF) continue
+                    if (ptr == 0 || ptr == 0xFFFF) {
+                        throw RomWritePlanException(
+                            "Enemy vulnerability edit for ${e.key} has no writable resistance-table pointer"
+                        )
+                    }
                     val resPc = romParser.snesToPc(0xB40000 or ptr)
-                    if (resPc + 22 > romData.size) continue
-                    for (i in 0..21) {
-                        val value = data["${e.key}_vuln$i"] ?: continue
-                        romData[resPc + i] = (value and 0xFF).toByte()
+                    if (resPc < 0 || resPc + 22 > romData.size) {
+                        throw RomWritePlanException("Enemy vulnerability edit for ${e.key} resolves outside ROM bounds")
+                    }
+                    for ((index, value) in requested) {
+                        writeU8(romData, resPc + index, value)
                         modCount++
                     }
                 }
                 onLog("[EXPORT]   Enemy vulnerabilities: $modCount values modified")
             } else if (patch.configType == "samus_physics") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, ALL_PHYSICS_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
                 var modCount = 0
                 for (field in ALL_PHYSICS_FIELDS) {
                     val value = data[field.key] ?: continue
@@ -474,21 +654,46 @@ internal class RomExporter(
                 onLog("[EXPORT]   Samus physics: $modCount values modified")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {
                 val data = patch.configData
+                validateConfigKeys(
+                    data,
+                    setOf(
+                        BOMB_MAX_ACTIVE_KEY,
+                        BOMB_FUSE_FRAMES_KEY,
+                        BOMB_COOLDOWN_FRAMES_KEY,
+                        BOMB_EXPLOSION_FRAME_DELAY_KEY,
+                    ),
+                    patch,
+                )
                 val defaults = readBombsRomDefaults(romParser)
-                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
-                    .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
-                val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
-                    .coerceIn(1, 9999)
-                val cooldownFrames = (
+                val maxActive = requireConfigRange(
+                    patch,
+                    BOMB_MAX_ACTIVE_KEY,
+                    data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs,
+                    1..BOMB_MAX_PROJECTILE_SLOTS,
+                )
+                val fuseFrames = requireConfigRange(
+                    patch,
+                    BOMB_FUSE_FRAMES_KEY,
+                    data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames,
+                    1..9999,
+                )
+                val cooldownFrames = requireConfigRange(
+                    patch,
+                    BOMB_COOLDOWN_FRAMES_KEY,
                     data?.get(BOMB_COOLDOWN_FRAMES_KEY)
                         ?: calculateBombCooldownForConfig(
                             maxActiveBombs = maxActive,
                             fuseFrames = fuseFrames,
                             baseCooldownFrames = defaults.cooldownFrames,
-                        )
-                    ).coerceIn(0, 255)
-                val explosionDelay = (data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay)
-                    .coerceIn(1, 255)
+                        ),
+                    0..255,
+                )
+                val explosionDelay = requireConfigRange(
+                    patch,
+                    BOMB_EXPLOSION_FRAME_DELAY_KEY,
+                    data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay,
+                    1..255,
+                )
                 writeU16(romData, BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
                 writeU8(romData, BOMB_COOLDOWN_PC, cooldownFrames)
                 writeU16(romData, BOMB_FUSE_TIMER_PC, fuseFrames)
@@ -499,9 +704,14 @@ internal class RomExporter(
                 )
             } else if (patch.configType == FANFARE_CONFIG_TYPE) {
                 val data = patch.configData
+                validateConfigKeys(data, setOf(FANFARE_FRAMES_KEY), patch)
                 val defaults = readFanfareRomDefaults(romParser)
-                val frames = (data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames)
-                    .coerceIn(FANFARE_MIN_FRAMES, FANFARE_MAX_FRAMES)
+                val frames = requireConfigRange(
+                    patch,
+                    FANFARE_FRAMES_KEY,
+                    data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames,
+                    FANFARE_MIN_FRAMES..FANFARE_MAX_FRAMES,
+                )
                 writeU16(romData, FANFARE_MESSAGE_BOX_WAIT_PC, frames)
                 for (offset in FANFARE_MUSIC_RESUME_DELAY_PCS) {
                     writeU16(romData, offset, frames)
@@ -512,6 +722,7 @@ internal class RomExporter(
                 )
             } else if (patch.configType == "controller_config") {
                 val data = patch.configData ?: continue
+                validateConfigKeys(data, CONTROLLER_SLOTS.mapTo(mutableSetOf()) { it.key }, patch)
                 var slotCount = 0
                 for (slot in CONTROLLER_SLOTS) {
                     val value = data[slot.key] ?: continue
@@ -520,9 +731,20 @@ internal class RomExporter(
                 }
                 onLog("[EXPORT]   Controller config: $slotCount buttons remapped")
             } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
+                validateConfigKeys(
+                    patch.configData,
+                    setOf(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY),
+                    patch,
+                )
                 deferredGeneratedPatches.add(patch)
                 onLog("[EXPORT]   (deferred until fixed patch writes are applied)")
             } else if (patch.configType == "boss_defeated" || patch.configType == "hyper_beam") {
+                val allowed = if (patch.configType == "boss_defeated") {
+                    BOSS_FLAG_DEFS.mapTo(mutableSetOf()) { it.key }
+                } else {
+                    emptySet()
+                }
+                validateConfigKeys(patch.configData, allowed, patch)
                 onLog("[EXPORT]   (deferred to combined per-frame hook)")
             } else {
                 error("Unsupported configured patch type '${patch.configType}' for '${patch.name}'")
@@ -548,6 +770,7 @@ internal class RomExporter(
                     alignment = RoomNamePauseMapPatch.RoomNameAlignment.fromConfig(
                         patch.configData?.get(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY)
                     ),
+                    freeSpaceAllocator = freeSpaceAllocator,
                 )
                 writePlan.recordDeclaredMutation(
                     before = beforeGeneratedPatch,
@@ -613,7 +836,10 @@ internal class RomExporter(
     private fun claimPerFrameHookResources(writePlan: RomWritePlan) {
         val participants = project.patches.filter { patch ->
             patch.enabled && (
-                patch.configType == "boss_defeated" ||
+                (patch.configType == "boss_defeated" &&
+                    patch.configData?.any { (key, value) ->
+                        value != 0 && BOSS_FLAG_DEFS.any { it.key == key }
+                    } == true) ||
                     patch.configType == "hyper_beam" ||
                     patch.id == "bundled_infinite_blue_suit"
                 )
@@ -634,341 +860,382 @@ internal class RomExporter(
     }
 
     /** Applies all custom GFX edits (tileset gfx/tables/palettes, sprite tiles, enemy palettes). Returns count of items patched. */
-    private fun applyCustomGfxPatches(writePlan: RomWritePlan): Int {
+    private fun applyCustomGfxPatches(
+        writePlan: RomWritePlan,
+        freeSpaceAllocator: RomFreeSpaceAllocator,
+    ): Int {
         val romData = writePlan.romData
         var gfxPatched = 0
         val gfxData = project.customGfx
+        if (gfxData.enemyGfx.isNotEmpty()) {
+            throw RomWritePlanException(
+                "Legacy PNG enemy graphics cannot be exported safely. Reopen each affected enemy in the sprite " +
+                    "editor and save it as raw sprite tile blocks before exporting; no graphics were written."
+            )
+        }
+        val tablePC = romParser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
 
-        // Helper: LZ5-compress rawData and write in-place at snesPtr if it fits, or warn and skip.
-        fun writeLZ5InPlace(rawData: ByteArray, snesPtr: Int, label: String): Boolean {
+        fun validAllocationBanks(originalSnesAddress: Int): List<Int> {
+            val originalBank = (originalSnesAddress shr 16) and 0xFF
+            return (listOf(originalBank) + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
+                .distinct()
+                .filter { bank ->
+                    val bankStart = runCatching { romParser.snesToPc((bank shl 16) or 0x8000) }.getOrNull()
+                    val bankEnd = runCatching { romParser.snesToPc((bank shl 16) or 0xFFFF) + 1 }.getOrNull()
+                    bankStart != null && bankEnd != null && bankStart >= 0 && bankEnd <= romData.size
+                }
+        }
+
+        /** Compress, validate, and either replace or safely relocate pointer-based data. */
+        fun writeLZ5(
+            rawData: ByteArray,
+            snesPtr: Int,
+            label: String,
+            pointerPc: Int? = null,
+            maxRawSize: Int? = null,
+            maxRawSizeReason: String = "the engine destination",
+            limitToOriginalRawSize: Boolean = false,
+        ) {
+            require(rawData.isNotEmpty()) { "$label is empty" }
+            val currentParser = RomParser(romData)
+            val pcOffset = currentParser.snesToPc(snesPtr)
+            val (originalRaw, origSize) = currentParser.decompressLZ2WithSize(snesPtr)
+            require(maxRawSize == null || rawData.size <= maxRawSize) {
+                "$label has ${rawData.size} decompressed bytes; $maxRawSizeReason can hold at most $maxRawSize bytes"
+            }
+            require(!limitToOriginalRawSize || rawData.size <= originalRaw.size) {
+                "$label has ${rawData.size} decompressed bytes; its fixed sprite DMA region can hold at most " +
+                    "${originalRaw.size} bytes"
+            }
             val compressed = LZ5Compressor.compress(rawData)
-            val pcOffset = romParser.snesToPc(snesPtr)
-            val (_, origSize) = romParser.decompressLZ2WithSize(snesPtr)
-            return if (compressed.size <= origSize) {
+            val roundTrip = LZ5Compressor.decompress(compressed)
+            require(roundTrip.contentEquals(rawData)) { "$label failed LZ5 round-trip validation" }
+            val sharedPointer = pointerPc?.let { pointerOffset ->
+                val fieldOffset = (pointerOffset - tablePC) % 9
+                fieldOffset in listOf(0, 3, 6) &&
+                    (0 until TileGraphics.NUM_TILESETS).sumOf { tilesetId ->
+                        listOf(0, 3, 6).count { candidateField ->
+                            readU24(romData, tablePC + tilesetId * 9 + candidateField) == snesPtr
+                        }
+                    } > 1
+            } == true
+            if (compressed.size <= origSize && !sharedPointer) {
                 writePlan.capture("graphics:$label", label, RomWriteKind.GRAPHICS) { _ ->
                     System.arraycopy(compressed, 0, romData, pcOffset, compressed.size)
                     for (i in compressed.size until origSize) romData[pcOffset + i] = 0xFF.toByte()
                 }
                 onLog("Patched $label in-place (${compressed.size}/$origSize bytes)")
-                true
-            } else {
-                onLog("WARN: Compressed $label (${compressed.size}) exceeds original ($origSize) — skipped")
-                false
+                return
             }
+
+            require(pointerPc != null) {
+                "$label compressed to ${compressed.size} bytes, exceeds its fixed $origSize-byte allocation, " +
+                    "and this engine pointer is not safely relocatable yet"
+            }
+            val owner = "graphics:$label"
+            val allocation = writePlan.capture(owner, "$label relocation", RomWriteKind.GRAPHICS) { _ ->
+                freeSpaceAllocator.allocate(
+                    bytes = compressed,
+                    banks = validAllocationBanks(snesPtr),
+                    label = label,
+                )?.also { allocated ->
+                    writeU24(romData, pointerPc, allocated.snesAddress)
+                } ?: error(
+                    "$label needs a private ${compressed.size}-byte allocation " +
+                        (if (sharedPointer) "because its source pointer is shared" else "because it exceeds $origSize bytes") +
+                        ", and no contiguous free ROM space was found"
+                )
+            }
+            writePlan.claimCurrentRange(
+                owner = owner,
+                label = allocation.label,
+                offset = allocation.pcOffset - writePlan.headerSize,
+                size = allocation.size,
+            )
+            onLog(
+                "Relocated $label \$${snesPtr.toString(16).uppercase()} -> " +
+                    "\$${allocation.snesAddress.toString(16).uppercase()} (${compressed.size}/$origSize bytes" +
+                    if (sharedPointer) ", copy-on-write for shared pointer)" else ")"
+            )
+        }
+
+        fun decode(payload: String, label: String): ByteArray = try {
+            java.util.Base64.getDecoder().decode(payload)
+        } catch (e: IllegalArgumentException) {
+            throw RomWritePlanException("$label contains invalid base64: ${e.message}")
+        }
+
+        fun validateTilesetId(value: String, label: String): Int {
+            val id = value.toIntOrNull()
+                ?: throw RomWritePlanException("$label key '$value' is not a decimal tileset ID")
+            if (id !in 0 until TileGraphics.NUM_TILESETS) {
+                throw RomWritePlanException("$label tileset ID $id is outside 0-${TileGraphics.NUM_TILESETS - 1}")
+            }
+            return id
         }
 
         // Custom CRE graphics (shared, always at $B9:8000)
         val creB64 = gfxData.creGfx
         if (creB64 != null) {
-            try {
-                val rawCre = java.util.Base64.getDecoder().decode(creB64)
-                if (writeLZ5InPlace(rawCre, TileGraphics.CRE_GFX_SNES, "CRE graphics")) gfxPatched++
-            } catch (e: Exception) { onLog("WARN: CRE gfx patch failed: ${e.message}") }
+            val rawCre = decode(creB64, "CRE graphics")
+            require(rawCre.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
+                "CRE graphics has ${rawCre.size} bytes; expected a non-empty multiple of ${RomConstants.BYTES_PER_4BPP_TILE}"
+            }
+            writeLZ5(
+                rawCre,
+                romParser.graphicsCatalog.creGfxPtr,
+                "CRE graphics",
+                maxRawSize = TileGraphics.CRE_GFX_MAX_BYTES,
+                maxRawSizeReason = "the engine's 12 KiB CRE graphics destination",
+            )
+            gfxPatched++
         }
 
         // Custom variable (URE) graphics per tileset
-        val tablePC = romParser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
-        val tilesetPaletteAllocator = RomFreeSpaceAllocator(
-            romData = romData,
-            snesToPc = romParser::snesToPc,
-            pcToSnes = romParser::pcToSnes,
-            guardBytes = 2,
-        )
         for ((tsIdStr, varB64) in gfxData.varGfx) {
-            val tsId = tsIdStr.toIntOrNull() ?: continue
-            try {
-                val rawVar = java.util.Base64.getDecoder().decode(varB64)
-                val entryOffset = tablePC + tsId * 9
-                val gfxSnes = (romData[entryOffset + 3].toInt() and 0xFF) or
-                        ((romData[entryOffset + 4].toInt() and 0xFF) shl 8) or
-                        ((romData[entryOffset + 5].toInt() and 0xFF) shl 16)
-                if (writeLZ5InPlace(rawVar, gfxSnes, "tileset $tsId variable gfx")) gfxPatched++
-            } catch (e: Exception) { onLog("WARN: Tileset $tsId gfx patch failed: ${e.message}") }
+            val tsId = validateTilesetId(tsIdStr, "Variable graphics")
+            val rawVar = decode(varB64, "Tileset $tsId variable graphics")
+            require(rawVar.isNotEmpty() && rawVar.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
+                "Tileset $tsId variable graphics has ${rawVar.size} bytes; expected a non-empty multiple " +
+                    "of ${RomConstants.BYTES_PER_4BPP_TILE}"
+            }
+            val entryOffset = tablePC + tsId * 9
+            val gfxSnes = readU24(romData, entryOffset + 3)
+            val layoutCapacity = RomValidator.variableGraphicsMaxBytes(romParser, tsId)
+            writeLZ5(
+                rawVar,
+                gfxSnes,
+                "tileset $tsId variable graphics",
+                pointerPc = entryOffset + 3,
+                maxRawSize = layoutCapacity,
+                maxRawSizeReason = if (layoutCapacity == TileGraphics.ROOM_GFX_MAX_BYTES) {
+                    "the engine's 32 KiB full room-graphics destination"
+                } else {
+                    "the tileset's 20 KiB area-graphics region (the remaining 12 KiB is reserved for CRE)"
+                },
+            )
+            gfxPatched++
         }
 
         // Custom shared CRE metatile table (raw 4-word metatile entries -> LZ5 compress -> write in-place)
         val creTableB64 = gfxData.creTileTable
         if (creTableB64 != null) {
-            try {
-                val rawCreTable = java.util.Base64.getDecoder().decode(creTableB64)
-                if (rawCreTable.isEmpty() || rawCreTable.size % 8 != 0) {
-                    onLog("WARN: CRE metatile table has ${rawCreTable.size} bytes (expected non-empty multiple of 8) — skipped")
-                } else {
-                    if (writeLZ5InPlace(rawCreTable, TileGraphics.CRE_TILE_TABLE_SNES, "CRE metatile table")) gfxPatched++
-                }
-            } catch (e: Exception) { onLog("WARN: CRE metatile table patch failed: ${e.message}") }
+            val rawCreTable = decode(creTableB64, "CRE metatile table")
+            require(rawCreTable.isNotEmpty() && rawCreTable.size % 8 == 0) {
+                "CRE metatile table has ${rawCreTable.size} bytes; expected a non-empty multiple of 8"
+            }
+            writeLZ5(
+                rawCreTable,
+                romParser.graphicsCatalog.creTileTablePtr,
+                "CRE metatile table",
+                maxRawSize = TileGraphics.CRE_TILE_TABLE_MAX_BYTES,
+                maxRawSizeReason = "the engine's 2 KiB CRE metatile-table destination",
+            )
+            gfxPatched++
         }
 
         // Custom variable (URE) metatile tables per tileset
         for ((tsIdStr, tableB64) in gfxData.tileTables) {
-            val tsId = tsIdStr.toIntOrNull() ?: continue
-            try {
-                val rawTable = java.util.Base64.getDecoder().decode(tableB64)
-                if (rawTable.isEmpty() || rawTable.size % 8 != 0) {
-                    onLog("WARN: Tileset $tsId metatile table has ${rawTable.size} bytes (expected non-empty multiple of 8) — skipped")
-                    continue
-                }
-                val entryOffset = tablePC + tsId * 9
-                val tableSnes = (romData[entryOffset].toInt() and 0xFF) or
-                        ((romData[entryOffset + 1].toInt() and 0xFF) shl 8) or
-                        ((romData[entryOffset + 2].toInt() and 0xFF) shl 16)
-                if (writeLZ5InPlace(rawTable, tableSnes, "tileset $tsId metatile table")) gfxPatched++
-            } catch (e: Exception) { onLog("WARN: Tileset $tsId metatile table patch failed: ${e.message}") }
+            val tsId = validateTilesetId(tsIdStr, "Metatile table")
+            val rawTable = decode(tableB64, "Tileset $tsId metatile table")
+            require(rawTable.isNotEmpty() && rawTable.size % 8 == 0) {
+                "Tileset $tsId metatile table has ${rawTable.size} bytes; expected a non-empty multiple of 8"
+            }
+            val entryOffset = tablePC + tsId * 9
+            val tableSnes = readU24(romData, entryOffset)
+            writeLZ5(
+                rawTable,
+                tableSnes,
+                "tileset $tsId metatile table",
+                pointerPc = entryOffset,
+                maxRawSize = RomValidator.variableTileTableMaxBytes(romParser, project, tsId),
+                maxRawSizeReason = "the engine's metatile-table work buffer for rooms using this tileset",
+            )
+            gfxPatched++
         }
 
         // Custom palette overrides per tileset (raw BGR555 -> LZ5 compress).
         // Randomized palettes often compress larger than vanilla, so relocate
         // them and update the tileset table when an in-place write will not fit.
         for ((tsIdStr, palB64) in gfxData.palettes) {
-            val tsId = tsIdStr.toIntOrNull() ?: continue
-            try {
-                val rawPal = java.util.Base64.getDecoder().decode(palB64)
-                if (rawPal.size != 256) { onLog("WARN: Palette $tsId has ${rawPal.size} bytes (expected 256) — skipped"); continue }
-                val compressed = LZ5Compressor.compress(rawPal)
-                val entryOffset = tablePC + tsId * 9
-                val palSnes = (romData[entryOffset + 6].toInt() and 0xFF) or
-                        ((romData[entryOffset + 7].toInt() and 0xFF) shl 8) or
-                        ((romData[entryOffset + 8].toInt() and 0xFF) shl 16)
-                val palPc = romParser.snesToPc(palSnes)
-                val (_, origSize) = romParser.decompressLZ2WithSize(palSnes)
-                if (compressed.size <= origSize) {
-                    writePlan.capture(
-                        "graphics:tileset-$tsId-palette",
-                        "Tileset $tsId palette",
-                        RomWriteKind.GRAPHICS,
-                    ) { _ ->
-                        System.arraycopy(compressed, 0, romData, palPc, compressed.size)
-                        for (i in compressed.size until origSize) romData[palPc + i] = 0xFF.toByte()
-                    }
-                    gfxPatched++
-                    onLog("Patched tileset $tsId palette in-place (${compressed.size}/$origSize bytes)")
-                } else {
-                    val origBank = (palSnes shr 16) and 0xFF
-                    val banksToTry = (listOf(origBank) + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
-                        .distinct()
-                        .filter { bank ->
-                            val bankStart = runCatching { romParser.snesToPc((bank shl 16) or 0x8000) }.getOrNull()
-                            val bankEnd = runCatching { romParser.snesToPc((bank shl 16) or 0xFFFF) + 1 }.getOrNull()
-                            bankStart != null && bankEnd != null && bankStart >= 0 && bankEnd <= romData.size
-                        }
-                    val allocation = writePlan.capture(
-                        "graphics:tileset-$tsId-palette",
-                        "Tileset $tsId palette relocation",
-                        RomWriteKind.GRAPHICS,
-                    ) { _ ->
-                        tilesetPaletteAllocator.allocate(
-                            bytes = compressed,
-                            banks = banksToTry,
-                            label = "tileset $tsId palette",
-                        )?.also { allocated ->
-                            writeU24(romData, entryOffset + 6, allocated.snesAddress)
-                            for (i in palPc until palPc + origSize) romData[i] = 0xFF.toByte()
-                        }
-                    }
-                    if (allocation != null) {
-                        writePlan.claimCurrentRange(
-                            owner = "graphics:tileset-$tsId-palette",
-                            label = allocation.label,
-                            offset = allocation.pcOffset - writePlan.headerSize,
-                            size = allocation.size,
-                        )
-                        gfxPatched++
-                        onLog(
-                            "Relocated tileset $tsId palette \$${palSnes.toString(16)} -> " +
-                                "\$${allocation.snesAddress.toString(16)} (${compressed.size}/$origSize bytes)"
-                        )
-                    } else {
-                        onLog("WARN: Compressed tileset $tsId palette (${compressed.size}) exceeds original ($origSize) and no free space was found — skipped")
-                    }
-                }
-            } catch (e: Exception) { onLog("WARN: Tileset $tsId palette patch failed: ${e.message}") }
+            val tsId = validateTilesetId(tsIdStr, "Palette")
+            val rawPal = decode(palB64, "Tileset $tsId palette")
+            require(rawPal.size == 256) { "Tileset $tsId palette has ${rawPal.size} bytes; expected 256" }
+            val entryOffset = tablePC + tsId * 9
+            val palSnes = readU24(romData, entryOffset + 6)
+            writeLZ5(rawPal, palSnes, "tileset $tsId palette", entryOffset + 6)
+            gfxPatched++
         }
 
         // Apply sprite palette overrides (Samus, beams, bosses, enemies — raw BGR555, no compression)
         for ((regionId, palB64) in gfxData.spritePalettes) {
-            val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId) ?: continue
-            try {
-                val rawBytes = java.util.Base64.getDecoder().decode(palB64)
-                val colors = com.supermetroid.editor.rom.SpritePalettes.bytesToColors(rawBytes)
-                if (colors.size == region.colorCount) {
-                    writePlan.capture(
-                        "graphics:sprite-palette-$regionId",
-                        "Sprite palette ${region.name}",
-                        RomWriteKind.GRAPHICS,
-                    ) { _ ->
-                        com.supermetroid.editor.rom.SpritePalettes.writeColors(romData, region, colors)
-                    }
-                    gfxPatched++
-                    onLog("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
-                }
-            } catch (e: Exception) { onLog("WARN: Sprite palette '$regionId' patch failed: ${e.message}") }
+            if (regionId.startsWith("enemy_pal:")) continue
+            val region = com.supermetroid.editor.rom.SpritePalettes.findRegion(regionId)
+                ?: throw RomWritePlanException("Sprite palette '$regionId' is not a known palette region")
+            val rawBytes = decode(palB64, "Sprite palette '$regionId'")
+            require(rawBytes.size == region.byteSize) {
+                "Sprite palette '${region.name}' has ${rawBytes.size} bytes; expected ${region.byteSize}"
+            }
+            val colors = com.supermetroid.editor.rom.SpritePalettes.bytesToColors(rawBytes)
+            writePlan.capture(
+                "graphics:sprite-palette-$regionId",
+                "Sprite palette ${region.name}",
+                RomWriteKind.GRAPHICS,
+            ) { _ ->
+                com.supermetroid.editor.rom.SpritePalettes.writeColors(romData, region, colors)
+            }
+            gfxPatched++
+            onLog("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
         }
 
         // Apply Phantoon sprite tile patches (raw 4bpp → LZ5 compress → write to $B7)
         onLog("[EXPORT] Phantoon sprite blocks: spriteTileBlocks.keys=${gfxData.spriteTileBlocks.keys}, size=${gfxData.spriteTileBlocks.size}")
         for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
             val b64 = gfxData.spriteTileBlocks["phantoon:$i"]
-            if (b64 == null) {
-                onLog("[EXPORT] Phantoon block $i: NO DATA in spriteTileBlocks (key 'phantoon:$i' not found)")
-                continue
+            if (b64 == null) continue
+            val rawBytes = decode(b64, "Phantoon sprite block $i")
+            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
+                "Phantoon sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
+                    RomConstants.BYTES_PER_4BPP_TILE
             }
-            onLog("[EXPORT] Phantoon block $i: found ${b64.length} b64 chars")
-            try {
-                val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                onLog("[EXPORT] Phantoon block $i: decoded to ${rawBytes.size} raw bytes")
-                val compressed = LZ5Compressor.compress(rawBytes)
-                onLog("[EXPORT] Phantoon block $i: compressed to ${compressed.size} bytes")
-                val (_, origSize) = romParser.decompressLZ2WithSize(block.snesAddress)
-                onLog("[EXPORT] Phantoon block $i: original compressed size=$origSize, fits=${compressed.size <= origSize}")
-                if (compressed.size <= origSize) {
-                    writePlan.capture(
-                        "graphics:phantoon-$i",
-                        "Phantoon sprite block $i",
-                        RomWriteKind.GRAPHICS,
-                    ) { _ ->
-                        System.arraycopy(compressed, 0, romData, block.pcAddress, compressed.size)
-                        for (j in compressed.size until origSize) romData[block.pcAddress + j] = 0xFF.toByte()
-                    }
-                    gfxPatched++
-                    onLog("[EXPORT] Patched Phantoon sprite tile block $i: ${compressed.size}/$origSize bytes at PC=0x${block.pcAddress.toString(16)}")
-                } else {
-                    onLog("[EXPORT] WARN: Phantoon sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
-                }
-            } catch (e: Exception) {
-                onLog("[EXPORT] WARN: Phantoon sprite block $i patch failed: ${e.message}")
-                onLog("[EXPORT] ERROR: Phantoon sprite block $i: ${e.stackTraceToString().lines().first()}")
-            }
+            writeLZ5(
+                rawBytes,
+                block.snesAddress,
+                "Phantoon sprite block $i",
+                limitToOriginalRawSize = true,
+            )
+            gfxPatched++
         }
 
         // Apply Kraid sprite tile patches (raw 4bpp → LZ5 compress → write to $B9)
         for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.withIndex()) {
             val b64 = gfxData.spriteTileBlocks["kraid:$i"]
             if (b64 == null) continue
-            onLog("[EXPORT] Kraid block $i: found ${b64.length} b64 chars")
-            try {
-                val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                val compressed = LZ5Compressor.compress(rawBytes)
-                val (_, origSize) = romParser.decompressLZ2WithSize(block.snesAddress)
-                onLog("[EXPORT] Kraid block $i: ${compressed.size}/$origSize bytes")
-                if (compressed.size <= origSize) {
-                    writePlan.capture(
-                        "graphics:kraid-$i",
-                        "Kraid sprite block $i",
-                        RomWriteKind.GRAPHICS,
-                    ) { _ ->
-                        System.arraycopy(compressed, 0, romData, block.pcAddress, compressed.size)
-                        for (j in compressed.size until origSize) romData[block.pcAddress + j] = 0xFF.toByte()
-                    }
-                    gfxPatched++
-                    onLog("[EXPORT] Patched Kraid sprite tile block $i at PC=0x${block.pcAddress.toString(16)}")
-                } else {
-                    onLog("[EXPORT] WARN: Kraid sprite block $i compressed size ${compressed.size} exceeds original $origSize — skipped")
-                }
-            } catch (e: Exception) {
-                onLog("[EXPORT] WARN: Kraid sprite block $i patch failed: ${e.message}")
+            val rawBytes = decode(b64, "Kraid sprite block $i")
+            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
+                "Kraid sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
+                    RomConstants.BYTES_PER_4BPP_TILE
             }
+            writeLZ5(
+                rawBytes,
+                block.snesAddress,
+                "Kraid sprite block $i",
+                limitToOriginalRawSize = true,
+            )
+            gfxPatched++
+        }
+
+        for (key in gfxData.spriteTileBlocks.keys) {
+            val valid = when {
+                key.startsWith("phantoon:") -> key.removePrefix("phantoon:").toIntOrNull()
+                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.indices } == true
+                key.startsWith("kraid:") -> key.removePrefix("kraid:").toIntOrNull()
+                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.indices } == true
+                key.startsWith("enemy:") -> key.removePrefix("enemy:").toIntOrNull(16) != null
+                else -> false
+            }
+            if (!valid) throw RomWritePlanException("Unknown sprite tile block key '$key'")
         }
 
         // Apply generic enemy sprite tile patches (raw 4bpp, uncompressed, write in-place)
         for ((key, b64) in gfxData.spriteTileBlocks) {
             if (!key.startsWith("enemy:")) continue
             val speciesHex = key.removePrefix("enemy:")
-            val speciesId = speciesHex.toIntOrNull(16) ?: continue
-            try {
-                val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                val validation = com.supermetroid.editor.rom.EnemySpriteGraphics.validateEnemyTileEdit(
-                    romParser = romParser,
-                    speciesId = speciesId,
-                    rawBytes = rawBytes
+            val speciesId = speciesHex.toIntOrNull(16)
+                ?: throw RomWritePlanException("Enemy sprite key '$key' has an invalid species ID")
+            val rawBytes = decode(b64, "Enemy $speciesHex sprite tiles")
+            val validation = com.supermetroid.editor.rom.EnemySpriteGraphics.validateEnemyTileEdit(
+                romParser = RomParser(romData),
+                speciesId = speciesId,
+                rawBytes = rawBytes
+            )
+            if (!validation.isExportable) {
+                throw RomWritePlanException(
+                    "Enemy $speciesHex sprite tiles cannot export: ${validation.errors.joinToString()}"
                 )
-                if (!validation.isExportable) {
-                    validation.errors.forEach { reason -> onLog("[EXPORT] WARN: Enemy $speciesHex: $reason") }
-                    onLog("[EXPORT] WARN: Enemy $speciesHex sprite tile patch skipped")
-                    continue
-                }
-                validation.warnings.forEach { reason -> onLog("[EXPORT] INFO: Enemy $speciesHex: $reason") }
-                val pcAddress = validation.pcAddress ?: continue
-                val snesAddress = validation.snesAddress ?: 0
-                writePlan.capture(
-                    "graphics:enemy-$speciesHex",
-                    "Enemy $speciesHex sprite tiles",
-                    RomWriteKind.GRAPHICS,
-                ) { _ ->
-                    System.arraycopy(rawBytes, 0, romData, pcAddress, rawBytes.size)
-                }
-                gfxPatched++
-                onLog("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${pcAddress.toString(16)} (SNES \$${snesAddress.toString(16).uppercase()})")
-            } catch (e: Exception) {
-                onLog("[EXPORT] WARN: Enemy $speciesHex sprite patch failed: ${e.message}")
             }
+            validation.warnings.forEach { reason -> onLog("[EXPORT] INFO: Enemy $speciesHex: $reason") }
+            val pcAddress = validation.pcAddress
+                ?: throw RomWritePlanException("Enemy $speciesHex sprite validation returned no ROM address")
+            val snesAddress = validation.snesAddress
+                ?: throw RomWritePlanException("Enemy $speciesHex sprite validation returned no SNES address")
+            writePlan.capture(
+                "graphics:enemy-$speciesHex",
+                "Enemy $speciesHex sprite tiles",
+                RomWriteKind.GRAPHICS,
+            ) { _ ->
+                System.arraycopy(rawBytes, 0, romData, pcAddress, rawBytes.size)
+            }
+            gfxPatched++
+            onLog("[EXPORT] Patched enemy $speciesHex sprite tiles: ${rawBytes.size} bytes at PC=0x${pcAddress.toString(16)} (SNES \$${snesAddress.toString(16).uppercase()})")
         }
 
         // Apply enemy palette patches (32 bytes BGR555 at palPtr address)
         for ((key, b64) in gfxData.spritePalettes) {
             if (!key.startsWith("enemy_pal:")) continue
             val speciesHex = key.removePrefix("enemy_pal:")
-            val speciesId = speciesHex.toIntOrNull(16) ?: continue
-            try {
-                val rawBytes = java.util.Base64.getDecoder().decode(b64)
-                if (rawBytes.size != 32) {
-                    onLog("[EXPORT] WARN: Enemy palette $speciesHex: expected 32 bytes, got ${rawBytes.size} — skipped")
-                    continue
-                }
-                val rom = romParser.getRomData()
-                val headerPc = romParser.snesToPc(com.supermetroid.editor.rom.RomConstants.BANK_ENEMY_AI or speciesId)
-                if (headerPc < 0 || headerPc + 0x0D > rom.size) {
-                    onLog("[EXPORT] WARN: Enemy palette $speciesHex: invalid species header — skipped")
-                    continue
-                }
-                val palPtr = com.supermetroid.editor.rom.readU16(rom, headerPc + 2)
-                val aiBank = com.supermetroid.editor.rom.readU8(rom, headerPc + 0x0C)
-                val palSnes = (aiBank shl 16) or (palPtr and 0xFFFF)
-                val palPc = romParser.snesToPc(palSnes)
-                if (palPc < 0 || palPc + 32 > romData.size) {
-                    onLog("[EXPORT] WARN: Enemy palette $speciesHex: palette address out of bounds — skipped")
-                    continue
-                }
-                writePlan.capture(
-                    "graphics:enemy-palette-$speciesHex",
-                    "Enemy $speciesHex palette",
-                    RomWriteKind.GRAPHICS,
-                ) { _ ->
-                    System.arraycopy(rawBytes, 0, romData, palPc, 32)
-                }
-                gfxPatched++
-                onLog("[EXPORT] Patched enemy $speciesHex palette: 32 bytes at PC=0x${palPc.toString(16)} (SNES \$${palSnes.toString(16).uppercase()})")
-            } catch (e: Exception) {
-                onLog("[EXPORT] WARN: Enemy palette $speciesHex patch failed: ${e.message}")
+            val speciesId = speciesHex.toIntOrNull(16)
+                ?: throw RomWritePlanException("Enemy palette key '$key' has an invalid species ID")
+            val rawBytes = decode(b64, "Enemy palette $speciesHex")
+            require(rawBytes.size == 32) {
+                "Enemy palette $speciesHex has ${rawBytes.size} bytes; expected 32"
             }
+            val headerPc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
+            if (headerPc < 0 || headerPc + 0x0D > romData.size) {
+                throw RomWritePlanException("Enemy palette $speciesHex has an invalid species header")
+            }
+            val palPtr = com.supermetroid.editor.rom.readU16(romData, headerPc + 2)
+            val aiBank = com.supermetroid.editor.rom.readU8(romData, headerPc + 0x0C)
+            val palSnes = (aiBank shl 16) or (palPtr and 0xFFFF)
+            val palPc = romParser.snesToPc(palSnes)
+            if (palPc < 0 || palPc + 32 > romData.size) {
+                throw RomWritePlanException("Enemy palette $speciesHex address \$${palSnes.toString(16)} is outside ROM bounds")
+            }
+            writePlan.capture(
+                "graphics:enemy-palette-$speciesHex",
+                "Enemy $speciesHex palette",
+                RomWriteKind.GRAPHICS,
+            ) { _ ->
+                System.arraycopy(rawBytes, 0, romData, palPc, 32)
+            }
+            gfxPatched++
+            onLog("[EXPORT] Patched enemy $speciesHex palette: 32 bytes at PC=0x${palPc.toString(16)} (SNES \$${palSnes.toString(16).uppercase()})")
         }
 
         return gfxPatched
     }
 
     private fun writeU8(romData: ByteArray, offset: Int, value: Int) {
-        if (offset < romData.size) romData[offset] = (value and 0xFF).toByte()
+        if (offset !in romData.indices) {
+            throw RomWritePlanException("8-bit ROM write at PC 0x${offset.toString(16)} is outside ROM bounds")
+        }
+        if (value !in 0..0xFF) {
+            throw RomWritePlanException("8-bit ROM write value $value is outside 0-255")
+        }
+        romData[offset] = value.toByte()
     }
 
     private fun writeU16(romData: ByteArray, offset: Int, value: Int) {
-        if (offset + 1 < romData.size) {
-            romData[offset] = (value and 0xFF).toByte()
-            romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+        if (offset < 0 || offset + 1 >= romData.size) {
+            throw RomWritePlanException("16-bit ROM write at PC 0x${offset.toString(16)} is outside ROM bounds")
         }
+        if (value !in 0..0xFFFF) {
+            throw RomWritePlanException("16-bit ROM write value $value is outside 0-65535")
+        }
+        romData[offset] = (value and 0xFF).toByte()
+        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
     }
 
     private fun writeU24(romData: ByteArray, offset: Int, value: Int) {
-        if (offset + 2 < romData.size) {
-            romData[offset] = (value and 0xFF).toByte()
-            romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
-            romData[offset + 2] = ((value shr 16) and 0xFF).toByte()
+        if (offset < 0 || offset + 2 >= romData.size) {
+            throw RomWritePlanException("24-bit ROM write at PC 0x${offset.toString(16)} is outside ROM bounds")
         }
-    }
-
-    /** Scans backwards from [end] to find the first non-0xFF byte, then returns that position + 1. */
-    private fun scanFreeSpaceEnd(romData: ByteArray, start: Int, end: Int): Int {
-        var ptr = end
-        while (ptr > start && romData[ptr - 1] == 0xFF.toByte()) ptr--
-        return ptr + 1
+        if (value !in 0..0xFFFFFF) {
+            throw RomWritePlanException("24-bit ROM write value $value is outside 0-16777215")
+        }
+        romData[offset] = (value and 0xFF).toByte()
+        romData[offset + 1] = ((value shr 8) and 0xFF).toByte()
+        romData[offset + 2] = ((value shr 16) and 0xFF).toByte()
     }
 
     private fun applyMinimapEdits(writePlan: RomWritePlan): Int {
@@ -1042,10 +1309,10 @@ internal class RomExporter(
         var patched = 0
         val allText = if (project.textEdits.isNotEmpty()) TextData.readAllText(romParser.getRomData()) else emptyList()
         for ((id, newText) in project.textEdits) {
-            val entry = allText.find { it.id == id } ?: continue
+            val entry = allText.find { it.id == id }
+                ?: throw RomWritePlanException("Text edit '$id' does not match a known ROM text entry")
             if (!entry.writable || entry.pcOffset < 0) {
-                onLog("[EXPORT] Skipped text entry '${entry.label}': ROM location is not writable")
-                continue
+                throw RomWritePlanException("Text entry '${entry.label}' is not safely writable")
             }
             val encoded = when (entry.category) {
                 TextCategory.AREA_NAME -> TextData.encodeAreaName(newText, entry.rawBytes)
@@ -1054,6 +1321,9 @@ internal class RomExporter(
                 TextCategory.ITEM_NAME -> TextData.encodeUiMessage(newText, entry.rawBytes)
                 TextCategory.INTRO_STORY -> TextData.encodeGreenText(newText, entry.rawBytes)
             }
+            if (entry.pcOffset + encoded.size > romData.size) {
+                throw RomWritePlanException("Text entry '${entry.label}' extends outside ROM bounds")
+            }
             writePlan.capture(
                 owner = "text:$id",
                 label = entry.label,
@@ -1061,7 +1331,7 @@ internal class RomExporter(
             ) { _ ->
                 for (i in encoded.indices) {
                     val offset = entry.pcOffset + i
-                    if (offset in romData.indices) romData[offset] = encoded[i]
+                    romData[offset] = encoded[i]
                 }
             }
             patched++
@@ -1074,53 +1344,62 @@ internal class RomExporter(
      * Embeds custom ASM hex bytes into free space in bank $A0 and updates
      * the species header pointer field to point at the new routine.
      */
-    private fun applyCustomAsm(writePlan: RomWritePlan): Int {
+    private fun applyCustomAsm(
+        writePlan: RomWritePlan,
+        freeSpaceAllocator: RomFreeSpaceAllocator,
+    ): Int {
         val romData = writePlan.romData
         var patched = 0
         for ((key, entry) in project.customAsm) {
             val parts = key.split(":")
-            if (parts.size != 2) continue
-            val speciesId = parts[0].toIntOrNull(16) ?: continue
+            if (parts.size != 2) {
+                throw RomWritePlanException("Custom ASM key '$key' must use speciesHex:fieldName")
+            }
+            val speciesId = parts[0].toIntOrNull(16)
+                ?: throw RomWritePlanException("Custom ASM key '$key' has an invalid hexadecimal species ID")
             val fieldName = parts[1]
             val headerOffset = when (fieldName) {
                 "initAi" -> 0x12; "mainAi" -> 0x16; "touchAi" -> 0x30
                 "shotAi" -> 0x32; "hurtAi" -> 0x1C; "frozenAi" -> 0x1E
                 "grappleAi" -> 0x1A; "deathAnim" -> 0x22
-                else -> continue
+                else -> throw RomWritePlanException("Custom ASM key '$key' uses unknown field '$fieldName'")
             }
-            val codeBytes = entry.hexBytes.trim().split("\\s+".toRegex())
-                .filter { it.isNotEmpty() }
-                .mapNotNull { it.toIntOrNull(16)?.toByte() }
-                .toByteArray()
-            if (codeBytes.isEmpty()) continue
+            val tokens = entry.hexBytes.trim().split("\\s+".toRegex()).filter { it.isNotEmpty() }
+            if (tokens.isEmpty()) throw RomWritePlanException("Custom ASM '$key' contains no code bytes")
+            val codeBytes = tokens.mapIndexed { index, token ->
+                val value = token.toIntOrNull(16)
+                    ?: throw RomWritePlanException("Custom ASM '$key' has invalid hex byte '$token' at index $index")
+                if (value !in 0..0xFF) {
+                    throw RomWritePlanException("Custom ASM '$key' byte '$token' at index $index is outside 00-FF")
+                }
+                value.toByte()
+            }.toByteArray()
 
-            val bankStart = romParser.snesToPc(0xA08000)
-            val bankEnd = romParser.snesToPc(0xA0FFFF) + 1
-            val freePtr = scanFreeSpaceEnd(romData, bankStart, bankEnd)
-
-            if (freePtr + codeBytes.size > bankEnd) {
-                onLog("[EXPORT] WARN: Not enough free space in bank \$A0 for custom ASM ($key)")
-                continue
-            }
-            require((freePtr until freePtr + codeBytes.size).all { romData[it] == 0xFF.toByte() }) {
-                "custom ASM allocation for $key is not free"
-            }
-
-            val newSnesPtr = 0x8000 + (freePtr - bankStart)
             val headerPc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
+            if (headerPc < 0 || headerPc + headerOffset + 1 >= romData.size) {
+                throw RomWritePlanException("Custom ASM '$key' species header field is outside ROM bounds")
+            }
             val owner = "asm:$key"
-            writePlan.capture(owner, entry.label.ifEmpty { fieldName }, RomWriteKind.CUSTOM_ASM) { _ ->
-                System.arraycopy(codeBytes, 0, romData, freePtr, codeBytes.size)
-                writeU16(romData, headerPc + headerOffset, newSnesPtr)
+            val allocation = writePlan.capture(owner, entry.label.ifEmpty { fieldName }, RomWriteKind.CUSTOM_ASM) { _ ->
+                val allocated = freeSpaceAllocator.allocate(
+                    bytes = codeBytes,
+                    banks = listOf(0xA0),
+                    label = "custom ASM $key",
+                ) ?: throw RomWritePlanException(
+                    "Custom ASM '$key' needs ${codeBytes.size} bytes but bank \$A0 has no contiguous free space"
+                )
+                writeU16(romData, headerPc + headerOffset, allocated.snesAddress and 0xFFFF)
+                allocated
             }
             writePlan.claimCurrentRange(
                 owner = owner,
                 label = "${entry.label.ifEmpty { fieldName }} allocation",
-                offset = freePtr - writePlan.headerSize,
+                offset = allocation.pcOffset - writePlan.headerSize,
                 size = codeBytes.size,
             )
             patched++
             val label = entry.label.ifEmpty { fieldName }
+            val newSnesPtr = allocation.snesAddress and 0xFFFF
             onLog("[EXPORT] Custom ASM: $label → \$A0:${newSnesPtr.toString(16).uppercase()} (${codeBytes.size} bytes) for species \$${parts[0]}")
         }
         if (patched > 0) onLog("[EXPORT] Embedded $patched custom ASM routine(s)")
@@ -1139,6 +1418,13 @@ internal class RomExporter(
             if (!patch.enabled) continue
             if (patch.configType == "boss_defeated") {
                 val data = patch.configData ?: continue
+                val knownKeys = BOSS_FLAG_DEFS.mapTo(mutableSetOf()) { it.key }
+                val unknownKeys = data.keys - knownKeys
+                if (unknownKeys.isNotEmpty()) {
+                    throw RomWritePlanException(
+                        "Boss Defeated Flags contains unknown option(s): ${unknownKeys.sorted().joinToString()}"
+                    )
+                }
                 enabledBosses.addAll(data.filter { it.value != 0 }.keys)
             }
             if (patch.configType == "hyper_beam") hyperBeam = true
@@ -1242,14 +1528,12 @@ internal class RomExporter(
 
             // Write payload at PC $2FF040
             for ((i, b) in code.withIndex()) {
-                val addr = payloadPc + i
-                if (addr < romData.size) romData[addr] = b.toByte()
+                romData[payloadPc + i] = b.toByte()
             }
             // Hook $82:896E (PC $1096E): JSL $DFF040
             val hook = listOf(0x22, 0x40, 0xF0, 0xDF)
             for ((i, b) in hook.withIndex()) {
-                val addr = hookPc + i
-                if (addr < romData.size) romData[addr] = b.toByte()
+                romData[hookPc + i] = b.toByte()
             }
             onLog("[EXPORT]   Per-frame hook: ${code.size} bytes at \$DF:F040, hook at \$82:896E")
         } else {
@@ -1264,8 +1548,18 @@ internal class RomExporter(
         val exportParser = RomParser(romData)
         for (roomKey in roomsPatched) {
             val roomId = roomKey.toIntOrNull(16) ?: continue
-            val room = romParser.readRoomHeader(roomId) ?: continue
-            val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+            val room = exportParser.readRoomHeader(roomId)
+            if (room == null) {
+                onLog("  ERROR: exported room 0x$roomKey no longer has a readable room header")
+                verifyErrors++
+                continue
+            }
+            val allStateOffsets = exportParser.findAllStateDataOffsets(roomId)
+            if (allStateOffsets.isEmpty()) {
+                onLog("  ERROR: exported room 0x$roomKey has no readable room-state data")
+                verifyErrors++
+                continue
+            }
 
             // Collect per-state data from the export copy
             val stateInfos = mutableListOf<String>()
@@ -1359,7 +1653,14 @@ internal class RomExporter(
         val ipsData = buildIpsPatch(original, patched)
         val orig = File(romPath)
         val ipsFile = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.ips")
-        ipsFile.writeBytes(ipsData)
+        try {
+            writeBytesAtomically(ipsFile, ipsData)
+        } catch (e: Exception) {
+            val msg = "Export failed safely while writing IPS: ${e.message ?: e::class.simpleName}"
+            onLog("ERROR: $msg")
+            onStatus(msg)
+            return null
+        }
         val msg = "Exported IPS: ${ipsFile.absolutePath} (${ipsData.size} bytes)"
         onLog(msg)
         onStatus(msg)
