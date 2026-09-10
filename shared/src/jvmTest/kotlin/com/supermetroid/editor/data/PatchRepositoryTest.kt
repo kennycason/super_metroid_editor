@@ -5,6 +5,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class PatchRepositoryTest {
     @Test
@@ -112,4 +113,61 @@ class PatchRepositoryTest {
         assertEquals(9, patch.resources.size)
         assertEquals("rom_hook", patch.resources.first().namespace)
     }
+
+    @Test
+    fun `spider ball label graphics do not overwrite Varia wireframe tiles`() {
+        val patch = assertNotNull(
+            PatchRepository.loadBundledPatches().firstOrNull { it.id == "bundled_spider_ball" }
+        )
+        val labelTileIds = patch.resources
+            .filter { it.namespace == "pause_bg_tile" }
+            .flatMap { it.start..it.endInclusive }
+
+        assertEquals(
+            (0x23E..0x241).toList() + (0x257..0x25A).toList(),
+            labelTileIds,
+        )
+        assertTrue(labelTileIds.toSet().intersect((0x1E0..0x1E7).toSet()).isEmpty())
+
+        // Pause BG tiles $0200-$02FF read from the pause/menu sprite graphics
+        // loaded from $B6:C000-$DFFF. Only the two audited four-tile holes may
+        // be replaced; Varia's $01E0-$01E7 remain in $B6:BC00-$BCFF.
+        val pauseCharacterWrites = patch.writes.filter { write ->
+            rangesOverlap(
+                write.offset,
+                write.offset + write.bytes.size,
+                loromPc(0xB6, 0x8000),
+                loromPc(0xB6, 0xE000),
+            )
+        }
+        assertEquals(
+            listOf(loromPc(0xB6, 0xC7C0), loromPc(0xB6, 0xCAE0)),
+            pauseCharacterWrites.map { it.offset },
+        )
+        assertEquals(listOf(0x80, 0x80), pauseCharacterWrites.map { it.bytes.size })
+
+        val variaGraphicsStart = loromPc(0xB6, 0x8000 + 0x1E0 * 32)
+        val variaGraphicsEnd = loromPc(0xB6, 0x8000 + 0x1E8 * 32)
+        assertTrue(patch.writes.none { write ->
+            rangesOverlap(
+                write.offset,
+                write.offset + write.bytes.size,
+                variaGraphicsStart,
+                variaGraphicsEnd,
+            )
+        })
+
+        val equipmentData = assertNotNull(
+            patch.writes.firstOrNull { it.offset == loromPc(0x82, 0xF7C0) }
+        ).bytes
+        val spiderLabelTilemap = listOf(0x08FF) + labelTileIds.map { 0x0800 or it }
+        val spiderLabelBytes = spiderLabelTilemap.flatMap { listOf(it and 0xFF, it ushr 8) }
+        assertTrue(equipmentData.windowed(spiderLabelBytes.size).any { it == spiderLabelBytes })
+    }
+
+    private fun loromPc(bank: Int, address: Int): Long =
+        ((bank and 0x7F) * 0x8000L) + (address and 0x7FFF)
+
+    private fun rangesOverlap(startA: Long, endA: Long, startB: Long, endB: Long): Boolean =
+        startA < endB && startB < endA
 }

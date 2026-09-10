@@ -60,9 +60,9 @@ This file captures the current SMILE/local-reference audit so the next work can 
 
 Next quality-first slices:
 
-1. Add an emulator-backed Room Names + Spider Ball equipment-state matrix,
-   especially Varia acquisition/equipped transitions, and diagnose the known
-   Samus black-bar symptom as a runtime VRAM/palette/DMA interaction.
+1. Run an emulator-backed Room Names + Spider Ball equipment-state matrix,
+   especially Varia acquisition/equipped transitions, to visually confirm the
+   fixed label-tile allocation and preserve it as a permanent smoke test.
 2. Finish fixed CRE relocation by identifying and patching every hardcoded
    engine reference, or retain the current clear blocker if proof is incomplete.
 3. Continue enemy sprite correctness for special compressed/DMA/boss cases;
@@ -93,7 +93,12 @@ Next quality-first slices:
   index range. Index 8+ load-station entries are no longer presented as save
   capacity.
 - Room, minimap, text, graphics, and custom-ASM adapters use logical sub-owners. Stateful room-graph rebuilds have an explicit same-owner policy for shared door/BG aggregates; that policy cannot overwrite another subsystem.
-- The real Spike Olympics project exports with Room Names and Spider Ball through both safety paths. Their Varia-only rendering symptom is not a direct ROM-byte collision and remains a separate emulator/debugger investigation.
+- The real Spike Olympics project exports with Room Names and Spider Ball
+  through both safety paths. The Varia-only rendering defect was traced to the
+  Spider patch itself replacing live vanilla Varia wireframe character tiles,
+  not to Room Names colliding with Spider Ball. The label now uses two audited
+  holes in the pause sprite sheet; static regression coverage is complete and
+  the emulator equipment-state matrix remains for visual confirmation.
 - First tileset/metatile composer pass is implemented and has manual notes in `docs/project/metatile_composer_test_notes.md`.
 - Enemy tile-sheet export hardening has manual notes in `docs/project/enemy_sprite_hardening_test_notes.md`.
 - Embedded Layer 2 editing has manual notes in `docs/project/layer2_editing_test_notes.md`.

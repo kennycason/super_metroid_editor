@@ -6,18 +6,27 @@ Build Spider Ball as a wall and ceiling traversal mode while leaving normal Morp
 
 The current prototype keeps breaking when Spider owns ground movement, especially downhill slopes. The planned reset is to stop treating floors as Spider surfaces. Ground, slopes, mockball, falling, and normal rolling should remain vanilla Morph Ball behavior unless Samus intentionally attaches to a wall.
 
-## Inventory Screen Plan
+## Inventory Screen Implementation
 
-Spider Ball should become a real item in editor data and ROM pickup data first, then get in-game pause-screen presentation as a follow-up patch.
+Spider Ball is a real editor/ROM pickup item and a togglable Misc entry on the
+in-game equipment screen.
 
-Planned pause-screen layout:
+Implemented pause-screen layout:
 
 - Extend the Misc section by one text row.
 - Put `SPIDER BALL` under `SPRING BALL` and above `SCREW ATTACK`.
 - Move the Boots section down one row so Misc has room for the new item text.
 - Keep Spider Ball out of the beam/boot/suit sections; it is a Misc upgrade.
 - Update the equipment-screen tilemaps, item bitmask tables, selector positions, and category movement bounds together so cursor navigation and text display remain aligned.
-- Initially Spider Ball can be treated as collected-only behavior, matching the movement patch's current item gate. If we later want pause-screen toggling, switch movement gating from `collected_items` to `equipped_items`.
+- Gate Spider Ball movement on `equipped_items`, so the new equipment entry can
+  enable and disable the behavior normally.
+
+The label uses BG tile IDs `$23E-$241` and `$257-$25A`, two four-tile holes in
+the already-loaded pause/menu sprite sheet. The patch generator audits those
+IDs against the vanilla pause and equipment tilemaps, all Samus wireframes, and
+all menu spritemaps (including 16x16 sprite footprints). This validation is
+required: the former `$1DE-$1E5` allocation overwrote six Varia wireframe tiles
+and produced the horizontal blank strip across Samus when Varia was equipped.
 
 ## State Model
 

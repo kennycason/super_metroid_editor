@@ -115,9 +115,15 @@
       },
       {
         "namespace": "pause_bg_tile",
-        "start": 478,
-        "endInclusive": 485,
-        "label": "SPIDER BALL label tiles"
+        "start": 574,
+        "endInclusive": 577,
+        "label": "SPIDER BALL label tiles (first half)"
+      },
+      {
+        "namespace": "pause_bg_tile",
+        "start": 599,
+        "endInclusive": 602,
+        "label": "SPIDER BALL label tiles (second half)"
       }
     ],
     "customItems": [

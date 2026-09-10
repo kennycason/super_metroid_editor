@@ -180,12 +180,16 @@ labels under one controlled `room-graph` owner, allowing that stateful rebuild
 while continuing to reject writes from patches, graphics, text, ASM, or any
 other subsystem.
 
-The Varia-only black bar therefore is not explained by one of the two named
-patches literally overwriting the other's ROM bytes. It is likely a runtime
-state, VRAM/tile, palette, DMA, or Samus draw interaction not yet represented by
-the current declarations. It should be diagnosed separately with emulator
-breakpoints and state-combination regression tests; this safety work does not
-silently claim that symptom is fixed.
+The Varia-only black bar was not a Room Names/Spider Ball byte collision. It was
+a semantic collision inside the Spider Ball patch: its custom label graphics
+replaced pause BG tiles `$1DE-$1E5`, while the Varia wireframe tilemap uses
+`$1E0-$1E7`. The write planner correctly knew that Spider Ball owned those ROM
+writes, but the original `pause_bg_tile` claim incorrectly treated live vanilla
+tiles as available. The label now uses `$23E-$241` and `$257-$25A`, two holes
+verified against every vanilla pause/equipment/wireframe tilemap and all menu
+spritemap footprints. Generation fails on a future overlap, and a bundled-patch
+test proves the IPS leaves Varia's `$B6:BC00-$BCFF` graphics untouched. An
+emulator equipment-state pass is still required for final visual confirmation.
 
 ## Required Metadata For New Patches
 

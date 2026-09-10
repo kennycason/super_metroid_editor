@@ -88,9 +88,10 @@ expected output file.
    equipped, and after unequipping/re-equipping it if the inventory permits.
 5. Exercise morph tunnels, slopes, wall jumps, moving platforms, door
    transitions, pause/unpause, save/load, and death/reload.
-6. Specifically watch Samus for the known Varia-only black bar. Its presence is
-   a runtime VRAM/palette/DMA defect still to diagnose; this review only proves
-   it is not a direct Room Names/Spider Ball ROM-byte overwrite.
+6. Specifically confirm the former Varia-only black bar is gone. The old Spider
+   label allocation overwrote Varia wireframe tiles `$1E0-$1E5`; the new patch
+   moves the label to audited `$23E-$241` and `$257-$25A` holes. Also confirm
+   the full `SPIDER BALL` label and pause-map icons still render correctly.
 
 ### 3. Area and save-station migration
 
@@ -168,8 +169,10 @@ expected output file.
 ## Remaining Risks
 
 - Runtime interactions in arbitrary 65816 patches cannot be derived completely
-  from byte ranges. The Varia/Spider Ball visual defect needs an emulator-backed
-  WRAM/VRAM/CGRAM/DMA trace and a permanent equipment-state matrix.
+  from byte ranges. The Varia/Spider Ball root cause and static fix are proven,
+  but the permanent emulator equipment-state matrix is still needed to confirm
+  presentation across Power/Varia, Hi-Jump, Room Names, pause transitions, and
+  save/load states.
 - Room export still uses one controlled same-owner graph transaction so multiple
   room edits can successively rebuild shared door-dependent background data.
   Converting that legacy aggregate writer to narrower direct intents is the next

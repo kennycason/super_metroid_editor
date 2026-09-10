@@ -263,10 +263,44 @@ SPIDER_BALL_MESSAGE_ID = 0x1E
 SPIDER_BALL_MESSAGE_TILEMAP = 0x9D00
 SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
 
-# Use an unused pause BG tile range for the custom label. The previous $028E
-# base wrote into the pause/menu sprite sheet and corrupted the pause-map ship.
-PAUSE_SPIDER_LABEL_TILE_BASE = 0x01DE
-PAUSE_SPIDER_LABEL_GFX_SOURCE = 0x8000 + PAUSE_SPIDER_LABEL_TILE_BASE * 32
+# BG1 can address the pause sprite sheet as tiles $0200-$02FF. There is no
+# eight-tile contiguous hole that is unused by both the pause BG tilemaps and
+# every menu spritemap, so keep the label in two verified four-tile holes.
+# These source tiles are not referenced by the vanilla menu spritemaps; unlike
+# the old $01DE-$01E5 allocation, they are also absent from every Samus
+# wireframe (Varia uses $01E0-$01E7).
+PAUSE_SPIDER_LABEL_TILE_GROUPS = (
+    tuple(range(0x023E, 0x0242)),
+    tuple(range(0x0257, 0x025B)),
+)
+PAUSE_SPIDER_LABEL_TILE_IDS = tuple(
+    tile_id
+    for group in PAUSE_SPIDER_LABEL_TILE_GROUPS
+    for tile_id in group
+)
+PAUSE_SPIDER_LABEL_GFX_SEGMENTS = tuple(
+    (0x8000 + group[0] * 32, len(group) * 32)
+    for group in PAUSE_SPIDER_LABEL_TILE_GROUPS
+)
+
+# Vanilla tilemaps that can consume pause BG character data. The generator
+# validates the custom label allocation against the ROM itself so a later
+# relocation cannot silently replace a live map, equipment-label, or Samus
+# wireframe tile again.
+PAUSE_BG_TILEMAP_RANGES = (
+    ("all area map tilemaps", 0xB58000, 0x7000),
+    ("pause/map base tilemap", 0xB6E000, 0x0800),
+    ("pause/equipment base tilemap", 0xB6E800, 0x0800),
+    ("pause area-label tilemaps", 0x82966F, 0x00A8),
+    ("equipment label tilemaps", 0x82BF06, 0x0126),
+    ("dummy Samus wireframe", 0x82C639, 0x0110),
+    ("Power Suit wireframe", 0x82D521, 0x0110),
+    ("Hi-Jump wireframe", 0x82D631, 0x0110),
+    ("Varia Suit wireframe", 0x82D741, 0x0110),
+    ("Varia + Hi-Jump wireframe", 0x82D851, 0x0110),
+)
+MENU_SPRITEMAP_POINTER_TABLE = 0x82C569
+MENU_SPRITEMAP_COUNT = 0x68
 
 PAUSE_SUIT_MASKS_ADDR = PAUSE_EQUIPMENT_DATA_ADDR
 PAUSE_BOOT_MASKS_ADDR = PAUSE_SUIT_MASKS_ADDR + 7 * 2
@@ -1128,6 +1162,58 @@ def build_pause_label_tiles(text: str) -> bytes:
     return b"".join(tiles)
 
 
+def validate_pause_label_tile_allocation(base: bytes) -> None:
+    label_ids = set(PAUSE_SPIDER_LABEL_TILE_IDS)
+    if len(PAUSE_SPIDER_LABEL_TILE_IDS) != 8 or len(label_ids) != 8:
+        raise ValueError("Spider Ball pause label must own exactly eight distinct tiles")
+    if any(tile_id not in range(0x0200, 0x0300) for tile_id in label_ids):
+        raise ValueError("Spider Ball pause label must use the pause/menu sprite-sheet tile window")
+
+    for label, snes_addr, length in PAUSE_BG_TILEMAP_RANGES:
+        data = read_snes(base, snes_addr, length)
+        referenced = {
+            (data[offset] | (data[offset + 1] << 8)) & 0x03FF
+            for offset in range(0, len(data), 2)
+        }
+        overlap = sorted(label_ids & referenced)
+        if overlap:
+            formatted = ", ".join(f"${tile_id:03X}" for tile_id in overlap)
+            raise ValueError(f"Spider Ball pause label overlaps {label}: {formatted}")
+
+    # BG tiles $0200-$02FF alias the 256 tiles loaded into the pause sprite
+    # sheet. Audit all vanilla menu spritemaps, including the full four-tile
+    # footprint of 16x16 OAM entries, before replacing any of those sources.
+    label_sprite_tiles = {tile_id - 0x0200 for tile_id in label_ids}
+    used_sprite_tiles: set[int] = set()
+    pointer_table = read_snes(base, MENU_SPRITEMAP_POINTER_TABLE, MENU_SPRITEMAP_COUNT * 2)
+    for index in range(MENU_SPRITEMAP_COUNT):
+        pointer = pointer_table[index * 2] | (pointer_table[index * 2 + 1] << 8)
+        count_data = read_snes(base, 0x820000 | pointer, 2)
+        entry_count = count_data[0] | (count_data[1] << 8)
+        if entry_count > 0x100:
+            raise ValueError(f"invalid menu spritemap ${index:02X} entry count: {entry_count}")
+        entries = read_snes(base, 0x820000 | (pointer + 2), entry_count * 5)
+        for entry in range(entry_count):
+            offset = entry * 5
+            size_and_x = entries[offset] | (entries[offset + 1] << 8)
+            attributes = entries[offset + 3] | (entries[offset + 4] << 8)
+            source_tile = attributes & 0xFF
+            used_sprite_tiles.add(source_tile)
+            if size_and_x & 0x8000:
+                used_sprite_tiles.update(
+                    {
+                        (source_tile + 1) & 0xFF,
+                        (source_tile + 0x10) & 0xFF,
+                        (source_tile + 0x11) & 0xFF,
+                    }
+                )
+
+    sprite_overlap = sorted(label_sprite_tiles & used_sprite_tiles)
+    if sprite_overlap:
+        formatted = ", ".join(f"${tile_id:02X}" for tile_id in sprite_overlap)
+        raise ValueError(f"Spider Ball pause label overlaps menu sprite tiles: {formatted}")
+
+
 def build_spider_item_gfx(base: bytes) -> bytes:
     morph_gfx = read_bank89(base, SPIDER_BALL_ITEM_GFX_SOURCE, SPIDER_BALL_ITEM_GFX_SIZE)
     return remap_4bpp_tiles(morph_gfx, spider_ball_palette_map())
@@ -1267,7 +1353,7 @@ def build_pause_equipment_data() -> bytes:
         0xBFC0,
     ]
     boot_tilemap_ptrs = [0xBFD2, 0xBFE4, 0xBFF6]
-    spider_tilemap = [0x08FF] + [0x0800 | (PAUSE_SPIDER_LABEL_TILE_BASE + i) for i in range(8)]
+    spider_tilemap = [0x08FF] + [0x0800 | tile_id for tile_id in PAUSE_SPIDER_LABEL_TILE_IDS]
     suit_xy = [
         0x00CC, 0x004C,
         0x00CC, 0x0054,
@@ -1374,6 +1460,17 @@ def main() -> None:
     message_box_table = build_message_box_table(base)
     spider_ball_message = encode_small_message_tilemap("spider ball")
     pause_spider_label_tiles = build_pause_label_tiles("SPIDER BALL")
+    validate_pause_label_tile_allocation(base)
+    pause_spider_label_segments = []
+    tile_data_offset = 0
+    for source_addr, segment_size in PAUSE_SPIDER_LABEL_GFX_SEGMENTS:
+        segment = pause_spider_label_tiles[tile_data_offset : tile_data_offset + segment_size]
+        if len(segment) != segment_size:
+            raise SystemExit("Spider Ball pause label graphics do not match their allocated segments")
+        pause_spider_label_segments.append((source_addr, segment))
+        tile_data_offset += segment_size
+    if tile_data_offset != len(pause_spider_label_tiles):
+        raise SystemExit("Spider Ball pause label graphics exceed their allocated segments")
     pause_equipment_data = build_pause_equipment_data()
     pause_equipment_base_tilemap = build_pause_equipment_base_tilemap(base)
     free_len = 0x10000 - CODE_ADDR
@@ -1445,7 +1542,10 @@ def main() -> None:
         (lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE), spider_item_plms),
         (lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR), spider_item_gfx),
         # Pause/equipment menu support for Spider Ball as a togglable misc item.
-        (lorom_pc(0xB6, PAUSE_SPIDER_LABEL_GFX_SOURCE), pause_spider_label_tiles),
+        *(
+            (lorom_pc(0xB6, source_addr), segment)
+            for source_addr, segment in pause_spider_label_segments
+        ),
         (lorom_pc(0x82, PAUSE_EQUIPMENT_DATA_ADDR), pause_equipment_data),
         (lorom_pc(0xB6, 0xE800), pause_equipment_base_tilemap),
         (lorom_pc(0x82, 0xC030), u16(PAUSE_SUIT_OFFSETS_ADDR)),
@@ -1508,11 +1608,10 @@ def main() -> None:
         lorom_pc(0x85, SPIDER_BALL_MESSAGE_TILEMAP): b"\xFF" * len(spider_ball_message),
         lorom_pc(0x84, SPIDER_BALL_PLM_VISIBLE): b"\xFF" * min(64, len(spider_item_plms)),
         lorom_pc(0x89, SPIDER_BALL_ITEM_GFX_ADDR): b"\xFF" * len(spider_item_gfx),
-        lorom_pc(0xB6, PAUSE_SPIDER_LABEL_GFX_SOURCE): read_bankb6(
-            base,
-            PAUSE_SPIDER_LABEL_GFX_SOURCE,
-            len(pause_spider_label_tiles),
-        ),
+        **{
+            lorom_pc(0xB6, source_addr): read_bankb6(base, source_addr, len(segment))
+            for source_addr, segment in pause_spider_label_segments
+        },
         lorom_pc(0x82, PAUSE_EQUIPMENT_DATA_ADDR): b"\xFF" * len(pause_equipment_data),
         lorom_pc(0xB6, 0xE800): read_bankb6(base, 0xE800, 0x0800),
         lorom_pc(0x82, 0xC030): u16(0xC076),
@@ -1587,7 +1686,11 @@ def main() -> None:
     print(
         "Spider Ball pause menu: "
         f"data ${PAUSE_EQUIPMENT_DATA_ADDR:04X}-${pause_data_end - 1:04X}, "
-        f"label tiles $B6:{PAUSE_SPIDER_LABEL_GFX_SOURCE:04X}"
+        "label tiles "
+        + ", ".join(
+            f"${group[0]:03X}-${group[-1]:03X}"
+            for group in PAUSE_SPIDER_LABEL_TILE_GROUPS
+        )
     )
     print(f"IPS size: {len(ips)} bytes")
 
