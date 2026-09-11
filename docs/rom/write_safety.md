@@ -1,6 +1,6 @@
 # ROM Write Safety
 
-Last updated: 2026-08-28
+Last updated: 2026-09-09
 
 SMEDIT exports through a shared transactional write plan. The planner exists to
 prevent patches, generated code, room relocation, graphics, music, text, and
@@ -11,7 +11,10 @@ unexpected base ROM.
 
 1. The input ROM is immutable. Export works on an isolated copy and writes an
    output file only after the full plan and post-export validation succeed;
-   verification errors are export blockers rather than advisory log lines.
+   verification errors are export blockers rather than advisory log lines. Final
+   ROM/IPS emission uses a completed same-directory temporary file and atomic
+   replacement where the filesystem supports it, with completed-file replacement
+   as the compatibility fallback.
 2. Every planned byte has an owner, label, canonical headerless PC offset, and
    write kind.
 3. A second owner cannot write any claimed byte. Byte-identical sharing is also
@@ -30,6 +33,27 @@ unexpected base ROM.
    `$FF` byte for unowned space.
 8. Copier-header handling is centralized. Reports and IPS offsets remain
    canonical headerless PC offsets.
+9. One allocation session owns the entire export. Room data, music transfer
+   chains, Room Names, graphics relocation, palettes, and custom ASM share its
+   per-bank cursors; subsystem-specific observers report ownership without
+   starting a second free-space scan.
+10. Requested edits are fail-closed. Invalid, unaddressable, out-of-bounds, or
+    unlinked project data aborts export rather than producing a ROM that omits
+    part of the project. Lossy music trimming and payload-only song fallbacks
+    are likewise refused.
+11. Pointer-based data uses copy-on-write when another tileset or room shares
+    the source pointer. Old compressed allocations are preserved unless a
+    complete reference graph proves they are unreferenced.
+12. Engine sentinel values are not treated as ROM pointers. Editing a room whose
+    scroll field is `$0000` (uniform blue) or `$0001` (uniform green) allocates
+    a concrete table and repoints its states instead of writing through the
+    sentinel or dropping the edit.
+13. Compressed payloads must fit both their ROM allocation and their decompressed
+    engine destination. Normal graphics retain the 20 KiB area/12 KiB CRE VRAM
+    split; established Mode-7/no-CRE layouts retain their larger valid capacity.
+    Fixed CRE and boss DMA regions fail closed when exceeded.
+14. Postflight validation parses the staged ROM, including edited room headers
+    and state pointers, and blocks structural errors newly introduced by export.
 
 The implementation lives in
 `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/RomWritePlan.kt`.
@@ -48,9 +72,10 @@ both owners, both labels, the exact PC offset, and both byte values. This covers
 - text, minimap, music, custom ASM, or graphics overwriting an earlier owner;
 - aliases that point at the same shared data but contain different results.
 
-Some vanilla tileset IDs intentionally share one palette. Those writes use the
-explicit byte-identical policy: identical content can coalesce, but differing
-content fails.
+Some vanilla tileset IDs intentionally share graphics, metatile tables, or
+palettes. Editing one tileset now gives it a private relocated allocation and
+updates only its U24 table pointer. The shared source remains intact for every
+other tileset.
 
 ### Base-ROM conflicts
 
@@ -101,7 +126,15 @@ them transactionally:
 
 Writers that allocate data also report complete reservations so unchanged
 `$FF` bytes are owned. Room Names declares its complete generated writes rather
-than relying on a diff.
+than relying on a diff. A shared `RomFreeSpaceAllocator` session prevents two
+captured legacy writers from reserving the same trailing free bytes even before
+their diffs are replayed through the plan.
+
+Desktop export runs project validation before applying patches. Errors already
+present in the input ROM remain visible as base-ROM diagnostics, while errors
+introduced by project data block the transaction. This distinction avoids both
+unsafe output and the opposite failure mode where an unrelated known vanilla
+quirk makes every edit impossible to export.
 
 This adapter makes current export safe while patch/config, graphics, music,
 text, minimap, and custom ASM code are incrementally moved to direct planned
@@ -147,12 +180,16 @@ labels under one controlled `room-graph` owner, allowing that stateful rebuild
 while continuing to reject writes from patches, graphics, text, ASM, or any
 other subsystem.
 
-The Varia-only black bar therefore is not explained by one of the two named
-patches literally overwriting the other's ROM bytes. It is likely a runtime
-state, VRAM/tile, palette, DMA, or Samus draw interaction not yet represented by
-the current declarations. It should be diagnosed separately with emulator
-breakpoints and state-combination regression tests; this safety work does not
-silently claim that symptom is fixed.
+The Varia-only black bar was not a Room Names/Spider Ball byte collision. It was
+a semantic collision inside the Spider Ball patch: its custom label graphics
+replaced pause BG tiles `$1DE-$1E5`, while the Varia wireframe tilemap uses
+`$1E0-$1E7`. The write planner correctly knew that Spider Ball owned those ROM
+writes, but the original `pause_bg_tile` claim incorrectly treated live vanilla
+tiles as available. The label now uses `$23E-$241` and `$257-$25A`, two holes
+verified against every vanilla pause/equipment/wireframe tilemap and all menu
+spritemap footprints. Generation fails on a future overlap, and a bundled-patch
+test proves the IPS leaves Varia's `$B6:BC00-$BCFF` graphics untouched. An
+emulator equipment-state pass is still required for final visual confirmation.
 
 ## Required Metadata For New Patches
 
@@ -173,10 +210,12 @@ The planner prevents known and declared stomps; it is not a complete linker or
 an emulator proof. The next safety work is:
 
 1. move every legacy captured writer to direct planned write intents;
-2. replace independent bank scanners with one layout-aware allocation registry;
-3. expand runtime resource declarations for complex bundled ASM patches;
-4. add an automated emulator matrix for patch combinations and equipment state;
-5. expose structured desktop blockers and a preflight ownership map before the
+2. expand runtime resource declarations for complex bundled ASM patches;
+3. add an automated emulator matrix for patch combinations and equipment state;
+4. expose structured desktop blockers and a preflight ownership map before the
    user chooses Export;
-6. add managed ROM expansion only after allocation, pointer, checksum/header,
+5. add managed ROM expansion only after allocation, pointer, checksum/header,
    and mapper rules are centralized.
+
+The current manual acceptance matrix and restriction review live in
+`docs/project/rom_write_safety_test_notes.md`.

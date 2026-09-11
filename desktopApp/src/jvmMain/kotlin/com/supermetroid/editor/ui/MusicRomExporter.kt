@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
+import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
 
@@ -13,7 +14,10 @@ internal class MusicRomExporter(
     private val project: SmEditProject,
     private val onLog: (String) -> Unit,
 ) {
-    internal fun applyMusicEditsToRom(romData: ByteArray): Int {
+    internal fun applyMusicEditsToRom(
+        romData: ByteArray,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
+    ): Int {
         if (project.musicEdits.isEmpty()) return 0
 
         var patched = 0
@@ -71,10 +75,11 @@ internal class MusicRomExporter(
                         key = key
                     ).also { patch ->
                         if (patch.fit.trimmed) {
-                            onLog(
-                                "WARN [EXPORT] Music edit '$key' ${edit.trackName}: " +
-                                    "trimmed ${patch.fit.removedNotes} notes and ${patch.fit.removedCommands} commands after tick " +
-                                    "${patch.fit.cutoffTick} to fit ${patch.fit.encodedBytes}/${patch.fit.budgetBytes} sequence bytes"
+                            error(
+                                "Music edit '$key' (${edit.trackName}) exceeds its safe SPC sequence budget: " +
+                                    "export would discard ${patch.fit.removedNotes} note(s) and " +
+                                    "${patch.fit.removedCommands} command(s) after tick ${patch.fit.cutoffTick}. " +
+                                    "Shorten the arrangement before exporting."
                             )
                         }
                     }
@@ -121,7 +126,11 @@ internal class MusicRomExporter(
 
             if (accumulatedWrites.isNotEmpty()) {
                 val chainBytes = writeRelocatedSongSetTransferChain(
-                    romData, songSet, accumulatedWrites.toWriteMap(), accumulatedWrites.hasNativePayload
+                    romData,
+                    songSet,
+                    accumulatedWrites.toWriteMap(),
+                    accumulatedWrites.hasNativePayload,
+                    freeSpaceAllocator,
                 )
                 onLog(
                     "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: relocated " +
@@ -266,7 +275,8 @@ internal class MusicRomExporter(
         romData: ByteArray,
         songSet: Int,
         spcWrites: Map<Int, ByteArray>,
-        hasNativePayload: Boolean = false
+        hasNativePayload: Boolean = false,
+        freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     ): Int {
         require(spcWrites.isNotEmpty()) { "music export has no SPC writes for songSet 0x${songSet.toString(16)}" }
 
@@ -282,30 +292,33 @@ internal class MusicRomExporter(
             "songSet 0x${songSet.toString(16)} has no transfer blocks to relocate"
         }
 
-        // Always try merging at the SPC RAM byte level first — this preserves data for
-        // other play indices in the same song set while applying the patch writes on top.
-        // If the merged chain exceeds one LoROM bank (32 KiB), fall back to payload-only
-        // for native payloads: those payloads replace the instrument/sample table so other
-        // arrangements would be broken by them anyway, and the original bytes only add size.
+        // Merge at the SPC RAM byte level so arrangements not being edited retain
+        // their instruments, samples, and sequence data.
         val mergedBlocks = mergeSpcRamBlocks(originalBlocks, spcWrites)
         val mergedChain = serializeTransferChain(mergedBlocks)
         val maxBank = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
-        val (relocatedChain, chainMode) = when {
-            mergedChain.size <= maxBank -> mergedChain to "merged"
-            hasNativePayload -> {
-                val payloadOnlyBlocks = buildSpcPatchBlocks(spcWrites)
-                val payloadChain = serializeTransferChain(payloadOnlyBlocks)
-                onLog(
-                    "[EXPORT] SongSet 0x${songSet.toString(16).padStart(2, '0')}: merged chain " +
-                        "${mergedChain.size} B > $maxBank B bank limit; falling back to payload-only " +
-                        "(${payloadChain.size} B) — other arrangements in this song set may be affected"
-                )
-                payloadChain to "payload-only"
+        require(mergedChain.size <= maxBank) {
+            val fallbackRisk = if (hasNativePayload) {
+                " A payload-only fallback was refused because it could break other arrangements in the same song set."
+            } else {
+                ""
             }
-            else -> mergedChain to "merged" // let findMusicTransferFreeSpace report the error
+            "SongSet 0x${songSet.toString(16).padStart(2, '0')} needs ${mergedChain.size} bytes, " +
+                "which exceeds the $maxBank-byte single-bank limit.$fallbackRisk"
         }
-        val writePc = findMusicTransferFreeSpace(parser, romData, relocatedChain.size)
-        relocatedChain.copyInto(romData, writePc)
+        val relocatedChain = mergedChain
+        val allocation = (freeSpaceAllocator ?: RomFreeSpaceAllocator(
+            romData = romData,
+            snesToPc = parser::snesToPc,
+            pcToSnes = parser::pcToSnes,
+            guardBytes = 2,
+        )).allocate(
+            bytes = relocatedChain,
+            banks = musicTransferBanks(parser, romData),
+            label = "songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain",
+            alignment = 0x10,
+        ) ?: error("not enough contiguous free ROM space for ${relocatedChain.size}-byte relocated SPC transfer chain")
+        val writePc = allocation.pcOffset
 
         val relocatedPointer = parser.pcToSnes(writePc)
         writeRomU24(romData, pointerEntryPc, relocatedPointer)
@@ -314,7 +327,7 @@ internal class MusicRomExporter(
             "[EXPORT] Relocated songSet 0x${songSet.toString(16).padStart(2, '0')} transfer chain " +
                 "\$${originalPointer.toString(16).uppercase().padStart(6, '0')} -> " +
                 "\$${relocatedPointer.toString(16).uppercase().padStart(6, '0')} " +
-                "($chainMode, ${relocatedChain.size} bytes)"
+                "(merged, ${relocatedChain.size} bytes)"
         )
         return relocatedChain.size
     }
@@ -354,21 +367,6 @@ internal class MusicRomExporter(
             .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
     }
 
-    private fun buildSpcPatchBlocks(spcWrites: Map<Int, ByteArray>): List<SpcData.TransferBlock> {
-        val bytesByAddr = sortedMapOf<Int, Int>()
-        for ((addr, data) in spcWrites) {
-            val dest = addr and 0xFFFF
-            require(data.isNotEmpty()) { "empty SPC write at 0x${dest.toString(16)}" }
-            require(data.size <= 0xFFFF) { "SPC write at 0x${dest.toString(16)} is too large (${data.size} bytes)" }
-            require(dest + data.size <= RomConstants.SPC_RAM_SIZE) {
-                "SPC write 0x${dest.toString(16)}..0x${(dest + data.size).toString(16)} exceeds SPC RAM"
-            }
-            for (i in data.indices) bytesByAddr[dest + i] = data[i].toInt() and 0xFF
-        }
-        return SpcData.packSpcBytesToWrites(bytesByAddr)
-            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
-    }
-
     private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {
         val out = java.io.ByteArrayOutputStream(blocks.sumOf { 4 + it.data.size } + 2)
         for (block in blocks) {
@@ -397,41 +395,17 @@ internal class MusicRomExporter(
         romData[offset + 2] = ((value ushr 16) and 0xFF).toByte()
     }
 
-    private fun findMusicTransferFreeSpace(
+    private fun musicTransferBanks(
         parser: RomParser,
         romData: ByteArray,
-        requiredBytes: Int
-    ): Int {
-        require(requiredBytes > 0) { "music transfer chain must not be empty" }
-        val maxLoRomBankBytes = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
-        if (requiredBytes > maxLoRomBankBytes) {
-            error(
-                "music transfer chain needs $requiredBytes bytes, but one LoROM bank can hold at most " +
-                    "$maxLoRomBankBytes bytes. Large native IT/custom-sample imports can preview and export raw .nspc, " +
-                    "but cannot be ROM-exported yet without a smaller payload or a future multi-bank/compact exporter"
-            )
-        }
+    ): List<Int> {
         val preferredBanks = listOf(0xB8, 0xCE, 0x85, 0x83, 0x89)
         val fallbackBanks = (0x80..0xFF).filterNot { it in preferredBanks }
-        for (bank in preferredBanks + fallbackBanks) {
-            val bankStart = parser.snesToPc((bank shl 16) or 0x8000)
-            val bankEndExclusive = parser.snesToPc((bank shl 16) or 0xFFFF) + 1
-            if (bankStart < 0 || bankEndExclusive > romData.size || bankStart >= bankEndExclusive) continue
-
-            var freeStart = bankEndExclusive
-            while (freeStart > bankStart && romData[freeStart - 1] == 0xFF.toByte()) {
-                freeStart--
-            }
-            if (freeStart >= bankEndExclusive) continue
-
-            val alignedStart = ((freeStart + 0x0F) / 0x10) * 0x10
-            if (alignedStart + requiredBytes <= bankEndExclusive) {
-                return alignedStart
-            }
+        return (preferredBanks + fallbackBanks).filter { bank ->
+            val bankStart = runCatching { parser.snesToPc((bank shl 16) or 0x8000) }.getOrNull()
+            val bankEndExclusive = runCatching { parser.snesToPc((bank shl 16) or 0xFFFF) + 1 }.getOrNull()
+            bankStart != null && bankEndExclusive != null && bankStart >= 0 &&
+                bankEndExclusive <= romData.size && bankStart < bankEndExclusive
         }
-
-        error(
-            "not enough contiguous free ROM space for $requiredBytes-byte relocated SPC transfer chain"
-        )
     }
 }

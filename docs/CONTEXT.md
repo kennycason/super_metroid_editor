@@ -195,7 +195,14 @@ Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 
 | Patrick Johnston bank logs    | https://patrickjohnston.org/bank/8F (also /B4, /A0, /A7, /A8, etc.)                                       |
 | Metroid Construction wiki     | https://wiki.metroidconstruction.com/                                                                     |
 | SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
+| Exact SM disassembly          | `~/code/super_metroid/sm_disassembly/` — canonical 65816 instructions, masks, and hardcoded references    |
 | SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
 | MapRandomizer                 | `~/code/super_metroid/MapRandomizer/` — Door handling, room geometry                                      |
 | SM Mod 3.0.80                 | `docs/Super Metroid Mod 3.0.80/SMMM_black.html` — Community reference (ground truth for species IDs)      |
 | SMILE source                  | `~/code/super_metroid/smile/` — Original SM editor                                                        |
+| Local SM reference root       | `~/code/sm/` — currently contains `vspcplay`; always inspect it for relevant additions before engine/audio work |
+
+These local repositories are standing implementation references, not optional
+reminders. Before changing ROM layout, engine behavior, graphics, rooms, or
+audio, consult the relevant disassembly/reference project and record any
+behavioral limit that changes the editor design.

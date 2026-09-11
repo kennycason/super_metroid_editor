@@ -5,6 +5,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class PatchRepositoryTest {
     @Test
@@ -112,4 +113,130 @@ class PatchRepositoryTest {
         assertEquals(9, patch.resources.size)
         assertEquals("rom_hook", patch.resources.first().namespace)
     }
+
+    @Test
+    fun `spider ball label graphics do not overwrite Varia wireframe tiles`() {
+        val patches = PatchRepository.loadBundledPatches().filter {
+            it.id == "bundled_spider_ball" || it.id == "bundled_spider_ball_hold_aim_down"
+        }
+        assertEquals(2, patches.size)
+
+        for (patch in patches) {
+            val labelTileIds = patch.resources
+                .filter { it.namespace == "pause_bg_tile" }
+                .flatMap { it.start..it.endInclusive }
+
+            assertEquals(
+                (0x23E..0x241).toList() + (0x257..0x25A).toList(),
+                labelTileIds,
+            )
+            assertTrue(labelTileIds.toSet().intersect((0x1E0..0x1E7).toSet()).isEmpty())
+
+            // Pause BG tiles $0200-$02FF read from the pause/menu sprite graphics
+            // loaded from $B6:C000-$DFFF. Only the two audited four-tile holes may
+            // be replaced; Varia's $01E0-$01E7 remain in $B6:BC00-$BCFF.
+            val pauseCharacterWrites = patch.writes.filter { write ->
+                rangesOverlap(
+                    write.offset,
+                    write.offset + write.bytes.size,
+                    loromPc(0xB6, 0x8000),
+                    loromPc(0xB6, 0xE000),
+                )
+            }
+            assertEquals(
+                listOf(loromPc(0xB6, 0xC7C0), loromPc(0xB6, 0xCAE0)),
+                pauseCharacterWrites.map { it.offset },
+            )
+            assertEquals(listOf(0x80, 0x80), pauseCharacterWrites.map { it.bytes.size })
+
+            val variaGraphicsStart = loromPc(0xB6, 0x8000 + 0x1E0 * 32)
+            val variaGraphicsEnd = loromPc(0xB6, 0x8000 + 0x1E8 * 32)
+            assertTrue(patch.writes.none { write ->
+                rangesOverlap(
+                    write.offset,
+                    write.offset + write.bytes.size,
+                    variaGraphicsStart,
+                    variaGraphicsEnd,
+                )
+            })
+
+            val equipmentData = assertNotNull(
+                patch.writes.firstOrNull { it.offset == loromPc(0x82, 0xF7C0) }
+            ).bytes
+            val spiderLabelTilemap = listOf(0x08FF) + labelTileIds.map { 0x0800 or it }
+            val spiderLabelBytes = spiderLabelTilemap.flatMap { listOf(it and 0xFF, it ushr 8) }
+            assertTrue(equipmentData.windowed(spiderLabelBytes.size).any { it == spiderLabelBytes })
+        }
+    }
+
+    @Test
+    fun `spider ball activation variants share assets but use distinct movement gates`() {
+        val patches = PatchRepository.loadBundledPatches()
+        val directional = assertNotNull(patches.firstOrNull { it.id == "bundled_spider_ball" })
+        val holdAimDown = assertNotNull(
+            patches.firstOrNull { it.id == "bundled_spider_ball_hold_aim_down" }
+        )
+        val directionalCodeOffset = loromPc(0x90, 0xF800)
+        val holdCodeOffset = loromPc(0x90, 0xF700)
+        val directionalCode = assertNotNull(
+            directional.writes.firstOrNull { it.offset == directionalCodeOffset }
+        )
+        val holdCode = assertNotNull(holdAimDown.writes.firstOrNull { it.offset == holdCodeOffset })
+
+        assertEquals("spider_ball_activation", directional.exclusiveGroup)
+        assertEquals(directional.exclusiveGroup, holdAimDown.exclusiveGroup)
+        assertEquals(directional.customItems, holdAimDown.customItems)
+        assertEquals(directional.resources, holdAimDown.resources)
+        assertEquals(2019, directionalCode.bytes.size)
+        assertEquals(2048, holdCode.bytes.size)
+
+        // AND $09BC reads Super Metroid's configurable Aim Down binding. The
+        // hold variant is only a gate around the shared directional path; it
+        // does not introduce a second state or surface-selection sentinel.
+        assertTrue(holdCode.bytes.containsSequence(listOf(0x2D, 0xBC, 0x09)))
+        assertTrue(!holdCode.bytes.containsSequence(listOf(0xA9, 0xA5, 0xA5, 0x8D, 0x1C, 0x0B)))
+        assertTrue(!directionalCode.bytes.containsSequence(listOf(0x2D, 0xBC, 0x09)))
+
+        val movementHooks = setOf(
+            loromPc(0x90, 0xA353),
+            loromPc(0x90, 0xA35B),
+            loromPc(0x90, 0xA36D),
+            loromPc(0x90, 0xA36F),
+            loromPc(0x90, 0xA371),
+        )
+        val directionalSharedWrites = directional.writes.filterNot {
+            it.offset == directionalCodeOffset || it.offset in movementHooks
+        }
+        val holdSharedWrites = holdAimDown.writes.filterNot {
+            it.offset == holdCodeOffset || it.offset in movementHooks
+        }
+        assertEquals(directionalSharedWrites, holdSharedWrites)
+        assertEquals(
+            movementHooks,
+            directional.writes.filter { it.offset in movementHooks }.map { it.offset }.toSet(),
+        )
+        assertEquals(
+            movementHooks,
+            holdAimDown.writes.filter { it.offset in movementHooks }.map { it.offset }.toSet(),
+        )
+        assertTrue(
+            directional.writes
+                .filter { it.offset in movementHooks }
+                .all { it.bytes == listOf(0x00, 0xF8) }
+        )
+        assertTrue(
+            holdAimDown.writes
+                .filter { it.offset in movementHooks }
+                .all { it.bytes == listOf(0x00, 0xF7) }
+        )
+    }
+
+    private fun List<Int>.containsSequence(sequence: List<Int>): Boolean =
+        windowed(sequence.size).any { it == sequence }
+
+    private fun loromPc(bank: Int, address: Int): Long =
+        ((bank and 0x7F) * 0x8000L) + (address and 0x7FFF)
+
+    private fun rangesOverlap(startA: Long, endA: Long, startB: Long, endB: Long): Boolean =
+        startA < endB && startB < endA
 }

@@ -248,6 +248,23 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `build rejects mutually exclusive patch variants with a clear error`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        "spider_ball" to SmeditPatchRequest(),
+                        "spider_ball_hold_aim_down" to SmeditPatchRequest(),
+                    )
+                )
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("mutually exclusive"))
+        assertTrue(error.message.orEmpty().contains("spider_ball_activation"))
+    }
+
+    @Test
     fun `rom build rejects a fixed patch authored for a different base rom`() {
         val patch = SmPatch(
             id = "base-specific",
@@ -265,6 +282,30 @@ class SmeditBuildServiceTest {
         }
 
         assertTrue(error.message.orEmpty().contains("not compatible with input ROM SHA-256"))
+    }
+
+    @Test
+    fun `headless builds apply project patch identity preflight`() {
+        val project = SmEditProject(romPath = "test.smc")
+        project.patches.add(SmPatch(id = "duplicate-owner", name = "First", enabled = true))
+        project.patches.add(SmPatch(id = "duplicate-owner", name = "Second", enabled = true))
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(
+                ByteArray(0x300000),
+                SmeditBuildRequest(),
+                project,
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("project preflight"))
+        assertTrue(error.message.orEmpty().contains("enabled patches use ID 'duplicate-owner'"))
+
+        val patchError = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(SmeditBuildRequest(), project)
+        }
+        assertTrue(patchError.message.orEmpty().contains("project identity"))
+        assertTrue(patchError.message.orEmpty().contains("enabled patches use ID 'duplicate-owner'"))
     }
 
     @Test
@@ -598,6 +639,32 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `hold Aim Down Spider Ball supports its shared custom item placement`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf("spider_ball_hold_aim_down" to SmeditPatchRequest()),
+                items = listOf(
+                    SmeditItemPlacementRequest(
+                        item = "spider_ball",
+                        roomId = 0x91F8,
+                        x = 83,
+                        y = 68,
+                    )
+                ),
+            ),
+        )
+
+        assertTrue(result.report.applied.any { it.identifier == "spider_ball_hold_aim_down" })
+        assertTrue(result.report.applied.any { it.identifier == "request_item_placements" })
+        assertEquals(0xF700, result.romBytes.readWord(parser.snesToPc(0x90A353)))
+        assertEquals(0xFF, result.romBytes[parser.snesToPc(0x90FFE3)].toInt() and 0xFF)
+    }
+
+    @Test
     fun `rom build applies project room edits through shared exporter`() {
         val original = TestRomHelper.loadRomBytes() ?: return
         val parser = RomParser(original)
@@ -780,6 +847,50 @@ class SmeditBuildServiceTest {
         assertContentEquals(editedPalette, patchedPalette)
         assertTrue(result.report.applied.any { it.identifier == "project_tileset_palettes" })
         assertTrue(result.report.warnings.none { it.contains("tileset palettes require --rom") })
+    }
+
+    @Test
+    fun `rom build uses copy on write for an aliased tileset palette`() {
+        val original = ByteArray(0x300000) { 0xFF.toByte() }
+        val parser = RomParser(original)
+        val tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
+        val paletteSnes = 0xC08000
+        val palettePc = parser.snesToPc(paletteSnes)
+        writeU24(original, tablePc + 6, paletteSnes)
+        writeU24(original, tablePc + 9 + 6, paletteSnes)
+        val vanillaPalette = ByteArray(256) { 0x11 }
+        LZ5Compressor.compress(vanillaPalette).copyInto(original, palettePc)
+        val editedPalette = ByteArray(256) { 0x22 }
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.customGfx.palettes["0"] = Base64.getEncoder().encodeToString(editedPalette)
+        }
+
+        val result = SmeditBuildService().build(original, SmeditBuildRequest(), project)
+        val resultParser = RomParser(result.romBytes)
+        val relocated = result.romBytes.readU24(tablePc + 6)
+
+        assertTrue(relocated != paletteSnes)
+        assertEquals(paletteSnes, result.romBytes.readU24(tablePc + 9 + 6))
+        assertContentEquals(editedPalette, resultParser.decompressLZ2(relocated))
+        assertContentEquals(
+            vanillaPalette,
+            resultParser.decompressLZ2(paletteSnes),
+            "Old compressed data must remain intact because another tileset may share its pointer",
+        )
+    }
+
+    @Test
+    fun `headless ROM build rejects project graphics it cannot export`() {
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.customGfx.tileTables["0"] = Base64.getEncoder().encodeToString(ByteArray(8))
+        }
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().build(ByteArray(0x300000) { 0xFF.toByte() }, SmeditBuildRequest(), project)
+        }
+
+        assertTrue(error.message.orEmpty().contains("cannot safely export"))
+        assertTrue(error.message.orEmpty().contains("metatile"))
     }
 
     @Test

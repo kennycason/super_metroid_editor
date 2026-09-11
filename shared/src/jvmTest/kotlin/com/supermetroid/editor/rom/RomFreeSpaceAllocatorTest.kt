@@ -37,6 +37,27 @@ class RomFreeSpaceAllocatorTest {
         assertNull(allocator.reserve(8, listOf(bank), "too large"))
     }
 
+    @Test
+    fun `observed allocator views share reservations before bytes are written`() {
+        val rom = ByteArray(0x300000) { 0x00 }
+        val bank = 0x8F
+        val bankEnd = snesToPc((bank shl 16) or 0xFFFF) + 1
+        val freeStart = bankEnd - 0x100
+        rom.fill(0xFF.toByte(), freeStart, bankEnd)
+        val firstObserved = mutableListOf<RomAllocation>()
+        val secondObserved = mutableListOf<RomAllocation>()
+
+        val session = RomFreeSpaceAllocator(rom, ::snesToPc, ::pcToSnes)
+        val first = session.observing(firstObserved::add).reserve(16, listOf(bank), "room data")!!
+        // Deliberately do not write [first]. The shared cursor alone must keep a
+        // second exporter from independently selecting the same trailing bytes.
+        val second = session.observing(secondObserved::add).reserve(8, listOf(bank), "music data")!!
+
+        assertEquals(first.pcOffset + first.size, second.pcOffset)
+        assertEquals(listOf(first), firstObserved)
+        assertEquals(listOf(second), secondObserved)
+    }
+
     private fun snesToPc(snesAddress: Int): Int {
         val bank = (snesAddress shr 16) and 0xFF
         val address = snesAddress and 0xFFFF

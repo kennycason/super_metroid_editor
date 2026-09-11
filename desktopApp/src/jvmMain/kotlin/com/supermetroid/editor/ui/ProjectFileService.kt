@@ -48,8 +48,14 @@ internal object ProjectFileService {
         romParser: RomParser,
         onLog: (String) -> Unit,
         onStatus: (String) -> Unit,
-    ): String? =
+    ): String? = try {
         RomExporter(project, romParser, onLog, onStatus).export()
+    } catch (e: Exception) {
+        val message = "Export failed safely: ${e.message ?: e::class.simpleName}"
+        onLog("ERROR: $message")
+        onStatus(message)
+        null
+    }
 
     fun exportToIps(
         project: SmEditProject,
@@ -70,7 +76,14 @@ internal object ProjectFileService {
         val build = project.buildName.trim()
         val suffix = if (build.isNotEmpty()) "$build-$version" else version
         val ipsFile = File(orig.parent, "${orig.nameWithoutExtension}-$suffix.ips")
-        ipsFile.writeBytes(ipsData)
+        try {
+            writeBytesAtomically(ipsFile, ipsData)
+        } catch (e: Exception) {
+            val message = "Export failed safely while writing IPS: ${e.message ?: e::class.simpleName}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
         val message = "Exported IPS: ${ipsFile.absolutePath} (${ipsData.size} bytes)"
         onLog(message)
         onStatus(message)

@@ -9,6 +9,7 @@ export type PatchId =
   | 'energy_free_shinesparks'
   | 'enable_moonwalk'
   | 'spider_ball'
+  | 'spider_ball_hold_aim_down'
   | 'fast_doors'
   | 'fast_elevators'
   | 'infinite_missiles'
@@ -21,6 +22,7 @@ export type PatchOption = {
   id: PatchId;
   label: string;
   defaultEnabled?: boolean;
+  exclusiveGroup?: string;
   section: 'Start' | 'Movement' | 'Supplies' | 'Combat';
 };
 
@@ -226,6 +228,7 @@ export type ServicePatchMetadata = {
   internalId: string;
   name: string;
   description?: string;
+  exclusiveGroup?: string;
   configType?: string;
   aliases?: string[];
   headlessSupported: boolean;

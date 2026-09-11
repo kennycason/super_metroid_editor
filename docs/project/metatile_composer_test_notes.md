@@ -44,12 +44,23 @@ Use these checks after opening a known-good Super Metroid ROM and a normal `.sme
 ## ROM Export
 
 1. Make one small area-metatile change and export the ROM.
-2. Watch the export log for `Patched tileset N metatile table in-place`.
+2. Watch the export log for either an in-place write or a safe relocation.
 3. Reopen the exported ROM and confirm the metatile change is present.
 4. Make one small CRE-metatile change and export the ROM.
 5. Watch the export log for `Patched CRE metatile table in-place`.
 6. Reopen the exported ROM and confirm the CRE change is present.
+7. Make an area-metatile edit whose compressed data is larger than the original
+   allocation. Confirm export reports a relocation, updates that tileset's U24
+   pointer, and the exported table round-trips exactly.
+8. Test two tileset entries that share a metatile-table pointer. Edit only one
+   and confirm copy-on-write gives it a new pointer while the other tileset and
+   the old compressed source remain unchanged.
 
 ## Known Limit
 
-Metatile tables currently follow the same conservative export rule as custom tiles and palettes: compressed replacement data is written only when it fits the original compressed allocation. If the log says the compressed metatile table exceeds the original size, the project data is still saved, but ROM export skips that table until relocation/ROM expansion is implemented.
+Variable per-tileset graphics, metatile tables, and palettes can relocate through
+their U24 tileset-table fields, including copy-on-write for shared pointers.
+Shared CRE graphics and CRE metatile data still use fixed engine references; an
+oversized CRE payload blocks export instead of being skipped or placed at an
+unproven address. Safe CRE relocation remains open until every engine reference
+is patched and emulator-tested.

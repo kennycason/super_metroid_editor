@@ -872,10 +872,14 @@ fun main() = application {
                                 val es = editorState
                                 val statusTs = es.statusMessageTimestamp
                                 var showTransient by remember { mutableStateOf(false) }
-                                LaunchedEffect(statusTs) {
+                                val statusIsError = es.statusMessage.startsWith("Export failed", ignoreCase = true) ||
+                                    es.statusMessage.startsWith("Export blocked", ignoreCase = true)
+                                LaunchedEffect(statusTs, statusIsError) {
                                     if (statusTs > 0L) {
                                         showTransient = true
-                                        delay(4000)
+                                        // Export blockers need enough time to read and act on;
+                                        // ordinary confirmations remain brief.
+                                        delay(if (statusIsError) 12_000 else 4_000)
                                         showTransient = false
                                     }
                                 }
@@ -908,7 +912,11 @@ fun main() = application {
                                                 es.statusMessage,
                                                 fontSize = fs.statusBar,
                                                 fontFamily = monoFont,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = if (statusIsError) {
+                                                    MaterialTheme.colorScheme.error
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
                                                 maxLines = 1
                                             )
                                         } else if (showEmuTransient && emuStatus.isNotEmpty()) {
