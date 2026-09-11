@@ -293,7 +293,19 @@ data class SmPatch(
     val compatibleRomHashes: MutableList<String> = mutableListOf(),
     /** Runtime/identifier resources used even when ROM write ranges do not overlap. */
     val resources: MutableList<PatchResourceClaim> = mutableListOf(),
+    /** Optional variant family in which only one patch may be enabled. */
+    var exclusiveGroup: String? = null,
 )
+
+/** Enabled patch variants that cannot safely coexist, grouped by family ID. */
+fun Iterable<SmPatch>.enabledPatchVariantConflicts(): Map<String, List<SmPatch>> =
+    mapNotNull { patch ->
+        patch.exclusiveGroup
+            ?.takeIf { it.isNotBlank() && patch.enabled }
+            ?.let { it to patch }
+    }
+        .groupBy(keySelector = { it.first }, valueTransform = { it.second })
+        .filterValues { it.size > 1 }
 
 /**
  * Custom tileset graphics data (base64-encoded raw 4bpp bytes).

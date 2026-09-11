@@ -866,7 +866,8 @@ class EditorState {
     }
 
     fun togglePatch(id: String) {
-        project.patches.find { it.id == id }?.let { it.enabled = !it.enabled }
+        val patch = project.patches.find { it.id == id } ?: return
+        setPatchEnabled(patch, !patch.enabled)
         dirty = true; patchVersion++
     }
 
@@ -874,8 +875,21 @@ class EditorState {
         val patch = project.patches.find { it.id == id } ?: return
         if (name != null) patch.name = name
         if (description != null) patch.description = description
-        if (enabled != null) patch.enabled = enabled
+        if (enabled != null) setPatchEnabled(patch, enabled)
         dirty = true; patchVersion++
+    }
+
+    private fun setPatchEnabled(patch: SmPatch, enabled: Boolean) {
+        if (enabled) {
+            patch.exclusiveGroup?.let { group ->
+                project.patches.forEach { other ->
+                    if (other.id != patch.id && other.exclusiveGroup == group) {
+                        other.enabled = false
+                    }
+                }
+            }
+        }
+        patch.enabled = enabled
     }
 
     fun enabledCustomItems(): List<CustomItemDef> =
@@ -978,7 +992,7 @@ class EditorState {
     fun setPatchConfigValue(id: String, value: Int) {
         project.patches.find { it.id == id }?.let {
             it.configValue = value
-            if (it.configType != null) it.enabled = true
+            if (it.configType != null) setPatchEnabled(it, true)
         }
         dirty = true; patchVersion++
     }
@@ -988,7 +1002,7 @@ class EditorState {
         val data = patch.configData ?: mutableMapOf()
         data[key] = value
         patch.configData = data
-        if (patch.configType != null) patch.enabled = true
+        if (patch.configType != null) setPatchEnabled(patch, true)
         dirty = true; patchVersion++
     }
 
@@ -1669,6 +1683,10 @@ class EditorState {
                     project.patches.find { it.id == patch.id }?.let {
                         it.name = patch.name
                         it.description = patch.description
+                        if (it.exclusiveGroup != patch.exclusiveGroup) {
+                            it.exclusiveGroup = patch.exclusiveGroup
+                            refreshed++
+                        }
                         if (it.customItems != patch.customItems) {
                             it.customItems.clear()
                             it.customItems.addAll(patch.customItems.map { customItem -> customItem.copy() })
@@ -1692,7 +1710,7 @@ class EditorState {
                                 PatchWrite(write.offset, write.bytes.toList(), write.expectedBytes?.toList())
                             })
                             refreshed++
-                            if (patch.id == "bundled_spider_ball") {
+                            if (patch.id.startsWith("bundled_spider_ball")) {
                                 editorLog("[PATCH-SEED] Refreshed Spider Ball bundled writes: ${patch.writes.size} records, sha256=$newHash")
                             }
                         } else {
@@ -1733,7 +1751,7 @@ class EditorState {
             if (patch.configType !in DEDICATED_EDITOR_CONFIG_TYPES) continue
             if (patch.configData.isNullOrEmpty()) continue
 
-            patch.enabled = true
+            setPatchEnabled(patch, true)
             count++
         }
         if (count > 0) {

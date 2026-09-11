@@ -28,6 +28,37 @@ all menu spritemaps (including 16x16 sprite footprints). This validation is
 required: the former `$1DE-$1E5` allocation overwrote six Varia wireframe tiles
 and produced the horizontal blank strip across Samus when Varia was equipped.
 
+## Activation Variants
+
+The editor now ships two alternatives generated from the same movement,
+graphics, item, message, and pause-menu source:
+
+- **Spider Ball — Directional** is the existing behavior described throughout
+  this document. Press toward a side wall to attach; press Left or Right at a
+  ceiling to attach there.
+- **Spider Ball — Hold Aim Down** uses the exact same attachment, surface
+  selection, corner recovery, and traversal logic as the directional variant,
+  but that logic is enabled only while the configured Aim Down action is held.
+  Aim Down is L in the vanilla control layout, but the patch reads WRAM `$09BC`
+  so in-game control remapping is respected. Releasing Aim Down detaches
+  immediately.
+
+Jump and one-tile-shaft behavior are therefore identical between variants.
+The hold variant adds no automatic surface selection: press toward a side wall
+to attach there, or press Left/Right at a ceiling. Floor-only contact remains
+vanilla in both variants.
+
+Only one activation variant may be enabled. The desktop and web UIs disable
+the sibling automatically, while desktop export and headless builds also reject
+invalid projects/requests with both enabled. Both variants advertise the same
+custom item and runtime-resource ownership, so switching behavior does not
+invalidate an existing Spider Ball placement.
+
+The original directional IPS remains byte-for-byte unchanged at `$90:F800`.
+The larger hold routine uses verified bank-90 free space at `$90:F700`; the
+local disassembly labels `$90:F63A-$FFFF` as free and generation verifies the
+entire emitted range is `$FF` in the vanilla JU ROM.
+
 ## State Model
 
 ### VanillaMorph
@@ -348,6 +379,22 @@ Expected result:
 - On ceiling, press `Right`: move right.
 - Move from a ceiling edge onto a wall that continues upward: transition to wall instead of detaching.
 - Move across a plain ceiling edge with no continuation: detach and fall as vanilla morph.
+
+Additional Hold Aim Down variant checks:
+
+- Remap Aim Down in the in-game controller settings and confirm Spider follows
+  the remapped action rather than requiring physical L.
+- Without Aim Down held, repeat every directional wall, ceiling, and corner
+  case above: Spider must remain inactive.
+- Hold Aim Down and repeat every directional wall, ceiling, and corner case
+  above: positions and state transitions must match the directional variant.
+- Release Aim Down on a wall or ceiling: detach immediately into vanilla morph
+  movement.
+- Press Jump: use the same release behavior as the directional variant.
+- In a one-tile shaft, hold Aim Down plus Left/Right to select the requested
+  wall; Aim Down alone must not choose a wall.
+- Hold Aim Down on flat ground and on both slope directions: preserve vanilla
+  morph/slope physics and do not enter Spider movement.
 
 ## Non-Goals For First Stable Pass
 

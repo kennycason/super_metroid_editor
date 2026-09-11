@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -340,6 +341,9 @@ internal class RomExporter(
             if (target.resources.isEmpty()) {
                 target.resources.addAll(source.resources.map { it.copy() })
             }
+            if (target.exclusiveGroup == null) {
+                target.exclusiveGroup = source.exclusiveGroup
+            }
             val sourceWrites = source.writes.associateBy { it.offset to it.bytes }
             for (index in target.writes.indices) {
                 val current = target.writes[index]
@@ -362,6 +366,14 @@ internal class RomExporter(
     ): Int? {
         val romData = writePlan.romData
         var patchesApplied = 0
+        val variantConflicts = project.patches.enabledPatchVariantConflicts()
+        if (variantConflicts.isNotEmpty()) {
+            val (group, patches) = variantConflicts.entries.first()
+            throw RomWritePlanException(
+                "Patch variants '${patches.joinToString { it.name }}' are mutually exclusive " +
+                    "(group '$group'). Enable only one variant."
+            )
+        }
         val enabledCount = project.patches.count { it.enabled }
         val disabledCount = project.patches.size - enabledCount
         val deferredGeneratedPatches = mutableListOf<SmPatch>()
@@ -417,14 +429,21 @@ internal class RomExporter(
                     )
                 }
                 onLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
-                if (patch.id == "bundled_spider_ball") {
+                if (patch.id.startsWith("bundled_spider_ball")) {
                     val flatHash = bytesSha256(patch.writes.flatMap { it.bytes })
                     val header = writePlan.headerSize
+                    val movementCode = patch.writes.firstOrNull {
+                        it.offset in 0x87700L..0x87FFFL && it.bytes.size > 1_000
+                    }
+                    val movementCodeProof = movementCode?.let {
+                        "code@0x${it.offset.toString(16).uppercase()}=" +
+                            romData.hexAt(header + it.offset.toInt(), 12)
+                    } ?: "code=missing"
                     onLog(
                         "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
                             "movePtr@0x82353=${romData.hexAt(header + 0x82353, 2)}, " +
                             "posePtr@0x8801C=${romData.hexAt(header + 0x8801C, 2)}, " +
-                            "code@0x87800=${romData.hexAt(header + 0x87800, 12)}, " +
+                            "$movementCodeProof, " +
                             "guard@0x880BE=${romData.hexAt(header + 0x880BE, 12)}, " +
                             "plm@0x27200=${romData.hexAt(header + 0x27200, 12)}"
                     )

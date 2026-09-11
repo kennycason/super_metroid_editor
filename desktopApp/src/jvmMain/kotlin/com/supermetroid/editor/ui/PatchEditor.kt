@@ -390,6 +390,14 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 }
             }
         }
+        if (!patch.exclusiveGroup.isNullOrBlank()) {
+            Text(
+                "Variant choice: enabling this patch automatically disables other variants in its group.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
 
         Spacer(Modifier.height(6.dp))
 

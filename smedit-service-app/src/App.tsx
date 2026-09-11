@@ -35,7 +35,18 @@ const patchOptions: PatchOption[] = [
   { id: 'higher_jump', label: 'Higher jump', section: 'Movement' },
   { id: 'energy_free_shinesparks', label: 'Energy-free shinesparks', section: 'Movement' },
   { id: 'enable_moonwalk', label: 'Enable moonwalk', section: 'Movement' },
-  { id: 'spider_ball', label: 'Spider Ball', section: 'Movement' },
+  {
+    id: 'spider_ball',
+    label: 'Spider Ball — Directional',
+    section: 'Movement',
+    exclusiveGroup: 'spider_ball_activation',
+  },
+  {
+    id: 'spider_ball_hold_aim_down',
+    label: 'Spider Ball — Hold Aim Down',
+    section: 'Movement',
+    exclusiveGroup: 'spider_ball_activation',
+  },
   { id: 'fast_doors', label: 'Fast doors', section: 'Movement' },
   { id: 'fast_elevators', label: 'Fast elevators', section: 'Movement' },
   { id: 'infinite_missiles', label: 'Infinite missiles', section: 'Supplies' },
@@ -470,6 +481,7 @@ export function App() {
   const categoryOptions = metadata?.randomization.enemyCategories ?? fallbackCategoryOptions;
   const presetOptions = metadata?.randomization.presets ?? ['balanced', 'spicy', 'chaos', 'survival'];
   const ceresTotalSeconds = ceresMinutes * 60 + ceresSeconds;
+  const spiderBallEnabled = enabledPatches.spider_ball || enabledPatches.spider_ball_hold_aim_down;
 
   useEffect(() => {
     if (selectedPatchId && !visiblePatchOptions.some((option) => option.id === selectedPatchId && patchHasOptions(option.id))) {
@@ -517,7 +529,7 @@ export function App() {
       patches,
     };
 
-    if (enabledPatches.spider_ball) {
+    if (spiderBallEnabled) {
       build.items = [
         {
           item: 'spider_ball',
@@ -558,6 +570,7 @@ export function App() {
     spiderBallRoomId,
     spiderBallX,
     spiderBallY,
+    spiderBallEnabled,
     spriteRegionFilter,
     tilesetFilter,
     visiblePatchOptions,
@@ -678,7 +691,7 @@ export function App() {
         errors.push('Ceres escape timer must total 15 to 600 seconds.');
       }
     }
-    if (enabledPatches.spider_ball) {
+    if (spiderBallEnabled) {
       if (metadata && !roomOptions.some((room) => room.roomId === spiderBallRoomId)) {
         errors.push('Spider Ball room must be selected from the service room list.');
       }
@@ -810,7 +823,7 @@ export function App() {
     enabledPatches.bombs,
     enabledPatches.ceres_escape_seconds,
     enabledPatches.fanfares,
-    enabledPatches.spider_ball,
+    spiderBallEnabled,
     excludeCategories,
     extraExcludedEnemies,
     fanfareFrames,
@@ -1063,12 +1076,20 @@ export function App() {
                       type="checkbox"
                       aria-label={`Enable ${option.label}`}
                       checked={enabledPatches[option.id]}
-                      onChange={(event) =>
-                        setEnabledPatches((current) => ({
-                          ...current,
-                          [option.id]: event.target.checked,
-                        }))
-                      }
+                      onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setEnabledPatches((current) => {
+                          const next = { ...current, [option.id]: enabled };
+                          if (enabled && option.exclusiveGroup) {
+                            for (const sibling of patchOptions) {
+                              if (sibling.id !== option.id && sibling.exclusiveGroup === option.exclusiveGroup) {
+                                next[sibling.id] = false;
+                              }
+                            }
+                          }
+                          return next;
+                        });
+                      }}
                     />
                     <button
                       type="button"
@@ -1133,7 +1154,7 @@ export function App() {
                     />
                   </>
                 )}
-                {selectedPatchId === 'spider_ball' && (
+                {(selectedPatchId === 'spider_ball' || selectedPatchId === 'spider_ball_hold_aim_down') && (
                   <>
                     <label className="field">
                       <span>Room</span>
@@ -1592,8 +1613,16 @@ function validateIntegerField(label: string, value: number, min: number, max: nu
   return [];
 }
 
-function patchHasOptions(id: PatchId): id is Extract<PatchId, 'fanfares' | 'bombs' | 'ceres_escape_seconds' | 'spider_ball'> {
-  return id === 'fanfares' || id === 'bombs' || id === 'ceres_escape_seconds' || id === 'spider_ball';
+function patchHasOptions(
+  id: PatchId,
+): id is Extract<PatchId, 'fanfares' | 'bombs' | 'ceres_escape_seconds' | 'spider_ball' | 'spider_ball_hold_aim_down'> {
+  return (
+    id === 'fanfares' ||
+    id === 'bombs' ||
+    id === 'ceres_escape_seconds' ||
+    id === 'spider_ball' ||
+    id === 'spider_ball_hold_aim_down'
+  );
 }
 
 function loadPersistedSettings(): PersistedSettings {

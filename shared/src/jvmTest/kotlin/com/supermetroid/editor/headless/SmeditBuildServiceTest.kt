@@ -248,6 +248,23 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `build rejects mutually exclusive patch variants with a clear error`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        "spider_ball" to SmeditPatchRequest(),
+                        "spider_ball_hold_aim_down" to SmeditPatchRequest(),
+                    )
+                )
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("mutually exclusive"))
+        assertTrue(error.message.orEmpty().contains("spider_ball_activation"))
+    }
+
+    @Test
     fun `rom build rejects a fixed patch authored for a different base rom`() {
         val patch = SmPatch(
             id = "base-specific",
@@ -619,6 +636,32 @@ class SmeditBuildServiceTest {
         val hook = result.romBytes.readBytes(parser.snesToPc(0x828D25), 4)
         assertEquals(0x22, hook[0])
         assertTrue(hook[3] in 0x82..0xBE)
+    }
+
+    @Test
+    fun `hold Aim Down Spider Ball supports its shared custom item placement`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf("spider_ball_hold_aim_down" to SmeditPatchRequest()),
+                items = listOf(
+                    SmeditItemPlacementRequest(
+                        item = "spider_ball",
+                        roomId = 0x91F8,
+                        x = 83,
+                        y = 68,
+                    )
+                ),
+            ),
+        )
+
+        assertTrue(result.report.applied.any { it.identifier == "spider_ball_hold_aim_down" })
+        assertTrue(result.report.applied.any { it.identifier == "request_item_placements" })
+        assertEquals(0xF700, result.romBytes.readWord(parser.snesToPc(0x90A353)))
+        assertEquals(0xFF, result.romBytes[parser.snesToPc(0x90FFE3)].toInt() and 0xFF)
     }
 
     @Test

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the bundled Spider Ball prototype IPS patch.
+"""Build the bundled directional and hold-Aim-Down Spider Ball IPS patches.
 
 This is intentionally self-contained: the local Super Metroid disassembly has
 an asar binary, but it is not runnable on macOS arm64. The small encoder below
@@ -9,8 +9,10 @@ The behavior is inspired by Metroid II's spider ball, but adapted to Super
 Metroid's movement engine:
 
 * Vanilla morph movement owns floors, slopes, falling, and mockball.
-* Spider attaches by pressing into a side wall, or by pressing left/right into
-  a ceiling while airborne.
+* The directional variant attaches by pressing into a side wall, or by
+  pressing left/right into a ceiling while airborne.
+* The hold variant uses the same directional attachment and traversal rules,
+  but only while the configured Aim Down action is held.
 * Wall movement uses up/down. Ceiling movement uses left/right.
 * Small bounded corner nudges help negotiate ledges and ceilings.
 * Jump releases the latch.
@@ -25,7 +27,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASE_ROM = ROOT / "test-resources" / "Super Metroid (JU) [!].smc"
 OUT_IPS = ROOT / "shared" / "src" / "commonMain" / "resources" / "patches" / "spider_ball.ips"
+OUT_HOLD_AIM_DOWN_IPS = (
+    ROOT
+    / "shared"
+    / "src"
+    / "commonMain"
+    / "resources"
+    / "patches"
+    / "spider_ball_hold_aim_down.ips"
+)
+# The existing directional patch remains at $90:F800 so regenerating it stays
+# byte-for-byte stable. The disassembly marks $90:F63A-$FFFF as free, allowing
+# the slightly larger hold-Aim-Down variant to start at $F700 in its own ROM.
 CODE_ADDR = 0xF800
+HOLD_AIM_DOWN_CODE_ADDR = 0xF700
 POSE_GUARD_ADDR = 0x80BE
 PAUSE_EQUIPMENT_DATA_ADDR = 0xF7C0
 
@@ -162,6 +177,7 @@ DOWN_BINDING = 0x09AC
 LEFT_BINDING = 0x09AE
 RIGHT_BINDING = 0x09B0
 JUMP_BINDING = 0x09B4
+AIM_DOWN_BINDING = 0x09BC
 POSE = 0x0A1C
 MOVEMENT_TYPE = 0x0A1F
 SAMUS_TILES_TOP_HALF_TILES_DEF = 0x071F
@@ -385,15 +401,39 @@ def emit_try_nudge(w: Bank90Writer, label: str, step_labels: tuple[str, ...], co
     w.rts()
 
 
-def build_spider_code() -> bytes:
-    w = Bank90Writer(start_addr=CODE_ADDR)
+def build_spider_code(
+    hold_aim_down: bool = False,
+    start_addr: int = CODE_ADDR,
+) -> bytes:
+    w = Bank90Writer(start_addr=start_addr)
 
     w.label("SpiderBallMovementWrapper")
     w.php()
     w.rep_30()
     w.lda_abs(EQUIPPED_ITEMS)
     w.and_imm(SPIDER_BALL_ITEM_BIT)
-    w.branch(0xF0, "WrapperInactive")  # BEQ
+    if hold_aim_down:
+        w.branch_long(0xF0, "WrapperInactive")  # BEQ
+    else:
+        w.branch(0xF0, "WrapperInactive")  # BEQ
+    if hold_aim_down:
+        # Aim Down is configurable (L by default), so use the live binding.
+        # This is deliberately only a gate: once it passes, attachment and
+        # traversal use the exact same directional path as the base variant.
+        w.lda_dp(DP_CONTROLLER_1_INPUT)
+        w.and_abs(AIM_DOWN_BINDING)
+        w.branch(0xD0, "WrapperAimDownHeld")  # BNE
+        # Clear only the sentinel owned by this patch. $0B1C is live WRAM and
+        # can contain unrelated values before Spider Ball initializes it.
+        w.lda_abs(SPIDER_ACTIVE)
+        w.cmp_imm(SPIDER_ACTIVE_MAGIC)
+        w.branch(0xF0, "WrapperAimDownReleased")  # BEQ
+        w.branch_long(0xD0, "WrapperInactive")  # BNE
+        w.label("WrapperAimDownReleased")
+        w.jsr_label("ReleaseSpider")
+        w.jmp_label("WrapperInactive")
+
+        w.label("WrapperAimDownHeld")
     w.lda_abs(SPIDER_ACTIVE)
     w.cmp_imm(SPIDER_ACTIVE_MAGIC)
     w.branch(0xF0, "WrapperActive")  # BEQ
@@ -1452,6 +1492,10 @@ def apply_ips(rom: bytearray, ips: bytes) -> None:
 def main() -> None:
     base = BASE_ROM.read_bytes()
     code = build_spider_code()
+    hold_aim_down_code = build_spider_code(
+        hold_aim_down=True,
+        start_addr=HOLD_AIM_DOWN_CODE_ADDR,
+    )
     spider_render_wrapper = build_spider_render_wrapper_code()
     pose_guard = build_pose_guard_code()
     spider_item_plms = build_spider_item_plms(base)
@@ -1473,9 +1517,15 @@ def main() -> None:
         raise SystemExit("Spider Ball pause label graphics exceed their allocated segments")
     pause_equipment_data = build_pause_equipment_data()
     pause_equipment_base_tilemap = build_pause_equipment_base_tilemap(base)
-    free_len = 0x10000 - CODE_ADDR
-    if len(code) > free_len:
-        raise SystemExit(f"Spider Ball code is {len(code)} bytes, exceeds free space {free_len}")
+    if CODE_ADDR + len(code) > 0x10000:
+        raise SystemExit(
+            f"Spider Ball directional code ends outside bank $90: ${CODE_ADDR + len(code):05X}"
+        )
+    if HOLD_AIM_DOWN_CODE_ADDR + len(hold_aim_down_code) > 0x10000:
+        raise SystemExit(
+            "Spider Ball hold-Aim-Down code ends outside bank $90: "
+            f"${HOLD_AIM_DOWN_CODE_ADDR + len(hold_aim_down_code):05X}"
+        )
     spider_render_wrapper_end = SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR + len(spider_render_wrapper)
     if spider_render_wrapper_end > SPIDER_BALL_SAMUS_TILE_DEFS_ADDR:
         raise SystemExit(
@@ -1577,6 +1627,25 @@ def main() -> None:
         (lorom_pc(0x82, 0xB546), u16(PAUSE_BOOT_MASKS_ADDR)),
     ]
     ips = make_ips(records)
+    code_record_offset = lorom_pc(0x90, CODE_ADDR)
+    hold_code_record_offset = lorom_pc(0x90, HOLD_AIM_DOWN_CODE_ADDR)
+    movement_hook_offsets = {
+        lorom_pc(0x90, 0xA353),
+        lorom_pc(0x90, 0xA35B),
+        lorom_pc(0x90, 0xA36D),
+        lorom_pc(0x90, 0xA36F),
+        lorom_pc(0x90, 0xA371),
+    }
+
+    def hold_variant_record(offset: int, data: bytes) -> tuple[int, bytes]:
+        if offset == code_record_offset:
+            return hold_code_record_offset, hold_aim_down_code
+        if offset in movement_hook_offsets:
+            return offset, u16(HOLD_AIM_DOWN_CODE_ADDR)
+        return offset, data
+
+    hold_aim_down_records = [hold_variant_record(offset, data) for offset, data in records]
+    hold_aim_down_ips = make_ips(hold_aim_down_records)
 
     expected_originals = {
         lorom_pc(0x90, 0xA353): bytes.fromhex("21 A5"),
@@ -1584,7 +1653,8 @@ def main() -> None:
         lorom_pc(0x90, 0xA36D): bytes.fromhex("9F A6"),
         lorom_pc(0x90, 0xA36F): bytes.fromhex("F1 A6"),
         lorom_pc(0x90, 0xA371): bytes.fromhex("03 A7"),
-        lorom_pc(0x90, CODE_ADDR): b"\xFF" * min(64, len(code)),
+        lorom_pc(0x90, CODE_ADDR): b"\xFF" * len(code),
+        lorom_pc(0x90, HOLD_AIM_DOWN_CODE_ADDR): b"\xFF" * len(hold_aim_down_code),
         lorom_pc(0x90, 0x8647): bytes.fromhex("22 00 80 92"),
         lorom_pc(0x90, 0x89F9): bytes.fromhex("22 00 80 92"),
         lorom_pc(0x90, 0x8A45): bytes.fromhex("22 00 80 92"),
@@ -1650,17 +1720,24 @@ def main() -> None:
                 f"expected {expected.hex(' ')}, got {actual.hex(' ')}"
             )
 
-    patched = bytearray(base)
-    apply_ips(patched, ips)
-    for offset, data in records:
-        actual = patched[offset : offset + len(data)]
-        if actual != data:
-            raise SystemExit(f"Patch verification failed at {offset:#06x}")
+    for output, variant_ips, variant_records in (
+        (OUT_IPS, ips, records),
+        (OUT_HOLD_AIM_DOWN_IPS, hold_aim_down_ips, hold_aim_down_records),
+    ):
+        patched = bytearray(base)
+        apply_ips(patched, variant_ips)
+        for offset, data in variant_records:
+            actual = patched[offset : offset + len(data)]
+            if actual != data:
+                raise SystemExit(f"Patch verification failed at {offset:#06x}")
+        output.write_bytes(variant_ips)
+        print(f"Wrote {output.relative_to(ROOT)}")
 
-    OUT_IPS.write_bytes(ips)
-
-    print(f"Wrote {OUT_IPS.relative_to(ROOT)}")
-    print(f"Spider Ball code: {len(code)} bytes at $90:{CODE_ADDR:04X}")
+    print(f"Spider Ball directional code: {len(code)} bytes at $90:{CODE_ADDR:04X}")
+    print(
+        "Spider Ball hold-Aim-Down code: "
+        f"{len(hold_aim_down_code)} bytes at $90:{HOLD_AIM_DOWN_CODE_ADDR:04X}"
+    )
     print(
         "Spider Ball render wrapper: "
         f"{len(spider_render_wrapper)} bytes at $92:{SPIDER_BALL_SAMUS_RENDER_WRAPPER_ADDR:04X}"
@@ -1692,7 +1769,8 @@ def main() -> None:
             for group in PAUSE_SPIDER_LABEL_TILE_GROUPS
         )
     )
-    print(f"IPS size: {len(ips)} bytes")
+    print(f"Directional IPS size: {len(ips)} bytes")
+    print(f"Hold-Aim-Down IPS size: {len(hold_aim_down_ips)} bytes")
 
 
 if __name__ == "__main__":

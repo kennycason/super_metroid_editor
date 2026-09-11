@@ -164,6 +164,11 @@ curl -sS \
   --output spider-ball.smc
 ```
 
+Use `spider_ball_hold_aim_down` instead of `spider_ball` for the variant that
+enables the same directional attachment and traversal controls only while the
+configured Aim Down action is held. These two activation variants are mutually
+exclusive; enabling both is rejected before output.
+
 ### Colorize Palettes
 
 Add `colorize` to the `build` field to apply one shared palette effect to area tileset palettes and fixed sprite palette regions:

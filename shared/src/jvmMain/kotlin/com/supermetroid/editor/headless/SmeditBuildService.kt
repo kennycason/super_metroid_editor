@@ -7,6 +7,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
+import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -359,7 +360,16 @@ class SmeditBuildService(
             }
         }
 
-        return entries.values.toList()
+        val resolved = entries.values.toList()
+        val variantConflicts = resolved.map { it.patch }.enabledPatchVariantConflicts()
+        if (variantConflicts.isNotEmpty()) {
+            val (group, patches) = variantConflicts.entries.first()
+            throw IllegalArgumentException(
+                "Patch variants '${patches.joinToString { it.name }}' are mutually exclusive " +
+                    "(group '$group'). Enable only one variant."
+            )
+        }
+        return resolved
     }
 
     private fun hydrateSafetyMetadata(target: SmPatch, catalogPatch: SmPatch) {
@@ -368,6 +378,9 @@ class SmeditBuildService(
         }
         if (target.resources.isEmpty()) {
             target.resources.addAll(catalogPatch.resources.map { it.copy() })
+        }
+        if (target.exclusiveGroup == null) {
+            target.exclusiveGroup = catalogPatch.exclusiveGroup
         }
         val catalogWrites = catalogPatch.writes.associateBy { it.offset to it.bytes }
         for (index in target.writes.indices) {
@@ -440,8 +453,8 @@ class SmeditBuildService(
                 ?: entries.values.firstOrNull { it.patch.configType == key || it.patch.configType == resolvedKey }
         }
 
-    private fun buildItemDefinitions(patches: List<SmPatch>): List<HeadlessItemDefinition> =
-        buildList {
+    private fun buildItemDefinitions(patches: List<SmPatch>): List<HeadlessItemDefinition> {
+        val definitions = buildList {
             for (item in RomParser.ITEM_DEFS) {
                 add(
                     HeadlessItemDefinition(
@@ -464,12 +477,22 @@ class SmeditBuildService(
                             visiblePlmId = item.visiblePlmId,
                             chozoPlmId = item.chozoPlmId,
                             hiddenPlmId = item.hiddenPlmId,
-                            sourcePatchId = SmeditPatchCatalog.publicPatchId(patch),
+                            sourcePatchIds = setOf(SmeditPatchCatalog.publicPatchId(patch)),
                         )
                     )
                 }
             }
         }
+        return definitions
+            .groupBy { lookupKey(it.id) }
+            .map { (_, variants) ->
+                val first = variants.first()
+                require(variants.all { it.samePlacementDefinition(first) }) {
+                    "Custom item '${first.id}' has conflicting PLM definitions across patch variants."
+                }
+                first.copy(sourcePatchIds = variants.flatMap { it.sourcePatchIds }.toSet())
+            }
+    }
 
     private fun itemApiId(name: String): String =
         name.lowercase()
@@ -560,13 +583,15 @@ class SmeditBuildService(
         patchEntries: List<PatchEntry>,
         context: ApplyContext,
     ) {
-        val sourcePatchId = item.sourcePatchId ?: return
+        val sourcePatchIds = item.sourcePatchIds
+        if (sourcePatchIds.isEmpty()) return
         val enabled = patchEntries.any {
-            it.patch.enabled && SmeditPatchCatalog.publicPatchId(it.patch) == sourcePatchId
+            it.patch.enabled && SmeditPatchCatalog.publicPatchId(it.patch) in sourcePatchIds
         }
         if (enabled) return
 
-        val message = "Item '${item.id}' requires patch '$sourcePatchId' to be enabled."
+        val alternatives = sourcePatchIds.sorted().joinToString("' or '", prefix = "'", postfix = "'")
+        val message = "Item '${item.id}' requires patch $alternatives to be enabled."
         if (context.strictConfigValidation) {
             throw IllegalArgumentException(message)
         }
@@ -2013,8 +2038,13 @@ class SmeditBuildService(
         val visiblePlmId: Int?,
         val chozoPlmId: Int?,
         val hiddenPlmId: Int?,
-        val sourcePatchId: String? = null,
+        val sourcePatchIds: Set<String> = emptySet(),
     ) {
+        fun samePlacementDefinition(other: HeadlessItemDefinition): Boolean =
+            visiblePlmId == other.visiblePlmId &&
+                chozoPlmId == other.chozoPlmId &&
+                hiddenPlmId == other.hiddenPlmId
+
         fun plmIds(): List<Int> =
             listOfNotNull(visiblePlmId, chozoPlmId, hiddenPlmId)
 
@@ -2242,4 +2272,5 @@ private fun SmPatch.deepCopy(): SmPatch =
         customItems = customItems.map { it.copy() }.toMutableList(),
         compatibleRomHashes = compatibleRomHashes.toMutableList(),
         resources = resources.map { it.copy() }.toMutableList(),
+        exclusiveGroup = exclusiveGroup,
     )

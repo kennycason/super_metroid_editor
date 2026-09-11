@@ -92,6 +92,17 @@ expected output file.
    label allocation overwrote Varia wireframe tiles `$1E0-$1E5`; the new patch
    moves the label to audited `$23E-$241` and `$257-$25A` holes. Also confirm
    the full `SPIDER BALL` label and pause-map icons still render correctly.
+7. Disable **Spider Ball — Directional**, enable **Spider Ball — Hold Aim
+   Down**, and confirm the first variant turns off automatically. Export with
+   Room Name Pause Map still enabled; the write plan should be conflict-free.
+8. With the hold variant, verify L (or the remapped Aim Down action) enables the
+   same directional attachment and traversal controls as the directional
+   variant, and release detaches. Repeat on left/right walls, wall-to-ceiling
+   corners, ceiling traversal, a one-tile shaft, flat ground, and both slope
+   directions. Aim Down alone must not select a surface.
+9. As a fail-closed check, manually edit a disposable project JSON so both
+   Spider variants are enabled. Export must stop with a mutually-exclusive
+   variant error and leave any previous output file untouched.
 
 ### 3. Area and save-station migration
 

@@ -32,6 +32,9 @@ This file captures the current SMILE/local-reference audit so the next work can 
 6. Spider Ball behavior hardening.
    - Keep spider code out of ground/slope ownership.
    - Preserve jump, wall-jump, morph tunnel, slope, and moving-platform behavior from the documented acceptance list.
+   - Directional and hold-Aim-Down activation variants now share one generator,
+     item/assets, ownership metadata, and fail-closed exclusivity. Emulator
+     tuning of the hold behavior remains in the acceptance matrix.
 7. Sound export hardening.
    - Verify relocated transfer chains, SPC RAM budget, sample directory consistency, and no-overlap rules.
 
@@ -99,6 +102,12 @@ Next quality-first slices:
   not to Room Names colliding with Spider Ball. The label now uses two audited
   holes in the pause sprite sheet; static regression coverage is complete and
   the emulator equipment-state matrix remains for visual confirmation.
+- A hold-Aim-Down Spider Ball sibling now respects the configurable in-game Aim
+  Down binding, detaches on release, and gates the same directional attachment,
+  corner, and traversal path as the original variant. The original directional
+  IPS remains byte-for-byte unchanged; both variants have desktop/web selection
+  UX, headless support, shared custom item placement, mutual-exclusion checks,
+  and static regression coverage.
 - First tileset/metatile composer pass is implemented and has manual notes in `docs/project/metatile_composer_test_notes.md`.
 - Enemy tile-sheet export hardening has manual notes in `docs/project/enemy_sprite_hardening_test_notes.md`.
 - Embedded Layer 2 editing has manual notes in `docs/project/layer2_editing_test_notes.md`.
