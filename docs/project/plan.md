@@ -4,6 +4,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 **See also:** `smile_parity.md` for the complete feature-by-feature comparison matrix.
 **See also:** `roadmap.md` for the prioritized feature list.
+**See also:** `room_model_v2.md` for the state model, migration, and delivery chunks.
 
 ---
 
@@ -39,7 +40,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 14 | **Save Station Spawn Display** | ✅ Done | Read-only spawn X/Y/scroll in tile properties |
 | 15 | **Auto-Repointing Engine** | ✅ Done | Level data, PLMs, scroll data, door ASM — all auto-relocate |
 | 16 | **Room JSON Export** | ✅ Done | Self-contained room data with PNG/JSON dropdown |
-| 17 | **Multi-State Room Editing** | ✅ Done | State selector, switching, per-state enemies/PLMs/scrolls/export |
+| 17 | **Multi-State Room Inspection** | 🟡 Partial | Ordered selector inspection and state preview exist. V1 persistence/export is room-scoped, not truly per-state. See `room_model_v2.md`. |
 | 18 | **Door Cloning Tool** | ✅ Done | Auto-detect direction from screen edge |
 | 19 | **Space Utilization Monitor** | ✅ Done | Per-section byte counts in Room Info |
 | 20 | **Room Resize** | ✅ Done | Level data + scroll + door ASM remapping |
@@ -57,11 +58,11 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 1 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
-| 2 | **New Room Creation** | Medium | Allocate room header in $8F, door table, level data, enemy/PLM/scroll pointers. Foundation is there (auto-repointing, resize). |
-| 3 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |
-| 4 | **Room JSON Import** | Small | Export done; import needs to create RoomEdits from JSON. |
-| 5 | **Save Station Spawn Editing** | Small | Currently display-only. Need writable fields + export. |
+| 1 | **Stateful Room Editing** | Large | Finish first-class ordered states, explicit link controls, legacy migration, and selector-graph authoring inside the existing format. |
+| 2 | **New Room Creation** | Medium | Build on the same model; allocate room header in $8F, selectors/states, door table, level data, enemy/PLM/scroll pointers. |
+| 3 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
+| 4 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |
+| 5 | **Room JSON Import** | Small | Export done; import should target native semantic rooms. |
 
 ### MEDIUM IMPACT
 
@@ -83,8 +84,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 14 | **Hotkey Configuration** | Small | Custom keyboard shortcuts. |
 | 15 | **Samus Pose/Animation Editor** | Large | Per-equipment animation poses. |
 | 16 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
-| 17 | **New Room Creation/Deletion** | Medium | Blank rooms with auto-assigned IDs, copy/paste between areas. |
-| 18 | **Plugin System** | Large | Extensibility framework for custom tools. |
+| 17 | **Plugin System** | Large | Extensibility framework for custom tools. |
 
 ---
 

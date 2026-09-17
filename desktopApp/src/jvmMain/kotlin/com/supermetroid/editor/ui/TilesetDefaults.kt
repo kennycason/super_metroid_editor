@@ -513,11 +513,11 @@ data class BossFlagDef(val key: String, val name: String, val wramAddr: Int, val
 val BOSS_FLAG_DEFS = listOf(
     BossFlagDef("kraid",    "Kraid",              0xD829, 0x01),
     BossFlagDef("phantoon", "Phantoon",           0xD82B, 0x01),
-    BossFlagDef("ridley",   "Ridley",             0xD82A, 0x02),
-    BossFlagDef("draygon",  "Draygon",            0xD82C, 0x02),
+    BossFlagDef("ridley",   "Ridley",             0xD82A, 0x01),
+    BossFlagDef("draygon",  "Draygon",            0xD82C, 0x01),
     BossFlagDef("spore",    "Spore Spawn",        0xD829, 0x02),
-    BossFlagDef("croc",     "Crocomire",          0xD82A, 0x04),
-    BossFlagDef("botwoon",  "Botwoon",            0xD82C, 0x01),
+    BossFlagDef("croc",     "Crocomire",          0xD82A, 0x02),
+    BossFlagDef("botwoon",  "Botwoon",            0xD82C, 0x02),
 )
 
 // ─── Controller Configuration ──────────────────────────────────

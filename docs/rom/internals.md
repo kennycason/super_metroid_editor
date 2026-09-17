@@ -221,18 +221,22 @@ States are checked first-to-last. First matching condition wins. Default (E5E6) 
 | Code | Name | Entry size | Args after code | Vanilla usage |
 |------|------|-----------|-----------------|---------------|
 | E5E6 | Default (Finish) | TERMINAL | 26-byte inline state data | 263 rooms (all) |
-| E5EB | Door | 6 bytes | door_ptr(2) + state_ptr(2) | **0 rooms** (dead code) |
+| E5EB | Door | 6 bytes | door_ptr(2) + state_ptr(2) | **0 vanilla rooms** |
 | E5FF | TourianBoss01 | 4 bytes | state_ptr(2) | 1 room (Mother Brain) |
+| E60F | Never | 4 bytes | state_ptr(2) | **0 vanilla rooms** |
 | E612 | IsEventSet | 5 bytes | event_flag(1) + state_ptr(2) | 24 rooms |
 | E629 | IsBossDead | 5 bytes | boss_flag(1) + state_ptr(2) | 33 rooms |
-| E640 | UNUSED_E640 | 4 bytes | state_ptr(2) | **0 rooms** (dead code) |
+| E640 | Morph Ball | 4 bytes | state_ptr(2) | **0 vanilla rooms** |
 | E652 | MorphBallMissiles | 4 bytes | state_ptr(2) | 2 rooms |
 | E669 | PowerBombs | 4 bytes | state_ptr(2) | 1 room (Landing Site) |
-| E678 | UNUSED_E678 | 4 bytes | state_ptr(2) | **0 rooms** (dead code) |
+| E678 | Speed Booster | 4 bytes | state_ptr(2) | **0 vanilla rooms** |
 
-**Dispatch**: `HandleRoomDefStateSelect` ($8F:E5D2) reads 2-byte code, calls via
-`CallRoomDefStateSelect` switch. Only E5E6/E5FF/E612/E629/E652/E669 have cases;
-E5EB/E640/E678 are defined functions but unreachable in vanilla.
+**Dispatch**: the machine code at `HandleRoomDefStateSelect` ($8F:E5D2) reads the
+2-byte address and jumps to it indirectly. The C decompilation represents addresses it
+observed as a `CallRoomDefStateSelect` switch, but that switch is not a runtime whitelist.
+E5EB/E640/E678 are callable vanilla entry points even though vanilla room data does not use
+them. E60F enters the common `INX; INX; RTS` path and is used by SMART projects as an
+always-false condition.
 
 Source: `~/code/sm/src/sm_8f.c:683` (`CallRoomDefStateSelect`),
 `~/code/sm/assets/restool.py:933` (`kRoomStateSelects`),
@@ -339,20 +343,21 @@ with zero errors — see `docs/code/scan_state_selectors.py`).
 | E5E6   | Default/Finish   | 26-byte inline state data | 28 |
 | E5EB   | Door             | door_ptr(2) + state_ptr(2) | 6 |
 | E5FF   | TourianBoss01    | state_ptr(2)               | 4 |
+| E60F   | Never            | state_ptr(2)               | 4 |
 | E612   | IsEventSet       | flag(1) + state_ptr(2)     | 5 |
 | E629   | IsBossDead       | flag(1) + state_ptr(2)     | 5 |
-| E640   | UNUSED           | state_ptr(2)               | 4 |
+| E640   | Morph Ball       | state_ptr(2)               | 4 |
 | E652   | MorphBallMissiles| state_ptr(2)               | 4 |
 | E669   | PowerBombs       | state_ptr(2)               | 4 |
-| E678   | UNUSED           | state_ptr(2)               | 4 |
+| E678   | Speed Booster    | state_ptr(2)               | 4 |
 
 **E5FF was previously mis-sized as 6 bytes** (treated like E5EB with a 2-byte param).
 The C code confirms E5FF has NO parameter — it checks hardcoded boss bit 1.
-Fix: grouped E5FF with E640/E652/E669/E678 as 4-byte entries.
+Fix: grouped E5FF with E60F/E640/E652/E669/E678 as 4-byte entries.
 
-**E5EB/E640/E678 never appear in vanilla** but are handled defensively by our parser.
-They exist as code at those addresses but `CallRoomDefStateSelect` has no dispatch case
-for them; a ROM hack would need to patch the dispatch table to use them.
+**E5EB/E60F/E640/E678 never appear in vanilla room data** but are handled by our parser.
+They are valid indirect-jump entry points/conventions despite not appearing in the
+decompiler's switch.
 
 ### DoorDef Bytes 4-5 (CONFIRMED)
 

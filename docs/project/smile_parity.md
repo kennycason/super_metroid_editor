@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are primarily advanced/niche features (tileset composition, ROM expansion, Samus pose editing). SMEDIT additionally has capabilities no SNES ROM editor has ever offered: embedded emulator, custom ASM embedding, auto-repointing engine, multi-state export, and visual scroll trigger editing.
+SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, state-scoped room editing, and visual scroll-trigger editing. Important remaining architecture work includes state-graph authoring, new-room creation, tileset composition, and ROM expansion.
 
 ---
 
@@ -42,7 +42,6 @@ SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are
 | **Modern theme system** | Multiple themes, configurable font sizes | Fixed Windows UI |
 | **Live emulator sync** | Follow player room in editor | Not available |
 | **Boss defeated flags** | GUI toggles with ASM hook generation | Manual hex only |
-| **Multi-state export** | Auto-propagates edits across ALL states sharing data | Saves only current state |
 | **Door cloning** | Auto-detect direction from screen edge | Manual property entry |
 | **Space utilization** | Per-section byte counts for all room data | Level data overflow warning only |
 
@@ -63,8 +62,8 @@ SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are
 | FX editing (16 types, liquid, blend) | Parity |
 | Tile graphics rendering (2bpp/4bpp) | Parity |
 | CRE tile handling | Parity |
-| Room state parsing (all 9 condition types) | Parity |
-| Multi-state room editing (state selector + switching) | Parity |
+| Room state parsing (all 10 known condition types) | Parity |
+| Multi-state room inspection and switching | Strong partial: selector logic, preview, selected-state persistence, copy-on-write, and export work; state add/delete and arbitrary graph relocation remain. |
 | LoROM address conversion | Parity |
 | Pattern copy/paste | Parity (we have more built-ins) |
 | Room header editing (all 11 fields) | Parity |
@@ -86,6 +85,7 @@ SMEDIT has **surpassed** SMILE in nearly every dimension. The remaining gaps are
 
 | Feature | SMILE | SMEDIT | Impact |
 |---------|-------|--------|--------|
+| **State-scoped room editing** | Selects and edits individual room states | Selected-state layouts, objects, actors, scrolls, music, tilesets, FX, and compatible selector changes persist/export | Medium — finish graph authoring and explicit link controls |
 | **Tileset/Metatile Composer** | Define 16x16 from 4 8x8 tiles with palette/flip/BTS | Can view/import/export tile sheets but no composition UI | High — needed for custom tilesets |
 
 ### Moderate
@@ -138,4 +138,3 @@ Features that differentiate SMEDIT from existing editors:
 9. **Modern project system** — JSON-based, versioned, multi-file
 10. **SPC audio** — Native music playback
 11. **Room JSON export** — Shareable room data for collaboration
-12. **Multi-state auto-export** — Edits propagate across all states sharing data

@@ -149,15 +149,13 @@ object RomRoomScanner {
         0xE5E6,
         0xE5EB,
         0xE5FF,
+        0xE60F,
         0xE612,
         0xE629,
         0xE640,
         0xE652,
         0xE669,
         0xE678,
-        0xE683,
-        0xE6A1,
-        0xE6BA,
     )
 
     fun discover(parser: RomParser, validateLevelData: Boolean): List<DiscoveredRoom> {
@@ -199,7 +197,7 @@ object RomRoomScanner {
         val height = romData[pc + 5].toInt() and 0xFF
         val doorOut = readU16OrNull(romData, pc + 9) ?: return false
         val condition = readU16OrNull(romData, pc + 11) ?: return false
-        return area <= 6 &&
+        return area <= 7 &&
             width in 1..16 &&
             height in 1..16 &&
             doorOut in 0x8000..0xFFFF &&
@@ -224,12 +222,12 @@ object RomRoomScanner {
                     statePcForPtr(parser, ptr)?.let(states::add)
                     cursor += 6
                 }
-                0xE612, 0xE629, 0xE683, 0xE6A1, 0xE6BA -> {
+                0xE612, 0xE629 -> {
                     val ptr = readU16OrNull(romData, cursor + 3) ?: return null
                     statePcForPtr(parser, ptr)?.let(states::add)
                     cursor += 5
                 }
-                0xE5FF, 0xE640, 0xE652, 0xE669, 0xE678 -> {
+                0xE5FF, 0xE60F, 0xE640, 0xE652, 0xE669, 0xE678 -> {
                     val ptr = readU16OrNull(romData, cursor + 2) ?: return null
                     statePcForPtr(parser, ptr)?.let(states::add)
                     cursor += 4

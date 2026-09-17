@@ -27,7 +27,7 @@ data class Room(
     val creBitflag: Int,       // Byte 8: CRE/special graphics bitflag
     val doorOut: Int,          // Bytes 9-10: Door out pointer
     
-    // From default room state data (26 bytes)
+    // From the room state selected for the initial editor preview (26 bytes)
     val levelDataPtr: Int = 0,   // 3-byte SNES address to compressed level data
     val tileset: Int = 0,        // Tileset index
     val musicData: Int = 0,      // Music data byte
@@ -37,6 +37,7 @@ data class Room(
     val enemyGfxPtr: Int = 0,    // Enemy graphics pointer
     val bgScrolling: Int = 0,    // Background scrolling
     val roomScrollsPtr: Int = 0, // Scroll data pointer
+    val xraySpecialCasingPtr: Int = 0, // Special X-Ray block table pointer
     val mainAsmPtr: Int = 0,     // Main ASM routine pointer
     val plmSetPtr: Int = 0,      // PLM (Post Load Modification) set pointer
     val bgDataPtr: Int = 0,      // Background tilemap pointer
@@ -51,6 +52,7 @@ data class Room(
             4 -> "Maridia"
             5 -> "Tourian"
             6 -> "Ceres"
+            7 -> "Debug/Unused"
             else -> "Unknown"
         }
     

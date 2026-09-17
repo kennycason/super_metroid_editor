@@ -157,7 +157,7 @@ class RoomExportTest {
         assertTrue(result.manualSkippedRooms >= 1, "bulk generation should report manual-edited skips")
         val roomEdits = es.project.rooms[es.project.roomKey(roomId)]
         assertTrue(roomEdits != null, "manual-edited room should remain in project")
-        val ops = roomEdits!!.operations
+        val ops = roomEdits!!.operations + roomEdits.states.flatMap { it.operations }
         assertEquals(1, ops.size, "manual-edited room should not receive a generated biome operation")
         assertEquals("Manual test edit", ops.single().description)
         assertFalse(

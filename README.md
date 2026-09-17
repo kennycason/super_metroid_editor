@@ -146,6 +146,11 @@ The native SPC library (`libspc`) is compiled automatically by Gradle from the `
 
 The `cli` module provides headless ROM data export and patch building without a GUI dependency. See [CLI.md](CLI.md) for command usage, build JSON examples, IPS-only generation, and the shared headless API.
 
+An experimental masked categorical room generator can learn complete layer-1 tile words, block
+types, slopes/BTS metadata, and structural door tiles from the lossless CLI training export. The
+desktop editor can validate, repair, rank, preview, and apply its candidate bundles. See
+[room_model/README.md](room_model/README.md) for the workflow.
+
 ## Editing Approach
 
 SMEDIT uses **binary ROM patching with smart data relocation** - Similar to SMILE, but edits are stored as non-destructive deltas in a project file (`.smedit` JSON) against an immutable ROM, and applied at export time.

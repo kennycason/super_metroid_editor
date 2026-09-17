@@ -76,6 +76,22 @@ class RomCompatibilityTest {
     }
 
     @Test
+    fun `expanded room discovery rejects addresses inside selector code and unrelated data`() {
+        for (notASelector in listOf(0xE683, 0xE6A1, 0xE6BA)) {
+            val rom = syntheticRom(0x400000)
+            writeCandidateRoomHeaderWithConditionalState(rom)
+            write16(rom, 0x78094 + 11, notASelector)
+
+            val parser = RomParser(rom)
+
+            assertTrue(
+                parser.roomCatalog.rooms.none { it.getRoomIdAsInt() == 0x8094 },
+                "\$${notASelector.toString(16).uppercase()} is not a room-state selector entry point",
+            )
+        }
+    }
+
+    @Test
     fun `tile graphics loads from relocated bank 8F tileset table`() {
         val rom = syntheticRom(0x400000)
         writeCandidateRoomHeaderWithExpandedLevelData(rom)

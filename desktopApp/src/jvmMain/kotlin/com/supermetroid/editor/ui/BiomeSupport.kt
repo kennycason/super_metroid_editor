@@ -6,13 +6,10 @@ import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomInfo
-import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.procgen.BiomeGenerationRect
 import com.supermetroid.editor.procgen.BiomeRoomEligibility
 import com.supermetroid.editor.procgen.BiomeTheme
-import com.supermetroid.editor.procgen.LevelGrid
-import com.supermetroid.editor.procgen.WfcSample
 import com.supermetroid.editor.rom.RomParser
 
 internal const val GENERATED_BIOME_PREFIX = "Generated biome:"
@@ -30,8 +27,27 @@ internal fun isGeneratedBiomeOperation(op: EditOperation): Boolean =
 
 internal fun stripGeneratedBiomeEdits(roomEdits: RoomEdits?): Boolean {
     if (roomEdits == null) return false
+    var stripped = false
+    for (state in roomEdits.states) {
+        val generatedStateOps = state.operations.filter { isGeneratedBiomeOperation(it) }
+        if (generatedStateOps.isEmpty()) continue
+        state.operations.removeAll(generatedStateOps.toSet())
+        for (op in generatedStateOps) {
+            if (op.stateDataBefore != op.stateDataAfter && state.stateDataChange == op.stateDataAfter) {
+                state.stateDataChange = op.stateDataBefore
+            }
+            if (op.fxBefore != op.fxAfter && state.fxChange == op.fxAfter) state.fxChange = op.fxBefore
+            state.scrollChanges.removeAll { change ->
+                op.scrollEdits.any {
+                    it.screenX == change.screenX && it.screenY == change.screenY && it.newValue == change.newValue
+                }
+            }
+            state.plmChanges.removeAll { change -> change in op.plmRemoves }
+        }
+        stripped = true
+    }
     val generatedOps = roomEdits.operations.filter { isGeneratedBiomeOperation(it) }
-    if (generatedOps.isEmpty()) return false
+    if (generatedOps.isEmpty()) return stripped
     roomEdits.operations.removeAll(generatedOps.toSet())
     for (op in generatedOps) {
         if (op.stateDataBefore != op.stateDataAfter && roomEdits.stateDataChange == op.stateDataAfter) {
@@ -57,6 +73,16 @@ internal fun stripGeneratedBiomeEdits(roomEdits: RoomEdits?): Boolean {
 
 internal fun hasManualBiomeBlockingEdits(roomEdits: RoomEdits?): Boolean {
     if (roomEdits == null) return false
+    if (roomEdits.states.any { state ->
+            state.operations.any { !isGeneratedBiomeOperation(it) } ||
+                state.enemyChanges.isNotEmpty() || state.customScrollCommands.isNotEmpty() ||
+                state.conditionChanged || state.resourcesChanged ||
+                state.operations.isEmpty() && (
+                    state.plmChanges.isNotEmpty() || state.scrollChanges.isNotEmpty() ||
+                        state.stateDataChange != null || state.fxChange != null
+                    )
+        }
+    ) return true
     val generatedOps = roomEdits.operations.filter { isGeneratedBiomeOperation(it) }
     if (roomEdits.operations.any { !isGeneratedBiomeOperation(it) }) return true
     if (roomEdits.doorChanges.isNotEmpty() ||
@@ -217,36 +243,3 @@ internal fun buildDoorCapPreserveRectsForRoom(
     }
     return rects
 }
-
-internal fun buildWfcSamples(romParser: RomParser, sourceRoomId: Int, sourceTilesetId: Int): List<WfcSample> {
-    val current = romParser.readRoomHeader(sourceRoomId)
-    val headers = RoomRepository().getAllRooms()
-        .mapNotNull { info -> runCatching { romParser.readRoomHeader(info.getRoomIdAsInt()) }.getOrNull() }
-        .filter { it.levelDataPtr != 0 && it.width > 0 && it.height > 0 }
-    fun sampleRank(room: Room): Int = when {
-        room.roomId == sourceRoomId -> 0
-        current != null && room.area == current.area && room.tileset == current.tileset -> 1
-        room.tileset == sourceTilesetId -> 2
-        current != null && room.area == current.area -> 3
-        else -> 4
-    }
-    return headers
-        .distinctBy { it.roomId }
-        .sortedWith(compareBy<Room> { sampleRank(it) }.thenBy { it.roomId })
-        .mapNotNull { buildWfcSample(romParser, it, sampleRank(it)) }
-}
-
-internal fun buildWfcSample(romParser: RomParser, room: Room, sampleRank: Int): WfcSample? =
-    runCatching {
-        val w = room.width * 16
-        val h = room.height * 16
-        val grid = LevelGrid.parse(romParser.decompressLZ2(room.levelDataPtr), w, h) ?: return null
-        val words = IntArray(w * h)
-        val bts = IntArray(w * h)
-        for (y in 0 until h) for (x in 0 until w) {
-            val i = y * w + x
-            words[i] = grid.word(x, y)
-            bts[i] = grid.bts(x, y)
-        }
-        WfcSample(w, h, words, bts, sampleRank)
-    }.getOrNull()

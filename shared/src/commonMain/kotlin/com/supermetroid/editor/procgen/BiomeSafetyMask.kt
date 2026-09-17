@@ -9,8 +9,10 @@ object BiomeSafetyMask {
         originalWords: IntArray,
         originalBts: IntArray,
         plms: List<RomParser.PlmEntry> = emptyList(),
+        enemies: List<RomParser.EnemyEntry> = emptyList(),
         metadataHaloBlocks: Int = DEFAULT_METADATA_HALO_BLOCKS,
         plmHaloBlocks: Int = DEFAULT_PLM_HALO_BLOCKS,
+        enemyHaloBlocks: Int = DEFAULT_ENEMY_HALO_BLOCKS,
     ): BooleanArray {
         require(width >= 0 && height >= 0) { "room dimensions must be non-negative" }
         val total = width * height
@@ -37,6 +39,20 @@ object BiomeSafetyMask {
         for (plm in plms) {
             protectRect(mask, width, height, plm.x - halo, plm.y - halo, plm.x + halo, plm.y + halo)
         }
+        val enemyHalo = enemyHaloBlocks.coerceAtLeast(0)
+        for (enemy in enemies) {
+            val blockX = enemy.x / BLOCK_PIXELS
+            val blockY = enemy.y / BLOCK_PIXELS
+            protectRect(
+                mask,
+                width,
+                height,
+                blockX - enemyHalo,
+                blockY - enemyHalo,
+                blockX + enemyHalo,
+                blockY + enemyHalo,
+            )
+        }
         return mask
     }
 
@@ -60,4 +76,6 @@ object BiomeSafetyMask {
     private const val ELEVATOR_TRIGGER_TYPE = 0x9
     private const val DEFAULT_METADATA_HALO_BLOCKS = 1
     private const val DEFAULT_PLM_HALO_BLOCKS = 2
+    private const val DEFAULT_ENEMY_HALO_BLOCKS = 2
+    private const val BLOCK_PIXELS = 16
 }

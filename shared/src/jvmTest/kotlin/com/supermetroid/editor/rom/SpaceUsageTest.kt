@@ -1,10 +1,24 @@
 package com.supermetroid.editor.rom
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SpaceUsageTest {
+    @Test
+    fun `Landing Site space usage follows the selected state`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val states = rp.inspectRoomStates(0x91F8).states
+
+        val escape = rp.readRoomSpaceUsage(0x91F8, states.first().stateDataPcOffset) ?: return
+        val default = rp.readRoomSpaceUsage(0x91F8, states.last().stateDataPcOffset) ?: return
+
+        assertEquals(8, escape.plmCount)
+        assertEquals(6, default.plmCount)
+        assertEquals(25, escape.enemyCount)
+        assertEquals(3, default.enemyCount)
+    }
 
     @Test
     fun `Landing Site space usage has valid sizes`() {

@@ -8,6 +8,22 @@ import kotlin.math.roundToInt
 
 class SmeditPatchRandomizerTest {
     @Test
+    fun `headless boss flags match the per-area room state bits`() {
+        assertEquals(
+            listOf(
+                Triple("kraid", 0xD829, 0x01),
+                Triple("phantoon", 0xD82B, 0x01),
+                Triple("ridley", 0xD82A, 0x01),
+                Triple("draygon", 0xD82C, 0x01),
+                Triple("spore", 0xD829, 0x02),
+                Triple("croc", 0xD82A, 0x02),
+                Triple("botwoon", 0xD82C, 0x02),
+            ),
+            HEADLESS_BOSS_FLAGS.map { Triple(it.key, it.wramAddr, it.bit) },
+        )
+    }
+
+    @Test
     fun `randomization is deterministic for a supplied seed`() {
         val randomization = SmeditRandomizationRequest(
             seed = 1234L,

@@ -253,11 +253,11 @@ internal val HEADLESS_SNES_BUTTONS = listOf(
 internal val HEADLESS_BOSS_FLAGS = listOf(
     HeadlessBossFlagDef("kraid", "Kraid", 0xD829, 0x01),
     HeadlessBossFlagDef("phantoon", "Phantoon", 0xD82B, 0x01),
-    HeadlessBossFlagDef("ridley", "Ridley", 0xD82A, 0x02),
-    HeadlessBossFlagDef("draygon", "Draygon", 0xD82C, 0x02),
+    HeadlessBossFlagDef("ridley", "Ridley", 0xD82A, 0x01),
+    HeadlessBossFlagDef("draygon", "Draygon", 0xD82C, 0x01),
     HeadlessBossFlagDef("spore", "Spore Spawn", 0xD829, 0x02),
-    HeadlessBossFlagDef("croc", "Crocomire", 0xD82A, 0x04),
-    HeadlessBossFlagDef("botwoon", "Botwoon", 0xD82C, 0x01),
+    HeadlessBossFlagDef("croc", "Crocomire", 0xD82A, 0x02),
+    HeadlessBossFlagDef("botwoon", "Botwoon", 0xD82C, 0x02),
 )
 
 internal val MAIN_BOSS_FLAG_KEYS = setOf("kraid", "phantoon", "ridley", "draygon")

@@ -845,7 +845,8 @@ fun MapCanvas(
                             val roomHeader = remember(room, editVersion) {
                                 room?.let { r ->
                                     val rh = romParser.readRoomHeader(r.getRoomIdAsInt()) ?: return@let null
-                                    editorState?.applyHeaderChanges(rh) ?: rh
+                                    val headerWithEdits = editorState?.applyHeaderChanges(rh) ?: rh
+                                    editorState?.applyCurrentStateData(headerWithEdits, romParser) ?: headerWithEdits
                                 }
                             }
                             val scrollVer = editorState?.scrollVersion ?: 0

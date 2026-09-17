@@ -54,8 +54,6 @@ data class BiomeRules(
             StructureAlgorithm.MAZE ->
                 "Terrain: one-tile pipe maze, ${(mazeLoopDensity * 100).toInt()}% loop bias" +
                     if (mazeEmptyCenter) ", empty center" else ""
-            StructureAlgorithm.WFC ->
-                "Terrain: door-seeded all-room pattern remix"
             else -> {
                 val density = when {
                     fillChance < 0.42 -> "airy"
@@ -127,7 +125,7 @@ data class BiomeRules(
             val rng = Random(seed * 31 + style.ordinal)
             val actualStyle = if (style == BiomeStyle.SURPRISE) {
                 BiomeStyle.values().toList()
-                    .filter { it != BiomeStyle.SURPRISE && it != BiomeStyle.WAVE_FUNCTION }
+                    .filter { it != BiomeStyle.SURPRISE }
                     .random(rng)
             } else style
             val wild = style == BiomeStyle.SURPRISE
@@ -157,7 +155,6 @@ data class BiomeRules(
                     StructureAlgorithm.SETTLEMENT,
                     StructureAlgorithm.REMIX,
                 ).random(rng)
-                BiomeStyle.WAVE_FUNCTION -> StructureAlgorithm.WFC
             }
 
             val fill = when (actualStyle) {
@@ -170,7 +167,6 @@ data class BiomeRules(
                 BiomeStyle.FACILITY, BiomeStyle.SETTLEMENT -> rng.env(0.42, 0.50)
                 BiomeStyle.REMIX -> rng.env(0.44, 0.52)
                 BiomeStyle.SURPRISE -> rng.env(0.35, 0.55)
-                BiomeStyle.WAVE_FUNCTION -> rng.env(0.44, 0.52)
             }
 
             val mutatorPool = BiomeMutator.values().toMutableList()
@@ -200,7 +196,7 @@ data class BiomeRules(
                 platformDensity = when (actualStyle) {
                     BiomeStyle.GARDEN -> rng.env(0.5, 0.9)
                     BiomeStyle.SHAFT -> rng.env(0.4, 0.7)
-                    BiomeStyle.PIPE_MAZE, BiomeStyle.WAVE_FUNCTION -> 0.0
+                    BiomeStyle.PIPE_MAZE -> 0.0
                     // Rooftop walkways over the street.
                     BiomeStyle.SETTLEMENT -> rng.env(0.35, 0.65)
                     BiomeStyle.FACILITY -> rng.env(0.15, 0.4)
@@ -209,7 +205,6 @@ data class BiomeRules(
                 },
                 hazardDensity =
                     if (actualStyle != BiomeStyle.PIPE_MAZE &&
-                        actualStyle != BiomeStyle.WAVE_FUNCTION &&
                         BiomeMutator.SPIKE_POCKETS in mutators
                     ) {
                         rng.env(0.2, 0.7)
@@ -217,7 +212,7 @@ data class BiomeRules(
                         0.0
                     },
                 destructibleDensity =
-                    if (actualStyle == BiomeStyle.PIPE_MAZE || actualStyle == BiomeStyle.WAVE_FUNCTION) {
+                    if (actualStyle == BiomeStyle.PIPE_MAZE) {
                         0.0
                     } else {
                         rng.env(0.15, 0.5)
@@ -225,15 +220,14 @@ data class BiomeRules(
                 // Constructed biomes repeat the same plating for a machined look.
                 textureCohesion =
                     if (actualStyle.isConstructed ||
-                        actualStyle == BiomeStyle.PIPE_MAZE ||
-                        actualStyle == BiomeStyle.WAVE_FUNCTION
+                        actualStyle == BiomeStyle.PIPE_MAZE
                     ) {
                         rng.range(0.86, 0.97)
                     } else {
                         rng.range(0.74, 0.94)
                     },
                 mutators =
-                    if (actualStyle == BiomeStyle.PIPE_MAZE || actualStyle == BiomeStyle.WAVE_FUNCTION) {
+                    if (actualStyle == BiomeStyle.PIPE_MAZE) {
                         emptySet()
                     } else {
                         mutators

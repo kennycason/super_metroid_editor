@@ -33,6 +33,10 @@ class RomDataFormatTest {
                 assertTrue(stateData.containsKey("plmSetPtr"), "State data should have plmSetPtr field")
                 assertTrue(stateData.containsKey("levelDataPtr"), "State data should have levelDataPtr field")
                 assertTrue(stateData.containsKey("enemySetPtr"), "State data should have enemySetPtr field")
+                assertTrue(
+                    stateData.containsKey("xraySpecialCasingPtr"),
+                    "State data should preserve the special X-Ray block pointer",
+                )
 
                 val romData = parser.getRomData()
                 val plmPtrDirect = readU16(romData, offset + 20)
@@ -42,7 +46,19 @@ class RomDataFormatTest {
                 val enemyPtrDirect = readU16(romData, offset + 8)
                 assertEquals(stateData["enemySetPtr"], enemyPtrDirect,
                     "Enemy pop pointer from readStateData must match raw bytes at offset+8")
+
+                val xrayPtrDirect = readU16(romData, offset + 16)
+                assertEquals(stateData["xraySpecialCasingPtr"], xrayPtrDirect,
+                    "Special X-Ray pointer must match raw bytes at offset+16")
             }
+        }
+
+        @Test
+        fun `Bomb Torizo escape state preserves its special X-Ray block table`() {
+            val parser = loadTestRom() ?: return
+            val escapeState = parser.findAllStateDataOffsets(0x9804).first()
+
+            assertEquals(0x986B, parser.readStateData(escapeState)["xraySpecialCasingPtr"])
         }
 
         @Test

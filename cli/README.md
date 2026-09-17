@@ -53,6 +53,21 @@ Export everything to a directory: `rooms.json`, `nav_graph.json`, and per-room J
 ./gradlew :cli:runCli -Pargs="--rom '/path/to/rom/Super Metroid/Super Metroid (JU) [\!].smc' export -o /tmp/sm_export"
 ```
 
+### training-data
+
+Export a versioned, lossless room-layout dataset for the learned room generator. Unlike the general
+`export` command, this retains every complete 16-bit layer-1 word, raw and resolved block types, and
+every BTS byte (including slope shapes and other type-specific metadata). Arrays are flattened in
+row-major order. Type-9 door tile clusters are identified, while door PLMs, covers, destinations,
+and room-state behavior remain outside the model boundary:
+
+```bash
+./gradlew :cli:runCli -Pargs="--rom '/path/to/rom/Super Metroid/Super Metroid (JU) [\!].smc' training-data -o /tmp/sm_room_training"
+```
+
+The output contains `manifest.json` and one JSON file per room under `rooms/`. Content hashes in the
+manifest allow training code to keep duplicate room data in the same train/validation split.
+
 ### render-rooms
 
 Render every room map to PNG and bundle into a ZIP file. Each PNG is named by room ID (e.g. `91f8.png`). The ZIP also includes a `rooms.json` metadata file:

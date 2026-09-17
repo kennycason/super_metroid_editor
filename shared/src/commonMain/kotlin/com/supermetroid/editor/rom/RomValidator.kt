@@ -40,6 +40,16 @@ object RomValidator {
                 }
             }
         }
+        for (state in edits.states) {
+            for (change in state.plmChanges) {
+                when (change.action) {
+                    "add" -> effectivePlms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                    "remove" -> effectivePlms.removeAll {
+                        it.id == change.plmId && it.x == change.x && it.y == change.y && it.param == change.param
+                    }
+                }
+            }
+        }
         val effectiveSaveIndices = effectivePlms.filter { it.id == 0xB76F }
             .map { it.param and 0xFF }
             .toSet()
@@ -87,6 +97,7 @@ object RomValidator {
         if (project != null) {
             issues.addAll(checkProjectOwnerIdentities(project))
             issues.addAll(checkProjectRoomHeaders(parser, project, rooms))
+            issues.addAll(checkProjectRoomStates(parser, project, rooms))
             issues.addAll(checkProjectMinimapEdits(project))
             issues.addAll(checkProjectSaveStationSpawns(parser, project, rooms))
             issues.addAll(checkProjectGraphicsExportFit(parser, project))
@@ -171,7 +182,8 @@ object RomValidator {
             if (area !in 0 until MinimapData.NUM_AREAS) {
                 issues.add(Issue(
                     Severity.ERROR, "Room Header", roomId, room.name,
-                    "Room area $area is invalid; 0 is Crateria and valid room areas are 0-6. There is no unassigned area value."
+                    "Room area $area is not writable by the editor; writable pause-map areas are 0-6. " +
+                        "Area 7 is the engine's debug/unused slot and has no normal pause map."
                 ))
             }
             if (mapX !in 0..(MinimapData.MAP_WIDTH - width).coerceAtLeast(0) ||
@@ -189,7 +201,10 @@ object RomValidator {
                     }
                 }
                 val stationPlm = parser.getAllPlmEntriesForRoom(roomId).any { it.id == 0xB76F } ||
-                    edits.plmChanges.any { it.plmId == 0xB76F && it.action == "add" }
+                    edits.plmChanges.any { it.plmId == 0xB76F && it.action == "add" } ||
+                    edits.states.any { state ->
+                        state.plmChanges.any { it.plmId == 0xB76F && it.action == "add" }
+                    }
                 val hasAreaSaveDependency = areaSaveReference || stationPlm || edits.saveStationSpawns.isNotEmpty()
                 if (hasAreaSaveDependency &&
                     !hasCompleteAreaSaveMigration(parser, project, roomId, room.area, area)
@@ -198,6 +213,86 @@ object RomValidator {
                         Severity.ERROR, "AreaSave", roomId, room.name,
                         "Room was reassigned from area ${room.area} to $area but is tied to AreaSave. Migrate and validate its save slot before export."
                     ))
+                }
+            }
+        }
+        return issues
+    }
+
+    fun checkProjectRoomStates(
+        parser: RomParser,
+        project: SmEditProject,
+        rooms: Map<Int, Room>,
+    ): List<Issue> {
+        val issues = mutableListOf<Issue>()
+        for ((roomKey, edits) in project.rooms) {
+            if (edits.states.isEmpty()) continue
+            val roomId = roomKey.toIntOrNull(16) ?: continue
+            val room = rooms[roomId] ?: parser.readRoomHeader(roomId) ?: continue
+            fun error(message: String) {
+                issues += Issue(Severity.ERROR, "Room States", roomId, room.name, message)
+            }
+            val duplicateIds = edits.states.groupingBy { it.id }.eachCount().filterValues { it > 1 }.keys
+            if (duplicateIds.isNotEmpty()) error("Duplicate state IDs: ${duplicateIds.sorted().joinToString()}")
+            val duplicateSources = edits.states.mapNotNull { it.sourceStateIndex }
+                .groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+            if (duplicateSources.isNotEmpty()) {
+                error("Multiple project states refer to source state(s) ${duplicateSources.sorted().joinToString()}")
+            }
+            val defaults = edits.states.withIndex().filter {
+                it.value.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+            }
+            if (defaults.size != 1 || defaults.singleOrNull()?.index != edits.states.lastIndex) {
+                error("The ordered state graph must contain exactly one default state, last")
+            }
+            val inspected = parser.inspectRoomStates(roomId).states
+            for (state in edits.states) {
+                val sourceIndex = state.sourceStateIndex
+                if (sourceIndex == null) {
+                    error("State '${state.id}' is new, but new-state allocation is not active yet")
+                    continue
+                }
+                val source = inspected.getOrNull(sourceIndex)
+                if (source == null) {
+                    error("State '${state.id}' refers to missing source state $sourceIndex")
+                    continue
+                }
+                val sourceCondition = state.sourceCondition ?: state.condition.takeUnless { state.conditionChanged }
+                if (sourceCondition == null || source.condition.code != sourceCondition.routineCode ||
+                    source.condition.argument != sourceCondition.argument
+                ) {
+                    error("State '${state.id}' no longer matches source state $sourceIndex")
+                }
+                if (state.conditionChanged && source.condition.entrySizeBytes != state.condition.encodedSizeBytes()) {
+                    error("State '${state.id}' condition changes encoded size and requires graph relocation")
+                }
+                val links = state.resources
+                if (listOf(
+                        links.level, links.effects, links.enemies, links.enemyGraphics,
+                        links.scrolling, links.placedObjects, links.background, links.specialXray,
+                    ).any { it.isBlank() }
+                ) {
+                    error("State '${state.id}' contains an empty resource identity")
+                }
+                if (state.doorFxChanges.isNotEmpty()) {
+                    val fxDoors = source.stateDataPcOffset?.let(parser::readStateData)
+                        ?.get("fxPtr")
+                        ?.let(parser::parseFxEntries)
+                        .orEmpty()
+                        .map { it.doorSelect }
+                        .toSet()
+                    for (doorKey in state.doorFxChanges.keys) {
+                        val doorSelect = doorKey.toIntOrNull(16)
+                        when {
+                            doorSelect == null || doorSelect !in 1..0xFFFF ->
+                                error("State '${state.id}' has invalid door FX key '$doorKey'")
+                            doorSelect !in fxDoors ->
+                                error(
+                                    "State '${state.id}' has no FX entry for door " +
+                                        "0x${doorSelect.toString(16).uppercase().padStart(4, '0')}"
+                                )
+                        }
+                    }
                 }
             }
         }
@@ -836,8 +931,11 @@ object RomValidator {
             val edits = project.rooms[project.roomKey(roomId)]
             val effectiveArea = edits?.roomHeaderChange?.area ?: room.area
             val overrideTileset = edits?.stateDataChange?.tileset
+            val stateOverrideTilesets = edits?.states.orEmpty().mapNotNull { it.stateDataChange?.tileset }
             val stateOffsets = parser.findAllStateDataOffsets(roomId)
-            val usesTileset = if (overrideTileset != null) {
+            val usesTileset = if (tilesetId in stateOverrideTilesets) {
+                true
+            } else if (overrideTileset != null) {
                 overrideTileset == tilesetId
             } else {
                 stateOffsets.any { offset ->
