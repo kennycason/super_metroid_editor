@@ -238,6 +238,15 @@ E5EB/E640/E678 are callable vanilla entry points even though vanilla room data d
 them. E60F enters the common `INX; INX; RTS` path and is used by SMART projects as an
 always-false condition.
 
+**SMEDIT graph relocation**: the selector loop enters every predicate with X immediately after
+the routine word and resumes through an RTS return address it placed on the stack. SMEDIT uses that
+verified ABI to preserve an existing room-header address when the selector list grows. The inline
+list starts with a pointer to `LDA $0000,X; TAX; RTS`, followed by the relocated graph pointer. The
+routine returns to the unmodified loop with X at the relocated vanilla-format graph. Its unreachable
+`SMEDITSG` + version signature makes parser detection explicit. Only the selector graph and copied
+26-byte state records move; DoorDef destinations, AreaSave/load-station room IDs, and hardcoded room
+comparisons remain valid. See `docs/rom/data_format.md` for the exact bridge bytes.
+
 Source: `~/code/sm/src/sm_8f.c:683` (`CallRoomDefStateSelect`),
 `~/code/sm/assets/restool.py:933` (`kRoomStateSelects`),
 `~/code/sm/assets/names.txt:7300` (function addresses).

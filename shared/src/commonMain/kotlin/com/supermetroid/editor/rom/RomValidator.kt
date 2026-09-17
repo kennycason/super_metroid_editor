@@ -232,6 +232,12 @@ object RomValidator {
             fun error(message: String) {
                 issues += Issue(Severity.ERROR, "Room States", roomId, room.name, message)
             }
+            fun warning(message: String) {
+                issues += Issue(Severity.WARNING, "Room States", roomId, room.name, message)
+            }
+            if (edits.states.size > 64) {
+                error("The ordered state graph has ${edits.states.size} states; the supported maximum is 64")
+            }
             val duplicateIds = edits.states.groupingBy { it.id }.eachCount().filterValues { it > 1 }.keys
             if (duplicateIds.isNotEmpty()) error("Duplicate state IDs: ${duplicateIds.sorted().joinToString()}")
             val duplicateSources = edits.states.mapNotNull { it.sourceStateIndex }
@@ -245,25 +251,69 @@ object RomValidator {
             if (defaults.size != 1 || defaults.singleOrNull()?.index != edits.states.lastIndex) {
                 error("The ordered state graph must contain exactly one default state, last")
             }
+            val duplicatePredicates = edits.states
+                .filter {
+                    it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT &&
+                        it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.NEVER
+                }
+                .groupingBy { it.condition.kind to it.condition.argument }
+                .eachCount()
+                .filterValues { it > 1 }
+                .keys
+            for ((kind, argument) in duplicatePredicates) {
+                warning(
+                    "Condition $kind${argument?.let { "($it)" }.orEmpty()} appears more than once; " +
+                        "only its first branch can be selected"
+                )
+            }
             val inspected = parser.inspectRoomStates(roomId).states
             for (state in edits.states) {
-                val sourceIndex = state.sourceStateIndex
+                val canonical = projectRoomStateCondition(state.condition.kind, state.condition.argument)
+                if (state.condition.routineCode != canonical.routineCode ||
+                    state.condition.argumentKind != canonical.argumentKind
+                ) {
+                    error("State '${state.id}' has an inconsistent typed selector")
+                }
+                when (state.condition.argumentKind) {
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                        val argument = state.condition.argument
+                        if (argument == null || argument !in 0..0xFF) {
+                            error("State '${state.id}' selector argument must fit in one byte")
+                        }
+                    }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                        val argument = state.condition.argument
+                        if (argument == null || argument !in 0x8000..0xFFFF) {
+                            error("State '${state.id}' incoming-door argument must be a bank \$83 pointer")
+                        }
+                    }
+                }
+                val sourceIndex = state.baseSourceStateIndex()
                 if (sourceIndex == null) {
-                    error("State '${state.id}' is new, but new-state allocation is not active yet")
+                    error("State '${state.id}' has no source/template state")
                     continue
+                }
+                if (state.sourceStateIndex == null && !edits.stateGraphChanged) {
+                    error("State '${state.id}' is new, but its state graph is not marked for rebuilding")
                 }
                 val source = inspected.getOrNull(sourceIndex)
                 if (source == null) {
-                    error("State '${state.id}' refers to missing source state $sourceIndex")
+                    error("State '${state.id}' refers to missing source/template state $sourceIndex")
                     continue
                 }
-                val sourceCondition = state.sourceCondition ?: state.condition.takeUnless { state.conditionChanged }
-                if (sourceCondition == null || source.condition.code != sourceCondition.routineCode ||
-                    source.condition.argument != sourceCondition.argument
-                ) {
-                    error("State '${state.id}' no longer matches source state $sourceIndex")
+                if (state.sourceStateIndex != null) {
+                    val sourceCondition = state.sourceCondition ?: state.condition.takeUnless { state.conditionChanged }
+                    if (sourceCondition == null || source.condition.code != sourceCondition.routineCode ||
+                        source.condition.argument != sourceCondition.argument
+                    ) {
+                        error("State '${state.id}' no longer matches source state $sourceIndex")
+                    }
                 }
-                if (state.conditionChanged && source.condition.entrySizeBytes != state.condition.encodedSizeBytes()) {
+                if (!edits.stateGraphChanged && state.conditionChanged &&
+                    source.condition.entrySizeBytes != state.condition.encodedSizeBytes()
+                ) {
                     error("State '${state.id}' condition changes encoded size and requires graph relocation")
                 }
                 val links = state.resources

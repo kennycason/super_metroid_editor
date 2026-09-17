@@ -585,12 +585,39 @@ class RomParser(internal val romData: ByteArray) {
         var pos = stateListOffset
         val bankEndExclusive = minOf(snesToPc(BANK_ROOM_DATA or 0xFFFF) + 1, romData.size)
 
-        repeat(64) { stateIndex ->
+        var stateIndex = 0
+        var followedSmEditRedirect = false
+        while (stateIndex < 64) {
             if (pos + 1 >= bankEndExclusive) {
                 issues.add(RoomStateParseIssue(pos, "State selector list ended before a default state"))
                 return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
             }
             val code = readUInt16At(pos)
+            if (stateIndex == 0 && !followedSmEditRedirect && isSmEditStateGraphRedirectRoutine(code)) {
+                if (pos + 4 > bankEndExclusive) {
+                    issues.add(RoomStateParseIssue(pos, "SMEDIT state-graph redirect is truncated"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val graphPtr = readUInt16At(pos + 2)
+                if (graphPtr !in 0x8000..0xFFFF) {
+                    issues.add(
+                        RoomStateParseIssue(
+                            pos + 2,
+                            "SMEDIT state-graph pointer \$${graphPtr.toString(16).uppercase().padStart(4, '0')} " +
+                                "is outside bank \$8F",
+                        )
+                    )
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val graphPc = snesToPc(BANK_ROOM_DATA or graphPtr)
+                if (graphPc !in 0 until bankEndExclusive || graphPc == pos) {
+                    issues.add(RoomStateParseIssue(pos + 2, "SMEDIT state-graph redirect target is invalid"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                pos = graphPc
+                followedSmEditRedirect = true
+                continue
+            }
             val condition: RoomStateCondition
             val statePtrOffset: Int
             when (code) {
@@ -703,9 +730,18 @@ class RomParser(internal val romData: ByteArray) {
                 )
             )
             pos += condition.entrySizeBytes
+            stateIndex++
         }
         issues.add(RoomStateParseIssue(pos, "State selector list exceeds the 64-entry safety limit"))
         return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+    }
+
+    private fun isSmEditStateGraphRedirectRoutine(routinePtr: Int): Boolean {
+        if (routinePtr !in 0x8000..0xFFFF) return false
+        val routinePc = runCatching { snesToPc(BANK_ROOM_DATA or routinePtr) }.getOrNull() ?: return false
+        val signature = SmEditRoomStateGraphFormat.redirectRoutineBytes
+        if (routinePc < 0 || routinePc + signature.size > romData.size) return false
+        return signature.indices.all { romData[routinePc + it] == signature[it] }
     }
 
     /** Parse all valid room states with the compatibility shape used by existing callers. */

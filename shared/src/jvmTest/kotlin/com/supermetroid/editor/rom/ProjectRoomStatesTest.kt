@@ -6,6 +6,7 @@ import com.supermetroid.editor.data.EnemyChange
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomRepository
+import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmEditProjectFormat
 import com.supermetroid.editor.data.StateDataChange
@@ -42,10 +43,21 @@ class ProjectRoomStatesTest {
         val parser = TestRomHelper.loadRomParser() ?: return
         val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
         val project = SmEditProject("base.smc")
-        val state = project.getOrCreateRoom(0xCD13).ensureStateManifest(parser).first()
+        val roomEdits = project.getOrCreateRoom(0xCD13)
+        val state = roomEdits.ensureStateManifest(parser).first()
         state.stateDataChange = StateDataChange(tileset = 7, musicData = 3, musicTrack = 5)
         state.fxChange = FxChange(fxType = 0x0C, tileAnimBitflags = 4)
         state.doorFxChanges["A18C"] = FxChange(fxType = 0x0A, paletteBlend = 3)
+        val added = state.copy(
+            id = "state-added",
+            sourceStateIndex = null,
+            templateSourceStateIndex = state.sourceStateIndex,
+            sourceCondition = null,
+            condition = projectRoomStateCondition(ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED),
+            conditionChanged = true,
+        )
+        roomEdits.states.add(1, added)
+        roomEdits.stateGraphChanged = true
 
         val decoded = SmEditProjectFormat.decode(
             json,
@@ -60,6 +72,8 @@ class ProjectRoomStatesTest {
         assertEquals(0x0C, actual.fxChange?.fxType)
         assertEquals(0x0A, actual.doorFxChanges["A18C"]?.fxType)
         assertEquals(3, actual.doorFxChanges["A18C"]?.paletteBlend)
+        assertTrue(decoded.rooms.getValue("CD13").stateGraphChanged)
+        assertEquals(state.sourceStateIndex, decoded.rooms.getValue("CD13").states[1].templateSourceStateIndex)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, decoded.projectFormatVersion)
     }
 
@@ -91,6 +105,142 @@ class ProjectRoomStatesTest {
         val after = RomParser(rom).parseRoomStatesWithData(roomId)
         assertEquals(replacement, after[0].tileset)
         assertEquals(before[1].tileset, after[1].tileset)
+    }
+
+    @Test
+    fun `adding a state rebuilds the graph without relocating the room header`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x91F8
+        val allRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+        val baselineErrors = RomValidator.validate(parser, allRoomIds)
+            .filter { it.severity == RomValidator.Severity.ERROR }
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        roomEdits.ensureStateManifest(parser)
+        val states = roomEdits.states
+        val template = states.last()
+        val templateData = parser.readStateData(
+            parser.inspectRoomStates(roomId).states[template.sourceStateIndex!!].stateDataPcOffset!!
+        )
+        val added = RoomStateEdits(
+            id = "state-added",
+            templateSourceStateIndex = template.sourceStateIndex,
+            condition = projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, 0xA18C),
+            resources = template.resources.copy(),
+            conditionChanged = true,
+            stateDataChange = StateDataChange(tileset = 7),
+        )
+        states.add(states.lastIndex, added)
+        roomEdits.stateGraphChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val inspection = exported.inspectRoomStates(roomId)
+        assertTrue(inspection.isComplete)
+        assertEquals(5, inspection.states.size)
+        assertEquals(RoomStateConditionKind.INCOMING_DOOR, inspection.states[3].condition.kind)
+        assertEquals(0xA18C, inspection.states[3].condition.argument)
+        val addedData = exported.readStateData(inspection.states[3].stateDataPcOffset!!)
+        assertEquals(7, addedData.getValue("tileset"))
+        assertEquals(templateData.getValue("levelDataPtr"), addedData.getValue("levelDataPtr"))
+        assertEquals(templateData.getValue("plmSetPtr"), addedData.getValue("plmSetPtr"))
+        assertEquals(roomId, exported.readRoomHeader(roomId)?.roomId)
+
+        val headerPc = exported.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
+        val redirectPtr = exported.readUInt16At(headerPc + 11)
+        val redirectPc = exported.snesToPc(RomConstants.BANK_ROOM_DATA or redirectPtr)
+        assertContentEquals(
+            SmEditRoomStateGraphFormat.redirectRoutineBytes,
+            rom.copyOfRange(redirectPc, redirectPc + SmEditRoomStateGraphFormat.redirectRoutineBytes.size),
+        )
+        val exportedErrors = RomValidator.validate(exported, allRoomIds)
+            .filter { it.severity == RomValidator.Severity.ERROR }
+        assertEquals(baselineErrors, exportedErrors)
+    }
+
+    @Test
+    fun `reordering and deleting states preserves first-match order and the final default`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x91F8
+        val before = parser.inspectRoomStates(roomId)
+        assertEquals(4, before.states.size)
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        roomEdits.ensureStateManifest(parser)
+        val states = roomEdits.states
+        val removed = states.removeAt(1)
+        val moved = states.removeAt(1)
+        states.add(0, moved)
+        roomEdits.stateGraphChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val after = RomParser(rom).inspectRoomStates(roomId)
+        assertTrue(after.isComplete)
+        assertEquals(3, after.states.size)
+        assertEquals(moved.condition.routineCode, after.states[0].condition.code)
+        assertEquals(moved.condition.argument, after.states[0].condition.argument)
+        assertTrue(after.states.last().condition.isDefault)
+        assertTrue(after.states.none {
+            it.condition.code == removed.condition.routineCode &&
+                it.condition.argument == removed.condition.argument
+        })
+    }
+
+    @Test
+    fun `separate room exports reuse the tagged state graph redirect routine`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val firstParser = RomParser(rom)
+        val allocator = RomFreeSpaceAllocator(
+            romData = rom,
+            snesToPc = firstParser::snesToPc,
+            pcToSnes = firstParser::pcToSnes,
+            guardBytes = 2,
+        )
+        val firstRoomId = 0x91F8
+        val firstProject = SmEditProject("base.smc")
+        val firstEdits = firstProject.getOrCreateRoom(firstRoomId)
+        firstEdits.ensureStateManifest(firstParser)
+        val firstMoved = firstEdits.states.removeAt(1)
+        firstEdits.states.add(0, firstMoved)
+        firstEdits.stateGraphChanged = true
+        ProjectRoomExporter(
+            firstProject,
+            firstParser,
+            rom,
+            freeSpaceAllocator = allocator,
+        ).exportRooms()
+
+        val afterFirst = RomParser(rom)
+        val firstHeaderPc = afterFirst.snesToPc(RomConstants.BANK_ROOM_DATA or firstRoomId)
+        val firstRedirectPtr = afterFirst.readUInt16At(firstHeaderPc + 11)
+
+        val secondRoomId = 0xCD13
+        val secondProject = SmEditProject("base.smc")
+        val secondEdits = secondProject.getOrCreateRoom(secondRoomId)
+        secondEdits.ensureStateManifest(afterFirst)
+        val secondState = secondEdits.states.first()
+        secondState.condition = projectRoomStateCondition(
+            ProjectRoomStateConditionKind.INCOMING_DOOR,
+            0xA18C,
+        )
+        secondState.conditionChanged = true
+        secondEdits.stateGraphChanged = true
+        ProjectRoomExporter(
+            secondProject,
+            afterFirst,
+            rom,
+            freeSpaceAllocator = allocator,
+        ).exportRooms()
+
+        val afterSecond = RomParser(rom)
+        val secondHeaderPc = afterSecond.snesToPc(RomConstants.BANK_ROOM_DATA or secondRoomId)
+        assertEquals(firstRedirectPtr, afterSecond.readUInt16At(secondHeaderPc + 11))
+        assertTrue(afterSecond.inspectRoomStates(firstRoomId).isComplete)
+        assertTrue(afterSecond.inspectRoomStates(secondRoomId).isComplete)
     }
 
     @Test

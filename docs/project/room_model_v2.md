@@ -55,10 +55,20 @@ upgraded.
 Selected-state tiles, PLMs, enemies, scrolls, tileset/music/Layer 2 motion, and FX are now persisted
 and exported against that state. Both the default FX entry and existing incoming-door-specific FX
 entries are editable. Shared level, PLM, enemy, enemy-GFX, scroll, and FX resources use copy-on-write
-so editing one state does not silently mutate a linked sibling. Full selector-graph editing,
-state creation/deletion/reordering, and the final legacy materializer remain to be completed. The
-current condition control safely edits selectors with the same encoded size; size-changing selector
-edits remain gated on selector-list relocation.
+so editing one state does not silently mutate a linked sibling.
+
+Existing-room selector graphs are now authorable. The UI can add/duplicate/delete/reorder conditional
+branches, edit every known typed condition, and keeps the one mandatory default branch fixed last.
+Size-changing conditions and changed state counts rebuild the selector graph in bank `$8F`. The room
+header remains at its original address and contains a four-byte SMEDIT bridge to the relocated graph,
+so DoorDefs, AreaSave entries, load stations, and hardcoded engine comparisons continue to use the
+same room ID. Export round trips the relocated graph through the normal parser and remains inside the
+transactional ROM write plan.
+
+The remaining boundary is explicit resource link/unlink authoring, separate-background and opaque
+room-code authoring, the legacy behavioral materializer, a condition-selection simulator, and new
+room creation. A duplicated state copies the selected state's effective project deltas; unedited ROM
+resources stay linked and later state-local edits use copy-on-write.
 
 ## Proposed Project Model
 
@@ -135,13 +145,15 @@ an advanced view, while the normal view uses compact summaries such as `same in 
 `same in 3 of 4 states`. A help dialog lists the matching states by condition name instead of
 exposing state ordinals.
 
-The editable state UI adds:
+The editable state UI includes:
 
 - Add, duplicate, delete, and reorder state.
 - A typed condition builder.
-- Duplicate as linked or independent.
-- Per-resource link/unlink controls.
 - Compare two states and highlight differing fields/resources.
+
+Still planned:
+
+- Explicit duplicate-as-linked/independent choices and per-resource link/unlink controls.
 - Simulate selection for a set of events, equipment, boss bits, and incoming door.
 
 The door/world graph is related but separate. Door edges connect rooms; a room's state list is an
@@ -211,19 +223,22 @@ reimplementing that behavior and risking a subtly different conversion.
 - A one-time pre-upgrade backup is implemented; the confirmation UI and behavioral materializer remain.
 - Serialization, migration, and byte/semantic equivalence tests.
 
-### 2. State-scoped editing — in progress
+### 2. State-scoped editing — substantially complete
 
 - Stable state IDs are carried through canvas/property edits and undo/redo.
 - Copy-on-write export is implemented for level, enemy, enemy-GFX, PLM, scrolling, and FX data.
 - State-targeted level, enemy, PLM, scrolling, default/door-specific FX, music, tileset, and Layer 2 motion export is implemented.
-- Same-width typed condition changes are implemented; selector-list relocation remains.
+- All known typed condition changes are implemented, including encoded-size changes through graph relocation.
 - Explicit link/unlink controls and separate-background authoring remain.
 
-### 3. State authoring
+### 3. State authoring — allocator and editor complete; simulator remains
 
-- Add/delete/duplicate/reorder.
-- Condition builder and selection simulator.
-- Selector-list/state-record allocator and validator.
+- Add/delete/duplicate/reorder are implemented with stable state IDs and a fixed final default.
+- The condition builder supports every verified vanilla selector; duplicate predicates are blocked in
+  the UI and diagnosed during validation.
+- The selector-list/state-record allocator preserves the physical room-header address and round trips
+  its tagged redirect format through `RomParser`.
+- The condition-selection simulator and emulator-backed selector matrix remain.
 
 ### 4. New rooms
 

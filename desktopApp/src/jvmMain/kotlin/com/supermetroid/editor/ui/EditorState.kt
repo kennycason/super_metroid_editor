@@ -57,6 +57,8 @@ import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.encodedSizeBytes
+import com.supermetroid.editor.rom.baseSourceStateIndex
+import com.supermetroid.editor.rom.stateEditsForId
 import com.supermetroid.editor.rom.stateEditsForSourceIndex
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
@@ -199,6 +201,9 @@ class EditorState {
     private var vanillaSaveIndicesByArea: Map<Int, Set<Int>> = emptyMap()
     /** Currently active room state index (0 = first conditional, last = default). */
     var currentStateIndex: Int = -1
+        private set
+    /** Stable project state identity; new/reordered states do not have a unique ROM source index. */
+    var currentStateId by mutableStateOf<String?>(null)
         private set
     private var currentRomParser: RomParser? = null
     var dirty by mutableStateOf(false)
@@ -2157,6 +2162,7 @@ class EditorState {
         currentAreaSaveEntryCount = 0
         vanillaSaveIndicesByArea = emptyMap()
         currentStateIndex = -1
+        currentStateId = null
         hoverBlockX = -1
         hoverBlockY = -1
         hoverTileWord = 0
@@ -2248,7 +2254,10 @@ class EditorState {
         // A stored state-data change (e.g. from the biome generator or room
         // properties panel) overrides the ROM tileset for editing/rendering.
         val roomEdits = project.rooms[project.roomKey(roomId)]
-        val stateDataChange = roomEdits?.stateEditsForSourceIndex(currentStateIndex)?.stateDataChange
+        currentStateId = roomEdits?.states
+            ?.firstOrNull { it.sourceStateIndex == currentStateIndex }
+            ?.id
+        val stateDataChange = selectedStateEdits(roomEdits)?.stateDataChange
         val commonStateDataChange = roomEdits?.stateDataChange
         currentTilesetId = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: room.tileset
         currentBgScrolling = stateDataChange?.bgScrolling ?: commonStateDataChange?.bgScrolling ?: room.bgScrolling
@@ -2359,13 +2368,17 @@ class EditorState {
     private fun currentStateEdits(): RoomStateEdits? {
         val parser = currentRomParser ?: return null
         if (currentRoomId == 0 || currentStateIndex < 0) return null
-        val state = project.getOrCreateRoom(currentRoomId)
-            .ensureStateManifest(parser)
-            .firstOrNull { it.sourceStateIndex == currentStateIndex }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(parser)
+        val state = selectedStateEdits(roomEdits)
             ?: return null
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         return state
     }
+
+    private fun selectedStateEdits(roomEdits: RoomEdits?): RoomStateEdits? =
+        roomEdits?.stateEditsForId(currentStateId)
+            ?: roomEdits?.stateEditsForSourceIndex(currentStateIndex)
 
     private fun currentOperations(): MutableList<EditOperation> =
         currentStateEdits()?.operations ?: project.getOrCreateRoom(currentRoomId).operations
@@ -2446,7 +2459,7 @@ class EditorState {
                 }
             }
         }
-        savedRoom.stateEditsForSourceIndex(currentStateIndex)?.let { stateEdits ->
+        selectedStateEdits(savedRoom)?.let { stateEdits ->
             replayStateEdits(stateEdits, effectiveWidth, roomKey)
         }
     }
@@ -2509,16 +2522,28 @@ class EditorState {
      * selecting a preview must not make already-saved edits disappear.
      */
     fun switchRoomState(stateIndex: Int, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateId = roomEdits.states.firstOrNull { it.sourceStateIndex == stateIndex }?.id ?: return
+        switchRoomState(stateId, romParser)
+    }
+
+    fun switchRoomState(stateId: String, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val selectedState = roomEdits.stateEditsForId(stateId) ?: return
+        val baseStateIndex = selectedState.baseSourceStateIndex() ?: return
         val states = romParser.parseRoomStatesWithData(currentRoomId)
-        val state = states.getOrNull(stateIndex) ?: return
-        currentStateIndex = stateIndex
+        val state = states.getOrNull(baseStateIndex) ?: return
+        currentStateIndex = baseStateIndex
+        currentStateId = selectedState.id
         val room = romParser.readRoomHeader(currentRoomId) ?: return
         val roomKey = project.roomKey(currentRoomId)
         val savedRoom = project.rooms[roomKey]
         val hc = savedRoom?.roomHeaderChange
         val effectiveWidth = hc?.width ?: room.width
         val effectiveHeight = hc?.height ?: room.height
-        val stateDataChange = savedRoom?.stateEditsForSourceIndex(stateIndex)?.stateDataChange
+        val stateDataChange = selectedState.stateDataChange
         val commonStateDataChange = savedRoom?.stateDataChange
 
         mapSelStart = null
@@ -2580,7 +2605,10 @@ class EditorState {
         if (savedRoom != null) replaySavedRoomEdits(savedRoom, effectiveWidth, roomKey)
 
         _editVersionState.value++
-        editorLog("Switched to state $stateIndex: ${state.stateInfo.conditionName} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})")
+        editorLog(
+            "Switched to state '${selectedState.id}' (source $baseStateIndex): " +
+                "${selectedState.condition.kind} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})"
+        )
     }
 
     /**
@@ -2589,10 +2617,11 @@ class EditorState {
      * backgrounds, and other state-owned resources change with the preview.
      */
     internal fun applyCurrentStateData(room: Room, romParser: RomParser): Room {
-        val state = romParser.parseRoomStatesWithData(room.roomId).getOrNull(currentStateIndex)
-            ?: return room
         val roomEdits = project.rooms[project.roomKey(room.roomId)]
-        val stateDataChange = roomEdits?.stateEditsForSourceIndex(currentStateIndex)?.stateDataChange
+        val selectedState = selectedStateEdits(roomEdits)
+        val baseStateIndex = selectedState?.baseSourceStateIndex() ?: currentStateIndex
+        val state = romParser.parseRoomStatesWithData(room.roomId).getOrNull(baseStateIndex) ?: return room
+        val stateDataChange = selectedState?.stateDataChange
         val commonStateDataChange = roomEdits?.stateDataChange
         return room.copy(
             levelDataPtr = state.levelDataPtr,
@@ -3207,7 +3236,7 @@ class EditorState {
     /** Get custom scroll commands for a command ID, or null if not found. */
     fun getScrollCommand(cmdId: String): List<ScrollCommand>? {
         val stateCommands = project.rooms[project.roomKey(currentRoomId)]
-            ?.stateEditsForSourceIndex(currentStateIndex)
+            ?.let(::selectedStateEdits)
             ?.customScrollCommands
         return stateCommands?.get(cmdId)
             ?: project.rooms[project.roomKey(currentRoomId)]?.customScrollCommands?.get(cmdId)
@@ -3396,11 +3425,11 @@ class EditorState {
         editVersion++
     }
 
-    fun setRoomStateFxChange(stateIndex: Int, change: FxChange?, romParser: RomParser) {
+    fun setRoomStateFxChange(stateId: String, change: FxChange?, romParser: RomParser) {
         val roomEdits = project.getOrCreateRoom(currentRoomId)
-        val stateEdits = roomEdits.ensureStateManifest(romParser)
-            .firstOrNull { it.sourceStateIndex == stateIndex }
-            ?: error("Room state $stateIndex is not available for room 0x${currentRoomId.toString(16)}")
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
         stateEdits.fxChange = change
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
@@ -3408,16 +3437,16 @@ class EditorState {
     }
 
     fun setRoomStateDoorFxChange(
-        stateIndex: Int,
+        stateId: String,
         doorSelect: Int,
         change: FxChange?,
         romParser: RomParser,
     ) {
         require(doorSelect in 1..0xFFFF) { "Door-specific FX requires a non-zero 16-bit door pointer" }
         val roomEdits = project.getOrCreateRoom(currentRoomId)
-        val stateEdits = roomEdits.ensureStateManifest(romParser)
-            .firstOrNull { it.sourceStateIndex == stateIndex }
-            ?: error("Room state $stateIndex is not available for room 0x${currentRoomId.toString(16)}")
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
         val key = doorSelect.toString(16).uppercase().padStart(4, '0')
         if (change == null) {
             stateEdits.doorFxChanges.remove(key)
@@ -3917,7 +3946,7 @@ class EditorState {
     fun applyHeaderChanges(room: com.supermetroid.editor.data.Room): com.supermetroid.editor.data.Room {
         val edits = project.rooms[project.roomKey(room.roomId)] ?: return room
         val hc = edits.roomHeaderChange
-        val sd = edits.stateEditsForSourceIndex(currentStateIndex)?.stateDataChange
+        val sd = selectedStateEdits(edits)?.stateDataChange
         val commonSd = edits.stateDataChange
         val tileset = sd?.tileset ?: commonSd?.tileset ?: room.tileset
         val bgScrolling = sd?.bgScrolling ?: commonSd?.bgScrolling ?: room.bgScrolling
@@ -3944,14 +3973,15 @@ class EditorState {
         editVersion++
     }
 
-    fun setRoomStateDataChange(stateIndex: Int, change: StateDataChange?, romParser: RomParser) {
+    fun setRoomStateDataChange(stateId: String, change: StateDataChange?, romParser: RomParser) {
         val roomEdits = project.getOrCreateRoom(currentRoomId)
-        val stateEdits = roomEdits.ensureStateManifest(romParser)
-            .firstOrNull { it.sourceStateIndex == stateIndex }
-            ?: error("Room state $stateIndex is not available for room 0x${currentRoomId.toString(16)}")
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
         stateEdits.stateDataChange = change
         val common = roomEdits.stateDataChange
-        val state = romParser.parseRoomStatesWithData(currentRoomId).getOrNull(stateIndex)
+        val state = stateEdits.baseSourceStateIndex()
+            ?.let { romParser.parseRoomStatesWithData(currentRoomId).getOrNull(it) }
         currentBgScrolling = change?.bgScrolling ?: common?.bgScrolling ?: state?.bgScrolling ?: currentBgScrolling
         if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
@@ -3960,26 +3990,116 @@ class EditorState {
     }
 
     fun setRoomStateCondition(
-        stateIndex: Int,
+        stateId: String,
         condition: ProjectRoomStateCondition,
         romParser: RomParser,
     ) {
-        val stateEdits = project.getOrCreateRoom(currentRoomId)
-            .ensureStateManifest(romParser)
-            .firstOrNull { it.sourceStateIndex == stateIndex }
-            ?: error("Room state $stateIndex is not available for room 0x${currentRoomId.toString(16)}")
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
         val source = stateEdits.sourceCondition ?: stateEdits.condition
         require(source.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
             "The mandatory default state condition cannot be changed"
         }
-        require(source.encodedSizeBytes() == condition.encodedSizeBytes()) {
-            "Changing this condition requires state-graph relocation"
+        if (stateEdits.sourceStateIndex == null || source.encodedSizeBytes() != condition.encodedSizeBytes()) {
+            roomEdits.stateGraphChanged = true
         }
         stateEdits.condition = condition
-        stateEdits.conditionChanged = condition != source
+        stateEdits.conditionChanged = stateEdits.sourceCondition?.let { condition != it } ?: true
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
+    }
+
+    /**
+     * Add a conditional branch by cloning the selected state's effective
+     * project deltas. Unedited source resources begin linked; copied local
+     * deltas preserve the template's visible content and export privately.
+     */
+    fun addRoomState(
+        templateStateId: String,
+        condition: ProjectRoomStateCondition,
+        romParser: RomParser,
+    ): String {
+        require(condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            "A room may contain only one mandatory default state"
+        }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val template = roomEdits.stateEditsForId(templateStateId)
+            ?: error("Template state '$templateStateId' is not available")
+        val templateSource = template.baseSourceStateIndex()
+            ?: error("Template state '$templateStateId' has no ROM source state")
+        var ordinal = 1
+        var id: String
+        do {
+            id = "state-new-$ordinal"
+            ordinal++
+        } while (roomEdits.states.any { it.id == id })
+
+        val newState = RoomStateEdits(
+            id = id,
+            templateSourceStateIndex = templateSource,
+            condition = condition,
+            resources = template.resources.copy(),
+            conditionChanged = true,
+            operations = template.operations.toMutableList(),
+            plmChanges = template.plmChanges.toMutableList(),
+            enemyChanges = template.enemyChanges.toMutableList(),
+            scrollChanges = template.scrollChanges.toMutableList(),
+            fxChange = template.fxChange?.copy(),
+            doorFxChanges = template.doorFxChanges.mapValuesTo(linkedMapOf()) { it.value.copy() },
+            stateDataChange = template.stateDataChange?.copy(),
+            customScrollCommands = template.customScrollCommands
+                .mapValuesTo(linkedMapOf()) { it.value.toMutableList() },
+        )
+        val templateIndex = roomEdits.states.indexOf(template)
+        val defaultIndex = roomEdits.states.lastIndex
+        val insertionIndex = if (templateIndex < defaultIndex) templateIndex + 1 else defaultIndex
+        roomEdits.states.add(insertionIndex, newState)
+        roomEdits.stateGraphChanged = true
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return id
+    }
+
+    /** Delete a conditional state and return the state that should remain selected. */
+    fun deleteRoomState(stateId: String, romParser: RomParser): String {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val index = roomEdits.states.indexOfFirst { it.id == stateId }
+        require(index >= 0) { "Room state '$stateId' is not available" }
+        require(roomEdits.states[index].condition.kind !=
+            com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+        ) { "The mandatory default state cannot be deleted" }
+        roomEdits.states.removeAt(index)
+        roomEdits.stateGraphChanged = true
+        val selected = roomEdits.states.getOrNull(index) ?: roomEdits.states.last()
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return selected.id
+    }
+
+    fun moveRoomState(stateId: String, direction: Int, romParser: RomParser): Boolean {
+        require(direction == -1 || direction == 1) { "State move direction must be -1 or 1" }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val index = roomEdits.states.indexOfFirst { it.id == stateId }
+        if (index < 0) return false
+        val state = roomEdits.states[index]
+        if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) return false
+        val target = index + direction
+        if (target !in 0 until roomEdits.states.lastIndex) return false
+        roomEdits.states[index] = roomEdits.states[target]
+        roomEdits.states[target] = state
+        roomEdits.stateGraphChanged = true
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return true
     }
 
     /** Flood fill: replace all connected tiles matching the one at (bx, by) with brush. */
@@ -4705,6 +4825,7 @@ class EditorState {
         romTilesetId = room.tileset
         currentTilesetId = room.tileset
         currentStateIndex = -1
+        currentStateId = null
 
         val tg = TileGraphics(romParser)
         tileGraphics = if (tg.loadTileset(currentTilesetId)) {

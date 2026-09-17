@@ -239,6 +239,8 @@ data class RoomStateResourceLinks(
 data class RoomStateEdits(
     val id: String,
     val sourceStateIndex: Int? = null,
+    /** Original ROM state whose 26-byte record seeds a newly authored state. */
+    val templateSourceStateIndex: Int? = null,
     val sourceCondition: ProjectRoomStateCondition? = null,
     var condition: ProjectRoomStateCondition,
     var resources: RoomStateResourceLinks,
@@ -295,6 +297,8 @@ data class RoomEdits(
     val roomId: Int,             // e.g. 0x91F8
     /** Ordered, stable room-state manifest. Empty in projects saved before state-scoped editing. */
     val states: MutableList<RoomStateEdits> = mutableListOf(),
+    /** True when selector count/order/encoded sizes require an out-of-line graph rebuild. */
+    var stateGraphChanged: Boolean = false,
     val operations: MutableList<EditOperation> = mutableListOf(),
     val plmChanges: MutableList<PlmChange> = mutableListOf(),
     val doorChanges: MutableList<DoorChange> = mutableListOf(),
@@ -310,7 +314,7 @@ data class RoomEdits(
     val saveStationSpawns: MutableList<SaveStationSpawnChange> = mutableListOf(),
 ) {
     val hasEdits: Boolean get() =
-        states.any { it.hasEdits } || operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
+        stateGraphChanged || states.any { it.hasEdits } || operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
         enemyChanges.isNotEmpty() || scrollChanges.isNotEmpty() || fxChange != null ||
         stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty() ||
         saveStationSpawns.isNotEmpty()

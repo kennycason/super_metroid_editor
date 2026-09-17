@@ -52,12 +52,13 @@ import com.supermetroid.editor.data.ProjectRoomStateCondition
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomStateCondition
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpritePalettes
-import com.supermetroid.editor.rom.encodedSizeBytes
+import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
 
 private val AREA_NAMES = arrayOf("Crateria", "Brinstar", "Norfair", "Wrecked Ship", "Maridia", "Tourian", "Ceres")
@@ -114,6 +115,13 @@ private val SCROLL_COLORS = mapOf(
 )
 private val SCROLL_LABELS = mapOf(0x00 to "R", 0x01 to "B", 0x02 to "G")
 
+private data class RoomStateUiItem(
+    val id: String,
+    val baseSourceStateIndex: Int?,
+    val condition: ProjectRoomStateCondition,
+    val edits: RoomStateEdits?,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RoomPropertiesPanel(
@@ -124,23 +132,64 @@ fun RoomPropertiesPanel(
     onNavigateToMap: (() -> Unit)? = null,
 ) {
     val stateInspection = remember(room.roomId, romParser) { romParser.inspectRoomStates(room.roomId) }
-    val states = stateInspection.states
-    var selectedStateIdx by remember(room.roomId) {
-        mutableStateOf(editorState.currentStateIndex.takeIf { it in states.indices } ?: states.lastIndex)
-    }
-    var showRomAddresses by remember(room.roomId) { mutableStateOf(false) }
-    var helpTopic by remember(room.roomId) { mutableStateOf<RoomInfoHelpTopic?>(null) }
-    val currentState = states.getOrNull(selectedStateIdx)
-    val selectedSourceStateIndex = states.take(selectedStateIdx + 1)
-        .count { it.stateDataPcOffset != null } - 1
-    val stateData = remember(currentState) {
-        currentState?.stateDataPcOffset?.let(romParser::readStateData) ?: emptyMap()
-    }
-    val allStateData = remember(stateInspection) {
-        states.map { state ->
-            state.stateDataPcOffset?.let(romParser::readStateData) ?: emptyMap()
+    // Track project-backed changes so authored state count/order is reflected immediately.
+    @Suppress("UNUSED_VARIABLE") val headerEditVersion = editorState.editVersion
+    val roomEdits = editorState.project.rooms[editorState.project.roomKey(room.roomId)]
+    val states = if (roomEdits?.states?.isNotEmpty() == true) {
+        roomEdits.states.map { state ->
+            RoomStateUiItem(
+                id = state.id,
+                baseSourceStateIndex = state.baseSourceStateIndex(),
+                condition = state.condition,
+                edits = state,
+            )
+        }
+    } else {
+        stateInspection.states.mapIndexed { index, state ->
+            RoomStateUiItem(
+                id = "state-${index + 1}",
+                baseSourceStateIndex = index,
+                condition = projectRoomStateCondition(
+                    ProjectRoomStateConditionKind.valueOf(state.condition.kind.name),
+                    state.condition.argument,
+                ),
+                edits = null,
+            )
         }
     }
+    var selectedStateId by remember(room.roomId) {
+        mutableStateOf(
+            editorState.currentStateId?.takeIf { id -> states.any { it.id == id } }
+                ?: states.lastOrNull()?.id
+        )
+    }
+    val selectedStateItem = states.firstOrNull { it.id == selectedStateId } ?: states.lastOrNull()
+    val selectedStateIdx = states.indexOf(selectedStateItem).coerceAtLeast(0)
+    var showRomAddresses by remember(room.roomId) { mutableStateOf(false) }
+    var helpTopic by remember(room.roomId) { mutableStateOf<RoomInfoHelpTopic?>(null) }
+    var showAddStateDialog by remember(room.roomId) { mutableStateOf(false) }
+    var duplicateSelectedCondition by remember(room.roomId) { mutableStateOf(false) }
+    var showDeleteStateDialog by remember(room.roomId) { mutableStateOf(false) }
+    val selectedSourceStateIndex = selectedStateItem?.baseSourceStateIndex ?: -1
+    val currentState = stateInspection.states.getOrNull(selectedSourceStateIndex)
+    val allStateData = states.map { state ->
+        val data = state.baseSourceStateIndex
+            ?.let(stateInspection.states::getOrNull)
+            ?.stateDataPcOffset
+            ?.let(romParser::readStateData)
+            ?.toMutableMap()
+            ?: mutableMapOf()
+        fun apply(change: StateDataChange?) {
+            change?.tileset?.let { data["tileset"] = it }
+            change?.musicData?.let { data["musicData"] = it }
+            change?.musicTrack?.let { data["musicTrack"] = it }
+            change?.bgScrolling?.let { data["bgScrolling"] = it }
+        }
+        apply(roomEdits?.stateDataChange)
+        apply(state.edits?.stateDataChange)
+        data
+    }
+    val stateData = allStateData.getOrNull(selectedStateIdx).orEmpty()
     val fxPtr = stateData["fxPtr"] ?: room.fxPtr
     val fxEntries = remember(fxPtr) { romParser.parseFxEntries(fxPtr) }
     val hasFxTable = fxEntries.isNotEmpty()
@@ -163,19 +212,9 @@ fun RoomPropertiesPanel(
     val scrollVer = editorState.scrollVersion
     val scrollData = remember(scrollVer, room.roomId) { editorState.workingScrolls.copyOf() }
 
-    // Track project-backed property changes reactively, including edits made
-    // from the minimap editor while this room remains selected.
-    @Suppress("UNUSED_VARIABLE") val headerEditVersion = editorState.editVersion
-    val roomEdits = editorState.project.rooms[editorState.project.roomKey(room.roomId)]
-    val selectedStateEdits = roomEdits?.states
-        ?.firstOrNull { it.sourceStateIndex == selectedSourceStateIndex }
+    val selectedStateEdits = selectedStateItem?.edits
     val savedDoorFxChanges = selectedStateEdits?.doorFxChanges.orEmpty()
-    val editableCondition = selectedStateEdits?.condition ?: currentState?.condition?.let {
-        projectRoomStateCondition(
-            ProjectRoomStateConditionKind.valueOf(it.kind.name),
-            it.argument,
-        )
-    }
+    val editableCondition = selectedStateItem?.condition
     val commonFx = roomEdits?.fxChange
     val stateFx = selectedStateEdits?.fxChange
     val savedFx = if (stateFx != null || commonFx != null) {
@@ -204,29 +243,29 @@ fun RoomPropertiesPanel(
         )
     } else null
 
-    // FX edit state — keyed by (roomId, stateIdx) so fields reset on state switch
-    var editFxType by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxType ?: defaultFx.fxType) }
-    var editLiquidStart by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.liquidSurfaceStart ?: defaultFx.liquidSurfaceStart) }
-    var editLiquidNew by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.liquidSurfaceNew ?: defaultFx.liquidSurfaceNew) }
-    var editLiquidSpeed by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.liquidSpeed ?: defaultFx.liquidSpeed) }
-    var editLiquidDelay by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.liquidDelay ?: defaultFx.liquidDelay) }
-    var editFxBitA by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitA ?: defaultFx.fxBitA) }
-    var editFxBitB by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitB ?: defaultFx.fxBitB) }
-    var editFxBitC by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.fxBitC ?: defaultFx.fxBitC) }
-    var editPaletteFxBits by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.paletteFxBitflags ?: defaultFx.paletteFxBitflags) }
-    var editTileAnimBits by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.tileAnimBitflags ?: defaultFx.tileAnimBitflags) }
-    var editPaletteBlend by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedFx?.paletteBlend ?: defaultFx.paletteBlend) }
-    var editingDoorFx by remember(room.roomId, selectedStateIdx) { mutableStateOf<Int?>(null) }
+    // FX edit state — keyed by stable state ID so it survives reordering.
+    var editFxType by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.fxType ?: defaultFx.fxType) }
+    var editLiquidStart by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.liquidSurfaceStart ?: defaultFx.liquidSurfaceStart) }
+    var editLiquidNew by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.liquidSurfaceNew ?: defaultFx.liquidSurfaceNew) }
+    var editLiquidSpeed by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.liquidSpeed ?: defaultFx.liquidSpeed) }
+    var editLiquidDelay by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.liquidDelay ?: defaultFx.liquidDelay) }
+    var editFxBitA by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.fxBitA ?: defaultFx.fxBitA) }
+    var editFxBitB by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.fxBitB ?: defaultFx.fxBitB) }
+    var editFxBitC by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.fxBitC ?: defaultFx.fxBitC) }
+    var editPaletteFxBits by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.paletteFxBitflags ?: defaultFx.paletteFxBitflags) }
+    var editTileAnimBits by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.tileAnimBitflags ?: defaultFx.tileAnimBitflags) }
+    var editPaletteBlend by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedFx?.paletteBlend ?: defaultFx.paletteBlend) }
+    var editingDoorFx by remember(room.roomId, selectedStateItem?.id) { mutableStateOf<Int?>(null) }
 
     // State data edit state — keyed by (roomId, stateIdx) so fields reset on state switch
     val origTileset = stateData["tileset"] ?: room.tileset
     val origMusicData = stateData["musicData"] ?: room.musicData
     val origMusicTrack = stateData["musicTrack"] ?: room.musicTrack
     val origBgScrolling = stateData["bgScrolling"] ?: room.bgScrolling
-    var editTileset by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedState?.tileset ?: origTileset) }
-    var editMusicData by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedState?.musicData ?: origMusicData) }
-    var editMusicTrack by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedState?.musicTrack ?: origMusicTrack) }
-    var editBgScrolling by remember(room.roomId, selectedStateIdx) { mutableStateOf(savedState?.bgScrolling ?: origBgScrolling) }
+    var editTileset by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedState?.tileset ?: origTileset) }
+    var editMusicData by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedState?.musicData ?: origMusicData) }
+    var editMusicTrack by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedState?.musicTrack ?: origMusicTrack) }
+    var editBgScrolling by remember(room.roomId, selectedStateItem?.id) { mutableStateOf(savedState?.bgScrolling ?: origBgScrolling) }
 
     fun syncFxToState() {
         val change = FxChange(
@@ -242,8 +281,9 @@ fun RoomPropertiesPanel(
             tileAnimBitflags = editTileAnimBits.takeIf { it != (commonFx?.tileAnimBitflags ?: defaultFx.tileAnimBitflags) },
             paletteBlend = editPaletteBlend.takeIf { it != (commonFx?.paletteBlend ?: defaultFx.paletteBlend) },
         )
+        val stateId = selectedStateItem?.id ?: return
         editorState.setRoomStateFxChange(
-            selectedSourceStateIndex,
+            stateId,
             change.takeIf { it != FxChange() },
             romParser,
         )
@@ -256,8 +296,9 @@ fun RoomPropertiesPanel(
             musicTrack = editMusicTrack.takeIf { it != (commonState?.musicTrack ?: origMusicTrack) },
             bgScrolling = editBgScrolling.takeIf { it != (commonState?.bgScrolling ?: origBgScrolling) },
         )
+        val stateId = selectedStateItem?.id ?: return
         editorState.setRoomStateDataChange(
-            selectedSourceStateIndex,
+            stateId,
             change.takeIf { it != StateDataChange() },
             romParser,
         )
@@ -351,26 +392,23 @@ fun RoomPropertiesPanel(
             Text("No readable states found", fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.error)
         } else {
             for ((idx, state) in states.withIndex()) {
-                val displayCondition = roomEdits?.states
-                    ?.firstOrNull { it.sourceStateIndex == idx }
-                    ?.condition
                 val branchLabel = when {
-                    state.condition.isDefault -> "ELSE"
+                    state.condition.kind == ProjectRoomStateConditionKind.DEFAULT -> "ELSE"
                     idx == 0 -> "IF"
                     else -> "ELSE IF"
                 }
-                val stateAddress = state.stateDataPointer?.let {
+                val sourceState = state.baseSourceStateIndex?.let(stateInspection.states::getOrNull)
+                val stateAddress = sourceState?.stateDataPointer?.let {
                     "\$8F:${it.toString(16).uppercase().padStart(4, '0')}"
-                } ?: state.stateDataPcOffset?.let {
+                } ?: sourceState?.stateDataPcOffset?.let {
                     val snes = romParser.pcToSnes(it)
                     "inline \$${(snes ushr 16).toString(16).uppercase()}:" +
                         (snes and 0xFFFF).toString(16).uppercase().padStart(4, '0')
-                } ?: "invalid state pointer"
+                } ?: "new state"
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = state.stateDataPcOffset != null) {
-                        selectedStateIdx = idx
-                        val readableStateIndex = states.take(idx + 1).count { it.stateDataPcOffset != null } - 1
-                        editorState.switchRoomState(readableStateIndex, romParser)
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = state.baseSourceStateIndex != null) {
+                        selectedStateId = state.id
+                        editorState.switchRoomState(state.id, romParser)
                     },
                     shape = MaterialTheme.shapes.extraSmall,
                     color = if (selectedStateIdx == idx) {
@@ -381,14 +419,14 @@ fun RoomPropertiesPanel(
                 ) {
                     Column(Modifier.padding(horizontal = 7.dp, vertical = 5.dp)) {
                         Text(
-                            "$branchLabel ${displayCondition?.let { projectConditionLabel(it, room.area) } ?: state.condition.shortSummary(room.area)}",
+                            "$branchLabel ${projectConditionLabel(state.condition, room.area)}",
                             fontSize = ROOM_INFO_BODY_FONT_SIZE,
                             fontWeight = if (selectedStateIdx == idx) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (state.stateDataPcOffset == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            color = if (state.baseSourceStateIndex == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                         )
                         if (showRomAddresses) {
                             Text(
-                                "engine check \$${state.condition.code.toString(16).uppercase().padStart(4, '0')}" +
+                                "engine check \$${state.condition.routineCode.toString(16).uppercase().padStart(4, '0')}" +
                                     "  →  state record $stateAddress",
                                 fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
                                 fontFamily = FontFamily.Monospace,
@@ -398,6 +436,91 @@ fun RoomPropertiesPanel(
                     }
                 }
             }
+
+            val selectedIsDefault = selectedStateItem?.condition?.kind == ProjectRoomStateConditionKind.DEFAULT
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = {
+                        duplicateSelectedCondition = false
+                        showAddStateDialog = true
+                    },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("+ Add", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                TextButton(
+                    onClick = {
+                        duplicateSelectedCondition = true
+                        showAddStateDialog = true
+                    },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("Duplicate", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                TextButton(
+                    enabled = !selectedIsDefault && selectedStateIdx > 0,
+                    onClick = {
+                        selectedStateItem?.id?.let { editorState.moveRoomState(it, -1, romParser) }
+                    },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("↑", fontSize = ROOM_INFO_BODY_FONT_SIZE) }
+                TextButton(
+                    enabled = !selectedIsDefault && selectedStateIdx in 0 until states.lastIndex - 1,
+                    onClick = {
+                        selectedStateItem?.id?.let { editorState.moveRoomState(it, 1, romParser) }
+                    },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("↓", fontSize = ROOM_INFO_BODY_FONT_SIZE) }
+                TextButton(
+                    enabled = !selectedIsDefault,
+                    onClick = { showDeleteStateDialog = true },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("Delete", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+            }
+        }
+
+        if (showAddStateDialog && selectedStateItem != null) {
+            val initialCondition = if (duplicateSelectedCondition &&
+                selectedStateItem.condition.kind != ProjectRoomStateConditionKind.DEFAULT
+            ) {
+                selectedStateItem.condition
+            } else {
+                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0)
+            }
+            AddRoomStateDialog(
+                title = if (duplicateSelectedCondition) "Duplicate state" else "Add condition",
+                templateName = projectConditionLabel(selectedStateItem.condition, room.area),
+                initialCondition = initialCondition,
+                area = room.area,
+                incomingDoorPointers = remember(room.roomId, romParser) {
+                    romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
+                },
+                existingConditions = states.map { it.condition },
+                onDismiss = { showAddStateDialog = false },
+                onAdd = { condition ->
+                    val newId = editorState.addRoomState(selectedStateItem.id, condition, romParser)
+                    selectedStateId = newId
+                    editorState.switchRoomState(newId, romParser)
+                    showAddStateDialog = false
+                },
+            )
+        }
+        if (showDeleteStateDialog && selectedStateItem != null) {
+            DeleteRoomStateDialog(
+                stateName = projectConditionLabel(selectedStateItem.condition, room.area),
+                onDismiss = { showDeleteStateDialog = false },
+                onDelete = {
+                    val nextId = editorState.deleteRoomState(selectedStateItem.id, romParser)
+                    selectedStateId = nextId
+                    editorState.switchRoomState(nextId, romParser)
+                    showDeleteStateDialog = false
+                },
+            )
         }
         for (issue in stateInspection.issues) {
             Text(
@@ -422,11 +545,7 @@ fun RoomPropertiesPanel(
         val plmSetPtr = stateData["plmSetPtr"] ?: room.plmSetPtr
         val xraySpecialCasingPtr = stateData["xraySpecialCasingPtr"] ?: room.xraySpecialCasingPtr
 
-        val stateNames = states.mapIndexed { index, state ->
-            roomEdits?.states?.firstOrNull { it.sourceStateIndex == index }?.condition
-                ?.let { projectConditionLabel(it, room.area) }
-                ?: state.condition.shortSummary(room.area)
-        }
+        val stateNames = states.map { projectConditionLabel(it.condition, room.area) }
         val defaultStateData = allStateData.lastOrNull().orEmpty()
         val stateDifferences = changedRoomStateSections(stateData, defaultStateData)
 
@@ -448,7 +567,7 @@ fun RoomPropertiesPanel(
 
         SelectedStateSummary(
             stateName = stateNames.getOrNull(selectedStateIdx) ?: "Unknown",
-            isDefault = currentState?.condition?.isDefault == true,
+            isDefault = selectedStateItem?.condition?.kind == ProjectRoomStateConditionKind.DEFAULT,
             differenceCount = stateDifferences.size,
             onShowDifferences = { helpTopic = RoomInfoHelpTopic.COMPARISON },
         )
@@ -461,7 +580,7 @@ fun RoomPropertiesPanel(
                     romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
                 },
                 onChange = { updated ->
-                    editorState.setRoomStateCondition(selectedSourceStateIndex, updated, romParser)
+                    editorState.setRoomStateCondition(selectedStateItem.id, updated, romParser)
                 },
             )
         }
@@ -478,7 +597,8 @@ fun RoomPropertiesPanel(
         )
         BgScrollDropdown(editBgScrolling) { editBgScrolling = it; syncStateDataToState() }
 
-        val selectedIsActive = editorState.currentStateIndex == selectedSourceStateIndex
+        val selectedIsActive = editorState.currentStateId?.let { it == selectedStateItem?.id }
+            ?: (editorState.currentStateIndex == selectedSourceStateIndex)
         val enemyCount = if (selectedIsActive) editorState.workingEnemies.size else {
             remember(enemySetPtr) { romParser.parseEnemyPopulation(enemySetPtr).size }
         }
@@ -688,7 +808,7 @@ fun RoomPropertiesPanel(
                 onDismiss = { editingDoorFx = null },
                 onSave = { change ->
                     editorState.setRoomStateDoorFxChange(
-                        stateIndex = selectedSourceStateIndex,
+                        stateId = selectedStateItem?.id ?: return@DoorFxEditorDialog,
                         doorSelect = doorFxEntry.doorSelect,
                         change = change,
                         romParser = romParser,
@@ -812,9 +932,10 @@ private fun StateConditionEditor(
     incomingDoorPointers: List<Int>,
     onChange: (ProjectRoomStateCondition) -> Unit,
 ) {
-    val sameSizeKinds = ProjectRoomStateConditionKind.entries.filter { kind ->
+    val availableKinds = ProjectRoomStateConditionKind.entries.filter { kind ->
         kind != ProjectRoomStateConditionKind.DEFAULT &&
-            projectRoomStateCondition(kind).encodedSizeBytes() == condition.encodedSizeBytes()
+            (kind != ProjectRoomStateConditionKind.INCOMING_DOOR ||
+                incomingDoorPointers.isNotEmpty() || condition.kind == kind)
     }
     var kindExpanded by remember(condition.kind) { mutableStateOf(false) }
     Row(
@@ -829,12 +950,12 @@ private fun StateConditionEditor(
         )
         ExposedDropdownMenuBox(
             expanded = kindExpanded,
-            onExpandedChange = { if (sameSizeKinds.size > 1) kindExpanded = it },
+            onExpandedChange = { if (availableKinds.size > 1) kindExpanded = it },
             modifier = Modifier.weight(1f),
         ) {
             Surface(
                 modifier = Modifier.fillMaxWidth().menuAnchor().clickable {
-                    if (sameSizeKinds.size > 1) kindExpanded = true
+                    if (availableKinds.size > 1) kindExpanded = true
                 },
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = MaterialTheme.shapes.extraSmall,
@@ -846,7 +967,7 @@ private fun StateConditionEditor(
                 )
             }
             ExposedDropdownMenu(expanded = kindExpanded, onDismissRequest = { kindExpanded = false }) {
-                for (kind in sameSizeKinds) {
+                for (kind in availableKinds) {
                     val argument = when (kind) {
                         condition.kind -> condition.argument
                         ProjectRoomStateConditionKind.EVENT_SET -> 0
@@ -929,6 +1050,81 @@ private fun StateConditionEditor(
             }
         }
     }
+}
+
+@Composable
+private fun AddRoomStateDialog(
+    title: String,
+    templateName: String,
+    initialCondition: ProjectRoomStateCondition,
+    area: Int,
+    incomingDoorPointers: List<Int>,
+    existingConditions: List<ProjectRoomStateCondition>,
+    onDismiss: () -> Unit,
+    onAdd: (ProjectRoomStateCondition) -> Unit,
+) {
+    var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
+    val duplicatesExistingBranch = condition in existingConditions
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                modifier = Modifier.requiredSizeIn(maxHeight = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Content starts as a copy of “$templateName”. Unedited ROM resources remain " +
+                        "linked; existing state-specific changes are copied so the new state looks the same.",
+                )
+                Text(
+                    "Branches are checked from top to bottom. The new branch is inserted after " +
+                        "the selected state and before ELSE.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                StateConditionEditor(
+                    condition = condition,
+                    area = area,
+                    incomingDoorPointers = incomingDoorPointers,
+                    onChange = { condition = it },
+                )
+                if (duplicatesExistingBranch) {
+                    Text(
+                        "Choose a different condition. An identical earlier branch would always " +
+                            "win, so this one could never be selected.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !duplicatesExistingBranch,
+                onClick = { onAdd(condition) },
+            ) { Text("Add state") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun DeleteRoomStateDialog(
+    stateName: String,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete room state?") },
+        text = {
+            Text(
+                "Delete “$stateName” and its state-specific edits? Shared resources used by other " +
+                    "states are kept. The mandatory ELSE state cannot be deleted.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onDelete) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 // ── Music Dropdown ────────────────────────────────────────────────

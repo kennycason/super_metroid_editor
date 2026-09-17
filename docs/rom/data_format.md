@@ -72,6 +72,37 @@ E612 xx PPPP   → event "Zebes is awake"     → state $922D
 E5E6           → default, 26-byte state data for $9213 follows
 ```
 
+### SMEDIT relocatable state graph
+
+Changing a selector's encoded size, adding/deleting a state, or reordering states can make the
+original inline list too small. SMEDIT preserves the room header's address and replaces the first
+four selector bytes at `room header + 11` with:
+
+```text
+Offset  Size  Field
+  0      2    Pointer to SMEDIT redirect routine in bank $8F
+  2      2    Pointer to relocated selector graph in bank $8F
+```
+
+The redirect routine's executable bytes are:
+
+```text
+BD 00 00    LDA $0000,X   ; X points at the graph-pointer word
+AA          TAX
+60          RTS           ; return to the vanilla selector loop
+```
+
+They are followed by the unreachable ASCII tag `SMEDITSG` and format byte `01`. The full signature
+lets the parser recognize this extension without mistaking an arbitrary custom selector routine for
+a redirect. The relocated graph itself uses the vanilla selector encodings above, including one
+final `$E5E6` followed by its inline 26-byte default record. Conditional state pointers and the graph
+pointer remain 16-bit bank-`$8F` addresses.
+
+This bridge is deliberately at the stable room ID. Door definitions, load/save-station tables, and
+engine code may all refer directly to the original room-header pointer; relocating the whole header
+would require rewriting more than the selector graph. `RomParser.inspectRoomStates()` follows and
+validates the tagged bridge transparently.
+
 ### Implementation: `RomParser.findAllStateDataOffsets()`
 
 ---

@@ -1,6 +1,22 @@
 package com.supermetroid.editor.rom
 
 /**
+ * SMEDIT's stable room-header bridge to a relocatable selector graph.
+ *
+ * The room engine enters selector routines with X pointing immediately after
+ * the routine word. The executable five bytes load the graph pointer stored at
+ * that X, transfer it back to X, and return to the vanilla selector loop:
+ * `LDA $0000,X; TAX; RTS` (`BD 00 00 AA 60`). An unreachable `SMEDITSG` tag
+ * and version byte make this ABI distinguishable from arbitrary custom code.
+ */
+object SmEditRoomStateGraphFormat {
+    val redirectRoutineBytes: ByteArray = byteArrayOf(
+        0xBD.toByte(), 0x00, 0x00, 0xAA.toByte(), 0x60,
+        0x53, 0x4D, 0x45, 0x44, 0x49, 0x54, 0x53, 0x47, 0x01,
+    )
+}
+
+/**
  * Semantic meaning of a room-state selector routine in bank $8F.
  *
  * These are runtime predicates, evaluated in order when a room is loaded. The

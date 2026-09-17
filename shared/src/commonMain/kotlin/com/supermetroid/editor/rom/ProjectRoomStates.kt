@@ -62,6 +62,11 @@ fun RoomEdits.ensureStateManifest(parser: RomParser): List<RoomStateEdits> {
 fun RoomEdits.stateEditsForSourceIndex(sourceStateIndex: Int): RoomStateEdits? =
     states.firstOrNull { it.sourceStateIndex == sourceStateIndex }
 
+fun RoomEdits.stateEditsForId(stateId: String?): RoomStateEdits? =
+    stateId?.let { id -> states.firstOrNull { it.id == id } }
+
+fun RoomStateEdits.baseSourceStateIndex(): Int? = sourceStateIndex ?: templateSourceStateIndex
+
 fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
     ProjectRoomStateConditionKind.DEFAULT -> 2
     ProjectRoomStateConditionKind.INCOMING_DOOR -> 6

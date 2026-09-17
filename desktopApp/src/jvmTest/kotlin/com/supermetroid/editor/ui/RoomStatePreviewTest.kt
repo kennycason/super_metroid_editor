@@ -1,12 +1,62 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.projectRoomStateCondition
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class RoomStatePreviewTest {
+    @Test
+    fun `state authoring adds reorders previews and deletes a conditional branch`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val roomId = 0x91F8
+        val room = parser.readRoomHeader(roomId) ?: return
+        val editor = EditorState()
+        editor.loadRoom(roomId, parser, room)
+        editor.switchRoomState(3, parser)
+        val roomEdits = editor.project.rooms.getValue("91F8")
+        val template = roomEdits.states.last()
+
+        val addedId = editor.addRoomState(
+            template.id,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x0E),
+            parser,
+        )
+        val added = roomEdits.states.single { it.id == addedId }
+
+        assertEquals(5, roomEdits.states.size)
+        assertEquals(template.sourceStateIndex, added.templateSourceStateIndex)
+        assertEquals(template.resources, added.resources)
+        assertEquals(addedId, roomEdits.states[roomEdits.states.lastIndex - 1].id)
+        assertEquals(ProjectRoomStateConditionKind.DEFAULT, roomEdits.states.last().condition.kind)
+        assertTrue(roomEdits.stateGraphChanged)
+
+        editor.switchRoomState(addedId, parser)
+        assertEquals(addedId, editor.currentStateId)
+        assertEquals(template.sourceStateIndex, editor.currentStateIndex)
+
+        assertTrue(editor.moveRoomState(addedId, -1, parser))
+        assertFalse(editor.moveRoomState(roomEdits.states.last().id, -1, parser))
+        editor.setRoomStateCondition(
+            addedId,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, 0xA18C),
+            parser,
+        )
+        assertEquals(ProjectRoomStateConditionKind.INCOMING_DOOR, added.condition.kind)
+
+        val nextId = editor.deleteRoomState(addedId, parser)
+        assertEquals(4, roomEdits.states.size)
+        assertTrue(roomEdits.states.any { it.id == nextId })
+        assertThrows(IllegalArgumentException::class.java) {
+            editor.deleteRoomState(roomEdits.states.last().id, parser)
+        }
+    }
+
     @Test
     fun `state resource sharing stays compact and details use condition names`() {
         val names = listOf(

@@ -40,6 +40,7 @@ class ProjectRoomExporter(
     }
 
     private val allocations = mutableListOf<RomAllocation>()
+    private var stateGraphRedirectRoutinePtr: Int? = null
 
     private val allocationSession = (
         freeSpaceAllocator ?: RomFreeSpaceAllocator(
@@ -144,10 +145,17 @@ class ProjectRoomExporter(
                 roomsPatched.add(roomKey)
             }
 
+            val rewrittenStateOffsets = if (roomEdits.stateGraphChanged) {
+                rewriteStateGraph(roomKey, roomId, roomEdits)
+            } else {
+                emptyMap()
+            }
+
             if (roomEdits.states.any { it.hasEdits }) {
-                applyExistingStateEdits(roomKey, roomId, roomEdits)
+                applyExistingStateEdits(roomKey, roomId, roomEdits, rewrittenStateOffsets)
                 roomsPatched.add(roomKey)
             }
+            if (roomEdits.stateGraphChanged) roomsPatched.add(roomKey)
 
             if (roomEdits.saveStationSpawns.isNotEmpty()) {
                 if (applySaveStationSpawns(roomKey, roomEdits)) {
@@ -1371,6 +1379,198 @@ class ProjectRoomExporter(
     }
 
     /**
+     * Rebuild an authored selector graph out-of-line while preserving the room
+     * header's stable address. The four-byte inline bridge is interpreted by a
+     * tiny shared bank-$8F routine (`LDA $0000,X; TAX; RTS`) which returns to
+     * the vanilla state-selection loop with X pointing at the relocated graph.
+     */
+    private fun rewriteStateGraph(
+        roomKey: String,
+        roomId: Int,
+        roomEdits: RoomEdits,
+    ): Map<String, Int> {
+        val sourceInspection = romParser.inspectRoomStates(roomId)
+        if (!sourceInspection.isComplete) {
+            val details = sourceInspection.issues.joinToString { it.message }.ifBlank { "missing default state" }
+            failExport("Room 0x$roomKey state graph cannot be rebuilt safely: $details")
+        }
+        if (roomEdits.states.isEmpty()) {
+            failExport("Room 0x$roomKey state graph cannot be empty")
+        }
+        if (roomEdits.states.size > 64) {
+            failExport("Room 0x$roomKey has ${roomEdits.states.size} states; the supported maximum is 64")
+        }
+        val defaults = roomEdits.states.withIndex().filter {
+            it.value.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+        }
+        if (defaults.size != 1 || defaults.single().index != roomEdits.states.lastIndex) {
+            failExport("Room 0x$roomKey must contain exactly one default state, last")
+        }
+        for (state in roomEdits.states) {
+            validateStateSelector(state.condition, roomKey, state.id)
+        }
+
+        val recordBytesById = linkedMapOf<String, ByteArray>()
+        for (state in roomEdits.states) {
+            val sourceIndex = state.baseSourceStateIndex() ?: failExport(
+                "Room 0x$roomKey state '${state.id}' has no source/template state"
+            )
+            val source = sourceInspection.states.getOrNull(sourceIndex) ?: failExport(
+                "Room 0x$roomKey state '${state.id}' refers to missing source/template state $sourceIndex"
+            )
+            if (state.sourceStateIndex != null) {
+                val expected = state.sourceCondition
+                    ?: state.condition.takeUnless { state.conditionChanged }
+                    ?: failExport("Room 0x$roomKey state '${state.id}' has no source selector")
+                if (source.condition.code != expected.routineCode || source.condition.argument != expected.argument) {
+                    failExport(
+                        "Room 0x$roomKey state '${state.id}' no longer matches source state $sourceIndex"
+                    )
+                }
+            }
+            val sourcePc = source.stateDataPcOffset ?: failExport(
+                "Room 0x$roomKey source/template state $sourceIndex has no readable 26-byte record"
+            )
+            recordBytesById[state.id] = romData.copyOfRange(
+                sourcePc,
+                sourcePc + RomConstants.STATE_DATA_SIZE,
+            )
+        }
+
+        val selectorBytes = roomEdits.states.sumOf { it.condition.encodedSizeBytes() }
+        val conditionalCount = roomEdits.states.size - 1
+        val graphSize = selectorBytes + RomConstants.STATE_DATA_SIZE +
+            conditionalCount * RomConstants.STATE_DATA_SIZE
+        val allocation = roomDataAllocator.reserve(
+            size = graphSize,
+            banks = listOf(0x8F),
+            label = "room 0x$roomKey state graph",
+        ) ?: failExport(
+            "Room 0x$roomKey needs $graphSize contiguous bytes for its state graph, but bank \$8F has no space"
+        )
+        val redirectPtr = ensureStateGraphRedirectRoutine(roomKey)
+        val graph = ByteArray(graphSize)
+        val stateOffsets = linkedMapOf<String, Int>()
+        var selectorCursor = 0
+        var conditionalRecordCursor = selectorBytes + RomConstants.STATE_DATA_SIZE
+        for (state in roomEdits.states) {
+            val record = recordBytesById.getValue(state.id)
+            if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+                encodeStateSelector(graph, selectorCursor, state.condition, statePointer = null, roomKey, state.id)
+                selectorCursor += state.condition.encodedSizeBytes()
+                record.copyInto(graph, selectorCursor)
+                stateOffsets[state.id] = allocation.pcOffset + selectorCursor
+                selectorCursor += RomConstants.STATE_DATA_SIZE
+            } else {
+                val statePointer = (allocation.snesAddress + conditionalRecordCursor) and 0xFFFF
+                encodeStateSelector(graph, selectorCursor, state.condition, statePointer, roomKey, state.id)
+                selectorCursor += state.condition.encodedSizeBytes()
+                record.copyInto(graph, conditionalRecordCursor)
+                stateOffsets[state.id] = allocation.pcOffset + conditionalRecordCursor
+                conditionalRecordCursor += RomConstants.STATE_DATA_SIZE
+            }
+        }
+        if (selectorCursor != selectorBytes + RomConstants.STATE_DATA_SIZE || conditionalRecordCursor != graphSize) {
+            failExport("Room 0x$roomKey internal state-graph sizing mismatch")
+        }
+        roomDataAllocator.write(allocation, graph)
+
+        val roomHeaderPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
+        writeU16(romData, roomHeaderPc + 11, redirectPtr)
+        writeU16(romData, roomHeaderPc + 13, allocation.snesAddress and 0xFFFF)
+        onLog(
+            "Room 0x$roomKey: rebuilt ${roomEdits.states.size}-state graph at " +
+                "\$8F:${(allocation.snesAddress and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
+        )
+        return stateOffsets
+    }
+
+    private fun ensureStateGraphRedirectRoutine(roomKey: String): Int {
+        stateGraphRedirectRoutinePtr?.let { return it }
+        val bytes = SmEditRoomStateGraphFormat.redirectRoutineBytes
+        val bankStart = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x8000)
+        val bankEndExclusive = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0xFFFF) + 1
+        for (pc in bankStart..(bankEndExclusive - bytes.size)) {
+            if (bytes.indices.all { index -> romData[pc + index] == bytes[index] }) {
+                return (romParser.pcToSnes(pc) and 0xFFFF).also { stateGraphRedirectRoutinePtr = it }
+            }
+        }
+        val allocation = roomDataAllocator.allocate(
+            bytes = bytes,
+            banks = listOf(0x8F),
+            label = "SMEDIT room state-graph redirect routine",
+        ) ?: failExport(
+            "Room 0x$roomKey needs the ${bytes.size}-byte state-graph redirect routine, " +
+                "but bank \$8F has no space"
+        )
+        return (allocation.snesAddress and 0xFFFF).also { stateGraphRedirectRoutinePtr = it }
+    }
+
+    private fun validateStateSelector(
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        roomKey: String,
+        stateId: String,
+    ) {
+        val expected = projectRoomStateCondition(condition.kind, condition.argument)
+        if (condition.routineCode != expected.routineCode || condition.argumentKind != expected.argumentKind) {
+            failExport("Room 0x$roomKey state '$stateId' has an inconsistent typed selector")
+        }
+        when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                if (condition.argument == null || condition.argument !in 0..0xFF) {
+                    failExport("Room 0x$roomKey state '$stateId' selector argument must fit in one byte")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                if (condition.argument == null || condition.argument !in 0x8000..0xFFFF) {
+                    failExport(
+                        "Room 0x$roomKey state '$stateId' incoming-door argument must be a bank \$83 pointer"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun encodeStateSelector(
+        destination: ByteArray,
+        offset: Int,
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        statePointer: Int?,
+        roomKey: String,
+        stateId: String,
+    ) {
+        validateStateSelector(condition, roomKey, stateId)
+        writeU16(destination, offset, condition.routineCode)
+        when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0..0xFF) {
+                    failExport("Room 0x$roomKey state '$stateId' selector argument must fit in one byte")
+                }
+                destination[offset + 2] = argument.toByte()
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0x8000..0xFFFF) {
+                    failExport("Room 0x$roomKey state '$stateId' incoming-door argument must be a bank \$83 pointer")
+                }
+                writeU16(destination, offset + 2, argument)
+            }
+        }
+        if (condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            if (statePointer != null) failExport("Room 0x$roomKey default state '$stateId' cannot use a pointer")
+            return
+        }
+        val pointer = statePointer ?: failExport("Room 0x$roomKey state '$stateId' has no record pointer")
+        val pointerOffset = offset + condition.encodedSizeBytes() - 2
+        writeU16(destination, pointerOffset, pointer)
+    }
+
+    /**
      * Apply state-scoped overrides after legacy/common room edits so a selected
      * state's explicit values win. State graph creation/reordering is handled
      * by the later graph writer; this path only accepts verified existing
@@ -1380,43 +1580,56 @@ class ProjectRoomExporter(
         roomKey: String,
         roomId: Int,
         roomEdits: RoomEdits,
+        rewrittenStateOffsets: Map<String, Int> = emptyMap(),
     ) {
-        val inspectedStates = romParser.inspectRoomStates(roomId).states
+        val graphWasRewritten = rewrittenStateOffsets.isNotEmpty()
+        val inspectedStates = if (graphWasRewritten) emptyList() else romParser.inspectRoomStates(roomId).states
         val room = romParser.readRoomHeader(roomId)
             ?: failExport("Room 0x$roomKey state edits have no readable room header")
         val effectiveWidth = roomEdits.roomHeaderChange?.width ?: room.width
         val effectiveHeight = roomEdits.roomHeaderChange?.height ?: room.height
         for (stateEdits in roomEdits.states.filter { it.hasEdits }) {
-            val sourceIndex = stateEdits.sourceStateIndex ?: failExport(
-                "Room 0x$roomKey state '${stateEdits.id}' is new, but new-state allocation is not active yet"
-            )
-            val inspected = inspectedStates.getOrNull(sourceIndex) ?: failExport(
-                "Room 0x$roomKey state '${stateEdits.id}' refers to missing source state $sourceIndex"
-            )
-            val sourceCondition = stateEdits.sourceCondition
-                ?: stateEdits.condition.takeUnless { stateEdits.conditionChanged }
-                ?: failExport(
-                    "Room 0x$roomKey state '${stateEdits.id}' changes its selector but has no source selector"
+            val inspected = if (graphWasRewritten) {
+                null
+            } else {
+                val sourceIndex = stateEdits.sourceStateIndex ?: failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' is new, but its state graph was not rebuilt"
                 )
-            if (inspected.condition.code != sourceCondition.routineCode ||
-                inspected.condition.argument != sourceCondition.argument
-            ) {
-                failExport(
-                    "Room 0x$roomKey state '${stateEdits.id}' no longer matches its source selector; " +
-                        "reload or migrate the project before exporting"
+                inspectedStates.getOrNull(sourceIndex) ?: failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' refers to missing source state $sourceIndex"
                 )
             }
-            val stateOffset = inspected.stateDataPcOffset ?: failExport(
-                "Room 0x$roomKey state '${stateEdits.id}' has no writable state record"
-            )
+            if (inspected != null) {
+                val sourceCondition = stateEdits.sourceCondition
+                    ?: stateEdits.condition.takeUnless { stateEdits.conditionChanged }
+                    ?: failExport(
+                        "Room 0x$roomKey state '${stateEdits.id}' changes its selector but has no source selector"
+                    )
+                if (inspected.condition.code != sourceCondition.routineCode ||
+                    inspected.condition.argument != sourceCondition.argument
+                ) {
+                    failExport(
+                        "Room 0x$roomKey state '${stateEdits.id}' no longer matches its source selector; " +
+                            "reload or migrate the project before exporting"
+                    )
+                }
+            }
+            val stateOffset = rewrittenStateOffsets[stateEdits.id]
+                ?: inspected?.stateDataPcOffset
+                ?: failExport("Room 0x$roomKey state '${stateEdits.id}' has no writable state record")
             if (stateEdits.resourcesChanged) {
                 failExport(
-                    "Room 0x$roomKey state '${stateEdits.id}' changes the state graph, but graph " +
-                        "rewriting is not active yet"
+                    "Room 0x$roomKey state '${stateEdits.id}' changes explicit resource links, " +
+                        "but link/unlink export is not active yet"
                 )
             }
-            if (stateEdits.conditionChanged) {
-                applyStateConditionChange(roomKey, stateEdits.id, inspected, stateEdits.condition)
+            if (stateEdits.conditionChanged && !graphWasRewritten) {
+                applyStateConditionChange(
+                    roomKey,
+                    stateEdits.id,
+                    checkNotNull(inspected),
+                    stateEdits.condition,
+                )
             }
             stateEdits.stateDataChange?.let {
                 applyStateDataChangeAtOffset(roomKey, stateEdits.id, stateOffset, it)
