@@ -58,7 +58,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 1 | **Stateful Room Editing** | Large | Finish first-class ordered states, explicit link controls, legacy migration, and selector-graph authoring inside the existing format. |
+| 1 | **Stateful Room Editing** | Medium | Ordered states and selector-graph authoring are implemented; finish explicit resource link controls and legacy behavioral migration. |
 | 2 | **New Room Creation** | Medium | Build on the same model; allocate room header in $8F, selectors/states, door table, level data, enemy/PLM/scroll pointers. |
 | 3 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
 | 4 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |

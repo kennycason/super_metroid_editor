@@ -172,6 +172,16 @@ Three layers that interact at runtime:
 Each item PLM's `param` maps to a bit in `$7E:D870` (512 bits). Every item across the entire ROM must have a unique `param`. Vanilla uses 0x00–0x50;
 editor assigns from 0x51–0x1FF (431 slots).
 
+Room-state authoring exposes this as a named “specific item pickup” condition, listing the ROM's
+item PLMs with room, coordinates, and hexadecimal pickup ID. This is distinct from ammo thresholds:
+“Missile capacity ≥ 25” reads maximum missiles at `$7E:09C8`, while “item pickup ID `$012`
+collected” tests one bit in `$7E:D870..D8AF`.
+
+SMEDIT also supports typed conditions for every collected equipment/beam bit, missile/Super
+Missile/Power Bomb/energy/reserve capacity thresholds, and any named boss across areas. These use
+the tagged `SMEDPRED` bank-`$8F` routine documented in `docs/rom/data_format.md`; conditions survive
+export and reopening as semantic project data rather than opaque ASM addresses.
+
 ---
 
 ## Controller Configuration

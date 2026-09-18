@@ -256,19 +256,24 @@ object RomValidator {
                     it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT &&
                         it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.NEVER
                 }
-                .groupingBy { it.condition.kind to it.condition.argument }
+                .groupingBy { Triple(it.condition.kind, it.condition.argument, it.condition.negated) }
                 .eachCount()
                 .filterValues { it > 1 }
                 .keys
-            for ((kind, argument) in duplicatePredicates) {
+            for ((kind, argument, negated) in duplicatePredicates) {
                 warning(
-                    "Condition $kind${argument?.let { "($it)" }.orEmpty()} appears more than once; " +
+                    "Condition $kind${argument?.let { "($it)" }.orEmpty()}" +
+                        (if (negated) " (inverted)" else "") + " appears more than once; " +
                         "only its first branch can be selected"
                 )
             }
             val inspected = parser.inspectRoomStates(roomId).states
             for (state in edits.states) {
-                val canonical = projectRoomStateCondition(state.condition.kind, state.condition.argument)
+                val canonical = projectRoomStateCondition(
+                    state.condition.kind,
+                    state.condition.argument,
+                    state.condition.negated,
+                )
                 if (state.condition.routineCode != canonical.routineCode ||
                     state.condition.argumentKind != canonical.argumentKind
                 ) {
@@ -289,6 +294,31 @@ object RomValidator {
                             error("State '${state.id}' incoming-door argument must be a bank \$83 pointer")
                         }
                     }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK,
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BEAM_MASK -> {
+                        val argument = state.condition.argument
+                        if (argument == null || argument !in 1..0xFFFF || argument.countOneBits() != 1) {
+                            error("State '${state.id}' equipment/beam selector must contain one bit")
+                        }
+                    }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY -> {
+                        if (state.condition.argument == null || state.condition.argument !in 0..0xFFFF) {
+                            error("State '${state.id}' capacity must fit in one word")
+                        }
+                    }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX -> {
+                        if (state.condition.argument == null || state.condition.argument !in 0..0x1FF) {
+                            error("State '${state.id}' item pickup ID must be 0-511")
+                        }
+                    }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> {
+                        val argument = state.condition.argument ?: -1
+                        val area = (argument ushr 8) and 0xFF
+                        val mask = argument and 0xFF
+                        if (argument !in 0..0xFFFF || area !in 0..7 || mask !in setOf(1, 2, 4)) {
+                            error("State '${state.id}' boss selector is invalid")
+                        }
+                    }
                 }
                 val sourceIndex = state.baseSourceStateIndex()
                 if (sourceIndex == null) {
@@ -305,9 +335,17 @@ object RomValidator {
                 }
                 if (state.sourceStateIndex != null) {
                     val sourceCondition = state.sourceCondition ?: state.condition.takeUnless { state.conditionChanged }
-                    if (sourceCondition == null || source.condition.code != sourceCondition.routineCode ||
-                        source.condition.argument != sourceCondition.argument
+                    val matchesSource = sourceCondition != null && if (
+                        sourceCondition.kind.isSmEditGeneratedPredicate()
                     ) {
+                        source.condition.kind.name == sourceCondition.kind.name &&
+                            source.condition.argument == sourceCondition.argument &&
+                            source.condition.negated == sourceCondition.negated
+                    } else {
+                        source.condition.code == sourceCondition.routineCode &&
+                            source.condition.argument == sourceCondition.argument
+                    }
+                    if (!matchesSource) {
                         error("State '${state.id}' no longer matches source state $sourceIndex")
                     }
                 }

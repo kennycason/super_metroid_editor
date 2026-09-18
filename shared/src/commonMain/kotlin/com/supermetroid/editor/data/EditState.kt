@@ -173,9 +173,10 @@ data class StateDataChange(
 /**
  * Serialized, address-independent description of a room-state selector.
  *
- * [routineCode] records the original engine routine for validation and exact
- * round-tripping, while [kind] and [argumentKind] let the editor present
- * semantic controls instead of asking users to edit routine addresses.
+ * [routineCode] records a vanilla engine routine for validation and exact
+ * round-tripping. Generated SMEDIT predicates use zero because their shared
+ * routine address is allocated at export. [kind] and [argumentKind] let the
+ * editor present semantic controls instead of raw routine addresses.
  */
 @Serializable
 data class ProjectRoomStateCondition(
@@ -183,6 +184,12 @@ data class ProjectRoomStateCondition(
     val argumentKind: ProjectRoomStateConditionArgumentKind,
     val argument: Int? = null,
     val routineCode: Int,
+    /**
+     * Generated SMEDIT predicates can reverse their test without requiring a
+     * second condition kind (for example, "Missiles below 25" or "Varia not
+     * collected"). Vanilla selectors always leave this false.
+     */
+    val negated: Boolean = false,
 )
 
 @Serializable
@@ -197,6 +204,15 @@ enum class ProjectRoomStateConditionKind {
     MORPH_BALL_AND_MISSILES,
     POWER_BOMBS_COLLECTED,
     SPEED_BOOSTER_COLLECTED,
+    EQUIPMENT_COLLECTED,
+    BEAM_COLLECTED,
+    MISSILE_CAPACITY_AT_LEAST,
+    SUPER_MISSILE_CAPACITY_AT_LEAST,
+    POWER_BOMB_CAPACITY_AT_LEAST,
+    ENERGY_CAPACITY_AT_LEAST,
+    RESERVE_CAPACITY_AT_LEAST,
+    ITEM_PICKUP_COLLECTED,
+    BOSS_DEFEATED,
 }
 
 @Serializable
@@ -205,6 +221,11 @@ enum class ProjectRoomStateConditionArgumentKind {
     EVENT_ID,
     BOSS_BIT_MASK,
     DOOR_POINTER,
+    EQUIPMENT_MASK,
+    BEAM_MASK,
+    CAPACITY,
+    ITEM_BIT_INDEX,
+    AREA_AND_BOSS_MASK,
 }
 
 /**

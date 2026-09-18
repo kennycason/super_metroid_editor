@@ -24,7 +24,7 @@
 - Room Header Editor — All 11 fields writable, minimap links to Map tab
 - Room Resize — Level data + BTS + L2 resize with scroll/door ASM remapping
 - Room Shifting Tool — Selection + arrow keys, Ctrl for screen-step
-- Multi-State Room Editing — Ordered selector logic and preview plus state-scoped persistence/export for layouts, actors, objects, scrolls, music, tilesets, and FX; state-graph authoring remains
+- Multi-State Room Editing — Ordered preview; add/duplicate/delete/reorder; state-scoped layouts, actors, objects, scrolls, music, tilesets, and FX; vanilla and generated equipment/capacity/item/boss conditions; relocatable selector-graph export
 - Layer 2 Editing — Embedded L2 paint/sample/resize plus room-map zoom shortcuts
 - Scroll Trigger PLM Editor — Visual screen grid for scroll commands
 - Door Cloning Tool — Auto-detect direction from screen edge

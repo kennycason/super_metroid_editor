@@ -94,14 +94,41 @@ AA          TAX
 
 They are followed by the unreachable ASCII tag `SMEDITSG` and format byte `01`. The full signature
 lets the parser recognize this extension without mistaking an arbitrary custom selector routine for
-a redirect. The relocated graph itself uses the vanilla selector encodings above, including one
-final `$E5E6` followed by its inline 26-byte default record. Conditional state pointers and the graph
-pointer remain 16-bit bank-`$8F` addresses.
+a redirect. The relocated graph supports both the vanilla selector encodings above and SMEDIT's
+typed predicate encoding below. It still ends with one final `$E5E6` followed by its inline 26-byte
+default record. Conditional state pointers and the graph pointer remain 16-bit bank-`$8F` addresses.
 
 This bridge is deliberately at the stable room ID. Door definitions, load/save-station tables, and
 engine code may all refer directly to the original room-header pointer; relocating the whole header
 would require rewriting more than the selector graph. `RomParser.inspectRoomStates()` follows and
 validates the tagged bridge transparently.
+
+### SMEDIT typed state predicates
+
+Vanilla has no general room-state checks for arbitrary equipment, capacity thresholds, individual
+item pickups, or bosses outside the current area. SMEDIT allocates one shared, tagged 65816 routine
+in bank `$8F` and points generated selector entries at it. Each entry is eight bytes:
+
+```text
+Offset  Size  Field
+  0      2    Pointer to the shared SMEDIT predicate routine in bank $8F
+  2      1    Predicate type
+  3      1    Flags (bit 0 = invert the result)
+  4      2    Value (mask, threshold, item bit index, or packed area/boss mask)
+  6      2    State pointer in bank $8F
+```
+
+Predicate types are stable ABI values: `1` collected equipment mask (`$7E:09A4`), `2` collected
+beam mask (`$7E:09A8`), `3` maximum missiles (`$09C8`), `4` maximum Super Missiles (`$09CC`),
+`5` maximum Power Bombs (`$09D0`), `6` maximum energy (`$09C4`), `7` maximum reserve energy
+(`$09D4`), `8` exact persistent item-pickup bit (`$7E:D870..D8AF`), and `9` boss bit for an explicit
+area (`$7E:D828 + area`). Threshold predicates mean “current maximum is greater than or equal to
+value”; inversion therefore means “below value.” Boss values pack the area in the high byte and the
+boss mask in the low byte.
+
+The routine ends in unreachable ASCII `SMEDPRED` plus format byte `01`. The parser requires the full
+routine signature before interpreting an eight-byte selector, so unrelated custom ASM still fails
+closed instead of being guessed.
 
 ### Implementation: `RomParser.findAllStateDataOffsets()`
 

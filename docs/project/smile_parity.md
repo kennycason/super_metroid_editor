@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, state-scoped room editing, and visual scroll-trigger editing. Important remaining architecture work includes state-graph authoring, new-room creation, tileset composition, and ROM expansion.
+SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, authored state graphs, state-scoped room editing, and visual scroll-trigger editing. Important remaining architecture work includes explicit state-resource link controls, new-room creation, tileset composition, and ROM expansion.
 
 ---
 
@@ -85,7 +85,7 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 
 | Feature | SMILE | SMEDIT | Impact |
 |---------|-------|--------|--------|
-| **State-scoped room editing** | Selects and edits individual room states | Selected-state layouts, objects, actors, scrolls, music, tilesets, FX, and compatible selector changes persist/export | Medium — finish graph authoring and explicit link controls |
+| **State-scoped room editing** | Selects and edits individual room states | Selected-state data persists/exports; branches can be added, duplicated, deleted, reordered, and assigned vanilla or generated typed conditions | Low-Medium — explicit resource link/unlink controls remain |
 | **Tileset/Metatile Composer** | Define 16x16 from 4 8x8 tiles with palette/flip/BTS | Can view/import/export tile sheets but no composition UI | High — needed for custom tilesets |
 
 ### Moderate

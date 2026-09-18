@@ -34,6 +34,15 @@ enum class RoomStateConditionKind {
     MORPH_BALL_AND_MISSILES,
     POWER_BOMBS_COLLECTED,
     SPEED_BOOSTER_COLLECTED,
+    EQUIPMENT_COLLECTED,
+    BEAM_COLLECTED,
+    MISSILE_CAPACITY_AT_LEAST,
+    SUPER_MISSILE_CAPACITY_AT_LEAST,
+    POWER_BOMB_CAPACITY_AT_LEAST,
+    ENERGY_CAPACITY_AT_LEAST,
+    RESERVE_CAPACITY_AT_LEAST,
+    ITEM_PICKUP_COLLECTED,
+    BOSS_DEFEATED,
 }
 
 enum class RoomStateConditionArgumentKind {
@@ -41,6 +50,11 @@ enum class RoomStateConditionArgumentKind {
     EVENT_ID,
     BOSS_BIT_MASK,
     DOOR_POINTER,
+    EQUIPMENT_MASK,
+    BEAM_MASK,
+    CAPACITY,
+    ITEM_BIT_INDEX,
+    AREA_AND_BOSS_MASK,
 }
 
 /**
@@ -54,6 +68,7 @@ data class RoomStateCondition(
     val argumentKind: RoomStateConditionArgumentKind,
     val argument: Int? = null,
     val entrySizeBytes: Int,
+    val negated: Boolean = false,
 ) {
     val isDefault: Boolean get() = kind == RoomStateConditionKind.DEFAULT
 
@@ -72,6 +87,24 @@ data class RoomStateCondition(
         RoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball + missiles collected"
         RoomStateConditionKind.POWER_BOMBS_COLLECTED -> "Power Bombs collected"
         RoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster collected"
+        RoomStateConditionKind.EQUIPMENT_COLLECTED ->
+            collectionSummary(EQUIPMENT_NAMES[argument ?: 0] ?: "Equipment mask \$${hex(argument, 4)}")
+        RoomStateConditionKind.BEAM_COLLECTED ->
+            collectionSummary(BEAM_NAMES[argument ?: 0] ?: "Beam mask \$${hex(argument, 4)}")
+        RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST -> thresholdSummary("Missiles")
+        RoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST -> thresholdSummary("Super Missiles")
+        RoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST -> thresholdSummary("Power Bombs")
+        RoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST -> thresholdSummary("Energy")
+        RoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST -> thresholdSummary("Reserve Energy")
+        RoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
+            collectionSummary("Item pickup ID \$${hex(argument, 3)}")
+        RoomStateConditionKind.BOSS_DEFEATED -> {
+            val packed = argument ?: 0
+            val bossArea = (packed ushr 8) and 0xFF
+            val mask = packed and 0xFF
+            val name = BOSS_NAMES[bossArea to mask] ?: "${areaName(bossArea)} boss bit \$${hex(mask, 2)}"
+            if (negated) "$name not defeated" else "$name defeated"
+        }
     }
 
     fun summary(area: Int): String = when (kind) {
@@ -99,7 +132,22 @@ data class RoomStateCondition(
         RoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball and at least one missile are collected"
         RoomStateConditionKind.POWER_BOMBS_COLLECTED -> "At least one Power Bomb has been collected"
         RoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster is collected"
+        RoomStateConditionKind.EQUIPMENT_COLLECTED,
+        RoomStateConditionKind.BEAM_COLLECTED,
+        RoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+        RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+        RoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
+        RoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST,
+        RoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
+        RoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
+        RoomStateConditionKind.BOSS_DEFEATED -> shortSummary(area)
     }
+
+    private fun collectionSummary(subject: String): String =
+        if (negated) "$subject not collected" else "$subject collected"
+
+    private fun thresholdSummary(subject: String): String =
+        if (negated) "$subject below ${argument ?: 0}" else "$subject ≥ ${argument ?: 0}"
 
     companion object {
         /** Event meanings verified against the vanilla event table. */
@@ -138,6 +186,30 @@ data class RoomStateCondition(
             (4 to 0x02) to "Botwoon",
             (5 to 0x01) to "Mother Brain",
             (6 to 0x01) to "Ceres Ridley",
+        )
+
+        /** Bit masks stored in Samus's collected-equipment word at $7E:09A4. */
+        val EQUIPMENT_NAMES: Map<Int, String> = linkedMapOf(
+            0x0001 to "Varia Suit",
+            0x0002 to "Spring Ball",
+            0x0004 to "Morph Ball",
+            0x0008 to "Screw Attack",
+            0x0020 to "Gravity Suit",
+            0x0100 to "Hi-Jump Boots",
+            0x0200 to "Space Jump",
+            0x1000 to "Bombs",
+            0x2000 to "Speed Booster",
+            0x4000 to "Grapple Beam",
+            0x8000 to "X-Ray Scope",
+        )
+
+        /** Bit masks stored in Samus's collected-beam word at $7E:09A8. */
+        val BEAM_NAMES: Map<Int, String> = linkedMapOf(
+            0x0001 to "Wave Beam",
+            0x0002 to "Ice Beam",
+            0x0004 to "Spazer",
+            0x0008 to "Plasma Beam",
+            0x1000 to "Charge Beam",
         )
 
         private val AREA_NAMES = listOf(

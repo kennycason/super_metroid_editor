@@ -41,6 +41,7 @@ class ProjectRoomExporter(
 
     private val allocations = mutableListOf<RomAllocation>()
     private var stateGraphRedirectRoutinePtr: Int? = null
+    private var statePredicateRoutinePtr: Int? = null
 
     private val allocationSession = (
         freeSpaceAllocator ?: RomFreeSpaceAllocator(
@@ -1409,6 +1410,11 @@ class ProjectRoomExporter(
         for (state in roomEdits.states) {
             validateStateSelector(state.condition, roomKey, state.id)
         }
+        val generatedPredicatePtr = if (roomEdits.states.any { it.condition.kind.isSmEditGeneratedPredicate() }) {
+            ensureStatePredicateRoutine(roomKey)
+        } else {
+            null
+        }
 
         val recordBytesById = linkedMapOf<String, ByteArray>()
         for (state in roomEdits.states) {
@@ -1422,7 +1428,7 @@ class ProjectRoomExporter(
                 val expected = state.sourceCondition
                     ?: state.condition.takeUnless { state.conditionChanged }
                     ?: failExport("Room 0x$roomKey state '${state.id}' has no source selector")
-                if (source.condition.code != expected.routineCode || source.condition.argument != expected.argument) {
+                if (!sourceConditionMatches(source.condition, expected)) {
                     failExport(
                         "Room 0x$roomKey state '${state.id}' no longer matches source state $sourceIndex"
                     )
@@ -1456,14 +1462,20 @@ class ProjectRoomExporter(
         for (state in roomEdits.states) {
             val record = recordBytesById.getValue(state.id)
             if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
-                encodeStateSelector(graph, selectorCursor, state.condition, statePointer = null, roomKey, state.id)
+                encodeStateSelector(
+                    graph, selectorCursor, state.condition, statePointer = null,
+                    roomKey, state.id, generatedPredicatePtr,
+                )
                 selectorCursor += state.condition.encodedSizeBytes()
                 record.copyInto(graph, selectorCursor)
                 stateOffsets[state.id] = allocation.pcOffset + selectorCursor
                 selectorCursor += RomConstants.STATE_DATA_SIZE
             } else {
                 val statePointer = (allocation.snesAddress + conditionalRecordCursor) and 0xFFFF
-                encodeStateSelector(graph, selectorCursor, state.condition, statePointer, roomKey, state.id)
+                encodeStateSelector(
+                    graph, selectorCursor, state.condition, statePointer,
+                    roomKey, state.id, generatedPredicatePtr,
+                )
                 selectorCursor += state.condition.encodedSizeBytes()
                 record.copyInto(graph, conditionalRecordCursor)
                 stateOffsets[state.id] = allocation.pcOffset + conditionalRecordCursor
@@ -1506,13 +1518,37 @@ class ProjectRoomExporter(
         return (allocation.snesAddress and 0xFFFF).also { stateGraphRedirectRoutinePtr = it }
     }
 
+    private fun ensureStatePredicateRoutine(roomKey: String): Int {
+        statePredicateRoutinePtr?.let { return it }
+        val bytes = SmEditRoomStatePredicateFormat.routineBytes
+        val bankStart = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x8000)
+        val bankEndExclusive = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0xFFFF) + 1
+        for (pc in bankStart..(bankEndExclusive - bytes.size)) {
+            if (bytes.indices.all { index -> romData[pc + index] == bytes[index] }) {
+                return (romParser.pcToSnes(pc) and 0xFFFF).also { statePredicateRoutinePtr = it }
+            }
+        }
+        val allocation = roomDataAllocator.allocate(
+            bytes = bytes,
+            banks = listOf(0x8F),
+            label = "SMEDIT typed room-state predicate routine",
+        ) ?: failExport(
+            "Room 0x$roomKey needs the ${bytes.size}-byte typed state-predicate routine, " +
+                "but bank \$8F has no space"
+        )
+        return (allocation.snesAddress and 0xFFFF).also { statePredicateRoutinePtr = it }
+    }
+
     private fun validateStateSelector(
         condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
         roomKey: String,
         stateId: String,
     ) {
         val expected = projectRoomStateCondition(condition.kind, condition.argument)
-        if (condition.routineCode != expected.routineCode || condition.argumentKind != expected.argumentKind) {
+        if (condition.routineCode != expected.routineCode ||
+            condition.argumentKind != expected.argumentKind ||
+            (!condition.kind.isSmEditGeneratedPredicate() && condition.negated)
+        ) {
             failExport("Room 0x$roomKey state '$stateId' has an inconsistent typed selector")
         }
         when (condition.argumentKind) {
@@ -1530,6 +1566,31 @@ class ProjectRoomExporter(
                     )
                 }
             }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BEAM_MASK -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 1..0xFFFF || argument.countOneBits() != 1) {
+                    failExport("Room 0x$roomKey state '$stateId' equipment/beam selector must contain one bit")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY -> {
+                if (condition.argument == null || condition.argument !in 0..0xFFFF) {
+                    failExport("Room 0x$roomKey state '$stateId' capacity must fit in one word")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX -> {
+                if (condition.argument == null || condition.argument !in 0..0x1FF) {
+                    failExport("Room 0x$roomKey state '$stateId' item pickup ID must be 0-511")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> {
+                val argument = condition.argument ?: -1
+                val area = (argument ushr 8) and 0xFF
+                val mask = argument and 0xFF
+                if (argument !in 0..0xFFFF || area !in 0..7 || mask !in setOf(1, 2, 4)) {
+                    failExport("Room 0x$roomKey state '$stateId' boss selector is invalid")
+                }
+            }
         }
     }
 
@@ -1540,9 +1601,25 @@ class ProjectRoomExporter(
         statePointer: Int?,
         roomKey: String,
         stateId: String,
+        generatedPredicatePtr: Int? = null,
     ) {
         validateStateSelector(condition, roomKey, stateId)
-        writeU16(destination, offset, condition.routineCode)
+        val generated = condition.kind.isSmEditGeneratedPredicate()
+        val routineCode = if (generated) {
+            generatedPredicatePtr ?: ensureStatePredicateRoutine(roomKey)
+        } else {
+            condition.routineCode
+        }
+        writeU16(destination, offset, routineCode)
+        if (generated) {
+            destination[offset + 2] = generatedPredicateType(condition.kind).toByte()
+            destination[offset + 3] = if (condition.negated) {
+                SmEditRoomStatePredicateFormat.FLAG_INVERTED.toByte()
+            } else {
+                0
+            }
+            writeU16(destination, offset + 4, checkNotNull(condition.argument))
+        }
         when (condition.argumentKind) {
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
@@ -1560,6 +1637,11 @@ class ProjectRoomExporter(
                 }
                 writeU16(destination, offset + 2, argument)
             }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BEAM_MASK,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> Unit
         }
         if (condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
             if (statePointer != null) failExport("Room 0x$roomKey default state '$stateId' cannot use a pointer")
@@ -1568,6 +1650,41 @@ class ProjectRoomExporter(
         val pointer = statePointer ?: failExport("Room 0x$roomKey state '$stateId' has no record pointer")
         val pointerOffset = offset + condition.encodedSizeBytes() - 2
         writeU16(destination, pointerOffset, pointer)
+    }
+
+    private fun generatedPredicateType(
+        kind: com.supermetroid.editor.data.ProjectRoomStateConditionKind,
+    ): Int = when (kind) {
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
+            SmEditRoomStatePredicateFormat.TYPE_EQUIPMENT
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.BEAM_COLLECTED ->
+            SmEditRoomStatePredicateFormat.TYPE_BEAM
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST ->
+            SmEditRoomStatePredicateFormat.TYPE_MAX_MISSILES
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST ->
+            SmEditRoomStatePredicateFormat.TYPE_MAX_SUPER_MISSILES
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST ->
+            SmEditRoomStatePredicateFormat.TYPE_MAX_POWER_BOMBS
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST ->
+            SmEditRoomStatePredicateFormat.TYPE_MAX_ENERGY
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST ->
+            SmEditRoomStatePredicateFormat.TYPE_MAX_RESERVE_ENERGY
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
+            SmEditRoomStatePredicateFormat.TYPE_ITEM_PICKUP
+        com.supermetroid.editor.data.ProjectRoomStateConditionKind.BOSS_DEFEATED ->
+            SmEditRoomStatePredicateFormat.TYPE_BOSS
+        else -> failExport("$kind is not a generated state predicate")
+    }
+
+    private fun sourceConditionMatches(
+        inspected: RoomStateCondition,
+        expected: com.supermetroid.editor.data.ProjectRoomStateCondition,
+    ): Boolean {
+        if (expected.kind.isSmEditGeneratedPredicate()) {
+            return inspected.kind.name == expected.kind.name &&
+                inspected.argument == expected.argument && inspected.negated == expected.negated
+        }
+        return inspected.code == expected.routineCode && inspected.argument == expected.argument
     }
 
     /**
@@ -1605,9 +1722,7 @@ class ProjectRoomExporter(
                     ?: failExport(
                         "Room 0x$roomKey state '${stateEdits.id}' changes its selector but has no source selector"
                     )
-                if (inspected.condition.code != sourceCondition.routineCode ||
-                    inspected.condition.argument != sourceCondition.argument
-                ) {
+                if (!sourceConditionMatches(inspected.condition, sourceCondition)) {
                     failExport(
                         "Room 0x$roomKey state '${stateEdits.id}' no longer matches its source selector; " +
                             "reload or migrate the project before exporting"
@@ -1771,6 +1886,22 @@ class ProjectRoomExporter(
                     "$oldSize bytes; use state-graph relocation"
             )
         }
+        if (condition.kind.isSmEditGeneratedPredicate()) {
+            val statePointer = inspected.stateDataPointer ?: failExport(
+                "Room 0x$roomKey state '$stateId' generated selector has no bank \$8F state pointer"
+            )
+            encodeStateSelector(
+                destination = romData,
+                offset = inspected.selectorPcOffset,
+                condition = condition,
+                statePointer = statePointer,
+                roomKey = roomKey,
+                stateId = stateId,
+                generatedPredicatePtr = ensureStatePredicateRoutine(roomKey),
+            )
+            onLog("Room 0x$roomKey: changed typed selector for state '$stateId'")
+            return
+        }
         val expectedArgumentKind = when (condition.kind) {
             com.supermetroid.editor.data.ProjectRoomStateConditionKind.INCOMING_DOOR ->
                 com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER
@@ -1809,6 +1940,12 @@ class ProjectRoomExporter(
                 }
                 writeU16(romData, pos + 2, argument)
             }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BEAM_MASK,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK ->
+                failExport("Room 0x$roomKey state '$stateId' generated selector was not encoded through its typed ABI")
         }
         onLog("Room 0x$roomKey: changed selector for state '$stateId'")
     }

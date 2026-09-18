@@ -52,6 +52,7 @@ import com.supermetroid.editor.data.ProjectRoomStateCondition
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
@@ -60,6 +61,8 @@ import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
+import com.supermetroid.editor.rom.isSmEditGeneratedPredicate
+import com.supermetroid.editor.rom.packedBossConditionArgument
 
 private val AREA_NAMES = arrayOf("Crateria", "Brinstar", "Norfair", "Wrecked Ship", "Maridia", "Tourian", "Ceres")
 
@@ -122,6 +125,11 @@ private data class RoomStateUiItem(
     val edits: RoomStateEdits?,
 )
 
+private data class ItemPickupConditionOption(
+    val id: Int,
+    val label: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RoomPropertiesPanel(
@@ -135,6 +143,42 @@ fun RoomPropertiesPanel(
     // Track project-backed changes so authored state count/order is reflected immediately.
     @Suppress("UNUSED_VARIABLE") val headerEditVersion = editorState.editVersion
     val roomEdits = editorState.project.rooms[editorState.project.roomKey(room.roomId)]
+    val roomInfos = remember { RoomRepository().getAllRooms() }
+    val roomNames = remember(roomInfos) { roomInfos.associate { it.getRoomIdAsInt() to it.name } }
+    val romItemPickupOptions = remember(romParser) {
+        romParser.scanAllItemPlms(roomInfos.map { it.getRoomIdAsInt() }).map { item ->
+            val itemName = RomParser.itemNameForPlm(item.plm.id) ?: "Item"
+            ItemPickupConditionOption(
+                id = item.plm.param,
+                label = "$itemName — ${roomNames[item.roomId] ?: "Room ${item.roomId.toString(16)}"} " +
+                    "(${item.plm.x}, ${item.plm.y}) — ID \$${item.plm.param.toString(16).uppercase().padStart(3, '0')}",
+            )
+        }
+    }
+    val projectItemPickupOptions = remember(editorState.editVersion) {
+        editorState.project.rooms.flatMap { (roomKey, edits) ->
+            val changes = edits.plmChanges + edits.states.flatMap { it.plmChanges }
+            changes.asSequence()
+                .filter { it.action == "add" && RomParser.isItemPlm(it.plmId) }
+                .map { change ->
+                    val roomId = roomKey.toIntOrNull(16)
+                    val itemName = RomParser.itemNameForPlm(change.plmId) ?: "Item"
+                    ItemPickupConditionOption(
+                        id = change.param,
+                        label = "$itemName — ${roomId?.let(roomNames::get) ?: "Room $roomKey"} " +
+                            "(${change.x}, ${change.y}) — ID \$${change.param.toString(16).uppercase().padStart(3, '0')}",
+                    )
+                }.toList()
+        }
+    }
+    val itemPickupOptions = remember(romItemPickupOptions, projectItemPickupOptions) {
+        (romItemPickupOptions + projectItemPickupOptions)
+            .filter { it.id in 0..0x1FF }
+            .distinctBy { it.id }
+            // Missile tanks are the most common exact-pickup condition; keep
+            // them together at the top while still exposing every item ID.
+            .sortedWith(compareBy<ItemPickupConditionOption>({ !it.label.startsWith("Missile ") }, { it.id }))
+    }
     val states = if (roomEdits?.states?.isNotEmpty() == true) {
         roomEdits.states.map { state ->
             RoomStateUiItem(
@@ -152,6 +196,7 @@ fun RoomPropertiesPanel(
                 condition = projectRoomStateCondition(
                     ProjectRoomStateConditionKind.valueOf(state.condition.kind.name),
                     state.condition.argument,
+                    state.condition.negated,
                 ),
                 edits = null,
             )
@@ -425,9 +470,13 @@ fun RoomPropertiesPanel(
                             color = if (state.baseSourceStateIndex == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                         )
                         if (showRomAddresses) {
+                            val engineCheck = if (state.condition.kind.isSmEditGeneratedPredicate()) {
+                                "generated typed check"
+                            } else {
+                                "engine check \$${state.condition.routineCode.toString(16).uppercase().padStart(4, '0')}"
+                            }
                             Text(
-                                "engine check \$${state.condition.routineCode.toString(16).uppercase().padStart(4, '0')}" +
-                                    "  →  state record $stateAddress",
+                                "$engineCheck  →  state record $stateAddress",
                                 fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -500,6 +549,7 @@ fun RoomPropertiesPanel(
                 incomingDoorPointers = remember(room.roomId, romParser) {
                     romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
                 },
+                itemPickupOptions = itemPickupOptions,
                 existingConditions = states.map { it.condition },
                 onDismiss = { showAddStateDialog = false },
                 onAdd = { condition ->
@@ -579,6 +629,7 @@ fun RoomPropertiesPanel(
                 incomingDoorPointers = remember(room.roomId, romParser) {
                     romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
                 },
+                itemPickupOptions = itemPickupOptions,
                 onChange = { updated ->
                     editorState.setRoomStateCondition(selectedStateItem.id, updated, romParser)
                 },
@@ -922,6 +973,41 @@ private fun projectConditionLabel(condition: ProjectRoomStateCondition, area: In
         ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball + missiles collected"
         ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED -> "Power Bombs collected"
         ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster collected"
+        ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> {
+            val name = RoomStateCondition.EQUIPMENT_NAMES[condition.argument ?: 0] ?: "Equipment"
+            if (condition.negated) "$name not collected" else "$name collected"
+        }
+        ProjectRoomStateConditionKind.BEAM_COLLECTED -> {
+            val name = RoomStateCondition.BEAM_NAMES[condition.argument ?: 0] ?: "Beam"
+            if (condition.negated) "$name not collected" else "$name collected"
+        }
+        ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST ->
+            if (condition.negated) "Missile capacity below ${condition.argument ?: 0}"
+            else "Missile capacity ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST ->
+            if (condition.negated) "Super Missile capacity below ${condition.argument ?: 0}"
+            else "Super Missile capacity ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST ->
+            if (condition.negated) "Power Bomb capacity below ${condition.argument ?: 0}"
+            else "Power Bomb capacity ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST ->
+            if (condition.negated) "Energy capacity below ${condition.argument ?: 0}"
+            else "Energy capacity ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST ->
+            if (condition.negated) "Reserve capacity below ${condition.argument ?: 0}"
+            else "Reserve capacity ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> {
+            val id = (condition.argument ?: 0).toString(16).uppercase().padStart(3, '0')
+            if (condition.negated) "Specific item ID \$$id not collected" else "Specific item ID \$$id collected"
+        }
+        ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
+            val packed = condition.argument ?: 0
+            val bossArea = (packed ushr 8) and 0xFF
+            val mask = packed and 0xFF
+            val name = RoomStateCondition.BOSS_NAMES[bossArea to mask]
+                ?: "${AREA_NAMES.getOrNull(bossArea) ?: "Area $bossArea"} boss bit \$${mask.toString(16)}"
+            if (condition.negated) "$name not defeated" else "$name defeated"
+        }
     }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -930,6 +1016,7 @@ private fun StateConditionEditor(
     condition: ProjectRoomStateCondition,
     area: Int,
     incomingDoorPointers: List<Int>,
+    itemPickupOptions: List<ItemPickupConditionOption>,
     onChange: (ProjectRoomStateCondition) -> Unit,
 ) {
     val availableKinds = ProjectRoomStateConditionKind.entries.filter { kind ->
@@ -974,6 +1061,16 @@ private fun StateConditionEditor(
                         ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
                             RoomStateCondition.BOSS_NAMES.keys.firstOrNull { it.first == area }?.second ?: 1
                         ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.firstOrNull() ?: 0
+                        ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
+                            RoomStateCondition.EQUIPMENT_NAMES.keys.first()
+                        ProjectRoomStateConditionKind.BEAM_COLLECTED ->
+                            RoomStateCondition.BEAM_NAMES.keys.first()
+                        ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
+                            itemPickupOptions.firstOrNull()?.id ?: 0
+                        ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
+                            val first = RoomStateCondition.BOSS_NAMES.keys.first()
+                            packedBossConditionArgument(first.first, first.second)
+                        }
                         else -> null
                     }
                     val option = projectRoomStateCondition(kind, argument)
@@ -998,6 +1095,14 @@ private fun StateConditionEditor(
         ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.map {
             it to "Door \$${it.toString(16).uppercase().padStart(4, '0')}"
         }
+        ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
+            RoomStateCondition.EQUIPMENT_NAMES.map { it.key to it.value }
+        ProjectRoomStateConditionKind.BEAM_COLLECTED ->
+            RoomStateCondition.BEAM_NAMES.map { it.key to it.value }
+        ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> itemPickupOptions.map { it.id to it.label }
+        ProjectRoomStateConditionKind.BOSS_DEFEATED -> RoomStateCondition.BOSS_NAMES.entries.map {
+            packedBossConditionArgument(it.key.first, it.key.second) to it.value
+        }
         else -> emptyList()
     }
     if (arguments.isNotEmpty()) {
@@ -1012,6 +1117,10 @@ private fun StateConditionEditor(
                 when (condition.kind) {
                     ProjectRoomStateConditionKind.EVENT_SET -> "Event"
                     ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> "Boss"
+                    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> "Equipment"
+                    ProjectRoomStateConditionKind.BEAM_COLLECTED -> "Beam"
+                    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> "Pickup"
+                    ProjectRoomStateConditionKind.BOSS_DEFEATED -> "Boss"
                     else -> "Door"
                 },
                 fontSize = ROOM_INFO_BODY_FONT_SIZE,
@@ -1040,7 +1149,7 @@ private fun StateConditionEditor(
                             text = { Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE) },
                             onClick = {
                                 argumentExpanded = false
-                                onChange(projectRoomStateCondition(condition.kind, value))
+                                onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier.height(32.dp),
@@ -1048,6 +1157,49 @@ private fun StateConditionEditor(
                     }
                 }
             }
+        }
+    }
+
+    if (condition.argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY) {
+        EditableIntRow(
+            label = "Minimum",
+            value = condition.argument ?: 0,
+            min = 0,
+            max = 0xFFFF,
+            onValueChange = { value ->
+                onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
+            },
+        )
+    }
+
+    if (condition.kind == ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED) {
+        Text(
+            "Checks that exact pickup's save bit; it does not compare ammo capacity.",
+            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 100.dp, top = 1.dp),
+        )
+    }
+
+    if (condition.kind.isSmEditGeneratedPredicate()) {
+        val invertLabel = when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY -> "Below this value instead"
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> "Boss is not defeated"
+            else -> "Not collected instead"
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(100.dp))
+            Checkbox(
+                checked = condition.negated,
+                onCheckedChange = { inverted ->
+                    onChange(projectRoomStateCondition(condition.kind, condition.argument, inverted))
+                },
+                modifier = Modifier.size(24.dp),
+            )
+            Text(invertLabel, fontSize = ROOM_INFO_BODY_FONT_SIZE)
         }
     }
 }
@@ -1059,6 +1211,7 @@ private fun AddRoomStateDialog(
     initialCondition: ProjectRoomStateCondition,
     area: Int,
     incomingDoorPointers: List<Int>,
+    itemPickupOptions: List<ItemPickupConditionOption>,
     existingConditions: List<ProjectRoomStateCondition>,
     onDismiss: () -> Unit,
     onAdd: (ProjectRoomStateCondition) -> Unit,
@@ -1086,6 +1239,7 @@ private fun AddRoomStateDialog(
                     condition = condition,
                     area = area,
                     incomingDoorPointers = incomingDoorPointers,
+                    itemPickupOptions = itemPickupOptions,
                     onChange = { condition = it },
                 )
                 if (duplicatesExistingBranch) {
@@ -1896,7 +2050,7 @@ private fun EditableIntRow(
         if (isEditing) {
             BasicTextField(
                 value = text,
-                onValueChange = { newText -> text = newText.filter { it.isDigit() }.take(4) },
+                onValueChange = { newText -> text = newText.filter { it.isDigit() }.take(5) },
                 singleLine = true,
                 textStyle = TextStyle(fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),

@@ -58,7 +58,9 @@ entries are editable. Shared level, PLM, enemy, enemy-GFX, scroll, and FX resour
 so editing one state does not silently mutate a linked sibling.
 
 Existing-room selector graphs are now authorable. The UI can add/duplicate/delete/reorder conditional
-branches, edit every known typed condition, and keeps the one mandatory default branch fixed last.
+branches, edit every vanilla condition plus generated equipment/beam, capacity, exact item-pickup,
+and cross-area boss conditions, and keeps the one mandatory default branch fixed last. Generated
+conditions can be inverted for “not collected,” “below threshold,” and “boss not defeated” logic.
 Size-changing conditions and changed state counts rebuild the selector graph in bank `$8F`. The room
 header remains at its original address and contains a four-byte SMEDIT bridge to the relocated graph,
 so DoorDefs, AreaSave entries, load stations, and hardcoded engine comparisons continue to use the

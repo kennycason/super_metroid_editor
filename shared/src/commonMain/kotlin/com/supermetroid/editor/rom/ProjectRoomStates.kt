@@ -33,11 +33,10 @@ fun RoomEdits.ensureStateManifest(parser: RomParser): List<RoomStateEdits> {
         }
         val data = parser.readStateData(stateOffset)
         val condition = inspected.condition
-        val projectCondition = ProjectRoomStateCondition(
+        val projectCondition = projectRoomStateCondition(
             kind = ProjectRoomStateConditionKind.valueOf(condition.kind.name),
-            argumentKind = ProjectRoomStateConditionArgumentKind.valueOf(condition.argumentKind.name),
             argument = condition.argument,
-            routineCode = condition.code,
+            negated = condition.negated,
         )
         states += RoomStateEdits(
             id = "state-${sourceIndex + 1}",
@@ -72,12 +71,38 @@ fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
     ProjectRoomStateConditionKind.INCOMING_DOOR -> 6
     ProjectRoomStateConditionKind.EVENT_SET,
     ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> 5
+    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED,
+    ProjectRoomStateConditionKind.BEAM_COLLECTED,
+    ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+    ProjectRoomStateConditionKind.BOSS_DEFEATED -> SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES
     else -> 4
 }
+
+fun ProjectRoomStateConditionKind.isSmEditGeneratedPredicate(): Boolean = when (this) {
+    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED,
+    ProjectRoomStateConditionKind.BEAM_COLLECTED,
+    ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+    ProjectRoomStateConditionKind.BOSS_DEFEATED -> true
+    else -> false
+}
+
+fun packedBossConditionArgument(area: Int, mask: Int): Int =
+    ((area and 0xFF) shl 8) or (mask and 0xFF)
 
 fun projectRoomStateCondition(
     kind: ProjectRoomStateConditionKind,
     argument: Int? = null,
+    negated: Boolean = false,
 ): ProjectRoomStateCondition = when (kind) {
     ProjectRoomStateConditionKind.DEFAULT -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE5E6,
@@ -108,5 +133,29 @@ fun projectRoomStateCondition(
     )
     ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE678,
+    )
+    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK, argument ?: 0x0004, 0, negated,
+    )
+    ProjectRoomStateConditionKind.BEAM_COLLECTED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.BEAM_MASK, argument ?: 0x1000, 0, negated,
+    )
+    ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
+    ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 5, 0, negated,
+    )
+    ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 199, 0, negated,
+    )
+    ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 100, 0, negated,
+    )
+    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX, argument ?: 0, 0, negated,
+    )
+    ProjectRoomStateConditionKind.BOSS_DEFEATED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK,
+        argument ?: packedBossConditionArgument(0, 0x04), 0, negated,
     )
 }

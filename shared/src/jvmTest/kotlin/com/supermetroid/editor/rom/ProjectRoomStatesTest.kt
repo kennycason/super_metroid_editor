@@ -161,6 +161,100 @@ class ProjectRoomStatesTest {
     }
 
     @Test
+    fun `typed equipment capacity pickup and global boss predicates survive ROM round trip`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x91F8
+        val allRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
+        val baselineErrors = RomValidator.validate(parser, allRoomIds)
+            .filter { it.severity == RomValidator.Severity.ERROR }
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        roomEdits.ensureStateManifest(parser)
+        val template = roomEdits.states.last()
+        val conditions = listOf(
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED, 0x0001),
+            projectRoomStateCondition(ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST, 25),
+            projectRoomStateCondition(ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED, 0x51),
+            projectRoomStateCondition(
+                ProjectRoomStateConditionKind.BOSS_DEFEATED,
+                packedBossConditionArgument(4, 0x02),
+                negated = true,
+            ),
+        )
+        conditions.forEachIndexed { index, condition ->
+            roomEdits.states.add(
+                roomEdits.states.lastIndex,
+                RoomStateEdits(
+                    id = "state-typed-${index + 1}",
+                    templateSourceStateIndex = template.sourceStateIndex,
+                    condition = condition,
+                    resources = template.resources.copy(),
+                    conditionChanged = true,
+                ),
+            )
+        }
+        roomEdits.stateGraphChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val inspection = exported.inspectRoomStates(roomId)
+        assertTrue(inspection.isComplete)
+        val typed = inspection.states.drop(inspection.states.size - 5).dropLast(1).map { it.condition }
+        assertEquals(
+            listOf(
+                RoomStateConditionKind.EQUIPMENT_COLLECTED,
+                RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+                RoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+                RoomStateConditionKind.BOSS_DEFEATED,
+            ),
+            typed.map { it.kind },
+        )
+        assertEquals(listOf(0x0001, 25, 0x51, packedBossConditionArgument(4, 0x02)), typed.map { it.argument })
+        assertEquals(listOf(false, false, false, true), typed.map { it.negated })
+        assertTrue(typed.all { it.entrySizeBytes == SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES })
+
+        val predicatePc = exported.snesToPc(RomConstants.BANK_ROOM_DATA or typed.first().code)
+        assertContentEquals(
+            SmEditRoomStatePredicateFormat.routineBytes,
+            rom.copyOfRange(predicatePc, predicatePc + SmEditRoomStatePredicateFormat.routineBytes.size),
+        )
+        assertTrue(typed.all { it.code == typed.first().code })
+
+        val reopenedProject = SmEditProject("exported.smc")
+        val reopened = reopenedProject.getOrCreateRoom(roomId).ensureStateManifest(exported)
+        val reopenedTyped = reopened.drop(reopened.size - 5).dropLast(1).map { it.condition }
+        assertEquals(conditions, reopenedTyped)
+        assertTrue(reopenedTyped.all { it.routineCode == 0 })
+        val reopenedMissile = reopened.first {
+            it.condition.kind == ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST
+        }
+        val missileStateOffset = inspection.states.first {
+            it.condition.kind == RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST
+        }.stateDataPcOffset
+        reopenedMissile.condition = projectRoomStateCondition(
+            ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+            30,
+            negated = true,
+        )
+        reopenedMissile.conditionChanged = true
+
+        ProjectRoomExporter(reopenedProject, exported, rom).exportRooms()
+
+        val afterUpdate = RomParser(rom)
+        val updatedMissile = afterUpdate.inspectRoomStates(roomId).states.first {
+            it.condition.kind == RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST
+        }
+        assertEquals(30, updatedMissile.condition.argument)
+        assertTrue(updatedMissile.condition.negated)
+        assertEquals(missileStateOffset, updatedMissile.stateDataPcOffset)
+        val exportedErrors = RomValidator.validate(afterUpdate, allRoomIds)
+            .filter { it.severity == RomValidator.Severity.ERROR }
+        assertEquals(baselineErrors, exportedErrors)
+    }
+
+    @Test
     fun `reordering and deleting states preserves first-match order and the final default`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
         val parser = RomParser(rom)

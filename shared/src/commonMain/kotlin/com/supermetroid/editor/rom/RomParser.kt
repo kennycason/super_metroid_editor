@@ -620,7 +620,59 @@ class RomParser(internal val romData: ByteArray) {
             }
             val condition: RoomStateCondition
             val statePtrOffset: Int
-            when (code) {
+            val generatedRoutinePc = if (code in 0x8000..0xFFFF) {
+                snesToPc(BANK_ROOM_DATA or code)
+            } else {
+                -1
+            }
+            if (SmEditRoomStatePredicateFormat.matchesAt(romData, generatedRoutinePc)) {
+                if (pos + SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES > bankEndExclusive) {
+                    issues.add(RoomStateParseIssue(pos, "SMEDIT typed state predicate is truncated"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val predicateType = romData[pos + 2].toInt() and 0xFF
+                val flags = romData[pos + 3].toInt() and 0xFF
+                val decoded = when (predicateType) {
+                    SmEditRoomStatePredicateFormat.TYPE_EQUIPMENT ->
+                        RoomStateConditionKind.EQUIPMENT_COLLECTED to RoomStateConditionArgumentKind.EQUIPMENT_MASK
+                    SmEditRoomStatePredicateFormat.TYPE_BEAM ->
+                        RoomStateConditionKind.BEAM_COLLECTED to RoomStateConditionArgumentKind.BEAM_MASK
+                    SmEditRoomStatePredicateFormat.TYPE_MAX_MISSILES ->
+                        RoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST to RoomStateConditionArgumentKind.CAPACITY
+                    SmEditRoomStatePredicateFormat.TYPE_MAX_SUPER_MISSILES ->
+                        RoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST to RoomStateConditionArgumentKind.CAPACITY
+                    SmEditRoomStatePredicateFormat.TYPE_MAX_POWER_BOMBS ->
+                        RoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST to RoomStateConditionArgumentKind.CAPACITY
+                    SmEditRoomStatePredicateFormat.TYPE_MAX_ENERGY ->
+                        RoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST to RoomStateConditionArgumentKind.CAPACITY
+                    SmEditRoomStatePredicateFormat.TYPE_MAX_RESERVE_ENERGY ->
+                        RoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST to RoomStateConditionArgumentKind.CAPACITY
+                    SmEditRoomStatePredicateFormat.TYPE_ITEM_PICKUP ->
+                        RoomStateConditionKind.ITEM_PICKUP_COLLECTED to RoomStateConditionArgumentKind.ITEM_BIT_INDEX
+                    SmEditRoomStatePredicateFormat.TYPE_BOSS ->
+                        RoomStateConditionKind.BOSS_DEFEATED to RoomStateConditionArgumentKind.AREA_AND_BOSS_MASK
+                    else -> null
+                }
+                if (decoded == null || flags and SmEditRoomStatePredicateFormat.FLAG_INVERTED.inv() != 0) {
+                    issues.add(
+                        RoomStateParseIssue(
+                            pos,
+                            "Unknown SMEDIT typed state predicate type/flags \$${predicateType.toString(16)}" +
+                                "/\$${flags.toString(16)}",
+                        )
+                    )
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                condition = RoomStateCondition(
+                    code = code,
+                    kind = decoded.first,
+                    argumentKind = decoded.second,
+                    argument = readUInt16At(pos + 4),
+                    entrySizeBytes = SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES,
+                    negated = flags and SmEditRoomStatePredicateFormat.FLAG_INVERTED != 0,
+                )
+                statePtrOffset = pos + 6
+            } else when (code) {
                 0xE5E6 -> {
                     val statePc = pos + 2
                     condition = RoomStateCondition(
@@ -893,8 +945,7 @@ class RomParser(internal val romData: ByteArray) {
         val result = mutableListOf<RoomItemInfo>()
         for (rid in roomIds) {
             val room = readRoomHeader(rid) ?: continue
-            if (room.plmSetPtr == 0 || room.plmSetPtr == 0xFFFF) continue
-            val plms = parsePlmSet(room.plmSetPtr)
+            val plms = getAllPlmEntriesForRoom(rid)
             for (plm in plms) {
                 if (isItemPlm(plm.id)) {
                     result.add(RoomItemInfo(rid, room.area, plm))
