@@ -20,8 +20,6 @@ data class BiomeGenerationOptions(
      */
     val hardForceAirRects: List<BiomeGenerationRect> = emptyList(),
     val protectedCells: BooleanArray? = null,
-    val wfcSamples: List<WfcSample> = emptyList(),
-    val wfcOptions: WfcOptions = WfcOptions(),
 )
 
 /**
@@ -97,16 +95,6 @@ class BiomeGenerator(
         }
         if (isMaze) {
             preserveOriginalMazeCollision(originalWords, width, preserved, forceAir)
-        }
-
-        if (rules.algorithm == StructureAlgorithm.WFC) {
-            return WaveFunctionCollapseGenerator(
-                rules = rules,
-                profile = profile,
-                seed = seed,
-                samples = options.wfcSamples,
-                options = options.wfcOptions,
-            ).generate(width, height, originalWords, originalBts, preserved, forceAir)
         }
 
         // Silhouette of the pre-generation room, used by REMIX to keep the

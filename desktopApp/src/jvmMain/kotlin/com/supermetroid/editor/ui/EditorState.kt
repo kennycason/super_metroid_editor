@@ -29,6 +29,8 @@ import com.supermetroid.editor.data.EnemyUpdate
 import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomEdits
+import com.supermetroid.editor.data.RoomStateEdits
+import com.supermetroid.editor.data.ProjectRoomStateCondition
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
@@ -39,11 +41,11 @@ import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeSafetyMask
 import com.supermetroid.editor.procgen.BiomeTheme
 import com.supermetroid.editor.procgen.LevelGrid
-import com.supermetroid.editor.procgen.StructureAlgorithm
+import com.supermetroid.editor.procgen.LearnedRoomProposal
+import com.supermetroid.editor.procgen.LearnedRoomProposalProcessor
+import com.supermetroid.editor.procgen.PreparedLearnedRoomCandidate
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
-import com.supermetroid.editor.procgen.WfcOptions
-import com.supermetroid.editor.procgen.WfcSample
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.PaletteEffects
@@ -53,6 +55,11 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
+import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.encodedSizeBytes
+import com.supermetroid.editor.rom.baseSourceStateIndex
+import com.supermetroid.editor.rom.stateEditsForId
+import com.supermetroid.editor.rom.stateEditsForSourceIndex
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TileGraphics
@@ -195,6 +202,10 @@ class EditorState {
     /** Currently active room state index (0 = first conditional, last = default). */
     var currentStateIndex: Int = -1
         private set
+    /** Stable project state identity; new/reordered states do not have a unique ROM source index. */
+    var currentStateId by mutableStateOf<String?>(null)
+        private set
+    private var currentRomParser: RomParser? = null
     var dirty by mutableStateOf(false)
         private set
 
@@ -330,6 +341,16 @@ class EditorState {
             when (change.action) {
                 "add" -> plms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
                 "remove" -> plms.removeAll { it.id == change.plmId && it.x == change.x && it.y == change.y }
+            }
+        }
+        for (state in roomEdits.states) {
+            for (change in state.plmChanges) {
+                when (change.action) {
+                    "add" -> plms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                    "remove" -> plms.removeAll {
+                        it.id == change.plmId && it.x == change.x && it.y == change.y && it.param == change.param
+                    }
+                }
             }
         }
 
@@ -2076,9 +2097,15 @@ class EditorState {
     fun initForRom(romPath: String) {
         projectFilePath = romPath.replaceAfterLast('.', "smedit")
         val file = File(projectFilePath)
+        var repairedRomPath = false
         if (file.exists()) {
             try {
                 project = ProjectFileService.loadProject(file)
+                if (!File(project.romPath).isFile) {
+                    editorLog("Project ROM path is unavailable; using the ROM opened with this project: $romPath")
+                    project = project.copy(romPath = romPath)
+                    repairedRomPath = true
+                }
                 val enabledPatches = project.patches.filter { it.enabled }
                 editorLog("Loaded project: ${file.absolutePath} (${project.rooms.size} rooms, ${project.patches.size} patches)")
                 if (enabledPatches.isNotEmpty()) {
@@ -2092,6 +2119,7 @@ class EditorState {
             project = SmEditProject(romPath = romPath)
         }
         resetForLoadedProject(seedPatches = true)
+        if (repairedRomPath) dirty = true
     }
 
     fun initForReadOnlyRom(romPath: String) {
@@ -2120,6 +2148,7 @@ class EditorState {
         workingBlocksWide = 0
         workingBlocksTall = 0
         currentRoomId = 0
+        currentRomParser = null
         currentTilesetId = 0
         romTilesetId = 0
         mapSelStart = null
@@ -2133,6 +2162,7 @@ class EditorState {
         currentAreaSaveEntryCount = 0
         vanillaSaveIndicesByArea = emptyMap()
         currentStateIndex = -1
+        currentStateId = null
         hoverBlockX = -1
         hoverBlockY = -1
         hoverTileWord = 0
@@ -2217,13 +2247,20 @@ class EditorState {
     // ─── Working level data ─────────────────────────────────────
 
     fun loadRoom(roomId: Int, romParser: RomParser, room: com.supermetroid.editor.data.Room) {
+        currentRomParser = romParser
         currentRoomId = roomId
+        currentStateIndex = romParser.preferredPreviewStateIndex(roomId)
         romTilesetId = room.tileset
         // A stored state-data change (e.g. from the biome generator or room
         // properties panel) overrides the ROM tileset for editing/rendering.
-        val stateDataChange = project.rooms[project.roomKey(roomId)]?.stateDataChange
-        currentTilesetId = stateDataChange?.tileset ?: room.tileset
-        currentBgScrolling = stateDataChange?.bgScrolling ?: room.bgScrolling
+        val roomEdits = project.rooms[project.roomKey(roomId)]
+        currentStateId = roomEdits?.states
+            ?.firstOrNull { it.sourceStateIndex == currentStateIndex }
+            ?.id
+        val stateDataChange = selectedStateEdits(roomEdits)?.stateDataChange
+        val commonStateDataChange = roomEdits?.stateDataChange
+        currentTilesetId = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: room.tileset
+        currentBgScrolling = stateDataChange?.bgScrolling ?: commonStateDataChange?.bgScrolling ?: room.bgScrolling
         currentArea = project.rooms[project.roomKey(roomId)]?.roomHeaderChange?.area ?: room.area
         refreshVanillaSaveIndices(romParser)
         currentIncomingDoorPtrs = romParser.findDoorsLeadingTo(roomId)
@@ -2302,9 +2339,10 @@ class EditorState {
         _workingScrolls = _originalScrolls.copyOf()
         scrollVersion++
 
-        // Load PLMs for this room from all states so rogue door caps (e.g. in Mother Brain / Tourian escape) are visible
+        // Load the selected preview state's PLMs. Other states are available
+        // through the state selector instead of being merged into one view.
         _workingPlms.clear()
-        val plms = romParser.getAllPlmEntriesForRoom(roomId)
+        val plms = romParser.parsePlmSet(room.plmSetPtr)
         _workingPlms.addAll(plms)
         originalPlmCount = plms.size
 
@@ -2321,6 +2359,41 @@ class EditorState {
         // Bump render version without marking room as user-edited
         _editVersionState.value++
     }
+
+    /**
+     * Editing through the room canvas always targets the state currently being
+     * previewed. Tests and synthetic canvases without a ROM parser retain the
+     * older room-wide lists so those isolated tools remain usable.
+     */
+    private fun currentStateEdits(): RoomStateEdits? {
+        val parser = currentRomParser ?: return null
+        if (currentRoomId == 0 || currentStateIndex < 0) return null
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(parser)
+        val state = selectedStateEdits(roomEdits)
+            ?: return null
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        return state
+    }
+
+    private fun selectedStateEdits(roomEdits: RoomEdits?): RoomStateEdits? =
+        roomEdits?.stateEditsForId(currentStateId)
+            ?: roomEdits?.stateEditsForSourceIndex(currentStateIndex)
+
+    private fun currentOperations(): MutableList<EditOperation> =
+        currentStateEdits()?.operations ?: project.getOrCreateRoom(currentRoomId).operations
+
+    private fun currentPlmChanges(): MutableList<PlmChange> =
+        currentStateEdits()?.plmChanges ?: project.getOrCreateRoom(currentRoomId).plmChanges
+
+    private fun currentEnemyChanges(): MutableList<EnemyChange> =
+        currentStateEdits()?.enemyChanges ?: project.getOrCreateRoom(currentRoomId).enemyChanges
+
+    private fun currentScrollChanges(): MutableList<ScrollChange> =
+        currentStateEdits()?.scrollChanges ?: project.getOrCreateRoom(currentRoomId).scrollChanges
+
+    private fun currentScrollCommands(): MutableMap<String, MutableList<ScrollCommand>> =
+        currentStateEdits()?.customScrollCommands ?: project.getOrCreateRoom(currentRoomId).customScrollCommands
 
     private fun replaySavedRoomEdits(savedRoom: RoomEdits, effectiveWidth: Int, roomKey: String) {
         // Replay saved tile edits
@@ -2386,17 +2459,129 @@ class EditorState {
                 }
             }
         }
+        selectedStateEdits(savedRoom)?.let { stateEdits ->
+            replayStateEdits(stateEdits, effectiveWidth, roomKey)
+        }
+    }
+
+    private fun replayStateEdits(stateEdits: RoomStateEdits, effectiveWidth: Int, roomKey: String) {
+        var tileCount = 0
+        for (op in stateEdits.operations) {
+            for (edit in op.edits) {
+                applyTileEdit(edit, useNew = true)
+                tileCount++
+            }
+            undoStack.add(op)
+        }
+        if (stateEdits.operations.isNotEmpty()) undoVersion++
+        for (change in stateEdits.plmChanges) {
+            when (change.action) {
+                "add" -> _workingPlms.add(RomParser.PlmEntry(change.plmId, change.x, change.y, change.param))
+                "remove" -> _workingPlms.removeAll {
+                    it.id == change.plmId && it.x == change.x && it.y == change.y
+                }
+            }
+        }
+        for (change in stateEdits.scrollChanges) {
+            val index = change.screenY * effectiveWidth + change.screenX
+            if (index in _workingScrolls.indices) _workingScrolls[index] = change.newValue
+        }
+        if (stateEdits.scrollChanges.isNotEmpty()) scrollVersion++
+        for (change in stateEdits.enemyChanges) {
+            when (change.action) {
+                "add" -> _workingEnemies.add(
+                    RomParser.EnemyEntry(
+                        change.enemyId, change.x, change.y, change.initParam, change.properties,
+                        change.extra1, change.extra2, change.extra3,
+                    )
+                )
+                "remove" -> _workingEnemies.removeAll {
+                    it.id == change.enemyId && it.x == change.origX && it.y == change.origY
+                }
+                "update" -> {
+                    val index = _workingEnemies.indexOfFirst {
+                        it.id == change.enemyId && it.x == change.origX && it.y == change.origY
+                    }
+                    if (index >= 0) {
+                        _workingEnemies[index] = RomParser.EnemyEntry(
+                            change.enemyId, change.x, change.y, change.initParam, change.properties,
+                            change.extra1, change.extra2, change.extra3,
+                        )
+                    }
+                }
+            }
+        }
+        if (tileCount > 0) {
+            editorLog("Replayed $tileCount state-specific edits for room 0x$roomKey state ${stateEdits.id}")
+        }
     }
 
     /**
-     * Switch to a different room state. Reloads enemies, PLMs, and scrolls
-     * from the selected state's data pointers. Level data is NOT reloaded
-     * (states typically share level data; if they don't, a full room reload is needed).
+     * Preview a different room state from its complete set of state-owned
+     * resources. V1 project edits are replayed because they are room-wide;
+     * selecting a preview must not make already-saved edits disappear.
      */
     fun switchRoomState(stateIndex: Int, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateId = roomEdits.states.firstOrNull { it.sourceStateIndex == stateIndex }?.id ?: return
+        switchRoomState(stateId, romParser)
+    }
+
+    fun switchRoomState(stateId: String, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val selectedState = roomEdits.stateEditsForId(stateId) ?: return
+        val baseStateIndex = selectedState.baseSourceStateIndex() ?: return
         val states = romParser.parseRoomStatesWithData(currentRoomId)
-        val state = states.getOrNull(stateIndex) ?: return
-        currentStateIndex = stateIndex
+        val state = states.getOrNull(baseStateIndex) ?: return
+        currentStateIndex = baseStateIndex
+        currentStateId = selectedState.id
+        val room = romParser.readRoomHeader(currentRoomId) ?: return
+        val roomKey = project.roomKey(currentRoomId)
+        val savedRoom = project.rooms[roomKey]
+        val hc = savedRoom?.roomHeaderChange
+        val effectiveWidth = hc?.width ?: room.width
+        val effectiveHeight = hc?.height ?: room.height
+        val stateDataChange = selectedState.stateDataChange
+        val commonStateDataChange = savedRoom?.stateDataChange
+
+        mapSelStart = null
+        mapSelEnd = null
+        floatingSelection = null
+        undoStack.clear()
+        redoStack.clear()
+        pendingEdits.clear()
+        pendingPositions.clear()
+        pendingPlmAdds.clear()
+        pendingPlmRemoves.clear()
+        undoVersion++
+
+        currentTilesetId = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: state.tileset
+        currentBgScrolling = stateDataChange?.bgScrolling ?: commonStateDataChange?.bgScrolling ?: state.bgScrolling
+        if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
+        val tg = TileGraphics(romParser)
+        if (tg.loadTileset(currentTilesetId)) {
+            applyCustomGfxToTileGraphics(tg, currentTilesetId)
+            tileGraphics = tg
+        }
+
+        val levelDataPtr = state.levelDataPtr.takeIf { it != 0 } ?: room.levelDataPtr
+        var levelData = romParser.decompressLZ2(levelDataPtr)
+        if (effectiveWidth != room.width || effectiveHeight != room.height) {
+            levelData = resizeLevelData(
+                levelData,
+                room.width,
+                room.height,
+                effectiveWidth,
+                effectiveHeight,
+            )
+        }
+        originalLevelData = levelData.copyOf()
+        workingLevelData = levelData.copyOf()
+        workingBlocksWide = effectiveWidth * 16
+        workingBlocksTall = effectiveHeight * 16
+        if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
 
         // Reload enemies from this state's enemy set pointer
         _workingEnemies.clear()
@@ -2408,31 +2593,52 @@ class EditorState {
         originalPlmCount = _workingPlms.size
 
         // Reload scroll data from this state's scroll pointer
-        val room = romParser.readRoomHeader(currentRoomId) ?: return
-        val hc = project.rooms[project.roomKey(currentRoomId)]?.roomHeaderChange
-        val w = hc?.width ?: room.width
-        val h = hc?.height ?: room.height
-        _originalScrolls = romParser.parseScrollData(state.scrollPtr, w, h)
+        val romScrolls = romParser.parseScrollData(state.scrollPtr, room.width, room.height)
+        _originalScrolls = if (effectiveWidth != room.width || effectiveHeight != room.height) {
+            resizeScrollGrid(romScrolls, room.width, room.height, effectiveWidth, effectiveHeight)
+        } else {
+            romScrolls
+        }
         _workingScrolls = _originalScrolls.copyOf()
         scrollVersion++
 
-        // If level data pointer differs from current, reload it
-        val currentLevelPtr = room.levelDataPtr
-        if (state.levelDataPtr != currentLevelPtr && state.levelDataPtr != 0) {
-            var levelData = romParser.decompressLZ2(state.levelDataPtr)
-            val effectiveWidth = hc?.width ?: room.width
-            val effectiveHeight = hc?.height ?: room.height
-            if (effectiveWidth != room.width || effectiveHeight != room.height) {
-                levelData = resizeLevelData(levelData, room.width, room.height, effectiveWidth, effectiveHeight)
-            }
-            originalLevelData = levelData.copyOf()
-            workingLevelData = levelData.copyOf()
-            workingBlocksWide = effectiveWidth * 16
-            workingBlocksTall = effectiveHeight * 16
-        }
+        if (savedRoom != null) replaySavedRoomEdits(savedRoom, effectiveWidth, roomKey)
 
-        editVersion++
-        editorLog("Switched to state $stateIndex: ${state.stateInfo.conditionName} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})")
+        _editVersionState.value++
+        editorLog(
+            "Switched to state '${selectedState.id}' (source $baseStateIndex): " +
+                "${selectedState.condition.kind} (enemies=${_workingEnemies.size}, PLMs=${_workingPlms.size})"
+        )
+    }
+
+    /**
+     * Overlay the selected runtime state's complete 26-byte record onto the
+     * shared room header. Canvas renderers use this so FX, liquids, separate
+     * backgrounds, and other state-owned resources change with the preview.
+     */
+    internal fun applyCurrentStateData(room: Room, romParser: RomParser): Room {
+        val roomEdits = project.rooms[project.roomKey(room.roomId)]
+        val selectedState = selectedStateEdits(roomEdits)
+        val baseStateIndex = selectedState?.baseSourceStateIndex() ?: currentStateIndex
+        val state = romParser.parseRoomStatesWithData(room.roomId).getOrNull(baseStateIndex) ?: return room
+        val stateDataChange = selectedState?.stateDataChange
+        val commonStateDataChange = roomEdits?.stateDataChange
+        return room.copy(
+            levelDataPtr = state.levelDataPtr,
+            tileset = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: state.tileset,
+            musicData = stateDataChange?.musicData ?: commonStateDataChange?.musicData ?: state.musicData,
+            musicTrack = stateDataChange?.musicTrack ?: commonStateDataChange?.musicTrack ?: state.musicTrack,
+            fxPtr = state.fxPtr,
+            enemySetPtr = state.enemySetPtr,
+            enemyGfxPtr = state.enemyGfxPtr,
+            bgScrolling = stateDataChange?.bgScrolling ?: commonStateDataChange?.bgScrolling ?: state.bgScrolling,
+            roomScrollsPtr = state.scrollPtr,
+            xraySpecialCasingPtr = state.xraySpecialCasingPtr,
+            mainAsmPtr = state.mainAsmPtr,
+            plmSetPtr = state.plmSetPtr,
+            bgDataPtr = state.bgDataPtr,
+            setupAsmPtr = state.setupAsmPtr,
+        )
     }
 
     fun readBlockWord(bx: Int, by: Int): Int {
@@ -2554,7 +2760,8 @@ class EditorState {
         val workingPlmsBefore = _workingPlms.toList()
         val roomKey = project.roomKey(currentRoomId)
         val existingRoomEdits = project.rooms[roomKey]
-        val roomPlmChangesBefore = existingRoomEdits?.plmChanges?.toList()
+        val targetPlmChanges = currentPlmChanges()
+        val roomPlmChangesBefore = targetPlmChanges.toList()
         val roomSaveSpawnsBefore = existingRoomEdits?.saveStationSpawns?.toList()
         val dirtyBefore = dirty
         val editVersionBefore = editVersion
@@ -2574,8 +2781,8 @@ class EditorState {
             if (existingRoomEdits == null) {
                 project.rooms.remove(roomKey)
             } else {
-                existingRoomEdits.plmChanges.clear()
-                existingRoomEdits.plmChanges.addAll(roomPlmChangesBefore.orEmpty())
+                targetPlmChanges.clear()
+                targetPlmChanges.addAll(roomPlmChangesBefore)
                 existingRoomEdits.saveStationSpawns.clear()
                 existingRoomEdits.saveStationSpawns.addAll(roomSaveSpawnsBefore.orEmpty())
             }
@@ -2625,12 +2832,12 @@ class EditorState {
                     for (old in existing) {
                         _workingPlms.remove(old)
                         val rc = PlmChange("remove", old.id, old.x, old.y, old.param)
-                        project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
+                        targetPlmChanges.add(rc)
                         pendingPlmRemoves.add(rc)
                     }
                     _workingPlms.add(RomParser.PlmEntry(plmId, tx, ty, actualParam))
                     val addChange = PlmChange("add", plmId, tx, ty, actualParam)
-                    project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
+                    targetPlmChanges.add(addChange)
                     pendingPlmAdds.add(addChange)
                     if (plmId == 0xB76F && retainedSaveParam == null) {
                         ensureAutoSaveStationSpawn(tx, ty, actualParam and 0xFF)
@@ -2712,7 +2919,7 @@ class EditorState {
         writeBlockWord(bx, by, newWord)
         writeBts(bx, by, bts)
 
-        val roomOps = project.getOrCreateRoom(currentRoomId).operations
+        val roomOps = currentOperations()
         val lastOp = undoStack.lastOrNull()
         if (lastOp != null && lastOp.edits.size == 1 &&
             lastOp.edits[0].blockX == bx && lastOp.edits[0].blockY == by &&
@@ -2908,17 +3115,20 @@ class EditorState {
             val usedIndices = mutableSetOf<Int>()
             // Replay add/remove history to find NET used params (not ghost entries)
             for ((_, roomEdits) in project.rooms) {
-                val netItems = mutableListOf<Triple<Int, Int, Int>>() // (plmId, xy, param)
-                for (change in roomEdits.plmChanges) {
-                    val xy = (change.x shl 16) or change.y
-                    if (change.action == "add") {
-                        netItems.add(Triple(change.plmId, xy, change.param))
-                    } else if (change.action == "remove") {
-                        netItems.removeAll { it.first == change.plmId && it.second == xy }
+                val changeSets = listOf(roomEdits.plmChanges) + roomEdits.states.map { it.plmChanges }
+                for (changes in changeSets) {
+                    val netItems = mutableListOf<Triple<Int, Int, Int>>() // (plmId, xy, param)
+                    for (change in changes) {
+                        val xy = (change.x shl 16) or change.y
+                        if (change.action == "add") {
+                            netItems.add(Triple(change.plmId, xy, change.param))
+                        } else if (change.action == "remove") {
+                            netItems.removeAll { it.first == change.plmId && it.second == xy }
+                        }
                     }
-                }
-                for ((_, _, p) in netItems) {
-                    if (p > 0) usedIndices.add(p)
+                    for ((_, _, p) in netItems) {
+                        if (p > 0) usedIndices.add(p)
+                    }
                 }
             }
             // Include vanilla item params from current room
@@ -2949,7 +3159,8 @@ class EditorState {
                 if (plm.id == 0xB76F) usedSaveIndices.add(plm.param and 0xFF)
             }
             for ((_, roomEdits) in project.rooms) {
-                for (change in roomEdits.plmChanges) {
+                val changes = roomEdits.plmChanges + roomEdits.states.flatMap { it.plmChanges }
+                for (change in changes) {
                     if (change.action == "add" && change.plmId == 0xB76F) usedSaveIndices.add(change.param and 0xFF)
                 }
             }
@@ -2974,6 +3185,7 @@ class EditorState {
     }
 
     fun addPlm(plmId: Int, x: Int, y: Int, param: Int) {
+        val plmChanges = currentPlmChanges()
         val existing = _workingPlms.filter { it.x == x && it.y == y && it.id == plmId }
         val retainedSaveParam = existing.singleOrNull()
             ?.takeIf { plmId == 0xB76F && param == 0x8000 }
@@ -2983,13 +3195,13 @@ class EditorState {
         for (old in existing) {
             _workingPlms.remove(old)
             val rc = PlmChange("remove", old.id, old.x, old.y, old.param)
-            project.getOrCreateRoom(currentRoomId).plmChanges.add(rc)
+            plmChanges.add(rc)
             removedChanges.add(rc)
         }
 
         _workingPlms.add(RomParser.PlmEntry(plmId, x, y, actualParam))
         val addChange = PlmChange("add", plmId, x, y, actualParam)
-        project.getOrCreateRoom(currentRoomId).plmChanges.add(addChange)
+        plmChanges.add(addChange)
         if (plmId == 0xB76F && retainedSaveParam == null) {
             ensureAutoSaveStationSpawn(x, y, actualParam and 0xFF)
         }
@@ -3007,25 +3219,27 @@ class EditorState {
 
     /** Create a new custom scroll command set, returns the command ID. */
     fun createScrollCommand(entries: List<ScrollCommand>): String {
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        val id = "cmd_${roomEdits.customScrollCommands.size}"
-        roomEdits.customScrollCommands[id] = entries.toMutableList()
+        val commands = currentScrollCommands()
+        val id = "cmd_${commands.size}"
+        commands[id] = entries.toMutableList()
         dirty = true
         return id
     }
 
     /** Update an existing custom scroll command set. */
     fun updateScrollCommand(cmdId: String, entries: List<ScrollCommand>) {
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        roomEdits.customScrollCommands[cmdId] = entries.toMutableList()
+        currentScrollCommands()[cmdId] = entries.toMutableList()
         dirty = true
         editVersion++
     }
 
     /** Get custom scroll commands for a command ID, or null if not found. */
     fun getScrollCommand(cmdId: String): List<ScrollCommand>? {
-        val roomEdits = project.rooms[project.roomKey(currentRoomId)] ?: return null
-        return roomEdits.customScrollCommands[cmdId]
+        val stateCommands = project.rooms[project.roomKey(currentRoomId)]
+            ?.let(::selectedStateEdits)
+            ?.customScrollCommands
+        return stateCommands?.get(cmdId)
+            ?: project.rooms[project.roomKey(currentRoomId)]?.customScrollCommands?.get(cmdId)
     }
 
     /** Add a B703 scroll trigger with a new custom command set. Returns the PLM param (command ID encoded). */
@@ -3033,8 +3247,7 @@ class EditorState {
         val cmdId = createScrollCommand(entries)
         // Use a custom param range starting from 0x0100 for custom commands
         // Format: 0xCC00 | cmdIndex (to distinguish from ROM pointers)
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        val cmdIndex = roomEdits.customScrollCommands.keys.indexOf(cmdId)
+        val cmdIndex = currentScrollCommands().keys.indexOf(cmdId)
         val customParam = 0xCC00 or (cmdIndex and 0xFF)
         addPlm(0xB703, x, y, customParam)
     }
@@ -3043,7 +3256,7 @@ class EditorState {
         val removed = _workingPlms.filter { it.x == x && it.y == y && it.id == plmId }
         _workingPlms.removeAll { it.x == x && it.y == y && it.id == plmId }
         val changes = removed.map { PlmChange("remove", it.id, it.x, it.y, it.param) }
-        for (c in changes) project.getOrCreateRoom(currentRoomId).plmChanges.add(c)
+        currentPlmChanges().addAll(changes)
         for (old in removed) {
             if (old.id == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(old.param and 0xFF)
         }
@@ -3066,7 +3279,7 @@ class EditorState {
         val entry = RomParser.EnemyEntry(enemyId, pixelX, pixelY, initParam, properties)
         _workingEnemies.add(entry)
         val ec = EnemyChange("add", enemyId, pixelX, pixelY, initParam, properties)
-        project.getOrCreateRoom(currentRoomId).enemyChanges.add(ec)
+        currentEnemyChanges().add(ec)
 
         val name = RomParser.enemyName(enemyId)
         val op = EditOperation("Add $name", enemyAdds = listOf(ec))
@@ -3081,7 +3294,7 @@ class EditorState {
         _workingEnemies.removeAll { it.id == enemy.id && it.x == enemy.x && it.y == enemy.y }
         val ec = EnemyChange("remove", enemy.id, enemy.x, enemy.y, enemy.initParam, enemy.properties,
             enemy.extra1, enemy.extra2, enemy.extra3, origX = enemy.x, origY = enemy.y)
-        project.getOrCreateRoom(currentRoomId).enemyChanges.add(ec)
+        currentEnemyChanges().add(ec)
 
         val name = RomParser.enemyName(enemy.id)
         val op = EditOperation("Remove $name", enemyRemoves = listOf(ec))
@@ -3098,7 +3311,7 @@ class EditorState {
         _workingEnemies[idx] = new
         val newEc = EnemyChange("update", new.id, new.x, new.y, new.initParam, new.properties,
             new.extra1, new.extra2, new.extra3, origX = old.x, origY = old.y)
-        project.getOrCreateRoom(currentRoomId).enemyChanges.add(newEc)
+        currentEnemyChanges().add(newEc)
 
         val oldEc = EnemyChange("update", old.id, old.x, old.y, old.initParam, old.properties,
             old.extra1, old.extra2, old.extra3, origX = old.x, origY = old.y)
@@ -3141,10 +3354,10 @@ class EditorState {
         val oldValue = _workingScrolls[idx]
         if (oldValue == newValue) return
         _workingScrolls[idx] = newValue
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        roomEdits.scrollChanges.removeAll { it.screenX == screenX && it.screenY == screenY }
+        val scrollChanges = currentScrollChanges()
+        scrollChanges.removeAll { it.screenX == screenX && it.screenY == screenY }
         if (newValue != _originalScrolls[idx]) {
-            roomEdits.scrollChanges.add(ScrollChange(screenX, screenY, _originalScrolls[idx], newValue))
+            scrollChanges.add(ScrollChange(screenX, screenY, _originalScrolls[idx], newValue))
         }
 
         val scrollName = when (newValue) { 0 -> "Red"; 1 -> "Blue"; 2 -> "Green"; else -> "0x${newValue.toString(16)}" }
@@ -3192,9 +3405,8 @@ class EditorState {
         setRoomHeaderChange(change)
 
         // Clear tile edit history (no longer valid for new dimensions)
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
-        roomEdits.operations.clear()
-        roomEdits.scrollChanges.clear()
+        currentOperations().clear()
+        currentScrollChanges().clear()
         undoStack.clear()
         redoStack.clear()
         undoVersion++
@@ -3209,6 +3421,39 @@ class EditorState {
     fun setFxChange(change: FxChange) {
         val roomEdits = project.getOrCreateRoom(currentRoomId)
         roomEdits.fxChange = change
+        dirty = true
+        editVersion++
+    }
+
+    fun setRoomStateFxChange(stateId: String, change: FxChange?, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
+        stateEdits.fxChange = change
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+    }
+
+    fun setRoomStateDoorFxChange(
+        stateId: String,
+        doorSelect: Int,
+        change: FxChange?,
+        romParser: RomParser,
+    ) {
+        require(doorSelect in 1..0xFFFF) { "Door-specific FX requires a non-zero 16-bit door pointer" }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
+        val key = doorSelect.toString(16).uppercase().padStart(4, '0')
+        if (change == null) {
+            stateEdits.doorFxChanges.remove(key)
+        } else {
+            stateEdits.doorFxChanges[key] = change
+        }
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
     }
@@ -3701,9 +3946,10 @@ class EditorState {
     fun applyHeaderChanges(room: com.supermetroid.editor.data.Room): com.supermetroid.editor.data.Room {
         val edits = project.rooms[project.roomKey(room.roomId)] ?: return room
         val hc = edits.roomHeaderChange
-        val sd = edits.stateDataChange
-        val tileset = sd?.tileset ?: room.tileset
-        val bgScrolling = sd?.bgScrolling ?: room.bgScrolling
+        val sd = selectedStateEdits(edits)?.stateDataChange
+        val commonSd = edits.stateDataChange
+        val tileset = sd?.tileset ?: commonSd?.tileset ?: room.tileset
+        val bgScrolling = sd?.bgScrolling ?: commonSd?.bgScrolling ?: room.bgScrolling
         if (hc == null && tileset == room.tileset && bgScrolling == room.bgScrolling) return room
         return room.copy(
             width = hc?.width ?: room.width,
@@ -3725,6 +3971,135 @@ class EditorState {
         if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
         dirty = true
         editVersion++
+    }
+
+    fun setRoomStateDataChange(stateId: String, change: StateDataChange?, romParser: RomParser) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
+        stateEdits.stateDataChange = change
+        val common = roomEdits.stateDataChange
+        val state = stateEdits.baseSourceStateIndex()
+            ?.let { romParser.parseRoomStatesWithData(currentRoomId).getOrNull(it) }
+        currentBgScrolling = change?.bgScrolling ?: common?.bgScrolling ?: state?.bgScrolling ?: currentBgScrolling
+        if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+    }
+
+    fun setRoomStateCondition(
+        stateId: String,
+        condition: ProjectRoomStateCondition,
+        romParser: RomParser,
+    ) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val stateEdits = roomEdits.stateEditsForId(stateId)
+            ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
+        val source = stateEdits.sourceCondition ?: stateEdits.condition
+        require(source.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            "The mandatory default state condition cannot be changed"
+        }
+        if (stateEdits.sourceStateIndex == null || source.encodedSizeBytes() != condition.encodedSizeBytes()) {
+            roomEdits.stateGraphChanged = true
+        }
+        stateEdits.condition = condition
+        stateEdits.conditionChanged = stateEdits.sourceCondition?.let { condition != it } ?: true
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+    }
+
+    /**
+     * Add a conditional branch by cloning the selected state's effective
+     * project deltas. Unedited source resources begin linked; copied local
+     * deltas preserve the template's visible content and export privately.
+     */
+    fun addRoomState(
+        templateStateId: String,
+        condition: ProjectRoomStateCondition,
+        romParser: RomParser,
+    ): String {
+        require(condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            "A room may contain only one mandatory default state"
+        }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val template = roomEdits.stateEditsForId(templateStateId)
+            ?: error("Template state '$templateStateId' is not available")
+        val templateSource = template.baseSourceStateIndex()
+            ?: error("Template state '$templateStateId' has no ROM source state")
+        var ordinal = 1
+        var id: String
+        do {
+            id = "state-new-$ordinal"
+            ordinal++
+        } while (roomEdits.states.any { it.id == id })
+
+        val newState = RoomStateEdits(
+            id = id,
+            templateSourceStateIndex = templateSource,
+            condition = condition,
+            resources = template.resources.copy(),
+            conditionChanged = true,
+            operations = template.operations.toMutableList(),
+            plmChanges = template.plmChanges.toMutableList(),
+            enemyChanges = template.enemyChanges.toMutableList(),
+            scrollChanges = template.scrollChanges.toMutableList(),
+            fxChange = template.fxChange?.copy(),
+            doorFxChanges = template.doorFxChanges.mapValuesTo(linkedMapOf()) { it.value.copy() },
+            stateDataChange = template.stateDataChange?.copy(),
+            customScrollCommands = template.customScrollCommands
+                .mapValuesTo(linkedMapOf()) { it.value.toMutableList() },
+        )
+        val templateIndex = roomEdits.states.indexOf(template)
+        val defaultIndex = roomEdits.states.lastIndex
+        val insertionIndex = if (templateIndex < defaultIndex) templateIndex + 1 else defaultIndex
+        roomEdits.states.add(insertionIndex, newState)
+        roomEdits.stateGraphChanged = true
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return id
+    }
+
+    /** Delete a conditional state and return the state that should remain selected. */
+    fun deleteRoomState(stateId: String, romParser: RomParser): String {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val index = roomEdits.states.indexOfFirst { it.id == stateId }
+        require(index >= 0) { "Room state '$stateId' is not available" }
+        require(roomEdits.states[index].condition.kind !=
+            com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+        ) { "The mandatory default state cannot be deleted" }
+        roomEdits.states.removeAt(index)
+        roomEdits.stateGraphChanged = true
+        val selected = roomEdits.states.getOrNull(index) ?: roomEdits.states.last()
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return selected.id
+    }
+
+    fun moveRoomState(stateId: String, direction: Int, romParser: RomParser): Boolean {
+        require(direction == -1 || direction == 1) { "State move direction must be -1 or 1" }
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val index = roomEdits.states.indexOfFirst { it.id == stateId }
+        if (index < 0) return false
+        val state = roomEdits.states[index]
+        if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) return false
+        val target = index + direction
+        if (target !in 0 until roomEdits.states.lastIndex) return false
+        roomEdits.states[index] = roomEdits.states[target]
+        roomEdits.states[target] = state
+        roomEdits.stateGraphChanged = true
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        return true
     }
 
     /** Flood fill: replace all connected tiles matching the one at (bx, by) with brush. */
@@ -3825,6 +4200,107 @@ class EditorState {
         pushEditOperation(EditOperation(description, edits))
     }
 
+    /**
+     * Validate and repair learned proposals against the currently loaded room.
+     * No editor state is changed; callers can safely render and rank the result
+     * before the user chooses one candidate to apply.
+     */
+    fun prepareLearnedRoomProposals(
+        proposals: List<LearnedRoomProposal>,
+        romParser: RomParser?,
+        keepLandingSiteShipClear: Boolean = true,
+        tilesetProfile: TilesetProfile? = null,
+    ): List<PreparedLearnedRoomCandidate> {
+        val width = workingBlocksWide
+        val height = workingBlocksTall
+        require(currentRoomId != 0 && width > 0 && height > 0) { "Load a room first" }
+        require(proposals.isNotEmpty()) { "Proposal file contains no candidates" }
+        val size = width * height
+        val originalWords = IntArray(size) { readBlockWord(it % width, it / width) }
+        val originalBts = IntArray(size) { readBts(it % width, it / width) }
+        val options = buildBiomeGenerationOptions(
+            keepLandingSiteShipClear,
+            romParser,
+            originalWords,
+            originalBts,
+        )
+        return proposals.map { proposal ->
+            LearnedRoomProposalProcessor.prepare(
+                proposal = proposal,
+                expectedRoomId = currentRoomId,
+                expectedTileset = currentTilesetId,
+                originalWords = originalWords,
+                originalBts = originalBts,
+                width = width,
+                height = height,
+                options = options,
+                tilesetProfile = tilesetProfile,
+            )
+        }.sortedWith(
+            compareByDescending<PreparedLearnedRoomCandidate> { it.score }
+                .thenBy { it.proposal.rank.takeIf { rank -> rank > 0 } ?: Int.MAX_VALUE }
+                .thenBy { it.proposal.generator.seed }
+        )
+    }
+
+    /**
+     * Apply one reviewed learned candidate as a single undoable room edit.
+     * The current layout may be the original preview base or another candidate
+     * from the same still-open gallery, which makes visual A/B comparison safe.
+     */
+    fun applyLearnedRoomProposal(
+        candidate: PreparedLearnedRoomCandidate,
+        reviewedCandidates: List<PreparedLearnedRoomCandidate> = listOf(candidate),
+    ): Int {
+        val width = workingBlocksWide
+        val height = workingBlocksTall
+        require(currentRoomId == candidate.proposal.source.roomId) { "The loaded room changed; reload candidates" }
+        require(currentTilesetId == candidate.proposal.tileset) { "The room tileset changed; reload candidates" }
+        require(width == candidate.proposal.widthBlocks && height == candidate.proposal.heightBlocks) {
+            "The room dimensions changed; reload candidates"
+        }
+        val size = width * height
+        val currentWords = IntArray(size) { readBlockWord(it % width, it / width) }
+        val currentBts = IntArray(size) { readBts(it % width, it / width) }
+        val matchesPreviewBase = currentWords.contentEquals(candidate.baseWords) &&
+            currentBts.contentEquals(candidate.baseBts)
+        val matchesReviewedCandidate = reviewedCandidates.any { reviewed ->
+            reviewed.proposal.source.roomId == candidate.proposal.source.roomId &&
+                reviewed.proposal.tileset == candidate.proposal.tileset &&
+                currentWords.contentEquals(reviewed.words) &&
+                currentBts.contentEquals(reviewed.bts)
+        }
+        require(matchesPreviewBase || matchesReviewedCandidate) {
+            "The room layout changed after preview and does not match a reviewed candidate; reload candidates"
+        }
+
+        val edits = ArrayList<TileEdit>()
+        for (i in 0 until size) {
+            if (candidate.words[i] != currentWords[i] || candidate.bts[i] != currentBts[i]) {
+                edits.add(
+                    TileEdit(
+                        blockX = i % width,
+                        blockY = i / width,
+                        oldBlockWord = currentWords[i],
+                        newBlockWord = candidate.words[i],
+                        oldBts = currentBts[i],
+                        newBts = candidate.bts[i],
+                    )
+                )
+            }
+        }
+        val scrollEdits = buildGeneratedRoomScrollResetEdits()
+        val scrollPlmRemoves = buildScrollPlmRemovals()
+        val rank = candidate.proposal.rank.takeIf { it > 0 }?.let { " #$it" }.orEmpty()
+        applyGeneratedRoomOperation(
+            description = "Apply learned room$rank (seed ${candidate.proposal.generator.seed})",
+            edits = edits,
+            scrollEdits = scrollEdits,
+            scrollPlmRemoves = scrollPlmRemoves,
+        )
+        return edits.size
+    }
+
     data class BulkBiomeResult(
         val generatedRooms: Int,
         val skippedRooms: Int,
@@ -3842,7 +4318,6 @@ class EditorState {
         seed: Long,
         keepLandingSiteShipClear: Boolean = true,
         romParser: RomParser? = null,
-        wfcOptions: WfcOptions = WfcOptions(),
     ): Int {
         val w = workingBlocksWide
         val h = workingBlocksTall
@@ -3853,9 +4328,7 @@ class EditorState {
         val origBts = IntArray(n) { readBts(it % w, it / w) }
         val options = buildBiomeGenerationOptions(
             keepLandingSiteShipClear,
-            rules,
             romParser,
-            wfcOptions,
             origWords,
             origBts,
         )
@@ -3883,7 +4356,6 @@ class EditorState {
         theme: BiomeTheme,
         seed: Long,
         romParser: RomParser,
-        wfcOptions: WfcOptions = WfcOptions(),
         omitSpecialRooms: Boolean = true,
     ): BulkBiomeResult {
         val repository = RoomRepository()
@@ -3894,7 +4366,6 @@ class EditorState {
         val headersById = headers.associateBy { it.roomId }
 
         prepareBulkTheme(theme, romParser)
-        val wfcSampleCache = mutableMapOf<Pair<Int, Int>, List<WfcSample>>()
         var generated = 0
         var skipped = 0
         var manualSkipped = 0
@@ -3933,16 +4404,7 @@ class EditorState {
                 height = grids.height,
                 originalWords = grids.words,
                 originalBts = grids.bts,
-                rules = rules,
                 romParser = romParser,
-                wfcOptions = wfcOptions,
-                wfcSamples = if (rules.algorithm == StructureAlgorithm.WFC) {
-                    wfcSampleCache.getOrPut(roomId to targetTileset) {
-                        buildWfcSamples(romParser, roomId, targetTileset)
-                    }
-                } else {
-                    emptyList()
-                },
             )
             val roomSeed = seed xor (roomId.toLong() * -7046029254386353131L)
             val generatedLevel = BiomeGenerator(rules, profile, roomSeed, options)
@@ -4130,10 +4592,7 @@ class EditorState {
         height: Int,
         originalWords: IntArray,
         originalBts: IntArray,
-        rules: BiomeRules,
         romParser: RomParser?,
-        wfcOptions: WfcOptions,
-        wfcSamples: List<WfcSample>,
     ): BiomeGenerationOptions {
         val preserveRects = ArrayList<BiomeGenerationRect>()
         val forceAirRects = ArrayList<BiomeGenerationRect>()
@@ -4143,15 +4602,25 @@ class EditorState {
         }
         addElevatorProtectionForRoom(preserveRects, hardForceAirRects, romParser, roomId, width, height)
         val plms = effectivePlmsForBiomeRoom(roomId, romParser)
+        val enemies = if (roomId == currentRoomId && workingLevelData != null) {
+            _workingEnemies.toList()
+        } else {
+            romParser?.readRoomHeader(roomId)?.let { romParser.parseEnemyPopulation(it.enemySetPtr) }.orEmpty()
+        }
         addImportantPlmProtection(preserveRects, hardForceAirRects, width, height, plms)
         preserveRects.addAll(buildDoorCapPreserveRectsForRoom(romParser, roomId, width, height, plms))
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
             hardForceAirRects = hardForceAirRects,
-            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(width, height, originalWords, originalBts, plms),
-            wfcSamples = if (rules.algorithm == StructureAlgorithm.WFC) wfcSamples else emptyList(),
-            wfcOptions = wfcOptions,
+            protectedCells = BiomeSafetyMask.protectNonPlainMetadata(
+                width = width,
+                height = height,
+                originalWords = originalWords,
+                originalBts = originalBts,
+                plms = plms,
+                enemies = enemies,
+            ),
         )
     }
 
@@ -4211,9 +4680,7 @@ class EditorState {
 
     private fun buildBiomeGenerationOptions(
         keepLandingSiteShipClear: Boolean,
-        rules: BiomeRules,
         romParser: RomParser?,
-        wfcOptions: WfcOptions,
         originalWords: IntArray,
         originalBts: IntArray,
     ): BiomeGenerationOptions {
@@ -4241,24 +4708,18 @@ class EditorState {
                 _workingPlms,
             )
         )
-        val wfcSamples = if (rules.algorithm == StructureAlgorithm.WFC && romParser != null) {
-            buildWfcSamples(romParser, currentRoomId, currentTilesetId)
-        } else {
-            emptyList()
-        }
         return BiomeGenerationOptions(
             preserveRects = preserveRects,
             forceAirRects = forceAirRects,
             hardForceAirRects = hardForceAirRects,
             protectedCells = BiomeSafetyMask.protectNonPlainMetadata(
-                workingBlocksWide,
-                workingBlocksTall,
-                originalWords,
-                originalBts,
-                _workingPlms,
+                width = workingBlocksWide,
+                height = workingBlocksTall,
+                originalWords = originalWords,
+                originalBts = originalBts,
+                plms = _workingPlms,
+                enemies = _workingEnemies,
             ),
-            wfcSamples = wfcSamples,
-            wfcOptions = wfcOptions,
         )
     }
 
@@ -4324,23 +4785,24 @@ class EditorState {
             applyTileEdit(e, useNew = true)
         }
 
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val scrollChanges = currentScrollChanges()
+        val plmChanges = currentPlmChanges()
         val roomWidthScreens = workingBlocksWide / 16
         for (sc in scrollEdits) {
             val idx = sc.screenY * roomWidthScreens + sc.screenX
             if (idx !in _workingScrolls.indices) continue
             _workingScrolls[idx] = sc.newValue
-            roomEdits.scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
+            scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
             val original = _originalScrolls.getOrElse(idx) { sc.oldValue }
             if (sc.newValue != original) {
-                roomEdits.scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, original, sc.newValue))
+                scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, original, sc.newValue))
             }
         }
         if (scrollEdits.isNotEmpty()) scrollVersion++
 
         for (plm in scrollPlmRemoves) {
             _workingPlms.removeAll { it.id == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param }
-            roomEdits.plmChanges.add(plm)
+            plmChanges.add(plm)
         }
 
         pushEditOperation(
@@ -4363,6 +4825,7 @@ class EditorState {
         romTilesetId = room.tileset
         currentTilesetId = room.tileset
         currentStateIndex = -1
+        currentStateId = null
 
         val tg = TileGraphics(romParser)
         tileGraphics = if (tg.loadTileset(currentTilesetId)) {
@@ -4422,6 +4885,7 @@ class EditorState {
         if (theme.tilesetId == null && theme.paletteEffectId == null && theme.fxType == null) return
         val targetTileset = theme.tilesetId ?: currentTilesetId
         val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val stateEdits = currentStateEdits()
 
         // Recolor from the vanilla palette so re-applying a theme is stable.
         val effectId = theme.paletteEffectId
@@ -4436,9 +4900,13 @@ class EditorState {
         }
 
         if (theme.tilesetId != null) {
-            val existing = roomEdits.stateDataChange ?: StateDataChange()
+            val existing = stateEdits?.stateDataChange ?: roomEdits.stateDataChange ?: StateDataChange()
             val change = existing.copy(tileset = targetTileset.takeIf { it != romTilesetId })
-            roomEdits.stateDataChange = change.takeIf { it != StateDataChange() }
+            if (stateEdits != null) {
+                stateEdits.stateDataChange = change.takeIf { it != StateDataChange() }
+            } else {
+                roomEdits.stateDataChange = change.takeIf { it != StateDataChange() }
+            }
             currentTilesetId = targetTileset
         }
         val tg = TileGraphics(romParser)
@@ -4448,8 +4916,8 @@ class EditorState {
         }
 
         if (theme.fxType != null) {
-            val existing = roomEdits.fxChange ?: FxChange()
-            roomEdits.fxChange = if (theme.isLiquid) {
+            val existing = stateEdits?.fxChange ?: roomEdits.fxChange ?: FxChange()
+            val change = if (theme.isLiquid) {
                 val heightPx = workingBlocksTall * 16
                 val surface = (heightPx * theme.liquidFraction).toInt()
                     .coerceIn(0x20, maxOf(0x20, heightPx - 0x20))
@@ -4462,6 +4930,7 @@ class EditorState {
             } else {
                 existing.copy(fxType = theme.fxType, liquidSurfaceStart = 0xFFFF, liquidSurfaceNew = 0xFFFF)
             }
+            if (stateEdits != null) stateEdits.fxChange = change else roomEdits.fxChange = change
         }
 
         dirty = true
@@ -4472,7 +4941,7 @@ class EditorState {
         undoStack.add(op)
         redoStack.clear()
         undoVersion++
-        project.getOrCreateRoom(currentRoomId).operations.add(op)
+        currentOperations().add(op)
         dirty = true
         editVersion++
     }
@@ -4482,42 +4951,45 @@ class EditorState {
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val op = undoStack.removeAt(undoStack.lastIndex)
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val operations = currentOperations()
+        val plmChanges = currentPlmChanges()
+        val enemyChanges = currentEnemyChanges()
+        val scrollChanges = currentScrollChanges()
 
         // Undo tile edits
         for (edit in op.edits.reversed()) {
             applyTileEdit(edit, useNew = false)
         }
-        if (roomEdits.operations.isNotEmpty() && roomEdits.operations.last() == op) {
-            roomEdits.operations.removeAt(roomEdits.operations.lastIndex)
-        } else if (op.edits.isNotEmpty() && roomEdits.operations.isNotEmpty()) {
-            roomEdits.operations.removeAt(roomEdits.operations.lastIndex)
+        if (operations.isNotEmpty() && operations.last() == op) {
+            operations.removeAt(operations.lastIndex)
+        } else if (op.edits.isNotEmpty() && operations.isNotEmpty()) {
+            operations.removeAt(operations.lastIndex)
         }
 
         // Undo PLM adds (reverse = remove them)
         for (plm in op.plmAdds) {
             _workingPlms.removeAll { it.id == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param }
-            roomEdits.plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
+            plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
             if (plm.plmId == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(plm.param and 0xFF)
         }
         // Undo PLM removes (reverse = re-add them)
         for (plm in op.plmRemoves) {
             _workingPlms.add(RomParser.PlmEntry(plm.plmId, plm.x, plm.y, plm.param))
-            roomEdits.plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
+            plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
             if (plm.plmId == 0xB76F) ensureAutoSaveStationSpawn(plm.x, plm.y, plm.param and 0xFF)
         }
 
         // Undo enemy adds
         for (ec in op.enemyAdds) {
             _workingEnemies.removeAll { it.id == ec.enemyId && it.x == ec.x && it.y == ec.y }
-            roomEdits.enemyChanges.add(EnemyChange("remove", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+            enemyChanges.add(EnemyChange("remove", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3, origX = ec.x, origY = ec.y))
         }
         // Undo enemy removes
         for (ec in op.enemyRemoves) {
             _workingEnemies.add(RomParser.EnemyEntry(ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3))
-            roomEdits.enemyChanges.add(EnemyChange("add", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+            enemyChanges.add(EnemyChange("add", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3))
         }
         // Undo enemy updates (swap back to old)
@@ -4526,7 +4998,7 @@ class EditorState {
             if (idx >= 0) {
                 val o = eu.old
                 _workingEnemies[idx] = RomParser.EnemyEntry(o.enemyId, o.x, o.y, o.initParam, o.properties, o.extra1, o.extra2, o.extra3)
-                roomEdits.enemyChanges.add(EnemyChange("update", o.enemyId, o.x, o.y, o.initParam, o.properties,
+                enemyChanges.add(EnemyChange("update", o.enemyId, o.x, o.y, o.initParam, o.properties,
                     o.extra1, o.extra2, o.extra3, origX = eu.new.x, origY = eu.new.y))
             }
         }
@@ -4537,9 +5009,9 @@ class EditorState {
             val scrollIdx = sc.screenY * roomWidthScreens + sc.screenX
             if (scrollIdx in _workingScrolls.indices) {
                 _workingScrolls[scrollIdx] = sc.oldValue
-                roomEdits.scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
+                scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
                 if (sc.oldValue != _originalScrolls.getOrElse(scrollIdx) { sc.oldValue }) {
-                    roomEdits.scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, _originalScrolls[scrollIdx], sc.oldValue))
+                    scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, _originalScrolls[scrollIdx], sc.oldValue))
                 }
                 scrollVersion++
             }
@@ -4555,24 +5027,27 @@ class EditorState {
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val op = redoStack.removeAt(redoStack.lastIndex)
-        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val operations = currentOperations()
+        val plmChanges = currentPlmChanges()
+        val enemyChanges = currentEnemyChanges()
+        val scrollChanges = currentScrollChanges()
 
         // Redo tile edits
         for (edit in op.edits) {
             applyTileEdit(edit, useNew = true)
         }
-        if (op.edits.isNotEmpty()) roomEdits.operations.add(op)
+        if (op.edits.isNotEmpty()) operations.add(op)
 
         // Redo PLM adds
         for (plm in op.plmAdds) {
             _workingPlms.add(RomParser.PlmEntry(plm.plmId, plm.x, plm.y, plm.param))
-            roomEdits.plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
+            plmChanges.add(PlmChange("add", plm.plmId, plm.x, plm.y, plm.param))
             if (plm.plmId == 0xB76F) ensureAutoSaveStationSpawn(plm.x, plm.y, plm.param and 0xFF)
         }
         // Redo PLM removes
         for (plm in op.plmRemoves) {
             _workingPlms.removeAll { it.id == plm.plmId && it.x == plm.x && it.y == plm.y && it.param == plm.param }
-            roomEdits.plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
+            plmChanges.add(PlmChange("remove", plm.plmId, plm.x, plm.y, plm.param))
             if (plm.plmId == 0xB76F) cleanupSaveStationSpawnIfUnreferenced(plm.param and 0xFF)
         }
 
@@ -4580,13 +5055,13 @@ class EditorState {
         for (ec in op.enemyAdds) {
             _workingEnemies.add(RomParser.EnemyEntry(ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3))
-            roomEdits.enemyChanges.add(EnemyChange("add", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+            enemyChanges.add(EnemyChange("add", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3))
         }
         // Redo enemy removes
         for (ec in op.enemyRemoves) {
             _workingEnemies.removeAll { it.id == ec.enemyId && it.x == ec.x && it.y == ec.y }
-            roomEdits.enemyChanges.add(EnemyChange("remove", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
+            enemyChanges.add(EnemyChange("remove", ec.enemyId, ec.x, ec.y, ec.initParam, ec.properties,
                 ec.extra1, ec.extra2, ec.extra3, origX = ec.x, origY = ec.y))
         }
         // Redo enemy updates
@@ -4595,7 +5070,7 @@ class EditorState {
             if (idx >= 0) {
                 val n = eu.new
                 _workingEnemies[idx] = RomParser.EnemyEntry(n.enemyId, n.x, n.y, n.initParam, n.properties, n.extra1, n.extra2, n.extra3)
-                roomEdits.enemyChanges.add(EnemyChange("update", n.enemyId, n.x, n.y, n.initParam, n.properties,
+                enemyChanges.add(EnemyChange("update", n.enemyId, n.x, n.y, n.initParam, n.properties,
                     n.extra1, n.extra2, n.extra3, origX = eu.old.x, origY = eu.old.y))
             }
         }
@@ -4606,9 +5081,9 @@ class EditorState {
             val scrollIdx = sc.screenY * roomWidthScreens + sc.screenX
             if (scrollIdx in _workingScrolls.indices) {
                 _workingScrolls[scrollIdx] = sc.newValue
-                roomEdits.scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
+                scrollChanges.removeAll { it.screenX == sc.screenX && it.screenY == sc.screenY }
                 if (sc.newValue != _originalScrolls.getOrElse(scrollIdx) { sc.newValue }) {
-                    roomEdits.scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, _originalScrolls[scrollIdx], sc.newValue))
+                    scrollChanges.add(ScrollChange(sc.screenX, sc.screenY, _originalScrolls[scrollIdx], sc.newValue))
                 }
                 scrollVersion++
             }

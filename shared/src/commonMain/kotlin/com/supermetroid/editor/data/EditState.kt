@@ -171,6 +171,103 @@ data class StateDataChange(
 )
 
 /**
+ * Serialized, address-independent description of a room-state selector.
+ *
+ * [routineCode] records the original engine routine for validation and exact
+ * round-tripping, while [kind] and [argumentKind] let the editor present
+ * semantic controls instead of asking users to edit routine addresses.
+ */
+@Serializable
+data class ProjectRoomStateCondition(
+    val kind: ProjectRoomStateConditionKind,
+    val argumentKind: ProjectRoomStateConditionArgumentKind,
+    val argument: Int? = null,
+    val routineCode: Int,
+)
+
+@Serializable
+enum class ProjectRoomStateConditionKind {
+    DEFAULT,
+    INCOMING_DOOR,
+    AREA_MAIN_BOSS_DEAD,
+    NEVER,
+    EVENT_SET,
+    AREA_BOSS_BIT_SET,
+    MORPH_BALL_COLLECTED,
+    MORPH_BALL_AND_MISSILES,
+    POWER_BOMBS_COLLECTED,
+    SPEED_BOOSTER_COLLECTED,
+}
+
+@Serializable
+enum class ProjectRoomStateConditionArgumentKind {
+    NONE,
+    EVENT_ID,
+    BOSS_BIT_MASK,
+    DOOR_POINTER,
+}
+
+/**
+ * Stable project-level resource identities for one room state.
+ *
+ * These are deliberately not ROM addresses. States with the same resource ID
+ * are linked; an edit can either retain that link or fork one state using
+ * copy-on-write. Existing ROM pointers are used only when initially assigning
+ * these IDs and may move freely during export.
+ */
+@Serializable
+data class RoomStateResourceLinks(
+    val level: String,
+    val effects: String,
+    val enemies: String,
+    val enemyGraphics: String,
+    val scrolling: String,
+    val placedObjects: String,
+    val background: String,
+    val specialXray: String,
+)
+
+/**
+ * State-scoped edits and identity within an existing [RoomEdits] entry.
+ *
+ * Existing states retain their [sourceStateIndex] so their source record can
+ * be verified before writing. New states will have no source index and are
+ * allocated by the state-graph writer. [id] remains stable across reordering
+ * and ROM relocation.
+ */
+@Serializable
+data class RoomStateEdits(
+    val id: String,
+    val sourceStateIndex: Int? = null,
+    /** Original ROM state whose 26-byte record seeds a newly authored state. */
+    val templateSourceStateIndex: Int? = null,
+    val sourceCondition: ProjectRoomStateCondition? = null,
+    var condition: ProjectRoomStateCondition,
+    var resources: RoomStateResourceLinks,
+    var conditionChanged: Boolean = false,
+    var resourcesChanged: Boolean = false,
+    val operations: MutableList<EditOperation> = mutableListOf(),
+    val plmChanges: MutableList<PlmChange> = mutableListOf(),
+    val enemyChanges: MutableList<EnemyChange> = mutableListOf(),
+    val scrollChanges: MutableList<ScrollChange> = mutableListOf(),
+    var fxChange: FxChange? = null,
+    /**
+     * Overrides for FX entries selected by a particular incoming door.
+     * Keys are four-digit hexadecimal door-definition pointers (for example,
+     * "A18C"). The default doorSelect=0 entry remains in [fxChange].
+     */
+    val doorFxChanges: MutableMap<String, FxChange> = mutableMapOf(),
+    var stateDataChange: StateDataChange? = null,
+    val customScrollCommands: MutableMap<String, MutableList<ScrollCommand>> = mutableMapOf(),
+) {
+    val hasEdits: Boolean get() =
+        conditionChanged || resourcesChanged || operations.isNotEmpty() ||
+            plmChanges.isNotEmpty() || enemyChanges.isNotEmpty() ||
+            scrollChanges.isNotEmpty() || fxChange != null || doorFxChanges.isNotEmpty() ||
+            stateDataChange != null || customScrollCommands.isNotEmpty()
+}
+
+/**
  * Room header change: modify the 11-byte room header in bank $8F.
  * Only non-null fields are applied on export. Field names match the Room data class.
  *
@@ -198,6 +295,10 @@ data class RoomHeaderChange(
 @Serializable
 data class RoomEdits(
     val roomId: Int,             // e.g. 0x91F8
+    /** Ordered, stable room-state manifest. Empty in projects saved before state-scoped editing. */
+    val states: MutableList<RoomStateEdits> = mutableListOf(),
+    /** True when selector count/order/encoded sizes require an out-of-line graph rebuild. */
+    var stateGraphChanged: Boolean = false,
     val operations: MutableList<EditOperation> = mutableListOf(),
     val plmChanges: MutableList<PlmChange> = mutableListOf(),
     val doorChanges: MutableList<DoorChange> = mutableListOf(),
@@ -213,7 +314,7 @@ data class RoomEdits(
     val saveStationSpawns: MutableList<SaveStationSpawnChange> = mutableListOf(),
 ) {
     val hasEdits: Boolean get() =
-        operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
+        stateGraphChanged || states.any { it.hasEdits } || operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
         enemyChanges.isNotEmpty() || scrollChanges.isNotEmpty() || fxChange != null ||
         stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty() ||
         saveStationSpawns.isNotEmpty()
@@ -505,7 +606,12 @@ data class SmEditProject(
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",
+    /** Serialization schema only; unrelated to the exported ROM version above. */
+    var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
 ) {
+    companion object {
+        const val CURRENT_PROJECT_FORMAT_VERSION = 2
+    }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
     fun getOrCreateRoom(roomId: Int): RoomEdits {

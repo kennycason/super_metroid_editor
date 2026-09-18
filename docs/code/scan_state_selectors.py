@@ -31,16 +31,17 @@ KNOWN_SELECTORS = OrderedDict([
     (0xE5E6, ("Default",            "TERMINAL",  "RoomDefStateSelect_Finish — 26-byte state data inline")),
     (0xE5EB, ("Door",               6,           "RoomDefStateSelect_Door — code(2)+doorPtr(2)+statePtr(2)")),
     (0xE5FF, ("TourianBoss01",      4,           "RoomDefStateSelect_TourianBoss01 — code(2)+statePtr(2)")),
+    (0xE60F, ("Never",              4,           "Always false — code(2)+statePtr(2)")),
     (0xE612, ("IsEventSet",         5,           "RoomDefStateSelect_IsEventSet — code(2)+eventFlag(1)+statePtr(2)")),
     (0xE629, ("IsBossDead",         5,           "RoomDefStateSelect_IsBossDead — code(2)+bossFlag(1)+statePtr(2)")),
-    (0xE640, ("UNUSED_E640",        4,           "UNUSED_sub_8FE640 — code(2)+statePtr(2)")),
+    (0xE640, ("MorphBall",          4,           "Morph Ball collected — code(2)+statePtr(2)")),
     (0xE652, ("MorphBallMissiles",  4,           "RoomDefStateSelect_MorphBallMissiles — code(2)+statePtr(2)")),
     (0xE669, ("PowerBombs",         4,           "RoomDefStateSelect_PowerBombs — code(2)+statePtr(2)")),
-    (0xE678, ("UNUSED_E678",        4,           "UNUSED_sub_8FE678 — code(2)+statePtr(2)")),
+    (0xE678, ("SpeedBooster",       4,           "Speed Booster collected — code(2)+statePtr(2)")),
 ])
 
 # What our Kotlin parser handles (from RomParser.kt findAllStateDataOffsets)
-KOTLIN_HANDLED = {0xE5E6, 0xE5EB, 0xE5FF, 0xE612, 0xE629, 0xE640, 0xE652, 0xE669, 0xE678}
+KOTLIN_HANDLED = {0xE5E6, 0xE5EB, 0xE5FF, 0xE60F, 0xE612, 0xE629, 0xE640, 0xE652, 0xE669, 0xE678}
 
 # Also from restool.py — what snesrev handles (subset that actually appears in vanilla)
 RESTOOL_HANDLED = {0xE5E6, 0xE5FF, 0xE612, 0xE629, 0xE652, 0xE669}
@@ -187,14 +188,15 @@ def parse_state_selectors(rom, room_id, has_header, verbose=False):
             })
             pos += 5
 
-        elif code in (0xE5FF, 0xE640, 0xE652, 0xE669, 0xE678):
+        elif code in (0xE5FF, 0xE60F, 0xE640, 0xE652, 0xE669, 0xE678):
             # 4-byte entries: code(2) + state_ptr(2)
             names = {
                 0xE5FF: 'TourianBoss01',
-                0xE640: 'UNUSED_E640',
+                0xE60F: 'Never',
+                0xE640: 'MorphBall',
                 0xE652: 'MorphBallMissiles',
                 0xE669: 'PowerBombs',
-                0xE678: 'UNUSED_E678',
+                0xE678: 'SpeedBooster',
             }
             name = names[code]
             if pos + 3 >= len(rom):

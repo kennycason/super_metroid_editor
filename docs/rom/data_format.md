@@ -29,7 +29,7 @@ Examples:
 ```
 Offset  Size  Field
   0      1    Room index
-  1      1    Room area (00=Crateria, 01=Brinstar, 02=Norfair, 03=WS, 04=Maridia, 05=Tourian, 06=Ceres; there is no unassigned value)
+  1      1    Room area (00=Crateria, 01=Brinstar, 02=Norfair, 03=WS, 04=Maridia, 05=Tourian, 06=Ceres, 07=debug/unused; area 07 has no normal pause map)
   2      1    X position on minimap
   3      1    Y position on minimap
   4      1    Width (in screens, 0-indexed: 00 = 1 screen)
@@ -52,14 +52,15 @@ The final entry is always `E5E6` (default), whose 26-byte state data follows inl
 | Code   | Name                              | Args after code | Total bytes |
 |--------|-----------------------------------|-----------------|-------------|
 | `E5E6` | Default                           | 26-byte state data follows | 28 |
+| `E5EB` | Incoming door = [X]               | 2-byte door + 2-byte state ptr | 6 |
+| `E5FF` | Main area boss dead               | 2-byte state ptr | 4 |
+| `E60F` | Never (always false)              | 2-byte state ptr | 4 |
 | `E612` | Event [X] is set                  | 1-byte event + 2-byte state ptr | 5 |
 | `E629` | Boss [X] is dead                  | 1-byte boss + 2-byte state ptr | 5 |
+| `E640` | Morph Ball collected              | 2-byte state ptr | 4 |
 | `E652` | Morph ball + missiles collected   | 2-byte state ptr | 4 |
 | `E669` | Power bombs collected             | 2-byte state ptr | 4 |
-| `E5EB` | Door pointer = [X] *(unused)*     | 2-byte arg + 2-byte state ptr | 6 |
-| `E5FF` | Main area boss dead               | 2-byte state ptr | 4 |
-| `E640` | Morph ball collected *(unused)*   | 2-byte state ptr | 4 |
-| `E678` | Speed booster collected *(unused)*| 2-byte state ptr | 4 |
+| `E678` | Speed Booster collected           | 2-byte state ptr | 4 |
 
 State pointers are 16-bit offsets in bank `$8F`.
 
@@ -70,6 +71,37 @@ E669    PPPP   → power bombs collected      → state $9247
 E612 xx PPPP   → event "Zebes is awake"     → state $922D
 E5E6           → default, 26-byte state data for $9213 follows
 ```
+
+### SMEDIT relocatable state graph
+
+Changing a selector's encoded size, adding/deleting a state, or reordering states can make the
+original inline list too small. SMEDIT preserves the room header's address and replaces the first
+four selector bytes at `room header + 11` with:
+
+```text
+Offset  Size  Field
+  0      2    Pointer to SMEDIT redirect routine in bank $8F
+  2      2    Pointer to relocated selector graph in bank $8F
+```
+
+The redirect routine's executable bytes are:
+
+```text
+BD 00 00    LDA $0000,X   ; X points at the graph-pointer word
+AA          TAX
+60          RTS           ; return to the vanilla selector loop
+```
+
+They are followed by the unreachable ASCII tag `SMEDITSG` and format byte `01`. The full signature
+lets the parser recognize this extension without mistaking an arbitrary custom selector routine for
+a redirect. The relocated graph itself uses the vanilla selector encodings above, including one
+final `$E5E6` followed by its inline 26-byte default record. Conditional state pointers and the graph
+pointer remain 16-bit bank-`$8F` addresses.
+
+This bridge is deliberately at the stable room ID. Door definitions, load/save-station tables, and
+engine code may all refer directly to the original room-header pointer; relocating the whole header
+would require rewriting more than the selector graph. `RomParser.inspectRoomStates()` follows and
+validates the tagged bridge transparently.
 
 ### Implementation: `RomParser.findAllStateDataOffsets()`
 
@@ -89,9 +121,9 @@ Offset  Size  Field                        Bank    Notes
   6-7    2    FX1 pointer                  $83
   8-9    2    Enemy population pointer     $A1     List of enemy entries
  10-11   2    Enemy GFX/set pointer        $B4     Which enemy tilesets to load
- 12-13   2    Layer 2 scrolling                    Y-axis byte, X-axis byte
+ 12-13   2    Layer 2 scrolling                    X-axis byte, then Y-axis byte
  14-15   2    Scroll pointer               $8F     Room scroll data (00/01/02 per screen)
- 16-17   2    RoomVar / Unknown                    Usually 0000
+ 16-17   2    Special X-Ray block table pointer    $8F; 0000 for none
  18-19   2    Main ASM / FX2 pointer       $8F
  20-21   2    PLM set pointer              $8F     ← Critical for door/gate/item placement
  22-23   2    BG data pointer              $8F

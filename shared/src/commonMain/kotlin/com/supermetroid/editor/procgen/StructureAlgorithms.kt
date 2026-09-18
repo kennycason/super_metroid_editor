@@ -28,7 +28,6 @@ internal object StructureAlgorithms {
                 } else {
                     structureCave(cells, width, height, rules, rng)
                 }
-            StructureAlgorithm.WFC -> Unit
         }
     }
 
@@ -158,7 +157,6 @@ internal object StructureAlgorithms {
             // Building walls are 1 tile thick; keep small constructed pieces.
             StructureAlgorithm.SETTLEMENT -> 4
             StructureAlgorithm.REMIX -> 10
-            StructureAlgorithm.WFC -> 10
         }
         val seen = BooleanArray(cells.size)
         val queue = ArrayDeque<Int>()

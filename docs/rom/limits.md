@@ -86,13 +86,15 @@ scroll data and FX data.
 
 ## Layer 2 / BG Scrolling
 
-The 2-byte value at state data offset +12 controls layer 2 behavior:
+The 2-byte value at state data offset +12 holds two independent motion bytes: X first,
+then Y. For either axis, `0x00` follows the camera at 1× speed, `0x01` remains fixed,
+and other values move at `(byte & 0xFE) / 256` of camera speed. An odd value also
+disables tilemap streaming on that axis.
 
-| Value | Meaning |
-|-------|---------|
-| `0x0000` | Layer 2 fixed (no scroll, same as layer 1) |
-| `0x0001` | Layer 2 follows layer 1 |
-| `0x00xx` / `0xYYxx` | Y/X scroll rates — varies per room |
+For example, the Landing Site value `0x0181` decodes as X = 1/2 camera speed with
+tilemap streaming disabled, and Y = fixed. This byte behavior is implemented by the
+engine's layer 2 position and background-update routines; the value is not a single
+enumerated “scroll mode.”
 
 ## FX Types (Layer3Type byte — from SMILE FX1_1.frx)
 

@@ -86,6 +86,67 @@ data class PlmExport(
     val category: String,
 )
 
+// ── Room-model training export ─────────────────────────────────────
+
+@Serializable
+data class RoomTrainingManifest(
+    val schemaVersion: Int,
+    val roomCount: Int,
+    val skippedRoomCount: Int,
+    val arrayLayout: String = "row-major",
+    val layer1WordFormat: String = "bits 0-9 metatile, bit 10 h-flip, bit 11 v-flip, bits 12-15 block type",
+    val btsFormat: String = "unsigned byte; meaning depends on block type (including slope shape)",
+    val rooms: List<RoomTrainingIndex>,
+)
+
+@Serializable
+data class RoomTrainingIndex(
+    val roomId: Int,
+    val roomIdHex: String,
+    val handle: String,
+    val name: String,
+    val area: Int,
+    val tileset: Int,
+    val widthBlocks: Int,
+    val heightBlocks: Int,
+    val contentHash: String,
+    val file: String,
+)
+
+@Serializable
+data class RoomTrainingExport(
+    val schemaVersion: Int,
+    val roomId: Int,
+    val roomIdHex: String,
+    val handle: String,
+    val name: String,
+    val area: Int,
+    val areaName: String,
+    val tileset: Int,
+    val widthScreens: Int,
+    val heightScreens: Int,
+    val widthBlocks: Int,
+    val heightBlocks: Int,
+    val contentHash: String,
+    /** Complete unsigned 16-bit layer-1 words, flattened row-major. */
+    val layer1Words: List<Int>,
+    /** Raw high-nibble block types, including horizontal/vertical extensions. */
+    val blockTypes: List<Int>,
+    /** Block types after resolving horizontal/vertical extension chains. */
+    val resolvedBlockTypes: List<Int>,
+    /** Complete unsigned BTS bytes, flattened row-major. */
+    val bts: List<Int>,
+    /** Type-9 tile clusters. Door PLMs, covers, destinations, and room states are deliberately excluded. */
+    val doorGroups: List<RoomTrainingDoorGroup>,
+)
+
+@Serializable
+data class RoomTrainingDoorGroup(
+    val edge: String,
+    val orientation: String,
+    val cellIndices: List<Int>,
+)
+
 // ── Navigation graph ────────────────────────────────────────────────
 
 @Serializable

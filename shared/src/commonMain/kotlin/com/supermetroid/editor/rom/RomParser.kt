@@ -86,9 +86,11 @@ class RomParser(internal val romData: ByteArray) {
             val doorOut = readUInt16At(pcOffset + 9)
             
             if (width == 0 || height == 0 || width > 16 || height > 16) return null
-            if (area > 6) return null
+            // Area 7 is the engine's debug/unused slot. It has load-station
+            // data but no normal pause-map area. Expanded projects can use it.
+            if (area > 7) return null
             
-            val stateDataOffset = findInitialStateData(roomId, pcOffset + 11)
+            val stateDataOffset = findInitialStateData(roomId)
             
             var levelDataPtr = 0
             var tileset = 0
@@ -99,6 +101,7 @@ class RomParser(internal val romData: ByteArray) {
             var enemyGfxPtr = 0
             var bgScrolling = 0
             var roomScrollsPtr = 0
+            var xraySpecialCasingPtr = 0
             var mainAsmPtr = 0
             var plmSetPtr = 0
             var bgDataPtr = 0
@@ -114,6 +117,7 @@ class RomParser(internal val romData: ByteArray) {
                 enemyGfxPtr = readUInt16At(stateDataOffset + 10)
                 bgScrolling = readUInt16At(stateDataOffset + 12)
                 roomScrollsPtr = readUInt16At(stateDataOffset + 14)
+                xraySpecialCasingPtr = readUInt16At(stateDataOffset + 16)
                 mainAsmPtr = readUInt16At(stateDataOffset + 18)
                 plmSetPtr = readUInt16At(stateDataOffset + 20)
                 bgDataPtr = readUInt16At(stateDataOffset + 22)
@@ -143,6 +147,7 @@ class RomParser(internal val romData: ByteArray) {
                 enemyGfxPtr = enemyGfxPtr,
                 bgScrolling = bgScrolling,
                 roomScrollsPtr = roomScrollsPtr,
+                xraySpecialCasingPtr = xraySpecialCasingPtr,
                 mainAsmPtr = mainAsmPtr,
                 plmSetPtr = plmSetPtr,
                 bgDataPtr = bgDataPtr,
@@ -154,20 +159,35 @@ class RomParser(internal val romData: ByteArray) {
         }
     }
     
-    private fun findInitialStateData(roomId: Int, stateListOffset: Int): Int? {
+    private fun findInitialStateData(roomId: Int): Int? {
+        val states = parseRoomStates(roomId)
         if (!usesVanillaEditableLayout()) {
-            firstReadableStateData(roomId)?.let { return it }
+            return states.firstOrNull { state -> isReadableStateDataOffset(state.stateDataPcOffset) }
+                ?.stateDataPcOffset
         }
-        return findDefaultStateData(stateListOffset)
+
+        // Preserve the legacy editable-ROM preview policy, but select from the
+        // exact decoded chain instead of byte-scanning for a marker.
+        val first = states.firstOrNull()
+        if (first?.conditionCode == 0xE629) return first.stateDataPcOffset
+        return states.lastOrNull { it.conditionCode == 0xE5E6 }?.stateDataPcOffset
+    }
+
+    /**
+     * State index represented by [readRoomHeader]'s state-owned fields.
+     * This keeps the editor's initial selection aligned with the exact state
+     * it loaded, including the legacy boss-defeated preview policy and the
+     * first-readable-state fallback for expanded read-only ROMs.
+     */
+    fun preferredPreviewStateIndex(roomId: Int): Int {
+        val roomPc = roomIdToPc(roomId)
+        if (roomPc < 0 || roomPc + 11 > romData.size) return -1
+        val selectedOffset = findInitialStateData(roomId) ?: return -1
+        return parseRoomStates(roomId).indexOfFirst { it.stateDataPcOffset == selectedOffset }
     }
 
     private fun usesVanillaEditableLayout(): Boolean =
         romData.size - romStartOffset == ROM_SIZE
-
-    private fun firstReadableStateData(roomId: Int): Int? =
-        parseRoomStates(roomId)
-            .firstOrNull { state -> isReadableStateDataOffset(state.stateDataPcOffset) }
-            ?.stateDataPcOffset
 
     private fun isReadableStateDataOffset(stateDataOffset: Int): Boolean {
         if (stateDataOffset < 0 || stateDataOffset + STATE_DATA_SIZE > romData.size) return false
@@ -177,40 +197,6 @@ class RomParser(internal val romData: ByteArray) {
         return runCatching { decompressLZ2(levelDataPtr).size >= 2 }.getOrDefault(false)
     }
 
-    /**
-     * Find room state data for vanilla-layout editing. Uses the first E629
-     * conditional state if available, otherwise falls back to the default E5E6
-     * state. This preserves the existing editable-ROM behavior; expanded
-     * read-only ROMs use [findInitialStateData] so their preview stays aligned
-     * with the first readable state/GFX pair in the ROM.
-     */
-    private fun findDefaultStateData(stateListOffset: Int): Int? {
-        // Preserve the legacy editable-ROM preview behavior: prefer a leading
-        // E629 boss-dead state, then fall back to the inline default state.
-        if (stateListOffset + 5 <= romData.size) {
-            val firstCondition = readUInt16At(stateListOffset)
-            if (firstCondition == 0xE629) {
-                // E629: condition(2) + arg(1) + ptr(2) = 5 bytes
-                val statePtr = readUInt16At(stateListOffset + 3)
-                val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                if (statePc + STATE_DATA_SIZE <= romData.size) {
-                    return statePc
-                }
-            }
-        }
-        
-        // Byte-scan for E5E6 default state marker
-        val maxScan = 200
-        val endOffset = minOf(stateListOffset + maxScan, romData.size - 1)
-        for (offset in stateListOffset until endOffset) {
-            if (readUInt16At(offset) == 0xE5E6) {
-                return offset + 2  // 26-byte state data follows
-            }
-        }
-        
-        return null
-    }
-    
     // ─── LZ5 Decompression ──────────────────────────────────────────────
     //
     // Ported from the verified working Python implementation:
@@ -542,12 +528,13 @@ class RomParser(internal val romData: ByteArray) {
                 0xE5E6 to "Standard (default)",
                 0xE5EB to "Door Event",
                 0xE5FF to "Tourian Boss",
+                0xE60F to "Never",
                 0xE612 to "Event Check",
                 0xE629 to "Boss Check",
-                0xE640 to "Unused Check",
+                0xE640 to "Morph Ball",
                 0xE652 to "Morph Ball / Missiles",
                 0xE669 to "Power Bombs",
-                0xE678 to "Unused Check",
+                0xE678 to "Speed Booster",
             )
 
             val EVENT_NAMES = mapOf(
@@ -572,69 +559,209 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     /**
-     * Parse all room states with descriptive info.
+     * Inspect the complete ordered state-selector list for a room.
+     *
+     * Unlike the legacy list reader, this reports unknown selectors, malformed
+     * pointers, and missing defaults. A selector routine controls its own
+     * argument width, so parsing must stop at an unknown routine instead of
+     * guessing where the next entry begins.
      */
-    fun parseRoomStates(roomId: Int): List<RoomStateInfo> {
+    fun inspectRoomStates(roomId: Int): RoomStateInspection {
         val pcOffset = roomIdToPc(roomId)
-        if (pcOffset < 0 || pcOffset + 11 > romData.size) return emptyList()
+        if (pcOffset < 0 || pcOffset + 11 > romData.size) {
+            return RoomStateInspection(
+                roomId = roomId,
+                area = null,
+                states = emptyList(),
+                issues = listOf(RoomStateParseIssue(pcOffset, "Room header is outside the ROM")),
+                hasDefault = false,
+            )
+        }
 
+        val area = romData[pcOffset + 1].toInt() and 0xFF
         val stateListOffset = pcOffset + 11
-        val results = mutableListOf<RoomStateInfo>()
+        val states = mutableListOf<InspectedRoomState>()
+        val issues = mutableListOf<RoomStateParseIssue>()
         var pos = stateListOffset
-        val maxPos = minOf(stateListOffset + 200, romData.size - 1)
+        val bankEndExclusive = minOf(snesToPc(BANK_ROOM_DATA or 0xFFFF) + 1, romData.size)
 
-        while (pos + 1 < maxPos) {
+        var stateIndex = 0
+        var followedSmEditRedirect = false
+        while (stateIndex < 64) {
+            if (pos + 1 >= bankEndExclusive) {
+                issues.add(RoomStateParseIssue(pos, "State selector list ended before a default state"))
+                return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+            }
             val code = readUInt16At(pos)
+            if (stateIndex == 0 && !followedSmEditRedirect && isSmEditStateGraphRedirectRoutine(code)) {
+                if (pos + 4 > bankEndExclusive) {
+                    issues.add(RoomStateParseIssue(pos, "SMEDIT state-graph redirect is truncated"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val graphPtr = readUInt16At(pos + 2)
+                if (graphPtr !in 0x8000..0xFFFF) {
+                    issues.add(
+                        RoomStateParseIssue(
+                            pos + 2,
+                            "SMEDIT state-graph pointer \$${graphPtr.toString(16).uppercase().padStart(4, '0')} " +
+                                "is outside bank \$8F",
+                        )
+                    )
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val graphPc = snesToPc(BANK_ROOM_DATA or graphPtr)
+                if (graphPc !in 0 until bankEndExclusive || graphPc == pos) {
+                    issues.add(RoomStateParseIssue(pos + 2, "SMEDIT state-graph redirect target is invalid"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                pos = graphPc
+                followedSmEditRedirect = true
+                continue
+            }
+            val condition: RoomStateCondition
+            val statePtrOffset: Int
             when (code) {
                 0xE5E6 -> {
                     val statePc = pos + 2
-                    if (statePc + STATE_DATA_SIZE <= romData.size) {
-                        results.add(RoomStateInfo(code, 0, statePc,
-                            RoomStateInfo.STATE_CONDITION_NAMES[code] ?: "Default"))
+                    condition = RoomStateCondition(
+                        code = code,
+                        kind = RoomStateConditionKind.DEFAULT,
+                        argumentKind = RoomStateConditionArgumentKind.NONE,
+                        entrySizeBytes = 2,
+                    )
+                    val validStatePc = statePc.takeIf { it + STATE_DATA_SIZE <= bankEndExclusive }
+                    if (validStatePc == null) {
+                        issues.add(RoomStateParseIssue(statePc, "Inline default state data is truncated"))
                     }
-                    return results
+                    states.add(
+                        InspectedRoomState(
+                            index = stateIndex,
+                            selectorPcOffset = pos,
+                            stateDataPcOffset = validStatePc,
+                            stateDataPointer = null,
+                            condition = condition,
+                        )
+                    )
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = true)
                 }
                 0xE5EB -> {
-                    if (pos + 5 < romData.size) {
-                        val arg = readUInt16At(pos + 2)
-                        val statePtr = readUInt16At(pos + 4)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        val argName = RoomStateInfo.EVENT_NAMES[arg] ?: "Event 0x${arg.toString(16).uppercase()}"
-                        if (statePc + STATE_DATA_SIZE <= romData.size) {
-                            results.add(RoomStateInfo(code, arg, statePc,
-                                "${RoomStateInfo.STATE_CONDITION_NAMES[code] ?: "Event"}: $argName"))
-                        }
+                    if (pos + 6 > bankEndExclusive) {
+                        issues.add(RoomStateParseIssue(pos, "Incoming-door selector is truncated"))
+                        return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
                     }
-                    pos += 6
+                    condition = RoomStateCondition(
+                        code = code,
+                        kind = RoomStateConditionKind.INCOMING_DOOR,
+                        argumentKind = RoomStateConditionArgumentKind.DOOR_POINTER,
+                        argument = readUInt16At(pos + 2),
+                        entrySizeBytes = 6,
+                    )
+                    statePtrOffset = pos + 4
                 }
                 0xE612, 0xE629 -> {
-                    if (pos + 4 < romData.size) {
-                        val arg = romData[pos + 2].toInt() and 0xFF
-                        val statePtr = readUInt16At(pos + 3)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        val argName = RoomStateInfo.EVENT_NAMES[arg] ?: "Flag 0x${arg.toString(16).uppercase()}"
-                        if (statePc + STATE_DATA_SIZE <= romData.size) {
-                            results.add(RoomStateInfo(code, arg, statePc,
-                                "${RoomStateInfo.STATE_CONDITION_NAMES[code] ?: "Check"}: $argName"))
-                        }
+                    if (pos + 5 > bankEndExclusive) {
+                        issues.add(RoomStateParseIssue(pos, "State selector \$${code.toString(16).uppercase()} is truncated"))
+                        return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
                     }
-                    pos += 5
+                    val isEvent = code == 0xE612
+                    condition = RoomStateCondition(
+                        code = code,
+                        kind = if (isEvent) RoomStateConditionKind.EVENT_SET else RoomStateConditionKind.AREA_BOSS_BIT_SET,
+                        argumentKind = if (isEvent) RoomStateConditionArgumentKind.EVENT_ID else RoomStateConditionArgumentKind.BOSS_BIT_MASK,
+                        argument = romData[pos + 2].toInt() and 0xFF,
+                        entrySizeBytes = 5,
+                    )
+                    statePtrOffset = pos + 3
                 }
-                0xE5FF, 0xE640, 0xE652, 0xE669, 0xE678 -> {
-                    if (pos + 3 < romData.size) {
-                        val statePtr = readUInt16At(pos + 2)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        if (statePc + STATE_DATA_SIZE <= romData.size) {
-                            results.add(RoomStateInfo(code, 0, statePc,
-                                RoomStateInfo.STATE_CONDITION_NAMES[code] ?: "Check"))
-                        }
+                0xE5FF, 0xE60F, 0xE640, 0xE652, 0xE669, 0xE678 -> {
+                    if (pos + 4 > bankEndExclusive) {
+                        issues.add(RoomStateParseIssue(pos, "State selector \$${code.toString(16).uppercase()} is truncated"))
+                        return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
                     }
-                    pos += 4
+                    val kind = when (code) {
+                        0xE5FF -> RoomStateConditionKind.AREA_MAIN_BOSS_DEAD
+                        0xE60F -> RoomStateConditionKind.NEVER
+                        0xE640 -> RoomStateConditionKind.MORPH_BALL_COLLECTED
+                        0xE652 -> RoomStateConditionKind.MORPH_BALL_AND_MISSILES
+                        0xE669 -> RoomStateConditionKind.POWER_BOMBS_COLLECTED
+                        else -> RoomStateConditionKind.SPEED_BOOSTER_COLLECTED
+                    }
+                    condition = RoomStateCondition(
+                        code = code,
+                        kind = kind,
+                        argumentKind = RoomStateConditionArgumentKind.NONE,
+                        entrySizeBytes = 4,
+                    )
+                    statePtrOffset = pos + 2
                 }
-                else -> return results
+                else -> {
+                    issues.add(
+                        RoomStateParseIssue(
+                            pos,
+                            "Unknown state selector routine \$${code.toString(16).uppercase().padStart(4, '0')}; " +
+                                "its argument size cannot be inferred safely",
+                        )
+                    )
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
             }
+
+            val statePtr = readUInt16At(statePtrOffset)
+            val statePc = if (statePtr in 0x8000..0xFFFF) {
+                snesToPc(BANK_ROOM_DATA or statePtr).takeIf { it + STATE_DATA_SIZE <= bankEndExclusive }
+            } else {
+                null
+            }
+            if (statePc == null) {
+                issues.add(
+                    RoomStateParseIssue(
+                        statePtrOffset,
+                        "State pointer \$${statePtr.toString(16).uppercase().padStart(4, '0')} is outside bank \$8F",
+                    )
+                )
+            }
+            states.add(
+                InspectedRoomState(
+                    index = stateIndex,
+                    selectorPcOffset = pos,
+                    stateDataPcOffset = statePc,
+                    stateDataPointer = statePtr,
+                    condition = condition,
+                )
+            )
+            pos += condition.entrySizeBytes
+            stateIndex++
         }
-        return results
+        issues.add(RoomStateParseIssue(pos, "State selector list exceeds the 64-entry safety limit"))
+        return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+    }
+
+    private fun isSmEditStateGraphRedirectRoutine(routinePtr: Int): Boolean {
+        if (routinePtr !in 0x8000..0xFFFF) return false
+        val routinePc = runCatching { snesToPc(BANK_ROOM_DATA or routinePtr) }.getOrNull() ?: return false
+        val signature = SmEditRoomStateGraphFormat.redirectRoutineBytes
+        if (routinePc < 0 || routinePc + signature.size > romData.size) return false
+        return signature.indices.all { romData[routinePc + it] == signature[it] }
+    }
+
+    /** Parse all valid room states with the compatibility shape used by existing callers. */
+    fun parseRoomStates(roomId: Int): List<RoomStateInfo> {
+        val inspection = inspectRoomStates(roomId)
+        val area = inspection.area ?: 0
+        return inspection.states.mapNotNull { state ->
+            val statePc = state.stateDataPcOffset ?: return@mapNotNull null
+            val condition = state.condition
+            RoomStateInfo(
+                conditionCode = condition.code,
+                conditionArg = condition.argument ?: 0,
+                stateDataPcOffset = statePc,
+                conditionName = if (condition.isDefault) {
+                    "Standard (default)"
+                } else {
+                    condition.summary(area)
+                },
+            )
+        }
     }
 
     /**
@@ -653,6 +780,7 @@ class RomParser(internal val romData: ByteArray) {
             "enemyGfxPtr" to readUInt16At(stateDataPcOffset + 10),
             "bgScrolling" to readUInt16At(stateDataPcOffset + 12),
             "roomScrollsPtr" to readUInt16At(stateDataPcOffset + 14),
+            "xraySpecialCasingPtr" to readUInt16At(stateDataPcOffset + 16),
             "mainAsmPtr" to readUInt16At(stateDataPcOffset + 18),
             "plmSetPtr" to readUInt16At(stateDataPcOffset + 20),
             "bgDataPtr" to readUInt16At(stateDataPcOffset + 22),
@@ -677,12 +805,12 @@ class RomParser(internal val romData: ByteArray) {
         return (bank shl 16) or offset
     }
 
-    /** Get the PC offset of the default state data block for a room.
+    /** Get the PC offset of the state data block used for the initial editor preview.
      *  The PLM set pointer is at stateDataPcOffset + 20. */
     fun getStateDataPcOffset(roomId: Int): Int? {
         val pcOffset = roomIdToPc(roomId)
         if (pcOffset < 0 || pcOffset + 11 > romData.size) return null
-        return findInitialStateData(roomId, pcOffset + 11)
+        return findInitialStateData(roomId)
     }
 
     /**
@@ -694,58 +822,13 @@ class RomParser(internal val romData: ByteArray) {
      *   E5E6: default (terminates list), 26-byte state data follows inline
      *   E5EB: code(2)+doorPtr(2)+statePtr(2) = 6 bytes  (RoomDefStateSelect_Door)
      *   E5FF: code(2)+statePtr(2)            = 4 bytes  (TourianBoss01: hardcoded boss check)
+     *   E60F: code(2)+statePtr(2)            = 4 bytes  (always false; skips the state pointer)
      *   E612: code(2)+eventFlag(1)+statePtr(2) = 5 bytes (IsEventSet)
      *   E629: code(2)+bossFlag(1)+statePtr(2)  = 5 bytes (IsBossDead)
      *   E640/E652/E669/E678: code(2)+statePtr(2) = 4 bytes
      */
     fun findAllStateDataOffsets(roomId: Int): List<Int> {
-        val pcOffset = roomIdToPc(roomId)
-        if (pcOffset < 0 || pcOffset + 11 > romData.size) return emptyList()
-
-        val stateListOffset = pcOffset + 11
-        val results = mutableListOf<Int>()
-        var pos = stateListOffset
-        val maxPos = minOf(stateListOffset + 200, romData.size - 1)
-
-        while (pos + 1 < maxPos) {
-            val code = readUInt16At(pos)
-            when (code) {
-                0xE5E6 -> {
-                    val statePc = pos + 2
-                    if (statePc + STATE_DATA_SIZE <= romData.size) results.add(statePc)
-                    return results
-                }
-                0xE5EB -> {
-                    // door_ptr(2) + state_ptr(2) = 6 bytes total
-                    if (pos + 5 < romData.size) {
-                        val statePtr = readUInt16At(pos + 4)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        if (statePc + STATE_DATA_SIZE <= romData.size) results.add(statePc)
-                    }
-                    pos += 6
-                }
-                0xE612, 0xE629 -> {
-                    // 1-byte flag + 2-byte state pointer = 5 bytes total
-                    if (pos + 4 < romData.size) {
-                        val statePtr = readUInt16At(pos + 3)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        if (statePc + STATE_DATA_SIZE <= romData.size) results.add(statePc)
-                    }
-                    pos += 5
-                }
-                0xE5FF, 0xE640, 0xE652, 0xE669, 0xE678 -> {
-                    // 2-byte state pointer only = 4 bytes total
-                    if (pos + 3 < romData.size) {
-                        val statePtr = readUInt16At(pos + 2)
-                        val statePc = snesToPc(BANK_ROOM_DATA or statePtr)
-                        if (statePc + STATE_DATA_SIZE <= romData.size) results.add(statePc)
-                    }
-                    pos += 4
-                }
-                else -> return results
-            }
-        }
-        return results
+        return inspectRoomStates(roomId).states.mapNotNull { it.stateDataPcOffset }
     }
     
     /**
@@ -763,6 +846,7 @@ class RomParser(internal val romData: ByteArray) {
         val enemyGfxPtr: Int,
         val bgScrolling: Int,
         val scrollPtr: Int,
+        val xraySpecialCasingPtr: Int,
         val mainAsmPtr: Int,
         val plmSetPtr: Int,
         val bgDataPtr: Int,
@@ -783,6 +867,7 @@ class RomParser(internal val romData: ByteArray) {
             enemyGfxPtr = readUInt16At(pc + 10),
             bgScrolling = readUInt16At(pc + 12),
             scrollPtr = readUInt16At(pc + 14),
+            xraySpecialCasingPtr = readUInt16At(pc + 16),
             mainAsmPtr = readUInt16At(pc + 18),
             plmSetPtr = readUInt16At(pc + 20),
             bgDataPtr = readUInt16At(pc + 22),
@@ -1019,12 +1104,16 @@ class RomParser(internal val romData: ByteArray) {
         val doorBytes: Int,            // doorCount * 12
     )
 
-    fun readRoomSpaceUsage(roomId: Int): RoomSpaceUsage? {
+    fun readRoomSpaceUsage(roomId: Int, stateDataPcOffset: Int? = null): RoomSpaceUsage? {
         val room = readRoomHeader(roomId) ?: return null
-        val (_, compSize) = decompressLZ2WithSize(room.levelDataPtr)
-        val decompData = decompressLZ2(room.levelDataPtr)
-        val plms = parsePlmSet(room.plmSetPtr)
-        val enemies = parseEnemyPopulation(room.enemySetPtr)
+        val stateData = stateDataPcOffset?.let(::readStateData).orEmpty()
+        val levelDataPtr = stateData["levelDataPtr"] ?: room.levelDataPtr
+        val plmSetPtr = stateData["plmSetPtr"] ?: room.plmSetPtr
+        val enemySetPtr = stateData["enemySetPtr"] ?: room.enemySetPtr
+        val (_, compSize) = decompressLZ2WithSize(levelDataPtr)
+        val decompData = decompressLZ2(levelDataPtr)
+        val plms = parsePlmSet(plmSetPtr)
+        val enemies = parseEnemyPopulation(enemySetPtr)
         val scrollSize = room.width * room.height
         val doors = parseDoorList(room.doorOut)
         return RoomSpaceUsage(

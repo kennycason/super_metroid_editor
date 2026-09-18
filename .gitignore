@@ -37,6 +37,11 @@ hs_err_pid*
 core.*
 *.pyc
 __pycache__/
+*.egg-info/
+.pytest_cache/
+.venv*/
+room_model/checkpoints/
+room_model/datasets/
 
 # ROM files
 *.smc

@@ -4,6 +4,10 @@ import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilePattern
+import com.supermetroid.editor.data.TileEdit
+import com.supermetroid.editor.procgen.LearnedRoomProposal
+import com.supermetroid.editor.procgen.LearnedRoomProposalGenerator
+import com.supermetroid.editor.procgen.LearnedRoomProposalSource
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
@@ -1408,6 +1412,91 @@ class EditorStateTest {
             val roomEdits = state.project.rooms[state.project.roomKey(0x93D5)]
             assertNotNull(roomEdits)
             assertTrue(roomEdits!!.saveStationSpawns.isEmpty())
+        }
+    }
+
+    @Nested
+    inner class LearnedRoomProposalIntegration {
+        private fun proposal(words: IntArray): LearnedRoomProposal = LearnedRoomProposal(
+            schemaVersion = 1,
+            kind = "smedit-room-proposal",
+            generator = LearnedRoomProposalGenerator(seed = 77),
+            source = LearnedRoomProposalSource(roomId = 0x92FD, roomIdHex = "0x92FD"),
+            tileset = 0,
+            widthScreens = 1,
+            heightScreens = 1,
+            widthBlocks = 16,
+            heightBlocks = 16,
+            layer1Words = words.toList(),
+            bts = List(words.size) { 0 },
+        )
+
+        @Test
+        fun `reviewed learned candidate applies and undoes as one operation`() {
+            state.initTestLevel(16, 16)
+            state.setRoomIdForTest(0x92FD)
+            val words = IntArray(16 * 16)
+            words[5 * 16 + 5] = 0x8120
+            val candidate = state.prepareLearnedRoomProposals(
+                listOf(proposal(words)),
+                romParser = null,
+            ).single()
+
+            val applied = state.applyLearnedRoomProposal(candidate)
+
+            assertEquals(1, applied)
+            assertEquals(0x8120, state.readBlockWord(5, 5))
+            assertEquals(1, state.undoStack.size)
+            assertTrue(state.undo())
+            assertEquals(0, state.readBlockWord(5, 5))
+        }
+
+        @Test
+        fun `open learned gallery can switch between reviewed candidates`() {
+            state.initTestLevel(16, 16)
+            state.setRoomIdForTest(0x92FD)
+            val firstWords = IntArray(16 * 16).also { it[5 * 16 + 5] = 0x8120 }
+            val secondWords = IntArray(16 * 16).also { it[6 * 16 + 6] = 0x8121 }
+            val candidates = state.prepareLearnedRoomProposals(
+                listOf(proposal(firstWords), proposal(secondWords)),
+                romParser = null,
+            )
+            val first = candidates.first { it.words[5 * 16 + 5] == 0x8120 }
+            val second = candidates.first { it.words[6 * 16 + 6] == 0x8121 }
+
+            state.applyLearnedRoomProposal(first, candidates)
+            val switched = state.applyLearnedRoomProposal(second, candidates)
+
+            assertEquals(2, switched)
+            assertEquals(0, state.readBlockWord(5, 5))
+            assertEquals(0x8121, state.readBlockWord(6, 6))
+            assertEquals(2, state.undoStack.size)
+            assertTrue(state.undo())
+            assertEquals(0x8120, state.readBlockWord(5, 5))
+            assertEquals(0, state.readBlockWord(6, 6))
+            assertTrue(state.undo())
+            assertEquals(0, state.readBlockWord(5, 5))
+        }
+
+        @Test
+        fun `candidate cannot apply after room changed since preview`() {
+            state.initTestLevel(16, 16)
+            state.setRoomIdForTest(0x92FD)
+            val candidateWords = IntArray(16 * 16).also { it[5 * 16 + 5] = 0x8120 }
+            val candidate = state.prepareLearnedRoomProposals(
+                listOf(proposal(candidateWords)),
+                romParser = null,
+            ).single()
+            state.applyBulkEdits(
+                "Intervening edit",
+                listOf(TileEdit(3, 3, 0, 0x8121)),
+            )
+
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                state.applyLearnedRoomProposal(candidate)
+            }
+
+            assertTrue(error.message.orEmpty().contains("changed after preview"))
         }
     }
 

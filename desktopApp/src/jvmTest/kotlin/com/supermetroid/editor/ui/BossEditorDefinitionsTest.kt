@@ -8,6 +8,22 @@ import org.junit.jupiter.api.Test
 
 class BossEditorDefinitionsTest {
     @Test
+    fun `boss defeated patch uses the per-area bits read by room state conditions`() {
+        assertEquals(
+            listOf(
+                Triple("kraid", 0xD829, 0x01),
+                Triple("phantoon", 0xD82B, 0x01),
+                Triple("ridley", 0xD82A, 0x01),
+                Triple("draygon", 0xD82C, 0x01),
+                Triple("spore", 0xD829, 0x02),
+                Triple("croc", 0xD82A, 0x02),
+                Triple("botwoon", 0xD82C, 0x02),
+            ),
+            BOSS_FLAG_DEFS.map { Triple(it.key, it.wramAddr, it.bit) },
+        )
+    }
+
+    @Test
     fun `phantoon stat labels describe body parts from enemy headers`() {
         val phantoon = BOSS_DEFS.first { it.name == "Phantoon" }
         val labelsByKey = phantoon.fields.associate { it.key to it.label }

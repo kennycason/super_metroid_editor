@@ -1,6 +1,7 @@
 package com.supermetroid.editor.cli
 
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.SmEditProjectFormat
 import com.supermetroid.editor.headless.SmeditBuildReport
 import com.supermetroid.editor.headless.SmeditBuildRequest
 import com.supermetroid.editor.headless.SmeditBuildService
@@ -55,12 +56,13 @@ fun main(args: Array<String>) {
     val json = if (compact) jsonCompact else jsonPretty
     try {
         when (command) {
-            "rooms", "room", "graph", "export", "render-rooms", "rooms-metadata" -> {
+            "rooms", "room", "graph", "export", "training-data", "render-rooms", "rooms-metadata" -> {
                 val requiredRomPath = romPath ?: error("ROM path was already validated")
                 val parser = RomParser.loadRom(requiredRomPath)
                 when (command) {
                     "render-rooms" -> cmdRenderRooms(parser, commandArgs)
                     "rooms-metadata" -> cmdRoomsMetadata(parser, json)
+                    "training-data" -> cmdTrainingData(parser, json, commandArgs)
                     else -> {
                         val roomExporter = RoomExporter(parser)
                         when (command) {
@@ -86,6 +88,53 @@ fun main(args: Array<String>) {
         System.err.println("Error: ${e.message ?: "invalid argument"}")
         exitProcess(1)
     }
+}
+
+private fun cmdTrainingData(parser: RomParser, json: Json, args: List<String>) {
+    var outDir: String? = null
+    val iter = args.iterator()
+    while (iter.hasNext()) {
+        val arg = iter.next()
+        when {
+            (arg == "-o" || arg == "--output") && iter.hasNext() -> outDir = iter.next()
+            else -> throw IllegalArgumentException("Unknown training-data option: $arg")
+        }
+    }
+    if (outDir == null) {
+        throw IllegalArgumentException("Usage: training-data -o <directory>")
+    }
+
+    val dir = File(outDir)
+    require(dir.mkdirs() || dir.isDirectory) { "Could not create output directory: ${dir.absolutePath}" }
+    val roomsDir = File(dir, "rooms")
+    require(roomsDir.mkdirs() || roomsDir.isDirectory) { "Could not create rooms directory: ${roomsDir.absolutePath}" }
+
+    val exporter = RoomTrainingExporter(parser)
+    val (rooms, skipped) = exporter.exportAll()
+    val indices = rooms.map { room ->
+        val filename = "room_${room.roomIdHex.removePrefix("0x").lowercase()}.json"
+        File(roomsDir, filename).writeText(json.encodeToString(room))
+        RoomTrainingIndex(
+            roomId = room.roomId,
+            roomIdHex = room.roomIdHex,
+            handle = room.handle,
+            name = room.name,
+            area = room.area,
+            tileset = room.tileset,
+            widthBlocks = room.widthBlocks,
+            heightBlocks = room.heightBlocks,
+            contentHash = room.contentHash,
+            file = "rooms/$filename",
+        )
+    }
+    val manifest = RoomTrainingManifest(
+        schemaVersion = RoomTrainingExporter.SCHEMA_VERSION,
+        roomCount = indices.size,
+        skippedRoomCount = skipped,
+        rooms = indices,
+    )
+    File(dir, "manifest.json").writeText(json.encodeToString(manifest))
+    System.err.println("Wrote ${indices.size} lossless room samples to ${dir.absolutePath} ($skipped skipped)")
 }
 
 private fun cmdRooms(exporter: RoomExporter, json: Json) {
@@ -290,7 +339,7 @@ private fun cmdBuild(
         ?: requestWithStrict
     val project = request.project?.let { projectPath ->
         val projectFile = resolveRelative(configFile.parentFile, projectPath)
-        jsonInput.decodeFromString(SmEditProject.serializer(), projectFile.readText())
+        SmEditProjectFormat.decode(jsonInput, projectFile.readText())
     }
 
     val service = SmeditBuildService()
@@ -373,6 +422,8 @@ Commands:
   room <id|handle>   Export single room with full collision grid
   graph              Export navigation graph (nodes + edges)
   export -o <dir>    Export everything: rooms.json, nav_graph.json, rooms/*.json
+  training-data -o <dir>
+                     Export lossless room grids for model training (full layer-1 words + BTS)
   render-rooms -o <zip> [--items] [--highlight-items]
                      Render every room map to PNG and bundle into a ZIP with rooms.json
                      --items overlays item icons (Energy Tank, Screw Attack, etc.)
@@ -395,6 +446,7 @@ Examples:
   ... --rom rom.smc room landingSite
   ... --rom rom.smc graph
   ... --rom rom.smc export -o /tmp/sm_export
+  ... --rom rom.smc training-data -o /tmp/sm_room_training
   ... --rom rom.smc render-rooms -o rooms.zip
   ... --rom rom.smc render-rooms -o rooms.zip --items
   ... patches

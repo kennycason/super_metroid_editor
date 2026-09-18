@@ -40,6 +40,7 @@ class ProjectRoomExporter(
     }
 
     private val allocations = mutableListOf<RomAllocation>()
+    private var stateGraphRedirectRoutinePtr: Int? = null
 
     private val allocationSession = (
         freeSpaceAllocator ?: RomFreeSpaceAllocator(
@@ -144,6 +145,18 @@ class ProjectRoomExporter(
                 roomsPatched.add(roomKey)
             }
 
+            val rewrittenStateOffsets = if (roomEdits.stateGraphChanged) {
+                rewriteStateGraph(roomKey, roomId, roomEdits)
+            } else {
+                emptyMap()
+            }
+
+            if (roomEdits.states.any { it.hasEdits }) {
+                applyExistingStateEdits(roomKey, roomId, roomEdits, rewrittenStateOffsets)
+                roomsPatched.add(roomKey)
+            }
+            if (roomEdits.stateGraphChanged) roomsPatched.add(roomKey)
+
             if (roomEdits.saveStationSpawns.isNotEmpty()) {
                 if (applySaveStationSpawns(roomKey, roomEdits)) {
                     roomsPatched.add(roomKey)
@@ -165,8 +178,10 @@ class ProjectRoomExporter(
         effectiveWidth: Int,
         effectiveHeight: Int,
         isResized: Boolean,
+        targetStateOffsets: List<Int>? = null,
     ): Boolean {
-        val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val roomStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val allStateOffsets = targetStateOffsets ?: roomStateOffsets
         if (allStateOffsets.isEmpty()) {
             failExport("Room 0x$roomKey has level edits but no writable room-state data")
         }
@@ -204,8 +219,10 @@ class ProjectRoomExporter(
             val layer1Size = readU16(editedData, 0)
             val totalBlocks = blocksWide * effectiveHeight * 16
             val layer2Start = 2 + layer1Size + totalBlocks
-            val hasEmbeddedLayer2 = layer2Start + totalBlocks * 2 <= editedData.size &&
-                (roomEdits.stateDataChange?.bgScrolling ?: room.bgScrolling) == 0
+            val stateBgScrolling = statesForPtr.firstOrNull()?.let { readU16(romData, it + 12) }
+                ?: roomEdits.stateDataChange?.bgScrolling
+                ?: room.bgScrolling
+            val hasEmbeddedLayer2 = layer2Start + totalBlocks * 2 <= editedData.size && stateBgScrolling == 0
 
             for (op in roomEdits.operations) {
                 for (edit in op.edits) {
@@ -257,7 +274,10 @@ class ProjectRoomExporter(
                 value = levelPtr,
                 u24 = true,
             )
-            if (compressed.size <= originalSize && !sharedOutsideRoom) {
+            val sharedWithUntargetedState = roomStateOffsets.any { stateOffset ->
+                stateOffset !in allStateOffsets && readU24(romData, stateOffset) == levelPtr
+            }
+            if (compressed.size <= originalSize && !sharedOutsideRoom && !sharedWithUntargetedState) {
                 compressed.copyInto(romData, levelPc)
                 for (i in compressed.size until originalSize) romData[levelPc + i] = 0xFF.toByte()
                 wrote = true
@@ -269,7 +289,7 @@ class ProjectRoomExporter(
                 )
                 if (allocation == null) failExport(
                     "Room 0x$roomKey level data needs a private ${compressed.size}-byte allocation " +
-                        (if (sharedOutsideRoom) "because another room shares its pointer" else "because it exceeds $originalSize bytes") +
+                        (if (sharedOutsideRoom || sharedWithUntargetedState) "because another state shares its pointer" else "because it exceeds $originalSize bytes") +
                         ", and no contiguous free space was found in banks " +
                         levelDataRelocationBanks(levelPtr).joinToString { "\$${it.toString(16).uppercase()}" }
                 )
@@ -291,8 +311,10 @@ class ProjectRoomExporter(
         roomKey: String,
         roomId: Int,
         roomEdits: RoomEdits,
+        targetStateOffsets: List<Int>? = null,
     ): Boolean {
-        val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val roomStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val allStateOffsets = targetStateOffsets ?: roomStateOffsets
         val distinctPlmPtrs = linkedSetOf<Int>()
         for (stateOffset in allStateOffsets) {
             val plmPtr = readU16(romData, stateOffset + 20)
@@ -350,7 +372,10 @@ class ProjectRoomExporter(
                 stateFieldOffset = 20,
                 value = plmSet.plmSetPtr,
             )
-            if (serialized.size <= plmSet.originalSize && !sharedOutsideRoom) {
+            val sharedWithUntargetedState = roomStateOffsets.any { stateOffset ->
+                stateOffset !in allStateOffsets && readU16(romData, stateOffset + 20) == plmSet.plmSetPtr
+            }
+            if (serialized.size <= plmSet.originalSize && !sharedOutsideRoom && !sharedWithUntargetedState) {
                 writePc = plmPc
             } else {
                 val allocation = roomDataAllocator.reserve(
@@ -361,7 +386,7 @@ class ProjectRoomExporter(
                 if (allocation == null) failExport(
                     "Room 0x$roomKey PLM set 0x${plmSet.plmSetPtr.toString(16)} needs a private " +
                         "${serialized.size}-byte allocation" +
-                        (if (sharedOutsideRoom) " because another room shares its pointer" else "") +
+                        (if (sharedOutsideRoom || sharedWithUntargetedState) " because another state shares its pointer" else "") +
                         ", but bank \$8F has no contiguous free space"
                 )
                 writePc = allocation.pcOffset
@@ -398,6 +423,7 @@ class ProjectRoomExporter(
         roomKey: String,
         roomId: Int,
         roomEdits: RoomEdits,
+        targetStateOffsets: List<Int>? = null,
     ): Boolean {
         val commandIdToPtr = mutableMapOf<String, Int>()
         for ((commandId, commands) in roomEdits.customScrollCommands) {
@@ -439,7 +465,7 @@ class ProjectRoomExporter(
 
         if (commandIdToPtr.isEmpty()) return false
 
-        val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val allStateOffsets = targetStateOffsets ?: romParser.findAllStateDataOffsets(roomId)
         if (allStateOffsets.isEmpty()) {
             failExport("Room 0x$roomKey has custom scroll commands but no writable room-state data")
         }
@@ -695,8 +721,11 @@ class ProjectRoomExporter(
         roomId: Int,
         room: Room,
         roomEdits: RoomEdits,
+        targetStateOffsets: List<Int>? = null,
+        targetEnemySetPtr: Int? = null,
     ): Boolean {
-        val originalEnemies = romParser.parseEnemyPopulation(room.enemySetPtr)
+        val enemySetPtr = targetEnemySetPtr ?: room.enemySetPtr
+        val originalEnemies = romParser.parseEnemyPopulation(enemySetPtr)
         val originalSet = originalEnemies.toSet()
         val modified = originalEnemies.toMutableList()
         for (change in roomEdits.enemyChanges) {
@@ -736,7 +765,7 @@ class ProjectRoomExporter(
             }
         }
 
-        val enemyPc = romParser.snesToPc(RomConstants.BANK_ENEMY_SET or room.enemySetPtr)
+        val enemyPc = romParser.snesToPc(RomConstants.BANK_ENEMY_SET or enemySetPtr)
         val killCountPc = enemyPc + originalEnemies.size * 16 + 2
         val killCount = if (killCountPc < romData.size) romData[killCountPc] else 0
         val originalSize = originalEnemies.size * 16 + 3
@@ -762,11 +791,16 @@ class ProjectRoomExporter(
         val sharedOutsideRoom = hasExternalRoomStateReference(
             roomId,
             stateFieldOffset = 8,
-            value = room.enemySetPtr,
+            value = enemySetPtr,
         )
+        val roomStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val selectedStateOffsets = targetStateOffsets ?: roomStateOffsets
+        val sharedWithUntargetedState = roomStateOffsets.any { stateOffset ->
+            stateOffset !in selectedStateOffsets && readU16(romData, stateOffset + 8) == enemySetPtr
+        }
 
         val writePc: Int
-        if (newSize <= originalSize && !sharedOutsideRoom) {
+        if (newSize <= originalSize && !sharedOutsideRoom && !sharedWithUntargetedState) {
             writePc = enemyPc
         } else {
             val allocation = enemyAllocator.reserve(
@@ -776,15 +810,14 @@ class ProjectRoomExporter(
             )
             if (allocation == null) failExport(
                 "Room 0x$roomKey enemy population needs a private $newSize-byte allocation" +
-                    (if (sharedOutsideRoom) " because another room shares its pointer" else "") +
+                    (if (sharedOutsideRoom || sharedWithUntargetedState) " because another state shares its pointer" else "") +
                     ", but bank \$A1 has no contiguous free space"
             )
             writePc = allocation.pcOffset
             val newPtr = allocation.snesAddress and 0xFFFF
-            val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
-            for (stateOffset in allStateOffsets) {
+            for (stateOffset in selectedStateOffsets) {
                 val existingPtr = readU16(romData, stateOffset + 8)
-                if (existingPtr == room.enemySetPtr) writeU16(romData, stateOffset + 8, newPtr)
+                if (existingPtr == enemySetPtr) writeU16(romData, stateOffset + 8, newPtr)
             }
             onLog(
                 "Room 0x$roomKey: relocated enemy set to 0x${allocation.snesAddress.toString(16)}" +
@@ -828,10 +861,15 @@ class ProjectRoomExporter(
         roomId: Int,
         room: Room,
         roomEdits: RoomEdits,
+        targetStateOffsets: List<Int>? = null,
+        targetEnemySetPtr: Int? = null,
+        targetEnemyGfxPtr: Int? = null,
     ): Boolean {
-        val gfxEntries = romParser.parseEnemyGfxSet(room.enemyGfxPtr)
+        val enemySetPtr = targetEnemySetPtr ?: room.enemySetPtr
+        val enemyGfxPtr = targetEnemyGfxPtr ?: room.enemyGfxPtr
+        val gfxEntries = romParser.parseEnemyGfxSet(enemyGfxPtr)
         val existingSpecies = gfxEntries.map { it.speciesId }.toSet()
-        val vanillaPopulation = romParser.parseEnemyPopulation(room.enemySetPtr)
+        val vanillaPopulation = romParser.parseEnemyPopulation(enemySetPtr)
         val vanillaSpecies = vanillaPopulation.map { it.id }.toSet()
 
         val finalPopulation = vanillaPopulation.toMutableList()
@@ -886,17 +924,22 @@ class ProjectRoomExporter(
         }
         if (newEntries.size == gfxEntries.size) return false
 
-        val gfxPc = romParser.snesToPc(RomConstants.BANK_ENEMY_GFX or room.enemyGfxPtr)
+        val gfxPc = romParser.snesToPc(RomConstants.BANK_ENEMY_GFX or enemyGfxPtr)
         val originalGfxSize = gfxEntries.size * 4 + 2
         val newGfxSize = newEntries.size * 4 + 2
         val sharedOutsideRoom = hasExternalRoomStateReference(
             roomId,
             stateFieldOffset = 10,
-            value = room.enemyGfxPtr,
+            value = enemyGfxPtr,
         )
+        val roomStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val selectedStateOffsets = targetStateOffsets ?: roomStateOffsets
+        val sharedWithUntargetedState = roomStateOffsets.any { stateOffset ->
+            stateOffset !in selectedStateOffsets && readU16(romData, stateOffset + 10) == enemyGfxPtr
+        }
         val writeGfxPc: Int
 
-        if (newGfxSize <= originalGfxSize && !sharedOutsideRoom) {
+        if (newGfxSize <= originalGfxSize && !sharedOutsideRoom && !sharedWithUntargetedState) {
             writeGfxPc = gfxPc
         } else {
             val allocation = enemyGfxAllocator.reserve(
@@ -906,15 +949,14 @@ class ProjectRoomExporter(
             )
             if (allocation == null) failExport(
                 "Room 0x$roomKey enemy GFX set needs a private $newGfxSize-byte allocation" +
-                    (if (sharedOutsideRoom) " because another room shares its pointer" else "") +
+                    (if (sharedOutsideRoom || sharedWithUntargetedState) " because another state shares its pointer" else "") +
                     ", but bank \$B4 has no contiguous free space"
             )
             writeGfxPc = allocation.pcOffset
             val newGfxOffset = allocation.snesAddress and 0xFFFF
-            val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
-            for (stateOffset in allStateOffsets) {
+            for (stateOffset in selectedStateOffsets) {
                 val existingPtr = readU16(romData, stateOffset + 10)
-                if (existingPtr == room.enemyGfxPtr) writeU16(romData, stateOffset + 10, newGfxOffset)
+                if (existingPtr == enemyGfxPtr) writeU16(romData, stateOffset + 10, newGfxOffset)
             }
             onLog(
                 "Room 0x$roomKey: relocated GFX set to 0x${allocation.snesAddress.toString(16)}" +
@@ -940,8 +982,11 @@ class ProjectRoomExporter(
         effectiveWidth: Int,
         effectiveHeight: Int,
         isResized: Boolean,
+        targetStateOffsets: List<Int>? = null,
+        targetScrollPtr: Int? = null,
     ): Boolean {
-        val originalScrolls = romParser.parseScrollData(room.roomScrollsPtr, room.width, room.height)
+        val scrollPtr = targetScrollPtr ?: room.roomScrollsPtr
+        val originalScrolls = romParser.parseScrollData(scrollPtr, room.width, room.height)
         val modifiedScrolls = if (isResized) {
             val resized = IntArray(effectiveWidth * effectiveHeight) { 1 }
             for (sourceY in 0 until min(room.height, effectiveHeight)) {
@@ -974,14 +1019,21 @@ class ProjectRoomExporter(
 
         // $0000/$0001 are engine sentinels for uniform blue/green screens, not ROM
         // addresses. Materialize a real table when either sentinel is edited.
-        val usesSpecialScrollValue = room.roomScrollsPtr <= 1
+        val usesSpecialScrollValue = scrollPtr <= 1
         val sharedOutsideRoom = !usesSpecialScrollValue && hasExternalRoomStateReference(
             roomId,
             stateFieldOffset = 14,
-            value = room.roomScrollsPtr,
+            value = scrollPtr,
         )
-        if (!usesSpecialScrollValue && modifiedScrolls.size <= originalScrolls.size && !sharedOutsideRoom) {
-            val scrollPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or room.roomScrollsPtr)
+        val roomStateOffsets = romParser.findAllStateDataOffsets(roomId)
+        val selectedStateOffsets = targetStateOffsets ?: roomStateOffsets
+        val sharedWithUntargetedState = !usesSpecialScrollValue && roomStateOffsets.any { stateOffset ->
+            stateOffset !in selectedStateOffsets && readU16(romData, stateOffset + 14) == scrollPtr
+        }
+        if (!usesSpecialScrollValue && modifiedScrolls.size <= originalScrolls.size &&
+            !sharedOutsideRoom && !sharedWithUntargetedState
+        ) {
+            val scrollPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or scrollPtr)
             for (i in modifiedScrolls.indices) {
                 writeU8(romData, scrollPc + i, modifiedScrolls[i])
             }
@@ -1003,18 +1055,17 @@ class ProjectRoomExporter(
         )
 
         val newPtr = allocation.snesAddress and 0xFFFF
-        val allStateOffsets = romParser.findAllStateDataOffsets(roomId)
-        if (allStateOffsets.isEmpty()) {
+        if (selectedStateOffsets.isEmpty()) {
             failExport("Room 0x$roomKey has scroll edits but no writable room-state data")
         }
-        for (stateOffset in allStateOffsets) {
+        for (stateOffset in selectedStateOffsets) {
             writeU16(romData, stateOffset + 14, newPtr)
         }
         onLog(
             "Room 0x$roomKey: ${if (usesSpecialScrollValue) "materialized special" else "relocated"} " +
-                "scroll data \$${room.roomScrollsPtr.toString(16)} " +
+                "scroll data \$${scrollPtr.toString(16)} " +
                 "to \$8F:${newPtr.toString(16).uppercase()} (${modifiedScrolls.size} bytes, " +
-                "updated ${allStateOffsets.size} state(s)" +
+                "updated ${selectedStateOffsets.size} state(s)" +
                 if (sharedOutsideRoom) ", copy-on-write for shared pointer)" else ")"
         )
         return true
@@ -1325,6 +1376,554 @@ class ProjectRoomExporter(
             stateChange.bgScrolling?.let { writeU16(romData, stateOffset + 12, it) }
         }
         onLog("Room 0x$roomKey: patched state data for ${allStateOffsets.size} state(s)")
+    }
+
+    /**
+     * Rebuild an authored selector graph out-of-line while preserving the room
+     * header's stable address. The four-byte inline bridge is interpreted by a
+     * tiny shared bank-$8F routine (`LDA $0000,X; TAX; RTS`) which returns to
+     * the vanilla state-selection loop with X pointing at the relocated graph.
+     */
+    private fun rewriteStateGraph(
+        roomKey: String,
+        roomId: Int,
+        roomEdits: RoomEdits,
+    ): Map<String, Int> {
+        val sourceInspection = romParser.inspectRoomStates(roomId)
+        if (!sourceInspection.isComplete) {
+            val details = sourceInspection.issues.joinToString { it.message }.ifBlank { "missing default state" }
+            failExport("Room 0x$roomKey state graph cannot be rebuilt safely: $details")
+        }
+        if (roomEdits.states.isEmpty()) {
+            failExport("Room 0x$roomKey state graph cannot be empty")
+        }
+        if (roomEdits.states.size > 64) {
+            failExport("Room 0x$roomKey has ${roomEdits.states.size} states; the supported maximum is 64")
+        }
+        val defaults = roomEdits.states.withIndex().filter {
+            it.value.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
+        }
+        if (defaults.size != 1 || defaults.single().index != roomEdits.states.lastIndex) {
+            failExport("Room 0x$roomKey must contain exactly one default state, last")
+        }
+        for (state in roomEdits.states) {
+            validateStateSelector(state.condition, roomKey, state.id)
+        }
+
+        val recordBytesById = linkedMapOf<String, ByteArray>()
+        for (state in roomEdits.states) {
+            val sourceIndex = state.baseSourceStateIndex() ?: failExport(
+                "Room 0x$roomKey state '${state.id}' has no source/template state"
+            )
+            val source = sourceInspection.states.getOrNull(sourceIndex) ?: failExport(
+                "Room 0x$roomKey state '${state.id}' refers to missing source/template state $sourceIndex"
+            )
+            if (state.sourceStateIndex != null) {
+                val expected = state.sourceCondition
+                    ?: state.condition.takeUnless { state.conditionChanged }
+                    ?: failExport("Room 0x$roomKey state '${state.id}' has no source selector")
+                if (source.condition.code != expected.routineCode || source.condition.argument != expected.argument) {
+                    failExport(
+                        "Room 0x$roomKey state '${state.id}' no longer matches source state $sourceIndex"
+                    )
+                }
+            }
+            val sourcePc = source.stateDataPcOffset ?: failExport(
+                "Room 0x$roomKey source/template state $sourceIndex has no readable 26-byte record"
+            )
+            recordBytesById[state.id] = romData.copyOfRange(
+                sourcePc,
+                sourcePc + RomConstants.STATE_DATA_SIZE,
+            )
+        }
+
+        val selectorBytes = roomEdits.states.sumOf { it.condition.encodedSizeBytes() }
+        val conditionalCount = roomEdits.states.size - 1
+        val graphSize = selectorBytes + RomConstants.STATE_DATA_SIZE +
+            conditionalCount * RomConstants.STATE_DATA_SIZE
+        val allocation = roomDataAllocator.reserve(
+            size = graphSize,
+            banks = listOf(0x8F),
+            label = "room 0x$roomKey state graph",
+        ) ?: failExport(
+            "Room 0x$roomKey needs $graphSize contiguous bytes for its state graph, but bank \$8F has no space"
+        )
+        val redirectPtr = ensureStateGraphRedirectRoutine(roomKey)
+        val graph = ByteArray(graphSize)
+        val stateOffsets = linkedMapOf<String, Int>()
+        var selectorCursor = 0
+        var conditionalRecordCursor = selectorBytes + RomConstants.STATE_DATA_SIZE
+        for (state in roomEdits.states) {
+            val record = recordBytesById.getValue(state.id)
+            if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+                encodeStateSelector(graph, selectorCursor, state.condition, statePointer = null, roomKey, state.id)
+                selectorCursor += state.condition.encodedSizeBytes()
+                record.copyInto(graph, selectorCursor)
+                stateOffsets[state.id] = allocation.pcOffset + selectorCursor
+                selectorCursor += RomConstants.STATE_DATA_SIZE
+            } else {
+                val statePointer = (allocation.snesAddress + conditionalRecordCursor) and 0xFFFF
+                encodeStateSelector(graph, selectorCursor, state.condition, statePointer, roomKey, state.id)
+                selectorCursor += state.condition.encodedSizeBytes()
+                record.copyInto(graph, conditionalRecordCursor)
+                stateOffsets[state.id] = allocation.pcOffset + conditionalRecordCursor
+                conditionalRecordCursor += RomConstants.STATE_DATA_SIZE
+            }
+        }
+        if (selectorCursor != selectorBytes + RomConstants.STATE_DATA_SIZE || conditionalRecordCursor != graphSize) {
+            failExport("Room 0x$roomKey internal state-graph sizing mismatch")
+        }
+        roomDataAllocator.write(allocation, graph)
+
+        val roomHeaderPc = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or roomId)
+        writeU16(romData, roomHeaderPc + 11, redirectPtr)
+        writeU16(romData, roomHeaderPc + 13, allocation.snesAddress and 0xFFFF)
+        onLog(
+            "Room 0x$roomKey: rebuilt ${roomEdits.states.size}-state graph at " +
+                "\$8F:${(allocation.snesAddress and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
+        )
+        return stateOffsets
+    }
+
+    private fun ensureStateGraphRedirectRoutine(roomKey: String): Int {
+        stateGraphRedirectRoutinePtr?.let { return it }
+        val bytes = SmEditRoomStateGraphFormat.redirectRoutineBytes
+        val bankStart = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x8000)
+        val bankEndExclusive = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0xFFFF) + 1
+        for (pc in bankStart..(bankEndExclusive - bytes.size)) {
+            if (bytes.indices.all { index -> romData[pc + index] == bytes[index] }) {
+                return (romParser.pcToSnes(pc) and 0xFFFF).also { stateGraphRedirectRoutinePtr = it }
+            }
+        }
+        val allocation = roomDataAllocator.allocate(
+            bytes = bytes,
+            banks = listOf(0x8F),
+            label = "SMEDIT room state-graph redirect routine",
+        ) ?: failExport(
+            "Room 0x$roomKey needs the ${bytes.size}-byte state-graph redirect routine, " +
+                "but bank \$8F has no space"
+        )
+        return (allocation.snesAddress and 0xFFFF).also { stateGraphRedirectRoutinePtr = it }
+    }
+
+    private fun validateStateSelector(
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        roomKey: String,
+        stateId: String,
+    ) {
+        val expected = projectRoomStateCondition(condition.kind, condition.argument)
+        if (condition.routineCode != expected.routineCode || condition.argumentKind != expected.argumentKind) {
+            failExport("Room 0x$roomKey state '$stateId' has an inconsistent typed selector")
+        }
+        when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                if (condition.argument == null || condition.argument !in 0..0xFF) {
+                    failExport("Room 0x$roomKey state '$stateId' selector argument must fit in one byte")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                if (condition.argument == null || condition.argument !in 0x8000..0xFFFF) {
+                    failExport(
+                        "Room 0x$roomKey state '$stateId' incoming-door argument must be a bank \$83 pointer"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun encodeStateSelector(
+        destination: ByteArray,
+        offset: Int,
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        statePointer: Int?,
+        roomKey: String,
+        stateId: String,
+    ) {
+        validateStateSelector(condition, roomKey, stateId)
+        writeU16(destination, offset, condition.routineCode)
+        when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0..0xFF) {
+                    failExport("Room 0x$roomKey state '$stateId' selector argument must fit in one byte")
+                }
+                destination[offset + 2] = argument.toByte()
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0x8000..0xFFFF) {
+                    failExport("Room 0x$roomKey state '$stateId' incoming-door argument must be a bank \$83 pointer")
+                }
+                writeU16(destination, offset + 2, argument)
+            }
+        }
+        if (condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            if (statePointer != null) failExport("Room 0x$roomKey default state '$stateId' cannot use a pointer")
+            return
+        }
+        val pointer = statePointer ?: failExport("Room 0x$roomKey state '$stateId' has no record pointer")
+        val pointerOffset = offset + condition.encodedSizeBytes() - 2
+        writeU16(destination, pointerOffset, pointer)
+    }
+
+    /**
+     * Apply state-scoped overrides after legacy/common room edits so a selected
+     * state's explicit values win. State graph creation/reordering is handled
+     * by the later graph writer; this path only accepts verified existing
+     * source states and fails closed for unsupported edit kinds.
+     */
+    private fun applyExistingStateEdits(
+        roomKey: String,
+        roomId: Int,
+        roomEdits: RoomEdits,
+        rewrittenStateOffsets: Map<String, Int> = emptyMap(),
+    ) {
+        val graphWasRewritten = rewrittenStateOffsets.isNotEmpty()
+        val inspectedStates = if (graphWasRewritten) emptyList() else romParser.inspectRoomStates(roomId).states
+        val room = romParser.readRoomHeader(roomId)
+            ?: failExport("Room 0x$roomKey state edits have no readable room header")
+        val effectiveWidth = roomEdits.roomHeaderChange?.width ?: room.width
+        val effectiveHeight = roomEdits.roomHeaderChange?.height ?: room.height
+        for (stateEdits in roomEdits.states.filter { it.hasEdits }) {
+            val inspected = if (graphWasRewritten) {
+                null
+            } else {
+                val sourceIndex = stateEdits.sourceStateIndex ?: failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' is new, but its state graph was not rebuilt"
+                )
+                inspectedStates.getOrNull(sourceIndex) ?: failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' refers to missing source state $sourceIndex"
+                )
+            }
+            if (inspected != null) {
+                val sourceCondition = stateEdits.sourceCondition
+                    ?: stateEdits.condition.takeUnless { stateEdits.conditionChanged }
+                    ?: failExport(
+                        "Room 0x$roomKey state '${stateEdits.id}' changes its selector but has no source selector"
+                    )
+                if (inspected.condition.code != sourceCondition.routineCode ||
+                    inspected.condition.argument != sourceCondition.argument
+                ) {
+                    failExport(
+                        "Room 0x$roomKey state '${stateEdits.id}' no longer matches its source selector; " +
+                            "reload or migrate the project before exporting"
+                    )
+                }
+            }
+            val stateOffset = rewrittenStateOffsets[stateEdits.id]
+                ?: inspected?.stateDataPcOffset
+                ?: failExport("Room 0x$roomKey state '${stateEdits.id}' has no writable state record")
+            if (stateEdits.resourcesChanged) {
+                failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' changes explicit resource links, " +
+                        "but link/unlink export is not active yet"
+                )
+            }
+            if (stateEdits.conditionChanged && !graphWasRewritten) {
+                applyStateConditionChange(
+                    roomKey,
+                    stateEdits.id,
+                    checkNotNull(inspected),
+                    stateEdits.condition,
+                )
+            }
+            stateEdits.stateDataChange?.let {
+                applyStateDataChangeAtOffset(roomKey, stateEdits.id, stateOffset, it)
+            }
+            val scopedRoomEdits = RoomEdits(
+                roomId = roomId,
+                operations = stateEdits.operations,
+                plmChanges = stateEdits.plmChanges,
+                enemyChanges = stateEdits.enemyChanges,
+                scrollChanges = stateEdits.scrollChanges,
+                customScrollCommands = stateEdits.customScrollCommands,
+            )
+            val targetOffsets = listOf(stateOffset)
+            val effectiveRoom = if (effectiveWidth != room.width || effectiveHeight != room.height) {
+                room.copy(width = effectiveWidth, height = effectiveHeight)
+            } else {
+                room
+            }
+            if (stateEdits.operations.any { it.edits.isNotEmpty() }) {
+                applyLevelDataEdits(
+                    roomKey,
+                    roomId,
+                    effectiveRoom,
+                    scopedRoomEdits,
+                    effectiveWidth,
+                    effectiveHeight,
+                    isResized = false,
+                    targetStateOffsets = targetOffsets,
+                )
+            }
+            if (stateEdits.plmChanges.isNotEmpty()) {
+                applyPlmChanges(roomKey, roomId, scopedRoomEdits, targetOffsets)
+            }
+            if (stateEdits.customScrollCommands.isNotEmpty()) {
+                applyCustomScrollCommands(roomKey, roomId, scopedRoomEdits, targetOffsets)
+            }
+            if (stateEdits.enemyChanges.isNotEmpty()) {
+                val enemySetPtr = readU16(romData, stateOffset + 8)
+                val enemyGfxPtr = readU16(romData, stateOffset + 10)
+                applyEnemyPopulationChanges(
+                    roomKey,
+                    roomId,
+                    room,
+                    scopedRoomEdits,
+                    targetOffsets,
+                    enemySetPtr,
+                )
+                applyEnemyGfxChanges(
+                    roomKey,
+                    roomId,
+                    room,
+                    scopedRoomEdits,
+                    targetOffsets,
+                    enemySetPtr,
+                    enemyGfxPtr,
+                )
+            }
+            if (stateEdits.scrollChanges.isNotEmpty()) {
+                val scrollPtr = readU16(romData, stateOffset + 14)
+                applyScrollChanges(
+                    roomKey,
+                    roomId,
+                    effectiveRoom,
+                    scopedRoomEdits,
+                    effectiveWidth,
+                    effectiveHeight,
+                    isResized = false,
+                    targetStateOffsets = targetOffsets,
+                    targetScrollPtr = scrollPtr,
+                )
+            }
+            stateEdits.fxChange?.let {
+                applyFxChangeAtOffset(roomKey, roomId, stateEdits.id, stateOffset, it)
+            }
+            for ((doorKey, change) in stateEdits.doorFxChanges) {
+                val doorSelect = doorKey.toIntOrNull(16) ?: failExport(
+                    "Room 0x$roomKey state '${stateEdits.id}' has invalid door FX key '$doorKey'"
+                )
+                if (doorSelect !in 1..0xFFFF) {
+                    failExport(
+                        "Room 0x$roomKey state '${stateEdits.id}' door FX key '$doorKey' must be a non-zero 16-bit pointer"
+                    )
+                }
+                applyFxChangeAtOffset(
+                    roomKey = roomKey,
+                    roomId = roomId,
+                    stateId = stateEdits.id,
+                    stateOffset = stateOffset,
+                    change = change,
+                    doorSelect = doorSelect,
+                )
+            }
+        }
+    }
+
+    private fun applyStateDataChangeAtOffset(
+        roomKey: String,
+        stateId: String,
+        stateOffset: Int,
+        change: com.supermetroid.editor.data.StateDataChange,
+    ) {
+        if (change.tileset != null && change.tileset !in 0 until TileGraphics.NUM_TILESETS) {
+            failExport("Room 0x$roomKey state '$stateId' tileset ${change.tileset} is invalid")
+        }
+        val invalidByte = listOf(
+            "musicData" to change.musicData,
+            "musicTrack" to change.musicTrack,
+        ).firstOrNull { (_, value) -> value != null && value !in 0..0xFF }
+        if (invalidByte != null) {
+            failExport(
+                "Room 0x$roomKey state '$stateId' field ${invalidByte.first}=${invalidByte.second} " +
+                    "is outside 0-255"
+            )
+        }
+        if (change.bgScrolling != null && change.bgScrolling !in 0..0xFFFF) {
+            failExport("Room 0x$roomKey state '$stateId' Layer 2 motion is outside 0-65535")
+        }
+        change.tileset?.let { romData[stateOffset + 3] = it.toByte() }
+        change.musicData?.let { romData[stateOffset + 4] = it.toByte() }
+        change.musicTrack?.let { romData[stateOffset + 5] = it.toByte() }
+        change.bgScrolling?.let { writeU16(romData, stateOffset + 12, it) }
+        onLog("Room 0x$roomKey: patched state '$stateId' properties")
+    }
+
+    private fun applyStateConditionChange(
+        roomKey: String,
+        stateId: String,
+        inspected: InspectedRoomState,
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+    ) {
+        if (inspected.condition.isDefault || condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
+            failExport("Room 0x$roomKey state '$stateId' cannot replace or create the mandatory default branch in place")
+        }
+        val oldSize = inspected.condition.entrySizeBytes
+        val newSize = condition.encodedSizeBytes()
+        if (newSize != oldSize) {
+            failExport(
+                "Room 0x$roomKey state '$stateId' selector needs $newSize bytes but its existing slot is " +
+                    "$oldSize bytes; use state-graph relocation"
+            )
+        }
+        val expectedArgumentKind = when (condition.kind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionKind.INCOMING_DOOR ->
+                com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER
+            com.supermetroid.editor.data.ProjectRoomStateConditionKind.EVENT_SET ->
+                com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID
+            com.supermetroid.editor.data.ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
+                com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK
+            else -> com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE
+        }
+        if (condition.argumentKind != expectedArgumentKind) {
+            failExport("Room 0x$roomKey state '$stateId' selector argument type is inconsistent")
+        }
+        val expectedRoutine = projectRoomStateCondition(condition.kind, condition.argument).routineCode
+        if (condition.routineCode != expectedRoutine) {
+            failExport(
+                "Room 0x$roomKey state '$stateId' selector routine \$${condition.routineCode.toString(16)} " +
+                    "does not match ${condition.kind}"
+            )
+        }
+        val pos = inspected.selectorPcOffset
+        writeU16(romData, pos, condition.routineCode)
+        when (condition.argumentKind) {
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.NONE -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.EVENT_ID,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.BOSS_BIT_MASK -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0..0xFF) {
+                    failExport("Room 0x$roomKey state '$stateId' selector argument must fit in one byte")
+                }
+                romData[pos + 2] = argument.toByte()
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
+                val argument = condition.argument
+                if (argument == null || argument !in 0..0xFFFF) {
+                    failExport("Room 0x$roomKey state '$stateId' door argument must fit in two bytes")
+                }
+                writeU16(romData, pos + 2, argument)
+            }
+        }
+        onLog("Room 0x$roomKey: changed selector for state '$stateId'")
+    }
+
+    private fun applyFxChangeAtOffset(
+        roomKey: String,
+        roomId: Int,
+        stateId: String,
+        stateOffset: Int,
+        change: com.supermetroid.editor.data.FxChange,
+        doorSelect: Int = 0,
+    ) {
+        val invalidWord = listOf(
+            "liquidSurfaceStart" to change.liquidSurfaceStart,
+            "liquidSurfaceNew" to change.liquidSurfaceNew,
+            "liquidSpeed" to change.liquidSpeed,
+        ).firstOrNull { (_, value) -> value != null && value !in 0..0xFFFF }
+        val invalidByte = listOf(
+            "liquidDelay" to change.liquidDelay,
+            "fxType" to change.fxType,
+            "fxBitA" to change.fxBitA,
+            "fxBitB" to change.fxBitB,
+            "fxBitC" to change.fxBitC,
+            "paletteFxBitflags" to change.paletteFxBitflags,
+            "tileAnimBitflags" to change.tileAnimBitflags,
+            "paletteBlend" to change.paletteBlend,
+        ).firstOrNull { (_, value) -> value != null && value !in 0..0xFF }
+        if (invalidWord != null || invalidByte != null) {
+            val invalid = invalidWord ?: invalidByte!!
+            failExport("Room 0x$roomKey state '$stateId' FX field ${invalid.first}=${invalid.second} is invalid")
+        }
+
+        val fxPtr = readU16(romData, stateOffset + 6)
+        val entries: List<RomParser.FxEntry>
+        val entryIndex: Int
+        var fxPc: Int
+        if (fxPtr == 0 || fxPtr == 0xFFFF) {
+            if (doorSelect != 0) {
+                failExport(
+                    "Room 0x$roomKey state '$stateId' has no FX table containing door " +
+                        "\$${doorSelect.toString(16).uppercase().padStart(4, '0')}"
+                )
+            }
+            val emptyDefault = ByteArray(16).also { bytes ->
+                writeU16(bytes, 2, 0xFFFF)
+                writeU16(bytes, 4, 0xFFFF)
+                bytes[10] = 0x02
+                bytes[11] = 0x02
+            }
+            val allocation = roomDataAllocator.allocate(
+                bytes = emptyDefault,
+                banks = listOf(0x83),
+                label = "room 0x$roomKey state '$stateId' FX table",
+            ) ?: failExport(
+                "Room 0x$roomKey state '$stateId' needs a 16-byte FX allocation, but bank \$83 " +
+                    "has no contiguous free space"
+            )
+            writeU16(romData, stateOffset + 6, allocation.snesAddress and 0xFFFF)
+            fxPc = allocation.pcOffset
+            entries = listOf(
+                RomParser.FxEntry(0, 0xFFFF, 0xFFFF, 0, 0, 0, 2, 2, 0, 0, 0, 0)
+            )
+            entryIndex = 0
+            onLog("Room 0x$roomKey: created FX table for state '$stateId'")
+        } else {
+            entries = romParser.parseFxEntries(fxPtr)
+            entryIndex = entries.indexOfFirst { it.doorSelect == doorSelect }
+            if (entryIndex < 0) {
+                val target = if (doorSelect == 0) {
+                    "default entry"
+                } else {
+                    "entry for door \$${doorSelect.toString(16).uppercase().padStart(4, '0')}"
+                }
+                failExport("Room 0x$roomKey state '$stateId' FX table has no $target")
+            }
+            fxPc = romParser.snesToPc(RomConstants.BANK_FX or fxPtr)
+        }
+
+        val sharedInRoom = fxPtr !in setOf(0, 0xFFFF) && romParser.findAllStateDataOffsets(roomId).any { otherOffset ->
+            otherOffset != stateOffset && readU16(romData, otherOffset + 6) == fxPtr
+        }
+        val sharedOutsideRoom = fxPtr !in setOf(0, 0xFFFF) && hasExternalRoomStateReference(
+            roomId,
+            stateFieldOffset = 6,
+            value = fxPtr,
+        )
+        if (fxPtr !in setOf(0, 0xFFFF) && (sharedInRoom || sharedOutsideRoom)) {
+            val bytes = romData.copyOfRange(fxPc, fxPc + entries.size * 16)
+            val allocation = roomDataAllocator.allocate(
+                bytes = bytes,
+                banks = listOf(0x83),
+                label = "room 0x$roomKey state '$stateId' FX table",
+            ) ?: failExport(
+                "Room 0x$roomKey state '$stateId' needs a private ${bytes.size}-byte FX allocation, " +
+                    "but bank \$83 has no contiguous free space"
+            )
+            writeU16(romData, stateOffset + 6, allocation.snesAddress and 0xFFFF)
+            fxPc = allocation.pcOffset
+            onLog("Room 0x$roomKey: forked FX for state '$stateId' (copy-on-write)")
+        }
+
+        val entryPc = fxPc + entryIndex * 16
+        change.liquidSurfaceStart?.let { writeU16(romData, entryPc + 2, it) }
+        change.liquidSurfaceNew?.let { writeU16(romData, entryPc + 4, it) }
+        change.liquidSpeed?.let { writeU16(romData, entryPc + 6, it) }
+        change.liquidDelay?.let { romData[entryPc + 8] = it.toByte() }
+        change.fxType?.let { romData[entryPc + 9] = it.toByte() }
+        change.fxBitA?.let { romData[entryPc + 10] = it.toByte() }
+        change.fxBitB?.let { romData[entryPc + 11] = it.toByte() }
+        change.fxBitC?.let { romData[entryPc + 12] = it.toByte() }
+        change.paletteFxBitflags?.let { romData[entryPc + 13] = it.toByte() }
+        change.tileAnimBitflags?.let { romData[entryPc + 14] = it.toByte() }
+        change.paletteBlend?.let { romData[entryPc + 15] = it.toByte() }
+        val target = if (doorSelect == 0) "default" else "door \$${doorSelect.toString(16).uppercase().padStart(4, '0')}"
+        onLog("Room 0x$roomKey: patched $target FX for state '$stateId'")
     }
 
     private fun applySaveStationSpawns(

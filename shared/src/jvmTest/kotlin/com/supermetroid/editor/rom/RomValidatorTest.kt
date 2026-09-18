@@ -140,7 +140,7 @@ class RomValidatorTest {
     @Nested
     inner class ProjectValidation {
         @Test
-        fun `project room header validation rejects an unassigned sentinel area`() {
+        fun `project room header validation rejects the debug area`() {
             val parser = romParser ?: return
             val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
             val room = rooms.values.first()
@@ -150,7 +150,7 @@ class RomValidatorTest {
             val issues = RomValidator.checkProjectRoomHeaders(parser, project, rooms)
 
             assertTrue(issues.any {
-                it.severity == RomValidator.Severity.ERROR && it.message.contains("There is no unassigned area value")
+                it.severity == RomValidator.Severity.ERROR && it.message.contains("not writable by the editor")
             })
         }
 

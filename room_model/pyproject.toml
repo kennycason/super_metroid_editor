@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smedit-room-model"
+version = "0.1.0"
+description = "Masked categorical room-layout model for SMEDIT"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26,<3",
+    "torch>=2.4,<3",
+]
+
+[project.scripts]
+smedit-room-model = "smedit_room_model.__main__:main"
+smedit-room-train = "smedit_room_model.train:main"
+smedit-room-generate = "smedit_room_model.generate:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

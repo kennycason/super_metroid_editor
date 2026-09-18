@@ -39,10 +39,10 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.procgen.BiomeRules
 import com.supermetroid.editor.procgen.BiomeStyle
 import com.supermetroid.editor.procgen.BiomeTheme
+import com.supermetroid.editor.procgen.PreparedLearnedRoomCandidate
 import com.supermetroid.editor.procgen.StructureAlgorithm
 import com.supermetroid.editor.procgen.TilesetProfile
 import com.supermetroid.editor.procgen.TilesetProfileCache
-import com.supermetroid.editor.procgen.WfcOptions
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +54,6 @@ private data class PendingGenerateAllBiome(
     val rules: BiomeRules,
     val theme: BiomeTheme,
     val seed: Long,
-    val wfcOptions: WfcOptions,
     val omitSpecialRooms: Boolean,
 )
 
@@ -74,8 +73,8 @@ fun BiomeGeneratorPanel(
     modifier: Modifier = Modifier,
 ) {
     val styleChoices = remember {
-        listOf(BiomeStyle.PIPE_MAZE, BiomeStyle.WAVE_FUNCTION) +
-            BiomeStyle.values().filter { it != BiomeStyle.PIPE_MAZE && it != BiomeStyle.WAVE_FUNCTION }
+        listOf(BiomeStyle.PIPE_MAZE) +
+            BiomeStyle.values().filter { it != BiomeStyle.PIPE_MAZE }
     }
     var style by remember { mutableStateOf(BiomeStyle.PIPE_MAZE) }
     var theme by remember { mutableStateOf(BiomeTheme.KEEP) }
@@ -109,6 +108,17 @@ fun BiomeGeneratorPanel(
             targetTilesetId to TilesetProfileCache.getOrLearn(rp, headers, targetTilesetId)
         }
     }
+    var learnedImportProfile by remember { mutableStateOf<Pair<Int, TilesetProfile>?>(null) }
+    LaunchedEffect(romParser, editorState.currentTilesetId, roomLoaded) {
+        if (!roomLoaded || learnedImportProfile?.first == editorState.currentTilesetId) return@LaunchedEffect
+        learnedImportProfile = null
+        val rp = romParser ?: return@LaunchedEffect
+        val tilesetId = editorState.currentTilesetId
+        learnedImportProfile = withContext(Dispatchers.Default) {
+            val headers = rooms.mapNotNull { rp.readRoomHeader(it.getRoomIdAsInt()) }
+            tilesetId to TilesetProfileCache.getOrLearn(rp, headers, tilesetId)
+        }
+    }
 
     val baseRules = remember(style, displaySeed) { BiomeRules.roll(style, displaySeed) }
     var platforms by remember(baseRules) { mutableStateOf(baseRules.platformDensity.toFloat()) }
@@ -125,15 +135,18 @@ fun BiomeGeneratorPanel(
     var mazeHubEdited by remember(baseRules) { mutableStateOf(false) }
     var mazeEmptyCenter by remember(baseRules) { mutableStateOf(baseRules.mazeEmptyCenter) }
     var mazeEmptyCenterEdited by remember(baseRules) { mutableStateOf(false) }
-    var wfcDetail by remember { mutableStateOf(0.55f) }
-    var wfcTunnelWidth by remember { mutableStateOf(2f) }
-    var wfcBendiness by remember { mutableStateOf(0.35f) }
-    var wfcBombs by remember { mutableStateOf(false) }
-    var wfcMissiles by remember { mutableStateOf(false) }
-    var wfcCrumble by remember { mutableStateOf(false) }
-    var wfcSpikes by remember { mutableStateOf(false) }
     var keepLandingSiteShipClear by remember { mutableStateOf(true) }
-    val wfcTunnelTiles = (wfcTunnelWidth + 0.5f).toInt().coerceIn(1, 4)
+    var learnedCandidates by remember(
+        editorState.currentRoomId,
+        editorState.currentTilesetId,
+        editorState.workingBlocksWide,
+        editorState.workingBlocksTall,
+        keepLandingSiteShipClear,
+    ) {
+        mutableStateOf<List<PreparedLearnedRoomCandidate>>(emptyList())
+    }
+    var selectedLearnedCandidateIndex by remember(editorState.currentRoomId) { mutableStateOf(0) }
+    var learnedCandidateSource by remember(editorState.currentRoomId) { mutableStateOf<String?>(null) }
     val effectiveRules = remember(
         baseRules, platforms, hazards, destructibles, mazeBranches, mazeLoops, mazeHub, mazeEmptyCenter,
     ) {
@@ -148,15 +161,6 @@ fun BiomeGeneratorPanel(
             baseRules.withOverrides(platforms.toDouble(), hazards.toDouble(), destructibles.toDouble())
         }
     }
-    fun currentWfcOptions() = WfcOptions(
-        morphAmount = wfcDetail.toDouble(),
-        tunnelWidth = wfcTunnelTiles,
-        tunnelBendiness = wfcBendiness.toDouble(),
-        allowBombs = wfcBombs,
-        allowMissiles = wfcMissiles,
-        allowCrumble = wfcCrumble,
-        allowSpikes = wfcSpikes,
-    )
     fun nextRandomSeed(): Long {
         var next = Random.nextInt(0, 1_000_000_000).toLong()
         val previous = lastGeneratedSeed
@@ -212,7 +216,6 @@ fun BiomeGeneratorPanel(
                 request.theme,
                 request.seed,
                 rp,
-                wfcOptions = request.wfcOptions,
                 omitSpecialRooms = request.omitSpecialRooms,
             )
             status = buildString {
@@ -395,24 +398,6 @@ fun BiomeGeneratorPanel(
                     mazeHubEdited = true
                 }
             }
-        } else if (effectiveRules.algorithm == StructureAlgorithm.WFC) {
-            LabeledSlider("Sample detail", wfcDetail) { wfcDetail = it }
-            LabeledSlider(
-                "Tunnel width",
-                wfcTunnelWidth,
-                valueRange = 1f..4f,
-                steps = 2,
-                valueText = "${wfcTunnelTiles}t",
-            ) { wfcTunnelWidth = it }
-            LabeledSlider("Bendiness", wfcBendiness) { wfcBendiness = it }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CompactCheckbox("Bombs", wfcBombs) { wfcBombs = it }
-                CompactCheckbox("Missiles", wfcMissiles) { wfcMissiles = it }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CompactCheckbox("Crumble", wfcCrumble) { wfcCrumble = it }
-                CompactCheckbox("Spikes", wfcSpikes) { wfcSpikes = it }
-            }
         } else {
             LabeledSlider("Platforms", platforms) {
                 platforms = it
@@ -450,7 +435,6 @@ fun BiomeGeneratorPanel(
                     runSeed,
                     keepLandingSiteShipClear = keepLandingSiteShipClear,
                     romParser = romParser,
-                    wfcOptions = currentWfcOptions(),
                 )
                 rememberUsedSeed(runSeed)
                 status = buildString {
@@ -474,6 +458,108 @@ fun BiomeGeneratorPanel(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.fillMaxWidth(),
         )
+        Surface(
+            shape = RoundedCornerShape(4.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(8.dp),
+            ) {
+                Text("Learned room candidates", fontSize = 11.sp)
+                Text(
+                    "Import a proposal bundle from smedit-room-generate. Candidates are revalidated and repaired against this room before preview.",
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    enabled = roomLoaded &&
+                        romParser != null &&
+                        learnedImportProfile?.first == editorState.currentTilesetId &&
+                        !bulkActionRunning,
+                    onClick = {
+                        val file = chooseLearnedRoomProposalFile() ?: return@OutlinedButton
+                        runCatching {
+                            val proposals = loadLearnedRoomProposalFile(file)
+                            editorState.prepareLearnedRoomProposals(
+                                proposals = proposals,
+                                romParser = romParser,
+                                keepLandingSiteShipClear = keepLandingSiteShipClear,
+                                tilesetProfile = learnedImportProfile?.second,
+                            )
+                        }.onSuccess { prepared ->
+                            learnedCandidates = prepared
+                            selectedLearnedCandidateIndex = 0
+                            learnedCandidateSource = file.name
+                            status = "Loaded ${prepared.size} learned candidate(s), ranked after editor safety repair"
+                        }.onFailure { error ->
+                            learnedCandidates = emptyList()
+                            learnedCandidateSource = null
+                            status = "Could not import learned candidates: ${error.message ?: error::class.simpleName}"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Import candidate JSON…", fontSize = 10.sp)
+                }
+                if (roomLoaded && learnedImportProfile?.first != editorState.currentTilesetId) {
+                    Text(
+                        "Learning a safe tile grammar for the current tileset…",
+                        fontSize = 8.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (learnedCandidates.isNotEmpty()) {
+                    learnedCandidateSource?.let { source ->
+                        Text(
+                            source,
+                            fontSize = 8.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    LearnedRoomCandidateGallery(
+                        candidates = learnedCandidates,
+                        selectedIndex = selectedLearnedCandidateIndex,
+                        onSelect = { selectedLearnedCandidateIndex = it },
+                    )
+                    val selected = learnedCandidates.getOrNull(selectedLearnedCandidateIndex)
+                    if (selected != null) {
+                        for (warning in selected.warnings.drop(1)) {
+                            Text(
+                                warning,
+                                fontSize = 8.sp,
+                                lineHeight = 10.sp,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                    Button(
+                        enabled = selected != null && !bulkActionRunning,
+                        onClick = {
+                            val candidate = selected ?: return@Button
+                            runCatching {
+                                editorState.applyLearnedRoomProposal(candidate, learnedCandidates)
+                            }
+                                .onSuccess { applied ->
+                                    val modelRank = candidate.proposal.rank.takeIf { it > 0 }
+                                        ?.let { ", model rank #$it" }
+                                        .orEmpty()
+                                    status = "Applied editor pick #${selectedLearnedCandidateIndex + 1}$modelRank: " +
+                                        "$applied tile edits. Select another preview to compare; Ctrl+Z restores the previous layout."
+                                }
+                                .onFailure { error ->
+                                    status = "Could not apply learned candidate: ${error.message ?: error::class.simpleName}"
+                                }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Apply selected candidate", fontSize = 10.sp)
+                    }
+                }
+            }
+        }
         status?.let {
             Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
         }
@@ -543,7 +629,6 @@ fun BiomeGeneratorPanel(
 //                            rulesForSeed(runSeed),
 //                            theme.resolve(runSeed),
 //                            runSeed,
-//                            currentWfcOptions(),
 //                            omitSpecialRooms,
 //                        )
 //                        rememberUsedSeed(runSeed)
@@ -608,13 +693,5 @@ private fun LabeledSlider(
             modifier = Modifier.weight(1f).height(24.dp),
         )
         Text(valueText, fontSize = 9.sp, modifier = Modifier.width(38.dp))
-    }
-}
-
-@Composable
-private fun CompactCheckbox(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(118.dp)) {
-        Checkbox(checked = checked, onCheckedChange = onChange)
-        Text(label, fontSize = 10.sp)
     }
 }

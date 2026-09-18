@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatternLibrary
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.SmEditProjectFormat
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TileGraphics
 import kotlinx.serialization.json.Json
@@ -18,7 +19,7 @@ internal object ProjectFileService {
     }
 
     fun loadProject(file: File): SmEditProject =
-        json.decodeFromString(SmEditProject.serializer(), file.readText())
+        SmEditProjectFormat.decode(json, file.readText())
 
     fun saveProject(
         project: SmEditProject,
@@ -32,7 +33,20 @@ internal object ProjectFileService {
             val emptyKeys = project.rooms.entries.filter { !it.value.hasEdits }.map { it.key }
             for (key in emptyKeys) project.rooms.remove(key)
 
-            File(projectFilePath).writeText(json.encodeToString(SmEditProject.serializer(), project))
+            val projectFile = File(projectFilePath)
+            if (projectFile.isFile) {
+                val existingVersion = runCatching {
+                    SmEditProjectFormat.decode(json, projectFile.readText()).projectFormatVersion
+                }.getOrNull()
+                if (existingVersion != null && existingVersion < project.projectFormatVersion) {
+                    val backup = File(projectFile.parentFile, "${projectFile.name}.format$existingVersion.backup")
+                    if (!backup.exists()) {
+                        projectFile.copyTo(backup, overwrite = false)
+                        onLog("Backed up format $existingVersion project: ${backup.absolutePath}")
+                    }
+                }
+            }
+            projectFile.writeText(json.encodeToString(SmEditProject.serializer(), project))
             onLog("Project saved: $projectFilePath")
             romParser?.let { exportCustomGfxPngs(project, projectFilePath, it, onLog) }
             if (savePatternLibrary) PatternLibrary.saveAll(project.patterns)

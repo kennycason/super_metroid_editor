@@ -165,6 +165,8 @@ class BiomeGeneratorTest {
         val slopeHalo = 13 * w + 15
         val plmCenter = 18 * w + 20
         val plmEdge = 20 * w + 22
+        val enemyCenter = 23 * w + 30
+        val enemyEdge = 25 * w + 32
         val plainForceAir = 15 * w + 15
 
         words[metaAir] = 0x00FF
@@ -175,6 +177,8 @@ class BiomeGeneratorTest {
         bts[slope] = 0
         words[plmCenter] = solid
         words[plmEdge] = solid
+        words[enemyCenter] = solid
+        words[enemyEdge] = solid
         words[plainForceAir] = solid
 
         val options = BiomeGenerationOptions(
@@ -185,12 +189,13 @@ class BiomeGeneratorTest {
                 originalWords = words,
                 originalBts = bts,
                 plms = listOf(RomParser.PlmEntry(0xEF23, 20, 18, 0x51)),
+                enemies = listOf(RomParser.EnemyEntry(0xD67F, 30 * 16, 23 * 16, 0, 0)),
             ),
         )
         val gen = BiomeGenerator(rules(1111, BiomeStyle.PIPE_MAZE), profile, 1111, options)
             .generate(w, h, words, bts)
 
-        for (i in listOf(metaAir, metaSolid, slope, slopeHalo, plmCenter, plmEdge)) {
+        for (i in listOf(metaAir, metaSolid, slope, slopeHalo, plmCenter, plmEdge, enemyCenter, enemyEdge)) {
             assertEquals(words[i], gen.words[i], "protected word $i must remain unchanged")
             assertEquals(bts[i], gen.bts[i], "protected BTS $i must remain unchanged")
             assertTrue(gen.preserved[i], "protected cell $i must be flagged preserved")
@@ -271,80 +276,6 @@ class BiomeGeneratorTest {
                 )
             }
         }
-    }
-
-    @Test
-    fun `wave function uses learned sample tiles and keeps original doors connected`() {
-        val w = 48
-        val h = 32
-        val (words, bts) = syntheticRoom(w, h)
-        val sampleW = 24
-        val sampleH = 24
-        val sampleWords = IntArray(sampleW * sampleH)
-        val sampleBts = IntArray(sampleW * sampleH)
-        val learnedAir = 0x00F1
-        val learnedSolid = (0x8 shl 12) or 0x221
-        for (y in 0 until sampleH) for (x in 0 until sampleW) {
-            sampleWords[y * sampleW + x] = if (x % 5 == 0 || y % 7 == 0) learnedSolid else learnedAir
-        }
-        val options = BiomeGenerationOptions(
-            wfcSamples = listOf(WfcSample(sampleW, sampleH, sampleWords, sampleBts)),
-            wfcOptions = WfcOptions(morphAmount = 0.8, originalSpaceBias = 0.45),
-        )
-        val gen = BiomeGenerator(rules(8642, BiomeStyle.WAVE_FUNCTION), TilesetProfile.synthetic(), 8642, options)
-            .generate(w, h, words, bts)
-
-        assertDoorGroupsConnected(gen, words, w, h, "WFC synthetic")
-        assertTrue(
-            gen.words.indices.any { !gen.preserved[it] && gen.words[it] == learnedSolid },
-            "WFC should copy solid tile states from the supplied sample"
-        )
-        for (i in words.indices) {
-            if (((words[i] shr 12) and 0xF) == 0x9) {
-                assertEquals(words[i], gen.words[i], "WFC must preserve original door cell $i")
-                assertEquals(bts[i], gen.bts[i], "WFC must preserve original door BTS $i")
-            }
-            if (!gen.preserved[i]) {
-                val type = (gen.words[i] shr 12) and 0xF
-                assertTrue(type != 0x5 && type != 0x9 && type != 0xD, "WFC should not synthesize extend/door type $type")
-            }
-        }
-    }
-
-    @Test
-    fun `wave function keeps door approach corridors open under heavy morphing`() {
-        val w = 64
-        val h = 40
-        val (words, bts) = syntheticRoom(w, h)
-        val sampleW = 32
-        val sampleH = 32
-        val sampleWords = IntArray(sampleW * sampleH)
-        val sampleBts = IntArray(sampleW * sampleH)
-        val learnedAir = 0x00E1
-        val learnedSolid = (0x8 shl 12) or 0x242
-        for (y in 0 until sampleH) for (x in 0 until sampleW) {
-            sampleWords[y * sampleW + x] = if (x % 7 == 0 || y % 6 == 0) learnedAir else learnedSolid
-        }
-        val options = BiomeGenerationOptions(
-            wfcSamples = listOf(WfcSample(sampleW, sampleH, sampleWords, sampleBts)),
-            wfcOptions = WfcOptions(
-                morphAmount = 1.0,
-                originalSpaceBias = 1.0,
-                tunnelWidth = 3,
-                tunnelBendiness = 0.8,
-            ),
-        )
-        val gen = BiomeGenerator(rules(1212, BiomeStyle.WAVE_FUNCTION), TilesetProfile.synthetic(), 1212, options)
-            .generate(w, h, words, bts)
-        val doorTop = h / 2 - 2
-
-        for (x in 2..16) {
-            for (y in doorTop..doorTop + 3) {
-                val type = (gen.words[y * w + x] shr 12) and 0xF
-                assertTrue(isPassableType(type), "door approach cell ($x,$y) must remain passable")
-            }
-        }
-        assertDoorGroupsConnected(gen, words, w, h, "WFC heavy morph")
     }
 
     @Test
