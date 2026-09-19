@@ -58,19 +58,21 @@ entries are editable. Shared level, PLM, enemy, enemy-GFX, scroll, and FX resour
 so editing one state does not silently mutate a linked sibling.
 
 Existing-room selector graphs are now authorable. The UI can add/duplicate/delete/reorder conditional
-branches, edit every vanilla condition plus generated equipment/beam, capacity, exact item-pickup,
-and cross-area boss conditions, and keeps the one mandatory default branch fixed last. Generated
-conditions can be inverted for “not collected,” “below threshold,” and “boss not defeated” logic.
+branches, edit every vanilla condition plus generated equipment/beam, capacity, current health/ammo,
+exact item/door/Chozo-block, escape, and cross-area boss conditions, and keeps the one mandatory
+default branch fixed last. A visual builder creates nested `AND`, `OR`, and `NOT` expressions.
 Size-changing conditions and changed state counts rebuild the selector graph in bank `$8F`. The room
 header remains at its original address and contains a four-byte SMEDIT bridge to the relocated graph,
 so DoorDefs, AreaSave entries, load stations, and hardcoded engine comparisons continue to use the
 same room ID. Export round trips the relocated graph through the normal parser and remains inside the
 transactional ROM write plan.
 
-The remaining boundary is explicit resource link/unlink authoring, separate-background and opaque
-room-code authoring, the legacy behavioral materializer, a condition-selection simulator, and new
-room creation. A duplicated state copies the selected state's effective project deltas; unedited ROM
-resources stay linked and later state-local edits use copy-on-write.
+The room-state simulator now accepts only inputs used by the current graph and shows the first branch
+that would win plus later branches that also match. The remaining boundary is explicit resource
+link/unlink authoring, separate-background and opaque room-code authoring, the legacy behavioral
+materializer, state-triggered action authoring, and new room creation. A duplicated state copies the
+selected state's effective project deltas; unedited ROM resources stay linked and later state-local
+edits use copy-on-write.
 
 ## Proposed Project Model
 
@@ -156,7 +158,7 @@ The editable state UI includes:
 Still planned:
 
 - Explicit duplicate-as-linked/independent choices and per-resource link/unlink controls.
-- Simulate selection for a set of events, equipment, boss bits, and incoming door.
+- Visual authoring for actions that set events or otherwise mutate persistent state.
 
 The door/world graph is related but separate. Door edges connect rooms; a room's state list is an
 ordered decision tree that determines the content loaded at a node. The graph can eventually
@@ -233,14 +235,16 @@ reimplementing that behavior and risking a subtly different conversion.
 - All known typed condition changes are implemented, including encoded-size changes through graph relocation.
 - Explicit link/unlink controls and separate-background authoring remain.
 
-### 3. State authoring — allocator and editor complete; simulator remains
+### 3. State authoring — compound editor, allocator, and simulator complete
 
 - Add/delete/duplicate/reorder are implemented with stable state IDs and a fixed final default.
-- The condition builder supports every verified vanilla selector; duplicate predicates are blocked in
-  the UI and diagnosed during validation.
+- The condition builder supports every verified vanilla selector, SMEDIT's typed runtime predicates,
+  and nested `AND`/`OR`/`NOT`; duplicate predicates are blocked in the UI and diagnosed during validation.
 - The selector-list/state-record allocator preserves the physical room-header address and round trips
   its tagged redirect format through `RomParser`.
-- The condition-selection simulator and emulator-backed selector matrix remain.
+- The condition-selection simulator proves first-match behavior from editable load-time inputs.
+- Canonical expression decoding, semantic evaluation, real-ROM graph round trips, and an
+  instruction-level 65816 interpreter matrix are unit tested.
 
 ### 4. New rooms
 

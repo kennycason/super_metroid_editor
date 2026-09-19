@@ -33,11 +33,14 @@ fun RoomEdits.ensureStateManifest(parser: RomParser): List<RoomStateEdits> {
         }
         val data = parser.readStateData(stateOffset)
         val condition = inspected.condition
-        val projectCondition = projectRoomStateCondition(
-            kind = ProjectRoomStateConditionKind.valueOf(condition.kind.name),
-            argument = condition.argument,
-            negated = condition.negated,
-        )
+        fun projectCondition(runtime: RoomStateCondition): ProjectRoomStateCondition =
+            projectRoomStateCondition(
+                kind = ProjectRoomStateConditionKind.valueOf(runtime.kind.name),
+                argument = runtime.argument,
+                negated = runtime.negated,
+                children = runtime.children.map(::projectCondition),
+            )
+        val projectCondition = projectCondition(condition)
         states += RoomStateEdits(
             id = "state-${sourceIndex + 1}",
             sourceStateIndex = sourceIndex,
@@ -67,6 +70,18 @@ fun RoomEdits.stateEditsForId(stateId: String?): RoomStateEdits? =
 fun RoomStateEdits.baseSourceStateIndex(): Int? = sourceStateIndex ?: templateSourceStateIndex
 
 fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
+    ProjectRoomStateConditionKind.ALL_OF,
+    ProjectRoomStateConditionKind.ANY_OF,
+    ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
+    ProjectRoomStateConditionKind.BEAM_EQUIPPED,
+    ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
+    ProjectRoomStateConditionKind.DOOR_BIT_SET,
+    ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
+    ProjectRoomStateConditionKind.ESCAPE_ACTIVE -> SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES
     ProjectRoomStateConditionKind.DEFAULT -> 2
     ProjectRoomStateConditionKind.INCOMING_DOOR -> 6
     ProjectRoomStateConditionKind.EVENT_SET,
@@ -80,7 +95,7 @@ fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
     ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
     ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
     ProjectRoomStateConditionKind.BOSS_DEFEATED -> SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES
-    else -> 4
+    else -> if (requiresCompiledExpression()) SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES else 4
 }
 
 fun ProjectRoomStateConditionKind.isSmEditGeneratedPredicate(): Boolean = when (this) {
@@ -96,6 +111,26 @@ fun ProjectRoomStateConditionKind.isSmEditGeneratedPredicate(): Boolean = when (
     else -> false
 }
 
+/** True when this condition uses the postfix expression interpreter rather than a vanilla/V1 selector. */
+fun ProjectRoomStateCondition.requiresCompiledExpression(): Boolean =
+    kind in setOf(
+        ProjectRoomStateConditionKind.ALL_OF,
+        ProjectRoomStateConditionKind.ANY_OF,
+        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
+        ProjectRoomStateConditionKind.BEAM_EQUIPPED,
+        ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
+        ProjectRoomStateConditionKind.DOOR_BIT_SET,
+        ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
+        ProjectRoomStateConditionKind.ESCAPE_ACTIVE,
+    ) || (negated && !kind.isSmEditGeneratedPredicate()) || children.isNotEmpty()
+
+fun ProjectRoomStateCondition.usesSmEditRuntime(): Boolean =
+    kind.isSmEditGeneratedPredicate() || requiresCompiledExpression()
+
 fun packedBossConditionArgument(area: Int, mask: Int): Int =
     ((area and 0xFF) shl 8) or (mask and 0xFF)
 
@@ -103,7 +138,9 @@ fun projectRoomStateCondition(
     kind: ProjectRoomStateConditionKind,
     argument: Int? = null,
     negated: Boolean = false,
-): ProjectRoomStateCondition = when (kind) {
+    children: List<ProjectRoomStateCondition> = emptyList(),
+): ProjectRoomStateCondition {
+    val base = when (kind) {
     ProjectRoomStateConditionKind.DEFAULT -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE5E6,
     )
@@ -135,27 +172,77 @@ fun projectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE678,
     )
     ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK, argument ?: 0x0004, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK, argument ?: 0x0004, 0,
     )
     ProjectRoomStateConditionKind.BEAM_COLLECTED -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.BEAM_MASK, argument ?: 0x1000, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.BEAM_MASK, argument ?: 0x1000, 0,
     )
     ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
     ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
     ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 5, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 5, 0,
     )
     ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 199, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 199, 0,
     )
     ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 100, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 100, 0,
     )
     ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX, argument ?: 0, 0, negated,
+        kind, ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX, argument ?: 0, 0,
     )
     ProjectRoomStateConditionKind.BOSS_DEFEATED -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK,
-        argument ?: packedBossConditionArgument(0, 0x04), 0, negated,
+        argument ?: packedBossConditionArgument(0, 0x04), 0,
+    )
+    ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.EQUIPMENT_MASK, argument ?: 0x0001, 0,
+    )
+    ProjectRoomStateConditionKind.BEAM_EQUIPPED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.BEAM_MASK, argument ?: 0x1000, 0,
+    )
+    ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 99, 0,
+    )
+    ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+    ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 1, 0,
+    )
+    ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CAPACITY, argument ?: 1, 0,
+    )
+    ProjectRoomStateConditionKind.DOOR_BIT_SET -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX, argument ?: 0, 0,
+    )
+    ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX, argument ?: 0, 0,
+    )
+    ProjectRoomStateConditionKind.ESCAPE_ACTIVE -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0,
+    )
+    ProjectRoomStateConditionKind.ALL_OF,
+    ProjectRoomStateConditionKind.ANY_OF -> ProjectRoomStateCondition(
+        kind, ProjectRoomStateConditionArgumentKind.CHILDREN, null, 0,
+    )
+    }
+    val compiled = kind in setOf(
+        ProjectRoomStateConditionKind.ALL_OF,
+        ProjectRoomStateConditionKind.ANY_OF,
+        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
+        ProjectRoomStateConditionKind.BEAM_EQUIPPED,
+        ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
+        ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
+        ProjectRoomStateConditionKind.DOOR_BIT_SET,
+        ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
+        ProjectRoomStateConditionKind.ESCAPE_ACTIVE,
+    ) || children.isNotEmpty() || (negated && !kind.isSmEditGeneratedPredicate())
+    return base.copy(
+        routineCode = if (compiled) 0 else base.routineCode,
+        negated = negated,
+        children = children,
     )
 }

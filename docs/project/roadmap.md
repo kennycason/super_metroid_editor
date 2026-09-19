@@ -54,7 +54,7 @@
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 1 | **Stateful Room Editing** | Large | Finish link controls, selector-graph relocation, state add/delete/reorder, and legacy-project materialization in the existing `.smedit` format. |
+| 1 | **Stateful Room Editing** | Large | Selector relocation, state add/delete/reorder, compound predicates, and simulation are implemented; finish link controls, actions, and legacy-project materialization. |
 | 2 | **New Room Creation** | Medium | Build on the same room model so new headers, selectors, states, doors, and resources are allocated as one validated graph. |
 | 3 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
 | 4 | **Room JSON Import** | Small | Export done; import should create semantic rooms rather than address-keyed legacy deltas. |

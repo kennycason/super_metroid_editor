@@ -128,7 +128,7 @@ class SmEditRoomStatePredicateFormatTest {
                     setA(memory.readWord(address + x))
                 }
                 0x2D -> setA(a and memory.readWord(codeWord())) // AND absolute
-                0xFA -> x = stack.removeLast() // PLX
+                0xFA -> { x = stack.removeLast(); zero = x == 0 } // PLX
                 0xEB -> setA(((a and 0xFF) shl 8) or ((a ushr 8) and 0xFF)) // XBA
                 0xAA -> x = a // TAX
                 0x4C -> {

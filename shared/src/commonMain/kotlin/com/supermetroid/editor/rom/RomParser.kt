@@ -625,7 +625,42 @@ class RomParser(internal val romData: ByteArray) {
             } else {
                 -1
             }
-            if (SmEditRoomStatePredicateFormat.matchesAt(romData, generatedRoutinePc)) {
+            if (SmEditCompiledRoomStateConditionFormat.interpreterMatchesAt(romData, generatedRoutinePc)) {
+                if (pos + SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES > bankEndExclusive) {
+                    issues.add(RoomStateParseIssue(pos, "SMEDIT compound state predicate is truncated"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                val expressionPtr = readUInt16At(pos + 2)
+                val expressionPc = if (expressionPtr in 0x8000..0xFFFF) {
+                    snesToPc(BANK_ROOM_DATA or expressionPtr)
+                } else {
+                    -1
+                }
+                val decoded = SmEditCompiledRoomStateConditionFormat.decodeExpression(romData, expressionPc, area)
+                if (decoded == null) {
+                    issues.add(RoomStateParseIssue(pos + 2, "SMEDIT compound state expression is invalid"))
+                    return RoomStateInspection(roomId, area, states, issues, hasDefault = false)
+                }
+                fun runtimeCondition(
+                    project: com.supermetroid.editor.data.ProjectRoomStateCondition,
+                    runtimeCode: Int = 0,
+                    runtimeSize: Int = 0,
+                ): RoomStateCondition = RoomStateCondition(
+                    code = runtimeCode,
+                    kind = RoomStateConditionKind.valueOf(project.kind.name),
+                    argumentKind = RoomStateConditionArgumentKind.valueOf(project.argumentKind.name),
+                    argument = project.argument,
+                    entrySizeBytes = runtimeSize,
+                    negated = project.negated,
+                    children = project.children.map { runtimeCondition(it) },
+                )
+                condition = runtimeCondition(
+                    decoded.condition,
+                    runtimeCode = code,
+                    runtimeSize = SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES,
+                )
+                statePtrOffset = pos + 4
+            } else if (SmEditRoomStatePredicateFormat.matchesAt(romData, generatedRoutinePc)) {
                 if (pos + SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES > bankEndExclusive) {
                     issues.add(RoomStateParseIssue(pos, "SMEDIT typed state predicate is truncated"))
                     return RoomStateInspection(roomId, area, states, issues, hasDefault = false)

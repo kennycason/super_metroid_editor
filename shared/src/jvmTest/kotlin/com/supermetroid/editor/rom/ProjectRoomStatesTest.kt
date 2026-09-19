@@ -53,7 +53,17 @@ class ProjectRoomStatesTest {
             sourceStateIndex = null,
             templateSourceStateIndex = state.sourceStateIndex,
             sourceCondition = null,
-            condition = projectRoomStateCondition(ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED),
+            condition = projectRoomStateCondition(
+                ProjectRoomStateConditionKind.ALL_OF,
+                children = listOf(
+                    projectRoomStateCondition(ProjectRoomStateConditionKind.ESCAPE_ACTIVE),
+                    projectRoomStateCondition(
+                        ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+                        30,
+                        negated = true,
+                    ),
+                ),
+            ),
             conditionChanged = true,
         )
         roomEdits.states.add(1, added)
@@ -74,6 +84,7 @@ class ProjectRoomStatesTest {
         assertEquals(3, actual.doorFxChanges["A18C"]?.paletteBlend)
         assertTrue(decoded.rooms.getValue("CD13").stateGraphChanged)
         assertEquals(state.sourceStateIndex, decoded.rooms.getValue("CD13").states[1].templateSourceStateIndex)
+        assertEquals(added.condition, decoded.rooms.getValue("CD13").states[1].condition)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, decoded.projectFormatVersion)
     }
 
@@ -252,6 +263,65 @@ class ProjectRoomStatesTest {
         val exportedErrors = RomValidator.validate(afterUpdate, allRoomIds)
             .filter { it.severity == RomValidator.Severity.ERROR }
         assertEquals(baselineErrors, exportedErrors)
+    }
+
+    @Test
+    fun `compound condition graph exports executes as typed data and reopens losslessly`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x91F8
+        val condition = projectRoomStateCondition(
+            ProjectRoomStateConditionKind.ALL_OF,
+            children = listOf(
+                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x0E),
+                projectRoomStateCondition(
+                    ProjectRoomStateConditionKind.ANY_OF,
+                    children = listOf(
+                        projectRoomStateCondition(ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED, 0x0001),
+                        projectRoomStateCondition(ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST, 10),
+                    ),
+                ),
+                projectRoomStateCondition(
+                    ProjectRoomStateConditionKind.BOSS_DEFEATED,
+                    packedBossConditionArgument(4, 0x02),
+                    negated = true,
+                ),
+            ),
+        )
+        val project = SmEditProject("base.smc")
+        val edits = project.getOrCreateRoom(roomId)
+        edits.ensureStateManifest(parser)
+        val template = edits.states.last()
+        edits.states.add(
+            edits.states.lastIndex,
+            RoomStateEdits(
+                id = "state-compound",
+                templateSourceStateIndex = template.sourceStateIndex,
+                condition = condition,
+                resources = template.resources.copy(),
+                conditionChanged = true,
+            ),
+        )
+        edits.stateGraphChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val inspected = exported.inspectRoomStates(roomId)
+        assertTrue(inspected.isComplete)
+        val compound = inspected.states.first { it.condition.kind == RoomStateConditionKind.ALL_OF }
+        assertEquals(SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES, compound.condition.entrySizeBytes)
+        val interpreterPc = exported.snesToPc(RomConstants.BANK_ROOM_DATA or compound.condition.code)
+        assertContentEquals(
+            SmEditCompiledRoomStateConditionFormat.interpreterBytes,
+            rom.copyOfRange(
+                interpreterPc,
+                interpreterPc + SmEditCompiledRoomStateConditionFormat.interpreterBytes.size,
+            ),
+        )
+
+        val reopened = SmEditProject("exported.smc").getOrCreateRoom(roomId).ensureStateManifest(exported)
+        assertEquals(condition, reopened.first { it.id == "state-${compound.index + 1}" }.condition)
     }
 
     @Test

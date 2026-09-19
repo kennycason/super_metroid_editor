@@ -42,6 +42,8 @@ class ProjectRoomExporter(
     private val allocations = mutableListOf<RomAllocation>()
     private var stateGraphRedirectRoutinePtr: Int? = null
     private var statePredicateRoutinePtr: Int? = null
+    private var stateExpressionInterpreterPtr: Int? = null
+    private val stateExpressionPointers = mutableMapOf<Pair<Int, com.supermetroid.editor.data.ProjectRoomStateCondition>, Int>()
 
     private val allocationSession = (
         freeSpaceAllocator ?: RomFreeSpaceAllocator(
@@ -1410,11 +1412,18 @@ class ProjectRoomExporter(
         for (state in roomEdits.states) {
             validateStateSelector(state.condition, roomKey, state.id)
         }
+        val roomArea = sourceInspection.area
+            ?: failExport("Room 0x$roomKey has no readable area for state-condition export")
         val generatedPredicatePtr = if (roomEdits.states.any { it.condition.kind.isSmEditGeneratedPredicate() }) {
             ensureStatePredicateRoutine(roomKey)
         } else {
             null
         }
+        val compiledPointers = roomEdits.states.mapNotNull { state ->
+            state.condition.takeIf { it.requiresCompiledExpression() }?.let { condition ->
+                state.id to ensureCompiledStateExpression(condition, roomArea, roomKey)
+            }
+        }.toMap()
 
         val recordBytesById = linkedMapOf<String, ByteArray>()
         for (state in roomEdits.states) {
@@ -1464,7 +1473,7 @@ class ProjectRoomExporter(
             if (state.condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
                 encodeStateSelector(
                     graph, selectorCursor, state.condition, statePointer = null,
-                    roomKey, state.id, generatedPredicatePtr,
+                    roomKey, state.id, generatedPredicatePtr, compiledPointers[state.id], roomArea,
                 )
                 selectorCursor += state.condition.encodedSizeBytes()
                 record.copyInto(graph, selectorCursor)
@@ -1474,7 +1483,7 @@ class ProjectRoomExporter(
                 val statePointer = (allocation.snesAddress + conditionalRecordCursor) and 0xFFFF
                 encodeStateSelector(
                     graph, selectorCursor, state.condition, statePointer,
-                    roomKey, state.id, generatedPredicatePtr,
+                    roomKey, state.id, generatedPredicatePtr, compiledPointers[state.id], roomArea,
                 )
                 selectorCursor += state.condition.encodedSizeBytes()
                 record.copyInto(graph, conditionalRecordCursor)
@@ -1539,15 +1548,68 @@ class ProjectRoomExporter(
         return (allocation.snesAddress and 0xFFFF).also { statePredicateRoutinePtr = it }
     }
 
+    private fun ensureStateExpressionInterpreter(roomKey: String): Int {
+        stateExpressionInterpreterPtr?.let { return it }
+        val bytes = SmEditCompiledRoomStateConditionFormat.interpreterBytes
+        val bankStart = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x8000)
+        val bankEndExclusive = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0xFFFF) + 1
+        for (pc in bankStart..(bankEndExclusive - bytes.size)) {
+            if (bytes.indices.all { index -> romData[pc + index] == bytes[index] }) {
+                return (romParser.pcToSnes(pc) and 0xFFFF).also { stateExpressionInterpreterPtr = it }
+            }
+        }
+        val allocation = roomDataAllocator.allocate(
+            bytes = bytes,
+            banks = listOf(0x8F),
+            label = "SMEDIT compound room-state interpreter",
+        ) ?: failExport(
+            "Room 0x$roomKey needs the ${bytes.size}-byte compound state interpreter, but bank \$8F has no space"
+        )
+        return (allocation.snesAddress and 0xFFFF).also { stateExpressionInterpreterPtr = it }
+    }
+
+    private fun ensureCompiledStateExpression(
+        condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        area: Int,
+        roomKey: String,
+    ): Pair<Int, Int> {
+        val interpreter = ensureStateExpressionInterpreter(roomKey)
+        val key = area to condition
+        stateExpressionPointers[key]?.let { return interpreter to it }
+        val bytes = runCatching {
+            SmEditCompiledRoomStateConditionFormat.expressionBytes(condition, area)
+        }.getOrElse { failExport("Room 0x$roomKey has an invalid compound condition: ${it.message}") }
+        val bankStart = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0x8000)
+        val bankEndExclusive = romParser.snesToPc(RomConstants.BANK_ROOM_DATA or 0xFFFF) + 1
+        for (pc in bankStart..(bankEndExclusive - bytes.size)) {
+            if (bytes.indices.all { index -> romData[pc + index] == bytes[index] }) {
+                val pointer = romParser.pcToSnes(pc) and 0xFFFF
+                stateExpressionPointers[key] = pointer
+                return interpreter to pointer
+            }
+        }
+        val allocation = roomDataAllocator.allocate(
+            bytes = bytes,
+            banks = listOf(0x8F),
+            label = "room 0x$roomKey compound state expression",
+        ) ?: failExport(
+            "Room 0x$roomKey needs ${bytes.size} bytes for a compound state expression, but bank \$8F has no space"
+        )
+        val pointer = allocation.snesAddress and 0xFFFF
+        stateExpressionPointers[key] = pointer
+        return interpreter to pointer
+    }
+
     private fun validateStateSelector(
         condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
         roomKey: String,
         stateId: String,
     ) {
-        val expected = projectRoomStateCondition(condition.kind, condition.argument)
+        val expected = projectRoomStateCondition(
+            condition.kind, condition.argument, condition.negated, condition.children,
+        )
         if (condition.routineCode != expected.routineCode ||
-            condition.argumentKind != expected.argumentKind ||
-            (!condition.kind.isSmEditGeneratedPredicate() && condition.negated)
+            condition.argumentKind != expected.argumentKind
         ) {
             failExport("Room 0x$roomKey state '$stateId' has an inconsistent typed selector")
         }
@@ -1591,7 +1653,19 @@ class ProjectRoomExporter(
                     failExport("Room 0x$roomKey state '$stateId' boss selector is invalid")
                 }
             }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX -> {
+                if (condition.argument == null || condition.argument !in 0..0x1FF) {
+                    failExport("Room 0x$roomKey state '$stateId' persistent bit index must be 0-511")
+                }
+            }
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHILDREN -> {
+                if (!SmEditCompiledRoomStateConditionFormat.conditionTreeIsValid(condition)) {
+                    failExport("Room 0x$roomKey state '$stateId' has an invalid compound condition tree")
+                }
+            }
         }
+        condition.children.forEach { child -> validateStateSelector(child, roomKey, "$stateId child") }
     }
 
     private fun encodeStateSelector(
@@ -1602,16 +1676,28 @@ class ProjectRoomExporter(
         roomKey: String,
         stateId: String,
         generatedPredicatePtr: Int? = null,
+        compiledPointers: Pair<Int, Int>? = null,
+        area: Int = 0,
     ) {
         validateStateSelector(condition, roomKey, stateId)
+        val compiled = condition.requiresCompiledExpression()
         val generated = condition.kind.isSmEditGeneratedPredicate()
-        val routineCode = if (generated) {
+        val effectiveCompiledPointers = if (compiled) {
+            compiledPointers ?: ensureCompiledStateExpression(condition, area, roomKey)
+        } else {
+            null
+        }
+        val routineCode = if (compiled) {
+            checkNotNull(effectiveCompiledPointers).first
+        } else if (generated) {
             generatedPredicatePtr ?: ensureStatePredicateRoutine(roomKey)
         } else {
             condition.routineCode
         }
         writeU16(destination, offset, routineCode)
-        if (generated) {
+        if (compiled) {
+            writeU16(destination, offset + 2, checkNotNull(effectiveCompiledPointers).second)
+        } else if (generated) {
             destination[offset + 2] = generatedPredicateType(condition.kind).toByte()
             destination[offset + 3] = if (condition.negated) {
                 SmEditRoomStatePredicateFormat.FLAG_INVERTED.toByte()
@@ -1642,6 +1728,9 @@ class ProjectRoomExporter(
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY,
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX,
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> Unit
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHILDREN -> Unit
         }
         if (condition.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
             if (statePointer != null) failExport("Room 0x$roomKey default state '$stateId' cannot use a pointer")
@@ -1680,9 +1769,17 @@ class ProjectRoomExporter(
         inspected: RoomStateCondition,
         expected: com.supermetroid.editor.data.ProjectRoomStateCondition,
     ): Boolean {
-        if (expected.kind.isSmEditGeneratedPredicate()) {
-            return inspected.kind.name == expected.kind.name &&
-                inspected.argument == expected.argument && inspected.negated == expected.negated
+        fun semanticMatch(
+            runtime: RoomStateCondition,
+            project: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        ): Boolean = runtime.kind.name == project.kind.name &&
+            runtime.argument == project.argument && runtime.negated == project.negated &&
+            runtime.children.size == project.children.size &&
+            runtime.children.zip(project.children).all { (runtimeChild, projectChild) ->
+                semanticMatch(runtimeChild, projectChild)
+            }
+        if (expected.usesSmEditRuntime()) {
+            return semanticMatch(inspected, expected)
         }
         return inspected.code == expected.routineCode && inspected.argument == expected.argument
     }
@@ -1886,6 +1983,25 @@ class ProjectRoomExporter(
                     "$oldSize bytes; use state-graph relocation"
             )
         }
+        if (condition.requiresCompiledExpression()) {
+            val statePointer = inspected.stateDataPointer ?: failExport(
+                "Room 0x$roomKey state '$stateId' compound selector has no bank \$8F state pointer"
+            )
+            val area = romParser.readRoomHeader(roomKey.toInt(16))?.area
+                ?: failExport("Room 0x$roomKey has no readable header for compound selector export")
+            encodeStateSelector(
+                destination = romData,
+                offset = inspected.selectorPcOffset,
+                condition = condition,
+                statePointer = statePointer,
+                roomKey = roomKey,
+                stateId = stateId,
+                compiledPointers = ensureCompiledStateExpression(condition, area, roomKey),
+                area = area,
+            )
+            onLog("Room 0x$roomKey: changed compound selector for state '$stateId'")
+            return
+        }
         if (condition.kind.isSmEditGeneratedPredicate()) {
             val statePointer = inspected.stateDataPointer ?: failExport(
                 "Room 0x$roomKey state '$stateId' generated selector has no bank \$8F state pointer"
@@ -1946,6 +2062,10 @@ class ProjectRoomExporter(
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.ITEM_BIT_INDEX,
             com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK ->
                 failExport("Room 0x$roomKey state '$stateId' generated selector was not encoded through its typed ABI")
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX,
+            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHILDREN ->
+                failExport("Room 0x$roomKey state '$stateId' compiled selector was not encoded through its expression ABI")
         }
         onLog("Room 0x$roomKey: changed selector for state '$stateId'")
     }

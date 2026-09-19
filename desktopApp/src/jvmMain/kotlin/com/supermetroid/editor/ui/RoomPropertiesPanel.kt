@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.ProjectRoomStateCondition
+import com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.Room
@@ -57,12 +58,15 @@ import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomStateCondition
+import com.supermetroid.editor.rom.RoomStateSimulationContext
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpritePalettes
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.rom.isSmEditGeneratedPredicate
 import com.supermetroid.editor.rom.packedBossConditionArgument
+import com.supermetroid.editor.rom.flattened
+import com.supermetroid.editor.rom.matches
 
 private val AREA_NAMES = arrayOf("Crateria", "Brinstar", "Norfair", "Wrecked Ship", "Maridia", "Tourian", "Ceres")
 
@@ -215,6 +219,8 @@ fun RoomPropertiesPanel(
     var showAddStateDialog by remember(room.roomId) { mutableStateOf(false) }
     var duplicateSelectedCondition by remember(room.roomId) { mutableStateOf(false) }
     var showDeleteStateDialog by remember(room.roomId) { mutableStateOf(false) }
+    var showConditionBuilder by remember(room.roomId) { mutableStateOf(false) }
+    var showStateSimulator by remember(room.roomId) { mutableStateOf(false) }
     val selectedSourceStateIndex = selectedStateItem?.baseSourceStateIndex ?: -1
     val currentState = stateInspection.states.getOrNull(selectedSourceStateIndex)
     val allStateData = states.map { state ->
@@ -530,7 +536,21 @@ fun RoomPropertiesPanel(
                     contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
                     modifier = Modifier.height(26.dp),
                 ) { Text("Delete", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                TextButton(
+                    onClick = { showStateSimulator = true },
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                    modifier = Modifier.height(26.dp),
+                ) { Text("Simulate", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
             }
+        }
+
+        if (showStateSimulator) {
+            RoomStateSimulatorDialog(
+                states = states.map { it.id to it.condition },
+                area = room.area,
+                itemPickupOptions = itemPickupOptions,
+                onDismiss = { showStateSimulator = false },
+            )
         }
 
         if (showAddStateDialog && selectedStateItem != null) {
@@ -632,6 +652,22 @@ fun RoomPropertiesPanel(
                 itemPickupOptions = itemPickupOptions,
                 onChange = { updated ->
                     editorState.setRoomStateCondition(selectedStateItem.id, updated, romParser)
+                },
+                onOpenBuilder = { showConditionBuilder = true },
+            )
+        }
+        if (showConditionBuilder && editableCondition != null) {
+            ConditionBuilderDialog(
+                initialCondition = editableCondition,
+                area = room.area,
+                incomingDoorPointers = remember(room.roomId, romParser) {
+                    romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
+                },
+                itemPickupOptions = itemPickupOptions,
+                onDismiss = { showConditionBuilder = false },
+                onApply = { updated ->
+                    editorState.setRoomStateCondition(selectedStateItem.id, updated, romParser)
+                    showConditionBuilder = false
                 },
             )
         }
@@ -956,23 +992,341 @@ fun RoomPropertiesPanel(
 
 // ── State Condition Editor ─────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoomStateSimulatorDialog(
+    states: List<Pair<String, ProjectRoomStateCondition>>,
+    area: Int,
+    itemPickupOptions: List<ItemPickupConditionOption>,
+    onDismiss: () -> Unit,
+) {
+    var context by remember(states, area) {
+        mutableStateOf(RoomStateSimulationContext(area = area, maxEnergy = 99, currentEnergy = 99))
+    }
+    val leaves = states.flatMap { it.second.flattened() }
+        .filter { it.kind != ProjectRoomStateConditionKind.ALL_OF && it.kind != ProjectRoomStateConditionKind.ANY_OF }
+    val matches = states.map { it.second.matches(context) }
+    val winner = matches.indexOfFirst { it }
+
+    fun toggleSet(source: Set<Int>, value: Int, checked: Boolean): Set<Int> =
+        if (checked) source + value else source - value
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Simulate room load") },
+        text = {
+            Column(
+                modifier = Modifier.requiredSizeIn(maxHeight = 680.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text(
+                    "Set the load-time values below. The first matching branch wins; later matching " +
+                        "branches are intentionally skipped.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                states.forEachIndexed { index, (_, condition) ->
+                    val status = when {
+                        index == winner -> "SELECTED"
+                        matches[index] -> "matches later"
+                        else -> "does not match"
+                    }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (index == winner) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        },
+                        shape = MaterialTheme.shapes.extraSmall,
+                    ) {
+                        Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+                            Text(
+                                projectConditionLabel(condition, area),
+                                fontSize = ROOM_INFO_BODY_FONT_SIZE,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                status,
+                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                                fontWeight = if (index == winner) FontWeight.Bold else FontWeight.Normal,
+                                color = if (index == winner) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+
+                Divider()
+                Text("Inputs", fontWeight = FontWeight.SemiBold)
+
+                val incomingDoors = leaves.filter { it.kind == ProjectRoomStateConditionKind.INCOMING_DOOR }
+                    .mapNotNull { it.argument }.distinct()
+                if (incomingDoors.isNotEmpty()) {
+                    var expanded by remember { mutableStateOf(false) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Incoming door", modifier = Modifier.width(130.dp), fontSize = ROOM_INFO_BODY_FONT_SIZE)
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = it },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().menuAnchor().clickable { expanded = true },
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = MaterialTheme.shapes.extraSmall,
+                            ) {
+                                Text(
+                                    context.incomingDoorPointer?.let {
+                                        "Door \$${it.toString(16).uppercase().padStart(4, '0')}"
+                                    } ?: "None / another door",
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                    fontSize = ROOM_INFO_BODY_FONT_SIZE,
+                                )
+                            }
+                            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("None / another door") },
+                                    onClick = { context = context.copy(incomingDoorPointer = null); expanded = false },
+                                )
+                                incomingDoors.forEach { door ->
+                                    DropdownMenuItem(
+                                        text = { Text("Door \$${door.toString(16).uppercase().padStart(4, '0')}") },
+                                        onClick = {
+                                            context = context.copy(incomingDoorPointer = door)
+                                            expanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val eventIds = buildSet {
+                    leaves.filter { it.kind == ProjectRoomStateConditionKind.EVENT_SET }
+                        .mapNotNullTo(this) { it.argument }
+                    if (leaves.any { it.kind == ProjectRoomStateConditionKind.ESCAPE_ACTIVE }) add(0x0E)
+                }
+                eventIds.sorted().forEach { event ->
+                    SimulatorCheckboxRow(
+                        label = RoomStateCondition.EVENT_NAMES[event] ?: "Event \$${event.toString(16)}",
+                        checked = event in context.events,
+                        onCheckedChange = { context = context.copy(events = toggleSet(context.events, event, it)) },
+                    )
+                }
+
+                val collectedEquipmentMasks = buildSet {
+                    leaves.filter { it.kind == ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED }
+                        .mapNotNullTo(this) { it.argument }
+                    if (leaves.any { it.kind == ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED ||
+                            it.kind == ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES }) add(0x0004)
+                    if (leaves.any { it.kind == ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED }) add(0x2000)
+                }
+                collectedEquipmentMasks.forEach { mask ->
+                    SimulatorMaskRow(
+                        label = "${RoomStateCondition.EQUIPMENT_NAMES[mask] ?: "Equipment"} collected",
+                        mask = mask,
+                        value = context.collectedEquipment,
+                        onValueChange = { context = context.copy(collectedEquipment = it) },
+                    )
+                }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED }
+                    .mapNotNull { it.argument }.distinct().forEach { mask ->
+                        SimulatorMaskRow(
+                            label = "${RoomStateCondition.EQUIPMENT_NAMES[mask] ?: "Equipment"} equipped",
+                            mask = mask,
+                            value = context.equippedEquipment,
+                            onValueChange = { context = context.copy(equippedEquipment = it) },
+                        )
+                    }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.BEAM_COLLECTED }
+                    .mapNotNull { it.argument }.distinct().forEach { mask ->
+                        SimulatorMaskRow(
+                            label = "${RoomStateCondition.BEAM_NAMES[mask] ?: "Beam"} collected",
+                            mask = mask,
+                            value = context.collectedBeams,
+                            onValueChange = { context = context.copy(collectedBeams = it) },
+                        )
+                    }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.BEAM_EQUIPPED }
+                    .mapNotNull { it.argument }.distinct().forEach { mask ->
+                        SimulatorMaskRow(
+                            label = "${RoomStateCondition.BEAM_NAMES[mask] ?: "Beam"} equipped",
+                            mask = mask,
+                            value = context.equippedBeams,
+                            onValueChange = { context = context.copy(equippedBeams = it) },
+                        )
+                    }
+
+                fun needs(kind: ProjectRoomStateConditionKind): Boolean = leaves.any { it.kind == kind }
+                if (needs(ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES) ||
+                    needs(ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST)
+                ) SimulatorValueRow("Maximum missiles", context.maxMissiles) {
+                    context = context.copy(maxMissiles = it)
+                }
+                if (needs(ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST)) {
+                    SimulatorValueRow("Current missiles", context.currentMissiles) {
+                        context = context.copy(currentMissiles = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST)) {
+                    SimulatorValueRow("Maximum Supers", context.maxSuperMissiles) {
+                        context = context.copy(maxSuperMissiles = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST)) {
+                    SimulatorValueRow("Current Supers", context.currentSuperMissiles) {
+                        context = context.copy(currentSuperMissiles = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED) ||
+                    needs(ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST)
+                ) SimulatorValueRow("Maximum Power Bombs", context.maxPowerBombs) {
+                    context = context.copy(maxPowerBombs = it)
+                }
+                if (needs(ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST)) {
+                    SimulatorValueRow("Current Power Bombs", context.currentPowerBombs) {
+                        context = context.copy(currentPowerBombs = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST)) {
+                    SimulatorValueRow("Maximum energy", context.maxEnergy) { context = context.copy(maxEnergy = it) }
+                }
+                if (needs(ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST)) {
+                    SimulatorValueRow("Current energy", context.currentEnergy) {
+                        context = context.copy(currentEnergy = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST)) {
+                    SimulatorValueRow("Maximum reserve", context.maxReserveEnergy) {
+                        context = context.copy(maxReserveEnergy = it)
+                    }
+                }
+                if (needs(ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST)) {
+                    SimulatorValueRow("Current reserve", context.currentReserveEnergy) {
+                        context = context.copy(currentReserveEnergy = it)
+                    }
+                }
+
+                val itemLabels = itemPickupOptions.associate { it.id to it.label }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED }
+                    .mapNotNull { it.argument }.distinct().forEach { id ->
+                        SimulatorCheckboxRow(
+                            label = itemLabels[id] ?: "Item pickup ID \$${id.toString(16).uppercase().padStart(3, '0')}",
+                            checked = id in context.collectedItemPickupIds,
+                            onCheckedChange = {
+                                context = context.copy(
+                                    collectedItemPickupIds = toggleSet(context.collectedItemPickupIds, id, it)
+                                )
+                            },
+                        )
+                    }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.DOOR_BIT_SET }
+                    .mapNotNull { it.argument }.distinct().forEach { id ->
+                        SimulatorCheckboxRow(
+                            label = "Door bit \$${id.toString(16).uppercase().padStart(3, '0')} set",
+                            checked = id in context.openedDoorIds,
+                            onCheckedChange = {
+                                context = context.copy(openedDoorIds = toggleSet(context.openedDoorIds, id, it))
+                            },
+                        )
+                    }
+                leaves.filter { it.kind == ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED }
+                    .mapNotNull { it.argument }.distinct().forEach { id ->
+                        SimulatorCheckboxRow(
+                            label = "Chozo block \$${id.toString(16).uppercase().padStart(3, '0')} destroyed",
+                            checked = id in context.destroyedChozoBlockIds,
+                            onCheckedChange = {
+                                context = context.copy(
+                                    destroyedChozoBlockIds = toggleSet(context.destroyedChozoBlockIds, id, it)
+                                )
+                            },
+                        )
+                    }
+
+                val bossRequirements = leaves.mapNotNull { leaf ->
+                    when (leaf.kind) {
+                        ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD -> area to 0x01
+                        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> area to (leaf.argument ?: 0)
+                        ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
+                            val packed = leaf.argument ?: 0
+                            ((packed ushr 8) and 0xFF) to (packed and 0xFF)
+                        }
+                        else -> null
+                    }
+                }.distinct()
+                bossRequirements.forEach { (bossArea, mask) ->
+                    val currentBits = context.bossBitsByArea[bossArea] ?: 0
+                    SimulatorCheckboxRow(
+                        label = "${RoomStateCondition.BOSS_NAMES[bossArea to mask] ?: "Area $bossArea boss"} defeated",
+                        checked = currentBits and mask != 0,
+                        onCheckedChange = { checked ->
+                            val updated = if (checked) currentBits or mask else currentBits and mask.inv()
+                            context = context.copy(bossBitsByArea = context.bossBitsByArea + (bossArea to updated))
+                        },
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+@Composable
+private fun SimulatorCheckboxRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.size(24.dp))
+        Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE)
+    }
+}
+
+@Composable
+private fun SimulatorMaskRow(label: String, mask: Int, value: Int, onValueChange: (Int) -> Unit) {
+    SimulatorCheckboxRow(
+        label = label,
+        checked = value and mask != 0,
+        onCheckedChange = { checked -> onValueChange(if (checked) value or mask else value and mask.inv()) },
+    )
+}
+
+@Composable
+private fun SimulatorValueRow(label: String, value: Int, onValueChange: (Int) -> Unit) {
+    EditableIntRow(label = label, value = value, min = 0, max = 0xFFFF, onValueChange = onValueChange)
+}
+
 private fun projectConditionLabel(condition: ProjectRoomStateCondition, area: Int): String =
     when (condition.kind) {
         ProjectRoomStateConditionKind.DEFAULT -> "Default"
-        ProjectRoomStateConditionKind.INCOMING_DOOR ->
-            "Entered through door \$${(condition.argument ?: 0).toString(16).uppercase().padStart(4, '0')}"
+        ProjectRoomStateConditionKind.INCOMING_DOOR -> {
+            val door = "\$${(condition.argument ?: 0).toString(16).uppercase().padStart(4, '0')}"
+            if (condition.negated) "Not entered through door $door" else "Entered through door $door"
+        }
         ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD ->
-            "${AREA_NAMES.getOrNull(area) ?: "Area $area"} main boss defeated"
-        ProjectRoomStateConditionKind.NEVER -> "Never"
-        ProjectRoomStateConditionKind.EVENT_SET -> RoomStateCondition.EVENT_NAMES[condition.argument ?: 0]
-            ?: "Event \$${(condition.argument ?: 0).toString(16).uppercase().padStart(2, '0')} set"
-        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
-            RoomStateCondition.BOSS_NAMES[area to (condition.argument ?: 0)]?.let { "$it defeated" }
-                ?: "Boss bit \$${(condition.argument ?: 0).toString(16).uppercase().padStart(2, '0')} set"
-        ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED -> "Morph Ball collected"
-        ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball + missiles collected"
-        ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED -> "Power Bombs collected"
-        ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster collected"
+            if (condition.negated) "${AREA_NAMES.getOrNull(area) ?: "Area $area"} main boss not defeated"
+            else "${AREA_NAMES.getOrNull(area) ?: "Area $area"} main boss defeated"
+        ProjectRoomStateConditionKind.NEVER -> if (condition.negated) "Always" else "Never"
+        ProjectRoomStateConditionKind.EVENT_SET -> {
+            val event = RoomStateCondition.EVENT_NAMES[condition.argument ?: 0]
+            if (event != null) {
+                if (condition.negated) "NOT ($event)" else event
+            } else {
+                val id = "\$${(condition.argument ?: 0).toString(16).uppercase().padStart(2, '0')}"
+                if (condition.negated) "Event $id not set" else "Event $id set"
+            }
+        }
+        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> {
+            val boss = RoomStateCondition.BOSS_NAMES[area to (condition.argument ?: 0)]
+                ?: "Boss bit \$${(condition.argument ?: 0).toString(16).uppercase().padStart(2, '0')}"
+            if (condition.negated) "$boss not defeated" else "$boss defeated"
+        }
+        ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED ->
+            if (condition.negated) "Morph Ball not collected" else "Morph Ball collected"
+        ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES ->
+            if (condition.negated) "Not (Morph Ball + missiles collected)" else "Morph Ball + missiles collected"
+        ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED ->
+            if (condition.negated) "No Power Bomb capacity" else "Power Bombs collected"
+        ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED ->
+            if (condition.negated) "Speed Booster not collected" else "Speed Booster collected"
         ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> {
             val name = RoomStateCondition.EQUIPMENT_NAMES[condition.argument ?: 0] ?: "Equipment"
             if (condition.negated) "$name not collected" else "$name collected"
@@ -1008,6 +1362,50 @@ private fun projectConditionLabel(condition: ProjectRoomStateCondition, area: In
                 ?: "${AREA_NAMES.getOrNull(bossArea) ?: "Area $bossArea"} boss bit \$${mask.toString(16)}"
             if (condition.negated) "$name not defeated" else "$name defeated"
         }
+        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED -> {
+            val name = RoomStateCondition.EQUIPMENT_NAMES[condition.argument ?: 0] ?: "Equipment"
+            if (condition.negated) "$name not equipped" else "$name equipped"
+        }
+        ProjectRoomStateConditionKind.BEAM_EQUIPPED -> {
+            val name = RoomStateCondition.BEAM_NAMES[condition.argument ?: 0] ?: "Beam"
+            if (condition.negated) "$name not equipped" else "$name equipped"
+        }
+        ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST ->
+            if (condition.negated) "Current energy below ${condition.argument ?: 0}"
+            else "Current energy ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST ->
+            if (condition.negated) "Current missiles below ${condition.argument ?: 0}"
+            else "Current missiles ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST ->
+            if (condition.negated) "Current Super Missiles below ${condition.argument ?: 0}"
+            else "Current Super Missiles ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST ->
+            if (condition.negated) "Current Power Bombs below ${condition.argument ?: 0}"
+            else "Current Power Bombs ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST ->
+            if (condition.negated) "Current reserve below ${condition.argument ?: 0}"
+            else "Current reserve ≥ ${condition.argument ?: 0}"
+        ProjectRoomStateConditionKind.DOOR_BIT_SET -> {
+            val id = (condition.argument ?: 0).toString(16).uppercase().padStart(3, '0')
+            if (condition.negated) "Door bit \$$id not set" else "Door bit \$$id set"
+        }
+        ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED -> {
+            val id = (condition.argument ?: 0).toString(16).uppercase().padStart(3, '0')
+            if (condition.negated) "Chozo block \$$id intact" else "Chozo block \$$id destroyed"
+        }
+        ProjectRoomStateConditionKind.ESCAPE_ACTIVE ->
+            if (condition.negated) "Escape not active" else "Escape active"
+        ProjectRoomStateConditionKind.ALL_OF,
+        ProjectRoomStateConditionKind.ANY_OF -> {
+            val operator = if (condition.kind == ProjectRoomStateConditionKind.ALL_OF) " AND " else " OR "
+            val body = condition.children.joinToString(operator) { child ->
+                val label = projectConditionLabel(child, area)
+                if (child.kind == ProjectRoomStateConditionKind.ALL_OF ||
+                    child.kind == ProjectRoomStateConditionKind.ANY_OF
+                ) "($label)" else label
+            }.ifBlank { "Empty condition group" }
+            if (condition.negated) "NOT ($body)" else body
+        }
     }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1018,9 +1416,33 @@ private fun StateConditionEditor(
     incomingDoorPointers: List<Int>,
     itemPickupOptions: List<ItemPickupConditionOption>,
     onChange: (ProjectRoomStateCondition) -> Unit,
+    onOpenBuilder: (() -> Unit)? = null,
 ) {
+    if (condition.kind == ProjectRoomStateConditionKind.ALL_OF ||
+        condition.kind == ProjectRoomStateConditionKind.ANY_OF
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+            shape = MaterialTheme.shapes.extraSmall,
+        ) {
+            Column(Modifier.padding(horizontal = 7.dp, vertical = 5.dp)) {
+                Text(projectConditionLabel(condition, area), fontSize = ROOM_INFO_BODY_FONT_SIZE)
+                if (onOpenBuilder != null) {
+                    TextButton(
+                        onClick = onOpenBuilder,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        modifier = Modifier.height(24.dp),
+                    ) { Text("Edit compound logic…", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                }
+            }
+        }
+        return
+    }
     val availableKinds = ProjectRoomStateConditionKind.entries.filter { kind ->
         kind != ProjectRoomStateConditionKind.DEFAULT &&
+            kind != ProjectRoomStateConditionKind.ALL_OF &&
+            kind != ProjectRoomStateConditionKind.ANY_OF &&
             (kind != ProjectRoomStateConditionKind.INCOMING_DOOR ||
                 incomingDoorPointers.isNotEmpty() || condition.kind == kind)
     }
@@ -1065,6 +1487,10 @@ private fun StateConditionEditor(
                             RoomStateCondition.EQUIPMENT_NAMES.keys.first()
                         ProjectRoomStateConditionKind.BEAM_COLLECTED ->
                             RoomStateCondition.BEAM_NAMES.keys.first()
+                        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED ->
+                            RoomStateCondition.EQUIPMENT_NAMES.keys.first()
+                        ProjectRoomStateConditionKind.BEAM_EQUIPPED ->
+                            RoomStateCondition.BEAM_NAMES.keys.first()
                         ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
                             itemPickupOptions.firstOrNull()?.id ?: 0
                         ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
@@ -1099,6 +1525,10 @@ private fun StateConditionEditor(
             RoomStateCondition.EQUIPMENT_NAMES.map { it.key to it.value }
         ProjectRoomStateConditionKind.BEAM_COLLECTED ->
             RoomStateCondition.BEAM_NAMES.map { it.key to it.value }
+        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED ->
+            RoomStateCondition.EQUIPMENT_NAMES.map { it.key to it.value }
+        ProjectRoomStateConditionKind.BEAM_EQUIPPED ->
+            RoomStateCondition.BEAM_NAMES.map { it.key to it.value }
         ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> itemPickupOptions.map { it.id to it.label }
         ProjectRoomStateConditionKind.BOSS_DEFEATED -> RoomStateCondition.BOSS_NAMES.entries.map {
             packedBossConditionArgument(it.key.first, it.key.second) to it.value
@@ -1119,6 +1549,8 @@ private fun StateConditionEditor(
                     ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> "Boss"
                     ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> "Equipment"
                     ProjectRoomStateConditionKind.BEAM_COLLECTED -> "Beam"
+                    ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED -> "Equipment"
+                    ProjectRoomStateConditionKind.BEAM_EQUIPPED -> "Beam"
                     ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> "Pickup"
                     ProjectRoomStateConditionKind.BOSS_DEFEATED -> "Boss"
                     else -> "Door"
@@ -1160,12 +1592,30 @@ private fun StateConditionEditor(
         }
     }
 
-    if (condition.argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY) {
+    if (condition.argumentKind == ProjectRoomStateConditionArgumentKind.CAPACITY) {
         EditableIntRow(
             label = "Minimum",
             value = condition.argument ?: 0,
             min = 0,
             max = 0xFFFF,
+            onValueChange = { value ->
+                onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
+            },
+        )
+    }
+
+    if (condition.argumentKind == ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX ||
+        condition.argumentKind == ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX
+    ) {
+        EditableIntRow(
+            label = if (condition.argumentKind == ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX) {
+                "Door ID"
+            } else {
+                "Block ID"
+            },
+            value = condition.argument ?: 0,
+            min = 0,
+            max = 0x1FF,
             onValueChange = { value ->
                 onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
             },
@@ -1181,11 +1631,28 @@ private fun StateConditionEditor(
         )
     }
 
-    if (condition.kind.isSmEditGeneratedPredicate()) {
-        val invertLabel = when (condition.argumentKind) {
-            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CAPACITY -> "Below this value instead"
-            com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.AREA_AND_BOSS_MASK -> "Boss is not defeated"
-            else -> "Not collected instead"
+    if (condition.kind != ProjectRoomStateConditionKind.DEFAULT) {
+        val invertLabel = when (condition.kind) {
+            ProjectRoomStateConditionKind.EVENT_SET -> "Event is not set"
+            ProjectRoomStateConditionKind.INCOMING_DOOR -> "Entered through any other door"
+            ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD,
+            ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET,
+            ProjectRoomStateConditionKind.BOSS_DEFEATED -> "Boss is not defeated"
+            ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
+            ProjectRoomStateConditionKind.BEAM_EQUIPPED -> "Not equipped instead"
+            ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED,
+            ProjectRoomStateConditionKind.BEAM_COLLECTED,
+            ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+            ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED,
+            ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Not collected instead"
+            ProjectRoomStateConditionKind.DOOR_BIT_SET -> "Door bit is not set"
+            ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED -> "Block is still intact"
+            ProjectRoomStateConditionKind.ESCAPE_ACTIVE -> "Escape is not active"
+            else -> if (condition.argumentKind == ProjectRoomStateConditionArgumentKind.CAPACITY) {
+                "Below this value instead"
+            } else {
+                "Invert this condition"
+            }
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
@@ -1200,6 +1667,218 @@ private fun StateConditionEditor(
                 modifier = Modifier.size(24.dp),
             )
             Text(invertLabel, fontSize = ROOM_INFO_BODY_FONT_SIZE)
+        }
+    }
+    if (onOpenBuilder != null) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(
+                onClick = onOpenBuilder,
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                modifier = Modifier.height(24.dp),
+            ) { Text("Build AND / OR logic…", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+        }
+    }
+}
+
+@Composable
+private fun ConditionBuilderDialog(
+    initialCondition: ProjectRoomStateCondition,
+    area: Int,
+    incomingDoorPointers: List<Int>,
+    itemPickupOptions: List<ItemPickupConditionOption>,
+    onDismiss: () -> Unit,
+    onApply: (ProjectRoomStateCondition) -> Unit,
+) {
+    var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
+    val valid = com.supermetroid.editor.rom.SmEditCompiledRoomStateConditionFormat
+        .conditionTreeIsValid(condition)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Condition logic") },
+        text = {
+            Column(
+                modifier = Modifier.requiredSizeIn(maxHeight = 620.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Build the load-time test as nested AND / OR groups. This entire expression " +
+                        "is evaluated before the room graph moves to the next ELSE IF.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (condition.kind != ProjectRoomStateConditionKind.ALL_OF &&
+                    condition.kind != ProjectRoomStateConditionKind.ANY_OF
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = {
+                            condition = projectRoomStateCondition(
+                                ProjectRoomStateConditionKind.ALL_OF,
+                                children = listOf(
+                                    condition,
+                                    projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0),
+                                ),
+                            )
+                        }) { Text("Add AND") }
+                        TextButton(onClick = {
+                            condition = projectRoomStateCondition(
+                                ProjectRoomStateConditionKind.ANY_OF,
+                                children = listOf(
+                                    condition,
+                                    projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0),
+                                ),
+                            )
+                        }) { Text("Add OR") }
+                    }
+                }
+                ConditionExpressionNodeEditor(
+                    condition = condition,
+                    area = area,
+                    incomingDoorPointers = incomingDoorPointers,
+                    itemPickupOptions = itemPickupOptions,
+                    depth = 0,
+                    onChange = { condition = it },
+                )
+                Text(
+                    "Preview: ${projectConditionLabel(condition, area)}",
+                    fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
+                    color = if (valid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = valid, onClick = { onApply(condition) }) { Text("Apply logic") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ConditionExpressionNodeEditor(
+    condition: ProjectRoomStateCondition,
+    area: Int,
+    incomingDoorPointers: List<Int>,
+    itemPickupOptions: List<ItemPickupConditionOption>,
+    depth: Int,
+    onChange: (ProjectRoomStateCondition) -> Unit,
+) {
+    val isGroup = condition.kind == ProjectRoomStateConditionKind.ALL_OF ||
+        condition.kind == ProjectRoomStateConditionKind.ANY_OF
+    if (!isGroup) {
+        StateConditionEditor(
+            condition = condition,
+            area = area,
+            incomingDoorPointers = incomingDoorPointers,
+            itemPickupOptions = itemPickupOptions,
+            onChange = onChange,
+        )
+        return
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (condition.kind == ProjectRoomStateConditionKind.ALL_OF) "ALL of (AND)" else "ANY of (OR)",
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = {
+                    val newKind = if (condition.kind == ProjectRoomStateConditionKind.ALL_OF) {
+                        ProjectRoomStateConditionKind.ANY_OF
+                    } else {
+                        ProjectRoomStateConditionKind.ALL_OF
+                    }
+                    onChange(
+                        projectRoomStateCondition(
+                            newKind,
+                            negated = condition.negated,
+                            children = condition.children,
+                        )
+                    )
+                }) { Text(if (condition.kind == ProjectRoomStateConditionKind.ALL_OF) "Use OR" else "Use AND") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = condition.negated,
+                    onCheckedChange = { onChange(condition.copy(negated = it, routineCode = 0)) },
+                    modifier = Modifier.size(24.dp),
+                )
+                Text("Invert this whole group", fontSize = ROOM_INFO_BODY_FONT_SIZE)
+            }
+            condition.children.forEachIndexed { index, child ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(start = (depth * 4).dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = MaterialTheme.shapes.extraSmall,
+                ) {
+                    Column(Modifier.padding(7.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${index + 1}", fontWeight = FontWeight.Bold, modifier = Modifier.width(22.dp))
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                enabled = condition.children.size > 2,
+                                onClick = {
+                                    onChange(
+                                        condition.copy(
+                                            children = condition.children.filterIndexed { childIndex, _ ->
+                                                childIndex != index
+                                            },
+                                            routineCode = 0,
+                                        )
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                modifier = Modifier.height(22.dp),
+                            ) { Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                        }
+                        ConditionExpressionNodeEditor(
+                            condition = child,
+                            area = area,
+                            incomingDoorPointers = incomingDoorPointers,
+                            itemPickupOptions = itemPickupOptions,
+                            depth = depth + 1,
+                            onChange = { updated ->
+                                onChange(
+                                    condition.copy(
+                                        children = condition.children.toMutableList().also { it[index] = updated },
+                                        routineCode = 0,
+                                    )
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = {
+                    onChange(
+                        condition.copy(
+                            children = condition.children +
+                                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0),
+                            routineCode = 0,
+                        )
+                    )
+                }) { Text("+ Condition") }
+                TextButton(
+                    enabled = depth < 7,
+                    onClick = {
+                        val nested = projectRoomStateCondition(
+                            ProjectRoomStateConditionKind.ALL_OF,
+                            children = listOf(
+                                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0),
+                                projectRoomStateCondition(ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED, 0x0004),
+                            ),
+                        )
+                        onChange(condition.copy(children = condition.children + nested, routineCode = 0))
+                    },
+                ) { Text("+ Nested group") }
+            }
         }
     }
 }
@@ -1217,6 +1896,7 @@ private fun AddRoomStateDialog(
     onAdd: (ProjectRoomStateCondition) -> Unit,
 ) {
     var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
+    var showBuilder by remember(initialCondition) { mutableStateOf(false) }
     val duplicatesExistingBranch = condition in existingConditions
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1241,6 +1921,7 @@ private fun AddRoomStateDialog(
                     incomingDoorPointers = incomingDoorPointers,
                     itemPickupOptions = itemPickupOptions,
                     onChange = { condition = it },
+                    onOpenBuilder = { showBuilder = true },
                 )
                 if (duplicatesExistingBranch) {
                     Text(
@@ -1259,6 +1940,19 @@ private fun AddRoomStateDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+    if (showBuilder) {
+        ConditionBuilderDialog(
+            initialCondition = condition,
+            area = area,
+            incomingDoorPointers = incomingDoorPointers,
+            itemPickupOptions = itemPickupOptions,
+            onDismiss = { showBuilder = false },
+            onApply = {
+                condition = it
+                showBuilder = false
+            },
+        )
+    }
 }
 
 @Composable

@@ -190,6 +190,8 @@ data class ProjectRoomStateCondition(
      * collected"). Vanilla selectors always leave this false.
      */
     val negated: Boolean = false,
+    /** Child predicates for [ProjectRoomStateConditionKind.ALL_OF] and [ProjectRoomStateConditionKind.ANY_OF]. */
+    val children: List<ProjectRoomStateCondition> = emptyList(),
 )
 
 @Serializable
@@ -213,6 +215,18 @@ enum class ProjectRoomStateConditionKind {
     RESERVE_CAPACITY_AT_LEAST,
     ITEM_PICKUP_COLLECTED,
     BOSS_DEFEATED,
+    EQUIPMENT_EQUIPPED,
+    BEAM_EQUIPPED,
+    CURRENT_ENERGY_AT_LEAST,
+    CURRENT_MISSILES_AT_LEAST,
+    CURRENT_SUPER_MISSILES_AT_LEAST,
+    CURRENT_POWER_BOMBS_AT_LEAST,
+    CURRENT_RESERVE_ENERGY_AT_LEAST,
+    DOOR_BIT_SET,
+    CHOZO_BLOCK_DESTROYED,
+    ESCAPE_ACTIVE,
+    ALL_OF,
+    ANY_OF,
 }
 
 @Serializable
@@ -226,6 +240,9 @@ enum class ProjectRoomStateConditionArgumentKind {
     CAPACITY,
     ITEM_BIT_INDEX,
     AREA_AND_BOSS_MASK,
+    DOOR_BIT_INDEX,
+    CHOZO_BLOCK_BIT_INDEX,
+    CHILDREN,
 }
 
 /**

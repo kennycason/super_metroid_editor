@@ -126,9 +126,55 @@ area (`$7E:D828 + area`). Threshold predicates mean “current maximum is greate
 value”; inversion therefore means “below value.” Boss values pack the area in the high byte and the
 boss mask in the low byte.
 
-The routine ends in unreachable ASCII `SMEDPRED` plus format byte `01`. The parser requires the full
-routine signature before interpreting an eight-byte selector, so unrelated custom ASM still fails
-closed instead of being guessed.
+The current routine ends in unreachable ASCII `SMEDPRED` plus format byte `02`. Version `02` restores
+the persistent-bit test flags after restoring the selector's X register. The parser also recognizes
+version `01` for read compatibility, but all new exports use version `02`. The parser requires the
+entire routine signature before interpreting an eight-byte selector, so unrelated custom ASM still
+fails closed instead of being guessed.
+
+### SMEDIT compiled/compound state predicates
+
+Conditions which cannot use a vanilla selector or the fixed typed-predicate descriptor above are
+stored as a tagged postfix expression. This includes nested `AND`, `OR`, and `NOT`, checks against
+current health/ammo, equipped-vs-collected item checks, persistent door/Chozo-block bits, and the
+named escape-active check. One shared bank-`$8F` interpreter evaluates every such expression.
+
+Each selector entry is six bytes:
+
+```text
+Offset  Size  Field
+  0      2    Pointer to the shared SMEDIT expression interpreter in bank $8F
+  2      2    Pointer to a tagged expression in bank $8F
+  4      2    State pointer in bank $8F
+```
+
+An expression begins with `SMEX`, format byte `01`, a one-byte bytecode length, and canonical postfix
+bytecode ending in `FF`. Every leaf is encoded as `[opcode, value-low, value-high]`; binary `AND` and
+`OR` are `F0` and `F1`, and unary `NOT` is `F2`. The interpreter is tagged `SMEXRUN` version `01`.
+The writer limits an expression to 64 nodes, eight nesting levels, and 255 bytecode bytes. The parser
+accepts it only when the interpreter bytes, expression tag, bounds, stack shape, and canonical
+re-encoding all match. Unknown or corrupt custom code therefore remains opaque instead of being
+misidentified as editable logic.
+
+Leaf predicates use these verified runtime values:
+
+| Predicate family | Runtime value |
+|------------------|---------------|
+| Collected/equipped equipment | `$09A4` / `$09A2` |
+| Collected/equipped beams | `$09A8` / `$09A6` |
+| Maximum missiles/Supers/Power Bombs | `$09C8` / `$09CC` / `$09D0` |
+| Current missiles/Supers/Power Bombs | `$09C6` / `$09CA` / `$09CE` |
+| Maximum/current energy | `$09C4` / `$09C2` |
+| Maximum/current reserve energy | `$09D4` / `$09D6` |
+| Item, Chozo-block, and door persistent bits | `$7E:D870`, `$7E:D830`, `$7E:D8B0` (512 bits each) |
+| Events and escape | the engine event checker; escape is event `$0E` |
+| Per-area boss bits | `$7E:D828 + area` |
+
+The expression interpreter preserves the selector payload pointer on the CPU stack, uses the same
+engine bit-index/event helpers as vanilla, and either jumps to `$8F:E5E6` with the selected state
+pointer or advances X by its four-byte payload and returns to the selector loop. Its emitted opcodes
+are exercised by an instruction-level test machine and its semantics are also tested independently
+by the editor's condition simulator.
 
 ### Implementation: `RomParser.findAllStateDataOffsets()`
 

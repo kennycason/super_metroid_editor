@@ -256,14 +256,14 @@ object RomValidator {
                     it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT &&
                         it.condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.NEVER
                 }
-                .groupingBy { Triple(it.condition.kind, it.condition.argument, it.condition.negated) }
+                .groupingBy { it.condition }
                 .eachCount()
                 .filterValues { it > 1 }
                 .keys
-            for ((kind, argument, negated) in duplicatePredicates) {
+            for (condition in duplicatePredicates) {
                 warning(
-                    "Condition $kind${argument?.let { "($it)" }.orEmpty()}" +
-                        (if (negated) " (inverted)" else "") + " appears more than once; " +
+                    "Condition ${condition.kind}${condition.argument?.let { "($it)" }.orEmpty()}" +
+                        (if (condition.negated) " (inverted)" else "") + " appears more than once; " +
                         "only its first branch can be selected"
                 )
             }
@@ -273,6 +273,7 @@ object RomValidator {
                     state.condition.kind,
                     state.condition.argument,
                     state.condition.negated,
+                    state.condition.children,
                 )
                 if (state.condition.routineCode != canonical.routineCode ||
                     state.condition.argumentKind != canonical.argumentKind
@@ -319,6 +320,17 @@ object RomValidator {
                             error("State '${state.id}' boss selector is invalid")
                         }
                     }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_BIT_INDEX,
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHOZO_BLOCK_BIT_INDEX -> {
+                        if (state.condition.argument == null || state.condition.argument !in 0..0x1FF) {
+                            error("State '${state.id}' persistent bit index must be 0-511")
+                        }
+                    }
+                    com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.CHILDREN -> {
+                        if (!SmEditCompiledRoomStateConditionFormat.conditionTreeIsValid(state.condition)) {
+                            error("State '${state.id}' has an invalid compound condition tree")
+                        }
+                    }
                 }
                 val sourceIndex = state.baseSourceStateIndex()
                 if (sourceIndex == null) {
@@ -335,12 +347,17 @@ object RomValidator {
                 }
                 if (state.sourceStateIndex != null) {
                     val sourceCondition = state.sourceCondition ?: state.condition.takeUnless { state.conditionChanged }
-                    val matchesSource = sourceCondition != null && if (
-                        sourceCondition.kind.isSmEditGeneratedPredicate()
-                    ) {
-                        source.condition.kind.name == sourceCondition.kind.name &&
-                            source.condition.argument == sourceCondition.argument &&
-                            source.condition.negated == sourceCondition.negated
+                    fun semanticMatch(
+                        runtime: RoomStateCondition,
+                        project: com.supermetroid.editor.data.ProjectRoomStateCondition,
+                    ): Boolean = runtime.kind.name == project.kind.name &&
+                        runtime.argument == project.argument && runtime.negated == project.negated &&
+                        runtime.children.size == project.children.size &&
+                        runtime.children.zip(project.children).all { (runtimeChild, projectChild) ->
+                            semanticMatch(runtimeChild, projectChild)
+                        }
+                    val matchesSource = sourceCondition != null && if (sourceCondition.usesSmEditRuntime()) {
+                        semanticMatch(source.condition, sourceCondition)
                     } else {
                         source.condition.code == sourceCondition.routineCode &&
                             source.condition.argument == sourceCondition.argument

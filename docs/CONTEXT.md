@@ -177,10 +177,14 @@ item PLMs with room, coordinates, and hexadecimal pickup ID. This is distinct fr
 “Missile capacity ≥ 25” reads maximum missiles at `$7E:09C8`, while “item pickup ID `$012`
 collected” tests one bit in `$7E:D870..D8AF`.
 
-SMEDIT also supports typed conditions for every collected equipment/beam bit, missile/Super
-Missile/Power Bomb/energy/reserve capacity thresholds, and any named boss across areas. These use
-the tagged `SMEDPRED` bank-`$8F` routine documented in `docs/rom/data_format.md`; conditions survive
-export and reopening as semantic project data rather than opaque ASM addresses.
+SMEDIT also supports typed conditions for every collected or equipped equipment/beam bit,
+maximum and current missile/Super Missile/Power Bomb/energy/reserve thresholds, named bosses across
+areas, persistent door and Chozo-block IDs, and escape-active. Conditions may be nested with visual
+`AND`, `OR`, and `NOT` logic, then tested in the first-match room-state simulator before export.
+Simple predicates use the tagged `SMEDPRED` bank-`$8F` routine; compound/newer predicates use the
+tagged `SMEX` postfix format and shared `SMEXRUN` interpreter documented in
+`docs/rom/data_format.md`. Both survive export and reopening as semantic project data rather than
+opaque ASM addresses.
 
 ---
 

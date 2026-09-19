@@ -43,6 +43,18 @@ enum class RoomStateConditionKind {
     RESERVE_CAPACITY_AT_LEAST,
     ITEM_PICKUP_COLLECTED,
     BOSS_DEFEATED,
+    EQUIPMENT_EQUIPPED,
+    BEAM_EQUIPPED,
+    CURRENT_ENERGY_AT_LEAST,
+    CURRENT_MISSILES_AT_LEAST,
+    CURRENT_SUPER_MISSILES_AT_LEAST,
+    CURRENT_POWER_BOMBS_AT_LEAST,
+    CURRENT_RESERVE_ENERGY_AT_LEAST,
+    DOOR_BIT_SET,
+    CHOZO_BLOCK_DESTROYED,
+    ESCAPE_ACTIVE,
+    ALL_OF,
+    ANY_OF,
 }
 
 enum class RoomStateConditionArgumentKind {
@@ -55,6 +67,9 @@ enum class RoomStateConditionArgumentKind {
     CAPACITY,
     ITEM_BIT_INDEX,
     AREA_AND_BOSS_MASK,
+    DOOR_BIT_INDEX,
+    CHOZO_BLOCK_BIT_INDEX,
+    CHILDREN,
 }
 
 /**
@@ -69,24 +84,42 @@ data class RoomStateCondition(
     val argument: Int? = null,
     val entrySizeBytes: Int,
     val negated: Boolean = false,
+    val children: List<RoomStateCondition> = emptyList(),
 ) {
     val isDefault: Boolean get() = kind == RoomStateConditionKind.DEFAULT
 
     /** Compact condition name for places where the surrounding UI supplies the IF/ELSE context. */
     fun shortSummary(area: Int): String = when (kind) {
         RoomStateConditionKind.DEFAULT -> "Default"
-        RoomStateConditionKind.INCOMING_DOOR -> "Entered through door \$${hex(argument, 4)}"
-        RoomStateConditionKind.AREA_MAIN_BOSS_DEAD -> "${areaName(area)} main boss defeated"
-        RoomStateConditionKind.NEVER -> "Never"
-        RoomStateConditionKind.EVENT_SET -> EVENT_NAMES[argument ?: 0]
-            ?: "Event \$${hex(argument, 2)} set"
-        RoomStateConditionKind.AREA_BOSS_BIT_SET -> BOSS_NAMES[area to (argument ?: 0)]
-            ?.let { "$it defeated" }
-            ?: "${areaName(area)} boss bit \$${hex(argument, 2)} set"
-        RoomStateConditionKind.MORPH_BALL_COLLECTED -> "Morph Ball collected"
-        RoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball + missiles collected"
-        RoomStateConditionKind.POWER_BOMBS_COLLECTED -> "Power Bombs collected"
-        RoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster collected"
+        RoomStateConditionKind.INCOMING_DOOR ->
+            if (negated) "Not entered through door \$${hex(argument, 4)}"
+            else "Entered through door \$${hex(argument, 4)}"
+        RoomStateConditionKind.AREA_MAIN_BOSS_DEAD ->
+            if (negated) "${areaName(area)} main boss not defeated" else "${areaName(area)} main boss defeated"
+        RoomStateConditionKind.NEVER -> if (negated) "Always" else "Never"
+        RoomStateConditionKind.EVENT_SET -> {
+            val event = EVENT_NAMES[argument ?: 0]
+            if (event != null) {
+                if (negated) "NOT ($event)" else event
+            } else if (negated) {
+                "Event \$${hex(argument, 2)} not set"
+            } else {
+                "Event \$${hex(argument, 2)} set"
+            }
+        }
+        RoomStateConditionKind.AREA_BOSS_BIT_SET -> {
+            val boss = BOSS_NAMES[area to (argument ?: 0)]
+                ?: "${areaName(area)} boss bit \$${hex(argument, 2)}"
+            if (negated) "$boss not defeated" else "$boss defeated"
+        }
+        RoomStateConditionKind.MORPH_BALL_COLLECTED ->
+            if (negated) "Morph Ball not collected" else "Morph Ball collected"
+        RoomStateConditionKind.MORPH_BALL_AND_MISSILES ->
+            if (negated) "Not (Morph Ball + missiles collected)" else "Morph Ball + missiles collected"
+        RoomStateConditionKind.POWER_BOMBS_COLLECTED ->
+            if (negated) "No Power Bomb capacity" else "Power Bombs collected"
+        RoomStateConditionKind.SPEED_BOOSTER_COLLECTED ->
+            if (negated) "Speed Booster not collected" else "Speed Booster collected"
         RoomStateConditionKind.EQUIPMENT_COLLECTED ->
             collectionSummary(EQUIPMENT_NAMES[argument ?: 0] ?: "Equipment mask \$${hex(argument, 4)}")
         RoomStateConditionKind.BEAM_COLLECTED ->
@@ -105,33 +138,49 @@ data class RoomStateCondition(
             val name = BOSS_NAMES[bossArea to mask] ?: "${areaName(bossArea)} boss bit \$${hex(mask, 2)}"
             if (negated) "$name not defeated" else "$name defeated"
         }
+        RoomStateConditionKind.EQUIPMENT_EQUIPPED ->
+            collectionSummary(EQUIPMENT_NAMES[argument ?: 0] ?: "Equipment mask \$${hex(argument, 4)}", "equipped")
+        RoomStateConditionKind.BEAM_EQUIPPED ->
+            collectionSummary(BEAM_NAMES[argument ?: 0] ?: "Beam mask \$${hex(argument, 4)}", "equipped")
+        RoomStateConditionKind.CURRENT_ENERGY_AT_LEAST -> thresholdSummary("Current energy")
+        RoomStateConditionKind.CURRENT_MISSILES_AT_LEAST -> thresholdSummary("Current missiles")
+        RoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST -> thresholdSummary("Current Super Missiles")
+        RoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST -> thresholdSummary("Current Power Bombs")
+        RoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST -> thresholdSummary("Current reserve energy")
+        RoomStateConditionKind.DOOR_BIT_SET -> collectionSummary("Door bit \$${hex(argument, 3)}", "set")
+        RoomStateConditionKind.CHOZO_BLOCK_DESTROYED ->
+            collectionSummary("Chozo block bit \$${hex(argument, 3)}", "destroyed")
+        RoomStateConditionKind.ESCAPE_ACTIVE -> if (negated) "Escape not active" else "Escape active"
+        RoomStateConditionKind.ALL_OF -> groupSummary("AND", area)
+        RoomStateConditionKind.ANY_OF -> groupSummary("OR", area)
     }
 
     fun summary(area: Int): String = when (kind) {
         RoomStateConditionKind.DEFAULT -> "Default (always used if no earlier condition matches)"
-        RoomStateConditionKind.INCOMING_DOOR ->
-            "Incoming door is \$${hex(argument, 4)}"
-        RoomStateConditionKind.AREA_MAIN_BOSS_DEAD ->
-            "Main boss for ${areaName(area)} is defeated"
-        RoomStateConditionKind.NEVER -> "Never (always false)"
+        RoomStateConditionKind.INCOMING_DOOR -> shortSummary(area)
+        RoomStateConditionKind.AREA_MAIN_BOSS_DEAD -> shortSummary(area)
+        RoomStateConditionKind.NEVER -> if (negated) "Always (inverted always-false predicate)" else "Never (always false)"
         RoomStateConditionKind.EVENT_SET -> {
             val event = argument ?: 0
             val name = EVENT_NAMES[event]
-            if (name == null) "Event \$${hex(event, 2)} is set" else "$name (event \$${hex(event, 2)})"
+            if (name != null) {
+                if (negated) "NOT ($name) (event \$${hex(event, 2)})" else "$name (event \$${hex(event, 2)})"
+            } else if (negated) {
+                "Event \$${hex(event, 2)} is not set"
+            } else {
+                "Event \$${hex(event, 2)} is set"
+            }
         }
         RoomStateConditionKind.AREA_BOSS_BIT_SET -> {
             val mask = argument ?: 0
             val name = BOSS_NAMES[area to mask]
-            if (name == null) {
-                "Boss bit \$${hex(mask, 2)} for ${areaName(area)} is set"
-            } else {
-                "$name is defeated (${areaName(area)} boss bit \$${hex(mask, 2)})"
-            }
+            val subject = name ?: "Boss bit \$${hex(mask, 2)} for ${areaName(area)}"
+            if (negated) "$subject is not defeated" else "$subject is defeated"
         }
-        RoomStateConditionKind.MORPH_BALL_COLLECTED -> "Morph Ball is collected"
-        RoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball and at least one missile are collected"
-        RoomStateConditionKind.POWER_BOMBS_COLLECTED -> "At least one Power Bomb has been collected"
-        RoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster is collected"
+        RoomStateConditionKind.MORPH_BALL_COLLECTED,
+        RoomStateConditionKind.MORPH_BALL_AND_MISSILES,
+        RoomStateConditionKind.POWER_BOMBS_COLLECTED,
+        RoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> shortSummary(area)
         RoomStateConditionKind.EQUIPMENT_COLLECTED,
         RoomStateConditionKind.BEAM_COLLECTED,
         RoomStateConditionKind.ITEM_PICKUP_COLLECTED,
@@ -141,13 +190,36 @@ data class RoomStateCondition(
         RoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
         RoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
         RoomStateConditionKind.BOSS_DEFEATED -> shortSummary(area)
+        RoomStateConditionKind.EQUIPMENT_EQUIPPED,
+        RoomStateConditionKind.BEAM_EQUIPPED,
+        RoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+        RoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+        RoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+        RoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
+        RoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
+        RoomStateConditionKind.DOOR_BIT_SET,
+        RoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
+        RoomStateConditionKind.ESCAPE_ACTIVE,
+        RoomStateConditionKind.ALL_OF,
+        RoomStateConditionKind.ANY_OF -> shortSummary(area)
     }
 
-    private fun collectionSummary(subject: String): String =
-        if (negated) "$subject not collected" else "$subject collected"
+    private fun collectionSummary(subject: String, positiveVerb: String = "collected"): String =
+        if (negated) "$subject not $positiveVerb" else "$subject $positiveVerb"
 
     private fun thresholdSummary(subject: String): String =
         if (negated) "$subject below ${argument ?: 0}" else "$subject ≥ ${argument ?: 0}"
+
+    private fun groupSummary(operator: String, area: Int): String {
+        val body = children.joinToString(" $operator ") { child ->
+            if (child.kind == RoomStateConditionKind.ALL_OF || child.kind == RoomStateConditionKind.ANY_OF) {
+                "(${child.shortSummary(area)})"
+            } else {
+                child.shortSummary(area)
+            }
+        }.ifBlank { "Empty group" }
+        return if (negated) "NOT ($body)" else body
+    }
 
     companion object {
         /** Event meanings verified against the vanilla event table. */
