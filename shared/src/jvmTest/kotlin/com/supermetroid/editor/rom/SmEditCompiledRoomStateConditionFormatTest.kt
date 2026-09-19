@@ -45,6 +45,10 @@ class SmEditCompiledRoomStateConditionFormatTest {
                 ProjectRoomStateConditionKind.BOSS_DEFEATED,
                 packedBossConditionArgument(4, 0x02),
             ) to RoomStateSimulationContext(area = area, bossBitsByArea = mapOf(4 to 0x02)),
+            projectRoomStateCondition(
+                ProjectRoomStateConditionKind.BOSS_DEFEATED,
+                packedBossConditionArgument(7, 0x80),
+            ) to RoomStateSimulationContext(area = area, bossBitsByArea = mapOf(7 to 0x80)),
             projectRoomStateCondition(ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED, 0x0001) to
                 RoomStateSimulationContext(area = area, equippedEquipment = 0x0001),
             projectRoomStateCondition(ProjectRoomStateConditionKind.BEAM_EQUIPPED, 0x0004) to

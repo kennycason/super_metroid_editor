@@ -124,7 +124,9 @@ beam mask (`$7E:09A8`), `3` maximum missiles (`$09C8`), `4` maximum Super Missil
 (`$09D4`), `8` exact persistent item-pickup bit (`$7E:D870..D8AF`), and `9` boss bit for an explicit
 area (`$7E:D828 + area`). Threshold predicates mean “current maximum is greater than or equal to
 value”; inversion therefore means “below value.” Boss values pack the area in the high byte and the
-boss mask in the low byte.
+boss mask in the low byte. Vanilla uses mask `$01` for an area's main boss, `$02` for its mini-boss
+(including Mother Brain), and `$04` for a Torizo. SMEDIT accepts any single-bit mask through `$80`
+so ASM hacks can give the otherwise-unused slots their own meanings without changing this format.
 
 The current routine ends in unreachable ASCII `SMEDPRED` plus format byte `02`. Version `02` restores
 the persistent-bit test flags after restoring the selector's X register. The parser also recognizes

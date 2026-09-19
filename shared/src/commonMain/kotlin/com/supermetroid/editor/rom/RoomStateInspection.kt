@@ -244,7 +244,9 @@ data class RoomStateCondition(
 
         /**
          * Boss bits are per-area masks, not global boss IDs. These names are
-         * verified from the vanilla room selector arguments and boss routines.
+         * verified from the boss death routines. Engine convention is bit 0
+         * for an area boss, bit 1 for a mini-boss, and bit 2 for a Torizo;
+         * Mother Brain consequently uses Tourian bit 1 (`0x02`).
          */
         val BOSS_NAMES: Map<Pair<Int, Int>, String> = mapOf(
             (0 to 0x04) to "Bomb Torizo",
@@ -256,9 +258,12 @@ data class RoomStateCondition(
             (3 to 0x01) to "Phantoon",
             (4 to 0x01) to "Draygon",
             (4 to 0x02) to "Botwoon",
-            (5 to 0x01) to "Mother Brain",
+            (5 to 0x02) to "Mother Brain",
             (6 to 0x01) to "Ceres Ridley",
         )
+
+        /** Every single-bit slot accepted by the engine's per-area boss byte. */
+        val BOSS_FLAG_MASKS: List<Int> = listOf(0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80)
 
         /** Bit masks stored in Samus's collected-equipment word at $7E:09A4. */
         val EQUIPMENT_NAMES: Map<Int, String> = linkedMapOf(

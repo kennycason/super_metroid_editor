@@ -1649,7 +1649,9 @@ class ProjectRoomExporter(
                 val argument = condition.argument ?: -1
                 val area = (argument ushr 8) and 0xFF
                 val mask = argument and 0xFF
-                if (argument !in 0..0xFFFF || area !in 0..7 || mask !in setOf(1, 2, 4)) {
+                if (argument !in 0..0xFFFF || area !in 0..7 ||
+                    mask !in RoomStateCondition.BOSS_FLAG_MASKS
+                ) {
                     failExport("Room 0x$roomKey state '$stateId' boss selector is invalid")
                 }
             }

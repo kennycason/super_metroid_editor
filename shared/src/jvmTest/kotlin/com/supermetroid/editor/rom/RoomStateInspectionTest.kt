@@ -121,6 +121,19 @@ class RoomStateInspectionTest {
     }
 
     @Test
+    fun `named boss catalog matches engine boss bit conventions`() {
+        assertEquals("Kraid", RoomStateCondition.BOSS_NAMES[1 to 0x01])
+        assertEquals("Spore Spawn", RoomStateCondition.BOSS_NAMES[1 to 0x02])
+        assertEquals("Golden Torizo", RoomStateCondition.BOSS_NAMES[2 to 0x04])
+        assertEquals("Mother Brain", RoomStateCondition.BOSS_NAMES[5 to 0x02])
+        assertEquals(null, RoomStateCondition.BOSS_NAMES[5 to 0x01])
+        assertEquals(
+            listOf(0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80),
+            RoomStateCondition.BOSS_FLAG_MASKS,
+        )
+    }
+
+    @Test
     fun `unknown selector stops at the exact byte instead of guessing its layout`() {
         val fixture = roomFixture(area = 0)
         write16(fixture.rom, fixture.stateListPc, 0xDEAD)

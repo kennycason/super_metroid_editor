@@ -181,6 +181,9 @@ SMEDIT also supports typed conditions for every collected or equipped equipment/
 maximum and current missile/Super Missile/Power Bomb/energy/reserve thresholds, named bosses across
 areas, persistent door and Chozo-block IDs, and escape-active. Conditions may be nested with visual
 `AND`, `OR`, and `NOT` logic, then tested in the first-match room-state simulator before export.
+Boss flags are stored per area: `$01` is the area boss, `$02` the area mini-boss (including Mother
+Brain), and `$04` a Torizo. The editor names every verified vanilla boss and also exposes the
+remaining one-bit slots (`$08` through `$80`) as custom flags for hacks.
 Simple predicates use the tagged `SMEDPRED` bank-`$8F` routine; compound/newer predicates use the
 tagged `SMEX` postfix format and shared `SMEXRUN` interpreter documented in
 `docs/rom/data_format.md`. Both survive export and reopening as semantic project data rather than

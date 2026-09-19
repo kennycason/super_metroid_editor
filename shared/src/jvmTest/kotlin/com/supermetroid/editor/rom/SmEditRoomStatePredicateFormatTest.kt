@@ -36,6 +36,12 @@ class SmEditRoomStatePredicateFormatTest {
                 packedBossConditionArgument(4, 0x02),
             ) { byte(0x7ED828 + 4, 0x01) }
         )
+        assertTrue(
+            runPredicate(
+                SmEditRoomStatePredicateFormat.TYPE_BOSS,
+                packedBossConditionArgument(7, 0x80),
+            ) { byte(0x7ED828 + 7, 0x80) }
+        )
     }
 
     @Test

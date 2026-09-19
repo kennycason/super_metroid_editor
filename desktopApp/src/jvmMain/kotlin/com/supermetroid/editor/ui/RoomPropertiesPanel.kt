@@ -68,7 +68,9 @@ import com.supermetroid.editor.rom.packedBossConditionArgument
 import com.supermetroid.editor.rom.flattened
 import com.supermetroid.editor.rom.matches
 
-private val AREA_NAMES = arrayOf("Crateria", "Brinstar", "Norfair", "Wrecked Ship", "Maridia", "Tourian", "Ceres")
+private val AREA_NAMES = arrayOf(
+    "Crateria", "Brinstar", "Norfair", "Wrecked Ship", "Maridia", "Tourian", "Ceres", "Debug / Unused",
+)
 
 // The Room Info panel used to sit at 8–10sp, noticeably below the room-name
 // typography beside it. Keep one compact, readable scale across its controls.
@@ -133,6 +135,109 @@ private data class ItemPickupConditionOption(
     val id: Int,
     val label: String,
 )
+
+internal data class StateConditionKindPickerGroup(
+    val title: String,
+    val kinds: List<ProjectRoomStateConditionKind>,
+)
+
+internal val STATE_CONDITION_KIND_PICKER_GROUPS = listOf(
+    StateConditionKindPickerGroup(
+        "World & room",
+        listOf(
+            ProjectRoomStateConditionKind.INCOMING_DOOR,
+            ProjectRoomStateConditionKind.EVENT_SET,
+            ProjectRoomStateConditionKind.ESCAPE_ACTIVE,
+            ProjectRoomStateConditionKind.DOOR_BIT_SET,
+            ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
+            ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Bosses",
+        listOf(
+            ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD,
+            ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET,
+            ProjectRoomStateConditionKind.BOSS_DEFEATED,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Collected gear",
+        listOf(
+            ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED,
+            ProjectRoomStateConditionKind.BEAM_COLLECTED,
+            ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED,
+            ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES,
+            ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED,
+            ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Equipped gear",
+        listOf(
+            ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
+            ProjectRoomStateConditionKind.BEAM_EQUIPPED,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Maximum capacity",
+        listOf(
+            ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
+            ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
+            ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
+            ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST,
+            ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Current health & ammo",
+        listOf(
+            ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+            ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
+            ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
+            ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
+            ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
+        ),
+    ),
+    StateConditionKindPickerGroup(
+        "Advanced",
+        listOf(ProjectRoomStateConditionKind.NEVER),
+    ),
+)
+
+internal fun stateConditionKindPickerLabel(kind: ProjectRoomStateConditionKind): String = when (kind) {
+    ProjectRoomStateConditionKind.DEFAULT -> "Default"
+    ProjectRoomStateConditionKind.INCOMING_DOOR -> "Entered through a specific door"
+    ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD -> "Primary boss defeated (this area)"
+    ProjectRoomStateConditionKind.NEVER -> "Never (always false)"
+    ProjectRoomStateConditionKind.EVENT_SET -> "Event is set"
+    ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> "Boss flag set (this area)"
+    ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED -> "Morph Ball collected"
+    ProjectRoomStateConditionKind.MORPH_BALL_AND_MISSILES -> "Morph Ball + missiles collected"
+    ProjectRoomStateConditionKind.POWER_BOMBS_COLLECTED -> "Power Bombs collected"
+    ProjectRoomStateConditionKind.SPEED_BOOSTER_COLLECTED -> "Speed Booster collected"
+    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED -> "Equipment collected"
+    ProjectRoomStateConditionKind.BEAM_COLLECTED -> "Beam collected"
+    ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST -> "Missile capacity ≥ N"
+    ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST -> "Super Missile capacity ≥ N"
+    ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST -> "Power Bomb capacity ≥ N"
+    ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST -> "Energy capacity ≥ N"
+    ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST -> "Reserve capacity ≥ N"
+    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> "Specific item pickup collected"
+    ProjectRoomStateConditionKind.BOSS_DEFEATED -> "Boss defeated (any area)"
+    ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED -> "Equipment equipped"
+    ProjectRoomStateConditionKind.BEAM_EQUIPPED -> "Beam equipped"
+    ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST -> "Current energy ≥ N"
+    ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST -> "Current missiles ≥ N"
+    ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST -> "Current Super Missiles ≥ N"
+    ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST -> "Current Power Bombs ≥ N"
+    ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST -> "Current reserve energy ≥ N"
+    ProjectRoomStateConditionKind.DOOR_BIT_SET -> "Persistent door flag set"
+    ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED -> "Chozo block destroyed"
+    ProjectRoomStateConditionKind.ESCAPE_ACTIVE -> "Escape active"
+    ProjectRoomStateConditionKind.ALL_OF -> "All conditions (AND)"
+    ProjectRoomStateConditionKind.ANY_OF -> "Any condition (OR)"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1315,9 +1420,14 @@ private fun projectConditionLabel(condition: ProjectRoomStateCondition, area: In
             }
         }
         ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> {
-            val boss = RoomStateCondition.BOSS_NAMES[area to (condition.argument ?: 0)]
-                ?: "Boss bit \$${(condition.argument ?: 0).toString(16).uppercase().padStart(2, '0')}"
-            if (condition.negated) "$boss not defeated" else "$boss defeated"
+            val mask = condition.argument ?: 0
+            val boss = RoomStateCondition.BOSS_NAMES[area to mask]
+            if (boss != null) {
+                if (condition.negated) "$boss not defeated" else "$boss defeated"
+            } else {
+                val flag = "Custom boss flag \$${mask.toString(16).uppercase().padStart(2, '0')}"
+                if (condition.negated) "$flag not set" else "$flag set"
+            }
         }
         ProjectRoomStateConditionKind.MORPH_BALL_COLLECTED ->
             if (condition.negated) "Morph Ball not collected" else "Morph Ball collected"
@@ -1358,9 +1468,14 @@ private fun projectConditionLabel(condition: ProjectRoomStateCondition, area: In
             val packed = condition.argument ?: 0
             val bossArea = (packed ushr 8) and 0xFF
             val mask = packed and 0xFF
-            val name = RoomStateCondition.BOSS_NAMES[bossArea to mask]
-                ?: "${AREA_NAMES.getOrNull(bossArea) ?: "Area $bossArea"} boss bit \$${mask.toString(16)}"
-            if (condition.negated) "$name not defeated" else "$name defeated"
+            val boss = RoomStateCondition.BOSS_NAMES[bossArea to mask]
+            if (boss != null) {
+                if (condition.negated) "$boss not defeated" else "$boss defeated"
+            } else {
+                val areaName = AREA_NAMES.getOrNull(bossArea) ?: "Area $bossArea"
+                val flag = "$areaName custom boss flag \$${mask.toString(16).uppercase().padStart(2, '0')}"
+                if (condition.negated) "$flag not set" else "$flag set"
+            }
         }
         ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED -> {
             val name = RoomStateCondition.EQUIPMENT_NAMES[condition.argument ?: 0] ?: "Equipment"
@@ -1439,13 +1554,14 @@ private fun StateConditionEditor(
         }
         return
     }
-    val availableKinds = ProjectRoomStateConditionKind.entries.filter { kind ->
-        kind != ProjectRoomStateConditionKind.DEFAULT &&
-            kind != ProjectRoomStateConditionKind.ALL_OF &&
-            kind != ProjectRoomStateConditionKind.ANY_OF &&
-            (kind != ProjectRoomStateConditionKind.INCOMING_DOOR ||
-                incomingDoorPointers.isNotEmpty() || condition.kind == kind)
+    val availableGroups = STATE_CONDITION_KIND_PICKER_GROUPS.mapNotNull { group ->
+        val kinds = group.kinds.filter { kind ->
+            kind != ProjectRoomStateConditionKind.INCOMING_DOOR ||
+                incomingDoorPointers.isNotEmpty() || condition.kind == kind
+        }
+        group.copy(kinds = kinds).takeIf { kinds.isNotEmpty() }
     }
+    val availableKinds = availableGroups.flatMap { it.kinds }
     var kindExpanded by remember(condition.kind) { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
@@ -1470,42 +1586,56 @@ private fun StateConditionEditor(
                 shape = MaterialTheme.shapes.extraSmall,
             ) {
                 Text(
-                    projectConditionLabel(condition, area),
+                    stateConditionKindPickerLabel(condition.kind),
                     fontSize = ROOM_INFO_BODY_FONT_SIZE,
                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                 )
             }
-            ExposedDropdownMenu(expanded = kindExpanded, onDismissRequest = { kindExpanded = false }) {
-                for (kind in availableKinds) {
-                    val argument = when (kind) {
-                        condition.kind -> condition.argument
-                        ProjectRoomStateConditionKind.EVENT_SET -> 0
-                        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
-                            RoomStateCondition.BOSS_NAMES.keys.firstOrNull { it.first == area }?.second ?: 1
-                        ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.firstOrNull() ?: 0
-                        ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
-                            RoomStateCondition.EQUIPMENT_NAMES.keys.first()
-                        ProjectRoomStateConditionKind.BEAM_COLLECTED ->
-                            RoomStateCondition.BEAM_NAMES.keys.first()
-                        ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED ->
-                            RoomStateCondition.EQUIPMENT_NAMES.keys.first()
-                        ProjectRoomStateConditionKind.BEAM_EQUIPPED ->
-                            RoomStateCondition.BEAM_NAMES.keys.first()
-                        ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
-                            itemPickupOptions.firstOrNull()?.id ?: 0
-                        ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
-                            val first = RoomStateCondition.BOSS_NAMES.keys.first()
-                            packedBossConditionArgument(first.first, first.second)
-                        }
-                        else -> null
-                    }
-                    val option = projectRoomStateCondition(kind, argument)
-                    DropdownMenuItem(
-                        text = { Text(projectConditionLabel(option, area), fontSize = ROOM_INFO_BODY_FONT_SIZE) },
-                        onClick = { kindExpanded = false; onChange(option) },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(32.dp),
+            ExposedDropdownMenu(
+                expanded = kindExpanded,
+                onDismissRequest = { kindExpanded = false },
+                modifier = Modifier.requiredSizeIn(maxHeight = 560.dp),
+            ) {
+                availableGroups.forEachIndexed { groupIndex, group ->
+                    if (groupIndex > 0) Divider()
+                    Text(
+                        group.title,
+                        fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 2.dp),
                     )
+                    for (kind in group.kinds) {
+                        val argument = when (kind) {
+                            condition.kind -> condition.argument
+                            ProjectRoomStateConditionKind.EVENT_SET -> 0
+                            ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
+                                RoomStateCondition.BOSS_NAMES.keys.firstOrNull { it.first == area }?.second ?: 1
+                            ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.firstOrNull() ?: 0
+                            ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
+                                RoomStateCondition.EQUIPMENT_NAMES.keys.first()
+                            ProjectRoomStateConditionKind.BEAM_COLLECTED ->
+                                RoomStateCondition.BEAM_NAMES.keys.first()
+                            ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED ->
+                                RoomStateCondition.EQUIPMENT_NAMES.keys.first()
+                            ProjectRoomStateConditionKind.BEAM_EQUIPPED ->
+                                RoomStateCondition.BEAM_NAMES.keys.first()
+                            ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED ->
+                                itemPickupOptions.firstOrNull()?.id ?: 0
+                            ProjectRoomStateConditionKind.BOSS_DEFEATED -> {
+                                val first = RoomStateCondition.BOSS_NAMES.keys.first()
+                                packedBossConditionArgument(first.first, first.second)
+                            }
+                            else -> null
+                        }
+                        val option = projectRoomStateCondition(kind, argument)
+                        DropdownMenuItem(
+                            text = { Text(stateConditionKindPickerLabel(kind), fontSize = ROOM_INFO_BODY_FONT_SIZE) },
+                            onClick = { kindExpanded = false; onChange(option) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                        )
+                    }
                 }
             }
         }
@@ -1514,10 +1644,10 @@ private fun StateConditionEditor(
     val arguments: List<Pair<Int, String>> = when (condition.kind) {
         ProjectRoomStateConditionKind.EVENT_SET -> RoomStateCondition.EVENT_NAMES.entries
             .sortedBy { it.key }.map { it.key to it.value }
-        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> RoomStateCondition.BOSS_NAMES.entries
-            .filter { it.key.first == area }.sortedBy { it.key.second }
-            .map { it.key.second to it.value }
-            .ifEmpty { listOf(1 to "Boss bit 01", 2 to "Boss bit 02", 4 to "Boss bit 04") }
+        ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> RoomStateCondition.BOSS_FLAG_MASKS.map { mask ->
+            mask to (RoomStateCondition.BOSS_NAMES[area to mask]
+                ?: "Custom boss flag \$${mask.toString(16).uppercase().padStart(2, '0')}")
+        }
         ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.map {
             it to "Door \$${it.toString(16).uppercase().padStart(4, '0')}"
         }
@@ -1530,8 +1660,12 @@ private fun StateConditionEditor(
         ProjectRoomStateConditionKind.BEAM_EQUIPPED ->
             RoomStateCondition.BEAM_NAMES.map { it.key to it.value }
         ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED -> itemPickupOptions.map { it.id to it.label }
-        ProjectRoomStateConditionKind.BOSS_DEFEATED -> RoomStateCondition.BOSS_NAMES.entries.map {
-            packedBossConditionArgument(it.key.first, it.key.second) to it.value
+        ProjectRoomStateConditionKind.BOSS_DEFEATED -> AREA_NAMES.indices.flatMap { bossArea ->
+            RoomStateCondition.BOSS_FLAG_MASKS.map { mask ->
+                val name = RoomStateCondition.BOSS_NAMES[bossArea to mask]
+                    ?: "Custom boss flag \$${mask.toString(16).uppercase().padStart(2, '0')}"
+                packedBossConditionArgument(bossArea, mask) to "${AREA_NAMES[bossArea]} — $name"
+            }
         }
         else -> emptyList()
     }
@@ -1575,10 +1709,32 @@ private fun StateConditionEditor(
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                     )
                 }
-                ExposedDropdownMenu(expanded = argumentExpanded, onDismissRequest = { argumentExpanded = false }) {
-                    for ((value, label) in arguments) {
+                ExposedDropdownMenu(
+                    expanded = argumentExpanded,
+                    onDismissRequest = { argumentExpanded = false },
+                    modifier = Modifier.requiredSizeIn(maxHeight = 520.dp),
+                ) {
+                    for ((index, argument) in arguments.withIndex()) {
+                        val (value, label) = argument
+                        val menuLabel = if (condition.kind == ProjectRoomStateConditionKind.BOSS_DEFEATED) {
+                            label.substringAfter(" — ")
+                        } else {
+                            label
+                        }
+                        if (condition.kind == ProjectRoomStateConditionKind.BOSS_DEFEATED &&
+                            index % RoomStateCondition.BOSS_FLAG_MASKS.size == 0
+                        ) {
+                            if (index > 0) Divider()
+                            Text(
+                                AREA_NAMES[index / RoomStateCondition.BOSS_FLAG_MASKS.size],
+                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 7.dp, bottom = 2.dp),
+                            )
+                        }
                         DropdownMenuItem(
-                            text = { Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE) },
+                            text = { Text(menuLabel, fontSize = ROOM_INFO_BODY_FONT_SIZE) },
                             onClick = {
                                 argumentExpanded = false
                                 onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
@@ -1598,6 +1754,18 @@ private fun StateConditionEditor(
             value = condition.argument ?: 0,
             min = 0,
             max = 0xFFFF,
+            onValueChange = { value ->
+                onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
+            },
+        )
+    }
+
+    if (condition.argumentKind == ProjectRoomStateConditionArgumentKind.EVENT_ID) {
+        EditableIntRow(
+            label = "Event ID",
+            value = condition.argument ?: 0,
+            min = 0,
+            max = 0xFF,
             onValueChange = { value ->
                 onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
             },
@@ -1625,6 +1793,17 @@ private fun StateConditionEditor(
     if (condition.kind == ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED) {
         Text(
             "Checks that exact pickup's save bit; it does not compare ammo capacity.",
+            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 100.dp, top = 1.dp),
+        )
+    }
+
+    if (condition.kind == ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ||
+        condition.kind == ProjectRoomStateConditionKind.BOSS_DEFEATED
+    ) {
+        Text(
+            "Named bosses are verified vanilla flags; custom flags are available for ASM hacks.",
             fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 100.dp, top = 1.dp),
