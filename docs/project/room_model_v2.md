@@ -12,6 +12,18 @@ unsupported custom behavior explicitly, and reject unsafe builds rather than gue
 This work is intentionally staged: read and explain state logic first, then persist state-scoped
 changes, then author selectors and new rooms.
 
+## Milestone Status
+
+As of 2026-09-20, **existing-room state editing is feature complete for the current product
+milestone**. This scope includes ordered inspection and preview, state-scoped editing, branch
+add/duplicate/delete/reorder, typed and compound conditions, first-match simulation, safe
+copy-on-write, selector-graph relocation, transactional export, validation, and semantic reopening.
+
+The following are intentionally separate future features rather than incomplete parts of this
+milestone: explicit re-linking of resources after copy-on-write, actions that mutate persistent
+state during gameplay, separate-background authoring, opaque/custom room-code authoring, automatic
+materialization of early development-only project formats, and creation of entirely new rooms.
+
 ## Verified Runtime Model
 
 When a room loads, the game reads its shared 11-byte header and evaluates the state-selector list
@@ -68,11 +80,11 @@ same room ID. Export round trips the relocated graph through the normal parser a
 transactional ROM write plan.
 
 The room-state simulator now accepts only inputs used by the current graph and shows the first branch
-that would win plus later branches that also match. The remaining boundary is explicit resource
-link/unlink authoring, separate-background and opaque room-code authoring, the legacy behavioral
-materializer, state-triggered action authoring, and new room creation. A duplicated state copies the
-selected state's effective project deltas; unedited ROM resources stay linked and later state-local
-edits use copy-on-write.
+that would win plus later branches that also match. A duplicated state copies the selected state's
+effective project deltas; unedited ROM resources stay linked and later state-local edits use
+copy-on-write. Explicit re-linking, state-triggered actions, separate-background/custom-code
+authoring, legacy behavioral materialization, and new-room creation are deferred extensions outside
+the completed existing-room milestone.
 
 ## Proposed Project Model
 
@@ -153,9 +165,9 @@ The editable state UI includes:
 
 - Add, duplicate, delete, and reorder state.
 - A typed condition builder.
-- Compare two states and highlight differing fields/resources.
+- Compare the selected state with Default and highlight differing fields/resources.
 
-Still planned:
+Deferred extensions:
 
 - Explicit duplicate-as-linked/independent choices and per-resource link/unlink controls.
 - Visual authoring for actions that set events or otherwise mutate persistent state.
@@ -220,20 +232,22 @@ reimplementing that behavior and risking a subtly different conversion.
   Layer 3 FX/liquids, tileset, and the preserved special X-Ray block-table field.
 - Multi-state fields remained read-only until state-scoped persistence was proven.
 
-### 1. Schema and migration engine — in progress
+### 1. Schema and project format — complete for current-format projects
 
 - Serializable room/state/resource identities are implemented inside the existing `RoomEdits`.
 - Explicit `projectFormatVersion` and legacy-format detection are implemented.
-- A one-time pre-upgrade backup is implemented; the confirmation UI and behavioral materializer remain.
-- Serialization, migration, and byte/semantic equivalence tests.
+- A one-time pre-upgrade backup is implemented.
+- Automated behavioral materialization of early development-only projects is deferred; it is not a
+  blocker for current-format projects.
+- Serialization and byte/semantic equivalence tests cover current-format round trips.
 
-### 2. State-scoped editing — substantially complete
+### 2. State-scoped editing — complete for the current milestone
 
 - Stable state IDs are carried through canvas/property edits and undo/redo.
 - Copy-on-write export is implemented for level, enemy, enemy-GFX, PLM, scrolling, and FX data.
 - State-targeted level, enemy, PLM, scrolling, default/door-specific FX, music, tileset, and Layer 2 motion export is implemented.
 - All known typed condition changes are implemented, including encoded-size changes through graph relocation.
-- Explicit link/unlink controls and separate-background authoring remain.
+- Explicit link/unlink controls and separate-background authoring are deferred extensions.
 
 ### 3. State authoring — compound editor, allocator, and simulator complete
 
@@ -258,15 +272,15 @@ reimplementing that behavior and risking a subtly different conversion.
 - Base-ROM/profile symbol tables and assembler/linker integration.
 - Custom selector schemas with explicit encoded argument contracts.
 
-## Required Tests
+## Test Boundary
 
-- Synthetic test for every known selector encoding and boundary/truncation case.
-- Full scan of every vanilla room with exact expected totals.
-- Golden multi-state fixtures for shared and independent resources.
-- Unknown-selector test proving parsing stops rather than guesses.
-- Copy-on-write tests across states and across rooms.
+The completed existing-room milestone is covered by selector encoding/decoding, malformed-input,
+full-ROM inspection, copy-on-write, add/delete/reorder, simulator, graph-allocation, semantic
+round-trip, and instruction-level predicate/interpreter tests.
+
+The following remain acceptance requirements for their corresponding future features, not for the
+completed state editor:
+
 - V1 migration tests comparing old exported behavior with V2 output.
-- Add/delete/reorder tests with first-match semantics.
-- Allocation rollback tests for every constrained bank.
 - New-room round trip: model -> ROM -> parser -> equivalent model.
 - Emulator smoke tests for event, boss, equipment, incoming-door, and default branches.

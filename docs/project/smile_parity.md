@@ -1,6 +1,6 @@
 # SMEDIT vs SMILE — Complete Feature Parity Analysis
 
-**Date:** 2026-05-25 (updated)
+**Date:** 2026-09-20 (updated)
 **SMILE version analyzed:** SMILE RF (VB6, ~42 forms, last updated ~2009)
 **SMEDIT version analyzed:** Current main branch
 
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, authored state graphs, state-scoped room editing, and visual scroll-trigger editing. Important remaining architecture work includes explicit state-resource link controls, new-room creation, tileset composition, and ROM expansion.
+SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, completed existing-room state authoring, and visual scroll-trigger editing. Important remaining architecture work includes new-room creation, tileset composition, and managed ROM expansion. Explicit state-resource relinking and typed state-triggered actions are optional future extensions, not blockers for state editing.
 
 ---
 
@@ -44,6 +44,7 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 | **Boss defeated flags** | GUI toggles with ASM hook generation | Manual hex only |
 | **Door cloning** | Auto-detect direction from screen edge | Manual property entry |
 | **Space utilization** | Per-section byte counts for all room data | Level data overflow warning only |
+| **Stateful room authoring** | Add/duplicate/delete/reorder branches; typed and compound conditions; simulation; state-scoped content; safe graph relocation and export/reopen | State selection and editing without SMEDIT's compound-condition builder or simulator |
 
 ---
 
@@ -62,8 +63,8 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 | FX editing (16 types, liquid, blend) | Parity |
 | Tile graphics rendering (2bpp/4bpp) | Parity |
 | CRE tile handling | Parity |
-| Room state parsing (all 10 known condition types) | Parity |
-| Multi-state room inspection and switching | Strong partial: selector logic, preview, selected-state persistence, copy-on-write, and export work; state add/delete and arbitrary graph relocation remain. |
+| Room state parsing and condition authoring | Beyond parity: every verified vanilla selector plus SMEDIT-generated item, equipment, ammo/health, cross-area boss, and compound conditions |
+| Multi-state room inspection, switching, and authoring | Beyond parity: add/duplicate/delete/reorder, state-scoped persistence, safe copy-on-write, load simulation, selector relocation, and semantic export/reopen |
 | LoROM address conversion | Parity |
 | Pattern copy/paste | Parity (we have more built-ins) |
 | Room header editing (all 11 fields) | Parity |
@@ -81,11 +82,10 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 
 ## 3. REMAINING GAPS (SMILE features we still lack)
 
-### Critical
+### High Impact
 
 | Feature | SMILE | SMEDIT | Impact |
 |---------|-------|--------|--------|
-| **State-scoped room editing** | Selects and edits individual room states | Selected-state data persists/exports; branches can be added, duplicated, deleted, reordered, and assigned vanilla or generated typed conditions | Low-Medium — explicit resource link/unlink controls remain |
 | **Tileset/Metatile Composer** | Define 16x16 from 4 8x8 tiles with palette/flip/BTS | Can view/import/export tile sheets but no composition UI | High — needed for custom tilesets |
 
 ### Moderate

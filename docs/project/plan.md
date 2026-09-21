@@ -40,7 +40,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 14 | **Save Station Spawn Display** | ✅ Done | Read-only spawn X/Y/scroll in tile properties |
 | 15 | **Auto-Repointing Engine** | ✅ Done | Level data, PLMs, scroll data, door ASM — all auto-relocate |
 | 16 | **Room JSON Export** | ✅ Done | Self-contained room data with PNG/JSON dropdown |
-| 17 | **Multi-State Room Inspection** | 🟡 Partial | Ordered selector inspection and state preview exist. V1 persistence/export is room-scoped, not truly per-state. See `room_model_v2.md`. |
+| 17 | **Stateful Room Editing** | ✅ Done | Ordered inspection and preview; state-scoped persistence; add/duplicate/delete/reorder; typed and compound conditions; simulator; selector relocation; export/reopen round trips. See `room_model_v2.md`. |
 | 18 | **Door Cloning Tool** | ✅ Done | Auto-detect direction from screen edge |
 | 19 | **Space Utilization Monitor** | ✅ Done | Per-section byte counts in Room Info |
 | 20 | **Room Resize** | ✅ Done | Level data + scroll + door ASM remapping |
@@ -58,33 +58,36 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 1 | **Stateful Room Editing** | Medium | Ordered state graphs, compound predicates, and load simulation are implemented; finish explicit resource link controls, action authoring, and legacy behavioral migration. |
-| 2 | **New Room Creation** | Medium | Build on the same model; allocate room header in $8F, selectors/states, door table, level data, enemy/PLM/scroll pointers. |
-| 3 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
-| 4 | **ROM Expansion** | Medium | Extend beyond 3MB (HiROM) to eliminate free space constraints. |
-| 5 | **Room JSON Import** | Small | Export done; import should target native semantic rooms. |
+| 1 | **New Room Creation** | Medium | Build on the same model; allocate room header in $8F, selectors/states, door table, level data, enemy/PLM/scroll pointers. |
+| 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
+| 3 | **ROM Expansion** | Medium | Extend beyond the current safe allocation space without invalid mapper or pointer assumptions. |
+| 4 | **Room JSON Import** | Small | Export done; import should target native semantic rooms. |
 
 ### MEDIUM IMPACT
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 6 | **Palette Blending / FX Tint Editor** | Medium | SNES color math register editing for transparency/blending. |
-| 7 | **Layer 2/BG Scrolling Editor** | Medium | Parallax mode selector + BG pointer editing. |
-| 8 | **SMART XML Interop** | Medium | Export rooms in SMART XML format for Map Randomizer compatibility. |
-| 9 | **Validation Suite** | Medium | PLM scanner, door validator, item bitflag checker, GFX limit warnings. |
-| 10 | **Auto Item/Door ID Assignment** | Small | Scan rooms, deduplicate collection bits. |
-| 11 | **Room Graph Discovery** | Small | Trace door connections, find orphaned rooms. |
+| 5 | **Palette Blending / FX Tint Editor** | Medium | SNES color math register editing for transparency/blending. |
+| 6 | **Layer 2/BG Scrolling Editor** | Medium | Parallax mode selector + BG pointer editing. |
+| 7 | **SMART XML Interop** | Medium | Translate supported SMART project data into SMEDIT's native format at import time. |
+| 8 | **Validation Suite** | Medium | PLM scanner, door validator, item bitflag checker, GFX limit warnings. |
+| 9 | **Auto Item/Door ID Assignment** | Small | Scan rooms, deduplicate collection bits. |
+| 10 | **Room Graph Discovery** | Small | Trace door connections, find orphaned rooms. |
 
 ### LOWER IMPACT — Backlog
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 12 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
-| 13 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks with respawn toggles. |
-| 14 | **Hotkey Configuration** | Small | Custom keyboard shortcuts. |
-| 15 | **Samus Pose/Animation Editor** | Large | Per-equipment animation poses. |
-| 16 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
-| 17 | **Plugin System** | Large | Extensibility framework for custom tools. |
+| 11 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
+| 12 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks with respawn toggles. |
+| 13 | **Hotkey Configuration** | Small | Custom keyboard shortcuts. |
+| 14 | **Samus Pose/Animation Editor** | Large | Per-equipment animation poses. |
+| 15 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
+| 16 | **Plugin System** | Large | Extensibility framework for custom tools. |
+
+Advanced state-resource relinking, typed state-triggered actions, and automated migration of early
+development-only project behavior are deferred enhancements rather than blockers for the completed
+existing-room state editor.
 
 ---
 

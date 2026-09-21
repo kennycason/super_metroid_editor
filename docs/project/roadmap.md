@@ -3,7 +3,7 @@
 **See also:** `smile_parity.md` for complete SMILE vs SMEDIT feature comparison.
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model_v2.md` for the state model, migration, and delivery chunks.
-**Last updated:** 2026-09-16
+**Last updated:** 2026-09-20
 
 ---
 
@@ -24,7 +24,7 @@
 - Room Header Editor — All 11 fields writable, minimap links to Map tab
 - Room Resize — Level data + BTS + L2 resize with scroll/door ASM remapping
 - Room Shifting Tool — Selection + arrow keys, Ctrl for screen-step
-- Multi-State Room Editing — Ordered preview; add/duplicate/delete/reorder; state-scoped layouts, actors, objects, scrolls, music, tilesets, and FX; vanilla and generated equipment/capacity/item/boss conditions; relocatable selector-graph export
+- Stateful Room Editing — Ordered preview; add/duplicate/delete/reorder; state-scoped layouts, actors, objects, scrolls, music, tilesets, and FX; grouped vanilla/generated and compound conditions; load simulation; relocatable selector-graph export and semantic reopen
 - Layer 2 Editing — Embedded L2 paint/sample/resize plus room-map zoom shortcuts
 - Scroll Trigger PLM Editor — Visual screen grid for scroll commands
 - Door Cloning Tool — Auto-detect direction from screen edge
@@ -54,39 +54,41 @@
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 1 | **Stateful Room Editing** | Large | Selector relocation, state add/delete/reorder, compound predicates, and simulation are implemented; finish link controls, actions, and legacy-project materialization. |
-| 2 | **New Room Creation** | Medium | Build on the same room model so new headers, selectors, states, doors, and resources are allocated as one validated graph. |
-| 3 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
-| 4 | **Room JSON Import** | Small | Export done; import should create semantic rooms rather than address-keyed legacy deltas. |
-| 5 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
-| 6 | **SMART XML Interop** | Medium | Translate supported SMART project data into the native stateful model without making SMART XML an internal save format. |
+| 1 | **New Room Creation** | Medium | Build on the same room model so new headers, selectors, states, doors, and resources are allocated as one validated graph. |
+| 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
+| 3 | **Room JSON Import** | Small | Export done; import should create semantic rooms rather than address-keyed legacy deltas. |
+| 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
+| 5 | **SMART XML Interop** | Medium | Translate supported SMART project data into the native stateful model without making SMART XML an internal save format. |
 
 ### Tier 2: Medium Impact
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 7 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
-| 8 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
-| 9 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
-| 10 | **Validation Suite** | Medium | PLM index scanner, door validator, item bitflag checker, GFX limit warnings. |
-| 11 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
-| 12 | **Room Graph Discovery** | Small | Trace door connections from save stations, find orphaned/disconnected rooms. |
+| 6 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
+| 7 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
+| 8 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
+| 9 | **Validation Suite** | Medium | PLM index scanner, door validator, item bitflag checker, GFX limit warnings. |
+| 10 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
+| 11 | **Room Graph Discovery** | Small | Trace door connections from save stations, find orphaned/disconnected rooms. |
 
 ### Tier 3: Backlog
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 13 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
-| 14 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks that break together with respawn toggles. |
-| 15 | **Hotkey Configuration** | Small | Custom keyboard shortcut mapping. |
-| 16 | **Samus Pose/Animation Editor** | Large | Configure animation poses per equipment state. |
-| 17 | **Color Math Editor** | Medium | SNES Add/Subtract color math registers. |
-| 18 | **Plugin System** | Large | Extensibility framework for custom tool integration. |
+| 12 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
+| 13 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks that break together with respawn toggles. |
+| 14 | **Hotkey Configuration** | Small | Custom keyboard shortcut mapping. |
+| 15 | **Samus Pose/Animation Editor** | Large | Configure animation poses per equipment state. |
+| 16 | **Color Math Editor** | Medium | SNES Add/Subtract color math registers. |
+| 17 | **Plugin System** | Large | Extensibility framework for custom tool integration. |
 
 ---
 
 ## Shelved / Deferred
 
+- **Advanced state-resource relinking** — The completed editor uses safe copy-on-write for state-local edits. Explicit “link to another state” controls are deferred until a concrete workflow requires intentional re-sharing.
+- **State-triggered action authoring** — Conditions select content when a room loads. Typed actions that mutate events or flags during play belong to a separate future Logic & Triggers feature.
+- **Legacy behavioral materializer** — Current-format projects are supported; automated conversion of early development-only project behavior is deferred while there are no external consumers.
 - **Instant Respawn on Death** — Multiple patch attempts freeze after death animation. Needs deeper investigation.
 - **Death Counter** — SRAM persistence for tracking deaths. Low priority.
 - **Kill Count Editor** — Enemy kill count byte exposure. Low priority.

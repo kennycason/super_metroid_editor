@@ -78,6 +78,7 @@ Sound
 ## Features
 
 - **Room Editor** — Paint, fill, erase, and sample tiles with multi-tile brush support. Right-click any block to edit block type and BTS properties. Undo/redo with full history.
+- **Stateful Room Editor** — Inspect and author ordered `IF` / `ELSE IF` / `ELSE` room versions; edit state-scoped layouts, objects, enemies, scrolls, music, tilesets, and FX; build compound conditions; simulate first-match selection; and safely relocate/export changed state graphs.
 - **PLM Placement** — Place and remove doors, gates, items, save stations, refill stations, and other PLMs with correct IDs and parameters.
 - **Enemy Editor** — View, place, and edit enemy positions and properties per room.
 - **Tileset Browser** — Browse all 29 tilesets with palette visualization and per-tile defaults.
@@ -170,13 +171,11 @@ See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including 
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
-- Layer 3 visual preview (fog, rain, heat shimmer rendering)
-- Multi-state room editing (per-state enemies/PLMs/FX)
-- Room creation, resizing, and state management
-- Door expansion and new door connections
-- ROM expansion beyond 3MB to eliminate free space limits
-- Custom tileset importing and tile swapping
-- Sound editing / synth
+- New room creation and reciprocal-door/world-graph tooling
+- Tileset/metatile composition and richer custom tileset workflows
+- Room JSON import and SMART-to-SMEDIT translation
+- Managed ROM expansion and a shared ownership-aware allocator
+- Advanced Layer 2/background transfer workflows
 
 ## Contributing
 
