@@ -576,8 +576,8 @@ class EmulatorWorkspaceState(
             setStatus("No active session — start the emulator first")
             return
         }
-        if (item.bitMask == 0) {
-            setStatus("${item.name} has no item bit configured")
+        if (!item.inventoryTracked || item.bitMask == 0) {
+            setStatus("${item.name} is acquired in-game and has no inventory toggle")
             return
         }
         isBusy = true

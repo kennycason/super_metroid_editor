@@ -551,9 +551,13 @@ private fun CustomItemTile(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "bit 0x${item.bitMask.toString(16).uppercase().padStart(4, '0')}",
+                    text = if (item.inventoryTracked) {
+                        "bit 0x${item.bitMask.toString(16).uppercase().padStart(4, '0')}"
+                    } else {
+                        "runtime effect · no inventory bit"
+                    },
                     fontSize = fs.detail,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = if (item.inventoryTracked) FontFamily.Monospace else FontFamily.Default,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )

@@ -125,7 +125,7 @@ fun ItemTrackerPanel(
     val beams = snapshot?.collectedBeams ?: 0
     val customItemSprites = remember(customItems) {
         customItems
-            .filter { it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
+            .filter { it.inventoryTracked && it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
             .map { item -> CustomItemSpriteEntry(item, SpriteCoord(item.iconX, item.iconY), item.bitMask) }
     }
 

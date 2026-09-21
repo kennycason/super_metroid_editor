@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SmPatchSerializationTest {
     private val json = Json {
@@ -36,5 +37,26 @@ class SmPatchSerializationTest {
         )
 
         assertNull(decoded.exclusiveGroup)
+    }
+
+    @Test
+    fun `runtime effect custom items round trip without changing legacy inventory defaults`() {
+        val effectItem = CustomItemDef(
+            id = "hyper_beam",
+            name = "Hyper Beam",
+            shortLabel = "HB",
+            inventoryTracked = false,
+        )
+        val decodedEffect = json.decodeFromString(
+            CustomItemDef.serializer(),
+            json.encodeToString(CustomItemDef.serializer(), effectItem),
+        )
+        val decodedLegacy = json.decodeFromString(
+            CustomItemDef.serializer(),
+            """{"id":"legacy","name":"Legacy","shortLabel":"L"}""",
+        )
+
+        assertEquals(false, decodedEffect.inventoryTracked)
+        assertTrue(decodedLegacy.inventoryTracked)
     }
 }

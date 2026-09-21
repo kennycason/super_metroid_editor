@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.rom.LZ5Compressor
@@ -13,6 +14,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomAllocation
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomOverlapPolicy
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanException
@@ -426,6 +428,11 @@ internal class RomExporter(
                         kind = RomWriteKind.FIXED_PATCH,
                         expectedBefore = write.expectedBytes,
                         preconditionRecommended = patch.compatibleRomHashes.isEmpty(),
+                        overlapPolicy = if (patch.declaresSharedRomWrite(write)) {
+                            RomOverlapPolicy.ALLOW_IDENTICAL
+                        } else {
+                            RomOverlapPolicy.DENY
+                        },
                     )
                 }
                 onLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")

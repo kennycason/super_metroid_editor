@@ -7,6 +7,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
+import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
@@ -1837,6 +1838,11 @@ class SmeditBuildService(
                     kind = RomWriteKind.FIXED_PATCH,
                     expectedBefore = write.expectedBytes,
                     preconditionRecommended = patch.compatibleRomHashes.isEmpty(),
+                    overlapPolicy = if (patch.declaresSharedRomWrite(write)) {
+                        RomOverlapPolicy.ALLOW_IDENTICAL
+                    } else {
+                        RomOverlapPolicy.DENY
+                    },
                 )
             ) {
                 writes++

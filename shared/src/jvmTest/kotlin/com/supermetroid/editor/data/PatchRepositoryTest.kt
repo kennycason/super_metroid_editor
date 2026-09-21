@@ -231,6 +231,88 @@ class PatchRepositoryTest {
         )
     }
 
+    @Test
+    fun `hyper beam item uses native runtime state without an inventory bit`() {
+        val patch = assertNotNull(
+            PatchRepository.loadBundledPatches().firstOrNull { it.id == "bundled_hyper_beam_item" }
+        )
+        val item = patch.customItems.single()
+
+        assertEquals("Hyper Beam Item", patch.name)
+        assertEquals("hyper_beam_mode", patch.exclusiveGroup)
+        assertEquals("hyper_beam", item.id)
+        assertTrue(!item.inventoryTracked)
+        assertEquals(0, item.bitMask)
+        assertEquals(0xF300, item.visiblePlmId)
+        assertEquals(0xF304, item.chozoPlmId)
+        assertEquals(0xF308, item.hiddenPlmId)
+        assertEquals(80, item.iconX)
+        assertEquals(80, item.iconY)
+
+        val plms = assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x84, 0xF300) })
+        assertEquals(182, plms.bytes.size)
+        assertContentEquals(
+            listOf(0x64, 0xEE, 0x0C, 0xF3, 0x64, 0xEE, 0x3A, 0xF3, 0x8E, 0xEE, 0x75, 0xF3),
+            plms.bytes.take(12),
+        )
+
+        val pickup = assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x84, 0xF3C0) })
+        assertContentEquals(listOf(0xA9, 0x09, 0x10, 0x8D, 0xA6, 0x09), pickup.bytes.take(6))
+        assertTrue(pickup.bytes.containsSequence(listOf(0x22, 0x8D, 0xAC, 0x90)))
+        assertTrue(pickup.bytes.containsSequence(listOf(0xA0, 0xF0, 0xE1, 0x22, 0xE9, 0xC4, 0x8D)))
+        assertTrue(pickup.bytes.containsSequence(listOf(0xA9, 0x00, 0x80, 0x8D, 0x76, 0x0A)))
+        assertTrue(pickup.bytes.containsSequence(listOf(0xA9, 0x1F, 0x00, 0x22, 0x80, 0x80, 0x85)))
+        assertTrue(!pickup.bytes.containsSequence(listOf(0x8D, 0xA4, 0x09)))
+
+        val hook = assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x90, 0xAC8D) })
+        assertContentEquals(listOf(0x5C, 0x00, 0xF4, 0x84), hook.bytes)
+        val wrapper = assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x84, 0xF400) })
+        assertContentEquals(
+            listOf(0x08, 0x8B, 0xE2, 0x20, 0xA9, 0x90, 0x48, 0xAB, 0xC2, 0x30),
+            wrapper.bytes.take(10),
+        )
+        assertTrue(wrapper.bytes.containsSequence(listOf(0xAD, 0x98, 0x09, 0xC9, 0x06, 0x00)))
+        assertTrue(wrapper.bytes.containsSequence(listOf(0xAD, 0xA6, 0x09, 0xC9, 0x09, 0x10)))
+        assertTrue(wrapper.bytes.containsSequence(listOf(0xA9, 0x00, 0x80, 0x8D, 0x76, 0x0A)))
+        assertContentEquals(listOf(0x5C, 0x91, 0xAC, 0x90), wrapper.bytes.takeLast(4))
+
+        assertContentEquals(
+            listOf(0x02, 0x9C),
+            assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x85, 0x8251) }).bytes,
+        )
+        val messageTable = assertNotNull(
+            patch.writes.firstOrNull { it.offset == loromPc(0x85, 0x9C00) }
+        )
+        assertEquals(0xC0, messageTable.bytes.size)
+        assertContentEquals(
+            listOf(
+                0x36, 0x84, 0x89, 0x82, 0x00, 0x9D,
+                0x36, 0x84, 0x89, 0x82, 0x40, 0x9D,
+                0x36, 0x84, 0x89, 0x82, 0x80, 0x9D,
+            ),
+            messageTable.bytes.takeLast(18),
+        )
+        val message = assertNotNull(
+            patch.writes.firstOrNull { it.offset == loromPc(0x85, 0x9D40) }
+        )
+        assertEquals(0x40, message.bytes.size)
+        assertTrue(message.bytes.containsSequence(listOf(0xE7, 0x28, 0xF8, 0x28, 0xEF, 0x28)))
+
+        val graphics = assertNotNull(patch.writes.firstOrNull { it.offset == loromPc(0x89, 0xF100) })
+        assertEquals(0x100, graphics.bytes.size)
+        assertTrue(graphics.bytes.any { it != 0 })
+        assertTrue(patch.resources.any { it.namespace == "message_id" && it.start == 0x1F })
+        assertEquals(
+            4,
+            patch.resources.count {
+                it.namespace == "rom_hook" &&
+                    it.access == "shared" &&
+                    it.sharedGroup == "smedit_custom_item_messages_v1"
+            },
+        )
+        assertTrue(patch.resources.any { it.namespace == "plm_id" })
+    }
+
     private fun List<Int>.containsSequence(sequence: List<Int>): Boolean =
         windowed(sequence.size).any { it == sequence }
 

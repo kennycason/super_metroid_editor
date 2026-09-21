@@ -122,7 +122,8 @@ val HARDCODED_PATCHES: List<SmPatch> = listOf(
     SmPatch(id = "hex_hyper_beam", name = "Hyper Beam",
         description = "Start with Hyper Beam enabled (the rainbow beam from the Mother Brain fight).",
         enabled = false, writes = mutableListOf(),
-        configType = "hyper_beam"),
+        configType = "hyper_beam",
+        exclusiveGroup = "hyper_beam_mode"),
 
     // ── Popular / featured patches (sorted to top) ──
     SmPatch(id = "hex_higher_jump", name = "Higher Jump",

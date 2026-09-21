@@ -265,6 +265,23 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `start enabled and collectible hyper beam modes are mutually exclusive`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(
+                SmeditBuildRequest(
+                    patches = mapOf(
+                        "hyper_beam" to SmeditPatchRequest(),
+                        "hyper_beam_item" to SmeditPatchRequest(),
+                    )
+                )
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("mutually exclusive"))
+        assertTrue(error.message.orEmpty().contains("hyper_beam_mode"))
+    }
+
+    @Test
     fun `rom build rejects a fixed patch authored for a different base rom`() {
         val patch = SmPatch(
             id = "base-specific",
@@ -662,6 +679,52 @@ class SmeditBuildServiceTest {
         assertTrue(result.report.applied.any { it.identifier == "request_item_placements" })
         assertEquals(0xF700, result.romBytes.readWord(parser.snesToPc(0x90A353)))
         assertEquals(0xFF, result.romBytes[parser.snesToPc(0x90FFE3)].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `hyper beam item placement coexists with Spider Ball and owns its persistence hook`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+        val parser = RomParser(original)
+
+        val result = SmeditBuildService().build(
+            inputRom = original,
+            request = SmeditBuildRequest(
+                patches = mapOf(
+                    "hyper_beam_item" to SmeditPatchRequest(),
+                    "spider_ball" to SmeditPatchRequest(),
+                ),
+                items = listOf(
+                    SmeditItemPlacementRequest(
+                        item = "hyper_beam",
+                        roomId = 0x91F8,
+                        x = 84,
+                        y = 68,
+                    )
+                ),
+            ),
+        )
+
+        assertTrue(result.report.applied.any { it.identifier == "hyper_beam_item" })
+        assertTrue(result.report.applied.any { it.identifier == "spider_ball" })
+        assertTrue(result.report.applied.any { it.identifier == "request_item_placements" })
+        assertContentEquals(
+            listOf(0x5C, 0x00, 0xF4, 0x84),
+            result.romBytes.readBytes(parser.snesToPc(0x90AC8D), 4),
+        )
+        assertContentEquals(
+            listOf(0x08, 0x8B, 0xE2, 0x20, 0xA9, 0x90, 0x48, 0xAB, 0xC2, 0x30),
+            result.romBytes.readBytes(parser.snesToPc(0x84F400), 10),
+        )
+        assertEquals(0x9C02, result.romBytes.readWord(parser.snesToPc(0x858251)))
+        assertContentEquals(
+            listOf(0x36, 0x84, 0x89, 0x82, 0x40, 0x9D),
+            result.romBytes.readBytes(parser.snesToPc(0x859CB4), 6),
+        )
+        assertEquals(0xEE64, result.romBytes.readWord(parser.snesToPc(0x84F300)))
+        assertEquals(0xEE64, result.romBytes.readWord(parser.snesToPc(0x84F200)))
+        val owners = result.report.writePlan?.owners.orEmpty().map { it.owner }.toSet()
+        assertTrue("patch:bundled_hyper_beam_item" in owners)
+        assertTrue("patch:bundled_spider_ball" in owners)
     }
 
     @Test

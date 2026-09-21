@@ -485,7 +485,7 @@ private fun CustomItemsEditor(patch: SmPatch, editorState: EditorState) {
         ) {
             Text("Name", fontSize = 10.sp, modifier = Modifier.width(150.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Label", fontSize = 10.sp, modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Bit", fontSize = 10.sp, modifier = Modifier.width(72.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Inventory", fontSize = 10.sp, modifier = Modifier.width(72.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Icon X", fontSize = 10.sp, modifier = Modifier.width(50.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Icon Y", fontSize = 10.sp, modifier = Modifier.width(50.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -527,17 +527,26 @@ private fun CustomItemEditorRow(
                 editorState.updatePatchCustomItem(patch.id, item.id, shortLabel = labelText)
             },
         )
-        CompactPatchField(
-            value = bitText,
-            widthDp = 72,
-            onValueChange = {
-                bitText = it
-                parsePatchInt(it)?.let { parsed ->
-                    editorState.updatePatchCustomItem(patch.id, item.id, bitMask = parsed)
-                }
-            },
-            monospace = true,
-        )
+        if (item.inventoryTracked) {
+            CompactPatchField(
+                value = bitText,
+                widthDp = 72,
+                onValueChange = {
+                    bitText = it
+                    parsePatchInt(it)?.let { parsed ->
+                        editorState.updatePatchCustomItem(patch.id, item.id, bitMask = parsed)
+                    }
+                },
+                monospace = true,
+            )
+        } else {
+            Text(
+                "Runtime",
+                modifier = Modifier.width(72.dp).padding(horizontal = 6.dp),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         CompactPatchField(
             value = iconXText,
             widthDp = 50,

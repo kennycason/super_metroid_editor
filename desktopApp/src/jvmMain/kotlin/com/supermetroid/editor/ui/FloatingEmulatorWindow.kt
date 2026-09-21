@@ -844,7 +844,7 @@ private fun SaveSlotRow(
     }
     val customItemSprites = remember(customItems) {
         customItems
-            .filter { it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
+            .filter { it.inventoryTracked && it.itemWordAddress == 0x09A4 && it.bitMask != 0 }
             .map { item -> MiniItemEntry(MiniSpriteCoord(item.iconX, item.iconY), item.bitMask) }
     }
 

@@ -1677,6 +1677,12 @@ class EditorState {
                 ordered.add(def.copy(writes = def.writes.toMutableList()))
             } else {
                 project.patches.find { it.id == def.id }?.let { existing ->
+                    existing.name = def.name
+                    existing.description = def.description
+                    if (existing.exclusiveGroup != def.exclusiveGroup) {
+                        existing.exclusiveGroup = def.exclusiveGroup
+                        refreshed++
+                    }
                     val expectedByWrite = def.writes.associateBy { it.offset to it.bytes }
                     var expectedChanged = false
                     for (index in existing.writes.indices) {

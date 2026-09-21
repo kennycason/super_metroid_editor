@@ -109,6 +109,46 @@
         "label": "Spider Ball acquisition message"
       },
       {
+        "namespace": "rom_hook",
+        "start": 164433,
+        "endInclusive": 164434,
+        "label": "Shared custom-item message initial-draw table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164437,
+        "endInclusive": 164438,
+        "label": "Shared custom-item message setup table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164594,
+        "endInclusive": 164595,
+        "label": "Shared custom-item message tilemap pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164599,
+        "endInclusive": 164600,
+        "label": "Shared custom-item message length pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_region",
+        "start": 171008,
+        "endInclusive": 171199,
+        "label": "Shared custom-item message definition table",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
         "namespace": "plm_id",
         "start": 61952,
         "endInclusive": 61960,
@@ -174,6 +214,46 @@
         "label": "Spider Ball acquisition message"
       },
       {
+        "namespace": "rom_hook",
+        "start": 164433,
+        "endInclusive": 164434,
+        "label": "Shared custom-item message initial-draw table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164437,
+        "endInclusive": 164438,
+        "label": "Shared custom-item message setup table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164594,
+        "endInclusive": 164595,
+        "label": "Shared custom-item message tilemap pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164599,
+        "endInclusive": 164600,
+        "label": "Shared custom-item message length pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_region",
+        "start": 171008,
+        "endInclusive": 171199,
+        "label": "Shared custom-item message definition table",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
         "namespace": "plm_id",
         "start": 61952,
         "endInclusive": 61960,
@@ -207,6 +287,89 @@
         "visiblePlmId": 61952,
         "chozoPlmId": 61956,
         "hiddenPlmId": 61960
+      }
+    ]
+  },
+  {
+    "file": "hyper_beam_item.ips",
+    "name": "Hyper Beam Item",
+    "description": "Adds placeable visible, Chozo-orb, and hidden Hyper Beam pickups. Collection enables Super Metroid's native Hyper Beam without adding a Samus inventory bit or pause-menu entry; the native equipped-beam value keeps the effect across saves.",
+    "exclusiveGroup": "hyper_beam_mode",
+    "resources": [
+      {
+        "namespace": "rom_hook",
+        "start": 535693,
+        "endInclusive": 535696,
+        "label": "Native beam graphics refresh persistence hook"
+      },
+      {
+        "namespace": "message_id",
+        "start": 31,
+        "label": "Hyper Beam acquisition message"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164433,
+        "endInclusive": 164434,
+        "label": "Shared custom-item message initial-draw table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164437,
+        "endInclusive": 164438,
+        "label": "Shared custom-item message setup table pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164594,
+        "endInclusive": 164595,
+        "label": "Shared custom-item message tilemap pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_hook",
+        "start": 164599,
+        "endInclusive": 164600,
+        "label": "Shared custom-item message length pointer",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "rom_region",
+        "start": 171008,
+        "endInclusive": 171199,
+        "label": "Shared custom-item message definition table",
+        "access": "shared",
+        "sharedGroup": "smedit_custom_item_messages_v1"
+      },
+      {
+        "namespace": "plm_id",
+        "start": 62208,
+        "endInclusive": 62216,
+        "label": "Hyper Beam item PLMs"
+      }
+    ],
+    "customItems": [
+      {
+        "id": "hyper_beam",
+        "name": "Hyper Beam",
+        "shortLabel": "HB",
+        "description": "Native rainbow Hyper Beam runtime effect.",
+        "source": "patch",
+        "inventoryTracked": false,
+        "itemWordAddress": 0,
+        "bitMask": 0,
+        "iconX": 80,
+        "iconY": 80,
+        "category": "Beam",
+        "visiblePlmId": 62208,
+        "chozoPlmId": 62212,
+        "hiddenPlmId": 62216
       }
     ]
   },

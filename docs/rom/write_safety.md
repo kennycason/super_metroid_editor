@@ -191,6 +191,19 @@ spritemap footprints. Generation fails on a future overlap, and a bundled-patch
 test proves the IPS leaves Varia's `$B6:BC00-$BCFF` graphics untouched. An
 emulator equipment-state pass is still required for final visual confirmation.
 
+The Hyper Beam Item patch was also built as an independent custom-item owner.
+Its PLMs (`$F300/$F304/$F308`), bank `$89` graphics, bank `$84` routines, and
+beam-refresh hook do not overlap Spider Ball. A combined headless build places
+Hyper Beam while both patches are enabled and verifies both patch owners and
+the `$90:AC8D` persistence hook in the staged ROM. The two patches deliberately
+share byte-identical message-table lookup hooks and the relocated table at
+`$85:9C00`; Spider Ball owns message `$1E`/tilemap `$85:9D00`, while Hyper Beam
+owns message `$1F`/tilemap `$85:9D40`. Shared resource claims and the combined
+headless and desktop-export tests cover that cooperation explicitly. Both
+export paths use the same declared-shared-range rule: overlapping bytes are
+accepted only when both patches name the shared range and the bytes are
+identical; different payloads still fail safely.
+
 ## Required Metadata For New Patches
 
 Before a new fixed patch is treated as production-safe:

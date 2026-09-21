@@ -209,6 +209,7 @@ object SmeditPatchCatalog {
             enabled = false,
             writes = mutableListOf(),
             configType = HYPER_BEAM_CONFIG_TYPE,
+            exclusiveGroup = "hyper_beam_mode",
         ),
         SmPatch(
             id = "hex_higher_jump",

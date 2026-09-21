@@ -38,6 +38,7 @@ in the table below.
 | E-Tank Refill Full | (community)                                                  |
 | Energy Station Reserves | (community)                                                  |
 | Spider Ball | Kentroid                                                     |
+| Hyper Beam Item | SMEdit (native engine behavior traced from `sm_disassembly` and `snesrev/sm`) |
 | Aim Anything | (community)                                                  |
 | Complementary Suits | (community)                                                  |
 | Boss Defeated (Kraid, Phantoon, Draygon, Ridley, All) | SMEdit (based on MapRandomizer RAM/ROM docs)                 |

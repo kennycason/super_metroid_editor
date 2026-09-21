@@ -103,6 +103,20 @@ slightly lower click when Samus lands, hits a ceiling, or runs into a wall. It
 also closes the silent Wave/Hyper Beam gap while preserving their ability to
 pass through tiles; enemy hits and the original landing sounds remain intact.
 
+The bundled **Hyper Beam Item** patch adds a placeable native Hyper Beam pickup
+without adding a Samus inventory bit or pause-menu entry. A complete example
+enables the patch and places a visible pickup in Landing Site:
+
+```bash
+./gradlew -q :cli:runCli -Pargs="--rom '/path/to/rom/Super Metroid/Super Metroid (JU) [\!].smc' build --config ../examples/cli/hyper-beam-item.json --output ../build/hyper-beam-item.smc --patch ../build/hyper-beam-item.ips"
+```
+
+The patch key is `hyper_beam_item`; its placeable item key is `hyper_beam`.
+This differs from the existing `hyper_beam` patch key, which forces Hyper Beam
+on from the start instead of placing a collectible. See
+[`docs/project/hyper_beam_item.md`](../docs/project/hyper_beam_item.md) for the
+native state and save-persistence details.
+
 The configurable `zebes_escape_seconds` patch changes the end-game countdown
 after Mother Brain (vanilla: 180 seconds). The `short_charge_stages` patch
 accepts 0–4 charge stages (vanilla: 4); 0 activates blue speed as soon as Dash

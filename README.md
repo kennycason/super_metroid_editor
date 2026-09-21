@@ -214,6 +214,7 @@ Many built-in patches are sourced from or inspired by community work:
 - Respin (Kejardon, P.JBoy)
 - Fast Doors (NobodyNada)
 - Momentum Conservation (Scyzer, Nodever2, OmegaDragnet7)
+- Hyper Beam Item (SMEDIT; placeable native Hyper Beam pickup with no custom inventory bit)
 - Vanilla Bugfixes (total, PJBoy, strotlog, ouiche, Maddo, NobodyNada, Stag Shot)
 - Skip Intro / New Game (theonlydude - RandomMetroidSolver, maddo)
 

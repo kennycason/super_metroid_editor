@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "hyper_beam_item": {
+      "enabled": true
+    }
+  },
+  "items": [
+    {
+      "item": "hyper_beam",
+      "roomId": 37368,
+      "x": 84,
+      "y": 68,
+      "kind": "visible"
+    }
+  ]
+}

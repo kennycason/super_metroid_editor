@@ -392,8 +392,11 @@ data class PatchResourceClaim(
 )
 
 /**
- * Patch-declared item metadata. This lets IPS/config patches expose new
- * inventory bits to editor UI without adding them to the vanilla PLM catalog.
+ * Patch-declared placeable item metadata outside the vanilla PLM catalog.
+ * Most custom items also expose an inventory bit to the emulator UI. Runtime
+ * effect pickups such as Hyper Beam set [inventoryTracked] to false: they can
+ * still be placed and rendered, but do not pretend to own a Samus inventory
+ * bit or pause-menu entry.
  */
 @Serializable
 data class CustomItemDef(
@@ -402,6 +405,7 @@ data class CustomItemDef(
     var shortLabel: String,
     var description: String = "",
     var source: String = "patch",
+    var inventoryTracked: Boolean = true,
     var itemWordAddress: Int = 0x09A4,
     var bitMask: Int = 0,
     var iconX: Int = 0,
@@ -435,6 +439,25 @@ data class SmPatch(
     /** Optional variant family in which only one patch may be enabled. */
     var exclusiveGroup: String? = null,
 )
+
+private val SHARED_ROM_RESOURCE_NAMESPACES = setOf("rom_hook", "rom_region")
+
+/**
+ * Whether [write] is covered by an explicitly shared ROM-address claim.
+ * Callers may allow an overlap only when the other owner writes identical
+ * bytes; the shared claim alone never authorizes replacement bytes.
+ */
+fun SmPatch.declaresSharedRomWrite(write: PatchWrite): Boolean {
+    if (write.bytes.isEmpty()) return false
+    val writeStart = write.offset
+    val writeEnd = writeStart + write.bytes.size - 1L
+    return resources.any { resource ->
+        resource.access.equals("shared", ignoreCase = true) &&
+            resource.namespace in SHARED_ROM_RESOURCE_NAMESPACES &&
+            writeStart >= resource.start.toLong() &&
+            writeEnd <= resource.endInclusive.toLong()
+    }
+}
 
 /** Enabled patch variants that cannot safely coexist, grouped by family ID. */
 fun Iterable<SmPatch>.enabledPatchVariantConflicts(): Map<String, List<SmPatch>> =

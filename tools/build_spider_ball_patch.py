@@ -277,7 +277,12 @@ MESSAGE_BOX_TABLE_ORIGINAL_ENTRIES = 29
 MESSAGE_BOX_TABLE_RELOCATED = 0x9C00
 SPIDER_BALL_MESSAGE_ID = 0x1E
 SPIDER_BALL_MESSAGE_TILEMAP = 0x9D00
-SPIDER_BALL_MESSAGE_TILEMAP_END = SPIDER_BALL_MESSAGE_TILEMAP + 0x40
+# Custom item messages share one relocated table. Reserve the next slot for
+# Hyper Beam even when that patch is not enabled: a message entry only needs
+# the following pointer to determine its length, so Spider Ball remains fully
+# standalone while both patches can install byte-identical table hooks.
+HYPER_BEAM_MESSAGE_TILEMAP = 0x9D40
+CUSTOM_ITEM_MESSAGE_TILEMAP_END = 0x9D80
 
 # BG1 can address the pause sprite sheet as tiles $0200-$02FF. There is no
 # eight-tile contiguous hole that is unused by both the pause BG tilemaps and
@@ -1320,7 +1325,8 @@ def build_message_box_table(base: bytes) -> bytes:
         (
             original,
             message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP),
-            message_box_entry(SPIDER_BALL_MESSAGE_TILEMAP_END),
+            message_box_entry(HYPER_BEAM_MESSAGE_TILEMAP),
+            message_box_entry(CUSTOM_ITEM_MESSAGE_TILEMAP_END),
         )
     )
 

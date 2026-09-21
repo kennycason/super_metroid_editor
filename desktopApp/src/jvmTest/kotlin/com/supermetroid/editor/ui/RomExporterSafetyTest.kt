@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
@@ -7,6 +8,7 @@ import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.readU24
 import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -146,6 +148,35 @@ class RomExporterSafetyTest {
         assertNull(outputPath)
         assertTrue(statuses.lastOrNull().orEmpty().contains("unsupported field(s): power_beem_typo"))
         assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
+    @Test
+    fun `desktop export permits declared identical Hyper and Spider message infrastructure`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "shared-item-messages.smc")
+        input.writeBytes(original!!)
+        val patches = PatchRepository.loadBundledPatches().filter {
+            it.id == "bundled_hyper_beam_item" ||
+                it.id == "bundled_spider_ball_hold_aim_down"
+        }
+        assertEquals(2, patches.size)
+        val project = SmEditProject(romPath = input.absolutePath).also { project ->
+            project.patches.addAll(patches.onEach { it.enabled = true })
+        }
+
+        val outputPath = RomExporter(project, RomParser(original)).export()
+
+        assertNotNull(outputPath)
+        val exported = File(outputPath!!).readBytes()
+        assertArrayEquals(
+            byteArrayOf(0x02, 0x9C.toByte()),
+            exported.copyOfRange(0x28251, 0x28253),
+        )
+        assertArrayEquals(
+            byteArrayOf(0x36, 0x84.toByte(), 0x89.toByte(), 0x82.toByte(), 0x40, 0x9D.toByte()),
+            exported.copyOfRange(0x29CB4, 0x29CBA),
+        )
     }
 
     @Test
