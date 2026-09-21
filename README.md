@@ -91,7 +91,7 @@ Sound
 - **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
-- **SMART ROM Inspection** — Load and inspect SMART-generated expanded ROMs in read-only mode. Editing/export for SMART ROMs is planned but disabled until writes can be proven safe.
+- **Expanded ROM Inspection** — Discover and inspect rooms in supported expanded-ROM layouts in read-only mode. This has been tested with SMART-generated output; no SMART project data is loaded or stored.
 - **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
 
 ## Download
@@ -154,7 +154,9 @@ desktop editor can validate, repair, rank, preview, and apply its candidate bund
 
 ## Editing Approach
 
-SMEDIT uses **binary ROM patching with smart data relocation** - Similar to SMILE, but edits are stored as non-destructive deltas in a project file (`.smedit` JSON) against an immutable ROM, and applied at export time.
+SMEDIT uses **binary ROM patching with safe data relocation**. Edits are stored as native,
+non-destructive deltas in a `.smedit` JSON project against an immutable ROM and are applied at
+export time. `.smedit` is SMEDIT's own format; it is not a SMILE or SMART project wrapper.
 
 When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
 
@@ -162,7 +164,15 @@ This approach supports the vast majority of ROM hacking use cases. The main cons
 
 ### ROM Compatibility
 
-Vanilla-layout Super Metroid ROMs and SMILE-style 3 MiB ROM projects are editable. SMART-generated expanded ROMs can currently be opened for read-only inspection, including discovered rooms, rendered room data, pause-map data, text, sprites, and sound where SMEDIT can locate the relocated data. SMART editing/export is intentionally disabled for now because relocated data allocation and write-safety rules are still being hardened.
+Standard-layout 3 MiB Super Metroid ROMs are editable, including ROMs previously modified by tools
+that preserve that layout. Expanded or relocated ROMs can currently be opened for read-only
+inspection when discovery succeeds, including rooms, rendered room data, pause-map data, text,
+sprites, and sound where SMEDIT can locate them. Editing/export stays disabled because relocated
+allocation and write-safety rules are not yet proven. The discovered catalog is derived in memory
+from ROM bytes and is not serialized as foreign project metadata.
+
+See [docs/project/project_format.md](docs/project/project_format.md) for the native project boundary
+and [docs/project/room_model.md](docs/project/room_model.md) for the room/state model.
 
 See [docs/project/plan.md](docs/project/plan.md) for the full roadmap including planned support for new room creation and ROM expansion.
 
@@ -173,7 +183,7 @@ See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for
 Planned:
 - New room creation and reciprocal-door/world-graph tooling
 - Tileset/metatile composition and richer custom tileset workflows
-- Room JSON import and SMART-to-SMEDIT translation
+- Room JSON import and one-way SMART XML → native SMEDIT translation
 - Managed ROM expansion and a shared ownership-aware allocator
 - Advanced Layer 2/background transfer workflows
 

@@ -2518,7 +2518,7 @@ class EditorState {
 
     /**
      * Preview a different room state from its complete set of state-owned
-     * resources. V1 project edits are replayed because they are room-wide;
+     * resources. Common room edits are replayed because they apply to every state;
      * selecting a preview must not make already-saved edits disappear.
      */
     fun switchRoomState(stateIndex: Int, romParser: RomParser) {

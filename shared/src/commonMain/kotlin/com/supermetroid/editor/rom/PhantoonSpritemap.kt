@@ -132,7 +132,7 @@ class PhantoonSpritemap(private val romParser: RomParser) {
 
     private fun findRoomStateOffsets(): List<Int> {
         val catalog = romParser.roomCatalog
-        if (catalog.source != RomRoomCatalogSource.VANILLA) {
+        if (catalog.source != RomRoomCatalogSource.STANDARD_LAYOUT) {
             val catalogRoom = catalog.rooms.firstOrNull { room ->
                 room.handle == PHANTOON_ROOM_HANDLE ||
                     room.handle.startsWith("${PHANTOON_ROOM_HANDLE}_") ||

@@ -86,7 +86,8 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`project/plan.md`](project/plan.md)                 | SMILE feature parity gap analysis and implementation phases.                                      |
 | [`project/roadmap.md`](project/roadmap.md)           | Feature roadmap: boss/enemy stats editors, patches, sprite export, scroll editor, FX editor, etc. |
 | [`project/smile_parity.md`](project/smile_parity.md) | Complete SMILE vs SMEDIT feature comparison matrix with priority tiers and implementation notes.   |
-| [`project/room_model_v2.md`](project/room_model_v2.md) | Completed existing-room state-editor scope, verified runtime model, project schema, export invariants, and explicitly deferred extensions. |
+| [`project/room_model.md`](project/room_model.md) | Current room/state model, verified runtime behavior, export invariants, and explicitly deferred extensions. |
+| [`project/project_format.md`](project/project_format.md) | Native `.smedit` boundary, internal schema marker, ROM-compatibility separation, and foreign-import rules. |
 | [`project/codebase_notes.md`](project/codebase_notes.md) | Local repo/codebase map, current sound branch architecture notes, and piano-roll editor implementation notes. |
 | [`project/parity_hardening_backlog.md`](project/parity_hardening_backlog.md) | Current quality-first priority order, completed hardening, and remaining SMILE-parity risks. |
 
@@ -193,8 +194,8 @@ opaque ASM addresses.
 Existing-room state editing is considered feature complete as of 2026-09-20: users can inspect,
 preview, add, duplicate, delete, reorder, simulate, and export branches with state-scoped content and
 typed or compound conditions. Explicit resource re-linking, persistent-state action authoring,
-separate-background/custom-code authoring, legacy behavioral materialization, and entirely new rooms
-are separate future features documented in `docs/project/room_model_v2.md`.
+separate-background/custom-code authoring and entirely new rooms
+are separate future features documented in `docs/project/room_model.md`.
 
 ---
 

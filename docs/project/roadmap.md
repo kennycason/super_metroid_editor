@@ -2,7 +2,8 @@
 
 **See also:** `smile_parity.md` for complete SMILE vs SMEDIT feature comparison.
 **See also:** `plan.md` for detailed implementation notes per feature.
-**See also:** `room_model_v2.md` for the state model, migration, and delivery chunks.
+**See also:** `room_model.md` for the current state model and delivery chunks, and
+`project_format.md` for the native `.smedit` boundary.
 **Last updated:** 2026-09-20
 
 ---

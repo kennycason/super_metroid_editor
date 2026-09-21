@@ -12,19 +12,19 @@ class ProjectFileServiceTest {
     lateinit var tempDir: File
 
     @Test
-    fun `saving an upgraded project keeps one untouched legacy backup`() {
+    fun `saving an upgraded project keeps one untouched pre-upgrade backup`() {
         val projectFile = File(tempDir, "test.smedit")
-        val legacyText = """{"romPath":"base.smc","rooms":{}}"""
-        projectFile.writeText(legacyText)
+        val markerlessText = """{"romPath":"base.smc","rooms":{}}"""
+        projectFile.writeText(markerlessText)
         val project = ProjectFileService.loadProject(projectFile)
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, project.projectFormatVersion)
 
         assertTrue(
             ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {},
         )
-        val backup = File(tempDir, "test.smedit.format1.backup")
+        val backup = File(tempDir, "test.smedit.before-schema-upgrade.backup")
         assertTrue(backup.isFile)
-        assertEquals(legacyText, backup.readText())
+        assertEquals(markerlessText, backup.readText())
         assertEquals(
             SmEditProject.CURRENT_PROJECT_FORMAT_VERSION,
             ProjectFileService.loadProject(projectFile).projectFormatVersion,
@@ -37,4 +37,3 @@ class ProjectFileServiceTest {
         assertEquals("do not overwrite", backup.readText())
     }
 }
-

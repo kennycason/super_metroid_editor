@@ -4,7 +4,8 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 **See also:** `smile_parity.md` for the complete feature-by-feature comparison matrix.
 **See also:** `roadmap.md` for the prioritized feature list.
-**See also:** `room_model_v2.md` for the state model, migration, and delivery chunks.
+**See also:** `room_model.md` for the current state model and delivery chunks, and
+`project_format.md` for the native `.smedit` boundary.
 
 ---
 
@@ -40,7 +41,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 14 | **Save Station Spawn Display** | ✅ Done | Read-only spawn X/Y/scroll in tile properties |
 | 15 | **Auto-Repointing Engine** | ✅ Done | Level data, PLMs, scroll data, door ASM — all auto-relocate |
 | 16 | **Room JSON Export** | ✅ Done | Self-contained room data with PNG/JSON dropdown |
-| 17 | **Stateful Room Editing** | ✅ Done | Ordered inspection and preview; state-scoped persistence; add/duplicate/delete/reorder; typed and compound conditions; simulator; selector relocation; export/reopen round trips. See `room_model_v2.md`. |
+| 17 | **Stateful Room Editing** | ✅ Done | Ordered inspection and preview; state-scoped persistence; add/duplicate/delete/reorder; typed and compound conditions; simulator; selector relocation; export/reopen round trips. See `room_model.md`. |
 | 18 | **Door Cloning Tool** | ✅ Done | Auto-detect direction from screen edge |
 | 19 | **Space Utilization Monitor** | ✅ Done | Per-section byte counts in Room Info |
 | 20 | **Room Resize** | ✅ Done | Level data + scroll + door ASM remapping |

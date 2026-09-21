@@ -285,7 +285,7 @@ private fun GeneralSettingsTab(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Version", fontSize = currentFontSize.body, color = MaterialTheme.colorScheme.onSurface)
+            Text("ROM Build Version", fontSize = currentFontSize.body, color = MaterialTheme.colorScheme.onSurface)
             VersionDropdown(
                 value = editorState.project.versionMajor,
                 onValueChange = { editorState.project.versionMajor = it },

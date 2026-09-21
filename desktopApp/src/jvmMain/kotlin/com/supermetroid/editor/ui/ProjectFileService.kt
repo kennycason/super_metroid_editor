@@ -19,7 +19,11 @@ internal object ProjectFileService {
     }
 
     fun loadProject(file: File): SmEditProject =
-        SmEditProjectFormat.decode(json, file.readText())
+        SmEditProjectFormat.decode(json, file.readText()).also { project ->
+            // Markerless beta files use the same semantic model with defaulted fields.
+            // Normalize the in-memory project so its next save writes the current schema.
+            project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        }
 
     fun saveProject(
         project: SmEditProject,
@@ -39,10 +43,10 @@ internal object ProjectFileService {
                     SmEditProjectFormat.decode(json, projectFile.readText()).projectFormatVersion
                 }.getOrNull()
                 if (existingVersion != null && existingVersion < project.projectFormatVersion) {
-                    val backup = File(projectFile.parentFile, "${projectFile.name}.format$existingVersion.backup")
+                    val backup = File(projectFile.parentFile, "${projectFile.name}.before-schema-upgrade.backup")
                     if (!backup.exists()) {
                         projectFile.copyTo(backup, overwrite = false)
-                        onLog("Backed up format $existingVersion project: ${backup.absolutePath}")
+                        onLog("Backed up project before schema upgrade: ${backup.absolutePath}")
                     }
                 }
             }

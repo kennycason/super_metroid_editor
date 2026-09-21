@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.EditOperation
 import com.supermetroid.editor.data.EnemyChange
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.RoomStateEdits
@@ -20,6 +21,18 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ProjectRoomStatesTest {
+    @Test
+    fun `serialized and runtime condition enums stay synchronized`() {
+        assertEquals(
+            RoomStateConditionKind.entries.map { it.name },
+            ProjectRoomStateConditionKind.entries.map { it.name },
+        )
+        assertEquals(
+            RoomStateConditionArgumentKind.entries.map { it.name },
+            ProjectRoomStateConditionArgumentKind.entries.map { it.name },
+        )
+    }
+
     @Test
     fun `materialized state manifest has stable ids semantic conditions and resource links`() {
         val parser = TestRomHelper.loadRomParser() ?: return
@@ -89,14 +102,31 @@ class ProjectRoomStatesTest {
     }
 
     @Test
-    fun `missing schema marker is detected as legacy without changing new project defaults`() {
+    fun `markerless beta file is detected without changing new project defaults`() {
         val json = Json { ignoreUnknownKeys = true }
 
-        val legacy = SmEditProjectFormat.decode(json, """{"romPath":"base.smc","rooms":{}}""")
+        val markerless = SmEditProjectFormat.decode(json, """{"romPath":"base.smc","rooms":{}}""")
         val current = SmEditProject("base.smc")
 
-        assertEquals(SmEditProjectFormat.LEGACY_FORMAT_VERSION, legacy.projectFormatVersion)
+        assertEquals(SmEditProjectFormat.PRE_VERSIONED_FILE_FORMAT, markerless.projectFormatVersion)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, current.projectFormatVersion)
+    }
+
+    @Test
+    fun `project condition summaries use the shared semantic presentation`() {
+        val condition = projectRoomStateCondition(
+            ProjectRoomStateConditionKind.ALL_OF,
+            children = listOf(
+                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x0E),
+                projectRoomStateCondition(
+                    ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
+                    30,
+                    negated = true,
+                ),
+            ),
+        )
+
+        assertEquals("Zebes timebomb is set AND Current energy below 30", condition.displaySummary(area = 0))
     }
 
     @Test

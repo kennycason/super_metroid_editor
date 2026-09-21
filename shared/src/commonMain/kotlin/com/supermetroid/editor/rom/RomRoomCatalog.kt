@@ -6,7 +6,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.rom.RomConstants.ROM_SIZE
 
 enum class RomRoomCatalogSource {
-    VANILLA,
+    STANDARD_LAYOUT,
     DISCOVERED_BANK_8F,
     UNSUPPORTED,
 }
@@ -59,14 +59,14 @@ object RomRoomCatalogDetector {
         parser: RomParser,
         compatibility: RomCompatibility.Report = parser.compatibilityReport,
     ): RomRoomCatalog {
-        val vanillaRooms = RoomRepository().getAllRooms().sortedBy { it.getRoomIdAsInt() }
+        val standardRooms = RoomRepository().getAllRooms().sortedBy { it.getRoomIdAsInt() }
         if (compatibility.supportedForEditing) {
             return RomRoomCatalog(
-                source = RomRoomCatalogSource.VANILLA,
-                rooms = vanillaRooms,
+                source = RomRoomCatalogSource.STANDARD_LAYOUT,
+                rooms = standardRooms,
                 editable = true,
-                discoveredStateCount = vanillaRooms.size,
-                parsedLevelDataStateCount = vanillaRooms.size,
+                discoveredStateCount = standardRooms.size,
+                parsedLevelDataStateCount = standardRooms.size,
             )
         }
 
@@ -79,11 +79,11 @@ object RomRoomCatalogDetector {
             )
         }
 
-        val vanillaById = vanillaRooms.associateBy { it.getRoomIdAsInt() }
-        val vanillaByAreaIndex = buildVanillaAreaIndexLookup(vanillaRooms)
+        val standardById = standardRooms.associateBy { it.getRoomIdAsInt() }
+        val standardByAreaIndex = buildStandardAreaIndexLookup(standardRooms)
         val rooms = discovered.map { room ->
-            val exact = vanillaById[room.roomId]
-            val indexed = vanillaByAreaIndex[room.header.area to room.header.index]
+            val exact = standardById[room.roomId]
+            val indexed = standardByAreaIndex[room.header.area to room.header.index]
             val known = exact ?: indexed
             val id = hexRoomId(room.roomId)
             val handle = when {
@@ -118,11 +118,11 @@ object RomRoomCatalogDetector {
     private fun hexRoomId(roomId: Int): String =
         "0x${(roomId and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
 
-    private fun buildVanillaAreaIndexLookup(vanillaRooms: List<RoomInfo>): Map<Pair<Int, Int>, RoomInfo> {
-        val countersByArea = IntArray(7)
+    private fun buildStandardAreaIndexLookup(standardRooms: List<RoomInfo>): Map<Pair<Int, Int>, RoomInfo> {
+        val countersByArea = IntArray(RoomAreaCatalog.PAUSE_MAP_AREA_COUNT)
         val roomsBySlot = LinkedHashMap<Pair<Int, Int>, MutableList<RoomInfo>>()
-        for (room in vanillaRooms.sortedBy { it.getRoomIdAsInt() }) {
-            val area = vanillaAreaForRoomId(room.getRoomIdAsInt()) ?: continue
+        for (room in standardRooms.sortedBy { it.getRoomIdAsInt() }) {
+            val area = standardAreaForRoomId(room.getRoomIdAsInt()) ?: continue
             val slot = area to countersByArea[area]++
             roomsBySlot.getOrPut(slot) { mutableListOf() }.add(room)
         }
@@ -131,7 +131,7 @@ object RomRoomCatalogDetector {
         }.toMap()
     }
 
-    private fun vanillaAreaForRoomId(roomId: Int): Int? =
+    private fun standardAreaForRoomId(roomId: Int): Int? =
         when (roomId and 0xFFFF) {
             in 0x91F8 until 0x9AD9 -> 0
             in 0x9AD9 until 0xA75D -> 1

@@ -6,9 +6,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** Centralized project decoding so a missing schema marker is never mistaken for a new project. */
+/** Centralized decoding and compatibility checks for native `.smedit` project files. */
 object SmEditProjectFormat {
-    const val LEGACY_FORMAT_VERSION = 1
+    /** Markerless beta files predate explicit schema versioning but remain readable. */
+    const val PRE_VERSIONED_FILE_FORMAT = 1
 
     fun decode(json: Json, text: String): SmEditProject {
         val root = json.parseToJsonElement(text).jsonObject
@@ -16,10 +17,15 @@ object SmEditProjectFormat {
         project.projectFormatVersion = root["projectFormatVersion"]
             ?.jsonPrimitive
             ?.intOrNull
-            ?: LEGACY_FORMAT_VERSION
-        require(project.projectFormatVersion in LEGACY_FORMAT_VERSION..SmEditProject.CURRENT_PROJECT_FORMAT_VERSION) {
-            "Project format ${project.projectFormatVersion} is newer than this version of SMEDIT supports " +
-                "(${SmEditProject.CURRENT_PROJECT_FORMAT_VERSION})"
+            ?: PRE_VERSIONED_FILE_FORMAT
+        require(project.projectFormatVersion in PRE_VERSIONED_FILE_FORMAT..SmEditProject.CURRENT_PROJECT_FORMAT_VERSION) {
+            val relation = if (project.projectFormatVersion > SmEditProject.CURRENT_PROJECT_FORMAT_VERSION) {
+                "newer than"
+            } else {
+                "older than"
+            }
+            "Project schema ${project.projectFormatVersion} is $relation this version of SMEDIT supports " +
+                "(${PRE_VERSIONED_FILE_FORMAT}..${SmEditProject.CURRENT_PROJECT_FORMAT_VERSION})"
         }
         return project
     }

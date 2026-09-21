@@ -42,18 +42,18 @@ footprint requires relocating to free space within the same bank.
 
 ## Supported ROM Layouts
 
-SMEDIT's editable ROM path currently supports vanilla-layout Super Metroid ROMs:
+SMEDIT's editable ROM path currently supports the standard 3 MiB Super Metroid layout:
 
 | Layout | Size | Editing |
 |--------|------|---------|
-| Headerless LoROM | `0x300000` bytes | Supported |
-| 512-byte SMC header + LoROM | `0x300200` bytes | Supported |
+| Standard map, headerless LoROM | `0x300000` bytes | Supported |
+| Standard map, 512-byte SMC header + LoROM | `0x300200` bytes | Supported |
 | Expanded LoROM | e.g. `0x310000`, `0x400000` | Read-only inspection when room discovery succeeds |
 
-Expanded hacks can be valid in-game, especially SMART/SMILE-family hacks that
-relocate room headers, state data, or compressed level data into extra banks.
-SMEDIT rejects those as editable because the writer/exporter still assumes the
-vanilla room map and vanilla-style free-space model. Loading a relocated ROM as
+Expanded hacks can be valid in-game and may relocate room headers, state data,
+or compressed level data into extra banks. SMEDIT rejects those as editable
+because the writer/exporter still assumes the standard room map and bank-local
+free-space model. Loading a relocated ROM as
 if it were safely editable can corrupt room data on export.
 
 When an expanded ROM is selected, SMEDIT runs a compatibility scan and then tries
@@ -64,7 +64,7 @@ the ROM without writing changes. Room rendering still uses the normal SMEDIT
 renderer. Expanded ROM support adds adapters that discover ROM-specific room and
 tileset pointer catalogs, then feed the resolved room headers, level data,
 tileset tables, graphics, and palettes through the same pipeline used for
-vanilla ROMs. If discovery fails, SMEDIT reports the compatibility details and
+standard-layout ROMs. If discovery fails, SMEDIT reports the compatibility details and
 does not load the ROM.
 
 Read-only mode intentionally disables project save/export and editor tabs that

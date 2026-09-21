@@ -14,8 +14,8 @@ package com.supermetroid.editor.rom
  *   Crateria=$1A9000, Brinstar=$1A8000, Norfair=$1AA000,
  *   Wrecked Ship=$1AB000, Maridia=$1AC000, Tourian=$1AD000, Ceres=$1AE000
  *
- * SMART-built expanded ROMs may relocate the same two-half map layout near
- * the end of the ROM; RomParser detects that before falling back to vanilla.
+ * Some expanded ROM layouts relocate the same two-half map layout near the
+ * end of the ROM; RomParser detects that before falling back to the standard layout.
  */
 data class MinimapData(
     val area: Int,
@@ -87,12 +87,10 @@ data class MinimapData(
 
         const val MAP_STATION_DATA_SIZE = 0x100  // 256 bytes per area
 
-        const val NUM_AREAS = 7
+        const val NUM_AREAS = RoomAreaCatalog.PAUSE_MAP_AREA_COUNT
 
-        val AREA_NAMES = arrayOf(
-            "Crateria", "Brinstar", "Norfair", "Wrecked Ship",
-            "Maridia", "Tourian", "Ceres"
-        )
+        /** Kept here as a convenience for map code; the canonical catalog is [RoomAreaCatalog]. */
+        val AREA_NAMES: List<String> = RoomAreaCatalog.pauseMapNames
 
         // Tile word bit masks
         const val TILE_INDEX_MASK = 0x03FF

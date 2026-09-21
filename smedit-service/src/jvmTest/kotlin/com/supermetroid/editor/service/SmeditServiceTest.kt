@@ -167,7 +167,7 @@ class SmeditServiceTest {
             setBody(
                 json.encodeToString(
                     SmeditServiceRomMetadataRequest(
-                        romBase64 = Base64.getEncoder().encodeToString(ByteArray(RomConstants.ROM_SIZE)),
+                        romBase64 = Base64.getEncoder().encodeToString(standardLayoutRom()),
                     )
                 )
             )
@@ -214,7 +214,7 @@ class SmeditServiceTest {
             smeditServiceModule()
         }
 
-        val rom = ByteArray(0x300000)
+        val rom = standardLayoutRom()
         val colors = IntArray(SpritePalettes.BEAM_STANDARD.colorCount) { index -> if (index == 0) 0 else 0x03E0 }
         SpritePalettes.colorsToBytes(colors).copyInto(rom, SpritePalettes.BEAM_STANDARD.offset)
         val request = patchRequest(
@@ -580,7 +580,7 @@ class SmeditServiceTest {
         build: SmeditBuildRequest,
         randomize: SmeditRandomizationRequest = SmeditRandomizationRequest(),
         generator: SmeditGeneratorRequest = SmeditGeneratorRequest(),
-        romBytes: ByteArray = ByteArray(0x300000),
+        romBytes: ByteArray = standardLayoutRom(),
     ): SmeditServicePatchRequest =
         SmeditServicePatchRequest(
             romBase64 = Base64.getEncoder().encodeToString(romBytes),
@@ -590,7 +590,7 @@ class SmeditServiceTest {
         )
 
     private fun multipartPatchBody(
-        romBytes: ByteArray? = ByteArray(0x300000),
+        romBytes: ByteArray? = standardLayoutRom(),
         build: SmeditBuildRequest = SmeditBuildRequest(),
         randomize: SmeditRandomizationRequest? = null,
         generator: SmeditGeneratorRequest? = null,
@@ -631,7 +631,22 @@ class SmeditServiceTest {
     }
 
     private fun higherJumpBaseRom(): ByteArray =
-        ByteArray(RomConstants.ROM_SIZE).also { it[0x81EB9] = 0x04 }
+        standardLayoutRom().also { it[0x81EB9] = 0x04 }
+
+    private fun standardLayoutRom(): ByteArray =
+        ByteArray(RomConstants.ROM_SIZE).also { rom ->
+            val header = 0x7FC0
+            "Super Metroid        ".encodeToByteArray().copyInto(rom, header)
+            rom[header + 0x15] = 0x30
+            for (roomInfo in RoomRepository().getAllRooms()) {
+                val roomPc = 0x78000 + (roomInfo.getRoomIdAsInt() and 0x7FFF)
+                rom[roomPc + 4] = 1
+                rom[roomPc + 5] = 1
+                rom[roomPc + 6] = 0x70
+                rom[roomPc + 7] = 0xA0.toByte()
+                write16(rom, roomPc + 11, 0xE5E6)
+            }
+        }
 
     private fun expandedReadableRom(): ByteArray =
         ByteArray(0x400000) { 0xFF.toByte() }.also { rom ->

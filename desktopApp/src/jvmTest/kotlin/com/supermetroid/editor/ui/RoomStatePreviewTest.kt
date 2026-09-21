@@ -212,7 +212,7 @@ class RoomStatePreviewTest {
     }
 
     @Test
-    fun `preview replays existing V1 room-wide edits without recording a new edit`() {
+    fun `preview replays existing common room edits without recording a new edit`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val roomId = 0xCD13
         val room = parser.readRoomHeader(roomId) ?: return

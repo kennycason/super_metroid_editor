@@ -108,7 +108,7 @@ object SmEditRoomStatePredicateFormat {
             emit(0xFA) // PLX; this changes N/Z, so mask afterward
             emit(0x2D, 0xE7, 0x05) // AND $05E7 and restore the tested N/Z result
         } else {
-            // V1 ordering is retained only so ROMs exported by the first release remain readable.
+            // Predicate ABI format 01 ordering remains readable for early exported ROMs.
             emit(0x2D, 0xE7, 0x05)
             emit(0xFA)
         }

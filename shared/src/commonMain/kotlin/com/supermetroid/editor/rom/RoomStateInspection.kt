@@ -95,7 +95,8 @@ data class RoomStateCondition(
             if (negated) "Not entered through door \$${hex(argument, 4)}"
             else "Entered through door \$${hex(argument, 4)}"
         RoomStateConditionKind.AREA_MAIN_BOSS_DEAD ->
-            if (negated) "${areaName(area)} main boss not defeated" else "${areaName(area)} main boss defeated"
+            if (negated) "${RoomAreaCatalog.name(area)} main boss not defeated"
+            else "${RoomAreaCatalog.name(area)} main boss defeated"
         RoomStateConditionKind.NEVER -> if (negated) "Always" else "Never"
         RoomStateConditionKind.EVENT_SET -> {
             val event = EVENT_NAMES[argument ?: 0]
@@ -109,7 +110,7 @@ data class RoomStateCondition(
         }
         RoomStateConditionKind.AREA_BOSS_BIT_SET -> {
             val boss = BOSS_NAMES[area to (argument ?: 0)]
-                ?: "${areaName(area)} boss bit \$${hex(argument, 2)}"
+                ?: "${RoomAreaCatalog.name(area)} boss bit \$${hex(argument, 2)}"
             if (negated) "$boss not defeated" else "$boss defeated"
         }
         RoomStateConditionKind.MORPH_BALL_COLLECTED ->
@@ -135,7 +136,8 @@ data class RoomStateCondition(
             val packed = argument ?: 0
             val bossArea = (packed ushr 8) and 0xFF
             val mask = packed and 0xFF
-            val name = BOSS_NAMES[bossArea to mask] ?: "${areaName(bossArea)} boss bit \$${hex(mask, 2)}"
+            val name = BOSS_NAMES[bossArea to mask]
+                ?: "${RoomAreaCatalog.name(bossArea)} boss bit \$${hex(mask, 2)}"
             if (negated) "$name not defeated" else "$name defeated"
         }
         RoomStateConditionKind.EQUIPMENT_EQUIPPED ->
@@ -174,7 +176,7 @@ data class RoomStateCondition(
         RoomStateConditionKind.AREA_BOSS_BIT_SET -> {
             val mask = argument ?: 0
             val name = BOSS_NAMES[area to mask]
-            val subject = name ?: "Boss bit \$${hex(mask, 2)} for ${areaName(area)}"
+            val subject = name ?: "Boss bit \$${hex(mask, 2)} for ${RoomAreaCatalog.name(area)}"
             if (negated) "$subject is not defeated" else "$subject is defeated"
         }
         RoomStateConditionKind.MORPH_BALL_COLLECTED,
@@ -288,19 +290,6 @@ data class RoomStateCondition(
             0x0008 to "Plasma Beam",
             0x1000 to "Charge Beam",
         )
-
-        private val AREA_NAMES = listOf(
-            "Crateria",
-            "Brinstar",
-            "Norfair",
-            "Wrecked Ship",
-            "Maridia",
-            "Tourian",
-            "Ceres",
-            "Debug/Unused",
-        )
-
-        private fun areaName(area: Int): String = AREA_NAMES.getOrNull(area) ?: "area $area"
 
         private fun hex(value: Int?, digits: Int): String =
             (value ?: 0).toString(16).uppercase().padStart(digits, '0')

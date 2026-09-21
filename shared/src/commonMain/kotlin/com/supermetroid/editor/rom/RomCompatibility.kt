@@ -18,8 +18,8 @@ object RomCompatibility {
         val expandedBytes: Int,
         val expandedFfPercent: Int?,
         val expandedZeroPercent: Int?,
-        val vanillaRoomHeadersParsed: Int,
-        val vanillaRoomHeadersTotal: Int,
+        val standardRoomHeadersParsed: Int,
+        val standardRoomHeadersExpected: Int,
         val candidateRoomHeadersInBank8F: Int,
         val candidateExpandedLevelPointers: Int,
     ) {
@@ -32,7 +32,7 @@ object RomCompatibility {
                     appendLine("File: $fileName")
                 }
                 appendLine(
-                    "SMEDIT currently supports vanilla-layout Super Metroid ROMs: " +
+                    "SMEDIT currently supports standard-layout Super Metroid ROMs: " +
                         "3.00 MiB headerless (0x300000) or 3.00 MiB with a 512-byte SMC copier header."
                 )
                 appendLine(
@@ -57,9 +57,9 @@ object RomCompatibility {
                     )
                 }
 
-                if (vanillaRoomHeadersTotal > 0) {
+                if (standardRoomHeadersExpected > 0) {
                     appendLine(
-                        "Vanilla room map: $vanillaRoomHeadersParsed/$vanillaRoomHeadersTotal known SMEDIT room headers parse at their expected offsets."
+                        "Standard room map: $standardRoomHeadersParsed/$standardRoomHeadersExpected known room headers parse at their expected offsets."
                     )
                 }
                 appendLine(
@@ -68,7 +68,7 @@ object RomCompatibility {
                 )
                 appendLine(
                     "Why editing is disabled: expanded or relocated room data can be valid in-game, " +
-                        "but SMEDIT's editor/export pipeline assumes the vanilla room map. Loading it as editable could corrupt the hack."
+                        "but SMEDIT's editor/export pipeline assumes the standard room map. Loading it as editable could corrupt the hack."
                 )
             }.trim()
     }
@@ -85,6 +85,8 @@ object RomCompatibility {
         val complement: Int,
         val checksumValid: Boolean,
     ) {
+        val isLoRom: Boolean get() = (mapMode and 0xEF) in setOf(0x20, 0x30)
+
         val mapModeLabel: String
             get() = when (mapMode and 0xEF) {
                 0x20, 0x30 -> "LoROM"
@@ -111,18 +113,23 @@ object RomCompatibility {
             romData.countBytes(expandedRange, 0x00) * 100 / size
         }
         val roomStats = scanRoomCompatibility(romData)
+        val snesHeader = readLoRomHeader(romData, smcHeaderOffset)
+        val hasCompleteStandardRoomMap = roomStats.standardExpected > 0 &&
+            roomStats.standardParsed == roomStats.standardExpected
 
         return Report(
             fileSize = romData.size,
             smcHeaderOffset = smcHeaderOffset,
             headerlessSize = headerlessSize,
-            supportedForEditing = headerlessSize == ROM_SIZE,
-            snesHeader = readLoRomHeader(romData, smcHeaderOffset),
+            supportedForEditing = headerlessSize == ROM_SIZE &&
+                snesHeader?.isLoRom == true &&
+                hasCompleteStandardRoomMap,
+            snesHeader = snesHeader,
             expandedBytes = expandedBytes,
             expandedFfPercent = expandedFfPercent,
             expandedZeroPercent = expandedZeroPercent,
-            vanillaRoomHeadersParsed = roomStats.vanillaParsed,
-            vanillaRoomHeadersTotal = roomStats.vanillaTotal,
+            standardRoomHeadersParsed = roomStats.standardParsed,
+            standardRoomHeadersExpected = roomStats.standardExpected,
             candidateRoomHeadersInBank8F = roomStats.candidateHeaders,
             candidateExpandedLevelPointers = roomStats.expandedLevelPointers,
         )
@@ -157,14 +164,14 @@ object RomCompatibility {
     private fun scanRoomCompatibility(romData: ByteArray): RoomStats {
         val roomInfos = runCatching { RoomRepository().getAllRooms() }.getOrDefault(emptyList())
         val parser = RomParser(romData)
-        val vanillaParsed = roomInfos.count { roomInfo ->
+        val standardParsed = roomInfos.count { roomInfo ->
             runCatching { parser.readRoomHeader(roomInfo.getRoomIdAsInt()) != null }.getOrDefault(false)
         }
         val discovered = RomRoomScanner.discover(parser, validateLevelData = false)
 
         return RoomStats(
-            vanillaParsed = vanillaParsed,
-            vanillaTotal = roomInfos.size,
+            standardParsed = standardParsed,
+            standardExpected = roomInfos.size,
             candidateHeaders = discovered.size,
             expandedLevelPointers = discovered.sumOf { it.expandedLevelPointerCount },
         )
@@ -203,8 +210,8 @@ object RomCompatibility {
         "0x${(value and 0xFF).toString(16).uppercase().padStart(2, '0')}"
 
     private data class RoomStats(
-        val vanillaParsed: Int,
-        val vanillaTotal: Int,
+        val standardParsed: Int,
+        val standardExpected: Int,
         val candidateHeaders: Int,
         val expandedLevelPointers: Int,
     )

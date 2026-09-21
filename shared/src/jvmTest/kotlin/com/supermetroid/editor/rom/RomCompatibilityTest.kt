@@ -1,6 +1,7 @@
 package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.Room
+import com.supermetroid.editor.data.RoomRepository
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -12,8 +13,9 @@ import kotlin.test.assertFailsWith
 
 class RomCompatibilityTest {
     @Test
-    fun `vanilla sized rom is supported for editing`() {
+    fun `standard three megabyte rom is supported for editing`() {
         val rom = syntheticRom(0x300000)
+        writeStandardRoomMap(rom)
 
         val report = RomCompatibility.analyze(rom)
 
@@ -21,6 +23,15 @@ class RomCompatibilityTest {
         assertEquals(0x300000, report.headerlessSize)
         assertNotNull(report.snesHeader)
         assertTrue(report.snesHeader!!.checksumValid)
+    }
+
+    @Test
+    fun `three megabyte lookalike without the standard room map is inspection only`() {
+        val report = RomCompatibility.analyze(syntheticRom(0x300000))
+
+        assertFalse(report.supportedForEditing)
+        assertNotNull(report.snesHeader)
+        assertEquals(0, report.standardRoomHeadersParsed)
     }
 
     @Test
@@ -38,7 +49,7 @@ class RomCompatibilityTest {
         assertContains(message, "Unsupported ROM layout")
         assertContains(message, "editing disabled")
         assertContains(message, "Expanded data")
-        assertContains(message, "vanilla room map")
+        assertContains(message, "standard room map")
     }
 
     @Test
@@ -73,6 +84,17 @@ class RomCompatibilityTest {
 
         assertEquals(0xE18000, room.levelDataPtr)
         assertEquals(2, room.tileset)
+    }
+
+    @Test
+    fun `expanded rom minimap layout is inspection only`() {
+        val parser = RomParser(syntheticRom(0x400000))
+
+        val error = assertFailsWith<IllegalArgumentException> {
+            parser.writeMinimapTiles(MinimapData.empty(area = 0))
+        }
+
+        assertContains(error.message.orEmpty(), "standard ROM layout")
     }
 
     @Test
@@ -252,7 +274,7 @@ class RomCompatibilityTest {
     }
 
     @Test
-    fun `expanded rom fixture reads smart minimap text and music layouts`() {
+    fun `expanded rom fixture reads relocated minimap text and music layouts`() {
         val path = System.getProperty("smedit.expandedRomFixture").orEmpty()
         if (path.isBlank()) return
         val parser = RomParser.loadRom(path)
@@ -278,13 +300,13 @@ class RomCompatibilityTest {
             text.first { it.id == "ceres_escape" }.text,
         )
         val intro = text.filter { it.category == TextCategory.INTRO_STORY }
-        assertEquals(6, intro.size, "SMART intro story should parse from relocated green-text records")
-        assertTrue(intro.none { it.text.contains("?") }, "SMART intro story should not contain unknown glyphs")
+        assertEquals(6, intro.size, "Expanded intro story should parse from relocated green-text records")
+        assertTrue(intro.none { it.text.contains("?") }, "Expanded intro story should not contain unknown glyphs")
         assertTrue(intro[0].text.startsWith("I FIRST BATTLED"), "Intro part 1 should decode from relocated records")
         assertTrue(intro[5].text.contains("ATTACK"), "Intro part 6 should decode from relocated records")
 
         val titleBlocks = SpcData.findSongSetTransferData(parser, 0x03)
-        assertTrue(titleBlocks.isNotEmpty(), "Title song set should parse from relocated SMART table")
+        assertTrue(titleBlocks.isNotEmpty(), "Title song set should parse from the relocated table")
         assertEquals(0x40, titleBlocks.first().data.size)
         assertEquals(0x6D60, titleBlocks.first().destAddr)
     }
@@ -319,7 +341,7 @@ class RomCompatibilityTest {
             }
 
             assertContains(error.message.orEmpty(), "Unsupported ROM layout")
-            assertContains(error.message.orEmpty(), "SMEDIT currently supports vanilla-layout")
+            assertContains(error.message.orEmpty(), "SMEDIT currently supports standard-layout")
             assertContains(error.message.orEmpty(), file.name)
         } finally {
             file.delete()
@@ -341,6 +363,24 @@ class RomCompatibilityTest {
         rom[offset + 0x1B] = 0x00
         write16(rom, offset + 0x1C, 0x353B)
         write16(rom, offset + 0x1E, 0xCAC4)
+    }
+
+    private fun writeStandardRoomMap(rom: ByteArray) {
+        for (roomInfo in RoomRepository().getAllRooms()) {
+            val roomPc = 0x78000 + (roomInfo.getRoomIdAsInt() and 0x7FFF)
+            rom[roomPc] = 0
+            rom[roomPc + 1] = 0
+            rom[roomPc + 2] = 0
+            rom[roomPc + 3] = 0
+            rom[roomPc + 4] = 1
+            rom[roomPc + 5] = 1
+            rom[roomPc + 6] = 0x70
+            rom[roomPc + 7] = 0xA0.toByte()
+            rom[roomPc + 8] = 0
+            write16(rom, roomPc + 9, 0)
+            write16(rom, roomPc + 11, 0xE5E6)
+            for (offset in roomPc + 13 until roomPc + 39) rom[offset] = 0
+        }
     }
 
     private fun writeCandidateRoomHeaderWithExpandedLevelData(rom: ByteArray) {

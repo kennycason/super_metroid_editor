@@ -69,6 +69,25 @@ fun RoomEdits.stateEditsForId(stateId: String?): RoomStateEdits? =
 
 fun RoomStateEdits.baseSourceStateIndex(): Int? = sourceStateIndex ?: templateSourceStateIndex
 
+/**
+ * Human-readable condition summary shared by the editor, diagnostics, and any
+ * future non-Compose client. Keeping this beside the semantic model prevents
+ * each view from maintaining its own condition-name switch.
+ */
+fun ProjectRoomStateCondition.displaySummary(area: Int): String =
+    asRuntimeCondition().shortSummary(area)
+
+private fun ProjectRoomStateCondition.asRuntimeCondition(): RoomStateCondition =
+    RoomStateCondition(
+        code = routineCode,
+        kind = RoomStateConditionKind.valueOf(kind.name),
+        argumentKind = RoomStateConditionArgumentKind.valueOf(argumentKind.name),
+        argument = argument,
+        entrySizeBytes = 0,
+        negated = negated,
+        children = children.map { it.asRuntimeCondition() },
+    )
+
 fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
     ProjectRoomStateConditionKind.ALL_OF,
     ProjectRoomStateConditionKind.ANY_OF,
@@ -111,7 +130,7 @@ fun ProjectRoomStateConditionKind.isSmEditGeneratedPredicate(): Boolean = when (
     else -> false
 }
 
-/** True when this condition uses the postfix expression interpreter rather than a vanilla/V1 selector. */
+/** True when this condition uses SMEDIT's postfix expression interpreter rather than a fixed-width selector. */
 fun ProjectRoomStateCondition.requiresCompiledExpression(): Boolean =
     kind in setOf(
         ProjectRoomStateConditionKind.ALL_OF,
