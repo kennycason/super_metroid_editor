@@ -90,6 +90,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`project/project_format.md`](project/project_format.md) | Native `.smedit` boundary, internal schema marker, ROM-compatibility separation, and foreign-import rules. |
 | [`project/codebase_notes.md`](project/codebase_notes.md) | Local repo/codebase map, current sound branch architecture notes, and piano-roll editor implementation notes. |
 | [`project/parity_hardening_backlog.md`](project/parity_hardening_backlog.md) | Current quality-first priority order, completed hardening, and remaining SMILE-parity risks. |
+| [`project/lsnes-extra.md`](project/lsnes-extra.md) | Optional Linux-only lsnes rr2-beta25 TAS extra: not bundled, user-installed worker, TASVideos `.lsmv` playback. |
 
 ### Analysis Scripts (`docs/code/`)
 

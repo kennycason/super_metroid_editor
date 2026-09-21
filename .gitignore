@@ -56,6 +56,13 @@ room_model/datasets/
 # Libretro cores (downloaded .so/.dylib/.dll)
 cores/
 
+# Headless lsnes worker build output (rebuild with ./gradlew buildLsnesWorker)
+tools/lsnes-smedit/bin/
+
+# lsnes emergency movie dumps (fatal-signal handler)
+crashsave-*.lsmv
+a.out
+
 # Emulator/runtime outputs
 custom_integrations/
 editor_recordings/
