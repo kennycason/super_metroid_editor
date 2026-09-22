@@ -10,6 +10,32 @@ import org.junit.jupiter.api.Test
 class DoorTemplateAutofillTest {
 
     @Test
+    fun `door cap derivation uses selected screen edge and vanilla offsets`() {
+        val romParser = TestRomHelper.loadRomParser() ?: return
+
+        assertEquals(
+            0x064E,
+            romParser.deriveDoorCapPosition(
+                destRoomId = 0x92FD,
+                direction = 1,
+                screenX = 4,
+                screenY = 0,
+            ),
+            "Horizontal entrance cap should be derived from screen 5, not the room's outer-left edge",
+        )
+        assertEquals(
+            0x0216,
+            romParser.deriveDoorCapPosition(
+                destRoomId = 0x96BA,
+                direction = 2,
+                screenX = 1,
+                screenY = 0,
+            ),
+            "Vertical closing caps sit two blocks inside the doorway",
+        )
+    }
+
+    @Test
     fun `Landing Site offers existing entrance templates`() {
         val romParser = TestRomHelper.loadRomParser() ?: return
         val choices = doorTemplateChoicesForDestination(
@@ -56,5 +82,23 @@ class DoorTemplateAutofillTest {
         assertEquals(2, filled.screenY)
         assertEquals(0x8000, filled.distFromDoor)
         assertEquals(0xB997, filled.entryCode)
+    }
+
+    @Test
+    fun `changing destination clamps entrance to destination dimensions`() {
+        val currentDoor = RomParser.DoorEntry(
+            destRoomPtr = 0x91F8,
+            bitflag = 0,
+            doorCapCode = 0,
+            screenX = 8,
+            screenY = 3,
+            distFromDoor = 0x8000,
+            entryCode = 0,
+        )
+
+        val clamped = doorWithEntranceClampedToRoom(currentDoor, roomWidth = 2, roomHeight = 1)
+
+        assertEquals(1, clamped.screenX)
+        assertEquals(0, clamped.screenY)
     }
 }

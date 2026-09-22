@@ -363,6 +363,31 @@ class EditorState {
         get() = _workingDoors
         private set(value) { _workingDoors.clear(); _workingDoors.addAll(value) }
 
+    /**
+     * Door entries with project edits applied. This keeps UI validation and
+     * room navigation semantic: callers do not need to inspect DoorDef ROM
+     * addresses or duplicate the last-change-wins merge.
+     */
+    internal fun effectiveDoorsForRoom(roomId: Int, romParser: RomParser): List<RomParser.DoorEntry> {
+        val room = romParser.readRoomHeader(roomId) ?: return emptyList()
+        val doors = romParser.parseDoorList(room.doorOut).toMutableList()
+        val changes = project.rooms[project.roomKey(roomId)]?.doorChanges.orEmpty()
+        for (change in changes) {
+            val original = doors.getOrNull(change.doorIndex) ?: continue
+            doors[change.doorIndex] = RomParser.DoorEntry(
+                destRoomPtr = change.destRoomPtr,
+                bitflag = change.bitflag,
+                doorCapCode = change.doorCapCode,
+                screenX = change.screenX,
+                screenY = change.screenY,
+                distFromDoor = change.distFromDoor,
+                entryCode = change.entryCode,
+                doorDefPtr = original.doorDefPtr,
+            )
+        }
+        return doors
+    }
+
     /** Working enemy population for the current room (includes edits). */
     private val _workingEnemies = mutableListOf<RomParser.EnemyEntry>()
     val workingEnemies: List<RomParser.EnemyEntry> get() = _workingEnemies
@@ -4503,7 +4528,7 @@ class EditorState {
         return BulkBiomeResult(resetRooms, 0, removedTiles)
     }
 
-    private fun buildEffectiveRoomGrids(romParser: RomParser, romRoom: Room, effectiveRoom: Room): RoomGrids? {
+    internal fun buildEffectiveRoomGrids(romParser: RomParser, romRoom: Room, effectiveRoom: Room): RoomGrids? {
         val data = runCatching { romParser.decompressLZ2(romRoom.levelDataPtr) }.getOrNull() ?: return null
         val effectiveData = if (effectiveRoom.width != romRoom.width || effectiveRoom.height != romRoom.height) {
             resizeLevelData(data, romRoom.width, romRoom.height, effectiveRoom.width, effectiveRoom.height)
@@ -4524,7 +4549,10 @@ class EditorState {
         }
         val roomEdits = project.rooms[project.roomKey(romRoom.roomId)]
         if (roomEdits != null) {
-            for (op in roomEdits.operations) {
+            val previewStateIndex = romParser.preferredPreviewStateIndex(romRoom.roomId)
+            val effectiveOperations = roomEdits.operations +
+                roomEdits.stateEditsForSourceIndex(previewStateIndex)?.operations.orEmpty()
+            for (op in effectiveOperations) {
                 for (edit in op.edits) {
                     if (edit.layer != TILE_EDIT_LAYER_1) continue
                     if (edit.blockX !in 0 until width || edit.blockY !in 0 until height) continue

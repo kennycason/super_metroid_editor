@@ -253,6 +253,11 @@ not old-versus-new storage.
 - Room/door/state/resource allocation.
 - Map placement, room graph, reciprocal-door tooling, and route validation.
 
+The prerequisite existing-door UX is now implemented: semantic room/entrance selection, bounded
+screen coordinates, project-aware connection diagnostics, and non-destructive reciprocal/facing
+warnings. New-room work must reuse these diagnostics and must assign door-list identities without
+asking the user to enter a BTS index, DoorDef pointer, or room address.
+
 ### 5. Symbolic ASM mode
 
 - Known routine, project symbol, opaque pointer, and no-routine code references.

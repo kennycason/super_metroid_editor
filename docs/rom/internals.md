@@ -44,6 +44,31 @@ Offset  Size  Field                 C struct field
 
 Source: `~/code/sm/src/ida_types.h:260` — `typedef struct DoorDef`
 
+### SMEDIT Door Authoring and Diagnostics
+
+The normal editor workflow is semantic: users choose a destination room by name and area, select
+or copy a known entrance, and use one-based screen columns/rows constrained to that destination's
+dimensions. DoorDef addresses, cap coordinates, distance, and entry ASM remain available under the
+door panel's **Advanced** disclosure, but are not required for an ordinary connection.
+
+When SMEDIT derives a closing-cap position it searches the selected destination **screen** edge,
+not merely the outer edge of the whole room. Verified vanilla geometry uses a one-block inward
+offset for horizontal entrances and a two-block inward offset for vertical entrances. A zero cap
+position is also valid and intentionally suppresses an ordinary closing-cap placement in scripted
+or elevator transitions.
+
+Connection health is evaluated against the project's effective destination header, level/BTS data,
+and edited door lists. The editor reports:
+
+- a missing destination or out-of-bounds entrance as an error;
+- no compatible destination opening as a warning;
+- no return door as an advisory one-way warning;
+- a return door without the opposite facing direction as a warning.
+
+One-way links are legal and may be intentional. Diagnostics never create, rewrite, or remove the
+return link automatically. Door tiles receive a red outline for errors and an amber dashed outline
+for warnings; the selected door's panel explains the reason in plain language.
+
 ### Door Transition State Machine (15 steps)
 
 Source: `~/code/sm/src/sm_82.c` and `~/code/sm/src/sm_80.c`

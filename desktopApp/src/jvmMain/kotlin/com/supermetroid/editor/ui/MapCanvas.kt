@@ -185,6 +185,12 @@ internal data class DoorTemplateChoice(
     val door: RomParser.DoorEntry,
 )
 
+private data class DoorWarningTile(
+    val x: Int,
+    val y: Int,
+    val hasError: Boolean,
+)
+
 internal fun doorTemplateChoicesForDestination(
     romParser: RomParser,
     rooms: List<RoomInfo>,
@@ -224,6 +230,15 @@ internal fun doorWithTemplateValues(
         entryCode = templateDoor.entryCode,
     )
 }
+
+internal fun doorWithEntranceClampedToRoom(
+    door: RomParser.DoorEntry,
+    roomWidth: Int,
+    roomHeight: Int,
+): RomParser.DoorEntry = door.copy(
+    screenX = door.screenX.coerceIn(0, (roomWidth - 1).coerceAtLeast(0)),
+    screenY = door.screenY.coerceIn(0, (roomHeight - 1).coerceAtLeast(0)),
+)
 
 /**
  * Shot block (type 0xC) BTS classification.
@@ -849,6 +864,31 @@ fun MapCanvas(
                                     editorState?.applyCurrentStateData(headerWithEdits, romParser) ?: headerWithEdits
                                 }
                             }
+                            val doorDiagnostics = remember(currentRoomId, editVersion, rooms, romParser) {
+                                val es = editorState
+                                if (es == null) emptyMap()
+                                else doorDiagnosticsForRoom(currentRoomId, romParser, es, rooms)
+                            }
+                            val doorWarningTiles = remember(
+                                currentRoomId,
+                                editVersion,
+                                effectiveBlocksWide,
+                                effectiveBlocksTall,
+                                doorDiagnostics,
+                            ) {
+                                val es = editorState ?: return@remember emptyList()
+                                buildList {
+                                    for (y in 0 until effectiveBlocksTall) {
+                                        for (x in 0 until effectiveBlocksWide) {
+                                            if (((es.readBlockWord(x, y) shr 12) and 0x0F) != 0x09) continue
+                                            val diagnostic = doorDiagnostics[es.readBts(x, y)]
+                                            if (diagnostic == null || diagnostic.needsAttention) {
+                                                add(DoorWarningTile(x, y, diagnostic?.hasError != false))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             val scrollVer = editorState?.scrollVersion ?: 0
                             val scrollDataForOverlay = remember(scrollVer, roomHeader) {
                                 val ws = editorState?.workingScrolls
@@ -1318,6 +1358,37 @@ fun MapCanvas(
                                                         strokeWidth = 2f
                                                     )
                                                 }
+                                            }
+                                        }
+                                    }
+                                    if (doorWarningTiles.isNotEmpty()) {
+                                        Canvas(
+                                            modifier = Modifier
+                                                .requiredWidth((data.width * zoomLevel).dp)
+                                                .requiredHeight((data.height * zoomLevel).dp)
+                                        ) {
+                                            val tileW = size.width / data.blocksWide
+                                            val tileH = size.height / data.blocksTall
+                                            for (tile in doorWarningTiles) {
+                                                val color = if (tile.hasError) Color(0xFFFF5252) else Color(0xFFFFB43B)
+                                                val topLeft = androidx.compose.ui.geometry.Offset(tile.x * tileW, tile.y * tileH)
+                                                val tileSize = androidx.compose.ui.geometry.Size(tileW, tileH)
+                                                drawRect(
+                                                    color = color.copy(alpha = 0.12f),
+                                                    topLeft = topLeft,
+                                                    size = tileSize,
+                                                )
+                                                drawRect(
+                                                    color = color.copy(alpha = 0.95f),
+                                                    topLeft = topLeft,
+                                                    size = tileSize,
+                                                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                                        width = if (tile.hasError) 3f else 2f,
+                                                        pathEffect = if (tile.hasError) null else {
+                                                            androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5f, 3f))
+                                                        },
+                                                    ),
+                                                )
                                             }
                                         }
                                     }

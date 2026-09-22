@@ -1,6 +1,6 @@
 # SMEDIT Parity And Hardening Backlog
 
-Last updated: 2026-09-09
+Last updated: 2026-09-21
 
 This file captures the current SMILE/local-reference audit so the next work can resume without redoing the full review.
 
@@ -75,6 +75,14 @@ Next quality-first slices:
    verified free space.
 
 ## Recent Progress
+
+- Existing-door authoring now uses room names/areas and bounded one-based entrance coordinates in
+  its normal workflow; raw cap/ASM fields are under Advanced. Project-aware connection diagnostics
+  flag missing destinations, invalid entrance geometry, missing doorway tiles, one-way links, and
+  wrong-facing return links without auto-rewriting intentional topology. Amber/red warnings are
+  drawn on the affected doorway tiles. Full-vanilla scanning was used to tune special/elevator door
+  handling, and door-cap derivation now uses the selected screen edge with verified horizontal and
+  vertical offsets.
 
 - Minimap editing now has a room/sprite-style top toolbar, consistent shortcuts,
   flip and exact-representable rotation, map-station reveal editing, full

@@ -1288,14 +1288,16 @@ class RomParser(internal val romData: ByteArray) {
      * ([screenX],[screenY]).
      *
      * Scans the destination room's level data for type-9 (door) blocks on the
-     * entry edge, then picks the topmost/leftmost block on the matching screen.
-     * The cap position is 1 tile INWARD from the door block (the game's
+     * selected screen's entry edge, then picks the topmost/leftmost block.
+     * Horizontal cap positions are 1 tile inward; vertical cap positions are
+     * 2 tiles inward (the game's
      * SpawnDoorClosingPLM places the cap adjacent to the door opening, not on it).
      * Returns (capY shl 8) or capX as a doorCapCode, or null if no door blocks found.
      */
     fun deriveDoorCapPosition(destRoomId: Int, direction: Int, screenX: Int, screenY: Int): Int? {
         val room = readRoomHeader(destRoomId) ?: return null
         if (room.levelDataPtr == 0) return null
+        if (screenX !in 0 until room.width || screenY !in 0 until room.height) return null
         val levelData = try { decompressLZ2(room.levelDataPtr) } catch (_: Exception) { return null }
 
         val blocksWide = room.width * 16
@@ -1306,16 +1308,8 @@ class RomParser(internal val romData: ByteArray) {
         val doorBlocks = mutableListOf<DoorBlock>()
 
         when (dir) {
-            0 -> { // Right: entering from left edge (x=0)
-                val screenStartY = screenY * 16
-                val screenEndY = screenStartY + 16
-                for (by in screenStartY until minOf(screenEndY, blocksTall)) {
-                    if (blockTypeAt(levelData, blocksWide, blocksTall, 0, by) == 0x9)
-                        doorBlocks.add(DoorBlock(0, by))
-                }
-            }
-            1 -> { // Left: entering from right edge (x=blocksWide-1)
-                val edgeX = blocksWide - 1
+            0 -> { // Right: entering from the selected screen's left edge
+                val edgeX = screenX * 16
                 val screenStartY = screenY * 16
                 val screenEndY = screenStartY + 16
                 for (by in screenStartY until minOf(screenEndY, blocksTall)) {
@@ -1323,16 +1317,26 @@ class RomParser(internal val romData: ByteArray) {
                         doorBlocks.add(DoorBlock(edgeX, by))
                 }
             }
-            2 -> { // Down: entering from top edge (y=0)
+            1 -> { // Left: entering from the selected screen's right edge
+                val edgeX = minOf((screenX + 1) * 16 - 1, blocksWide - 1)
+                val screenStartY = screenY * 16
+                val screenEndY = screenStartY + 16
+                for (by in screenStartY until minOf(screenEndY, blocksTall)) {
+                    if (blockTypeAt(levelData, blocksWide, blocksTall, edgeX, by) == 0x9)
+                        doorBlocks.add(DoorBlock(edgeX, by))
+                }
+            }
+            2 -> { // Down: entering from the selected screen's top edge
+                val edgeY = screenY * 16
                 val screenStartX = screenX * 16
                 val screenEndX = screenStartX + 16
                 for (bx in screenStartX until minOf(screenEndX, blocksWide)) {
-                    if (blockTypeAt(levelData, blocksWide, blocksTall, bx, 0) == 0x9)
-                        doorBlocks.add(DoorBlock(bx, 0))
+                    if (blockTypeAt(levelData, blocksWide, blocksTall, bx, edgeY) == 0x9)
+                        doorBlocks.add(DoorBlock(bx, edgeY))
                 }
             }
-            3 -> { // Up: entering from bottom edge (y=blocksTall-1)
-                val edgeY = blocksTall - 1
+            3 -> { // Up: entering from the selected screen's bottom edge
+                val edgeY = minOf((screenY + 1) * 16 - 1, blocksTall - 1)
                 val screenStartX = screenX * 16
                 val screenEndX = screenStartX + 16
                 for (bx in screenStartX until minOf(screenEndX, blocksWide)) {
@@ -1349,8 +1353,8 @@ class RomParser(internal val romData: ByteArray) {
         when (dir) {
             0 -> { capX = (best.bx + 1).coerceAtMost(blocksWide - 1); capY = best.by }
             1 -> { capX = (best.bx - 1).coerceAtLeast(0);             capY = best.by }
-            2 -> { capX = best.bx; capY = (best.by + 1).coerceAtMost(blocksTall - 1) }
-            3 -> { capX = best.bx; capY = (best.by - 1).coerceAtLeast(0) }
+            2 -> { capX = best.bx; capY = (best.by + 2).coerceAtMost(blocksTall - 1) }
+            3 -> { capX = best.bx; capY = (best.by - 2).coerceAtLeast(0) }
             else -> { capX = best.bx; capY = best.by }
         }
         return (capY shl 8) or capX
