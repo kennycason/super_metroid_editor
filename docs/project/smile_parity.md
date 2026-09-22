@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, completed existing-room state authoring, and visual scroll-trigger editing. Important remaining architecture work includes new-room creation, tileset composition, and managed ROM expansion. Explicit state-resource relinking and typed state-triggered actions are optional future extensions, not blockers for state editing.
+SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, completed state authoring, core project-owned room creation, and visual scroll-trigger editing. Important remaining architecture work includes new-room deletion/templates/minimap automation, tileset composition, and managed ROM expansion. Layout sharing/relinking is implemented; equivalent controls for non-layout state resources and typed state-triggered actions are optional future extensions, not blockers for state editing.
 
 ---
 
@@ -64,7 +64,7 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 | Tile graphics rendering (2bpp/4bpp) | Parity |
 | CRE tile handling | Parity |
 | Room state parsing and condition authoring | Beyond parity: every verified vanilla selector plus SMEDIT-generated item, equipment, ammo/health, cross-area boss, and compound conditions |
-| Multi-state room inspection, switching, and authoring | Beyond parity: add/duplicate/delete/reorder, state-scoped persistence, safe copy-on-write, load simulation, selector relocation, and semantic export/reopen |
+| Multi-state room inspection, switching, and authoring | Beyond parity: add/duplicate/delete/reorder, state-scoped persistence, explicit shared/unique whole-layout ownership, load simulation, selector relocation, and semantic export/reopen |
 | LoROM address conversion | Parity |
 | Pattern copy/paste | Parity (we have more built-ins) |
 | Room header editing (all 11 fields) | Parity |
@@ -115,7 +115,7 @@ These features match or exceed what SMART offers:
 | Feature | SMART | SMEDIT |
 |---------|-------|--------|
 | **Auto-repointing** | All data types | Level data, PLMs, scrolls, door ASM ✅ |
-| **Room creation** | Auto-assigned IDs, blank level data | Not yet (foundation exists) |
+| **Room creation** | Auto-assigned IDs, blank level data | Blank/clone creation with stable project IDs and semantic doors ✅ |
 | **Room resize** | With auto-repoint | With scroll/door ASM remapping ✅ |
 | **XML export** | SMART XML format | JSON export (XML interop planned) |
 | **Free space management** | Automatic | Backwards scan from bank end ✅ |

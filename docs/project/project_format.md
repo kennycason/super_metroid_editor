@@ -10,13 +10,22 @@ SMEDIT at export time. The current top-level model includes room edits, room-sta
 tileset defaults, patches, custom graphics, patterns, minimap and map-station edits, text and room
 name overrides, custom ASM, music edits, and ROM build-label fields.
 
-Room data is described in [`room_model.md`](room_model.md). Top-level room operations, PLM changes,
+Room data is described in [`room_model.md`](room_model.md). `newRooms` owns stable project room
+identities, complete initial headers/default-state payloads, and semantic door destinations.
+Top-level room operations, PLM changes,
 enemy changes, and similar lists are common edits applied across that room's states. The equivalent
-lists inside `RoomStateEdits` target one state. Both are parts of the same current room model.
+lists inside `RoomStateEdits` target one state for non-layout data.
+`RoomEdits.levelResourceOperations` stores tile, BTS, and embedded Layer 2 operations once per
+complete semantic layout identity, whether that identity is shared by several states or unique to
+one. A state cannot own a partial tile overlay: making it independent creates a new whole-layout
+identity. PLMs, enemies, effects, and scroll metadata remain state-owned even when they were placed
+by the same canvas action. Legacy beta state tile overlays are promoted to unique complete layouts
+on load. All are parts of the same current room model.
 
 ROM addresses and allocation choices are export results, not the long-term identity of newly
-authored data. Existing rooms are still keyed by their physical room-header ID until new-room
-creation introduces stable project IDs for content that has no source address.
+authored data. Existing rooms remain keyed by their source room-header ID. Project-owned rooms use
+IDs such as `room-1`; their `previewRoomId` is a rebuildable workspace adapter and is never used to
+resolve exported doors or treated as persistent identity.
 
 ## Version Fields
 

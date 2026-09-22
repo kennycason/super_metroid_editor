@@ -31,6 +31,88 @@ internal data class DoorConnectionDiagnostic(
     val hasError: Boolean get() = issues.any { it.severity == DoorConnectionSeverity.ERROR }
 }
 
+/** One contiguous type-9 opening on the edge used by an incoming door. */
+internal data class DoorwayOpening(
+    val roomId: Int,
+    val direction: Int,
+    val screenX: Int,
+    val screenY: Int,
+    val blockX: Int,
+    val blockY: Int,
+    val tileCount: Int,
+    val doorCapCode: Int,
+    val connectionIndex: Int,
+)
+
+internal fun incomingDoorEdgeName(direction: Int): String = when (direction and 0x03) {
+    0 -> "left"
+    1 -> "right"
+    2 -> "top"
+    else -> "bottom"
+}
+
+/**
+ * Find real destination openings instead of inferring them from existing
+ * DoorDefs. This deliberately includes unlinked type-9 openings in new rooms.
+ */
+internal fun doorwayOpenings(
+    roomId: Int,
+    grids: RoomGrids,
+    direction: Int,
+): List<DoorwayOpening> {
+    val dir = direction and 0x03
+    val screensWide = grids.width / 16
+    val screensTall = grids.height / 16
+    fun isDoor(x: Int, y: Int): Boolean =
+        x in 0 until grids.width && y in 0 until grids.height &&
+            ((grids.words[y * grids.width + x] ushr 12) and 0x0F) == 0x09
+
+    val result = mutableListOf<DoorwayOpening>()
+    for (screenY in 0 until screensTall) {
+        for (screenX in 0 until screensWide) {
+            val edgePositions = when (dir) {
+                0 -> (0 until 16).map { screenX * 16 to screenY * 16 + it }
+                1 -> (0 until 16).map { screenX * 16 + 15 to screenY * 16 + it }
+                2 -> (0 until 16).map { screenX * 16 + it to screenY * 16 }
+                else -> (0 until 16).map { screenX * 16 + it to screenY * 16 + 15 }
+            }
+            var runStart = -1
+            for (position in 0..edgePositions.size) {
+                val onDoor = position < edgePositions.size &&
+                    edgePositions[position].let { (x, y) -> isDoor(x, y) }
+                if (onDoor && runStart < 0) runStart = position
+                if (!onDoor && runStart >= 0) {
+                    val (blockX, blockY) = edgePositions[runStart]
+                    val tileCount = position - runStart
+                    val capX = when (dir) {
+                        0 -> blockX + 1
+                        1 -> blockX - 1
+                        else -> blockX
+                    }.coerceIn(0, grids.width - 1)
+                    val capY = when (dir) {
+                        2 -> blockY + 2
+                        3 -> blockY - 2
+                        else -> blockY
+                    }.coerceIn(0, grids.height - 1)
+                    result += DoorwayOpening(
+                        roomId = roomId,
+                        direction = dir,
+                        screenX = screenX,
+                        screenY = screenY,
+                        blockX = blockX,
+                        blockY = blockY,
+                        tileCount = tileCount,
+                        doorCapCode = (capY shl 8) or capX,
+                        connectionIndex = grids.bts[blockY * grids.width + blockX],
+                    )
+                    runStart = -1
+                }
+            }
+        }
+    }
+    return result
+}
+
 /**
  * Validate one semantic room connection without changing either side.
  *
@@ -46,6 +128,7 @@ internal fun evaluateDoorConnection(
     destinationRoomName: String,
     destinationDoors: List<RomParser.DoorEntry>,
     destinationOpeningCap: Int?,
+    destinationOpeningConnectionIndex: Int?,
 ): DoorConnectionDiagnostic {
     if (destinationRoom == null) {
         return DoorConnectionDiagnostic(
@@ -83,17 +166,47 @@ internal fun evaluateDoorConnection(
         )
     }
 
-    val returnDoors = destinationDoors.mapIndexedNotNull { index, candidate ->
-        index.takeIf { candidate.destRoomPtr == sourceRoomId }
-    }
-    if (returnDoors.isEmpty()) {
-        issues += DoorConnectionIssue(
-            kind = DoorConnectionIssueKind.RETURN_LINK_MISSING,
-            severity = DoorConnectionSeverity.WARNING,
-            message = "$destinationRoomName has no door returning to $sourceRoomName. " +
-                "This one-way connection may be intentional.",
-        )
+    val returnDoors: List<Int>
+    if (destinationOpeningConnectionIndex != null) {
+        val returnDoor = destinationDoors.getOrNull(destinationOpeningConnectionIndex)
+        returnDoors = if (returnDoor?.destRoomPtr == sourceRoomId) {
+            listOf(destinationOpeningConnectionIndex)
+        } else {
+            emptyList()
+        }
+        if (returnDoor == null) {
+            issues += DoorConnectionIssue(
+                kind = DoorConnectionIssueKind.RETURN_LINK_MISSING,
+                severity = DoorConnectionSeverity.WARNING,
+                message = "The selected $destinationRoomName doorway stores Connection " +
+                    "${destinationOpeningConnectionIndex + 1}, but that connection does not exist.",
+            )
+        } else if (returnDoor.destRoomPtr != sourceRoomId) {
+            issues += DoorConnectionIssue(
+                kind = DoorConnectionIssueKind.RETURN_LINK_MISSING,
+                severity = DoorConnectionSeverity.WARNING,
+                message = "The selected $destinationRoomName doorway's Connection " +
+                    "${destinationOpeningConnectionIndex + 1} leads somewhere else instead of returning to $sourceRoomName.",
+            )
+        }
     } else {
+        // Scripted/elevator transitions may not have a normal type-9 opening.
+        // Retain the room-level fallback only when there is no physical opening
+        // whose BTS can identify the exact return connection.
+        returnDoors = destinationDoors.mapIndexedNotNull { index, candidate ->
+            index.takeIf { candidate.destRoomPtr == sourceRoomId }
+        }
+        if (returnDoors.isEmpty()) {
+            issues += DoorConnectionIssue(
+                kind = DoorConnectionIssueKind.RETURN_LINK_MISSING,
+                severity = DoorConnectionSeverity.WARNING,
+                message = "$destinationRoomName has no door returning to $sourceRoomName. " +
+                    "This one-way connection may be intentional.",
+            )
+        }
+    }
+
+    if (returnDoors.isNotEmpty()) {
         val expectedReturnDirection = oppositeDoorDirection(door.direction)
         val hasFacingReturn = returnDoors.any { index ->
             (destinationDoors[index].direction and 0x03) == expectedReturnDirection
@@ -103,7 +216,8 @@ internal fun evaluateDoorConnection(
             issues += DoorConnectionIssue(
                 kind = DoorConnectionIssueKind.RETURN_LINK_FACES_WRONG_WAY,
                 severity = DoorConnectionSeverity.WARNING,
-                message = "A return door exists, but none enters $sourceRoomName facing $expectedName.",
+                message = "The selected return connection enters $sourceRoomName facing the wrong way; " +
+                    "expected $expectedName.",
             )
         }
     }
@@ -121,7 +235,7 @@ internal fun doorDiagnosticsForRoom(
     val sourceName = names[sourceRoomId] ?: "this room"
     val destinationRooms = mutableMapOf<Int, Pair<Room, Room>?>()
     val destinationDoors = mutableMapOf<Int, List<RomParser.DoorEntry>>()
-    val openingCaps = mutableMapOf<List<Int>, Int?>()
+    val destinationOpenings = mutableMapOf<List<Int>, DoorwayOpening?>()
     return editorState.effectiveDoorsForRoom(sourceRoomId, parser)
         .mapIndexed { index, door ->
             val roomPair = destinationRooms.getOrPut(door.destRoomPtr) {
@@ -133,14 +247,23 @@ internal fun doorDiagnosticsForRoom(
             val effectiveDestinationDoors = destinationDoors.getOrPut(door.destRoomPtr) {
                 editorState.effectiveDoorsForRoom(door.destRoomPtr, parser)
             }
-            val openingCap = if (destinationBase == null || destination == null) null else {
-                val key = listOf(door.destRoomPtr, door.direction and 0x03, door.screenX, door.screenY)
-                openingCaps.getOrPut(key) {
-                    editorState.buildEffectiveRoomGrids(parser, destinationBase, destination)?.let { grids ->
-                        validateDoorOpening(grids, door)
-                    }
+            val opening = if (destinationBase == null || destination == null) null else {
+                val key = listOf(
+                    door.destRoomPtr,
+                    door.direction and 0x03,
+                    door.screenX,
+                    door.screenY,
+                    door.doorCapCode,
+                )
+                destinationOpenings.getOrPut(key) {
+                    val choices = editorState.effectiveDoorwayOpenings(
+                        door.destRoomPtr, door.direction, parser,
+                    ).filter { it.screenX == door.screenX && it.screenY == door.screenY }
+                    choices.firstOrNull { it.doorCapCode == door.doorCapCode }
+                        ?: choices.firstOrNull()
                 }
             }
+            val openingCap = if (door.doorCapCode == 0) 0 else opening?.doorCapCode
             index to evaluateDoorConnection(
                 sourceRoomId = sourceRoomId,
                 sourceRoomName = sourceName,
@@ -149,6 +272,7 @@ internal fun doorDiagnosticsForRoom(
                 destinationRoomName = destinationName,
                 destinationDoors = effectiveDestinationDoors,
                 destinationOpeningCap = openingCap,
+                destinationOpeningConnectionIndex = opening?.connectionIndex,
             )
         }
         .toMap()
@@ -166,40 +290,4 @@ private fun doorDirectionName(direction: Int): String = when (direction and 0x03
     1 -> "left"
     2 -> "down"
     else -> "up"
-}
-
-/** Validate the declared cap against the project's effective (possibly edited) doorway tiles. */
-private fun validateDoorOpening(
-    grids: RoomGrids,
-    door: RomParser.DoorEntry,
-): Int? {
-    if (door.screenX !in 0 until (grids.width / 16) || door.screenY !in 0 until (grids.height / 16)) return null
-    // Zero explicitly disables the closing-cap spawn (common for elevators and
-    // scripted transitions); it is not a broken pointer or missing doorway.
-    if (door.doorCapCode == 0) return 0
-    val dir = door.direction and 0x03
-    val capX = door.doorCapCode and 0xFF
-    val capY = (door.doorCapCode shr 8) and 0xFF
-    if (capX !in 0 until grids.width || capY !in 0 until grids.height) return null
-    fun isDoor(x: Int, y: Int): Boolean =
-        x in 0 until grids.width && y in 0 until grids.height &&
-            ((grids.words[y * grids.width + x] shr 12) and 0x0F) == 0x09
-    val declaredCapTouchesDoor = when (dir) {
-        // Horizontal caps sit one block inward; vertical caps sit two.
-        0 -> isDoor(capX - 1, capY)
-        1 -> isDoor(capX + 1, capY)
-        2 -> isDoor(capX, capY - 2)
-        else -> isDoor(capX, capY + 2)
-    }
-    // Scripted/boss transitions use unusual cap offsets. They are still sound
-    // when the selected entrance edge contains a real type-9 doorway.
-    val screenLeft = door.screenX * 16
-    val screenTop = door.screenY * 16
-    val edgeHasDoor = when (dir) {
-        0 -> (screenTop until screenTop + 16).any { y -> isDoor(screenLeft, y) }
-        1 -> (screenTop until screenTop + 16).any { y -> isDoor(screenLeft + 15, y) }
-        2 -> (screenLeft until screenLeft + 16).any { x -> isDoor(x, screenTop) }
-        else -> (screenLeft until screenLeft + 16).any { x -> isDoor(x, screenTop + 15) }
-    }
-    return door.doorCapCode.takeIf { declaredCapTouchesDoor || edgeHasDoor }
 }

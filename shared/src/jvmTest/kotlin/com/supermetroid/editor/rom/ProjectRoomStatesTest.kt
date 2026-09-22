@@ -61,6 +61,9 @@ class ProjectRoomStatesTest {
         state.stateDataChange = StateDataChange(tileset = 7, musicData = 3, musicTrack = 5)
         state.fxChange = FxChange(fxType = 0x0C, tileAnimBitflags = 4)
         state.doorFxChanges["A18C"] = FxChange(fxType = 0x0A, paletteBlend = 3)
+        roomEdits.levelResourceOperations[state.resources.level] = mutableListOf(
+            EditOperation("shared layout", listOf(TileEdit(2, 3, 0x8123, 0x8456, 1, 2)))
+        )
         val added = state.copy(
             id = "state-added",
             sourceStateIndex = null,
@@ -95,6 +98,10 @@ class ProjectRoomStatesTest {
         assertEquals(0x0C, actual.fxChange?.fxType)
         assertEquals(0x0A, actual.doorFxChanges["A18C"]?.fxType)
         assertEquals(3, actual.doorFxChanges["A18C"]?.paletteBlend)
+        assertEquals(
+            roomEdits.levelResourceOperations,
+            decoded.rooms.getValue("CD13").levelResourceOperations,
+        )
         assertTrue(decoded.rooms.getValue("CD13").stateGraphChanged)
         assertEquals(state.sourceStateIndex, decoded.rooms.getValue("CD13").states[1].templateSourceStateIndex)
         assertEquals(added.condition, decoded.rooms.getValue("CD13").states[1].condition)
@@ -564,6 +571,105 @@ class ProjectRoomStatesTest {
         assertNotEquals(after[0].levelDataPtr, after[1].levelDataPtr)
         assertEquals(replacement, readU16(exported.decompressLZ2(after[0].levelDataPtr), 2))
         assertContentEquals(levelBefore, exported.decompressLZ2(after[1].levelDataPtr))
+    }
+
+    @Test
+    fun `shared layout operation updates every linked state and preserves one pointer`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val candidate = RoomRepository().getAllRooms().asSequence()
+            .map { it.getRoomIdAsInt() to parser.parseRoomStatesWithData(it.getRoomIdAsInt()) }
+            .firstOrNull { (_, states) -> states.size > 1 && states[0].levelDataPtr == states[1].levelDataPtr }
+            ?: return
+        val (roomId, before) = candidate
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        val manifest = roomEdits.ensureStateManifest(parser)
+        val resourceId = manifest.first().resources.level
+        val members = manifest.filter { it.resources.level == resourceId }
+        assertTrue(members.size > 1)
+        val levelBefore = parser.decompressLZ2(before.first().levelDataPtr)
+        val oldWord = readU16(levelBefore, 2)
+        val replacement = oldWord xor 1
+        roomEdits.levelResourceOperations[resourceId] = mutableListOf(
+            EditOperation("shared layout test", listOf(TileEdit(0, 0, oldWord, replacement)))
+        )
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val after = exported.parseRoomStatesWithData(roomId)
+        val memberIndices = members.mapNotNull { it.sourceStateIndex }
+        val memberPointers = memberIndices.map { after[it].levelDataPtr }.distinct()
+        assertEquals(1, memberPointers.size, "linked states should retain one shared layout pointer")
+        memberIndices.forEach { index ->
+            assertEquals(replacement, readU16(exported.decompressLZ2(after[index].levelDataPtr), 2))
+        }
+    }
+
+    @Test
+    fun `unique layout resource changes only its owning state`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val candidate = RoomRepository().getAllRooms().asSequence()
+            .map { it.getRoomIdAsInt() to parser.parseRoomStatesWithData(it.getRoomIdAsInt()) }
+            .firstOrNull { (_, states) -> states.size > 1 && states[0].levelDataPtr == states[1].levelDataPtr }
+            ?: return
+        val (roomId, before) = candidate
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        val manifest = roomEdits.ensureStateManifest(parser)
+        val originalResource = manifest.first().resources.level
+        val members = manifest.filter { it.resources.level == originalResource }
+        val target = members.first()
+        val peer = members[1]
+        val uniqueResource = "level-unique-test"
+        target.resources = target.resources.copy(level = uniqueResource)
+        target.levelResourceChanged = false
+        val levelBefore = parser.decompressLZ2(before[target.sourceStateIndex!!].levelDataPtr)
+        val oldWord = readU16(levelBefore, 2)
+        val replacement = oldWord xor 1
+        roomEdits.levelResourceOperations[uniqueResource] = mutableListOf(
+            EditOperation("unique layout test", listOf(TileEdit(0, 0, oldWord, replacement)))
+        )
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val after = exported.parseRoomStatesWithData(roomId)
+        val targetAfter = after[target.sourceStateIndex!!]
+        val peerAfter = after[peer.sourceStateIndex!!]
+        assertNotEquals(targetAfter.levelDataPtr, peerAfter.levelDataPtr)
+        assertEquals(replacement, readU16(exported.decompressLZ2(targetAfter.levelDataPtr), 2))
+        assertContentEquals(levelBefore, exported.decompressLZ2(peerAfter.levelDataPtr))
+    }
+
+    @Test
+    fun `explicit layout link repoints one state to another states layout`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val candidate = RoomRepository().getAllRooms().asSequence()
+            .map { it.getRoomIdAsInt() to parser.parseRoomStatesWithData(it.getRoomIdAsInt()) }
+            .firstOrNull { (_, states) -> states.size > 1 && states[0].levelDataPtr != states[1].levelDataPtr }
+            ?: return
+        val (roomId, before) = candidate
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        val manifest = roomEdits.ensureStateManifest(parser)
+        val target = manifest[0]
+        val source = manifest[1]
+        target.resources = target.resources.copy(level = source.resources.level)
+        target.levelResourceChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val after = RomParser(rom).parseRoomStatesWithData(roomId)
+        assertNotEquals(before[0].levelDataPtr, before[1].levelDataPtr)
+        assertEquals(after[1].levelDataPtr, after[0].levelDataPtr)
+        assertContentEquals(
+            RomParser(rom).decompressLZ2(after[1].levelDataPtr),
+            RomParser(rom).decompressLZ2(after[0].levelDataPtr),
+        )
     }
 
     @Test

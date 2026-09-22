@@ -21,6 +21,7 @@ class DoorConnectionDiagnosticsTest {
             destinationRoomName = "Destination",
             destinationDoors = listOf(door(sourceRoomId, direction = 1)),
             destinationOpeningCap = 0x0010,
+            destinationOpeningConnectionIndex = 0,
         )
 
         assertFalse(diagnostic.needsAttention)
@@ -37,6 +38,7 @@ class DoorConnectionDiagnosticsTest {
             destinationRoomName = "Destination",
             destinationDoors = emptyList(),
             destinationOpeningCap = 0x0010,
+            destinationOpeningConnectionIndex = 0,
         )
 
         assertTrue(diagnostic.needsAttention)
@@ -57,6 +59,7 @@ class DoorConnectionDiagnosticsTest {
             destinationRoomName = "Destination",
             destinationDoors = listOf(door(sourceRoomId, direction = 2)),
             destinationOpeningCap = 0x1000,
+            destinationOpeningConnectionIndex = 0,
         )
 
         assertEquals(
@@ -75,6 +78,7 @@ class DoorConnectionDiagnosticsTest {
             destinationRoomName = "Destination",
             destinationDoors = listOf(door(sourceRoomId, direction = 1)),
             destinationOpeningCap = null,
+            destinationOpeningConnectionIndex = null,
         )
 
         assertTrue(diagnostic.hasError)
@@ -94,10 +98,35 @@ class DoorConnectionDiagnosticsTest {
             destinationRoomName = "Destination",
             destinationDoors = emptyList(),
             destinationOpeningCap = null,
+            destinationOpeningConnectionIndex = null,
         )
 
         assertTrue(diagnostic.hasError)
         assertEquals(DoorConnectionIssueKind.DESTINATION_MISSING, diagnostic.issues.single().kind)
+    }
+
+    @Test
+    fun `a return door elsewhere in the room does not make the selected opening reciprocal`() {
+        val diagnostic = evaluateDoorConnection(
+            sourceRoomId = sourceRoomId,
+            sourceRoomName = "Source",
+            door = door(destinationRoomId, direction = 0),
+            destinationRoom = room(destinationRoomId, width = 2, height = 1),
+            destinationRoomName = "Destination",
+            destinationDoors = listOf(
+                door(0x9200, direction = 1),
+                door(sourceRoomId, direction = 1),
+            ),
+            destinationOpeningCap = 0x0010,
+            destinationOpeningConnectionIndex = 0,
+        )
+
+        assertEquals(
+            listOf(DoorConnectionIssueKind.RETURN_LINK_MISSING),
+            diagnostic.issues.map { it.kind },
+        )
+        assertTrue(diagnostic.issues.single().message.contains("Connection 1"))
+        assertTrue(diagnostic.returnDoorIndices.isEmpty())
     }
 
     private fun door(

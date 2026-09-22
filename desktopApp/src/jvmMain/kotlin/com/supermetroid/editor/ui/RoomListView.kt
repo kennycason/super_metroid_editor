@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -21,12 +23,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Divider
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,6 +83,7 @@ fun RoomListView(
     selectedRoom: RoomInfo?,
     romParser: RomParser?,
     editorState: EditorState?,
+    onCreateRoom: ((NewRoomCreationRequest) -> String?)? = null,
     onRoomSelected: (RoomInfo) -> Unit,
     modifier: Modifier = Modifier,
     onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
@@ -81,6 +91,7 @@ fun RoomListView(
     var searchQuery by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf(RoomSortMode.AREA) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
+    var createRoomOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val editVersion = editorState?.editVersion ?: 0
 
@@ -227,6 +238,13 @@ fun RoomListView(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(
+                    onClick = { createRoomOpen = true },
+                    enabled = romParser != null && editorState != null && onCreateRoom != null,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Create room", modifier = Modifier.size(18.dp))
+                }
                 // Sort dropdown with toggle: clicking the active sort's group swaps direction
                 val menuEntries = listOf(
                     RoomSortMode.AREA,
@@ -363,6 +381,158 @@ fun RoomListView(
             }
         }
     }
+
+    if (createRoomOpen && romParser != null && editorState != null && onCreateRoom != null) {
+        NewRoomDialog(
+            selectedRoom = selectedRoom,
+            romParser = romParser,
+            editorState = editorState,
+            onCreate = onCreateRoom,
+            onDismiss = { createRoomOpen = false },
+        )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun NewRoomDialog(
+    selectedRoom: RoomInfo?,
+    romParser: RomParser,
+    editorState: EditorState,
+    onCreate: (NewRoomCreationRequest) -> String?,
+    onDismiss: () -> Unit,
+) {
+    val selectedHeader = remember(selectedRoom, romParser, editorState.editVersion) {
+        selectedRoom?.let { info ->
+            romParser.readRoomHeader(info.getRoomIdAsInt())?.let(editorState::applyHeaderChanges)
+        }
+    }
+    var cloneCurrent by remember { mutableStateOf(selectedHeader != null) }
+    var copyDoors by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf(selectedRoom?.name?.let { "$it Copy" } ?: "New Room") }
+    var area by remember { mutableStateOf(selectedHeader?.area ?: 0) }
+    var mapX by remember { mutableStateOf((selectedHeader?.mapX ?: 0).toString()) }
+    var mapY by remember { mutableStateOf((selectedHeader?.mapY ?: 0).toString()) }
+    var width by remember { mutableStateOf((selectedHeader?.width ?: 1).toString()) }
+    var height by remember { mutableStateOf((selectedHeader?.height ?: 1).toString()) }
+    var tileset by remember { mutableStateOf((selectedHeader?.tileset ?: 0).toString()) }
+    var areaMenuOpen by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val fs = LocalEditorTheme.current.fontSize.value
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create a new room", fontSize = fs.heading) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "The project owns this room. SMEDIT allocates its ROM address and resources when you build.",
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !cloneCurrent,
+                        onClick = { cloneCurrent = false; copyDoors = false },
+                        label = { Text("Blank", fontSize = fs.detail) },
+                    )
+                    FilterChip(
+                        selected = cloneCurrent,
+                        onClick = { if (selectedHeader != null) cloneCurrent = true },
+                        enabled = selectedHeader != null,
+                        label = { Text("Clone current state", fontSize = fs.detail) },
+                    )
+                }
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it; error = null },
+                    label = { Text("Room name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Box {
+                    OutlinedButton(onClick = { areaMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(areaInfo[area]?.first ?: "Area $area")
+                    }
+                    DropdownMenu(expanded = areaMenuOpen, onDismissRequest = { areaMenuOpen = false }) {
+                        areaInfo.toSortedMap().forEach { (value, info) ->
+                            DropdownMenuItem(
+                                text = { Text(info.first) },
+                                onClick = { area = value; areaMenuOpen = false },
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    CompactNumberField("Map X", mapX, { mapX = it }, Modifier.weight(1f))
+                    CompactNumberField("Map Y", mapY, { mapY = it }, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                    CompactNumberField("Width", width, { width = it }, Modifier.weight(1f), enabled = !cloneCurrent)
+                    CompactNumberField("Height", height, { height = it }, Modifier.weight(1f), enabled = !cloneCurrent)
+                    CompactNumberField("Tileset", tileset, { tileset = it }, Modifier.weight(1f), enabled = !cloneCurrent)
+                }
+                if (cloneCurrent) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = copyDoors, onCheckedChange = { copyDoors = it })
+                        Column {
+                            Text("Copy outgoing doors", fontSize = fs.body)
+                            Text(
+                                "Off by default so the clone does not silently duplicate world links.",
+                                fontSize = fs.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val request = runCatching {
+                    NewRoomCreationRequest(
+                        name = name,
+                        cloneCurrentRoom = cloneCurrent,
+                        copyDoors = copyDoors,
+                        area = area,
+                        mapX = mapX.toInt(),
+                        mapY = mapY.toInt(),
+                        width = width.toInt(),
+                        height = height.toInt(),
+                        tileset = tileset.toInt(),
+                    )
+                }.getOrElse {
+                    error = "Map position, size, and tileset must be whole numbers."
+                    return@TextButton
+                }
+                error = onCreate(request)
+                if (error == null) onDismiss()
+            }) { Text("Create room") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun CompactNumberField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier,
+    enabled: Boolean = true,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { next -> if (next.all(Char::isDigit)) onValueChange(next) },
+        label = { Text(label) },
+        singleLine = true,
+        enabled = enabled,
+        modifier = modifier,
+    )
 }
 
 @Composable

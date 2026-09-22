@@ -186,7 +186,8 @@ Done when:
 ### Highest Priority
 
 - [ ] Managed ROM expansion and one layout-aware free-space allocation registry. Transactional allocation ownership is implemented; independent scanners remain to be unified.
-- [ ] New room creation/deletion with room header, state, door, level, enemy, PLM, scroll, and minimap allocation.
+- [x] New room creation with room header, state, door, level, enemy, PLM, and scroll allocation.
+- [ ] Whole-room deletion/reference cleanup and automatic minimap-tile authoring.
 - [ ] Room JSON import with conflict handling and validation.
 - [ ] AreaSave expansion and duplicate-slot conflict UI.
 - [ ] Validation expansion and richer export blocker UX.

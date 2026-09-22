@@ -107,6 +107,126 @@ data class DoorChange(
 )
 
 /**
+ * Address-independent destination used by a project-owned room door.
+ *
+ * Existing ROM rooms use `rom:91F8`; project rooms use `project:room-1`.
+ * The build planner resolves both forms only after every new room header has
+ * been allocated, so room-to-room links never depend on a preview address.
+ */
+@Serializable
+data class ProjectDoorDefinition(
+    var destination: String,
+    var bitflag: Int,
+    var doorCapCode: Int,
+    var screenX: Int,
+    var screenY: Int,
+    var distFromDoor: Int,
+    var entryCode: Int,
+    /** Source DoorDef pointer, used only to preserve/remap cloned door-specific FX. */
+    val sourceDoorDefPtr: Int = 0,
+)
+
+@Serializable
+data class ProjectFxEntry(
+    val doorSelect: Int = 0,
+    val liquidSurfaceStart: Int = 0xFFFF,
+    val liquidSurfaceNew: Int = 0xFFFF,
+    val liquidSpeed: Int = 0,
+    val liquidDelay: Int = 0,
+    val fxType: Int = 0,
+    val fxBitA: Int = 0,
+    val fxBitB: Int = 0,
+    val fxBitC: Int = 0,
+    val paletteFxBitflags: Int = 0,
+    val tileAnimBitflags: Int = 0,
+    val paletteBlend: Int = 0,
+)
+
+@Serializable
+data class ProjectEnemyEntry(
+    val id: Int,
+    val x: Int,
+    val y: Int,
+    val initParam: Int = 0,
+    val properties: Int = 0,
+    val extra1: Int = 0,
+    val extra2: Int = 0,
+    val extra3: Int = 0,
+)
+
+@Serializable
+data class ProjectEnemyGfxEntry(
+    val speciesId: Int,
+    val paletteIndex: Int,
+)
+
+@Serializable
+data class ProjectPlmEntry(
+    val id: Int,
+    val x: Int,
+    val y: Int,
+    val param: Int = 0,
+)
+
+/** Complete initial state payload for a project-owned room. */
+@Serializable
+data class ProjectNewRoomState(
+    /** Base64 of the decompressed level/BTS/(optional) embedded Layer 2 payload. */
+    val levelDataBase64: String,
+    var tileset: Int,
+    var musicData: Int = 0,
+    var musicTrack: Int = 0,
+    val fxEntries: MutableList<ProjectFxEntry> = mutableListOf(ProjectFxEntry()),
+    val enemies: MutableList<ProjectEnemyEntry> = mutableListOf(),
+    val enemyGfx: MutableList<ProjectEnemyGfxEntry> = mutableListOf(),
+    var bgScrolling: Int = 0,
+    val scrollData: MutableList<Int> = mutableListOf(),
+    var xraySpecialCasingPtr: Int = 0,
+    var mainAsmPtr: Int = 0,
+    val plms: MutableList<ProjectPlmEntry> = mutableListOf(),
+    var bgDataPtr: Int = 0,
+    var setupAsmPtr: Int = 0,
+)
+
+@Serializable
+data class ProjectNewRoomHeader(
+    var index: Int,
+    var area: Int,
+    var mapX: Int,
+    var mapY: Int,
+    var width: Int,
+    var height: Int,
+    var upScroller: Int = 0x70,
+    var downScroller: Int = 0xA0,
+    var creBitflag: Int = 0,
+)
+
+@Serializable
+enum class ProjectNewRoomOrigin { BLANK, CLONED }
+
+/**
+ * A room owned by the project rather than by the input ROM.
+ *
+ * [id] is the durable identity. [previewRoomId] is a rebuildable workspace
+ * address that lets the existing editor inspect the room through RomParser; it
+ * is never used to resolve an exported door or treated as project identity.
+ */
+@Serializable
+data class ProjectNewRoom(
+    val id: String,
+    var previewRoomId: Int = 0,
+    /** Rebuildable workspace DoorDef pointers, parallel to [doors]; never semantic identity. */
+    val previewDoorDefPtrs: MutableList<Int> = mutableListOf(),
+    var name: String,
+    var handle: String,
+    val origin: ProjectNewRoomOrigin,
+    val sourceRoomId: Int? = null,
+    val header: ProjectNewRoomHeader,
+    val initialState: ProjectNewRoomState,
+    val doors: MutableList<ProjectDoorDefinition> = mutableListOf(),
+)
+
+/**
  * An enemy population change: add, remove, or update an enemy entry.
  * Coordinates are in pixels (same units as the ROM's enemy population data).
  * extra1/extra2/extra3 are the 3 trailing 16-bit fields per entry that must
@@ -284,6 +404,8 @@ data class RoomStateEdits(
     var resources: RoomStateResourceLinks,
     var conditionChanged: Boolean = false,
     var resourcesChanged: Boolean = false,
+    /** True when this state's level pointer must be linked to another state in [resources.level]. */
+    var levelResourceChanged: Boolean = false,
     val operations: MutableList<EditOperation> = mutableListOf(),
     val plmChanges: MutableList<PlmChange> = mutableListOf(),
     val enemyChanges: MutableList<EnemyChange> = mutableListOf(),
@@ -299,7 +421,7 @@ data class RoomStateEdits(
     val customScrollCommands: MutableMap<String, MutableList<ScrollCommand>> = mutableMapOf(),
 ) {
     val hasEdits: Boolean get() =
-        conditionChanged || resourcesChanged || operations.isNotEmpty() ||
+        conditionChanged || resourcesChanged || levelResourceChanged || operations.isNotEmpty() ||
             plmChanges.isNotEmpty() || enemyChanges.isNotEmpty() ||
             scrollChanges.isNotEmpty() || fxChange != null || doorFxChanges.isNotEmpty() ||
             stateDataChange != null || customScrollCommands.isNotEmpty()
@@ -337,6 +459,8 @@ data class RoomEdits(
     val states: MutableList<RoomStateEdits> = mutableListOf(),
     /** True when selector count/order/encoded sizes require an out-of-line graph rebuild. */
     var stateGraphChanged: Boolean = false,
+    /** Tile/BTS edits owned by a complete level resource, whether shared or unique. */
+    val levelResourceOperations: MutableMap<String, MutableList<EditOperation>> = mutableMapOf(),
     val operations: MutableList<EditOperation> = mutableListOf(),
     val plmChanges: MutableList<PlmChange> = mutableListOf(),
     val doorChanges: MutableList<DoorChange> = mutableListOf(),
@@ -352,7 +476,8 @@ data class RoomEdits(
     val saveStationSpawns: MutableList<SaveStationSpawnChange> = mutableListOf(),
 ) {
     val hasEdits: Boolean get() =
-        stateGraphChanged || states.any { it.hasEdits } || operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
+        stateGraphChanged || levelResourceOperations.values.any { it.isNotEmpty() } ||
+            states.any { it.hasEdits } || operations.isNotEmpty() || plmChanges.isNotEmpty() || doorChanges.isNotEmpty() ||
         enemyChanges.isNotEmpty() || scrollChanges.isNotEmpty() || fxChange != null ||
         stateDataChange != null || roomHeaderChange != null || customScrollCommands.isNotEmpty() ||
         saveStationSpawns.isNotEmpty()
@@ -654,6 +779,8 @@ data class MusicTrackEdit(
 data class SmEditProject(
     val romPath: String,
     val rooms: MutableMap<String, RoomEdits> = mutableMapOf(),  // key = "91F8"
+    /** Project-owned rooms, ordered so workspace allocation is deterministic. */
+    val newRooms: MutableList<ProjectNewRoom> = mutableListOf(),
     val tileDefaults: MutableMap<String, TileDefaultOverride> = mutableMapOf(), // key = "tilesetId:metatileIndex"
     val patches: MutableList<SmPatch> = mutableListOf(),
     val customGfx: TilesetGfxData = TilesetGfxData(),
@@ -671,7 +798,7 @@ data class SmEditProject(
     var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
 ) {
     companion object {
-        const val CURRENT_PROJECT_FORMAT_VERSION = 2
+        const val CURRENT_PROJECT_FORMAT_VERSION = 5
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
@@ -679,6 +806,14 @@ data class SmEditProject(
         val key = roomKey(roomId)
         return rooms.getOrPut(key) { RoomEdits(roomId) }
     }
+
+    fun newRoomForPreviewId(roomId: Int): ProjectNewRoom? =
+        newRooms.firstOrNull { it.previewRoomId == roomId }
+
+    fun newRoomDestination(id: String): String = "project:$id"
+
+    fun romRoomDestination(roomId: Int): String =
+        "rom:${roomId.toString(16).uppercase().padStart(4, '0')}"
 
     fun tileDefaultKey(tilesetId: Int, metatileIndex: Int): String = "$tilesetId:$metatileIndex"
 

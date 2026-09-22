@@ -342,7 +342,7 @@ internal fun buildCompositeImage(
         }
     }
 
-    // Draw screen grid when toggle is on (one line every 256 px)
+    // Draw room screen boundaries without coupling them to coordinate labels.
     if (showGrid) {
         g.color = java.awt.Color(255, 255, 255, 0x30)
         var x = 0
@@ -354,6 +354,24 @@ internal fun buildCompositeImage(
         while (y <= data.height) {
             g.drawLine(0, y, data.width, y)
             y += SCREEN_PX
+        }
+    }
+
+    // Draw one-based screen coordinates independently of the grid. Screen (1, 1) is top-left.
+    if (activeOverlays.contains(TileOverlay.SCREEN_COORDINATES)) {
+        val g2 = g as java.awt.Graphics2D
+        g2.font = java.awt.Font("SansSerif", java.awt.Font.BOLD, 12)
+        for (screenY in 0 until roomHeightScreens) {
+            for (screenX in 0 until roomWidthScreens) {
+                val label = oneBasedRoomCoordinate(screenX, screenY)
+                val labelX = screenX * SCREEN_PX + 6
+                val labelY = screenY * SCREEN_PX + 17
+                val width = g2.fontMetrics.stringWidth(label) + 8
+                g2.color = java.awt.Color(0, 0, 0, 140)
+                g2.fillRoundRect(labelX - 3, labelY - 13, width, 17, 5, 5)
+                g2.color = java.awt.Color(255, 255, 255, 190)
+                g2.drawString(label, labelX, labelY)
+            }
         }
     }
 

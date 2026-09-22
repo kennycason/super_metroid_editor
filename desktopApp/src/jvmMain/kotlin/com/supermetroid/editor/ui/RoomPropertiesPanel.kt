@@ -47,6 +47,7 @@ import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.RoomStateEdits
+import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.baseSourceStateIndex
@@ -113,12 +114,15 @@ fun RoomPropertiesPanel(
     editorState: EditorState,
     modifier: Modifier = Modifier,
     onNavigateToMap: (() -> Unit)? = null,
+    onWorkspaceChanged: (() -> Unit)? = null,
 ) {
     val stateInspection = remember(room.roomId, romParser) { romParser.inspectRoomStates(room.roomId) }
     // Track project-backed changes so authored state count/order is reflected immediately.
     @Suppress("UNUSED_VARIABLE") val headerEditVersion = editorState.editVersion
     val roomEdits = editorState.project.rooms[editorState.project.roomKey(room.roomId)]
-    val roomInfos = remember { RoomRepository().getAllRooms() }
+    val roomInfos = remember(romParser, editorState.editVersion) {
+        (romParser.roomCatalog.rooms + editorState.projectRoomInfos()).distinctBy { it.getRoomIdAsInt() }
+    }
     val roomNames = remember(roomInfos) { roomInfos.associate { it.getRoomIdAsInt() to it.name } }
     val romItemPickupOptions = remember(romParser) {
         romParser.scanAllItemPlms(roomInfos.map { it.getRoomIdAsInt() }).map { item ->
@@ -192,6 +196,7 @@ fun RoomPropertiesPanel(
     var showDeleteStateDialog by remember(room.roomId) { mutableStateOf(false) }
     var showConditionBuilder by remember(room.roomId) { mutableStateOf(false) }
     var showStateSimulator by remember(room.roomId) { mutableStateOf(false) }
+    var doorManagerError by remember(room.roomId) { mutableStateOf<String?>(null) }
     val selectedSourceStateIndex = selectedStateItem?.baseSourceStateIndex ?: -1
     val currentState = stateInspection.states.getOrNull(selectedSourceStateIndex)
     val allStateData = states.map { state ->
@@ -390,6 +395,50 @@ fun RoomPropertiesPanel(
             suffix = " ${CRE_BITFLAG_NAMES[editCreBitflag] ?: ""}"
         ) { editCreBitflag = it; syncHeaderToState() }
         PropertyRow("Door Out Ptr", "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)")
+
+        val projectRoom = editorState.project.newRoomForPreviewId(room.roomId)
+        if (projectRoom != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            SectionHeader("Door Connections (${editorState.doorEntries.size})")
+            Text(
+                "Connections are numbered from 1. SMEDIT manages their stored tile indices.",
+                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            editorState.doorEntries.forEachIndexed { index, door ->
+                val destinationName = roomInfos.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name
+                    ?: "Room 0x${door.destRoomPtr.toString(16).uppercase()}"
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    shape = MaterialTheme.shapes.extraSmall,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("${index + 1}. $destinationName", fontSize = ROOM_INFO_BODY_FONT_SIZE)
+                            Text(
+                                "Travels ${door.directionName.lowercase()} · destination screen " +
+                                    oneBasedRoomCoordinate(door.screenX, door.screenY),
+                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = {
+                            doorManagerError = runCatching {
+                                editorState.removeProjectRoomDoor(room.roomId, index)
+                                onWorkspaceChanged?.invoke()
+                            }.exceptionOrNull()?.message
+                        }) { Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                    }
+                }
+            }
+            doorManagerError?.let {
+                Text(it, fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.error)
+            }
+        }
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -592,8 +641,16 @@ fun RoomPropertiesPanel(
 
         fun sharingDescription(field: String, value: Int): String {
             if (states.size <= 1) return "Only state"
+            if (field == "levelDataPtr" && selectedStateEdits != null) {
+                val resourceId = selectedStateEdits.resources.level
+                val memberCount = states.count { it.edits?.resources?.level == resourceId }
+                return if (memberCount > 1) {
+                    "Shared layout in $memberCount states"
+                } else {
+                    "Unique layout for this state"
+                }
+            }
             val hasIndependentEdit = when (field) {
-                "levelDataPtr" -> selectedStateEdits?.operations?.any { it.edits.isNotEmpty() } == true
                 "fxPtr" -> selectedStateEdits?.fxChange != null ||
                     selectedStateEdits?.doorFxChanges?.isNotEmpty() == true
                 "plmSetPtr" -> selectedStateEdits?.plmChanges?.isNotEmpty() == true

@@ -37,6 +37,8 @@ internal fun RoomsTabSidebar(
     onRoomSelected: (RoomInfo) -> Unit,
     romParser: RomParser?,
     editorState: EditorState,
+    onCreateRoom: (NewRoomCreationRequest) -> String?,
+    onWorkspaceChanged: () -> Unit,
     tilesetHeightDp: Float,
     onTilesetHeightChange: (Float) -> Unit,
     onSeedPatterns: () -> Unit,
@@ -57,6 +59,7 @@ internal fun RoomsTabSidebar(
                 selectedRoom = selectedRoom,
                 romParser = romParser,
                 editorState = editorState,
+                onCreateRoom = onCreateRoom,
                 onRoomSelected = onRoomSelected,
                 modifier = topModifier,
                 onKeyboardNavigatorChanged = onKeyboardNavigatorChanged,
@@ -122,6 +125,7 @@ internal fun RoomsTabSidebar(
                                             editorState = editorState,
                                             modifier = Modifier.fillMaxSize(),
                                             onNavigateToMap = onNavigateToMap,
+                                            onWorkspaceChanged = onWorkspaceChanged,
                                         )
                                     } else {
                                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

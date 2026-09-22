@@ -178,66 +178,10 @@ internal fun reusableScrollCommandPtrs(
         .sorted()
         .toList()
 
-internal data class DoorTemplateChoice(
-    val sourceRoomId: Int,
-    val sourceRoomName: String,
-    val doorIndex: Int,
-    val door: RomParser.DoorEntry,
-)
-
 private data class DoorWarningTile(
     val x: Int,
     val y: Int,
     val hasError: Boolean,
-)
-
-internal fun doorTemplateChoicesForDestination(
-    romParser: RomParser,
-    rooms: List<RoomInfo>,
-    destRoomId: Int,
-): List<DoorTemplateChoice> {
-    return rooms.flatMap { roomInfo ->
-        val sourceRoomId = roomInfo.getRoomIdAsInt()
-        val sourceRoom = romParser.readRoomHeader(sourceRoomId) ?: return@flatMap emptyList()
-        romParser.parseDoorList(sourceRoom.doorOut).mapIndexedNotNull { doorIndex, door ->
-            if (door.destRoomPtr == destRoomId) {
-                DoorTemplateChoice(sourceRoomId, roomInfo.name, doorIndex, door)
-            } else {
-                null
-            }
-        }
-    }
-}
-
-internal fun doorWithTemplateValues(
-    currentDoor: RomParser.DoorEntry,
-    templateDoor: RomParser.DoorEntry,
-    crossArea: Boolean,
-): RomParser.DoorEntry {
-    val templateLowFlagsWithoutCrossArea = templateDoor.bitflag and 0xBF
-    val finalLowFlags = if (crossArea) {
-        templateLowFlagsWithoutCrossArea or 0x40
-    } else {
-        templateLowFlagsWithoutCrossArea and 0x40.inv()
-    }
-    return currentDoor.copy(
-        destRoomPtr = templateDoor.destRoomPtr,
-        bitflag = ((templateDoor.direction and 0xFF) shl 8) or (finalLowFlags and 0xFF),
-        doorCapCode = templateDoor.doorCapCode,
-        screenX = templateDoor.screenX,
-        screenY = templateDoor.screenY,
-        distFromDoor = templateDoor.distFromDoor,
-        entryCode = templateDoor.entryCode,
-    )
-}
-
-internal fun doorWithEntranceClampedToRoom(
-    door: RomParser.DoorEntry,
-    roomWidth: Int,
-    roomHeight: Int,
-): RomParser.DoorEntry = door.copy(
-    screenX = door.screenX.coerceIn(0, (roomWidth - 1).coerceAtLeast(0)),
-    screenY = door.screenY.coerceIn(0, (roomHeight - 1).coerceAtLeast(0)),
 )
 
 /**
@@ -305,6 +249,7 @@ fun MapCanvas(
     emulatorConnected: Boolean = false,
     onMoveSamusHere: ((x: Int, y: Int) -> Unit)? = null,
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
+    onWorkspaceChanged: (() -> Unit)? = null,
     roomKeyboardNavigationEnabled: Boolean = true,
     showItemNames: Boolean = true,
     showMetaNames: Boolean = true,
@@ -322,6 +267,13 @@ fun MapCanvas(
     var shortChargeStutters by remember { mutableStateOf(0) }
     var shortChargeTaps by remember { mutableStateOf(0) }
     var tileMetaExpanded by remember { mutableStateOf(false) }
+    var layoutScopeExpanded by remember { mutableStateOf(false) }
+    var showMakeUniqueLayoutDialog by remember { mutableStateOf(false) }
+    var showCopyLayoutDialog by remember { mutableStateOf(false) }
+    var showShareLayoutDialog by remember { mutableStateOf(false) }
+    var showApplySelectionDialog by remember { mutableStateOf(false) }
+    var applySelectionStateIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var pendingLayoutRevert by remember { mutableStateOf<LayoutEditScope?>(null) }
     val overlayToggles = remember { mutableStateMapOf<TileOverlay, Boolean>(
         TileOverlay.ITEMS to true,
         TileOverlay.ENEMIES to true,
@@ -332,6 +284,9 @@ fun MapCanvas(
     val customItems = remember(editorState?.patchVersion, editorState?.project?.patches) {
         editorState?.enabledCustomItems().orEmpty()
     }
+    @Suppress("UNUSED_VARIABLE") val layoutContextVersion = editorState?.editVersion
+    val layoutContext = editorState?.currentLayoutEditingContext()
+        ?.takeIf { context -> context.roomId == room?.getRoomIdAsInt() }
 
     val mapFocusReq = remember { FocusRequester() }
     Card(
@@ -433,7 +388,23 @@ fun MapCanvas(
                                 }; true
                             }
                             Key.F -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.FILL; true }
-                            Key.E -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.ERASE; true }
+                            Key.E -> {
+                                if (es.mapSelStart != null && es.mapSelEnd != null) {
+                                    es.eraseMapSelection()
+                                } else {
+                                    es.cancelFloatingSelection()
+                                    es.activeTool = EditorTool.ERASE
+                                }
+                                true
+                            }
+                            Key.Delete, Key.Backspace -> when {
+                                es.mapSelStart != null && es.mapSelEnd != null -> {
+                                    es.eraseMapSelection()
+                                    true
+                                }
+                                es.floatingSelection != null -> es.cancelFloatingSelection()
+                                else -> false
+                            }
                             Key.I -> { es.cancelFloatingSelection(); es.activeTool = EditorTool.SAMPLE; true }
                             Key.Enter -> {
                                 if (es.floatingSelection != null) {
@@ -582,15 +553,18 @@ fun MapCanvas(
                             TileOverlay.values().forEach { overlay ->
                                 val isOn = overlayToggles[overlay] ?: false
                                 DropdownMenuItem(
+                                    modifier = Modifier.height(32.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                     text = {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             Checkbox(
                                                 checked = isOn,
-                                                onCheckedChange = null
+                                                onCheckedChange = null,
+                                                modifier = Modifier.size(20.dp),
                                             )
                                             TileMetaIcon(overlay = overlay, sizeDp = 14.dp, borderDp = 2.dp, fontSize = 7.sp)
                                             Text(overlay.label, fontSize = 12.sp)
@@ -600,6 +574,114 @@ fun MapCanvas(
                                         overlayToggles[overlay] = !isOn
                                     }
                                 )
+                            }
+                        }
+                    }
+
+                    if (layoutContext != null) {
+                        Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
+                        Surface(
+                            modifier = Modifier.height(28.dp),
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "State: ${layoutContext.stateName}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                        Box {
+                            val canOpenLayoutMenu = layoutContext.allStateIds.size > 1 ||
+                                layoutContext.hasResourceEdits
+                            val layoutLabel = if (layoutContext.isShared) {
+                                "Shared layout · ${layoutContext.sharingStateCount} states"
+                            } else {
+                                "Unique layout · ${layoutContext.stateName}"
+                            }
+                            Surface(
+                                modifier = Modifier
+                                    .height(28.dp)
+                                    .clickable(enabled = canOpenLayoutMenu) {
+                                        layoutScopeExpanded = true
+                                    },
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Text(layoutLabel, fontSize = 10.sp)
+                                    if (canOpenLayoutMenu) Text("▾", fontSize = 8.sp)
+                                }
+                            }
+                            DropdownMenu(
+                                expanded = layoutScopeExpanded,
+                                onDismissRequest = { layoutScopeExpanded = false },
+                            ) {
+                                if (layoutContext.isShared) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text("Make layout unique to this state…", fontSize = 10.sp)
+                                                Text(
+                                                    "Forks the complete layout from ${layoutContext.sharingStateCount} states",
+                                                    fontSize = 8.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        },
+                                        onClick = {
+                                            layoutScopeExpanded = false
+                                            showMakeUniqueLayoutDialog = true
+                                        },
+                                        modifier = Modifier.height(40.dp),
+                                    )
+                                }
+                                Divider()
+                                DropdownMenuItem(
+                                    text = { Text("Copy layout from state…", fontSize = 10.sp) },
+                                    onClick = {
+                                        layoutScopeExpanded = false
+                                        showCopyLayoutDialog = true
+                                    },
+                                    modifier = Modifier.height(32.dp),
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Use another state’s layout…", fontSize = 10.sp) },
+                                    onClick = {
+                                        layoutScopeExpanded = false
+                                        showShareLayoutDialog = true
+                                    },
+                                    modifier = Modifier.height(32.dp),
+                                )
+                                if (layoutContext.hasResourceEdits) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (layoutContext.isShared) "Revert shared layout edits…"
+                                                else "Revert unique layout edits…",
+                                                fontSize = 10.sp,
+                                            )
+                                        },
+                                        onClick = {
+                                            layoutScopeExpanded = false
+                                            pendingLayoutRevert = if (layoutContext.isShared) {
+                                                LayoutEditScope.ALL_SHARING_STATES
+                                            } else {
+                                                LayoutEditScope.THIS_STATE
+                                            }
+                                        },
+                                        modifier = Modifier.height(32.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1688,6 +1770,16 @@ fun MapCanvas(
                                         showSavePatternDialog = true
                                     }
                                 )
+                                if ((layoutContext?.allStateIds?.size ?: 0) > 1) {
+                                    DropdownMenuItem(
+                                        text = { Text("Apply Selection to States…", fontSize = 11.sp) },
+                                        onClick = {
+                                            contextMenuExpanded = false
+                                            applySelectionStateIds = emptySet()
+                                            showApplySelectionDialog = true
+                                        },
+                                    )
+                                }
                             }
 
                             // Save-as-pattern dialog
@@ -1734,6 +1826,7 @@ fun MapCanvas(
                                     roomId = room.getRoomIdAsInt(),
                                     emulatorConnected = emulatorConnected,
                                     onMoveSamusHere = onMoveSamusHere,
+                                    onWorkspaceChanged = onWorkspaceChanged,
                                     onDismiss = { propsExpanded = false; mapFocusReq.requestFocus() },
                                     modifier = Modifier.align(Alignment.TopEnd),
                                 )
@@ -1762,6 +1855,240 @@ fun MapCanvas(
                 }
             }
         }
+    }
+
+    editorState?.pendingLayoutEditScope?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = editorState::dismissPendingLayoutEditScope,
+            title = { Text("Editing a shared layout") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This complete tile layout is used by ${prompt.sharingStateCount} states:",
+                    )
+                    Text(prompt.sharingStateNames.joinToString())
+                    Text(
+                        "Tile, BTS/collision, and embedded Layer 2 changes affect every state above. " +
+                            "Enemies, objects, effects, music, and other state data remain separate.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        editorState.resolvePendingLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
+                        mapFocusReq.requestFocus()
+                    },
+                ) { Text("Edit shared layout") }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = editorState::dismissPendingLayoutEditScope) {
+                        Text("Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            editorState.resolvePendingLayoutEditScope(LayoutEditScope.THIS_STATE)
+                            mapFocusReq.requestFocus()
+                        },
+                    ) { Text("Make unique…") }
+                }
+            },
+        )
+    }
+
+    if (showMakeUniqueLayoutDialog && layoutContext != null && editorState != null && romParser != null) {
+        AlertDialog(
+            onDismissRequest = { showMakeUniqueLayoutDialog = false },
+            title = { Text("Make layout unique?") },
+            text = {
+                Text(
+                    "${layoutContext.stateName} currently shares its complete layout with " +
+                        "${layoutContext.sharingStateCount - 1} other state" +
+                        if (layoutContext.sharingStateCount == 2) {
+                            ". A separate complete layout will be written only when it differs."
+                        } else {
+                            "s. A separate complete layout will be written only when it differs."
+                        }
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    editorState.makeCurrentLayoutUnique(romParser)
+                    showMakeUniqueLayoutDialog = false
+                    mapFocusReq.requestFocus()
+                }) { Text("Make unique") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMakeUniqueLayoutDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showCopyLayoutDialog && layoutContext != null && editorState != null && romParser != null) {
+        AlertDialog(
+            onDismissRequest = { showCopyLayoutDialog = false },
+            title = { Text("Copy layout from state") },
+            text = {
+                Column(
+                    modifier = Modifier.requiredSizeIn(maxHeight = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Makes this state’s layout unique, then replaces its Layer 1 tiles, collision, BTS, " +
+                            "and compatible embedded Layer 2 tiles.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    layoutContext.allStateIds.zip(layoutContext.allStateNames)
+                        .filter { (stateId, _) -> stateId != layoutContext.stateId }
+                        .forEach { (stateId, stateName) ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    showCopyLayoutDialog = false
+                                    editorState.copyLayoutFromState(stateId, romParser)
+                                },
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    stateName,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCopyLayoutDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showApplySelectionDialog && layoutContext != null && editorState != null && romParser != null) {
+        AlertDialog(
+            onDismissRequest = { showApplySelectionDialog = false },
+            title = { Text("Apply selection to states") },
+            text = {
+                Column(
+                    modifier = Modifier.requiredSizeIn(maxHeight = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Copies the selected ${if (editorState.activeRoomLayer == RoomEditLayer.LAYER2) "Layer 2" else "Layer 1 and BTS"} " +
+                            "tiles into unique layouts for the chosen states.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    layoutContext.allStateIds.zip(layoutContext.allStateNames)
+                        .filter { (stateId, _) -> stateId != layoutContext.stateId }
+                        .forEach { (stateId, stateName) ->
+                            val checked = stateId in applySelectionStateIds
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        applySelectionStateIds = if (checked) {
+                                            applySelectionStateIds - stateId
+                                        } else {
+                                            applySelectionStateIds + stateId
+                                        }
+                                    }
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(checked = checked, onCheckedChange = null, modifier = Modifier.size(24.dp))
+                                Text(stateName, fontSize = 11.sp, modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = applySelectionStateIds.isNotEmpty(),
+                    onClick = {
+                        editorState.applySelectionToStates(applySelectionStateIds, romParser)
+                        showApplySelectionDialog = false
+                        mapFocusReq.requestFocus()
+                    },
+                ) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApplySelectionDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showShareLayoutDialog && layoutContext != null && editorState != null && romParser != null) {
+        AlertDialog(
+            onDismissRequest = { showShareLayoutDialog = false },
+            title = { Text("Use another state’s layout") },
+            text = {
+                Column(
+                    modifier = Modifier.requiredSizeIn(maxHeight = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "This replaces ${layoutContext.stateName}’s complete layout with the chosen state’s layout " +
+                            "and links them. Future tile edits affect every state using that layout.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    layoutContext.allStateIds.zip(layoutContext.allStateNames)
+                        .filter { (stateId, _) -> stateId != layoutContext.stateId }
+                        .forEach { (stateId, stateName) ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    editorState.shareCurrentLayoutWithState(stateId, romParser)
+                                    showShareLayoutDialog = false
+                                    mapFocusReq.requestFocus()
+                                },
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                            ) {
+                                Text(
+                                    stateName,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showShareLayoutDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (pendingLayoutRevert != null && layoutContext != null && editorState != null && romParser != null) {
+        val revertingShared = pendingLayoutRevert == LayoutEditScope.ALL_SHARING_STATES
+        AlertDialog(
+            onDismissRequest = { pendingLayoutRevert = null },
+            title = { Text(if (revertingShared) "Revert shared layout edits?" else "Revert unique layout edits?") },
+            text = {
+                Text(
+                    if (revertingShared) {
+                        "This removes shared tile and collision edits from all ${layoutContext.sharingStateCount} linked states."
+                    } else {
+                        "This resets ${layoutContext.stateName}’s unique tile and collision edits to its ROM source."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (revertingShared) {
+                        editorState.revertSharedLayoutEdits(romParser)
+                    } else {
+                        editorState.revertCurrentStateLayoutEdits(romParser)
+                    }
+                    pendingLayoutRevert = null
+                    mapFocusReq.requestFocus()
+                }) { Text("Revert") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingLayoutRevert = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

@@ -14,6 +14,10 @@ data class ProjectRoomExportResult(
     val roomsPatched: Set<String>,
     /** Complete reserved ranges, including payload bytes whose value remains $FF. */
     val allocations: List<RomAllocation> = emptyList(),
+    /** Stable project room ID -> allocated bank-$8F room-header pointer. */
+    val newRoomIds: Map<String, Int> = emptyMap(),
+    /** Stable project room ID -> allocated DoorDefs, in BTS/list order. */
+    val newRoomDoorDefPtrs: Map<String, List<Int>> = emptyMap(),
 )
 
 /**
@@ -36,7 +40,7 @@ class ProjectRoomExporter(
 ) {
     companion object {
         fun hasRoomEdits(project: SmEditProject): Boolean =
-            project.rooms.values.any { it.hasEdits }
+            project.newRooms.isNotEmpty() || project.rooms.values.any { it.hasEdits }
     }
 
     private val allocations = mutableListOf<RomAllocation>()
@@ -60,6 +64,7 @@ class ProjectRoomExporter(
     private val levelDataAllocator = allocationSession
     private val enemyAllocator = allocationSession
     private val enemyGfxAllocator = allocationSession
+    private val effectiveRoomAreaOverrides = roomAreaOverrides.toMutableMap()
 
     private val vanillaEnemyGfxDestinationsBySpecies by lazy {
         collectVanillaEnemyGfxDestinations(romParser)
@@ -67,8 +72,70 @@ class ProjectRoomExporter(
 
     fun exportRooms(): ProjectRoomExportResult {
         val roomsPatched = linkedSetOf<String>()
+        val materialized = ProjectNewRoomMaterializer(
+            project = project,
+            parser = romParser,
+            romData = romData,
+            freeSpaceAllocator = allocationSession,
+            onLog = onLog,
+        ).materialize()
+        val previewToPhysical = project.newRooms.mapNotNull { room ->
+            materialized.roomIdsByProjectId[room.id]?.let { room.previewRoomId to it }
+        }.toMap()
+        val previewDoorToPhysical = buildMap {
+            for (room in project.newRooms) {
+                val physical = materialized.doorDefPtrsByProjectId[room.id].orEmpty()
+                room.previewDoorDefPtrs.zip(physical).forEach { (previewPtr, physicalPtr) ->
+                    if (previewPtr != 0) put(previewPtr, physicalPtr)
+                }
+            }
+        }
+        fun remapCondition(
+            condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
+        ): com.supermetroid.editor.data.ProjectRoomStateCondition = condition.copy(
+            argument = if (
+                condition.argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER
+            ) condition.argument?.let { previewDoorToPhysical[it] ?: it } else condition.argument,
+            children = condition.children.map(::remapCondition),
+        )
+        for (room in project.newRooms) {
+            val physicalId = materialized.roomIdsByProjectId.getValue(room.id)
+            effectiveRoomAreaOverrides[physicalId] = room.header.area
+            roomsPatched.add(physicalId.toString(16).uppercase().padStart(4, '0'))
+        }
 
-        for ((roomKey, roomEdits) in project.rooms) {
+        val effectiveEdits = project.rooms.map { (storedKey, storedEdits) ->
+            val storedId = storedKey.toIntOrNull(16)
+                ?: failExport("Project room key '$storedKey' is not a hexadecimal room ID")
+            val physicalId = previewToPhysical[storedId] ?: storedId
+            val resolvedDoors = storedEdits.doorChanges.mapTo(mutableListOf()) { change ->
+                change.copy(destRoomPtr = previewToPhysical[change.destRoomPtr] ?: change.destRoomPtr)
+            }
+            val resolvedSpawns = storedEdits.saveStationSpawns.mapTo(mutableListOf()) { spawn ->
+                spawn.copy(
+                    roomId = previewToPhysical[spawn.roomId] ?: spawn.roomId,
+                    doorPtr = previewDoorToPhysical[spawn.doorPtr] ?: spawn.doorPtr,
+                )
+            }
+            val resolvedStates = storedEdits.states.mapTo(mutableListOf()) { state ->
+                state.copy(
+                    condition = remapCondition(state.condition),
+                    doorFxChanges = state.doorFxChanges.entries.associateTo(linkedMapOf()) { (key, value) ->
+                        val oldPointer = key.toIntOrNull(16)
+                        val newPointer = oldPointer?.let { previewDoorToPhysical[it] ?: it }
+                        (newPointer?.toString(16)?.uppercase()?.padStart(4, '0') ?: key) to value
+                    },
+                )
+            }
+            physicalId.toString(16).uppercase().padStart(4, '0') to storedEdits.copy(
+                roomId = physicalId,
+                states = resolvedStates,
+                doorChanges = resolvedDoors,
+                saveStationSpawns = resolvedSpawns,
+            )
+        }
+
+        for ((roomKey, roomEdits) in effectiveEdits) {
             if (!roomEdits.hasEdits) continue
             val roomId = roomKey.toIntOrNull(16)
                 ?: failExport("Project room key '$roomKey' is not a hexadecimal room ID")
@@ -154,6 +221,24 @@ class ProjectRoomExporter(
                 emptyMap()
             }
 
+            if (roomEdits.states.any { it.levelResourceChanged }) {
+                applyLevelResourceLinks(roomKey, roomId, roomEdits, rewrittenStateOffsets)
+                roomsPatched.add(roomKey)
+            }
+
+            if (roomEdits.levelResourceOperations.values.any { operations -> operations.isNotEmpty() }) {
+                applyLevelResourceEdits(
+                    roomKey = roomKey,
+                    roomId = roomId,
+                    room = room,
+                    roomEdits = roomEdits,
+                    rewrittenStateOffsets = rewrittenStateOffsets,
+                    effectiveWidth = effectiveWidth,
+                    effectiveHeight = effectiveHeight,
+                )
+                roomsPatched.add(roomKey)
+            }
+
             if (roomEdits.states.any { it.hasEdits }) {
                 applyExistingStateEdits(roomKey, roomId, roomEdits, rewrittenStateOffsets)
                 roomsPatched.add(roomKey)
@@ -170,7 +255,98 @@ class ProjectRoomExporter(
         return ProjectRoomExportResult(
             roomsPatched = roomsPatched,
             allocations = allocations.toList(),
+            newRoomIds = materialized.roomIdsByProjectId,
+            newRoomDoorDefPtrs = materialized.doorDefPtrsByProjectId,
         )
+    }
+
+    /** Repoint explicitly linked states before applying complete layout-resource edits. */
+    private fun applyLevelResourceLinks(
+        roomKey: String,
+        roomId: Int,
+        roomEdits: RoomEdits,
+        rewrittenStateOffsets: Map<String, Int>,
+    ) {
+        val inspectedStates = if (rewrittenStateOffsets.isEmpty()) {
+            romParser.inspectRoomStates(roomId).states
+        } else {
+            emptyList()
+        }
+        fun stateOffset(state: com.supermetroid.editor.data.RoomStateEdits): Int =
+            rewrittenStateOffsets[state.id]
+                ?: state.sourceStateIndex?.let { sourceIndex ->
+                    inspectedStates.getOrNull(sourceIndex)?.stateDataPcOffset
+                }
+                ?: failExport("Room 0x$roomKey state '${state.id}' has no writable state record")
+
+        for (target in roomEdits.states.filter { it.levelResourceChanged }) {
+            val source = roomEdits.states.firstOrNull { candidate ->
+                candidate.id != target.id &&
+                    candidate.resources.level == target.resources.level &&
+                    !candidate.levelResourceChanged
+            } ?: failExport(
+                "Room 0x$roomKey state '${target.id}' links layout '${target.resources.level}', " +
+                    "but no source state owns that layout"
+            )
+            val sourcePointer = readU24(romData, stateOffset(source))
+            if (sourcePointer == 0) {
+                failExport("Room 0x$roomKey linked layout '${target.resources.level}' has a null source pointer")
+            }
+            writeU24(romData, stateOffset(target), sourcePointer)
+        }
+    }
+
+    /**
+     * Apply one operation stream to every state linked to the same semantic
+     * level resource. Passing all member offsets together preserves one pointer
+     * for shared resources; a one-state resource naturally copy-on-writes when
+     * its source ROM pointer is still aliased.
+     */
+    private fun applyLevelResourceEdits(
+        roomKey: String,
+        roomId: Int,
+        room: Room,
+        roomEdits: RoomEdits,
+        rewrittenStateOffsets: Map<String, Int>,
+        effectiveWidth: Int,
+        effectiveHeight: Int,
+    ) {
+        val inspectedStates = if (rewrittenStateOffsets.isEmpty()) {
+            romParser.inspectRoomStates(roomId).states
+        } else {
+            emptyList()
+        }
+        val effectiveRoom = if (effectiveWidth != room.width || effectiveHeight != room.height) {
+            room.copy(width = effectiveWidth, height = effectiveHeight)
+        } else {
+            room
+        }
+        for ((resourceId, operations) in roomEdits.levelResourceOperations) {
+            if (operations.none { it.edits.isNotEmpty() }) continue
+            val members = roomEdits.states.filter { it.resources.level == resourceId }
+            if (members.isEmpty()) {
+                failExport("Room 0x$roomKey layout '$resourceId' has edits but no linked states")
+            }
+            val targetOffsets = members.map { state ->
+                rewrittenStateOffsets[state.id]
+                    ?: state.sourceStateIndex?.let { sourceIndex ->
+                        inspectedStates.getOrNull(sourceIndex)?.stateDataPcOffset
+                    }
+                    ?: failExport(
+                        "Room 0x$roomKey layout '$resourceId' state '${state.id}' has no writable state record"
+                    )
+            }
+            applyLevelDataEdits(
+                roomKey = roomKey,
+                roomId = roomId,
+                room = effectiveRoom,
+                roomEdits = RoomEdits(roomId = roomId, operations = operations),
+                effectiveWidth = effectiveWidth,
+                effectiveHeight = effectiveHeight,
+                isResized = false,
+                targetStateOffsets = targetOffsets,
+            )
+        }
     }
 
     private fun applyLevelDataEdits(
@@ -581,8 +757,8 @@ class ProjectRoomExporter(
             }
 
             var finalBitflag = change.bitflag
-            val sourceArea = roomAreaOverrides[roomId] ?: room.area
-            val destinationArea = roomAreaOverrides[change.destRoomPtr] ?: destRoom.area
+            val sourceArea = effectiveRoomAreaOverrides[roomId] ?: room.area
+            val destinationArea = effectiveRoomAreaOverrides[change.destRoomPtr] ?: destRoom.area
             val expectedCrossArea = sourceArea != destinationArea
             val correctedBitflag = if (expectedCrossArea) finalBitflag or 0x40 else finalBitflag and 0x40.inv()
             if (correctedBitflag != finalBitflag) {

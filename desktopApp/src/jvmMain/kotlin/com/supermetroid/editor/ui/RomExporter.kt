@@ -209,18 +209,16 @@ internal class RomExporter(
             ) { applyPerFrameHook(it) }
 
             try {
-                for ((roomKey, roomEdits) in project.rooms) {
-                    if (!roomEdits.hasEdits) continue
+                if (ProjectRoomExporter.hasRoomEdits(project)) {
                     val owner = "room-graph:project"
-                    val roomProject = project.copy(rooms = mutableMapOf(roomKey to roomEdits))
                     val roomExportResult = writePlan.capture(
                         owner = owner,
-                        label = "Room 0x$roomKey edits",
+                        label = "Project room graph",
                         kind = RomWriteKind.ROOM,
                         overlapPolicy = com.supermetroid.editor.rom.RomOverlapPolicy.ALLOW_SAME_OWNER,
                     ) { workingRom ->
                         ProjectRoomExporter(
-                            project = roomProject,
+                            project = project,
                             romParser = RomParser(workingRom),
                             romData = workingRom,
                             roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->

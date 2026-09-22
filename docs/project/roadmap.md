@@ -55,7 +55,7 @@
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 1 | **New Room Creation** | Medium | Build on the same room model so new headers, selectors, states, doors, and resources are allocated as one validated graph. |
+| 1 | **New Room Creation follow-ups** | Small-Medium | Core blank/clone allocation and semantic project-room doors are done. Add deletion, automatic minimap tiles, templates, and generator output. |
 | 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
 | 3 | **Room JSON Import** | Small | Export done; import should create semantic rooms rather than address-keyed legacy deltas. |
 | 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
@@ -87,7 +87,9 @@
 
 ## Shelved / Deferred
 
-- **Advanced state-resource relinking** — The completed editor uses safe copy-on-write for state-local edits. Explicit “link to another state” controls are deferred until a concrete workflow requires intentional re-sharing.
+- **Non-layout state-resource relinking** — Layouts now support explicit shared/unique whole-resource
+  ownership, make-unique, copy, share, and revert. Equivalent link controls for PLM, enemy, FX, scroll, and background
+  resources remain deferred until a concrete workflow requires intentional re-sharing.
 - **State-triggered action authoring** — Conditions select content when a room loads. Typed actions that mutate events or flags during play belong to a separate future Logic & Triggers feature.
 - **Legacy behavioral materializer** — Current-format projects are supported; automated conversion of early development-only project behavior is deferred while there are no external consumers.
 - **Instant Respawn on Death** — Multiple patch attempts freeze after death animation. Needs deeper investigation.

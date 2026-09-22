@@ -91,6 +91,7 @@ class RoomExportTest {
         val oldBts = es.readBts(4, 4)
         val newScroll = if (originalScrolls[0] == 0x02) 0x01 else 0x02
 
+        es.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
         es.applyBulkEdits("test edit", listOf(TileEdit(4, 4, oldWord, oldWord xor 0x001, oldBts, oldBts xor 0x01)))
         es.setScroll(0, 0, newScroll, room.width)
 
@@ -138,6 +139,7 @@ class RoomExportTest {
         val room = rp.readRoomHeader(roomId) ?: return
         val es = EditorState()
         es.loadRoom(roomId, rp, room)
+        es.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
 
         val oldWord = es.readBlockWord(8, 8)
         val oldBts = es.readBts(8, 8)
@@ -157,7 +159,9 @@ class RoomExportTest {
         assertTrue(result.manualSkippedRooms >= 1, "bulk generation should report manual-edited skips")
         val roomEdits = es.project.rooms[es.project.roomKey(roomId)]
         assertTrue(roomEdits != null, "manual-edited room should remain in project")
-        val ops = roomEdits!!.operations + roomEdits.states.flatMap { it.operations }
+        val ops = roomEdits!!.operations +
+            roomEdits.states.flatMap { it.operations } +
+            roomEdits.levelResourceOperations.values.flatten()
         assertEquals(1, ops.size, "manual-edited room should not receive a generated biome operation")
         assertEquals("Manual test edit", ops.single().description)
         assertFalse(
@@ -173,6 +177,7 @@ class RoomExportTest {
         val room = rp.readRoomHeader(roomId) ?: return
         val es = EditorState()
         es.loadRoom(roomId, rp, room)
+        es.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
 
         val elevatorDoor = rp.findDoorsLeadingTo(roomId).single { it.isElevator }
         val clearanceBefore = elevatorClearanceSnapshot(es, elevatorDoor, room.width * 16, room.height * 16)
@@ -213,6 +218,7 @@ class RoomExportTest {
             val room = rp.readRoomHeader(roomId) ?: continue
             val es = EditorState()
             es.loadRoom(roomId, rp, room)
+            es.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
             val clearancesBefore = incomingElevators.associateWith { door ->
                 elevatorClearanceSnapshot(es, door, room.width * 16, room.height * 16)
             }

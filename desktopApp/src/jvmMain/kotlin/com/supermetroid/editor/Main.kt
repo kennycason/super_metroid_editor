@@ -84,6 +84,7 @@ import com.supermetroid.editor.ui.MapCanvas
 import com.supermetroid.editor.ui.MinimapCanvas
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.MinimapSidebar
+import com.supermetroid.editor.ui.NewRoomCreationRequest
 import com.supermetroid.editor.ui.PatchEditorCanvas
 import com.supermetroid.editor.ui.PatchListPanel
 import com.supermetroid.editor.ui.PatternEditorCanvas
@@ -102,6 +103,8 @@ import com.supermetroid.editor.ui.TilesetEditorState
 import com.supermetroid.editor.ui.TilesTabSidebar
 import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
+import com.supermetroid.editor.ui.oneBasedRoomCoordinate
+import com.supermetroid.editor.ui.roomScreenCoordinateForBlock
 import com.supermetroid.editor.ui.requestVerticalSelectionFocus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
@@ -186,16 +189,19 @@ fun main() = application {
                 TilesetProfileCache.invalidate()
                 val parser = loadRomParser(bootRomPath)
                 val catalog = parser.roomCatalog
-                romParser = parser
-                rooms = catalog.rooms
                 romFileName = File(bootRomPath).nameWithoutExtension
                 romLoadMessage = catalog.loadNotice(File(bootRomPath).name)
                 romLoadMessageIsError = false
                 RomPreferences.setLastRomPath(bootRomPath)
                 if (catalog.editable) {
                     editorState.initForRom(bootRomPath)
+                    val workspace = editorState.prepareWorkspaceParser(parser)
+                    romParser = workspace
+                    rooms = workspace.roomCatalog.rooms
                 } else {
                     editorState.initForReadOnlyRom(bootRomPath)
+                    romParser = parser
+                    rooms = catalog.rooms
                 }
                 if (selectedRoom == null) {
                     selectedRoom = pickDefaultRoom(rooms, bootRomPath)
@@ -316,16 +322,19 @@ fun main() = application {
                                             TilesetProfileCache.invalidate()
                                             val parser = loadRomParser(file.absolutePath)
                                             val catalog = parser.roomCatalog
-                                            romParser = parser
-                                            rooms = catalog.rooms
                                             romFileName = file.nameWithoutExtension
                                             romLoadMessage = catalog.loadNotice(file.name)
                                             romLoadMessageIsError = false
                                             RomPreferences.setLastRomPath(file.absolutePath)
                                             if (catalog.editable) {
                                                 editorState.initForRom(file.absolutePath)
+                                                val workspace = editorState.prepareWorkspaceParser(parser)
+                                                romParser = workspace
+                                                rooms = workspace.roomCatalog.rooms
                                             } else {
                                                 editorState.initForReadOnlyRom(file.absolutePath)
+                                                romParser = parser
+                                                rooms = catalog.rooms
                                             }
                                             selectedRoom = pickDefaultRoom(rooms, file.absolutePath)
                                         } catch (e: Exception) {
@@ -691,6 +700,23 @@ fun main() = application {
                                             },
                                             romParser = romParser,
                                             editorState = editorState,
+                                            onCreateRoom = { request ->
+                                                runCatching {
+                                                    val parser = checkNotNull(romParser) { "Open a ROM first" }
+                                                    val (created, workspace) = editorState.createNewRoomWorkspace(request, parser)
+                                                    romParser = workspace
+                                                    rooms = workspace.roomCatalog.rooms
+                                                    selectedRoom = editorState.projectRoomInfos().first { it.handle == created.handle }
+                                                }.exceptionOrNull()?.message
+                                            },
+                                            onWorkspaceChanged = {
+                                                val selectedHandle = selectedRoom?.handle
+                                                val workspace = editorState.prepareWorkspaceParser()
+                                                romParser = workspace
+                                                rooms = workspace.roomCatalog.rooms
+                                                selectedRoom = rooms.firstOrNull { it.handle == selectedHandle }
+                                                    ?: selectedRoom
+                                            },
                                             tilesetHeightDp = tilesetHeightDp,
                                             onTilesetHeightChange = { tilesetHeightDp = it },
                                             onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
@@ -808,6 +834,14 @@ fun main() = application {
                                                 selectedRoom = r
                                                 val romPath = RomPreferences.getLastRomPath()
                                                 if (romPath != null) saveLastRoom(romPath, r)
+                                            },
+                                            onWorkspaceChanged = {
+                                                val selectedHandle = selectedRoom?.handle
+                                                val workspace = editorState.prepareWorkspaceParser()
+                                                romParser = workspace
+                                                rooms = workspace.roomCatalog.rooms
+                                                selectedRoom = rooms.firstOrNull { it.handle == selectedHandle }
+                                                    ?: selectedRoom
                                             },
                                             roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             showItemNames = showRoomItemNames,
@@ -956,18 +990,18 @@ fun main() = application {
                                             val hw = es.hoverTileWord
                                             val hIdx = hw and 0x3FF
                                             val hType = (hw shr 12) and 0xF
-                                            val chunkX = hx / 16
-                                            val chunkY = hy / 16
                                             val doorHint = if (hType == 0x9) {
                                                 val bts = es.readBts(hx, hy)
                                                 val door = es.doorEntries.getOrNull(bts)
                                                 val destName = if (door != null) rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name ?: "" else ""
                                                 val modKey = if (System.getProperty("os.name", "").lowercase().contains("mac")) "Cmd" else "Ctrl"
                                                 val dest = if (destName.isNotEmpty()) " → $destName" else ""
-                                                "  Door[$bts]${door?.directionName?.let { " $it" } ?: ""}$dest  ($modKey+click to follow)"
+                                                "  Connection ${bts + 1}${door?.directionName?.let { " travels ${it.lowercase()}" } ?: ""}$dest  ($modKey+click to follow)"
                                             } else ""
                                             Text(
-                                                "chunk($chunkX,$chunkY)  tile($hx,$hy)  #$hIdx 0x${hType.toString(16).uppercase()} ${blockTypeName(hType)}$doorHint",
+                                                "screen${roomScreenCoordinateForBlock(hx, hy)}  " +
+                                                    "tile${oneBasedRoomCoordinate(hx, hy)}  #$hIdx " +
+                                                    "0x${hType.toString(16).uppercase()} ${blockTypeName(hType)}$doorHint",
                                                 fontSize = fs.statusBar,
                                                 fontFamily = monoFont,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

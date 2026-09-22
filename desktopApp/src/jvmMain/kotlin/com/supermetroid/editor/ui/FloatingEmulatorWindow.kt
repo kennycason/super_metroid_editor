@@ -1103,7 +1103,8 @@ private fun FloatingDevToolsPanel(
                         val door = doors.getOrNull(selectedDoorIndex)
                         val destName = if (door != null) {
                             val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
-                            "#$selectedDoorIndex ${door.directionName} → ${destRoom?.name ?: "0x${door.destRoomPtr.toString(16)}"}"
+                            "Connection ${selectedDoorIndex + 1} · travels ${door.directionName.lowercase()} → " +
+                                (destRoom?.name ?: "0x${door.destRoomPtr.toString(16)}")
                         } else "Select door"
                         Text(
                             destName,
@@ -1122,7 +1123,8 @@ private fun FloatingDevToolsPanel(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        "#$index ${door.directionName} → ${destRoom?.name ?: "0x${door.destRoomPtr.toString(16).uppercase()}"}",
+                                        "Connection ${index + 1} · travels ${door.directionName.lowercase()} → " +
+                                            (destRoom?.name ?: "0x${door.destRoomPtr.toString(16).uppercase()}"),
                                         fontSize = 10.sp,
                                     )
                                 },

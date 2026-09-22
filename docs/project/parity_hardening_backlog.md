@@ -43,7 +43,10 @@ This file captures the current SMILE/local-reference audit so the next work can 
 - Layer 2 / BG hardening: embedded L2 editing exists; richer BG data pointer workflows, scrolling/link behavior, and door-dependent background transfers still need a fuller authoring surface.
 - AreaSave conflict UI: save station spawn editing exists for the engine's eight runtime slots. More capacity is an engine-patch project, not a table-only relocation task.
 - Room JSON import: export exists, import still needs conflict handling and validation.
-- New room creation: requires room header/state/door/minimap allocation and route validation.
+- New room creation core is complete: blank/clone-current-state creation, native bank-constrained
+  allocation, state authoring, semantic project-room doors, and parser round trips. Remaining work
+  is automatic minimap-tile drawing, whole-room deletion, templates/generator output, and broader
+  world-route validation.
 - SMART XML import: useful for interoperability and migration from older tools.
 - Managed layout/ROM expansion: variable graphics, music, and level data can
   already relocate when free space exists. Expansion is still needed for large
@@ -70,11 +73,16 @@ Next quality-first slices:
    engine reference, or retain the current clear blocker if proof is incomplete.
 3. Continue enemy sprite correctness for special compressed/DMA/boss cases;
    Phantoon and Kraid must not use the generic raw-tile assumptions.
-4. Build new-room creation on the shared allocator plus room/state/door/minimap
-   reference validation, then add managed ROM growth when real projects exhaust
+4. Extend the completed new-room core with automatic minimap tiles, deletion/reference cleanup,
+   and template/generator entry points; then add managed ROM growth when real projects exhaust
    verified free space.
 
 ## Recent Progress
+
+- Project-owned room creation now supports blank rooms and snapshots of the current visible state.
+  SMEDIT emits a complete native room graph, keeps addresses as build output, supports named
+  project-to-project door links (including cycles), and reuses the full state editor and room-delta
+  exporter. Save/reopen, edit/export, door-resolution, and multi-state parser round trips are tested.
 
 - Existing-door authoring now uses room names/areas and bounded one-based entrance coordinates in
   its normal workflow; raw cap/ASM fields are under Advanced. Project-aware connection diagnostics

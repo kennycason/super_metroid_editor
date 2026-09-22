@@ -136,6 +136,63 @@ class EditorStateTest {
         }
     }
 
+    @Nested
+    inner class SelectionErase {
+        @Test
+        fun `erase selection clears layer 1 as one undoable operation`() {
+            for (y in 1..2) for (x in 1..2) {
+                writeWord(x, y, 0xA100 + y * 4 + x)
+                writeBts(x, y, 0x20 + y * 4 + x)
+            }
+            writeWord(3, 3, 0x8123)
+            state.mapSelStart = 2 to 2
+            state.mapSelEnd = 1 to 1
+
+            assertTrue(state.eraseMapSelection())
+
+            for (y in 1..2) for (x in 1..2) {
+                assertEquals(0x00FF, state.readBlockWord(x, y))
+                assertEquals(0, state.readBts(x, y))
+            }
+            assertEquals(0x8123, state.readBlockWord(3, 3), "tiles outside the selection must remain unchanged")
+            assertEquals(1, state.undoStack.size)
+            assertEquals(4, state.undoStack.single().edits.size)
+            assertEquals("Erase selection 4 tile(s)", state.undoStack.single().description)
+            assertEquals(2 to 2, state.mapSelStart, "erasing should preserve the selection marquee")
+            assertEquals(1 to 1, state.mapSelEnd)
+
+            assertTrue(state.undo())
+            for (y in 1..2) for (x in 1..2) {
+                assertEquals(0xA100 + y * 4 + x, state.readBlockWord(x, y))
+                assertEquals(0x20 + y * 4 + x, state.readBts(x, y))
+            }
+        }
+
+        @Test
+        fun `erase selection clears only embedded layer 2 when it is active`() {
+            state.initTestLevel(blocksWide = 4, blocksTall = 4, includeLayer2 = true)
+            writeWord(0, 0, 0x8456)
+            writeLayer2Word(0, 0, 0x0123)
+            state.activeRoomLayer = RoomEditLayer.LAYER2
+            state.mapSelStart = 0 to 0
+            state.mapSelEnd = 0 to 0
+
+            assertTrue(state.eraseMapSelection())
+
+            assertEquals(0, state.readLayer2BlockWord(0, 0))
+            assertEquals(0x8456, state.readBlockWord(0, 0))
+            assertEquals(TILE_EDIT_LAYER_2, state.undoStack.single().edits.single().layer)
+        }
+
+        @Test
+        fun `erase selection is a no-op without a complete selection`() {
+            state.mapSelStart = 0 to 0
+
+            assertFalse(state.eraseMapSelection())
+            assertTrue(state.undoStack.isEmpty())
+        }
+    }
+
     // ── Toggle flip ──────────────────────────────────────────────
 
     @Nested

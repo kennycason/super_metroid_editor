@@ -14,15 +14,17 @@ changes, then author selectors and new rooms.
 
 ## Milestone Status
 
-As of 2026-09-20, **existing-room state editing is feature complete for the current product
+As of 2026-09-22, **existing-room state editing is feature complete for the current product
 milestone**. This scope includes ordered inspection and preview, state-scoped editing, branch
 add/duplicate/delete/reorder, typed and compound conditions, first-match simulation, safe
-copy-on-write, selector-graph relocation, transactional export, validation, and semantic reopening.
+copy-on-write, intentional shared-layout editing and relinking, selector-graph relocation,
+transactional export, validation, and semantic reopening.
 
 The following are intentionally separate future features rather than incomplete parts of this
-milestone: explicit re-linking of resources after copy-on-write, actions that mutate persistent
-state during gameplay, separate-background authoring, opaque/custom room-code authoring, and
-creation of entirely new rooms.
+milestone: explicit relinking controls for non-layout resources, actions that mutate persistent
+state during gameplay, separate-background authoring, opaque/custom room-code authoring,
+whole-room deletion, template libraries, and generator-to-new-room output. Core project-owned room
+creation is implemented as the next layer on this same model.
 
 ## Verified Runtime Model
 
@@ -60,14 +62,20 @@ is conventionally used as an always-false selector that skips its state pointer.
 
 ## Current Boundary
 
-The project remains a set of deltas keyed by an existing physical room-header address. `RoomEdits`
-now optionally contains an ordered manifest of stable `RoomStateEdits` identities and explicit
-resource links. Top-level room-wide deltas remain valid common edits that apply across states.
+Existing source rooms remain deltas keyed by their physical room-header address. Project-owned
+rooms have stable semantic identities and complete initial payloads, then use the same `RoomEdits`
+overlay after workspace materialization. `RoomEdits` optionally contains an ordered manifest of
+stable `RoomStateEdits` identities and explicit resource links. Top-level room-wide deltas remain
+valid common edits that apply across states.
 
-Selected-state tiles, PLMs, enemies, scrolls, tileset/music/Layer 2 motion, and FX are now persisted
-and exported against that state. Both the default FX entry and existing incoming-door-specific FX
-entries are editable. Shared level, PLM, enemy, enemy-GFX, scroll, and FX resources use copy-on-write
-so editing one state does not silently mutate a linked sibling.
+Selected-state layouts, PLMs, enemies, scrolls, tileset/music/Layer 2 motion, and FX are now persisted
+and exported against their actual owning resources. Both the default FX entry and existing
+incoming-door-specific FX entries are editable. A state never owns a partial tile override: it
+references one complete level-layout resource, which may be shared by several states or unique to
+one. The first tile-changing action on an unacknowledged shared layout asks whether to edit the
+shared layout or make the active state's complete layout unique first. PLM, enemy, enemy-GFX,
+scroll, and FX resources continue
+to use copy-on-write so editing one state does not silently mutate a linked sibling.
 
 Existing-room selector graphs are now authorable. The UI can add/duplicate/delete/reorder conditional
 branches, edit every vanilla condition plus generated equipment/beam, capacity, current health/ammo,
@@ -82,41 +90,57 @@ transactional ROM write plan.
 The room-state simulator now accepts only inputs used by the current graph and shows the first branch
 that would win plus later branches that also match. A duplicated state copies the selected state's
 effective project deltas; unedited ROM resources stay linked and later state-local edits use
-copy-on-write. Explicit re-linking, state-triggered actions, separate-background/custom-code
-authoring and new-room creation are deferred extensions outside the completed existing-room
-milestone.
+copy-on-write. Layouts can be made unique, copied between states, applied from a selection to several
+states, explicitly shared, or reverted as one whole resource. Relinking for non-layout
+resources, state-triggered actions, and separate-background/custom-code authoring remain deferred
+extensions. Project-owned room creation now builds on the completed
+existing-room milestone.
 
 ## Current Project Representation
 
 ```text
 SmEditProject.rooms[room-header ID] -> RoomEdits
   common room operations / PLM / enemy / scroll / FX edits
+  levelResourceOperations: tile/BTS/embedded-Layer-2 operations owned by a complete layout identity
   optional shared room-header changes
   states: ordered RoomStateEdits list
+
+SmEditProject.newRooms[stable project ID] -> ProjectNewRoom
+  complete initial header and default-state payload
+  semantic ordered doors (`rom:*` / `project:*` destinations)
+  rebuildable workspace room/DoorDef pointers (preview adapters only)
 
 RoomStateEdits
   id: stable project ID
   source/template state identity
   condition: typed selector condition
   resources: explicit level / FX / enemy / enemy-GFX / scroll / PLM / background / X-Ray links
-  state-specific operations and property changes
+  state-specific non-layout operations and property changes
 ```
 
 State IDs and resource-link IDs are project identities, not SNES addresses. Existing ROM addresses
 remain source locations and can change during copy-on-write relocation.
 
 Resource links make sharing explicit. The default state can share a level with several conditional
-states while each state owns different enemies or PLMs. The current state-local edit path safely
-forks a shared resource on write. A future explicit link editor should offer both choices:
+states while each state owns different enemies or PLMs. A layout identity always represents the
+complete Layer 1, BTS, and embedded Layer 2 payload; partial per-state layout overlays are not part
+of the current model. The canvas exposes both layout choices:
 
-- Edit the shared resource and affect every linked state.
-- Make this state independent, copy the resource, and edit only that copy.
+- Edit the shared layout, changing every state linked to that resource.
+- Make this state's whole layout unique, then edit its independent resource.
 
-The safe default for an edit initiated from one state is copy-on-write.
+The first tile-changing action never guesses between them. The editor pauses that action, asks for
+its scope, and then replays it after the choice. Tile/BTS/embedded-Layer-2 data are the layout;
+PLMs, enemies, effects, scroll settings, and other state resources are not accidentally included in
+a layout operation. The toolbar also provides explicit make-unique, copy, share,
+selection-to-states, and revert commands. Legacy beta files containing per-state tile overlays are
+migrated to complete unique layout resources when opened, preserving their visible result without
+retaining ambiguous partial ownership.
 
-New-room creation will extend this representation with a stable room identity, an origin of
-`Existing` or `New`, a complete shared header, and ordered door definitions. New content has no ROM
-address until the build planner allocates it.
+Project-owned rooms extend this representation with a stable room identity, an origin of `BLANK` or
+`CLONED`, a complete shared header/default state, and ordered door definitions. Their workspace
+addresses are disposable parser adapters; new content has no exported ROM address until the build
+planner allocates it.
 
 ## Conditions
 
@@ -160,10 +184,11 @@ The editable state UI includes:
 - Add, duplicate, delete, and reorder state.
 - A typed condition builder.
 - Compare the selected state with Default and highlight differing fields/resources.
+- A compact shared/unique layout indicator and menu for make-unique, copy, share, and revert.
 
 Deferred extensions:
 
-- Explicit duplicate-as-linked/independent choices and per-resource link/unlink controls.
+- Explicit duplicate-as-linked/independent choices and link/unlink controls for non-layout resources.
 - Visual authoring for actions that set events or otherwise mutate persistent state.
 
 The door/world graph is related but separate. Door edges connect rooms; a room's state list is an
@@ -172,13 +197,53 @@ annotate a room with state-dependent door caps or traversal changes without conf
 
 ## New Rooms
 
-New-room creation should build on this same model rather than introduce another address-keyed delta format. A
-new room starts with a header, one mandatory default state, blank level/BTS data, scroll data, empty
-PLM/enemy/GFX sets, an FX table, and a door list. Blank, cloned, templated, and generated rooms all
-produce the same semantic model.
+Project-owned room creation is implemented in the native model. The Rooms list `+` action can create
+a blank room or snapshot the currently previewed state. A blank room receives a complete header,
+one mandatory default state, editable Layer 1/BTS/embedded Layer 2 data, blue scrolls, empty PLM,
+enemy, and enemy-GFX sets, a default FX entry, and an empty terminated door list. A clone snapshots
+the visible layout, scrolls, PLMs, enemies, enemy GFX, FX, state properties, and optionally copies
+outgoing connections into independently allocated DoorDefs. It intentionally clones the selected
+state as the new room's default; additional conditions use the normal state editor.
 
-At build time, the planner allocates the room header, selector list, state records, and referenced
-resources in their required banks, then resolves door destinations and code symbols transactionally.
+`ProjectNewRoom.id` is stable project identity. Its workspace preview address is rebuilt from an
+untouched copy of the input ROM so the normal parser, renderer, and editing tools operate on the
+same native structure they use for existing rooms. Saving preserves the semantic model; building
+allocates fresh physical addresses and returns the stable-ID-to-room-ID mapping.
+
+Every door tile uses the same two-stage destination picker in the tile-properties panel: search for
+a room by name, ID, or area, then select one of the real compatible doorway openings found in that
+room's effective tile layout. The picker includes unsaved project edits and unlinked openings in new
+rooms; it does not guess from existing DoorDefs. If the source doorway has no DoorDef, choosing the
+destination opening creates one behind the scenes. If a freshly painted doorway still shares another opening's BTS, choosing its
+destination privately forks the connection and assigns the entire contiguous doorway pattern,
+preventing mixed BTS indices across the opening. The doorway shape supplies the initial horizontal
+or vertical direction, and only destination edges compatible with that direction are selectable. Room Info remains
+the overview for inspecting and shrinking the complete door list; new connections always begin from
+doorway tiles. Connections use named destinations, direction, and bounded one-based entrance screens.
+Door destinations are stored as `rom:91F8` or
+`project:room-1` references and resolved only after all new headers exist, including forward and
+cyclic links. Removing a connection is blocked while doorway tiles reference its BTS index; higher
+indices are shifted safely. Removal is also blocked while a room-state condition, door-specific FX
+override, or save-station spawn references that exact DoorDef. Existing
+reciprocal/facing/opening diagnostics remain advisory.
+Reciprocity is checked against the connection index attached to the selected physical destination
+opening, not merely any DoorDef elsewhere in that room. Healthy connections stay quiet; the tile
+panel surfaces only actionable warnings and errors.
+
+Room-local screen and tile coordinates are one-based everywhere in the editor UI. `(1, 1)` is the
+top-left, columns increase to the right, and rows increase downward. ROM/project fields remain
+zero-based internally and are converted only at the UI boundary. Door connections are likewise
+displayed as Connection 1 through N; their zero-based BTS indices are an implementation detail.
+
+At build time, SMEDIT allocates and validates the native graph in its required banks: compressed
+level data in `$C0-$CE`, FX and DoorDefs in `$83`, enemy populations in `$A1`, enemy GFX in `$B4`,
+and the room header/default state, PLMs, scrolls, and door list in `$8F`. The materialized output is
+reopened through `RomParser` in tests. Normal room deltas and relocatable multi-state authoring are
+then applied to the allocated room through the same exporter used for existing rooms.
+
+Current follow-ups are whole-room deletion/reference cleanup, automatic minimap-tile drawing,
+rebuildable template libraries, generator output into a new room, existing-ROM-room door-list
+growth/removal, and managed ROM expansion when verified free space is exhausted.
 
 ## Project Schema During Beta
 
@@ -193,8 +258,9 @@ schema change must ship with a tested, one-way migration into this model and mus
 downgrade a project.
 
 Top-level room edit lists remain intentional common edits: they apply across the room's states.
-Entries inside `RoomStateEdits` are state-specific. This is an overlay distinction in one model,
-not old-versus-new storage.
+Entries inside `RoomStateEdits` are state-specific non-layout changes. Layout edits live in
+`levelResourceOperations`, keyed by the complete layout identity referenced by one or more states.
+This is a resource-ownership distinction in one model, not old-versus-new storage.
 
 ## Build Invariants
 
@@ -232,9 +298,11 @@ not old-versus-new storage.
 
 - Stable state IDs are carried through canvas/property edits and undo/redo.
 - Copy-on-write export is implemented for level, enemy, enemy-GFX, PLM, scrolling, and FX data.
+- Whole-layout ownership, shared/unique resource operations, copy/share/revert, and selection-to-state
+  workflows are implemented without sharing state-owned PLMs, enemies, effects, or scroll changes.
 - State-targeted level, enemy, PLM, scrolling, default/door-specific FX, music, tileset, and Layer 2 motion export is implemented.
 - All known typed condition changes are implemented, including encoded-size changes through graph relocation.
-- Explicit link/unlink controls and separate-background authoring are deferred extensions.
+- Link/unlink controls for non-layout resources and separate-background authoring are deferred extensions.
 
 ### 3. State authoring — compound editor, allocator, and simulator complete
 
@@ -247,16 +315,20 @@ not old-versus-new storage.
 - Canonical expression decoding, semantic evaluation, real-ROM graph round trips, and an
   instruction-level 65816 interpreter matrix are unit tested.
 
-### 4. New rooms
+### 4. New rooms — core creation complete
 
-- Blank/clone/template/generator entry points.
-- Room/door/state/resource allocation.
-- Map placement, room graph, reciprocal-door tooling, and route validation.
+- Blank and clone-current-state entry points are implemented; templates and generator output remain.
+- Stable project identity, isolated workspace materialization, schema round trip, and physical
+  room/door/state/resource allocation are implemented.
+- Project-room door-list add/remove, semantic destinations, forward/cyclic resolution, BTS-safe
+  removal, and existing reciprocal diagnostics are implemented.
+- Header map coordinates are authored at creation. Automatic minimap-tile drawing and whole-world
+  route/orphan validation remain separate follow-ups.
 
 The prerequisite existing-door UX is now implemented: semantic room/entrance selection, bounded
 screen coordinates, project-aware connection diagnostics, and non-destructive reciprocal/facing
-warnings. New-room work must reuse these diagnostics and must assign door-list identities without
-asking the user to enter a BTS index, DoorDef pointer, or room address.
+warnings. The project-room connection editor reuses these diagnostics and assigns door-list
+identities without asking the user to enter a BTS index, DoorDef pointer, or room address.
 
 ### 5. Symbolic ASM mode
 
@@ -267,12 +339,14 @@ asking the user to enter a BTS index, DoorDef pointer, or room address.
 ## Test Boundary
 
 The completed existing-room milestone is covered by selector encoding/decoding, malformed-input,
-full-ROM inspection, copy-on-write, add/delete/reorder, simulator, graph-allocation, semantic
-round-trip, and instruction-level predicate/interpreter tests.
+full-ROM inspection, copy-on-write, shared/unique whole-layout ownership, layout relinking, add/delete/reorder,
+simulator, graph-allocation, semantic round-trip, and instruction-level predicate/interpreter tests.
+Core new-room coverage includes
+schema save/reopen, blank and cloned workspace editing, semantic and cyclic doors, surviving-door
+identity after deletion, normal delta/state export, and native ROM reparse.
 
 The following remain acceptance requirements for their corresponding future features, not for the
-completed state editor:
+completed state editor or core new-room creation:
 
 - Migration tests for any future incompatible project-schema change.
-- New-room round trip: model -> ROM -> parser -> equivalent model.
 - Emulator smoke tests for event, boss, equipment, incoming-door, and default branches.

@@ -191,11 +191,16 @@ tagged `SMEX` postfix format and shared `SMEXRUN` interpreter documented in
 `docs/rom/data_format.md`. Both survive export and reopening as semantic project data rather than
 opaque ASM addresses.
 
-Existing-room state editing is considered feature complete as of 2026-09-20: users can inspect,
+Existing-room state editing is considered feature complete as of 2026-09-22: users can inspect,
 preview, add, duplicate, delete, reorder, simulate, and export branches with state-scoped content and
-typed or compound conditions. Explicit resource re-linking, persistent-state action authoring,
-separate-background/custom-code authoring and entirely new rooms
-are separate future features documented in `docs/project/room_model.md`.
+typed or compound conditions. Layouts are whole resources: the first change to an unacknowledged
+shared layout asks whether to edit every linked state or make the active state's complete layout
+unique. The compact shared/unique indicator, resource-owned operations, make-unique/copy/share/revert
+commands, and selection-to-state copying use that same rule. Relinking for non-layout resources,
+persistent-state action authoring, and separate-background/custom-code
+authoring remain separate future features. Core project-owned room
+creation is implemented; deletion, automatic minimap tiles, templates, and generator output remain
+follow-ups documented in `docs/project/room_model.md`.
 
 ---
 

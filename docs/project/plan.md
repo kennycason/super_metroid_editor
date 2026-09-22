@@ -50,6 +50,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 23 | **Custom ASM Embedding** | ✅ Done | Hex bytes → free space + auto-link pointer |
 | 24 | **Enemy/Boss Top-Level Tabs** | ✅ Done | Promoted from Patches to dedicated tabs |
 | 25 | **TestRomHelper Migration** | ✅ Done | 73 test files, eliminated hardcoded ROM paths |
+| 26 | **New Room Creation Core** | ✅ Done | Blank/clone-current-state, stable project identity, native room/resource allocation, semantic project-room doors, state editing, and parser round trips |
 
 ---
 
@@ -59,7 +60,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 1 | **New Room Creation** | Medium | Build on the same model; allocate room header in $8F, selectors/states, door table, level data, enemy/PLM/scroll pointers. |
+| 1 | **New Room Creation Follow-ups** | Small-Medium | Core creation is done; add deletion/reference cleanup, automatic minimap tiles, templates, and generator output. |
 | 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
 | 3 | **ROM Expansion** | Medium | Extend beyond the current safe allocation space without invalid mapper or pointer assumptions. |
 | 4 | **Room JSON Import** | Small | Export done; import should target native semantic rooms. |
@@ -86,9 +87,9 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 15 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
 | 16 | **Plugin System** | Large | Extensibility framework for custom tools. |
 
-Advanced state-resource relinking, typed state-triggered actions, and automated migration of early
-development-only project behavior are deferred enhancements rather than blockers for the completed
-existing-room state editor.
+Layout sharing and relinking are implemented. Equivalent controls for non-layout state resources,
+typed state-triggered actions, and automated migration of early development-only project behavior
+are deferred enhancements rather than blockers for the completed existing-room state editor.
 
 ---
 

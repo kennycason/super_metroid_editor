@@ -28,6 +28,15 @@ internal fun isGeneratedBiomeOperation(op: EditOperation): Boolean =
 internal fun stripGeneratedBiomeEdits(roomEdits: RoomEdits?): Boolean {
     if (roomEdits == null) return false
     var stripped = false
+    val emptyResources = mutableListOf<String>()
+    for ((resourceId, operations) in roomEdits.levelResourceOperations) {
+        val generatedResourceOps = operations.filter { isGeneratedBiomeOperation(it) }
+        if (generatedResourceOps.isEmpty()) continue
+        operations.removeAll(generatedResourceOps.toSet())
+        if (operations.isEmpty()) emptyResources.add(resourceId)
+        stripped = true
+    }
+    for (resourceId in emptyResources) roomEdits.levelResourceOperations.remove(resourceId)
     for (state in roomEdits.states) {
         val generatedStateOps = state.operations.filter { isGeneratedBiomeOperation(it) }
         if (generatedStateOps.isEmpty()) continue
@@ -73,6 +82,10 @@ internal fun stripGeneratedBiomeEdits(roomEdits: RoomEdits?): Boolean {
 
 internal fun hasManualBiomeBlockingEdits(roomEdits: RoomEdits?): Boolean {
     if (roomEdits == null) return false
+    if (roomEdits.levelResourceOperations.values.any { operations ->
+            operations.any { !isGeneratedBiomeOperation(it) }
+        }
+    ) return true
     if (roomEdits.states.any { state ->
             state.operations.any { !isGeneratedBiomeOperation(it) } ||
                 state.enemyChanges.isNotEmpty() || state.customScrollCommands.isNotEmpty() ||

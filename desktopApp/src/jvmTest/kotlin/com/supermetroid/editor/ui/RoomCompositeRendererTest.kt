@@ -83,6 +83,42 @@ class RoomCompositeRendererTest {
         )
     }
 
+    @Test
+    fun `screen coordinates render independently from the grid`() {
+        val data = roomRenderData()
+        val plain = buildCompositeImage(
+            data = data,
+            activeOverlays = emptySet(),
+            showGrid = false,
+            roomWidthScreens = 1,
+            roomHeightScreens = 1,
+        )
+        val gridOnly = buildCompositeImage(
+            data = data,
+            activeOverlays = emptySet(),
+            showGrid = true,
+            roomWidthScreens = 1,
+            roomHeightScreens = 1,
+        )
+        val coordinatesOnly = buildCompositeImage(
+            data = data,
+            activeOverlays = setOf(TileOverlay.SCREEN_COORDINATES),
+            showGrid = false,
+            roomWidthScreens = 1,
+            roomHeightScreens = 1,
+        )
+
+        assertFalse(plain.pixels().contentEquals(gridOnly.pixels()), "Grid should draw screen boundaries")
+        assertFalse(
+            plain.pixels().contentEquals(coordinatesOnly.pixels()),
+            "Screen Coordinates should draw labels even when Grid is off",
+        )
+        assertFalse(
+            gridOnly.pixels().contentEquals(coordinatesOnly.pixels()),
+            "Grid and Screen Coordinates should remain separate display options",
+        )
+    }
+
     private fun roomRenderData(
         itemBlocks: Set<Int> = emptySet(),
         plmEntries: List<RomParser.PlmEntry> = emptyList(),

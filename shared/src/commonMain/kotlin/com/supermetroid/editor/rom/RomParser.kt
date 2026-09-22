@@ -23,7 +23,12 @@ import com.supermetroid.editor.util.EditorLog
  * Room IDs (e.g., 0x91F8 for Landing Site) are 16-bit pointers within
  * SNES bank $8F. Each room header lives at SNES address $8F:<roomId>.
  */
-class RomParser(internal val romData: ByteArray) {
+class RomParser(
+    internal val romData: ByteArray,
+    private val roomCatalogOverride: RomRoomCatalog? = null,
+) {
+    /** Isolated copy used to build a project-room workspace without mutating the input ROM. */
+    fun copyRomData(): ByteArray = romData.copyOf()
     private val hasHeader: Boolean
         get() = romData.size % 0x8000 == SMC_HEADER_SIZE
 
@@ -35,7 +40,7 @@ class RomParser(internal val romData: ByteArray) {
     }
 
     val roomCatalog: RomRoomCatalog by lazy {
-        RomRoomCatalogDetector.detect(this, compatibilityReport)
+        roomCatalogOverride ?: RomRoomCatalogDetector.detect(this, compatibilityReport)
     }
 
     val graphicsCatalog: RomGraphicsCatalog by lazy {
@@ -1239,8 +1244,7 @@ class RomParser(internal val romData: ByteArray) {
      */
     fun findDoorsLeadingTo(targetRoomId: Int): List<DoorEntry> {
         val result = mutableListOf<DoorEntry>()
-        val allRooms = com.supermetroid.editor.data.RoomRepository().getAllRooms()
-        for (info in allRooms) {
+        for (info in roomCatalog.rooms) {
             val srcId = info.getRoomIdAsInt()
             val srcRoom = readRoomHeader(srcId) ?: continue
             if (srcRoom.doorOut == 0) continue

@@ -31,6 +31,15 @@ import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.ProjectRoomStateCondition
+import com.supermetroid.editor.data.ProjectDoorDefinition
+import com.supermetroid.editor.data.ProjectEnemyEntry
+import com.supermetroid.editor.data.ProjectEnemyGfxEntry
+import com.supermetroid.editor.data.ProjectFxEntry
+import com.supermetroid.editor.data.ProjectNewRoom
+import com.supermetroid.editor.data.ProjectNewRoomHeader
+import com.supermetroid.editor.data.ProjectNewRoomOrigin
+import com.supermetroid.editor.data.ProjectNewRoomState
+import com.supermetroid.editor.data.ProjectPlmEntry
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.procgen.BiomeGenerator
@@ -54,8 +63,11 @@ import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RomRoomCatalog
+import com.supermetroid.editor.rom.ProjectNewRoomMaterializer
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.displaySummary
 import com.supermetroid.editor.rom.encodedSizeBytes
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.stateEditsForId
@@ -67,6 +79,7 @@ import com.supermetroid.editor.rom.toSigned16
 import com.supermetroid.editor.rom.toUnsigned16
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
+import java.util.Base64
 
 private val editorStateLog = KotlinLogging.logger {}
 
@@ -115,6 +128,18 @@ data class RoomAreaReassignmentResult(
     val destinationMapY: Int? = null,
 )
 
+data class NewRoomCreationRequest(
+    val name: String,
+    val cloneCurrentRoom: Boolean,
+    val copyDoors: Boolean = false,
+    val area: Int,
+    val mapX: Int,
+    val mapY: Int,
+    val width: Int,
+    val height: Int,
+    val tileset: Int,
+)
+
 private data class AreaSaveMigrationPlan(
     val plmReplacements: List<Pair<RomParser.PlmEntry, Int>> = emptyList(),
     val spawnOverrides: List<SaveStationSpawnChange> = emptyList(),
@@ -133,6 +158,29 @@ private data class MapSelectionBounds(
     val maxX: Int,
     val maxY: Int,
 )
+
+enum class LayoutEditScope {
+    THIS_STATE,
+    ALL_SHARING_STATES,
+}
+
+data class LayoutEditingContext(
+    val roomId: Int,
+    val stateId: String,
+    val stateName: String,
+    val resourceId: String,
+    val allStateIds: List<String>,
+    val allStateNames: List<String>,
+    val sharingStateIds: List<String>,
+    val sharingStateNames: List<String>,
+    val scope: LayoutEditScope?,
+    val hasResourceEdits: Boolean,
+    val hasLegacyPrivateEdits: Boolean,
+) {
+    val sharingStateCount: Int get() = sharingStateIds.size
+    val isShared: Boolean get() = sharingStateCount > 1
+    val requiresScopeChoice: Boolean get() = sharingStateCount > 1 && scope == null
+}
 
 // ─── Editor State ───────────────────────────────────────────────
 
@@ -173,11 +221,17 @@ class EditorState {
     private val pendingPositions = mutableSetOf<Long>()
     private val pendingPlmAdds = mutableListOf<PlmChange>()
     private val pendingPlmRemoves = mutableListOf<PlmChange>()
+    private val layoutEditScopes = mutableMapOf<String, LayoutEditScope>()
+    private var pendingLayoutEditAction: (() -> Unit)? = null
+    var pendingLayoutEditScope by mutableStateOf<LayoutEditingContext?>(null)
+        private set
 
     var project by mutableStateOf(SmEditProject(romPath = ""))
         private set
     var projectFilePath: String = ""
         private set
+    private var sourceRomData: ByteArray? = null
+    private var sourceRoomCatalog: RomRoomCatalog? = null
 
     var workingLevelData: ByteArray? = null
         private set
@@ -2126,6 +2180,10 @@ class EditorState {
     // ─── Project lifecycle ──────────────────────────────────────
 
     fun initForRom(romPath: String) {
+        layoutEditScopes.clear()
+        dismissPendingLayoutEditScope()
+        sourceRomData = null
+        sourceRoomCatalog = null
         projectFilePath = romPath.replaceAfterLast('.', "smedit")
         val file = File(projectFilePath)
         var repairedRomPath = false
@@ -2154,9 +2212,309 @@ class EditorState {
     }
 
     fun initForReadOnlyRom(romPath: String) {
+        sourceRomData = null
+        sourceRoomCatalog = null
         projectFilePath = ""
         project = SmEditProject(romPath = romPath)
         resetForLoadedProject(seedPatches = true)
+    }
+
+    /**
+     * Rebuild an isolated parser containing project-owned rooms. The input ROM
+     * bytes remain untouched; [ProjectNewRoom.previewRoomId] is only the address
+     * of this workspace representation.
+     */
+    fun prepareWorkspaceParser(sourceParser: RomParser? = null): RomParser {
+        if (sourceParser != null) {
+            sourceRomData = sourceParser.copyRomData()
+            sourceRoomCatalog = sourceParser.roomCatalog
+        }
+        val source = sourceRomData ?: sourceParser?.copyRomData()
+            ?: error("No source ROM is available for the room workspace")
+        val data = source.copyOf()
+        val result = ProjectNewRoomMaterializer(
+            project = project,
+            parser = RomParser(data),
+            romData = data,
+            onLog = ::editorLog,
+        ).materialize()
+
+        val oldToNew = linkedMapOf<Int, Int>()
+        val oldDoorToNew = linkedMapOf<Int, Int>()
+        for (room in project.newRooms) {
+            val allocated = result.roomIdsByProjectId.getValue(room.id)
+            if (room.previewRoomId != 0 && room.previewRoomId != allocated) {
+                oldToNew[room.previewRoomId] = allocated
+            }
+            if (room.previewRoomId != allocated) {
+                room.previewRoomId = allocated
+                dirty = true
+            }
+            val doorPointers = result.doorDefPtrsByProjectId[room.id].orEmpty()
+            room.previewDoorDefPtrs.zip(doorPointers).forEach { (oldPointer, newPointer) ->
+                if (oldPointer != 0 && oldPointer != newPointer) oldDoorToNew[oldPointer] = newPointer
+            }
+            if (room.previewDoorDefPtrs != doorPointers) {
+                room.previewDoorDefPtrs.clear()
+                room.previewDoorDefPtrs.addAll(doorPointers)
+                dirty = true
+            }
+        }
+        if (oldToNew.isNotEmpty() || oldDoorToNew.isNotEmpty()) {
+            fun remapCondition(condition: ProjectRoomStateCondition): ProjectRoomStateCondition = condition.copy(
+                argument = if (
+                    condition.argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER
+                ) condition.argument?.let { oldDoorToNew[it] ?: it } else condition.argument,
+                children = condition.children.map(::remapCondition),
+            )
+            val remapped = linkedMapOf<String, RoomEdits>()
+            for ((key, edits) in project.rooms) {
+                val oldId = key.toIntOrNull(16)
+                val newId = oldId?.let { oldToNew[it] } ?: oldId
+                val mappedDoors = edits.doorChanges.mapTo(mutableListOf()) { change ->
+                    change.copy(destRoomPtr = oldToNew[change.destRoomPtr] ?: change.destRoomPtr)
+                }
+                val mappedSpawns = edits.saveStationSpawns.mapTo(mutableListOf()) { spawn ->
+                    spawn.copy(
+                        roomId = oldToNew[spawn.roomId] ?: spawn.roomId,
+                        doorPtr = oldDoorToNew[spawn.doorPtr] ?: spawn.doorPtr,
+                    )
+                }
+                val mappedStates = edits.states.mapTo(mutableListOf()) { state ->
+                    state.copy(
+                        condition = remapCondition(state.condition),
+                        doorFxChanges = state.doorFxChanges.entries.associateTo(linkedMapOf()) { (doorKey, change) ->
+                            val oldPointer = doorKey.toIntOrNull(16)
+                            val newPointer = oldPointer?.let { oldDoorToNew[it] ?: it }
+                            (newPointer?.toString(16)?.uppercase()?.padStart(4, '0') ?: doorKey) to change
+                        },
+                    )
+                }
+                val mappedEdits = edits.copy(
+                    roomId = newId ?: edits.roomId,
+                    states = mappedStates,
+                    doorChanges = mappedDoors,
+                    saveStationSpawns = mappedSpawns,
+                )
+                remapped[project.roomKey(mappedEdits.roomId)] = mappedEdits
+            }
+            project.rooms.clear()
+            project.rooms.putAll(remapped)
+        }
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        val workspaceCatalog = sourceRoomCatalog?.let { catalog ->
+            catalog.copy(
+                rooms = (catalog.rooms + projectRoomInfos()).distinctBy { it.getRoomIdAsInt() },
+                discoveredRoomCount = catalog.discoveredRoomCount + project.newRooms.size,
+            )
+        }
+        return RomParser(data, workspaceCatalog)
+    }
+
+    fun projectRoomInfos(): List<RoomInfo> = project.newRooms.map { room ->
+        RoomInfo(
+            id = "0x${room.previewRoomId.toString(16).uppercase().padStart(4, '0')}",
+            handle = room.handle,
+            name = room.name,
+            comment = "Project-owned ${room.origin.name.lowercase()} room",
+        )
+    }
+
+    /** Create a complete project-owned room seed. Call [prepareWorkspaceParser] afterwards. */
+    fun createNewRoom(request: NewRoomCreationRequest, romParser: RomParser): ProjectNewRoom {
+        val name = request.name.trim()
+        require(name.isNotEmpty()) { "Room name cannot be empty" }
+        require(request.area in 0..6) { "Room area must be Crateria through Ceres" }
+        require(request.mapX in 0..63 && request.mapY in 0..31) { "Map position is outside the 64x32 area map" }
+        require(request.width in 1..16 && request.height in 1..16) { "Room dimensions must be 1-16 screens" }
+        require(request.tileset in 0 until TileGraphics.NUM_TILESETS) { "Tileset ${request.tileset} is invalid" }
+
+        val sourceBase = if (request.cloneCurrentRoom) {
+            require(currentRoomId != 0) { "Load a room before cloning it" }
+            romParser.readRoomHeader(currentRoomId) ?: error("The current room could not be read")
+        } else null
+        val sourceRoom = sourceBase?.let { applyHeaderChanges(applyCurrentStateData(it, romParser)) }
+        val width = sourceRoom?.width ?: request.width
+        val height = sourceRoom?.height ?: request.height
+        val tileset = sourceRoom?.tileset ?: request.tileset
+        require(request.mapX + width <= 64 && request.mapY + height <= 32) {
+            "The ${width}x$height room does not fit at map position (${request.mapX}, ${request.mapY})"
+        }
+
+        var ordinal = 1
+        var stableId: String
+        do {
+            stableId = "room-$ordinal"
+            ordinal++
+        } while (project.newRooms.any { it.id == stableId })
+        val baseHandle = name.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { stableId }
+        var handle = baseHandle
+        var handleOrdinal = 2
+        val usedHandles = RoomRepository().getAllRooms().mapTo(mutableSetOf()) { it.handle }
+            .also { handles -> handles += project.newRooms.map { it.handle } }
+        while (handle in usedHandles) handle = "$baseHandle-${handleOrdinal++}"
+
+        val usedIndices = buildSet {
+            for (info in romParser.roomCatalog.rooms) {
+                val room = romParser.readRoomHeader(info.getRoomIdAsInt()) ?: continue
+                if (room.area == request.area) add(room.index)
+            }
+            project.newRooms.filter { it.header.area == request.area }.forEach { add(it.header.index) }
+        }
+        val roomIndex = (0..0xFF).firstOrNull { it !in usedIndices }
+            ?: error("Area ${request.area} has no unused room index")
+
+        val levelData = if (sourceRoom != null) {
+            workingLevelData?.copyOf() ?: romParser.decompressLZ2(sourceRoom.levelDataPtr)
+        } else {
+            blankLevelData(width, height, includeLayer2 = true)
+        }
+        val scrolls = if (sourceRoom != null) {
+            if (_workingScrolls.size == width * height) _workingScrolls.toList()
+            else romParser.parseScrollData(sourceRoom.roomScrollsPtr, width, height).toList()
+        } else List(width * height) { 1 }
+        val plms = if (sourceRoom != null) {
+            _workingPlms.map { ProjectPlmEntry(it.id, it.x, it.y, it.param) }
+        } else emptyList()
+        val enemies = if (sourceRoom != null) {
+            _workingEnemies.map {
+                ProjectEnemyEntry(it.id, it.x, it.y, it.initParam, it.properties, it.extra1, it.extra2, it.extra3)
+            }
+        } else emptyList()
+        val enemyGfx = sourceRoom?.let { room ->
+            romParser.parseEnemyGfxSet(room.enemyGfxPtr).map { ProjectEnemyGfxEntry(it.speciesId, it.paletteIndex) }
+        }.orEmpty()
+        val missingGfxSpecies = enemies.map { it.id }.toSet() - enemyGfx.map { it.speciesId }.toSet()
+        require(missingGfxSpecies.isEmpty()) {
+            "Clone cannot snapshot newly added enemy graphics until the source room is exported: " +
+                missingGfxSpecies.joinToString { "0x${it.toString(16).uppercase()}" }
+        }
+        fun ProjectFxEntry.withChange(change: FxChange?): ProjectFxEntry = if (change == null) this else copy(
+            liquidSurfaceStart = change.liquidSurfaceStart ?: liquidSurfaceStart,
+            liquidSurfaceNew = change.liquidSurfaceNew ?: liquidSurfaceNew,
+            liquidSpeed = change.liquidSpeed ?: liquidSpeed,
+            liquidDelay = change.liquidDelay ?: liquidDelay,
+            fxType = change.fxType ?: fxType,
+            fxBitA = change.fxBitA ?: fxBitA,
+            fxBitB = change.fxBitB ?: fxBitB,
+            fxBitC = change.fxBitC ?: fxBitC,
+            paletteFxBitflags = change.paletteFxBitflags ?: paletteFxBitflags,
+            tileAnimBitflags = change.tileAnimBitflags ?: tileAnimBitflags,
+            paletteBlend = change.paletteBlend ?: paletteBlend,
+        )
+        val sourceEdits = sourceRoom?.let { project.rooms[project.roomKey(it.roomId)] }
+        val selectedSourceEdits = selectedStateEdits(sourceEdits)
+        val fxEntries = sourceRoom?.let { room ->
+            romParser.parseFxEntries(room.fxPtr).map {
+                ProjectFxEntry(
+                    it.doorSelect, it.liquidSurfaceStart, it.liquidSurfaceNew, it.liquidSpeed,
+                    it.liquidDelay, it.fxType, it.fxBitA, it.fxBitB, it.fxBitC,
+                    it.paletteFxBitflags, it.tileAnimBitflags, it.paletteBlend,
+                ).withChange(
+                    if (it.doorSelect == 0) {
+                        selectedSourceEdits?.fxChange ?: sourceEdits?.fxChange
+                    } else {
+                        selectedSourceEdits?.doorFxChanges
+                            ?.entries
+                            ?.firstOrNull { change -> change.key.toIntOrNull(16) == it.doorSelect }
+                            ?.value
+                    }
+                )
+            }
+        }.orEmpty().ifEmpty { listOf(ProjectFxEntry()) }
+        val doors = if (sourceRoom != null && request.copyDoors) {
+            _workingDoors.map { door ->
+                val projectDestination = project.newRooms.firstOrNull { it.previewRoomId == door.destRoomPtr }
+                ProjectDoorDefinition(
+                    destination = projectDestination?.let { project.newRoomDestination(it.id) }
+                        ?: project.romRoomDestination(door.destRoomPtr),
+                    bitflag = door.bitflag,
+                    doorCapCode = door.doorCapCode,
+                    screenX = door.screenX,
+                    screenY = door.screenY,
+                    distFromDoor = door.distFromDoor,
+                    entryCode = door.entryCode,
+                    sourceDoorDefPtr = door.doorDefPtr,
+                )
+            }
+        } else emptyList()
+
+        val room = ProjectNewRoom(
+            id = stableId,
+            name = name,
+            handle = handle,
+            origin = if (sourceRoom == null) ProjectNewRoomOrigin.BLANK else ProjectNewRoomOrigin.CLONED,
+            sourceRoomId = sourceRoom?.roomId,
+            header = ProjectNewRoomHeader(
+                index = roomIndex,
+                area = request.area,
+                mapX = request.mapX,
+                mapY = request.mapY,
+                width = width,
+                height = height,
+                upScroller = sourceRoom?.upScroller ?: 0x70,
+                downScroller = sourceRoom?.downScroller ?: 0xA0,
+                creBitflag = sourceRoom?.creBitflag ?: 0,
+            ),
+            initialState = ProjectNewRoomState(
+                levelDataBase64 = Base64.getEncoder().encodeToString(levelData),
+                tileset = tileset,
+                musicData = sourceRoom?.musicData ?: 0,
+                musicTrack = sourceRoom?.musicTrack ?: 0,
+                fxEntries = fxEntries.toMutableList(),
+                enemies = enemies.toMutableList(),
+                enemyGfx = enemyGfx.toMutableList(),
+                bgScrolling = sourceRoom?.bgScrolling ?: 0,
+                scrollData = scrolls.toMutableList(),
+                xraySpecialCasingPtr = sourceRoom?.xraySpecialCasingPtr ?: 0,
+                mainAsmPtr = sourceRoom?.mainAsmPtr ?: 0,
+                plms = plms.toMutableList(),
+                bgDataPtr = sourceRoom?.bgDataPtr ?: 0,
+                setupAsmPtr = sourceRoom?.setupAsmPtr ?: 0,
+            ),
+            doors = doors.toMutableList(),
+        )
+        project.newRooms += room
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        postStatus("Created ${if (sourceRoom == null) "blank" else "cloned"} room '$name'")
+        return room
+    }
+
+    /** Create and workspace-materialize atomically from the UI's perspective. */
+    fun createNewRoomWorkspace(
+        request: NewRoomCreationRequest,
+        romParser: RomParser,
+    ): Pair<ProjectNewRoom, RomParser> {
+        val wasDirty = dirty
+        val room = createNewRoom(request, romParser)
+        return try {
+            room to prepareWorkspaceParser()
+        } catch (failure: Throwable) {
+            project.newRooms.removeAll { it.id == room.id }
+            if (room.previewRoomId != 0) project.rooms.remove(project.roomKey(room.previewRoomId))
+            dirty = wasDirty
+            editVersion++
+            throw failure
+        }
+    }
+
+    private fun blankLevelData(width: Int, height: Int, includeLayer2: Boolean): ByteArray {
+        val blocks = width * 16 * height * 16
+        val layer1Bytes = blocks * 2
+        return ByteArray(2 + layer1Bytes + blocks + if (includeLayer2) layer1Bytes else 0).also {
+            it[0] = (layer1Bytes and 0xFF).toByte()
+            it[1] = ((layer1Bytes ushr 8) and 0xFF).toByte()
+            for (index in 0 until blocks) {
+                val offset = 2 + index * 2
+                it[offset] = (RomConstants.AIR_TILE_WORD and 0xFF).toByte()
+                it[offset + 1] = ((RomConstants.AIR_TILE_WORD ushr 8) and 0xFF).toByte()
+            }
+        }
     }
 
     private fun resetForLoadedProject(seedPatches: Boolean) {
@@ -2386,7 +2744,10 @@ class EditorState {
 
         val roomKey = project.roomKey(roomId)
         val savedRoom = project.rooms[roomKey]
-        if (savedRoom != null) replaySavedRoomEdits(savedRoom, effectiveWidth, roomKey)
+        if (savedRoom != null) {
+            if (savedRoom.states.isNotEmpty()) migrateLegacyStateLayoutOperations(savedRoom, romParser)
+            replaySavedRoomEdits(savedRoom, effectiveWidth, roomKey)
+        }
         // Bump render version without marking room as user-edited
         _editVersionState.value++
     }
@@ -2411,8 +2772,531 @@ class EditorState {
         roomEdits?.stateEditsForId(currentStateId)
             ?: roomEdits?.stateEditsForSourceIndex(currentStateIndex)
 
-    private fun currentOperations(): MutableList<EditOperation> =
-        currentStateEdits()?.operations ?: project.getOrCreateRoom(currentRoomId).operations
+    private fun layoutScopeKey(roomId: Int, resourceId: String): String = "$roomId:$resourceId"
+
+    private fun levelResourceOwner(roomEdits: RoomEdits, state: RoomStateEdits): RoomStateEdits =
+        if (!state.levelResourceChanged) {
+            state
+        } else {
+            roomEdits.states.firstOrNull { candidate ->
+                candidate.resources.level == state.resources.level && !candidate.levelResourceChanged
+            } ?: state
+        }
+
+    fun currentLayoutEditingContext(): LayoutEditingContext? {
+        val parser = currentRomParser ?: return null
+        if (currentRoomId == 0) return null
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(parser)
+        val state = selectedStateEdits(roomEdits) ?: return null
+        val resourceId = state.resources.level
+        val sharingStates = roomEdits.states.filter { it.resources.level == resourceId }
+        val resourceOperations = roomEdits.levelResourceOperations[resourceId].orEmpty()
+        val explicitScope = layoutEditScopes[layoutScopeKey(currentRoomId, resourceId)]
+        val inferredScope = when {
+            sharingStates.size <= 1 -> LayoutEditScope.THIS_STATE
+            explicitScope == LayoutEditScope.ALL_SHARING_STATES -> explicitScope
+            resourceOperations.any { it.edits.isNotEmpty() } -> LayoutEditScope.ALL_SHARING_STATES
+            else -> null
+        }
+        return LayoutEditingContext(
+            roomId = currentRoomId,
+            stateId = state.id,
+            stateName = state.condition.displaySummary(currentArea),
+            resourceId = resourceId,
+            allStateIds = roomEdits.states.map { it.id },
+            allStateNames = roomEdits.states.map { it.condition.displaySummary(currentArea) },
+            sharingStateIds = sharingStates.map { it.id },
+            sharingStateNames = sharingStates.map { it.condition.displaySummary(currentArea) },
+            scope = inferredScope,
+            hasResourceEdits = resourceOperations.any { it.edits.isNotEmpty() },
+            hasLegacyPrivateEdits = state.operations.any { it.edits.isNotEmpty() },
+        )
+    }
+
+    /** Acknowledge shared editing or explicitly fork the active state's complete layout. */
+    fun setCurrentLayoutEditScope(scope: LayoutEditScope) {
+        val context = currentLayoutEditingContext() ?: return
+        if (scope == LayoutEditScope.THIS_STATE) {
+            currentRomParser?.let { makeCurrentLayoutUnique(it) }
+        } else {
+            layoutEditScopes[layoutScopeKey(context.roomId, context.resourceId)] = scope
+            pendingLayoutEditScope = null
+            editVersion++
+        }
+    }
+
+    fun resolvePendingLayoutEditScope(scope: LayoutEditScope) {
+        val prompt = pendingLayoutEditScope ?: return
+        val action = pendingLayoutEditAction
+        pendingLayoutEditScope = null
+        pendingLayoutEditAction = null
+        if (scope == LayoutEditScope.THIS_STATE) {
+            currentRomParser?.let { makeCurrentLayoutUnique(it) }
+        } else {
+            layoutEditScopes[layoutScopeKey(prompt.roomId, prompt.resourceId)] = scope
+        }
+        action?.invoke()
+        editVersion++
+    }
+
+    fun dismissPendingLayoutEditScope() {
+        pendingLayoutEditScope = null
+        pendingLayoutEditAction = null
+    }
+
+    /**
+     * Queue the first direct edit until the user acknowledges that the complete
+     * layout is shared or explicitly forks it for this state.
+     */
+    private fun allowOrQueueLayoutEdit(action: () -> Unit): Boolean {
+        val context = currentLayoutEditingContext() ?: return true
+        if (!context.requiresScopeChoice) return true
+        if (pendingLayoutEditAction == null) pendingLayoutEditAction = action
+        pendingLayoutEditScope = context
+        return false
+    }
+
+    private fun currentOperations(): MutableList<EditOperation> {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val state = currentStateEdits() ?: return roomEdits.operations
+        return roomEdits.levelResourceOperations.getOrPut(state.resources.level) { mutableListOf() }
+    }
+
+    private fun EditOperation.hasNonLayoutChanges(): Boolean =
+        plmAdds.isNotEmpty() || plmRemoves.isNotEmpty() || enemyAdds.isNotEmpty() ||
+            enemyRemoves.isNotEmpty() || enemyUpdates.isNotEmpty() || scrollEdits.isNotEmpty() ||
+            stateDataBefore != null || stateDataAfter != null || fxBefore != null || fxAfter != null
+
+    private fun EditOperation.tileOnly(): EditOperation = copy(
+        plmAdds = emptyList(),
+        plmRemoves = emptyList(),
+        enemyAdds = emptyList(),
+        enemyRemoves = emptyList(),
+        enemyUpdates = emptyList(),
+        scrollEdits = emptyList(),
+        stateDataBefore = null,
+        stateDataAfter = null,
+        fxBefore = null,
+        fxAfter = null,
+    )
+
+    private fun EditOperation.nonLayoutOnly(): EditOperation = copy(edits = emptyList())
+
+    /** Keep resource-owned tile edits separate from state-owned objects/effects in mixed actions. */
+    private fun recordOperationForCurrentScope(operation: EditOperation) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val state = currentStateEdits()
+        if (operation.edits.isNotEmpty() && state != null) {
+            roomEdits.levelResourceOperations
+                .getOrPut(state.resources.level) { mutableListOf() }
+                .add(operation.tileOnly())
+            if (operation.hasNonLayoutChanges()) state.operations.add(operation.nonLayoutOnly())
+        } else {
+            (state?.operations ?: roomEdits.operations).add(operation)
+        }
+    }
+
+    private fun removeRecordedOperationForCurrentScope(operation: EditOperation) {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val state = currentStateEdits()
+        if (operation.edits.isNotEmpty() && state != null) {
+            val resourceOperations = roomEdits.levelResourceOperations[state.resources.level]
+            if (resourceOperations?.lastOrNull() == operation.tileOnly()) {
+                resourceOperations.removeAt(resourceOperations.lastIndex)
+                if (resourceOperations.isEmpty()) {
+                    roomEdits.levelResourceOperations.remove(state.resources.level)
+                }
+            }
+            if (operation.hasNonLayoutChanges() && state.operations.lastOrNull() == operation.nonLayoutOnly()) {
+                state.operations.removeAt(state.operations.lastIndex)
+            }
+        } else {
+            val operations = state?.operations ?: roomEdits.operations
+            val index = operations.indexOfLast { it == operation }
+            if (index >= 0) operations.removeAt(index)
+        }
+    }
+
+    private fun effectiveLevelDataForState(
+        roomEdits: RoomEdits,
+        state: RoomStateEdits,
+        romParser: RomParser,
+        followLinkedResource: Boolean = true,
+        includeSharedOperations: Boolean = true,
+        includeStateOperations: Boolean = true,
+    ): ByteArray? {
+        val room = romParser.readRoomHeader(currentRoomId) ?: return null
+        val targetSourceIndex = state.baseSourceStateIndex() ?: return null
+        val runtimeStates = romParser.parseRoomStatesWithData(currentRoomId)
+        val targetRuntimeState = runtimeStates.getOrNull(targetSourceIndex) ?: return null
+        val levelOwner = if (followLinkedResource) levelResourceOwner(roomEdits, state) else state
+        val sourceIndex = levelOwner.baseSourceStateIndex() ?: return null
+        val levelRuntimeState = runtimeStates.getOrNull(sourceIndex) ?: return null
+        val effectiveWidth = roomEdits.roomHeaderChange?.width ?: room.width
+        val effectiveHeight = roomEdits.roomHeaderChange?.height ?: room.height
+        val levelPtr = levelRuntimeState.levelDataPtr.takeIf { it != 0 } ?: room.levelDataPtr
+        var data = romParser.decompressLZ2(levelPtr)
+        if (effectiveWidth != room.width || effectiveHeight != room.height) {
+            data = resizeLevelData(data, room.width, room.height, effectiveWidth, effectiveHeight)
+        } else {
+            data = data.copyOf()
+        }
+        val bgScrolling = state.stateDataChange?.bgScrolling
+            ?: roomEdits.stateDataChange?.bgScrolling
+            ?: targetRuntimeState.bgScrolling
+        fun applyOperations(operations: List<EditOperation>) {
+            val blocksWide = effectiveWidth * 16
+            val blocksTall = effectiveHeight * 16
+            val totalBlocks = blocksWide * blocksTall
+            if (data.size < 2) return
+            val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+            val layer2Start = 2 + layer1Size + totalBlocks
+            val hasLayer2 = bgScrolling == 0 && layer2Start + totalBlocks * 2 <= data.size
+            for (operation in operations) for (edit in operation.edits) {
+                if (edit.blockX !in 0 until blocksWide || edit.blockY !in 0 until blocksTall) continue
+                val index = edit.blockY * blocksWide + edit.blockX
+                if (edit.layer == TILE_EDIT_LAYER_2) {
+                    if (!hasLayer2) continue
+                    val offset = layer2Start + index * 2
+                    data[offset] = (edit.newBlockWord and 0xFF).toByte()
+                    data[offset + 1] = ((edit.newBlockWord ushr 8) and 0xFF).toByte()
+                } else {
+                    val wordOffset = 2 + index * 2
+                    val btsOffset = 2 + layer1Size + index
+                    if (wordOffset + 1 >= data.size || btsOffset >= data.size) continue
+                    data[wordOffset] = (edit.newBlockWord and 0xFF).toByte()
+                    data[wordOffset + 1] = ((edit.newBlockWord ushr 8) and 0xFF).toByte()
+                    data[btsOffset] = edit.newBts.toByte()
+                }
+            }
+        }
+        applyOperations(roomEdits.operations)
+        if (includeSharedOperations) {
+            applyOperations(roomEdits.levelResourceOperations[state.resources.level].orEmpty())
+        }
+        if (includeStateOperations) applyOperations(state.operations)
+        return data
+    }
+
+    private fun levelWordAt(
+        data: ByteArray,
+        blockX: Int,
+        blockY: Int,
+        layer: Int,
+        blocksWide: Int,
+        blocksTall: Int,
+    ): Int? {
+        if (blockX !in 0 until blocksWide || blockY !in 0 until blocksTall || data.size < 2) return null
+        val index = blockY * blocksWide + blockX
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val offset = if (layer == TILE_EDIT_LAYER_2) {
+            val start = 2 + layer1Size + blocksWide * blocksTall
+            start + index * 2
+        } else {
+            2 + index * 2
+        }
+        if (offset + 1 >= data.size) return null
+        return (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
+    }
+
+    private fun levelBtsAt(data: ByteArray, blockX: Int, blockY: Int, blocksWide: Int): Int? {
+        if (blockX < 0 || blockY < 0 || blockX >= blocksWide || data.size < 2) return null
+        val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+        val offset = 2 + layer1Size + blockY * blocksWide + blockX
+        if (offset !in data.indices) return null
+        return data[offset].toInt() and 0xFF
+    }
+
+    private fun buildLevelDataDiff(
+        oldData: ByteArray,
+        newData: ByteArray,
+        blocksWide: Int,
+        blocksTall: Int,
+    ): List<TileEdit> {
+        val edits = mutableListOf<TileEdit>()
+        for (y in 0 until blocksTall) for (x in 0 until blocksWide) {
+            val oldWord = levelWordAt(oldData, x, y, TILE_EDIT_LAYER_1, blocksWide, blocksTall) ?: continue
+            val newWord = levelWordAt(newData, x, y, TILE_EDIT_LAYER_1, blocksWide, blocksTall) ?: continue
+            val oldBts = levelBtsAt(oldData, x, y, blocksWide) ?: continue
+            val newBts = levelBtsAt(newData, x, y, blocksWide) ?: continue
+            if (oldWord != newWord || oldBts != newBts) {
+                edits += TileEdit(x, y, oldWord, newWord, oldBts, newBts)
+            }
+        }
+        fun hasEmbeddedLayer2(data: ByteArray): Boolean {
+            if (data.size < 2) return false
+            val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
+            val totalBlocks = blocksWide * blocksTall
+            return 2 + layer1Size + totalBlocks + totalBlocks * 2 <= data.size
+        }
+        if (hasEmbeddedLayer2(oldData) && hasEmbeddedLayer2(newData)) {
+            for (y in 0 until blocksTall) for (x in 0 until blocksWide) {
+                val oldWord = levelWordAt(oldData, x, y, TILE_EDIT_LAYER_2, blocksWide, blocksTall) ?: continue
+                val newWord = levelWordAt(newData, x, y, TILE_EDIT_LAYER_2, blocksWide, blocksTall) ?: continue
+                if (oldWord != newWord) {
+                    edits += TileEdit(x, y, oldWord, newWord, layer = TILE_EDIT_LAYER_2)
+                }
+            }
+        }
+        return edits
+    }
+
+    private fun pruneUnusedLevelResources(roomEdits: RoomEdits) {
+        val activeResourceIds = roomEdits.states.mapTo(mutableSetOf()) { it.resources.level }
+        roomEdits.levelResourceOperations.keys.removeAll { it !in activeResourceIds }
+    }
+
+    private fun stripTileEdits(operations: MutableList<EditOperation>) {
+        operations.replaceAll { operation -> operation.copy(edits = emptyList()) }
+        operations.removeAll { operation -> !operation.hasNonLayoutChanges() }
+    }
+
+    private fun nextUniqueLevelResourceId(roomEdits: RoomEdits): String {
+        var ordinal = 1
+        var candidate: String
+        do {
+            candidate = "level-unique-$ordinal"
+            ordinal++
+        } while (
+            roomEdits.states.any { it.resources.level == candidate } ||
+            candidate in roomEdits.levelResourceOperations
+        )
+        return candidate
+    }
+
+    /**
+     * Give [state] one complete semantic layout resource. Any legacy private
+     * tile overlay is normalized into that resource; non-layout operation
+     * metadata remains state-owned.
+     */
+    private fun makeLayoutUniqueForState(
+        roomEdits: RoomEdits,
+        state: RoomStateEdits,
+        romParser: RomParser,
+    ): Boolean {
+        val sharingCount = roomEdits.states.count { it.resources.level == state.resources.level }
+        val hasLegacyOverlay = state.operations.any { it.edits.isNotEmpty() }
+        if (sharingCount <= 1 && !hasLegacyOverlay) return false
+
+        val effectiveLayout = effectiveLevelDataForState(roomEdits, state, romParser) ?: return false
+        val stateBaseline = effectiveLevelDataForState(
+            roomEdits = roomEdits,
+            state = state,
+            romParser = romParser,
+            followLinkedResource = false,
+            includeSharedOperations = false,
+            includeStateOperations = false,
+        ) ?: return false
+        val resourceId = if (sharingCount > 1) {
+            nextUniqueLevelResourceId(roomEdits)
+        } else {
+            state.resources.level
+        }
+        val edits = buildLevelDataDiff(
+            oldData = stateBaseline,
+            newData = effectiveLayout,
+            blocksWide = workingBlocksWide,
+            blocksTall = workingBlocksTall,
+        )
+        if (edits.isEmpty()) {
+            roomEdits.levelResourceOperations.remove(resourceId)
+        } else {
+            roomEdits.levelResourceOperations[resourceId] = mutableListOf(
+                EditOperation("Unique layout for ${state.condition.displaySummary(currentArea)}", edits)
+            )
+        }
+        stripTileEdits(state.operations)
+        state.resources = state.resources.copy(level = resourceId)
+        state.levelResourceChanged = false
+        pruneUnusedLevelResources(roomEdits)
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        return true
+    }
+
+    /** Explicitly fork the active state's whole layout resource. */
+    fun makeCurrentLayoutUnique(romParser: RomParser): Boolean {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val state = selectedStateEdits(roomEdits) ?: return false
+        if (!makeLayoutUniqueForState(roomEdits, state, romParser)) return false
+        layoutEditScopes[layoutScopeKey(currentRoomId, state.resources.level)] = LayoutEditScope.THIS_STATE
+        switchRoomState(state.id, romParser)
+        editVersion++
+        return true
+    }
+
+    /** Preserve old project semantics while upgrading private tile overlays to whole resources. */
+    private fun migrateLegacyStateLayoutOperations(roomEdits: RoomEdits, romParser: RomParser) {
+        val legacyStates = roomEdits.states.filter { state -> state.operations.any { it.edits.isNotEmpty() } }
+        if (legacyStates.isEmpty()) return
+        var migrated = 0
+        for (state in legacyStates) {
+            if (makeLayoutUniqueForState(roomEdits, state, romParser)) migrated++
+        }
+        if (migrated > 0) {
+            editorLog("Migrated $migrated legacy state layout overlay(s) to complete layout resources")
+            editVersion++
+        }
+    }
+
+    /** Replace the active state's complete tile/BTS layout with another state's effective layout. */
+    fun copyLayoutFromState(sourceStateId: String, romParser: RomParser): Int {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val sourceState = roomEdits.stateEditsForId(sourceStateId) ?: return 0
+        if (sourceState.id == currentStateId) return 0
+        val sourceData = effectiveLevelDataForState(roomEdits, sourceState, romParser) ?: return 0
+        makeCurrentLayoutUnique(romParser)
+        val blocksWide = workingBlocksWide
+        val blocksTall = workingBlocksTall
+        val edits = mutableListOf<TileEdit>()
+        for (y in 0 until blocksTall) for (x in 0 until blocksWide) {
+            val oldWord = readBlockWord(x, y)
+            val oldBts = readBts(x, y)
+            val newWord = levelWordAt(sourceData, x, y, TILE_EDIT_LAYER_1, blocksWide, blocksTall) ?: continue
+            val newBts = levelBtsAt(sourceData, x, y, blocksWide) ?: continue
+            if (oldWord != newWord || oldBts != newBts) {
+                edits += TileEdit(x, y, oldWord, newWord, oldBts, newBts)
+            }
+        }
+        if (canEditEmbeddedLayer2()) {
+            for (y in 0 until blocksTall) for (x in 0 until blocksWide) {
+                val oldWord = readLayer2BlockWord(x, y)
+                val newWord = levelWordAt(sourceData, x, y, TILE_EDIT_LAYER_2, blocksWide, blocksTall) ?: continue
+                if (oldWord != newWord) {
+                    edits += TileEdit(x, y, oldWord, newWord, layer = TILE_EDIT_LAYER_2)
+                }
+            }
+        }
+        val sourceName = sourceState.condition.displaySummary(currentArea)
+        applyBulkEdits("Copy layout from $sourceName", edits)
+        return edits.size
+    }
+
+    /** Apply the selected tile rectangle as independent edits in chosen states. */
+    fun applySelectionToStates(targetStateIds: Set<String>, romParser: RomParser): Int {
+        val bounds = mapSelectionBounds() ?: return 0
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val sourceName = selectedStateEdits(roomEdits)?.condition?.displaySummary(currentArea) ?: "selected state"
+        val layer = if (activeRoomLayer == RoomEditLayer.LAYER2) TILE_EDIT_LAYER_2 else TILE_EDIT_LAYER_1
+        var editCount = 0
+        for (target in roomEdits.states.filter { it.id in targetStateIds && it.id != currentStateId }) {
+            val targetData = effectiveLevelDataForState(roomEdits, target, romParser) ?: continue
+            val edits = mutableListOf<TileEdit>()
+            for (y in bounds.minY..bounds.maxY) for (x in bounds.minX..bounds.maxX) {
+                val oldWord = levelWordAt(targetData, x, y, layer, workingBlocksWide, workingBlocksTall) ?: continue
+                val newWord = if (layer == TILE_EDIT_LAYER_2) readLayer2BlockWord(x, y) else readBlockWord(x, y)
+                val oldBts = if (layer == TILE_EDIT_LAYER_1) {
+                    levelBtsAt(targetData, x, y, workingBlocksWide) ?: continue
+                } else 0
+                val newBts = if (layer == TILE_EDIT_LAYER_1) readBts(x, y) else 0
+                if (oldWord != newWord || oldBts != newBts) {
+                    edits += TileEdit(x, y, oldWord, newWord, oldBts, newBts, layer)
+                }
+            }
+            if (edits.isNotEmpty()) {
+                makeLayoutUniqueForState(roomEdits, target, romParser)
+                roomEdits.levelResourceOperations
+                    .getOrPut(target.resources.level) { mutableListOf() }
+                    .add(EditOperation("Apply selection from $sourceName", edits))
+                editCount += edits.size
+            }
+        }
+        if (editCount > 0) {
+            project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+            dirty = true
+            editVersion++
+        }
+        return editCount
+    }
+
+    fun revertCurrentStateLayoutEdits(romParser: RomParser): Boolean {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val state = selectedStateEdits(roomEdits) ?: return false
+        val removed = roomEdits.levelResourceOperations.remove(state.resources.level)?.isNotEmpty() == true
+        if (!removed) return false
+        layoutEditScopes.remove(layoutScopeKey(currentRoomId, state.resources.level))
+        dirty = true
+        switchRoomState(state.id, romParser)
+        editVersion++
+        return true
+    }
+
+    /** Replace this state's layout with another state's and keep their future shared edits linked. */
+    fun shareCurrentLayoutWithState(sourceStateId: String, romParser: RomParser): Boolean {
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        roomEdits.ensureStateManifest(romParser)
+        val target = selectedStateEdits(roomEdits) ?: return false
+        val source = roomEdits.stateEditsForId(sourceStateId) ?: return false
+        if (source.id == target.id) return false
+
+        val legacySourceTileOperations = source.operations.filter { it.edits.isNotEmpty() }
+        val destinationResourceId = if (legacySourceTileOperations.isEmpty()) {
+            source.resources.level
+        } else {
+            val sourceLayout = effectiveLevelDataForState(roomEdits, source, romParser) ?: return false
+            val sourceBaseline = effectiveLevelDataForState(
+                roomEdits = roomEdits,
+                state = source,
+                romParser = romParser,
+                followLinkedResource = false,
+                includeSharedOperations = false,
+                includeStateOperations = false,
+            ) ?: return false
+            var ordinal = 1
+            var candidate: String
+            do {
+                candidate = "level-shared-$ordinal"
+                ordinal++
+            } while (
+                roomEdits.states.any { it.resources.level == candidate } ||
+                candidate in roomEdits.levelResourceOperations
+            )
+            val edits = buildLevelDataDiff(
+                oldData = sourceBaseline,
+                newData = sourceLayout,
+                blocksWide = workingBlocksWide,
+                blocksTall = workingBlocksTall,
+            )
+            if (edits.isNotEmpty()) {
+                roomEdits.levelResourceOperations[candidate] = mutableListOf(
+                    EditOperation("Share layout from ${source.condition.displaySummary(currentArea)}", edits)
+                )
+            }
+            stripTileEdits(source.operations)
+            source.resources = source.resources.copy(level = candidate)
+            source.levelResourceChanged = false
+            candidate
+        }
+
+        stripTileEdits(target.operations)
+        target.resources = target.resources.copy(level = destinationResourceId)
+        target.levelResourceChanged = true
+        pruneUnusedLevelResources(roomEdits)
+        layoutEditScopes[layoutScopeKey(currentRoomId, destinationResourceId)] = LayoutEditScope.ALL_SHARING_STATES
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        switchRoomState(target.id, romParser)
+        layoutEditScopes[layoutScopeKey(currentRoomId, destinationResourceId)] = LayoutEditScope.ALL_SHARING_STATES
+        editVersion++
+        return true
+    }
+
+    fun revertSharedLayoutEdits(romParser: RomParser): Boolean {
+        val context = currentLayoutEditingContext() ?: return false
+        val roomEdits = project.getOrCreateRoom(currentRoomId)
+        val removed = roomEdits.levelResourceOperations.remove(context.resourceId)?.isNotEmpty() == true
+        if (!removed) return false
+        layoutEditScopes.remove(layoutScopeKey(currentRoomId, context.resourceId))
+        dirty = true
+        switchRoomState(context.stateId, romParser)
+        editVersion++
+        return true
+    }
 
     private fun currentPlmChanges(): MutableList<PlmChange> =
         currentStateEdits()?.plmChanges ?: project.getOrCreateRoom(currentRoomId).plmChanges
@@ -2491,6 +3375,23 @@ class EditorState {
             }
         }
         selectedStateEdits(savedRoom)?.let { stateEdits ->
+            savedRoom.levelResourceOperations[stateEdits.resources.level]?.let { resourceOperations ->
+                var resourceTileCount = 0
+                for (operation in resourceOperations) {
+                    for (edit in operation.edits) {
+                        applyTileEdit(edit, useNew = true)
+                        resourceTileCount++
+                    }
+                    undoStack.add(operation)
+                }
+                if (resourceOperations.isNotEmpty()) undoVersion++
+                if (resourceTileCount > 0) {
+                    editorLog(
+                        "Replayed $resourceTileCount layout-resource edits for room 0x$roomKey " +
+                            "resource ${stateEdits.resources.level}"
+                    )
+                }
+            }
             replayStateEdits(stateEdits, effectiveWidth, roomKey)
         }
     }
@@ -2560,6 +3461,7 @@ class EditorState {
     }
 
     fun switchRoomState(stateId: String, romParser: RomParser) {
+        dismissPendingLayoutEditScope()
         val roomEdits = project.getOrCreateRoom(currentRoomId)
         roomEdits.ensureStateManifest(romParser)
         val selectedState = roomEdits.stateEditsForId(stateId) ?: return
@@ -2597,7 +3499,10 @@ class EditorState {
             tileGraphics = tg
         }
 
-        val levelDataPtr = state.levelDataPtr.takeIf { it != 0 } ?: room.levelDataPtr
+        val levelOwner = levelResourceOwner(roomEdits, selectedState)
+        val levelOwnerIndex = levelOwner.baseSourceStateIndex() ?: baseStateIndex
+        val levelOwnerState = states.getOrNull(levelOwnerIndex) ?: state
+        val levelDataPtr = levelOwnerState.levelDataPtr.takeIf { it != 0 } ?: room.levelDataPtr
         var levelData = romParser.decompressLZ2(levelDataPtr)
         if (effectiveWidth != room.width || effectiveHeight != room.height) {
             levelData = resizeLevelData(
@@ -2651,11 +3556,18 @@ class EditorState {
         val roomEdits = project.rooms[project.roomKey(room.roomId)]
         val selectedState = selectedStateEdits(roomEdits)
         val baseStateIndex = selectedState?.baseSourceStateIndex() ?: currentStateIndex
-        val state = romParser.parseRoomStatesWithData(room.roomId).getOrNull(baseStateIndex) ?: return room
+        val states = romParser.parseRoomStatesWithData(room.roomId)
+        val state = states.getOrNull(baseStateIndex) ?: return room
+        val levelState = if (roomEdits != null && selectedState != null) {
+            val ownerIndex = levelResourceOwner(roomEdits, selectedState).baseSourceStateIndex()
+            ownerIndex?.let(states::getOrNull) ?: state
+        } else {
+            state
+        }
         val stateDataChange = selectedState?.stateDataChange
         val commonStateDataChange = roomEdits?.stateDataChange
         return room.copy(
-            levelDataPtr = state.levelDataPtr,
+            levelDataPtr = levelState.levelDataPtr,
             tileset = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: state.tileset,
             musicData = stateDataChange?.musicData ?: commonStateDataChange?.musicData ?: state.musicData,
             musicTrack = stateDataChange?.musicTrack ?: commonStateDataChange?.musicTrack ?: state.musicTrack,
@@ -2779,6 +3691,12 @@ class EditorState {
 
     /** Paint the full brush at map position (bx, by). Returns true if anything changed. */
     fun paintAt(bx: Int, by: Int): Boolean {
+        if (!allowOrQueueLayoutEdit {
+                beginStroke()
+                paintAt(bx, by)
+                endStroke()
+            }
+        ) return false
         if (activeRoomLayer == RoomEditLayer.LAYER2) return paintLayer2At(bx, by)
         val b = brush ?: return false
         // A brush stamp may contain both decorative tiles and a functional PLM.
@@ -2909,6 +3827,12 @@ class EditorState {
     }
 
     fun eraseAt(bx: Int, by: Int): Boolean {
+        if (!allowOrQueueLayoutEdit {
+                beginStroke()
+                eraseAt(bx, by)
+                endStroke()
+            }
+        ) return false
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return false
         val key = (bx.toLong() shl 32) or (by.toLong() and 0xFFFFFFFFL)
         if (pendingPositions.contains(key)) return false
@@ -2936,9 +3860,26 @@ class EditorState {
         return true
     }
 
+    /** Erase the selected room rectangle as one undoable edit on the active layer. */
+    fun eraseMapSelection(): Boolean {
+        if (!allowOrQueueLayoutEdit { eraseMapSelection() }) return false
+        val bounds = mapSelectionBounds() ?: return false
+        beginStroke()
+        var changed = false
+        for (by in bounds.minY..bounds.maxY) {
+            for (bx in bounds.minX..bounds.maxX) {
+                changed = eraseAt(bx, by) || changed
+            }
+        }
+        val layerLabel = if (activeRoomLayer == RoomEditLayer.LAYER2) "Layer 2 " else ""
+        endStroke("${layerLabel}Erase selection ${pendingEdits.size} tile(s)")
+        return changed
+    }
+
     /** Set block type and BTS for a single tile (used by right-click properties).
      *  Coalesces consecutive changes on the same tile into one undo entry. */
     fun setTileProperties(bx: Int, by: Int, blockType: Int, bts: Int) {
+        if (!allowOrQueueLayoutEdit { setTileProperties(bx, by, blockType, bts) }) return
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return
         val oldWord = readBlockWord(bx, by)
         val oldBts = readBts(bx, by)
@@ -2977,6 +3918,92 @@ class EditorState {
             val meta = (readBlockWord(bx, by) and 0x3FF)
             metatileBlockTypePresets = metatileBlockTypePresets + (meta to blockType)
         }
+    }
+
+    /**
+     * Assign one connection index to the contiguous doorway containing the
+     * selected tile. Door patterns are normally several adjacent type-9
+     * blocks; treating them as one edit avoids a doorway whose blocks point at
+     * different DoorDefs.
+     */
+    fun linkDoorwayTilesToConnection(startX: Int, startY: Int, doorIndex: Int): Int {
+        if (!allowOrQueueLayoutEdit { linkDoorwayTilesToConnection(startX, startY, doorIndex) }) return 0
+        require(doorIndex in 0..0xFF) { "Door connection index is outside the BTS byte range" }
+        val doorway = connectedDoorwayTiles(startX, startY)
+        if (doorway.isEmpty()) return 0
+        val sourceBts = readBts(startX, startY)
+        val edits = mutableListOf<TileEdit>()
+        for ((x, y) in doorway) {
+            val word = readBlockWord(x, y)
+            if (sourceBts != doorIndex) {
+                writeBts(x, y, doorIndex)
+                edits += TileEdit(x, y, word, word, sourceBts, doorIndex)
+            }
+        }
+        if (edits.isEmpty()) return doorway.size
+        val operation = EditOperation(
+            "Link doorway to connection ${doorIndex + 1}",
+            edits,
+        )
+        undoStack += operation
+        currentOperations() += operation
+        redoStack.clear()
+        undoVersion++
+        dirty = true
+        editVersion++
+        return edits.size
+    }
+
+    /** Whether the same BTS connection is also used by another disconnected doorway. */
+    fun isDoorConnectionSharedOutsideDoorway(startX: Int, startY: Int, doorIndex: Int): Boolean {
+        val selectedDoorway = connectedDoorwayTiles(startX, startY).toSet()
+        if (selectedDoorway.isEmpty()) return false
+        for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
+            if (x to y in selectedDoorway) continue
+            if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && readBts(x, y) == doorIndex) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /** Infer travel direction from the selected doorway's shape and screen edge. */
+    fun suggestedDoorDirection(startX: Int, startY: Int): Int {
+        val doorway = connectedDoorwayTiles(startX, startY)
+        if (doorway.isEmpty()) return 0
+        val minX = doorway.minOf { it.first }
+        val maxX = doorway.maxOf { it.first }
+        val minY = doorway.minOf { it.second }
+        val maxY = doorway.maxOf { it.second }
+        return if (maxY - minY >= maxX - minX) {
+            // A vertical strip is a left/right opening.
+            if (((minX + maxX) / 2) % 16 >= 8) 0 else 1
+        } else {
+            // A horizontal strip is a top/bottom opening.
+            if (((minY + maxY) / 2) % 16 >= 8) 2 else 3
+        }
+    }
+
+    private fun connectedDoorwayTiles(startX: Int, startY: Int): List<Pair<Int, Int>> {
+        if (startX !in 0 until workingBlocksWide || startY !in 0 until workingBlocksTall) return emptyList()
+        if (((readBlockWord(startX, startY) ushr 12) and 0xF) != 0x9) return emptyList()
+        val sourceBts = readBts(startX, startY)
+        val pending = mutableListOf(startX to startY)
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        val doorway = mutableListOf<Pair<Int, Int>>()
+        var cursor = 0
+        while (cursor < pending.size) {
+            val (x, y) = pending[cursor++]
+            if (!visited.add(x to y)) continue
+            if (x !in 0 until workingBlocksWide || y !in 0 until workingBlocksTall) continue
+            if (((readBlockWord(x, y) ushr 12) and 0xF) != 0x9 || readBts(x, y) != sourceBts) continue
+            doorway += x to y
+            pending += x - 1 to y
+            pending += x + 1 to y
+            pending += x to y - 1
+            pending += x to y + 1
+        }
+        return doorway
     }
 
     // ─── PLM editing ────────────────────────────────────────────
@@ -3373,6 +4400,158 @@ class EditorState {
         )
         roomEdits.doorChanges.removeAll { it.doorIndex == index }
         roomEdits.doorChanges.add(dc)
+        dirty = true
+        editVersion++
+    }
+
+    fun addProjectRoomDoor(
+        roomId: Int,
+        destinationRoomId: Int,
+        direction: Int,
+        screenX: Int,
+        screenY: Int,
+        romParser: RomParser,
+        doorCapCode: Int? = null,
+    ): Int {
+        val projectRoom = project.newRoomForPreviewId(roomId)
+            ?: error("Door-list growth is currently available for project-owned rooms")
+        require(projectRoom.doors.size < 16) { "SMEDIT currently supports at most 16 door connections per room" }
+        val destination = romParser.readRoomHeader(destinationRoomId)?.let(::applyHeaderChanges)
+            ?: error("Destination room could not be read")
+        require(direction in 0..3) { "Door direction is invalid" }
+        require(screenX in 0 until destination.width && screenY in 0 until destination.height) {
+            "Destination entrance is outside the room"
+        }
+        val sourceArea = projectRoom.header.area
+        val crossArea = sourceArea != destination.area
+        val match = romParser.findVanillaDoorMatch(destinationRoomId, direction, screenX, screenY)
+        val bitflag = (direction shl 8) or if (crossArea) 0x40 else 0
+        val cap = doorCapCode
+            ?: deriveEffectiveDoorCapPosition(
+                romParser, destinationRoomId, direction, screenX, screenY,
+            )
+            ?: romParser.deriveDoorCapPosition(destinationRoomId, direction, screenX, screenY)
+            ?: match?.doorCapCode
+            ?: 0
+        val destinationRef = project.newRooms.firstOrNull { it.previewRoomId == destinationRoomId }
+            ?.let { project.newRoomDestination(it.id) }
+            ?: project.romRoomDestination(destinationRoomId)
+        projectRoom.doors += ProjectDoorDefinition(
+            destination = destinationRef,
+            bitflag = mergeDoorBitflagWithMatchedOrientation(bitflag, match?.orientation, crossArea),
+            doorCapCode = cap,
+            screenX = screenX,
+            screenY = screenY,
+            distFromDoor = 0x8000,
+            entryCode = match?.entryCode ?: 0,
+        )
+        _workingDoors += RomParser.DoorEntry(
+            destRoomPtr = destinationRoomId,
+            bitflag = projectRoom.doors.last().bitflag,
+            doorCapCode = cap,
+            screenX = screenX,
+            screenY = screenY,
+            distFromDoor = 0x8000,
+            entryCode = match?.entryCode ?: 0,
+        )
+        dirty = true
+        editVersion++
+        return projectRoom.doors.lastIndex
+    }
+
+    /** Undo only the most recent add when workspace materialization fails. */
+    internal fun rollbackAddedProjectRoomDoor(roomId: Int, doorIndex: Int) {
+        val projectRoom = project.newRoomForPreviewId(roomId)
+            ?: return
+        require(doorIndex == projectRoom.doors.lastIndex) {
+            "Only the most recently added room connection can be rolled back"
+        }
+        projectRoom.doors.removeAt(doorIndex)
+        if (doorIndex in projectRoom.previewDoorDefPtrs.indices) {
+            projectRoom.previewDoorDefPtrs.removeAt(doorIndex)
+        }
+        if (doorIndex in _workingDoors.indices) {
+            _workingDoors.removeAt(doorIndex)
+        }
+        project.rooms[project.roomKey(roomId)]?.doorChanges?.removeAll { it.doorIndex == doorIndex }
+        dirty = true
+        editVersion++
+    }
+
+    /**
+     * Remove a project-room connection. Door tiles referencing the removed
+     * index must be erased first; higher BTS indices are shifted with the list.
+     */
+    fun removeProjectRoomDoor(roomId: Int, doorIndex: Int) {
+        val projectRoom = project.newRoomForPreviewId(roomId)
+            ?: error("Door-list removal is currently available for project-owned rooms")
+        require(doorIndex in projectRoom.doors.indices) { "Door ${doorIndex + 1} does not exist" }
+        require(currentRoomId == roomId && workingLevelData != null) { "Load the room before removing a door" }
+        val removedDoorPtr = projectRoom.previewDoorDefPtrs.getOrNull(doorIndex)
+        if (removedDoorPtr != null) {
+            fun ProjectRoomStateCondition.referencesDoor(pointer: Int): Boolean =
+                (argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER &&
+                    argument == pointer) || children.any { it.referencesDoor(pointer) }
+
+            val conditionReferences = project.rooms.values.sumOf { edits ->
+                edits.states.count { it.condition.referencesDoor(removedDoorPtr) }
+            }
+            val fxReferences = project.rooms.values.sumOf { edits ->
+                edits.states.count { state ->
+                    state.doorFxChanges.keys.any { it.toIntOrNull(16) == removedDoorPtr }
+                }
+            }
+            val saveReferences = project.rooms.values.sumOf { edits ->
+                edits.saveStationSpawns.count { it.doorPtr == removedDoorPtr && !it.clearSlot }
+            }
+            require(conditionReferences + fxReferences + saveReferences == 0) {
+                buildString {
+                    append("Door ${doorIndex + 1} is still referenced by ")
+                    append(
+                        listOfNotNull(
+                            conditionReferences.takeIf { it > 0 }?.let { "$it room-state condition(s)" },
+                            fxReferences.takeIf { it > 0 }?.let { "$it door-specific FX override(s)" },
+                            saveReferences.takeIf { it > 0 }?.let { "$it save-station spawn(s)" },
+                        ).joinToString(),
+                    )
+                    append("; remove or retarget those references first")
+                }
+            }
+        }
+        val exactReferences = buildList {
+            for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
+                if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && readBts(x, y) == doorIndex) add(x to y)
+            }
+        }
+        require(exactReferences.isEmpty()) {
+            "Door ${doorIndex + 1} is still used by ${exactReferences.size} doorway tile(s); erase or relink them first"
+        }
+        for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
+            if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9) {
+                val bts = readBts(x, y)
+                if (bts > doorIndex) setTileProperties(x, y, 0x9, bts - 1)
+            }
+        }
+        projectRoom.doors.removeAt(doorIndex)
+        if (doorIndex in projectRoom.previewDoorDefPtrs.indices) {
+            // Keep the disposable pointer adapter parallel with the semantic
+            // door list so the next workspace rebuild remaps surviving DDBs
+            // by identity rather than by their former list position.
+            projectRoom.previewDoorDefPtrs.removeAt(doorIndex)
+        }
+        val edits = project.rooms[project.roomKey(roomId)]
+        if (edits != null) {
+            val remapped = edits.doorChanges.mapNotNull { change ->
+                when {
+                    change.doorIndex == doorIndex -> null
+                    change.doorIndex > doorIndex -> change.copy(doorIndex = change.doorIndex - 1)
+                    else -> change
+                }
+            }
+            edits.doorChanges.clear()
+            edits.doorChanges.addAll(remapped)
+        }
+        if (doorIndex in _workingDoors.indices) _workingDoors.removeAt(doorIndex)
         dirty = true
         editVersion++
     }
@@ -4105,7 +5284,53 @@ class EditorState {
         require(roomEdits.states[index].condition.kind !=
             com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT
         ) { "The mandatory default state cannot be deleted" }
+        val deleting = roomEdits.states[index]
+        val linkedDependents = if (!deleting.levelResourceChanged) {
+            roomEdits.states.filter { state ->
+                state.id != deleting.id && state.resources.level == deleting.resources.level
+            }
+        } else {
+            emptyList()
+        }
+        if (linkedDependents.isNotEmpty()) {
+            // Keep a valid owner for the semantic resource. Normalize the shared
+            // layout against the promoted state's own ROM source before the old
+            // owner disappears from the authored graph.
+            val promoted = linkedDependents.first()
+            val sharedLayout = effectiveLevelDataForState(
+                roomEdits = roomEdits,
+                state = deleting,
+                romParser = romParser,
+                includeStateOperations = false,
+            ) ?: error("Could not preserve the shared layout while deleting state '${deleting.id}'")
+            val promotedBaseline = effectiveLevelDataForState(
+                roomEdits = roomEdits,
+                state = promoted,
+                romParser = romParser,
+                followLinkedResource = false,
+                includeSharedOperations = false,
+                includeStateOperations = false,
+            ) ?: error("Could not prepare a replacement owner for layout '${deleting.resources.level}'")
+            val edits = buildLevelDataDiff(
+                oldData = promotedBaseline,
+                newData = sharedLayout,
+                blocksWide = workingBlocksWide,
+                blocksTall = workingBlocksTall,
+            )
+            if (edits.isEmpty()) {
+                roomEdits.levelResourceOperations.remove(deleting.resources.level)
+            } else {
+                roomEdits.levelResourceOperations[deleting.resources.level] = mutableListOf(
+                    EditOperation("Preserve shared layout after deleting a state", edits)
+                )
+            }
+            promoted.levelResourceChanged = false
+        }
         roomEdits.states.removeAt(index)
+        pruneUnusedLevelResources(roomEdits)
+        if (roomEdits.states.none { it.resources.level == deleting.resources.level }) {
+            layoutEditScopes.remove(layoutScopeKey(currentRoomId, deleting.resources.level))
+        }
         roomEdits.stateGraphChanged = true
         val selected = roomEdits.states.getOrNull(index) ?: roomEdits.states.last()
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
@@ -4135,6 +5360,12 @@ class EditorState {
 
     /** Flood fill: replace all connected tiles matching the one at (bx, by) with brush. */
     fun floodFill(bx: Int, by: Int): Boolean {
+        if (!allowOrQueueLayoutEdit {
+                beginStroke()
+                floodFill(bx, by)
+                endStroke()
+            }
+        ) return false
         val b = brush ?: return false
         if (b.cols != 1 || b.rows != 1) return false  // fill only works with 1×1 brush
         if (bx < 0 || by < 0 || bx >= workingBlocksWide || by >= workingBlocksTall) return false
@@ -4196,15 +5427,19 @@ class EditorState {
         return changed
     }
 
-    fun endStroke() {
+    fun endStroke(description: String? = null) {
         if (pendingEdits.isEmpty() && pendingPlmAdds.isEmpty()) return
         val layerLabel = if (pendingEdits.any { it.layer == TILE_EDIT_LAYER_2 }) "Layer 2 " else ""
-        val desc = if (floatingSelection != null) "${layerLabel}Place selection ${pendingEdits.size} tile(s)" else when (activeTool) {
-            EditorTool.PAINT -> "${layerLabel}Paint ${pendingEdits.size} tile(s)"
-            EditorTool.FILL -> "${layerLabel}Fill ${pendingEdits.size} tile(s)"
-            EditorTool.ERASE -> "${layerLabel}Erase ${pendingEdits.size} tile(s)"
-            EditorTool.SAMPLE -> "Sample"
-            EditorTool.SELECT -> "Select"
+        val desc = description ?: if (floatingSelection != null) {
+            "${layerLabel}Place selection ${pendingEdits.size} tile(s)"
+        } else {
+            when (activeTool) {
+                EditorTool.PAINT -> "${layerLabel}Paint ${pendingEdits.size} tile(s)"
+                EditorTool.FILL -> "${layerLabel}Fill ${pendingEdits.size} tile(s)"
+                EditorTool.ERASE -> "${layerLabel}Erase ${pendingEdits.size} tile(s)"
+                EditorTool.SAMPLE -> "Sample"
+                EditorTool.SELECT -> "Select"
+            }
         }
         pushEditOperation(
             EditOperation(
@@ -4225,6 +5460,9 @@ class EditorState {
      */
     fun applyBulkEdits(description: String, edits: List<TileEdit>) {
         if (edits.isEmpty()) return
+        if (!allowOrQueueLayoutEdit { applyBulkEdits(description, edits) }) return
+        // Bulk commands edit the active whole layout resource. If that resource
+        // is shared, every linked state receives the same layout change.
         for (e in edits) {
             applyTileEdit(e, useNew = true)
         }
@@ -4510,7 +5748,11 @@ class EditorState {
         val keys = project.rooms.keys.toList()
         for (key in keys) {
             val roomEdits = project.rooms[key] ?: continue
-            val oldTileCount = roomEdits.operations
+            val oldTileCount = (
+                roomEdits.operations.asSequence() +
+                    roomEdits.states.asSequence().flatMap { it.operations.asSequence() } +
+                    roomEdits.levelResourceOperations.values.asSequence().flatMap { it.asSequence() }
+                )
                 .filter { isGeneratedBiomeOperation(it) }
                 .sumOf { it.edits.size }
             if (!stripGeneratedBiomeEdits(roomEdits)) continue
@@ -4550,8 +5792,10 @@ class EditorState {
         val roomEdits = project.rooms[project.roomKey(romRoom.roomId)]
         if (roomEdits != null) {
             val previewStateIndex = romParser.preferredPreviewStateIndex(romRoom.roomId)
+            val previewState = roomEdits.stateEditsForSourceIndex(previewStateIndex)
             val effectiveOperations = roomEdits.operations +
-                roomEdits.stateEditsForSourceIndex(previewStateIndex)?.operations.orEmpty()
+                previewState?.let { roomEdits.levelResourceOperations[it.resources.level] }.orEmpty() +
+                previewState?.operations.orEmpty()
             for (op in effectiveOperations) {
                 for (edit in op.edits) {
                     if (edit.layer != TILE_EDIT_LAYER_1) continue
@@ -4564,6 +5808,42 @@ class EditorState {
         }
         return RoomGrids(width, height, words, bts)
     }
+
+    /** Effective level data for door picking/validation, including live unsaved edits. */
+    internal fun effectiveRoomGridsForRoom(roomId: Int, romParser: RomParser): RoomGrids? {
+        if (roomId == currentRoomId && workingLevelData != null) {
+            val data = requireNotNull(workingLevelData)
+            val width = workingBlocksWide
+            val height = workingBlocksTall
+            val grid = LevelGrid.parse(data, width, height) ?: return null
+            return RoomGrids(
+                width = width,
+                height = height,
+                words = IntArray(width * height) { index -> grid.word(index % width, index / width) },
+                bts = IntArray(width * height) { index -> grid.bts(index % width, index / width) },
+            )
+        }
+        val romRoom = romParser.readRoomHeader(roomId) ?: return null
+        return buildEffectiveRoomGrids(romParser, romRoom, applyHeaderChanges(romRoom))
+    }
+
+    internal fun effectiveDoorwayOpenings(
+        roomId: Int,
+        direction: Int,
+        romParser: RomParser,
+    ): List<DoorwayOpening> = effectiveRoomGridsForRoom(roomId, romParser)
+        ?.let { doorwayOpenings(roomId, it, direction) }
+        .orEmpty()
+
+    internal fun deriveEffectiveDoorCapPosition(
+        romParser: RomParser,
+        roomId: Int,
+        direction: Int,
+        screenX: Int,
+        screenY: Int,
+    ): Int? = effectiveDoorwayOpenings(roomId, direction, romParser)
+        .firstOrNull { it.screenX == screenX && it.screenY == screenY }
+        ?.doorCapCode
 
     private fun recordGeneratedBiomeOperation(
         roomEdits: RoomEdits,
@@ -4814,6 +6094,12 @@ class EditorState {
         scrollPlmRemoves: List<PlmChange>,
     ) {
         if (edits.isEmpty() && scrollEdits.isEmpty() && scrollPlmRemoves.isEmpty()) return
+        if (!allowOrQueueLayoutEdit {
+                applyGeneratedRoomOperation(description, edits, scrollEdits, scrollPlmRemoves)
+            }
+        ) return
+        // Generation edits the active whole layout resource. State-owned PLMs
+        // and scroll metadata below remain separate even when tiles are shared.
 
         for (e in edits) {
             applyTileEdit(e, useNew = true)
@@ -4975,7 +6261,7 @@ class EditorState {
         undoStack.add(op)
         redoStack.clear()
         undoVersion++
-        currentOperations().add(op)
+        recordOperationForCurrentScope(op)
         dirty = true
         editVersion++
     }
@@ -4985,7 +6271,6 @@ class EditorState {
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         val op = undoStack.removeAt(undoStack.lastIndex)
-        val operations = currentOperations()
         val plmChanges = currentPlmChanges()
         val enemyChanges = currentEnemyChanges()
         val scrollChanges = currentScrollChanges()
@@ -4994,11 +6279,7 @@ class EditorState {
         for (edit in op.edits.reversed()) {
             applyTileEdit(edit, useNew = false)
         }
-        if (operations.isNotEmpty() && operations.last() == op) {
-            operations.removeAt(operations.lastIndex)
-        } else if (op.edits.isNotEmpty() && operations.isNotEmpty()) {
-            operations.removeAt(operations.lastIndex)
-        }
+        removeRecordedOperationForCurrentScope(op)
 
         // Undo PLM adds (reverse = remove them)
         for (plm in op.plmAdds) {
@@ -5061,7 +6342,6 @@ class EditorState {
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
         val op = redoStack.removeAt(redoStack.lastIndex)
-        val operations = currentOperations()
         val plmChanges = currentPlmChanges()
         val enemyChanges = currentEnemyChanges()
         val scrollChanges = currentScrollChanges()
@@ -5070,7 +6350,7 @@ class EditorState {
         for (edit in op.edits) {
             applyTileEdit(edit, useNew = true)
         }
-        if (op.edits.isNotEmpty()) operations.add(op)
+        if (op.edits.isNotEmpty() || op.hasNonLayoutChanges()) recordOperationForCurrentScope(op)
 
         // Redo PLM adds
         for (plm in op.plmAdds) {
@@ -5221,14 +6501,16 @@ class EditorState {
         seedDefaultPatches(forceRefreshBundled = true)
         if (project.romPath.isEmpty()) return null
         saveProject(romParser)
-        return ProjectFileService.exportToRom(project, romParser, ::editorLog, ::postStatus)
+        val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
+        return ProjectFileService.exportToRom(project, sourceParser, ::editorLog, ::postStatus)
     }
 
     fun exportToIps(romParser: RomParser): String? {
         seedDefaultPatches(forceRefreshBundled = true)
         if (project.romPath.isEmpty()) return null
         saveProject(romParser)
-        return ProjectFileService.exportToIps(project, romParser, ::editorLog, ::postStatus)
+        val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
+        return ProjectFileService.exportToIps(project, sourceParser, ::editorLog, ::postStatus)
     }
 
 }

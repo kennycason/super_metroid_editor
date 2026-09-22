@@ -823,12 +823,9 @@ class SmeditBuildService(
         val beforeRom = rom.copyOf()
         val roomsPatched = linkedSetOf<String>()
         try {
-            for ((roomKey, roomEdits) in project.rooms) {
-                if (!roomEdits.hasEdits) continue
-                val roomProject = project.copy(rooms = mutableMapOf(roomKey to roomEdits))
-                val beforeRoom = rom.copyOf()
-                val roomExportResult = ProjectRoomExporter(
-                    project = roomProject,
+            val beforeRooms = rom.copyOf()
+            val roomExportResult = ProjectRoomExporter(
+                    project = project,
                     romParser = RomParser(rom),
                     romData = rom,
                     roomAreaOverrides = project.rooms.mapNotNull { (key, edits) ->
@@ -842,25 +839,24 @@ class SmeditBuildService(
                             context.warnings.add(message)
                         }
                     },
-                ).exportRooms()
-                val owner = "room-graph:$identifier"
-                context.writePlan.recordExternalMutation(
+            ).exportRooms()
+            val owner = "room-graph:$identifier"
+            context.writePlan.recordExternalMutation(
+                owner = owner,
+                label = "$name project room graph",
+                before = beforeRooms,
+                kind = RomWriteKind.ROOM,
+                overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+            )
+            for (allocation in roomExportResult.allocations) {
+                context.writePlan.claimCurrentRange(
                     owner = owner,
-                    label = "$name room 0x$roomKey",
-                    before = beforeRoom,
-                    kind = RomWriteKind.ROOM,
-                    overlapPolicy = RomOverlapPolicy.ALLOW_SAME_OWNER,
+                    label = allocation.label,
+                    offset = allocation.pcOffset - context.romHeaderOffset,
+                    size = allocation.size,
                 )
-                for (allocation in roomExportResult.allocations) {
-                    context.writePlan.claimCurrentRange(
-                        owner = owner,
-                        label = allocation.label,
-                        offset = allocation.pcOffset - context.romHeaderOffset,
-                        size = allocation.size,
-                    )
-                }
-                roomsPatched.addAll(roomExportResult.roomsPatched)
             }
+            roomsPatched.addAll(roomExportResult.roomsPatched)
         } catch (e: ProjectRoomExportException) {
             throw IllegalStateException("Project room edits could not be written safely: ${e.message}", e)
         }
