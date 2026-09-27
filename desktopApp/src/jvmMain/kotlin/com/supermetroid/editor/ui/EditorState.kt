@@ -1055,63 +1055,6 @@ class EditorState {
 
     fun isEditorItemPlm(plmId: Int): Boolean = RomParser.isItemPlm(plmId) || isCustomItemPlm(plmId)
 
-    fun addPatchCustomItem(patchId: String): CustomItemDef? {
-        val patch = project.patches.find { it.id == patchId } ?: return null
-        val usedIds = patch.customItems.map { it.id }.toSet()
-        var suffix = patch.customItems.size + 1
-        var id = "custom_item_$suffix"
-        while (id in usedIds) {
-            suffix++
-            id = "custom_item_$suffix"
-        }
-        val item = CustomItemDef(
-            id = id,
-            name = "Custom Item $suffix",
-            shortLabel = "CI",
-            bitMask = nextCustomItemBitMask(),
-            iconX = 64,
-            iconY = 80,
-        )
-        patch.customItems.add(item)
-        dirty = true; patchVersion++
-        return item
-    }
-
-    fun removePatchCustomItem(patchId: String, itemId: String) {
-        val patch = project.patches.find { it.id == patchId } ?: return
-        val removed = patch.customItems.removeAll { it.id == itemId }
-        if (removed) {
-            dirty = true; patchVersion++
-        }
-    }
-
-    fun updatePatchCustomItem(
-        patchId: String,
-        itemId: String,
-        name: String? = null,
-        shortLabel: String? = null,
-        description: String? = null,
-        bitMask: Int? = null,
-        iconX: Int? = null,
-        iconY: Int? = null,
-        category: String? = null,
-    ) {
-        val item = project.patches.find { it.id == patchId }?.customItems?.find { it.id == itemId } ?: return
-        if (name != null) item.name = name
-        if (shortLabel != null) item.shortLabel = shortLabel.take(4)
-        if (description != null) item.description = description
-        if (bitMask != null) item.bitMask = bitMask and 0xFFFF
-        if (iconX != null) item.iconX = iconX.coerceIn(0, 112)
-        if (iconY != null) item.iconY = iconY.coerceIn(0, 112)
-        if (category != null) item.category = category
-        dirty = true; patchVersion++
-    }
-
-    private fun nextCustomItemBitMask(): Int {
-        val used = project.patches.flatMap { it.customItems }.map { it.bitMask }.toSet()
-        return listOf(0x0010, 0x0040, 0x0080, 0x0400, 0x0800).firstOrNull { it !in used } ?: 0
-    }
-
     fun setPatchWrites(id: String, writes: List<SmPatchWrite>) {
         val patch = project.patches.find { it.id == id } ?: return
         patch.writes.clear()
