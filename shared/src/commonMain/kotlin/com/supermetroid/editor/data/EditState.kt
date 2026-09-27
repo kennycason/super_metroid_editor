@@ -771,6 +771,26 @@ data class MusicTrackEdit(
     }
 }
 
+@Serializable
+enum class PatchSortOrder {
+    NAME_ASCENDING,
+    NAME_DESCENDING,
+}
+
+/** Patch-list presentation choices that travel with the project and never affect ROM output. */
+@Serializable
+data class PatchBrowserSettings(
+    var sortOrder: PatchSortOrder = PatchSortOrder.NAME_ASCENDING,
+    var favoritesFirst: Boolean = true,
+    val favoritePatchIds: MutableList<String> = mutableListOf(),
+)
+
+/** Project-local editor preferences shared by all views. */
+@Serializable
+data class ProjectGeneralSettings(
+    val patchBrowser: PatchBrowserSettings = PatchBrowserSettings(),
+)
+
 /**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
@@ -791,6 +811,7 @@ data class SmEditProject(
     val roomNameOverrides: MutableMap<String, String> = mutableMapOf(), // key = room id hex (e.g. "91F8")
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
+    val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",

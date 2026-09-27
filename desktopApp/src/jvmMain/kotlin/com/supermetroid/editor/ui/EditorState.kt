@@ -11,6 +11,7 @@ import com.supermetroid.editor.data.EnemyChange
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.PatchWrite
+import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SaveStationSpawnChange
@@ -961,8 +962,37 @@ class EditorState {
     fun removePatch(id: String) {
         if (isSystemPatch(id)) return
         project.patches.removeAll { it.id == id }
+        project.generalSettings.patchBrowser.favoritePatchIds.removeAll { it == id }
         if (selectedPatchId == id) selectedPatchId = null
         dirty = true; patchVersion++
+    }
+
+    fun isPatchFavorite(id: String): Boolean =
+        id in project.generalSettings.patchBrowser.favoritePatchIds
+
+    fun togglePatchFavorite(id: String) {
+        if (project.patches.none { it.id == id }) return
+        val favorites = project.generalSettings.patchBrowser.favoritePatchIds
+        val removed = favorites.removeAll { it == id }
+        if (!removed) favorites.add(id)
+        dirty = true
+        patchVersion++
+    }
+
+    fun setPatchSortOrder(sortOrder: PatchSortOrder) {
+        val settings = project.generalSettings.patchBrowser
+        if (settings.sortOrder == sortOrder) return
+        settings.sortOrder = sortOrder
+        dirty = true
+        patchVersion++
+    }
+
+    fun setPatchFavoritesFirst(enabled: Boolean) {
+        val settings = project.generalSettings.patchBrowser
+        if (settings.favoritesFirst == enabled) return
+        settings.favoritesFirst = enabled
+        dirty = true
+        patchVersion++
     }
 
     fun togglePatch(id: String) {
@@ -1736,7 +1766,7 @@ class EditorState {
         val ordered = mutableListOf<SmPatch>()
 
         // 1. GUI config patches (featured at top)
-        for (guiPatch in listOf(BEAM_DAMAGE_PATCH, BOSS_STATS_PATCH, PHANTOON_PATCH, KRAID_PATCH, RIDLEY_PATCH, DRAYGON_PATCH, SPORE_SPAWN_PATCH, CROCOMIRE_PATCH, BOTWOON_PATCH, TORIZO_PATCH, MOTHER_BRAIN_PATCH, ENEMY_STATS_PATCH, ENEMY_DROP_RATE_PATCH, ENEMY_VULNERABILITY_PATCH, SAMUS_PHYSICS_PATCH, BOMBS_PATCH, FANFARE_PATCH, ROOM_NAME_PAUSE_MAP_PATCH, BOSS_DEFEATED_PATCH, CONTROLLER_CONFIG_PATCH, CERES_ESCAPE_PATCH, ZEBES_ESCAPE_PATCH, SHORT_CHARGE_PATCH)) {
+        for (guiPatch in GUI_CONFIG_PATCHES) {
             if (guiPatch.id !in existingIds) {
                 ordered.add(SmPatch(
                     id = guiPatch.id,

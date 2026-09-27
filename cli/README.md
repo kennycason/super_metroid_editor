@@ -122,6 +122,12 @@ after Mother Brain (vanilla: 180 seconds). The `short_charge_stages` patch
 accepts 0–4 charge stages (vanilla: 4); 0 activates blue speed as soon as Dash
 running begins. Both support ROM-free IPS generation through `build --patch`.
 
+The configurable `environmental_damage` patch sets `heat_per_second`,
+`lava_per_second`, and `acid_per_second` as base energy drain rates. It also
+supports ROM-free IPS generation. See
+[`docs/rom/environmental_damage.md`](../docs/rom/environmental_damage.md) for
+the native Varia/Gravity suit behavior and exact ROM locations.
+
 ### patches / schemas / schema
 
 List available patches and config schemas (no ROM required):

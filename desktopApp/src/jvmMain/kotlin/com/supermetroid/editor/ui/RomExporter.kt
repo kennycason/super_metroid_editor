@@ -7,6 +7,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
 import com.supermetroid.editor.rom.ProjectRoomExporter
@@ -676,6 +677,31 @@ internal class RomExporter(
                     modCount++
                 }
                 onLog("[EXPORT]   Samus physics: $modCount values modified")
+            } else if (patch.configType == EnvironmentalDamagePatch.CONFIG_TYPE) {
+                val data = patch.configData ?: continue
+                validateConfigKeys(
+                    data,
+                    EnvironmentalDamagePatch.FIELDS.mapTo(mutableSetOf()) { it.key },
+                    patch,
+                )
+                var modCount = 0
+                for (field in EnvironmentalDamagePatch.FIELDS) {
+                    val energyPerSecond = data[field.key] ?: continue
+                    requireConfigRange(
+                        patch,
+                        field.key,
+                        energyPerSecond,
+                        IntRange(
+                            EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                            EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                        ),
+                    )
+                    val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
+                    writeU16(romData, field.lowWordPc, fixedRate.lowWord)
+                    writeU16(romData, field.highWordPc, fixedRate.highWord)
+                    modCount++
+                }
+                onLog("[EXPORT]   Environmental damage: $modCount rates modified")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {
                 val data = patch.configData
                 validateConfigKeys(

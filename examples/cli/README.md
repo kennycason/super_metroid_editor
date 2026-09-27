@@ -10,6 +10,7 @@ When using Gradle's `:cli:runCli` task, paths are resolved from the `cli/` modul
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/boss-lab.json --patch ../build/cli-examples/boss-lab.ips --report ../build/cli-examples/boss-lab-report.json'
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/echolocation-beam.json --patch ../build/cli-examples/echolocation-beam.ips --report ../build/cli-examples/echolocation-beam-report.json'
 ./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/gameplay-timing.json --patch ../build/cli-examples/gameplay-timing.ips --report ../build/cli-examples/gameplay-timing-report.json'
+./gradlew -q :cli:runCli -Pargs='build --config ../examples/cli/environmental-damage.json --patch ../build/cli-examples/environmental-damage.ips --report ../build/cli-examples/environmental-damage-report.json'
 ```
 
 To emit a patched ROM, add `--rom` and `--output`:
@@ -27,3 +28,8 @@ Use `patches` to list public patch IDs. Internally prefixed IDs such as `bundled
 Short Charge stage count. The vanilla defaults are 180 seconds and 4 stages;
 Short Charge accepts 0–4, where 0 grants blue speed as soon as Dash running
 begins.
+
+`environmental-damage.json` sets heated-room, lava, and acid base damage in
+energy per second. Set a value to 0 for a harmless hazard while preserving its
+visual and sound effects. Native Varia and Gravity suit mitigation remains in
+effect.

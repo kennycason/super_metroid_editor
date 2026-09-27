@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "patches": {
+    "environmental_damage": {
+      "enabled": true,
+      "config": {
+        "heat_per_second": 10,
+        "lava_per_second": 40,
+        "acid_per_second": 120
+      }
+    }
+  }
+}

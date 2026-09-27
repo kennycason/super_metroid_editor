@@ -2,6 +2,7 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 
 // ─── Tileset defaults: metatile → (block type, BTS) ─────────────
 
@@ -453,6 +454,16 @@ val SAMUS_PHYSICS_PATCH = SmPatch(
     configType = "samus_physics"
 )
 
+/** Config patch: heated-room, lava, and acid base damage rates. */
+val ENVIRONMENTAL_DAMAGE_PATCH = SmPatch(
+    id = "config_environmental_damage",
+    name = "Environmental Damage",
+    description = "Set heated-room, lava, and acid damage rates in energy per second.",
+    enabled = false,
+    writes = mutableListOf(),
+    configType = EnvironmentalDamagePatch.CONFIG_TYPE,
+)
+
 /** Config patch: Bomb behavior. Stores active bomb cap and timing values in configData. */
 val BOMBS_PATCH = SmPatch(
     id = "config_bombs",
@@ -556,6 +567,34 @@ val SNES_BUTTONS = listOf(
     SnesButton("L",      0x0020),
     SnesButton("R",      0x0010),
     SnesButton("Select", 0x2000),
+)
+
+/** Configurable patches shown at the top of the Patches panel, in display order. */
+internal val GUI_CONFIG_PATCHES = listOf(
+    BEAM_DAMAGE_PATCH,
+    BOSS_STATS_PATCH,
+    PHANTOON_PATCH,
+    KRAID_PATCH,
+    RIDLEY_PATCH,
+    DRAYGON_PATCH,
+    SPORE_SPAWN_PATCH,
+    CROCOMIRE_PATCH,
+    BOTWOON_PATCH,
+    TORIZO_PATCH,
+    MOTHER_BRAIN_PATCH,
+    ENEMY_STATS_PATCH,
+    ENEMY_DROP_RATE_PATCH,
+    ENEMY_VULNERABILITY_PATCH,
+    SAMUS_PHYSICS_PATCH,
+    ENVIRONMENTAL_DAMAGE_PATCH,
+    BOMBS_PATCH,
+    FANFARE_PATCH,
+    ROOM_NAME_PAUSE_MAP_PATCH,
+    BOSS_DEFEATED_PATCH,
+    CONTROLLER_CONFIG_PATCH,
+    CERES_ESCAPE_PATCH,
+    ZEBES_ESCAPE_PATCH,
+    SHORT_CHARGE_PATCH,
 )
 
 /** PC offset of the 7×2-byte default button table in the ROM. */

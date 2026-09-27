@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-09-20
+**Last updated:** 2026-09-26
 
 ---
 
@@ -16,6 +16,7 @@
 - Enemy Vulnerability Editor — 22 weapon slots per species
 - Enemy Drop Rate Editor — 6 fields per species
 - Samus Physics Editor — 17 verified fields (jump, gravity, running, air control)
+- Environmental Damage Editor — Heated-room, lava, and acid base rates with native suit behavior
 - Palette Editor — HSV/RGB picker, 8x16 grid, import/export .pal
 - Beam Damage Editor — Per-beam damage values
 - Boss Defeated Flags — GUI toggles with ASM hook generation

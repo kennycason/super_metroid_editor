@@ -1,11 +1,87 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.PatchSortOrder
+import com.supermetroid.editor.data.SmPatch
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class PatchEditorTest {
+    @Test
+    fun `patch search covers names descriptions ids and config types`() {
+        val patches = listOf(
+            SmPatch(id = "hex_alpha", name = "Alpha", description = "Movement tweak"),
+            SmPatch(id = "config_beta", name = "Beta", description = "Damage controls", configType = "hazard_rates"),
+        )
+
+        assertEquals(listOf("hex_alpha"), patchResults(patches, "movement"))
+        assertEquals(listOf("config_beta"), patchResults(patches, "config_beta"))
+        assertEquals(listOf("config_beta"), patchResults(patches, "hazard_rates"))
+    }
+
+    @Test
+    fun `favorite patches stay grouped first in the selected name direction`() {
+        val patches = listOf(
+            SmPatch(id = "charlie", name = "Charlie"),
+            SmPatch(id = "alpha", name = "Alpha"),
+            SmPatch(id = "beta", name = "Beta"),
+        )
+
+        assertEquals(
+            listOf("beta", "alpha", "charlie"),
+            patchResults(patches, favorites = setOf("beta")),
+        )
+        assertEquals(
+            listOf("beta", "charlie", "alpha"),
+            patchResults(
+                patches,
+                sortOrder = PatchSortOrder.NAME_DESCENDING,
+                favorites = setOf("beta"),
+            ),
+        )
+        assertEquals(
+            listOf("alpha", "beta", "charlie"),
+            patchResults(patches, favorites = setOf("beta"), favoritesFirst = false),
+        )
+    }
+
+    @Test
+    fun `enabled patches stay above disabled patches with favorites first inside each group`() {
+        val patches = listOf(
+            SmPatch(id = "disabled_favorite", name = "Alpha", enabled = false),
+            SmPatch(id = "enabled_plain", name = "Beta", enabled = true),
+            SmPatch(id = "enabled_favorite", name = "Charlie", enabled = true),
+            SmPatch(id = "disabled_plain", name = "Delta", enabled = false),
+        )
+
+        assertEquals(
+            listOf("enabled_favorite", "enabled_plain", "disabled_favorite", "disabled_plain"),
+            patchResults(
+                patches,
+                favorites = setOf("disabled_favorite", "enabled_favorite"),
+            ),
+        )
+    }
+
+    @Test
+    fun `patch browser choices update project settings`() {
+        val state = EditorState().also { it.testMode = true }
+        val patch = state.addPatch("Favorite me")
+
+        state.togglePatchFavorite(patch.id)
+        state.setPatchSortOrder(PatchSortOrder.NAME_DESCENDING)
+        state.setPatchFavoritesFirst(false)
+
+        assertTrue(state.isPatchFavorite(patch.id))
+        assertEquals(PatchSortOrder.NAME_DESCENDING, state.project.generalSettings.patchBrowser.sortOrder)
+        assertFalse(state.project.generalSettings.patchBrowser.favoritesFirst)
+
+        state.togglePatchFavorite(patch.id)
+        assertFalse(state.isPatchFavorite(patch.id))
+    }
+
     @Test
     fun `imported IPS patch is selected and enabled`() {
         val ips = byteArrayOf(
@@ -25,4 +101,18 @@ class PatchEditorTest {
         assertEquals(0x1234L, patch.writes.single().offset)
         assertEquals(listOf(0xAB, 0xCD), patch.writes.single().bytes)
     }
+
+    private fun patchResults(
+        patches: List<SmPatch>,
+        query: String = "",
+        sortOrder: PatchSortOrder = PatchSortOrder.NAME_ASCENDING,
+        favorites: Set<String> = emptySet(),
+        favoritesFirst: Boolean = true,
+    ): List<String> = filterAndSortPatches(
+        patches = patches,
+        searchQuery = query,
+        sortOrder = sortOrder,
+        favoritePatchIds = favorites,
+        favoritesFirst = favoritesFirst,
+    ).map { it.id }
 }

@@ -7,6 +7,7 @@ import com.supermetroid.editor.data.MinimapTileEdit
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.PaletteEffects
@@ -24,6 +25,53 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SmeditBuildServiceTest {
+    @Test
+    fun `vanilla ROM environmental damage constants decode to documented rates`() {
+        val original = TestRomHelper.loadRomBytes() ?: return
+
+        val rates = EnvironmentalDamagePatch.FIELDS.associate { field ->
+            field.key to EnvironmentalDamagePatch.decodeEnergyPerSecond(
+                original.readWord(field.lowWordPc),
+                original.readWord(field.highWordPc),
+            )
+        }
+
+        assertEquals(15, rates[EnvironmentalDamagePatch.HEAT_KEY])
+        assertEquals(30, rates[EnvironmentalDamagePatch.LAVA_KEY])
+        assertEquals(90, rates[EnvironmentalDamagePatch.ACID_KEY])
+    }
+
+    @Test
+    fun `environmental damage config produces standalone fixed point writes`() {
+        val addressSpace = ByteArray(0x300000)
+        val result = SmeditBuildService().buildPatch(
+            SmeditBuildRequest(
+                patches = mapOf(
+                    EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(
+                        config = mapOf(
+                            EnvironmentalDamagePatch.HEAT_KEY to 0,
+                            EnvironmentalDamagePatch.LAVA_KEY to 45,
+                            EnvironmentalDamagePatch.ACID_KEY to 120,
+                        )
+                    )
+                )
+            )
+        )
+
+        applyIps(addressSpace, result.ipsPatchBytes)
+
+        val heat = EnvironmentalDamagePatch.FIELDS.first { it.key == EnvironmentalDamagePatch.HEAT_KEY }
+        val lava = EnvironmentalDamagePatch.FIELDS.first { it.key == EnvironmentalDamagePatch.LAVA_KEY }
+        val acid = EnvironmentalDamagePatch.FIELDS.first { it.key == EnvironmentalDamagePatch.ACID_KEY }
+        assertEquals(0x0000, addressSpace.readWord(heat.lowWordPc))
+        assertEquals(0x0000, addressSpace.readWord(heat.highWordPc))
+        assertEquals(0xC000, addressSpace.readWord(lava.lowWordPc))
+        assertEquals(0x0000, addressSpace.readWord(lava.highWordPc))
+        assertEquals(0x0000, addressSpace.readWord(acid.lowWordPc))
+        assertEquals(0x0002, addressSpace.readWord(acid.highWordPc))
+        assertTrue(result.report.applied.any { it.configType == EnvironmentalDamagePatch.CONFIG_TYPE })
+    }
+
     @Test
     fun `vanilla ROM uses a three minute Zebes escape and four short charge stages`() {
         val original = TestRomHelper.loadRomBytes() ?: return
@@ -794,6 +842,7 @@ class SmeditBuildServiceTest {
         val hyperBeam = SmeditPatchCatalog.configSchema(HYPER_BEAM_CONFIG_TYPE)!!
         val zebesEscape = SmeditPatchCatalog.configSchema(ZEBES_ESCAPE_CONFIG_TYPE)!!
         val shortCharge = SmeditPatchCatalog.configSchema(SHORT_CHARGE_CONFIG_TYPE)!!
+        val environmentalDamage = SmeditPatchCatalog.configSchema(EnvironmentalDamagePatch.CONFIG_TYPE)!!
 
         assertTrue(enemyStats.supportsPatchOnly)
         assertTrue(enemyStats.fields.any { it.key == "zoomer_hp" && it.defaultValue == 15 })
@@ -813,6 +862,11 @@ class SmeditBuildServiceTest {
         assertEquals(ZEBES_ESCAPE_DEFAULT_SECONDS, zebesEscape.fields.first { it.key == "seconds" }.defaultValue)
         assertEquals(SHORT_CHARGE_MIN_STAGES, shortCharge.fields.first { it.key == SHORT_CHARGE_STAGES_KEY }.min)
         assertEquals(SHORT_CHARGE_MAX_STAGES, shortCharge.fields.first { it.key == SHORT_CHARGE_STAGES_KEY }.max)
+        assertEquals(
+            90,
+            environmentalDamage.fields.first { it.key == EnvironmentalDamagePatch.ACID_KEY }.defaultValue,
+        )
+        assertTrue(environmentalDamage.supportsPatchOnly)
         assertEquals("config_zebes_escape_time", SmeditPatchCatalog.resolvePatchKey("end_game_escape_timer"))
         assertEquals("config_short_charge", SmeditPatchCatalog.resolvePatchKey("short_charge"))
     }

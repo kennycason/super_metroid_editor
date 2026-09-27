@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 
 const val CERES_ESCAPE_CONFIG_TYPE = "ceres_escape_seconds"
@@ -119,6 +120,7 @@ object SmeditPatchCatalog {
             ROOM_NAME_PAUSE_MAP_CONFIG_TYPE,
             SAMUS_PHYSICS_CONFIG_TYPE,
             CONTROLLER_CONFIG_TYPE,
+            EnvironmentalDamagePatch.CONFIG_TYPE,
         ) + HEADLESS_BOSS_BEHAVIOR_CONFIG_TYPES
 
     fun configSchemas(): List<SmeditConfigSchema> =
@@ -138,6 +140,7 @@ object SmeditPatchCatalog {
             roomNamePauseMapSchema(),
             samusPhysicsSchema(),
             controllerConfigSchema(),
+            environmentalDamageSchema(),
         ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map(::bossBehaviorSchema)
 
     fun configSchema(key: String): SmeditConfigSchema? {
@@ -535,6 +538,13 @@ object SmeditPatchCatalog {
             enabled = false,
             configType = CONTROLLER_CONFIG_TYPE,
         ),
+        SmPatch(
+            id = "config_environmental_damage",
+            name = "Environmental Damage",
+            description = "Set heated-room, lava, and acid damage rates in energy per second.",
+            enabled = false,
+            configType = EnvironmentalDamagePatch.CONFIG_TYPE,
+        ),
     ) + HEADLESS_BOSS_BEHAVIOR_DEFINITIONS.map { definition ->
         SmPatch(
             id = definition.patchId,
@@ -854,6 +864,27 @@ object SmeditPatchCatalog {
                     choices = HEADLESS_SNES_BUTTONS.map { button ->
                         SmeditConfigChoiceSchema(label = button.label, value = button.bitmask)
                     },
+                )
+            },
+        )
+
+    private fun environmentalDamageSchema(): SmeditConfigSchema =
+        SmeditConfigSchema(
+            configType = EnvironmentalDamagePatch.CONFIG_TYPE,
+            patchId = "config_environmental_damage",
+            name = "Environmental Damage",
+            description = "Sets base heated-room, lava, and acid damage in energy per second.",
+            headlessSupported = true,
+            supportsPatchOnly = true,
+            requiresRom = false,
+            fields = EnvironmentalDamagePatch.FIELDS.map { field ->
+                intField(
+                    key = field.key,
+                    label = field.label,
+                    min = EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                    max = EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+                    defaultValue = field.defaultEnergyPerSecond,
+                    description = field.suitBehavior,
                 )
             },
         )

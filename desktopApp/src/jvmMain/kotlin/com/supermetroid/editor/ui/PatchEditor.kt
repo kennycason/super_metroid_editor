@@ -20,6 +20,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -29,10 +34,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,11 +58,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmPatch
-import com.supermetroid.editor.rom.RoomNamePauseMapPatch
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.awt.FileDialog
 import java.io.File
@@ -80,6 +90,40 @@ internal fun importIpsPatch(editorState: EditorState, fileName: String, ipsData:
     return patch
 }
 
+internal fun filterAndSortPatches(
+    patches: List<SmPatch>,
+    searchQuery: String,
+    sortOrder: PatchSortOrder,
+    favoritePatchIds: Set<String>,
+    favoritesFirst: Boolean,
+): List<SmPatch> {
+    val query = searchQuery.trim().lowercase()
+    val filtered = if (query.isEmpty()) {
+        patches
+    } else {
+        patches.filter { patch ->
+            patch.name.lowercase().contains(query) ||
+                patch.description.lowercase().contains(query) ||
+                patch.id.lowercase().contains(query) ||
+                patch.configType?.lowercase()?.contains(query) == true
+        }
+    }
+    val nameSorted = when (sortOrder) {
+        PatchSortOrder.NAME_ASCENDING -> filtered.sortedWith(
+            compareBy<SmPatch> { it.name.lowercase() }.thenBy { it.id.lowercase() },
+        )
+        PatchSortOrder.NAME_DESCENDING -> filtered.sortedWith(
+            compareByDescending<SmPatch> { it.name.lowercase() }.thenByDescending { it.id.lowercase() },
+        )
+    }
+    val favoriteSorted = if (favoritesFirst) {
+        nameSorted.sortedBy { it.id !in favoritePatchIds }
+    } else {
+        nameSorted
+    }
+    return favoriteSorted.sortedBy { !it.enabled }
+}
+
 @Composable
 fun PatchListPanel(
     editorState: EditorState,
@@ -90,8 +134,16 @@ fun PatchListPanel(
     val patches = editorState.project.patches.filter { it.configType !in DEDICATED_EDITOR_CONFIG_TYPES }
     val selectedId = editorState.selectedPatchId
     var searchQuery by remember { mutableStateOf("") }
-    val filtered = if (searchQuery.isBlank()) patches
-        else patches.filter { it.name.contains(searchQuery, ignoreCase = true) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+    val settings = editorState.project.generalSettings.patchBrowser
+    val favoritePatchIds = settings.favoritePatchIds.toSet()
+    val filtered = filterAndSortPatches(
+        patches = patches,
+        searchQuery = searchQuery,
+        sortOrder = settings.sortOrder,
+        favoritePatchIds = favoritePatchIds,
+        favoritesFirst = settings.favoritesFirst,
+    )
     val selectedIndex = filtered.indexOfFirst { it.id == selectedId }
     val navigationFocusRequester = rememberVerticalSelectionFocusRequester()
 
@@ -104,12 +156,68 @@ fun PatchListPanel(
         )
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 2.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Patches", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            val countText = if (filtered.size == patches.size) "${patches.size}" else "${filtered.size}/${patches.size}"
+            Text("Patches ($countText)", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Box {
+                    TextButton(
+                        onClick = { sortMenuExpanded = true },
+                        contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                        modifier = Modifier.height(28.dp),
+                    ) {
+                        Text(
+                            if (settings.sortOrder == PatchSortOrder.NAME_ASCENDING) "A–Z" else "Z–A",
+                            fontSize = 11.sp,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = sortMenuExpanded,
+                        onDismissRequest = { sortMenuExpanded = false },
+                    ) {
+                        for (order in PatchSortOrder.entries) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (order == PatchSortOrder.NAME_ASCENDING) "Name A–Z" else "Name Z–A",
+                                        fontSize = 12.sp,
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (settings.sortOrder == order) Text("✓", fontWeight = FontWeight.Bold)
+                                },
+                                onClick = {
+                                    editorState.setPatchSortOrder(order)
+                                    sortMenuExpanded = false
+                                },
+                                modifier = Modifier.height(32.dp),
+                            )
+                        }
+                        Divider()
+                        DropdownMenuItem(
+                            text = { Text("Favorites first", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Favorite,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                            },
+                            trailingIcon = {
+                                if (settings.favoritesFirst) Text("✓", fontWeight = FontWeight.Bold)
+                            },
+                            onClick = {
+                                editorState.setPatchFavoritesFirst(!settings.favoritesFirst)
+                                sortMenuExpanded = false
+                            },
+                            modifier = Modifier.height(32.dp),
+                        )
+                    }
+                }
                 Button(
                     onClick = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
@@ -140,28 +248,45 @@ fun PatchListPanel(
         }
 
         // Search field
-        BasicTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            singleLine = true,
-            textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            decorationBox = { inner ->
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    if (searchQuery.isEmpty()) {
-                        Text("Search patches...", fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-                    }
-                    inner()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .height(36.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Search,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                if (searchQuery.isEmpty()) {
+                    Text(
+                        "Search patches...",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+                BasicTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            if (searchQuery.isNotEmpty()) {
+                IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear search", modifier = Modifier.size(14.dp))
                 }
             }
-        )
+        }
 
         Divider()
 
@@ -183,6 +308,7 @@ fun PatchListPanel(
                 PatchListItem(
                     patch = patch,
                     isSelected = patch.id == selectedId,
+                    isFavorite = patch.id in favoritePatchIds,
                     onSelect = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.selectPatch(patch.id)
@@ -190,6 +316,10 @@ fun PatchListPanel(
                     onToggle = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.togglePatch(patch.id)
+                    },
+                    onToggleFavorite = {
+                        requestVerticalSelectionFocus(navigationFocusRequester)
+                        editorState.togglePatchFavorite(patch.id)
                     },
                     onDelete = if (isSystemPatch(patch.id)) null
                                else {{
@@ -206,8 +336,10 @@ fun PatchListPanel(
 private fun PatchListItem(
     patch: SmPatch,
     isSelected: Boolean,
+    isFavorite: Boolean,
     onSelect: () -> Unit,
     onToggle: () -> Unit,
+    onToggleFavorite: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
     val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer
@@ -247,6 +379,22 @@ private fun PatchListItem(
                     overflow = TextOverflow.Ellipsis,
                     color = if (patch.enabled) MaterialTheme.colorScheme.onSurface
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+
+            IconButton(
+                onClick = onToggleFavorite,
+                modifier = Modifier.size(22.dp),
+            ) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                    contentDescription = if (isFavorite) "Remove ${patch.name} from favorites" else "Favorite ${patch.name}",
+                    modifier = Modifier.size(15.dp),
+                    tint = if (isFavorite) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                    },
                 )
             }
 
@@ -311,6 +459,12 @@ fun PatchEditorCanvas(
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            EnvironmentalDamagePatch.CONFIG_TYPE -> EnvironmentalDamageEditor(
+                patch,
+                editorState,
+                romParser,
+                Modifier.weight(1f).fillMaxWidth(),
+            )
             BOMB_CONFIG_TYPE -> BombsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             FANFARE_CONFIG_TYPE -> FanfareEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             RoomNamePauseMapPatch.CONFIG_TYPE -> RoomNamePauseMapConfig(patch, editorState, Modifier.weight(1f).fillMaxWidth())

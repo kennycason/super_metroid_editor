@@ -8,7 +8,14 @@ does not embed either tool's configuration model.
 A project identifies an immutable base ROM with `romPath` and stores semantic edits applied by
 SMEDIT at export time. The current top-level model includes room edits, room-state manifests,
 tileset defaults, patches, custom graphics, patterns, minimap and map-station edits, text and room
-name overrides, custom ASM, music edits, and ROM build-label fields.
+name overrides, custom ASM, music edits, project UI settings, and ROM build-label fields.
+
+`generalSettings` contains project-local editor preferences that should follow the project rather
+than the machine. Its `patchBrowser` section stores alphabetical sort direction, whether favorites
+are grouped first, and favorite patch IDs. Patch search text is intentionally session-only and is
+not saved. Enabled patches are always grouped above disabled patches; favorites and alphabetical
+sorting apply within those groups. These settings affect presentation only and never change ROM
+export behavior.
 
 Room data is described in [`room_model.md`](room_model.md). `newRooms` owns stable project room
 identities, complete initial headers/default-state payloads, and semantic door destinations.

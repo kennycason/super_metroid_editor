@@ -9,6 +9,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
+import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -1383,6 +1384,10 @@ class SmeditBuildService(
                 applyControllerConfigPatch(patch, context)
                 CONTROLLER_CONFIG_TYPE
             }
+            EnvironmentalDamagePatch.CONFIG_TYPE -> {
+                applyEnvironmentalDamagePatch(patch, context)
+                EnvironmentalDamagePatch.CONFIG_TYPE
+            }
             else -> {
                 val configType = patch.configType
                 if (configType != null && configType in HEADLESS_BOSS_BEHAVIOR_BY_CONFIG_TYPE) {
@@ -1529,6 +1534,32 @@ class SmeditBuildService(
         for (slot in HEADLESS_CONTROLLER_SLOTS) {
             val value = data[slot.key]?.coerceIn(0, 0xFFFF) ?: continue
             writeWord(context, CONTROLLER_TABLE_PC + slot.tableIndex * 2, value, "Controller config ${slot.key}")
+        }
+    }
+
+    private fun applyEnvironmentalDamagePatch(
+        patch: SmPatch,
+        context: ApplyContext,
+    ) {
+        val data = patch.configData ?: return
+        for (field in EnvironmentalDamagePatch.FIELDS) {
+            val energyPerSecond = data[field.key]?.coerceIn(
+                EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND,
+                EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
+            ) ?: continue
+            val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
+            writeWord(
+                context,
+                field.lowWordPc,
+                fixedRate.lowWord,
+                "Environmental damage ${field.key} fraction",
+            )
+            writeWord(
+                context,
+                field.highWordPc,
+                fixedRate.highWord,
+                "Environmental damage ${field.key} whole",
+            )
         }
     }
 

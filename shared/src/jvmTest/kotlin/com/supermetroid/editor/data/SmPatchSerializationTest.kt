@@ -13,6 +13,37 @@ class SmPatchSerializationTest {
     }
 
     @Test
+    fun `patch browser settings survive project round trip`() {
+        val project = SmEditProject(romPath = "/tmp/sm.smc").also {
+            it.generalSettings.patchBrowser.sortOrder = PatchSortOrder.NAME_DESCENDING
+            it.generalSettings.patchBrowser.favoritesFirst = false
+            it.generalSettings.patchBrowser.favoritePatchIds += listOf("config_environmental_damage", "hex_higher_jump")
+        }
+
+        val encoded = json.encodeToString(SmEditProject.serializer(), project)
+        val decoded = json.decodeFromString(SmEditProject.serializer(), encoded)
+
+        assertEquals(PatchSortOrder.NAME_DESCENDING, decoded.generalSettings.patchBrowser.sortOrder)
+        assertEquals(false, decoded.generalSettings.patchBrowser.favoritesFirst)
+        assertEquals(
+            listOf("config_environmental_damage", "hex_higher_jump"),
+            decoded.generalSettings.patchBrowser.favoritePatchIds,
+        )
+    }
+
+    @Test
+    fun `projects without general settings get patch browser defaults`() {
+        val decoded = json.decodeFromString(
+            SmEditProject.serializer(),
+            """{"romPath":"/tmp/sm.smc"}""",
+        )
+
+        assertEquals(PatchSortOrder.NAME_ASCENDING, decoded.generalSettings.patchBrowser.sortOrder)
+        assertTrue(decoded.generalSettings.patchBrowser.favoritesFirst)
+        assertTrue(decoded.generalSettings.patchBrowser.favoritePatchIds.isEmpty())
+    }
+
+    @Test
     fun `exclusive variant group survives project round trip`() {
         val project = SmEditProject(romPath = "/tmp/sm.smc")
         project.patches.add(
