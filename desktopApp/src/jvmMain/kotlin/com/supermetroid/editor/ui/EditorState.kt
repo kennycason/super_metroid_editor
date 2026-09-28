@@ -160,6 +160,17 @@ private data class MapSelectionBounds(
     val maxY: Int,
 )
 
+internal data class MapSelectionProperties(
+    val minX: Int,
+    val minY: Int,
+    val maxX: Int,
+    val maxY: Int,
+    val tileCount: Int,
+    val metatile: Int,
+    val blockType: Int?,
+    val bts: Int?,
+)
+
 enum class LayoutEditScope {
     THIS_STATE,
     ALL_SHARING_STATES,
@@ -2010,6 +2021,39 @@ class EditorState {
             minY = minOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1),
             maxX = maxOf(s.first, e.first).coerceIn(0, workingBlocksWide - 1),
             maxY = maxOf(s.second, e.second).coerceIn(0, workingBlocksTall - 1),
+        )
+    }
+
+    /**
+     * Metadata shared by every tile in the current map selection. A null block
+     * type or BTS means that property is heterogeneous across the selection.
+     */
+    internal fun mapSelectionProperties(): MapSelectionProperties? {
+        val bounds = mapSelectionBounds() ?: return null
+        val firstWord = readBlockWord(bounds.minX, bounds.minY)
+        val firstBlockType = (firstWord ushr 12) and 0xF
+        val firstBts = readBts(bounds.minX, bounds.minY)
+        var blockTypeIsCommon = true
+        var btsIsCommon = true
+
+        for (by in bounds.minY..bounds.maxY) {
+            for (bx in bounds.minX..bounds.maxX) {
+                if (((readBlockWord(bx, by) ushr 12) and 0xF) != firstBlockType) {
+                    blockTypeIsCommon = false
+                }
+                if (readBts(bx, by) != firstBts) btsIsCommon = false
+            }
+        }
+
+        return MapSelectionProperties(
+            minX = bounds.minX,
+            minY = bounds.minY,
+            maxX = bounds.maxX,
+            maxY = bounds.maxY,
+            tileCount = (bounds.maxX - bounds.minX + 1) * (bounds.maxY - bounds.minY + 1),
+            metatile = firstWord and 0x3FF,
+            blockType = firstBlockType.takeIf { blockTypeIsCommon },
+            bts = firstBts.takeIf { btsIsCommon },
         )
     }
 
@@ -3891,6 +3935,35 @@ class EditorState {
             val meta = (readBlockWord(bx, by) and 0x3FF)
             metatileBlockTypePresets = metatileBlockTypePresets + (meta to blockType)
         }
+    }
+
+    /** Set block type and BTS on every tile in the map selection as one undoable edit. */
+    fun setMapSelectionProperties(blockType: Int, bts: Int): Boolean {
+        require(blockType in 0..0xF) { "Block type is outside the 4-bit range" }
+        require(bts in 0..0xFF) { "BTS is outside the byte range" }
+        if (!allowOrQueueLayoutEdit { setMapSelectionProperties(blockType, bts) }) return false
+        val bounds = mapSelectionBounds() ?: return false
+        val edits = mutableListOf<TileEdit>()
+        val editedMetatiles = mutableSetOf<Int>()
+
+        for (by in bounds.minY..bounds.maxY) {
+            for (bx in bounds.minX..bounds.maxX) {
+                val oldWord = readBlockWord(bx, by)
+                val oldBts = readBts(bx, by)
+                val newWord = (oldWord and 0x0FFF) or (blockType shl 12)
+                if (oldWord == newWord && oldBts == bts) continue
+                edits += TileEdit(bx, by, oldWord, newWord, oldBts, bts)
+                editedMetatiles += oldWord and 0x3FF
+            }
+        }
+        if (edits.isEmpty()) return false
+
+        edits.forEach { applyTileEdit(it, useNew = true) }
+        pushEditOperation(EditOperation("Properties selection ${edits.size} tile(s)", edits))
+        if (blockType != 0x0) {
+            metatileBlockTypePresets = metatileBlockTypePresets + editedMetatiles.associateWith { blockType }
+        }
+        return true
     }
 
     /**

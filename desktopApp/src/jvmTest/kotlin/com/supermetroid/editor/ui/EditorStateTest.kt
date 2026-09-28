@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
+import java.io.File
 
 class EditorStateTest {
 
@@ -190,6 +191,70 @@ class EditorStateTest {
 
             assertFalse(state.eraseMapSelection())
             assertTrue(state.undoStack.isEmpty())
+        }
+    }
+
+    @Nested
+    inner class SelectionProperties {
+        @Test
+        fun `selection properties report common values and mixed values`() {
+            writeWord(0, 0, 0x8123)
+            writeWord(1, 0, 0x8456)
+            writeBts(0, 0, 0x02)
+            writeBts(1, 0, 0x02)
+            state.mapSelStart = 0 to 0
+            state.mapSelEnd = 1 to 0
+
+            val uniform = requireNotNull(state.mapSelectionProperties())
+            assertEquals(2, uniform.tileCount)
+            assertEquals(0x8, uniform.blockType)
+            assertEquals(0x02, uniform.bts)
+
+            writeWord(1, 0, 0xA456)
+            writeBts(1, 0, 0x03)
+
+            val mixed = requireNotNull(state.mapSelectionProperties())
+            assertNull(mixed.blockType)
+            assertNull(mixed.bts)
+        }
+
+        @Test
+        fun `setting selection properties preserves graphics and is one undoable edit`() {
+            writeWord(1, 1, 0x8523)
+            writeWord(2, 1, 0xAC56)
+            writeWord(1, 2, 0x1B78)
+            writeWord(2, 2, 0xF099)
+            writeBts(1, 1, 1)
+            writeBts(2, 1, 2)
+            writeBts(1, 2, 3)
+            writeBts(2, 2, 4)
+            writeWord(0, 0, 0x8777)
+            state.mapSelStart = 2 to 2
+            state.mapSelEnd = 1 to 1
+
+            assertTrue(state.setMapSelectionProperties(blockType = 0x0, bts = 0))
+
+            assertEquals(0x0523, state.readBlockWord(1, 1))
+            assertEquals(0x0C56, state.readBlockWord(2, 1))
+            assertEquals(0x0B78, state.readBlockWord(1, 2))
+            assertEquals(0x0099, state.readBlockWord(2, 2))
+            for (y in 1..2) for (x in 1..2) assertEquals(0, state.readBts(x, y))
+            assertEquals(0x8777, state.readBlockWord(0, 0))
+            assertEquals(1, state.undoStack.size)
+            assertEquals(4, state.undoStack.single().edits.size)
+            assertEquals("Properties selection 4 tile(s)", state.undoStack.single().description)
+            assertEquals(2 to 2, state.mapSelStart)
+            assertEquals(1 to 1, state.mapSelEnd)
+
+            assertTrue(state.undo())
+            assertEquals(0x8523, state.readBlockWord(1, 1))
+            assertEquals(0xAC56, state.readBlockWord(2, 1))
+            assertEquals(0x1B78, state.readBlockWord(1, 2))
+            assertEquals(0xF099, state.readBlockWord(2, 2))
+            assertEquals(1, state.readBts(1, 1))
+            assertEquals(2, state.readBts(2, 1))
+            assertEquals(3, state.readBts(1, 2))
+            assertEquals(4, state.readBts(2, 2))
         }
     }
 
@@ -1593,10 +1658,20 @@ class EditorStateTest {
         @Test
         fun `testMode true prevents pattern save to disk`() {
             assertTrue(state.testMode, "testMode should be set in setUp")
-            // addPattern should not throw or write to disk
+            val testHome = File(System.getProperty("user.home"))
+            assertEquals("user-home", testHome.name, "tests must use an isolated home directory")
+            val patternFile = File(testHome, ".smedit/patterns/cre.json")
+            val before = patternFile.takeIf { it.isFile }?.readBytes()
+
             val pat = state.addPattern("ephemeral", cols = 1, rows = 1)
             assertNotNull(pat)
-            // Remove it to clean up
+            val afterAdd = patternFile.takeIf { it.isFile }?.readBytes()
+            assertTrue(
+                (before == null && afterAdd == null) ||
+                    (before != null && afterAdd != null && before.contentEquals(afterAdd)),
+                "test-mode addPattern must not write the shared pattern library",
+            )
+
             state.removePattern(pat.id)
         }
     }

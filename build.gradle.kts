@@ -7,6 +7,15 @@ tasks.wrapper {
     gradleVersion = "8.5"
 }
 
+// Tests must never read or write the developer's real ~/.smedit state.
+subprojects {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        val isolatedTestHome = temporaryDir.resolve("user-home")
+        systemProperty("user.home", isolatedTestHome.absolutePath)
+        doFirst { isolatedTestHome.mkdirs() }
+    }
+}
+
 // ── Build snes9x libretro core from submodule ──────────────────────────────
 
 val buildLibretroCore by tasks.registering(Exec::class) {

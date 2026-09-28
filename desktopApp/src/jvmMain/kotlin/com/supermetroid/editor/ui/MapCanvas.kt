@@ -1069,9 +1069,13 @@ fun MapCanvas(
                             // Right-click properties popup state
                             var propsBlockX by remember { mutableStateOf(-1) }
                             var propsBlockY by remember { mutableStateOf(-1) }
+                            var propsSelectionEndX by remember { mutableStateOf(-1) }
+                            var propsSelectionEndY by remember { mutableStateOf(-1) }
+                            var propsSelectionTileCount by remember { mutableStateOf(1) }
                             var propsExpanded by remember { mutableStateOf(false) }
-                            var propsBlockType by remember { mutableStateOf(0) }
+                            var propsBlockType by remember { mutableStateOf<Int?>(null) }
                             var propsBts by remember { mutableStateOf(0) }
+                            var propsBtsMixed by remember { mutableStateOf(false) }
                             var propsMetatile by remember { mutableStateOf(0) }
 
                             // Right-click context menu state
@@ -1088,6 +1092,37 @@ fun MapCanvas(
                                     ((posX + hScrollState.value) / tilePx).toInt(),
                                     ((posY + vScrollState.value) / tilePx).toInt()
                                 )
+                            }
+
+                            fun openTileProperties(bx: Int, by: Int) {
+                                val es = editorState ?: return
+                                val word = es.readBlockWord(bx, by)
+                                propsBlockX = bx
+                                propsBlockY = by
+                                propsSelectionEndX = bx
+                                propsSelectionEndY = by
+                                propsSelectionTileCount = 1
+                                propsMetatile = word and 0x3FF
+                                propsBlockType = (word shr 12) and 0xF
+                                propsBts = es.readBts(bx, by)
+                                propsBtsMixed = false
+                                propsExpanded = true
+                            }
+
+                            fun openSelectionProperties(): Boolean {
+                                val es = editorState ?: return false
+                                val selection = es.mapSelectionProperties() ?: return false
+                                propsBlockX = selection.minX
+                                propsBlockY = selection.minY
+                                propsSelectionEndX = selection.maxX
+                                propsSelectionEndY = selection.maxY
+                                propsSelectionTileCount = selection.tileCount
+                                propsMetatile = selection.metatile
+                                propsBlockType = selection.blockType
+                                propsBts = selection.bts ?: es.readBts(selection.minX, selection.minY)
+                                propsBtsMixed = selection.bts == null
+                                propsExpanded = true
+                                return true
                             }
 
                             // Re-render from working data (reacts to editVersion from EditorState)
@@ -1178,12 +1213,7 @@ fun MapCanvas(
                                                 contextMenuExpanded = true
                                             } else if (editorState.activeRoomLayer == RoomEditLayer.LAYER1) {
                                                 if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
-                                                    val word = editorState.readBlockWord(bx, by)
-                                                    propsBlockX = bx; propsBlockY = by
-                                                    propsMetatile = word and 0x3FF
-                                                    propsBlockType = (word shr 12) and 0xF
-                                                    propsBts = editorState.readBts(bx, by)
-                                                    propsExpanded = true
+                                                    openTileProperties(bx, by)
                                                 }
                                             }
                                         } else if (ne != null && ne.button == MouseEvent.BUTTON1 && editorState != null) {
@@ -1242,17 +1272,9 @@ fun MapCanvas(
                                             isPainting = false
                                             val ss = editorState?.mapSelStart
                                             val se = editorState?.mapSelEnd
-                                            if (ss != null && se != null && ss == se && editorState != null &&
+                                            if (ss != null && se != null && editorState != null &&
                                                 editorState.activeRoomLayer == RoomEditLayer.LAYER1) {
-                                                val bx = ss.first; val by = ss.second
-                                                if (bx in 0 until effectiveBlocksWide && by in 0 until effectiveBlocksTall) {
-                                                    val word = editorState.readBlockWord(bx, by)
-                                                    propsBlockX = bx; propsBlockY = by
-                                                    propsMetatile = word and 0x3FF
-                                                    propsBlockType = (word shr 12) and 0xF
-                                                    propsBts = editorState.readBts(bx, by)
-                                                    propsExpanded = true
-                                                }
+                                                openSelectionProperties()
                                             }
                                         } else if (isPainting) {
                                             isPainting = false; editorState?.endStroke()
@@ -1757,6 +1779,13 @@ fun MapCanvas(
                                 offset = contextMenuOffset
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("Edit Tile Metadata", fontSize = 11.sp) },
+                                    onClick = {
+                                        contextMenuExpanded = false
+                                        openSelectionProperties()
+                                    }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Paint", fontSize = 11.sp) },
                                     onClick = {
                                         contextMenuExpanded = false
@@ -1819,6 +1848,10 @@ fun MapCanvas(
                                     metatile = propsMetatile,
                                     initialBlockType = propsBlockType,
                                     initialBts = propsBts,
+                                    initialBtsMixed = propsBtsMixed,
+                                    selectionEndX = propsSelectionEndX,
+                                    selectionEndY = propsSelectionEndY,
+                                    selectionTileCount = propsSelectionTileCount,
                                     editorState = editorState,
                                     romParser = romParser,
                                     rooms = rooms,

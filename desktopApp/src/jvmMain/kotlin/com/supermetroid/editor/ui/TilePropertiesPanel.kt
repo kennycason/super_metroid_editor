@@ -60,8 +60,12 @@ internal fun TilePropertiesPanel(
     blockX: Int,
     blockY: Int,
     metatile: Int,
-    initialBlockType: Int,
+    initialBlockType: Int?,
     initialBts: Int,
+    initialBtsMixed: Boolean = false,
+    selectionEndX: Int = blockX,
+    selectionEndY: Int = blockY,
+    selectionTileCount: Int = 1,
     editorState: EditorState,
     romParser: RomParser,
     rooms: List<RoomInfo>,
@@ -73,8 +77,15 @@ internal fun TilePropertiesPanel(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var propsBlockType by remember(blockX, blockY) { mutableStateOf(initialBlockType) }
-    var propsBts by remember(blockX, blockY) { mutableStateOf(initialBts) }
+    var propsBlockType by remember(blockX, blockY, selectionEndX, selectionEndY, initialBlockType) {
+        mutableStateOf(initialBlockType)
+    }
+    var propsBts by remember(blockX, blockY, selectionEndX, selectionEndY, initialBts) {
+        mutableStateOf(initialBts)
+    }
+    var propsBtsMixed by remember(blockX, blockY, selectionEndX, selectionEndY, initialBtsMixed) {
+        mutableStateOf(initialBtsMixed)
+    }
     var doorConnectionError by remember(blockX, blockY, roomId) { mutableStateOf<String?>(null) }
     val editableBlockTypes = listOf(
         0x0 to "Air", 0x1 to "Slope", 0x2 to "X-Ray Air", 0x3 to "Treadmill",
@@ -83,8 +94,17 @@ internal fun TilePropertiesPanel(
         0xB to "Crumble", 0xC to "Shot Block", 0xD to "V-Extend",
         0xE to "Grapple", 0xF to "Bomb Block"
     )
-    val propsTypeName = blockTypeName(propsBlockType)
-    val btsOptions = btsOptionsForBlockType(propsBlockType)
+    val selectedBlockType = propsBlockType
+    val propsTypeName = selectedBlockType?.let(::blockTypeName)
+    val btsOptions = selectedBlockType?.let(::btsOptionsForBlockType).orEmpty()
+
+    fun applyProperties(blockType: Int, bts: Int) {
+        if (selectionTileCount > 1) {
+            editorState.setMapSelectionProperties(blockType, bts)
+        } else {
+            editorState.setTileProperties(blockX, blockY, blockType, bts)
+        }
+    }
 
     Card(
         modifier = modifier
@@ -105,9 +125,16 @@ internal fun TilePropertiesPanel(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Tile ${oneBasedRoomCoordinate(blockX, blockY)} · " +
-                        "Screen ${roomScreenCoordinateForBlock(blockX, blockY)} · " +
-                        "#$metatile 0x${propsBlockType.toString(16).uppercase()} $propsTypeName",
+                    if (selectionTileCount > 1) {
+                        "$selectionTileCount tiles · ${oneBasedRoomCoordinate(blockX, blockY)}–" +
+                            oneBasedRoomCoordinate(selectionEndX, selectionEndY)
+                    } else {
+                        "Tile ${oneBasedRoomCoordinate(blockX, blockY)} · " +
+                            "Screen ${roomScreenCoordinateForBlock(blockX, blockY)} · " +
+                            "#$metatile" + (selectedBlockType?.let {
+                                " 0x${it.toString(16).uppercase()} $propsTypeName"
+                            } ?: "")
+                    },
                     fontSize = 11.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 )
@@ -142,9 +169,16 @@ internal fun TilePropertiesPanel(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            "0x${propsBlockType.toString(16).uppercase()} $propsTypeName",
+                            selectedBlockType?.let {
+                                "0x${it.toString(16).uppercase()} $propsTypeName"
+                            } ?: "Mixed block types — choose one",
                             fontSize = 11.sp,
-                            modifier = Modifier.weight(1f)
+                            color = if (selectedBlockType == null) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            modifier = Modifier.weight(1f),
                         )
                         Text("▾", fontSize = 10.sp)
                     }
@@ -154,16 +188,17 @@ internal fun TilePropertiesPanel(
                         DropdownMenuItem(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    RadioButton(selected = propsBlockType == typeVal, onClick = null, modifier = Modifier.size(16.dp))
+                                    RadioButton(selected = selectedBlockType == typeVal, onClick = null, modifier = Modifier.size(16.dp))
                                     Text("0x${typeVal.toString(16).uppercase()} $typeName", fontSize = 11.sp)
                                 }
                             },
                             onClick = {
                                 btExpanded = false
-                                if (typeVal != propsBlockType) {
+                                if (typeVal != selectedBlockType) {
                                     propsBlockType = typeVal
                                     propsBts = 0
-                                    editorState.setTileProperties(blockX, blockY, typeVal, 0)
+                                    propsBtsMixed = false
+                                    applyProperties(typeVal, 0)
                                 }
                             },
                             modifier = Modifier.height(28.dp)
@@ -175,11 +210,11 @@ internal fun TilePropertiesPanel(
             Spacer(modifier = Modifier.height(8.dp))
 
             var hoveredSlopeBts by remember { mutableStateOf<Int?>(null) }
-            if (propsBlockType == 0x1) {
+            if (selectedBlockType == 0x1) {
                 val displayBts = hoveredSlopeBts ?: propsBts
                 val displayName = SLOPE_BTS_NAMES[displayBts and 0x40.inv()]
                     ?: SLOPE_BTS_NAMES[displayBts]
-                if (displayName != null) {
+                if (displayName != null && (!propsBtsMixed || hoveredSlopeBts != null)) {
                     val flipLabel = if (displayBts and 0x40 != 0) " [X-Flipped]" else ""
                     Text(
                         "0x${displayBts.toString(16).uppercase().padStart(2, '0')} $displayName$flipLabel",
@@ -193,20 +228,24 @@ internal fun TilePropertiesPanel(
             }
 
             // ── Door connection / block subtype ──
-            val btsLabel = if (propsBlockType == 0x9) "Connection" else if (propsBlockType == 0x1) {
+            val btsLabel = if (selectedBlockType == 0x9) "Connection" else if (selectedBlockType == 0x1) {
                 "Slope Shape"
             } else {
                 "Sub Type (BTS)"
             }
-            Text(btsLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(modifier = Modifier.height(2.dp))
+            if (selectedBlockType != null) {
+                Text(btsLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(modifier = Modifier.height(2.dp))
+            }
 
-            if (propsBlockType == 0x9) {
+            if (selectedBlockType == 0x9) {
                 val doorConnections = remember(editorState.editVersion) {
                     editorState.doorEntries.toList()
                 }
                 var connectionDropExpanded by remember { mutableStateOf(false) }
-                val connectionLabel = doorConnections.getOrNull(propsBts)?.let { door ->
+                val connectionLabel = if (propsBtsMixed) {
+                    "Mixed connections — choose one"
+                } else doorConnections.getOrNull(propsBts)?.let { door ->
                     val destination = rooms.firstOrNull {
                         it.getRoomIdAsInt() == door.destRoomPtr
                     }?.name ?: "Unknown destination"
@@ -241,9 +280,14 @@ internal fun TilePropertiesPanel(
                                 text = { Text("Connection ${index + 1} → $destination", fontSize = 10.sp) },
                                 onClick = {
                                     connectionDropExpanded = false
-                                    if (index != propsBts) {
+                                    if (index != propsBts || propsBtsMixed) {
                                         propsBts = index
-                                        editorState.linkDoorwayTilesToConnection(blockX, blockY, index)
+                                        propsBtsMixed = false
+                                        if (selectionTileCount > 1) {
+                                            applyProperties(0x9, index)
+                                        } else {
+                                            editorState.linkDoorwayTilesToConnection(blockX, blockY, index)
+                                        }
                                     }
                                 },
                                 modifier = Modifier.height(30.dp),
@@ -252,13 +296,14 @@ internal fun TilePropertiesPanel(
                     }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-            } else if (propsBlockType == 0x1) {
+            } else if (selectedBlockType == 0x1) {
                 SlopeGridPicker(
-                    selectedBts = propsBts,
+                    selectedBts = if (propsBtsMixed) -1 else propsBts,
                     onSelect = { btsVal ->
-                        if (btsVal != propsBts) {
+                        if (btsVal != propsBts || propsBtsMixed) {
                             propsBts = btsVal
-                            editorState.setTileProperties(blockX, blockY, propsBlockType, btsVal)
+                            propsBtsMixed = false
+                            applyProperties(0x1, btsVal)
                         }
                     },
                     onHoverBts = { hoveredSlopeBts = it }
@@ -266,7 +311,9 @@ internal fun TilePropertiesPanel(
                 Spacer(modifier = Modifier.height(4.dp))
             } else if (btsOptions.isNotEmpty()) {
                 var btsDropExpanded by remember { mutableStateOf(false) }
-                val btsName = btsOptions.firstOrNull { it.first == propsBts }?.second
+                val btsName = if (propsBtsMixed) {
+                    "Mixed BTS values — choose one"
+                } else btsOptions.firstOrNull { it.first == propsBts }?.second
                     ?: "Custom (0x${propsBts.toString(16).uppercase().padStart(2, '0')})"
                 Box {
                     Surface(
@@ -291,15 +338,16 @@ internal fun TilePropertiesPanel(
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        RadioButton(selected = propsBts == btsVal, onClick = null, modifier = Modifier.size(16.dp))
+                                        RadioButton(selected = !propsBtsMixed && propsBts == btsVal, onClick = null, modifier = Modifier.size(16.dp))
                                         Text("0x${btsVal.toString(16).uppercase().padStart(2, '0')} $btsOptName", fontSize = 11.sp)
                                     }
                                 },
                                 onClick = {
                                     btsDropExpanded = false
-                                    if (btsVal != propsBts) {
+                                    if (btsVal != propsBts || propsBtsMixed) {
                                         propsBts = btsVal
-                                        editorState.setTileProperties(blockX, blockY, propsBlockType, btsVal)
+                                        propsBtsMixed = false
+                                        applyProperties(selectedBlockType!!, btsVal)
                                     }
                                 },
                                 modifier = Modifier.height(28.dp)
@@ -310,15 +358,18 @@ internal fun TilePropertiesPanel(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            if (propsBlockType != 0x9) {
+            if (selectedBlockType != null && selectedBlockType != 0x9) {
                 // Raw BTS hex input (BasicTextField so typed text is visible, same fix as room search)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(if (btsOptions.isNotEmpty()) "Raw:" else "BTS:", fontSize = 10.sp)
-                    var rawText by remember(blockX, blockY, propsBts) {
-                        mutableStateOf(propsBts.toString(16).uppercase().padStart(2, '0'))
+                    var rawText by remember(blockX, blockY, selectionEndX, selectionEndY, propsBts, propsBtsMixed) {
+                        mutableStateOf(
+                            if (propsBtsMixed) ""
+                            else propsBts.toString(16).uppercase().padStart(2, '0')
+                        )
                     }
                     Box(
                         modifier = Modifier
@@ -327,14 +378,19 @@ internal fun TilePropertiesPanel(
                             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
                             .padding(horizontal = 6.dp, vertical = 4.dp)
                     ) {
+                        if (rawText.isEmpty()) {
+                            Text("Mixed", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         BasicTextField(
                             value = rawText,
                             onValueChange = { s ->
                                 val filtered = s.uppercase().filter { it in '0'..'9' || it in 'A'..'F' }.take(2)
                                 rawText = filtered
                                 val v = filtered.toIntOrNull(16)
-                                if (v != null && v in 0..255 && v != propsBts) {
-                                    editorState.setTileProperties(blockX, blockY, propsBlockType, v)
+                                if (v != null && v in 0..255 && (v != propsBts || propsBtsMixed)) {
+                                    propsBts = v
+                                    propsBtsMixed = false
+                                    applyProperties(selectedBlockType, v)
                                 }
                             },
                             singleLine = true,
@@ -346,7 +402,7 @@ internal fun TilePropertiesPanel(
             }
 
             // ── Door Connection Info (when block type = Door) ──
-            if (propsBlockType == 0x9) {
+            if (selectedBlockType == 0x9 && selectionTileCount == 1) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Divider()
                 Spacer(modifier = Modifier.height(4.dp))

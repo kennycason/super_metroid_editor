@@ -12358,18 +12358,6 @@
                 }
             ],
             "builtIn": true
-        },
-        {
-            "id": "pattern_1772420773530",
-            "name": "test",
-            "cols": 2,
-            "rows": 2,
-            "cells": [
-                null,
-                null,
-                null,
-                null
-            ]
         }
     ]
 ,"projectFormatVersion":2}
