@@ -316,9 +316,7 @@ internal fun buildCompositeImage(
             java.awt.Color(40, 80, 200, 120),
             java.awt.Color(40, 160, 50, 120),
         )
-        val scrollLabels = arrayOf("RED", "BLUE", "GREEN")
         val g2 = g as java.awt.Graphics2D
-        g2.font = java.awt.Font("SansSerif", java.awt.Font.BOLD, 12)
         for (sy in 0 until roomHeightScreens) {
             for (sx in 0 until roomWidthScreens) {
                 val idx = sy * roomWidthScreens + sx
@@ -331,13 +329,6 @@ internal fun buildCompositeImage(
                 g2.stroke = java.awt.BasicStroke(2f)
                 g2.drawRect(px + 1, py + 1, SCREEN_PX - 3, SCREEN_PX - 3)
                 g2.stroke = java.awt.BasicStroke(1f)
-                if (showMetaNames) {
-                    val fm = g2.fontMetrics
-                    val label = scrollLabels[scrollVal]
-                    val tw = fm.stringWidth(label)
-                    g2.color = java.awt.Color(255, 255, 255, 100)
-                    g2.drawString(label, px + (SCREEN_PX - tw) / 2, py + 16)
-                }
             }
         }
     }

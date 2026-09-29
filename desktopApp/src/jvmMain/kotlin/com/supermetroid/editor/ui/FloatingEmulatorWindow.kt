@@ -85,6 +85,7 @@ import com.supermetroid.editor.rom.RomParser
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import kotlin.math.ceil
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 private const val SNES_ASPECT = 4f / 3f // CRT display aspect ratio
@@ -118,11 +119,59 @@ private const val TITLE_BAR_HEIGHT = 24
 private const val MIN_WIDTH = 280f
 private const val MAX_WIDTH = 900f
 
+internal data class EmulatorWindowGeometry(
+    val xPx: Float,
+    val yPx: Float,
+    val widthDp: Float,
+)
+
+/**
+ * Fits the floating emulator completely inside its editor container.
+ *
+ * Positions are stored as pixels because Compose's lambda offset and drag
+ * deltas are pixel based. Width is stored as dp for the persisted UI setting.
+ */
+internal fun fitEmulatorWindowGeometry(
+    xPx: Float,
+    yPx: Float,
+    widthDp: Float,
+    containerSizePx: IntSize,
+    density: Float,
+): EmulatorWindowGeometry {
+    val safeDensity = density.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val containerWidthDp = (containerSizePx.width.coerceAtLeast(1) / safeDensity)
+    val containerHeightDp = (containerSizePx.height.coerceAtLeast(1) / safeDensity)
+    val maxWidthForHeight = ((containerHeightDp - TITLE_BAR_HEIGHT - CONTROL_BAR_HEIGHT)
+        .coerceAtLeast(1f) * SNES_ASPECT)
+    val largestFittingWidth = min(MAX_WIDTH, min(containerWidthDp, maxWidthForHeight))
+        .coerceAtLeast(1f)
+    val requestedWidth = widthDp.takeIf { it.isFinite() } ?: MIN_WIDTH
+    val fittedWidth = if (largestFittingWidth >= MIN_WIDTH) {
+        requestedWidth.coerceIn(MIN_WIDTH, largestFittingWidth)
+    } else {
+        largestFittingWidth
+    }
+    val fittedHeightDp = TITLE_BAR_HEIGHT + fittedWidth / SNES_ASPECT + CONTROL_BAR_HEIGHT
+    val widthPx = fittedWidth * safeDensity
+    val heightPx = fittedHeightDp * safeDensity
+    val maxX = (containerSizePx.width - widthPx).coerceAtLeast(0f)
+    val maxY = (containerSizePx.height - heightPx).coerceAtLeast(0f)
+    val requestedX = xPx.takeIf { it.isFinite() } ?: 0f
+    val requestedY = yPx.takeIf { it.isFinite() } ?: 0f
+    return EmulatorWindowGeometry(
+        xPx = requestedX.coerceIn(0f, maxX),
+        yPx = requestedY.coerceIn(0f, maxY),
+        widthDp = fittedWidth,
+    )
+}
+
 @Composable
 fun FloatingEmulatorWindow(
     workspaceState: EmulatorWorkspaceState,
     editorState: EditorState,
     romParser: RomParser?,
+    containerSizePx: IntSize,
+    density: Float,
     rooms: List<RoomInfo> = emptyList(),
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -133,13 +182,35 @@ fun FloatingEmulatorWindow(
         editorState.enabledCustomItems()
     }
 
-    // Draggable position (persisted)
+    // Draggable position (persisted and fitted to the current editor window)
     val savedConfig = remember { AppConfig.load() }
-    var offsetX by remember { mutableStateOf(savedConfig.emulatorWindowX) }
-    var offsetY by remember { mutableStateOf(savedConfig.emulatorWindowY) }
+    val initialGeometry = remember {
+        fitEmulatorWindowGeometry(
+            xPx = savedConfig.emulatorWindowX,
+            yPx = savedConfig.emulatorWindowY,
+            widthDp = savedConfig.emulatorWindowWidth,
+            containerSizePx = containerSizePx,
+            density = density,
+        )
+    }
+    var offsetX by remember { mutableStateOf(initialGeometry.xPx) }
+    var offsetY by remember { mutableStateOf(initialGeometry.yPx) }
 
     // Resizable width (height derived from aspect ratio, persisted)
-    var windowWidth by remember { mutableStateOf(savedConfig.emulatorWindowWidth) }
+    var windowWidth by remember { mutableStateOf(initialGeometry.widthDp) }
+
+    LaunchedEffect(initialGeometry) {
+        if (initialGeometry.xPx != savedConfig.emulatorWindowX ||
+            initialGeometry.yPx != savedConfig.emulatorWindowY ||
+            initialGeometry.widthDp != savedConfig.emulatorWindowWidth
+        ) {
+            workspaceState.persistEmulatorWindowGeometry(
+                initialGeometry.xPx,
+                initialGeometry.yPx,
+                initialGeometry.widthDp,
+            )
+        }
+    }
 
     // Fast forward state
     var fastForwarding by remember { mutableStateOf(false) }
@@ -160,12 +231,15 @@ fun FloatingEmulatorWindow(
     }
 
     // Auto-set ROM path from editor — restart emulator if a session is active
+    var observedRomPath by remember { mutableStateOf(editorState.project.romPath) }
     LaunchedEffect(editorState.project.romPath) {
         val romPath = editorState.project.romPath.takeIf { it.isNotBlank() }
+        val romChangedWhileOpen = observedRomPath != editorState.project.romPath
+        observedRomPath = editorState.project.romPath
         workspaceState.updateRomPath(romPath)
 
         // If emulator is running and we got a new ROM, restart the session
-        if (workspaceState.session.active && romPath != null) {
+        if (romChangedWhileOpen && workspaceState.session.active && romPath != null) {
             workspaceState.disconnectBridge()
             // Clear stale state so we don't auto-load an old ROM's save state
             workspaceState.clearSavedStateSelection()
@@ -185,6 +259,48 @@ fun FloatingEmulatorWindow(
                 workspaceState.startSession()
                 workspaceState.setLoopRunning(true)
             }
+        }
+    }
+
+    // Closing the floating window disconnects its session, so opening it builds
+    // the latest project ROM and boots a fresh game when globally enabled.
+    LaunchedEffect(Unit) {
+        if (!workspaceState.autoPlayOnOpen) return@LaunchedEffect
+        workspaceState.updateRomPath(editorState.project.romPath.takeIf { it.isNotBlank() })
+        if (!workspaceState.isConnected) workspaceState.connectBridge()
+        workspaceState.propagateAudioState()
+        if (workspaceState.isConnected && !workspaceState.session.active) {
+            val rp = romParser
+            if (rp != null) {
+                val patchedPath = editorState.exportToRom(rp)
+                if (patchedPath != null) {
+                    workspaceState.updateRomPath(patchedPath)
+                } else {
+                    workspaceState.setStatus("Export failed; emulator was not started.")
+                    return@LaunchedEffect
+                }
+            }
+            workspaceState.clearSavedStateSelection()
+            workspaceState.startSession()
+        }
+        if (workspaceState.session.active) workspaceState.setLoopRunning(true)
+    }
+
+    // Re-fit persisted geometry whenever the editor moves to a smaller display
+    // or is resized while the emulator is open.
+    LaunchedEffect(containerSizePx, density) {
+        val fitted = fitEmulatorWindowGeometry(
+            xPx = offsetX,
+            yPx = offsetY,
+            widthDp = windowWidth,
+            containerSizePx = containerSizePx,
+            density = density,
+        )
+        if (fitted.xPx != offsetX || fitted.yPx != offsetY || fitted.widthDp != windowWidth) {
+            offsetX = fitted.xPx
+            offsetY = fitted.yPx
+            windowWidth = fitted.widthDp
+            workspaceState.persistEmulatorWindowGeometry(offsetX, offsetY, windowWidth)
         }
     }
 
@@ -271,12 +387,20 @@ fun FloatingEmulatorWindow(
                         .fillMaxWidth()
                         .height(TITLE_BAR_HEIGHT.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .pointerInput(Unit) {
+                        .pointerInput(containerSizePx, density) {
                             detectDragGestures(
                                 onDrag = { change, dragAmount ->
                                     change.consume()
-                                    offsetX += dragAmount.x
-                                    offsetY += dragAmount.y
+                                    val fitted = fitEmulatorWindowGeometry(
+                                        xPx = offsetX + dragAmount.x,
+                                        yPx = offsetY + dragAmount.y,
+                                        widthDp = windowWidth,
+                                        containerSizePx = containerSizePx,
+                                        density = density,
+                                    )
+                                    offsetX = fitted.xPx
+                                    offsetY = fitted.yPx
+                                    windowWidth = fitted.widthDp
                                 },
                                 onDragEnd = {
                                     workspaceState.persistEmulatorWindowGeometry(offsetX, offsetY, windowWidth)
@@ -775,11 +899,20 @@ fun FloatingEmulatorWindow(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .size(32.dp)
-                    .pointerInput(Unit) {
+                    .pointerInput(containerSizePx, density) {
                         detectDragGestures(
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                windowWidth = (windowWidth + dragAmount.x).coerceIn(MIN_WIDTH, MAX_WIDTH)
+                                val fitted = fitEmulatorWindowGeometry(
+                                    xPx = offsetX,
+                                    yPx = offsetY,
+                                    widthDp = windowWidth + dragAmount.x / density.coerceAtLeast(0.01f),
+                                    containerSizePx = containerSizePx,
+                                    density = density,
+                                )
+                                offsetX = fitted.xPx
+                                offsetY = fitted.yPx
+                                windowWidth = fitted.widthDp
                             },
                             onDragEnd = {
                                 workspaceState.persistEmulatorWindowGeometry(offsetX, offsetY, windowWidth)

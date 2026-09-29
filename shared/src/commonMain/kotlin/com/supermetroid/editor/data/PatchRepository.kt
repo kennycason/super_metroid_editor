@@ -3,6 +3,9 @@ package com.supermetroid.editor.data
 import com.supermetroid.editor.util.EditorLog
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayInputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.ZipException
 
 @Serializable
 private data class PatchMeta(
@@ -17,10 +20,51 @@ private data class PatchMeta(
 
 const val VANILLA_JU_SHA256 = "12b77c4bc9c1832cee8881244659065ee1d84c70c3d29e6eaf92e6798cc2ca72"
 
-/** Load a classpath resource with fallback to thread context classloader. */
-fun loadResource(path: String): java.io.InputStream? =
-    PatchRepository::class.java.classLoader.getResourceAsStream(path)
-        ?: Thread.currentThread().contextClassLoader.getResourceAsStream(path)
+/**
+ * Process-wide snapshots of classpath resources.
+ *
+ * Gradle's development launcher puts SMEDIT's project JARs directly on the running app's
+ * classpath. A later compile/test can replace those JARs, invalidating the JVM's open ZipFile
+ * handle. Snapshotting each resource on first use also ensures the underlying JAR stream is
+ * closed promptly and keeps an open editor usable while a newer build is produced.
+ */
+private val resourceSnapshots = ConcurrentHashMap<String, ByteArray>()
+
+/** Load a classpath resource with fallback to the thread context classloader. */
+fun loadResource(path: String): java.io.InputStream? {
+    resourceSnapshots[path]?.let { return ByteArrayInputStream(it) }
+
+    var resourceFailure: Exception? = null
+    val classLoaders = listOfNotNull(
+        PatchRepository::class.java.classLoader,
+        Thread.currentThread().contextClassLoader,
+    ).distinct()
+    for (classLoader in classLoaders) {
+        val stream = try {
+            classLoader.getResourceAsStream(path)
+        } catch (e: Exception) {
+            resourceFailure = e
+            null
+        } ?: continue
+        val loaded = try {
+            stream.use { it.readBytes() }
+        } catch (e: Exception) {
+            resourceFailure = e
+            continue
+        }
+        val snapshot = resourceSnapshots.putIfAbsent(path, loaded) ?: loaded
+        return ByteArrayInputStream(snapshot)
+    }
+
+    if (resourceFailure is ZipException) {
+        throw IllegalStateException(
+            "SMEDIT's application resources changed or are corrupt; restart SMEDIT and try again",
+            resourceFailure,
+        )
+    }
+    resourceFailure?.let { throw it }
+    return null
+}
 
 object PatchRepository {
 
@@ -32,7 +76,7 @@ object PatchRepository {
 
         val metaList: List<PatchMeta> = json.decodeFromString(
             kotlinx.serialization.builtins.ListSerializer(PatchMeta.serializer()),
-            metaStream.bufferedReader().readText()
+            metaStream.bufferedReader().use { it.readText() }
         )
 
         return metaList.mapNotNull { meta ->
@@ -42,7 +86,7 @@ object PatchRepository {
                 return@mapNotNull null
             }
             try {
-                val ipsData = ipsStream.readBytes()
+                val ipsData = ipsStream.use { it.readBytes() }
                 if (!hasIpsEof(ipsData) && warnedLegacyAssets.add(meta.file)) {
                     EditorLog.warn(
                         "[PatchRepository] Bundled patch ${meta.file} has no IPS EOF marker; " +

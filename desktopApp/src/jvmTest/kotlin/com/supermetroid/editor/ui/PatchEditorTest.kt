@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.AppSettings
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.SmPatch
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -66,20 +67,64 @@ class PatchEditorTest {
     }
 
     @Test
-    fun `patch browser choices update project settings`() {
-        val state = EditorState().also { it.testMode = true }
+    fun `patch favorites persist globally without changing project settings`() {
+        var persistedSettings = AppSettings()
+        var persistenceCount = 0
+        fun favoriteStore() = PatchFavoriteStore(persistedSettings) { ids, migrationComplete ->
+            persistedSettings = persistedSettings.copy(
+                patchFavoriteIds = ids,
+                patchFavoritesMigratedToGlobalConfig = migrationComplete,
+            )
+            persistenceCount++
+        }
+        val state = EditorState(favoriteStore()).also { it.testMode = true }
         val patch = state.addPatch("Favorite me")
 
         state.togglePatchFavorite(patch.id)
-        state.setPatchSortOrder(PatchSortOrder.NAME_DESCENDING)
-        state.setPatchFavoritesFirst(false)
 
         assertTrue(state.isPatchFavorite(patch.id))
-        assertEquals(PatchSortOrder.NAME_DESCENDING, state.project.generalSettings.patchBrowser.sortOrder)
-        assertFalse(state.project.generalSettings.patchBrowser.favoritesFirst)
+        assertTrue(patch.id in persistedSettings.patchFavoriteIds)
+        assertTrue(state.project.generalSettings.patchBrowser.favoritePatchIds.isEmpty())
+        assertEquals(1, persistenceCount)
+
+        val reopenedState = EditorState(favoriteStore())
+        assertTrue(reopenedState.isPatchFavorite(patch.id))
 
         state.togglePatchFavorite(patch.id)
         assertFalse(state.isPatchFavorite(patch.id))
+        assertFalse(patch.id in persistedSettings.patchFavoriteIds)
+        assertEquals(2, persistenceCount)
+    }
+
+    @Test
+    fun `patch browser sorting choices remain project settings`() {
+        val state = EditorState(PatchFavoriteStore(AppSettings()) { _, _ -> }).also { it.testMode = true }
+
+        state.setPatchSortOrder(PatchSortOrder.NAME_DESCENDING)
+        state.setPatchFavoritesFirst(false)
+
+        assertEquals(PatchSortOrder.NAME_DESCENDING, state.project.generalSettings.patchBrowser.sortOrder)
+        assertFalse(state.project.generalSettings.patchBrowser.favoritesFirst)
+    }
+
+    @Test
+    fun `legacy project favorites migrate only once`() {
+        var persistedIds = emptyList<String>()
+        var migrationComplete = false
+        var persistenceCount = 0
+        val store = PatchFavoriteStore(AppSettings()) { ids, migrated ->
+            persistedIds = ids
+            migrationComplete = migrated
+            persistenceCount++
+        }
+
+        store.migrateLegacyFavorites(listOf("legacy_patch", "legacy_patch"))
+        store.migrateLegacyFavorites(listOf("another_project_patch"))
+
+        assertEquals(setOf("legacy_patch"), store.favoriteIds)
+        assertEquals(listOf("legacy_patch"), persistedIds)
+        assertTrue(migrationComplete)
+        assertEquals(1, persistenceCount)
     }
 
     @Test

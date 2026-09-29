@@ -196,7 +196,9 @@ data class LayoutEditingContext(
 
 // ─── Editor State ───────────────────────────────────────────────
 
-class EditorState {
+class EditorState(
+    private val patchFavoriteStore: PatchFavoriteStore = PatchFavoriteStore(),
+) {
     internal var testMode = false
 
     var brush by mutableStateOf<TileBrush?>(null)
@@ -932,6 +934,10 @@ class EditorState {
     var patchVersion by mutableStateOf(0)
         private set
 
+    /** Application-wide favorites, persisted immediately rather than with a project save. */
+    val favoritePatchIds: Set<String>
+        get() = patchFavoriteStore.favoriteIds
+
     /** Compose-observable version counter for saved music edits. */
     var musicEditVersion by mutableStateOf(0)
         private set
@@ -973,20 +979,17 @@ class EditorState {
     fun removePatch(id: String) {
         if (isSystemPatch(id)) return
         project.patches.removeAll { it.id == id }
-        project.generalSettings.patchBrowser.favoritePatchIds.removeAll { it == id }
+        patchFavoriteStore.remove(id, project.generalSettings.patchBrowser.favoritePatchIds)
         if (selectedPatchId == id) selectedPatchId = null
         dirty = true; patchVersion++
     }
 
     fun isPatchFavorite(id: String): Boolean =
-        id in project.generalSettings.patchBrowser.favoritePatchIds
+        id in favoritePatchIds
 
     fun togglePatchFavorite(id: String) {
         if (project.patches.none { it.id == id }) return
-        val favorites = project.generalSettings.patchBrowser.favoritePatchIds
-        val removed = favorites.removeAll { it == id }
-        if (!removed) favorites.add(id)
-        dirty = true
+        patchFavoriteStore.toggle(id, project.generalSettings.patchBrowser.favoritePatchIds)
         patchVersion++
     }
 
@@ -2540,6 +2543,7 @@ class EditorState {
         if (seedPatches) {
             seedDefaultPatches(forceRefreshBundled = true)
         }
+        patchFavoriteStore.migrateLegacyFavorites(project.generalSettings.patchBrowser.favoritePatchIds)
         brush = null
         activeTool = EditorTool.SELECT
         tileGraphics = null

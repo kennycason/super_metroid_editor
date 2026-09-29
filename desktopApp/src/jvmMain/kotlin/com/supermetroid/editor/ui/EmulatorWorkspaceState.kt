@@ -220,6 +220,8 @@ class EmulatorWorkspaceState(
     var audioMuted by mutableStateOf(AppConfig.load().emulatorAudioMuted)
         private set
     var audioVolume by mutableStateOf(AppConfig.load().emulatorAudioVolume)
+    var autoPlayOnOpen by mutableStateOf(AppConfig.load().emulatorAutoPlayOnOpen)
+        private set
     var saveSlotIndex by mutableStateOf(0)
 
     /** Combo action queued by gamepad detection, consumed by the frame loop. */
@@ -714,6 +716,11 @@ class EmulatorWorkspaceState(
         persistConfig()
     }
 
+    fun updateAutoPlayOnOpen(enabled: Boolean) {
+        autoPlayOnOpen = enabled
+        persistConfig()
+    }
+
     fun slotDisplayText(slotIndex: Int): String {
         val name = "slot_$slotIndex"
         val meta = slotMetadata[name] ?: return "[EMPTY]"
@@ -1156,6 +1163,7 @@ class EmulatorWorkspaceState(
                 retroArchNwaPort = this@EmulatorWorkspaceState.retroArchNwaPort,
                 emulatorAudioVolume = this@EmulatorWorkspaceState.audioVolume,
                 emulatorAudioMuted = this@EmulatorWorkspaceState.audioMuted,
+                emulatorAutoPlayOnOpen = this@EmulatorWorkspaceState.autoPlayOnOpen,
             )
         }
     }

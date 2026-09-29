@@ -54,6 +54,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
@@ -367,7 +369,16 @@ fun main() = application {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedButton(
-                            onClick = { emulatorEnabled = !emulatorEnabled },
+                            onClick = {
+                                if (emulatorEnabled) {
+                                    // Closing is a lifecycle boundary: release the current
+                                    // session so reopening builds and boots the latest ROM.
+                                    emulatorWorkspaceState.disconnectBridge()
+                                    emulatorEnabled = false
+                                } else {
+                                    emulatorEnabled = true
+                                }
+                            },
                             shape = RoundedCornerShape(6.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
                                 containerColor = if (emulatorEnabled) MaterialTheme.colorScheme.primaryContainer
@@ -644,6 +655,10 @@ fun main() = application {
                         }
                 ) {
                     val maxLeftWidth = maxWidth.value - 100f
+                    val windowDensity = LocalDensity.current
+                    val emulatorContainerSize = with(windowDensity) {
+                        IntSize(maxWidth.roundToPx(), maxHeight.roundToPx())
+                    }
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -1036,8 +1051,13 @@ fun main() = application {
                             workspaceState = emulatorWorkspaceState,
                             editorState = editorState,
                             romParser = romParser,
+                            containerSizePx = emulatorContainerSize,
+                            density = windowDensity.density,
                             rooms = rooms,
-                            onClose = { emulatorEnabled = false },
+                            onClose = {
+                                emulatorWorkspaceState.disconnectBridge()
+                                emulatorEnabled = false
+                            },
                         )
 
                         // Sync map editor to emulator room when followLiveRoom is on

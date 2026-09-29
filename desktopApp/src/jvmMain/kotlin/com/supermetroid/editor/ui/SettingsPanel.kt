@@ -413,6 +413,38 @@ private fun EmulatorSettingsTab(
     workspaceState: EmulatorWorkspaceState,
     currentFontSize: FontSize,
 ) {
+    // ── Startup behavior ──
+    Text(
+        "Startup",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { workspaceState.updateAutoPlayOnOpen(!workspaceState.autoPlayOnOpen) },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Checkbox(
+            checked = workspaceState.autoPlayOnOpen,
+            onCheckedChange = null,
+        )
+        Column {
+            Text(
+                "Auto-play when emulator opens",
+                fontSize = currentFontSize.body,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                "Connect, build the current ROM, and start or resume play.",
+                fontSize = currentFontSize.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+
     // ── Backend selector ──
     Text(
         "Backend",

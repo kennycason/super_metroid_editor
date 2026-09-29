@@ -135,7 +135,7 @@ fun PatchListPanel(
     var searchQuery by remember { mutableStateOf("") }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     val settings = editorState.project.generalSettings.patchBrowser
-    val favoritePatchIds = settings.favoritePatchIds.toSet()
+    val favoritePatchIds = editorState.favoritePatchIds
     val filtered = filterAndSortPatches(
         patches = patches,
         searchQuery = searchQuery,

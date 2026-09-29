@@ -159,6 +159,38 @@ class EmulatorWorkspaceStateTest {
     }
 
     @Test
+    fun `disconnecting a closed emulator makes the next session boot fresh`() = runBlocking {
+        val backend = FakeBackend().also {
+            it.connectResult = EmulatorCapabilities(backendName = "fake")
+            it.startSessionResult = StepResult(
+                session = SessionState(active = true, currentState = "EditorCheckpoint02", frameCounter = 1),
+                snapshot = GameSnapshot(frameCounter = 1),
+            )
+        }
+        val state = EmulatorWorkspaceState(backendFactory = { backend })
+
+        state.updateRomPath("/tmp/old-build.sfc")
+        state.connectBridge()
+        state.selectedStateName = "EditorCheckpoint02"
+        state.startSession()
+        state.disconnectBridge()
+
+        assertFalse(state.isConnected)
+        assertFalse(state.session.active)
+        assertFalse(state.isRunning)
+
+        state.updateRomPath("/tmp/latest-build.sfc")
+        state.clearSavedStateSelection()
+        state.connectBridge()
+        state.startSession()
+
+        assertEquals("/tmp/latest-build.sfc", backend.lastSessionConfig?.romPath)
+        assertEquals(null, backend.lastSessionConfig?.stateName)
+        assertTrue(state.session.active)
+        assertTrue(state.isRunning)
+    }
+
+    @Test
     fun `liveTracePoints convert local room pixels into planner world coordinates`() {
         val state = EmulatorWorkspaceState()
         state.setNavGraphForTest(sampleGraph())

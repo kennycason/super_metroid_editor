@@ -11,11 +11,12 @@ tileset defaults, patches, custom graphics, patterns, minimap and map-station ed
 name overrides, custom ASM, music edits, project UI settings, and ROM build-label fields.
 
 `generalSettings` contains project-local editor preferences that should follow the project rather
-than the machine. Its `patchBrowser` section stores alphabetical sort direction, whether favorites
-are grouped first, and favorite patch IDs. Patch search text is intentionally session-only and is
-not saved. Enabled patches are always grouped above disabled patches; favorites and alphabetical
-sorting apply within those groups. These settings affect presentation only and never change ROM
-export behavior.
+than the machine. Its `patchBrowser` section stores alphabetical sort direction and whether
+favorites are grouped first. Patch favorite IDs are application-wide and are written immediately
+to SMEDIT's global config; the project field remains only as a migration source for files written
+by older builds. Patch search text is intentionally session-only and is not saved. Enabled patches
+are always grouped above disabled patches; favorites and alphabetical sorting apply within those
+groups. These settings affect presentation only and never change ROM export behavior.
 
 Room data is described in [`room_model.md`](room_model.md). `newRooms` owns stable project room
 identities, complete initial headers/default-state payloads, and semantic door destinations.

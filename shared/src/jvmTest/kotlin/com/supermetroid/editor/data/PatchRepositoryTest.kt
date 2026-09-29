@@ -1,5 +1,9 @@
 package com.supermetroid.editor.data
 
+import java.net.URLClassLoader
+import java.nio.file.Files
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -8,6 +12,36 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PatchRepositoryTest {
+    @Test
+    fun `classpath resources remain readable after their backing jar is replaced`() {
+        val tempDir = Files.createTempDirectory("smedit-resource-cache-test")
+        val jarPath = tempDir.resolve("resources.jar")
+        val resourcePath = "resource-cache-${System.nanoTime()}.txt"
+        val expected = "cached resource contents".toByteArray()
+        JarOutputStream(Files.newOutputStream(jarPath)).use { jar ->
+            jar.putNextEntry(JarEntry(resourcePath))
+            jar.write(expected)
+            jar.closeEntry()
+        }
+
+        val originalClassLoader = Thread.currentThread().contextClassLoader
+        URLClassLoader(arrayOf(jarPath.toUri().toURL()), null).use { testClassLoader ->
+            Thread.currentThread().contextClassLoader = testClassLoader
+            try {
+                val firstRead = assertNotNull(loadResource(resourcePath)).use { it.readBytes() }
+                Files.write(jarPath, byteArrayOf(0x00, 0x01, 0x02))
+                val secondRead = assertNotNull(loadResource(resourcePath)).use { it.readBytes() }
+
+                assertContentEquals(expected, firstRead)
+                assertContentEquals(expected, secondRead)
+            } finally {
+                Thread.currentThread().contextClassLoader = originalClassLoader
+            }
+        }
+        Files.deleteIfExists(jarPath)
+        Files.deleteIfExists(tempDir)
+    }
+
     @Test
     fun `parses normal and RLE records with a required EOF`() {
         val ips = byteArrayOf(

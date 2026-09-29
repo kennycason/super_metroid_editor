@@ -778,7 +778,11 @@ enum class PatchSortOrder {
     NAME_DESCENDING,
 }
 
-/** Patch-list presentation choices that travel with the project and never affect ROM output. */
+/**
+ * Patch-list presentation choices that travel with the project and never affect ROM output.
+ * [favoritePatchIds] is retained only to migrate favorites saved by older SMEDIT builds into
+ * the application-wide config; current builds never mutate it.
+ */
 @Serializable
 data class PatchBrowserSettings(
     var sortOrder: PatchSortOrder = PatchSortOrder.NAME_ASCENDING,
