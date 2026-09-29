@@ -249,7 +249,8 @@ data class EnemyChange(
 
 /**
  * A room scroll change: set a single screen's scroll value.
- * Values: 0x00=Red (hidden), 0x01=Blue (explorable), 0x02=Green (show floor).
+ * Values: 0x00=Red (camera blocked), 0x01=Blue (normal),
+ * 0x02=Green (open with a lower vertical clamp offset / "show floor").
  */
 @Serializable
 data class ScrollChange(

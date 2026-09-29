@@ -111,11 +111,11 @@ class RoomCompositeRendererTest {
         assertFalse(plain.pixels().contentEquals(gridOnly.pixels()), "Grid should draw screen boundaries")
         assertFalse(
             plain.pixels().contentEquals(coordinatesOnly.pixels()),
-            "Screen Coordinates should draw labels even when Grid is off",
+            "Screen Coords should draw labels even when Grid is off",
         )
         assertFalse(
             gridOnly.pixels().contentEquals(coordinatesOnly.pixels()),
-            "Grid and Screen Coordinates should remain separate display options",
+            "Grid and Screen Coords should remain separate display options",
         )
     }
 

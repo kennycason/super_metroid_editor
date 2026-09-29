@@ -21,12 +21,12 @@ enum class TileOverlay(val label: String, val shortLabel: String, val color: Lon
     ITEMS("Items", "I", 0xCCFFCC00),       // gold/yellow
     // Enemies (from enemy population data in bank $A1)
     ENEMIES("Enemies", "E", 0xCCFF6644),   // orange-red
-    // Scroll PLMs (B703, B63B, B647 — runtime scroll triggers)
+    // Scroll PLMs (B703 plus activation-zone extensions)
     SCROLL_PLMS("Scroll Triggers", "St", 0xCCFF8040),  // orange
-    // Per-screen scroll colors (Red/Blue/Green)
-    SCROLLS("Scroll Colors", "Sc", 0x60FFFFFF),
+    // Initial per-screen room scroll values (Red/Blue/Green)
+    SCROLLS("Screen Scrolls", "Sc", 0x60FFFFFF),
     // One-based room screen coordinates; the top-left screen is (1, 1)
-    SCREEN_COORDINATES("Screen Coordinates", "XY", 0xCC80C8FF),
+    SCREEN_COORDINATES("Screen Coords", "XY", 0xCC80C8FF),
     // Liquid level (water/lava/acid from FX data)
     LIQUID("Liquid Level", "~", 0x443388FF),
     // Layer 2 background (BG data tilemap or embedded L2)

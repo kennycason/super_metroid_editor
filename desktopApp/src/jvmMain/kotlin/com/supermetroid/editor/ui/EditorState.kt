@@ -4618,7 +4618,10 @@ class EditorState {
 
         val scrollName = when (newValue) { 0 -> "Red"; 1 -> "Blue"; 2 -> "Green"; else -> "0x${newValue.toString(16)}" }
         val sc = ScrollChange(screenX, screenY, oldValue, newValue)
-        val op = EditOperation("Scroll ($screenX,$screenY) → $scrollName", scrollEdits = listOf(sc))
+        val op = EditOperation(
+            "Screen Scroll ${oneBasedRoomCoordinate(screenX, screenY)} → $scrollName",
+            scrollEdits = listOf(sc),
+        )
         undoStack.add(op)
         redoStack.clear()
         undoVersion++

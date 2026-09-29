@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.ScrollChange
+import com.supermetroid.editor.data.ScrollCommand
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -13,6 +14,52 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class ProjectRoomExporterTest {
+    @Test
+    fun `custom scroll behavior rejects a target outside the room`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = RoomRepository().getAllRooms().first().getRoomIdAsInt()
+        val room = parser.readRoomHeader(roomId)!!
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).customScrollCommands["cmd_0"] = mutableListOf(
+                ScrollCommand(room.width * room.height, 1)
+            )
+        }
+
+        val failure = assertFailsWith<ProjectRoomExportException> {
+            ProjectRoomExporter(project, parser, rom).exportRooms()
+        }
+
+        assertTrue(failure.message.orEmpty().contains("invalid entry"))
+        assertTrue(failure.message.orEmpty().contains("screen indices"))
+    }
+
+    @Test
+    fun `custom scroll behavior rejects empty and duplicate screen writes`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = RoomRepository().getAllRooms().first().getRoomIdAsInt()
+
+        val emptyProject = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).customScrollCommands["cmd_0"] = mutableListOf()
+        }
+        val emptyFailure = assertFailsWith<ProjectRoomExportException> {
+            ProjectRoomExporter(emptyProject, parser, rom.copyOf()).exportRooms()
+        }
+        assertTrue(emptyFailure.message.orEmpty().contains("is empty"))
+
+        val duplicateProject = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).customScrollCommands["cmd_0"] = mutableListOf(
+                ScrollCommand(0, 1),
+                ScrollCommand(0, 0),
+            )
+        }
+        val duplicateFailure = assertFailsWith<ProjectRoomExportException> {
+            ProjectRoomExporter(duplicateProject, parser, rom.copyOf()).exportRooms()
+        }
+        assertTrue(duplicateFailure.message.orEmpty().contains("more than once"))
+    }
+
     @Test
     fun `expanded scroll data aborts when bank 8F has no free space`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return

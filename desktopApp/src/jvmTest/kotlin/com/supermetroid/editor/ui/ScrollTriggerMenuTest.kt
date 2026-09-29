@@ -28,9 +28,15 @@ class ScrollTriggerMenuTest {
     }
 
     @Test
-    fun `scroll value labels describe camera behavior`() {
-        assertEquals("Red (blocked)", RomParser.scrollValueLabel(0))
+    fun `scroll value labels describe screen scroll behavior`() {
+        assertEquals("Red (blocks camera)", RomParser.scrollValueLabel(0))
         assertEquals("Blue (normal)", RomParser.scrollValueLabel(1))
-        assertEquals("Green (lower rows)", RomParser.scrollValueLabel(2))
+        assertEquals("Green (open + lower view)", RomParser.scrollValueLabel(2))
+    }
+
+    @Test
+    fun `scroll command coordinates are one based at the UI boundary`() {
+        assertEquals("Screen (1, 1) → Blue (normal)", RomParser.formatScrollCommand(0, 1, 5))
+        assertEquals("Screen (2, 2) → Red (blocks camera)", RomParser.formatScrollCommand(6, 0, 5))
     }
 }

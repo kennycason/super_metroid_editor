@@ -48,6 +48,7 @@ import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.RoomInfo
+import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.baseSourceStateIndex
@@ -988,9 +989,9 @@ fun RoomPropertiesPanel(
             Spacer(modifier = Modifier.height(4.dp))
         }
 
-        // ── Scroll Data (editable) ──
+        // ── Screen scrolls (editable) ──
         SectionHeader(
-            title = "Room Scrolls",
+            title = "Screen Scrolls",
             onHelp = { helpTopic = RoomInfoHelpTopic.SCROLLS },
         )
         if (helpTopic == RoomInfoHelpTopic.SCROLLS) {
@@ -1000,16 +1001,45 @@ fun RoomPropertiesPanel(
             )
         }
         val scrollsPtr = stateData["roomScrollsPtr"] ?: room.roomScrollsPtr
-        PropertyRow("Scrolls Ptr", when (scrollsPtr) {
-            0x0000 -> "All Blue (\$0000)"
-            0x0001 -> "All Green (\$0001)"
-            else -> "\$8F:${scrollsPtr.toString(16).uppercase().padStart(4, '0')}"
-        })
+        PropertyRow("Room states", sharingDescription("roomScrollsPtr", scrollsPtr))
+        if (showRomAddresses) {
+            PropertyRow("ROM scroll data", when (scrollsPtr) {
+                0x0000 -> "All Blue preset (\$0000)"
+                0x0001 -> "All Green preset (\$0001)"
+                else -> "\$8F:${scrollsPtr.toString(16).uppercase().padStart(4, '0')}"
+            })
+        }
 
         if (scrollData.isNotEmpty() && currentState?.stateDataPcOffset != null) {
             val scrollW = editorState.workingBlocksWide / 16
             val scrollH = editorState.workingBlocksTall / 16
-            EditableScrollGrid(scrollData, scrollW, scrollH) { col, row, newVal ->
+            val visiblePlms = if (selectedIsActive) {
+                editorState.workingPlms
+            } else {
+                remember(plmSetPtr) { romParser.parsePlmSet(plmSetPtr) }
+            }
+            val runtimeDiagnostics = remember(
+                room.roomId,
+                selectedStateId,
+                editorState.editVersion,
+                plmSetPtr,
+                scrollW,
+                scrollH,
+            ) {
+                buildScrollRuntimeDiagnostics(visiblePlms, scrollW, scrollH) { trigger ->
+                    if ((trigger.param and 0xFF00) == 0xCC00) {
+                        editorState.getScrollCommand("cmd_${trigger.param and 0xFF}")
+                    } else {
+                        runCatching {
+                            RomParser.decodeScrollCommands(romParser, trigger.param, scrollW)
+                                .map { (screenIndex, _, scrollValue) ->
+                                    ScrollCommand(screenIndex, scrollValue)
+                                }
+                        }.getOrNull()
+                    }
+                }
+            }
+            EditableScrollGrid(scrollData, scrollW, scrollH, runtimeDiagnostics) { col, row, newVal ->
                 editorState.setScroll(col, row, newVal, scrollW)
             }
         }
@@ -1291,18 +1321,37 @@ private fun DoorFxEditorDialog(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun EditableScrollGrid(
     scrollData: IntArray,
     width: Int,
     height: Int,
+    runtimeDiagnostics: ScrollRuntimeDiagnostics,
     onScrollChange: (col: Int, row: Int, newValue: Int) -> Unit
 ) {
     Column(modifier = Modifier.padding(top = 4.dp)) {
-        Text("Click to cycle: Blue → Green → Red → Blue", fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+        Text("Initial Scrolls", fontSize = ROOM_INFO_BODY_FONT_SIZE,
+            fontWeight = FontWeight.SemiBold)
+        Text("Click a screen to cycle Blue → Green → Red", fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp))
+        val cellSize = 24.dp
+        val axisSize = 14.dp
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Spacer(Modifier.size(axisSize))
+            for (col in 0 until width) {
+                Box(Modifier.size(cellSize), contentAlignment = Alignment.Center) {
+                    Text("${col + 1}", fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         for (row in 0 until height) {
             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(Modifier.size(axisSize), contentAlignment = Alignment.Center) {
+                    Text("${row + 1}", fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 for (col in 0 until width) {
                     val idx = row * width + col
                     val scrollVal = scrollData.getOrElse(idx) { 0x01 }
@@ -1310,7 +1359,7 @@ private fun EditableScrollGrid(
                     val label = SCROLL_LABELS[scrollVal] ?: "?"
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
+                            .size(cellSize)
                             .background(bgColor, MaterialTheme.shapes.extraSmall)
                             .clickable {
                                 val next = when (scrollVal) {
@@ -1323,18 +1372,99 @@ private fun EditableScrollGrid(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold, color = Color.White)
+                        if (runtimeDiagnostics.valuesByScreen[idx].orEmpty().isNotEmpty()) {
+                            Box(
+                                Modifier.align(Alignment.TopEnd)
+                                    .padding(2.dp)
+                                    .size(5.dp)
+                                    .background(Color(0xFFFFA040), MaterialTheme.shapes.extraSmall)
+                            )
+                        }
                     }
                 }
             }
         }
         Spacer(modifier = Modifier.height(2.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((code, lbl) in listOf(0x00 to "Red (hidden)", 0x01 to "Blue (explorable)", 0x02 to "Green (PLM-gated)")) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            for ((code, lbl) in listOf(0x00 to "Red blocks", 0x01 to "Blue normal", 0x02 to "Green lower view")) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     Box(modifier = Modifier.size(8.dp).background(SCROLL_COLORS[code]!!, MaterialTheme.shapes.extraSmall))
                     Text(lbl, fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+        if (runtimeDiagnostics.triggerCount > 0) {
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(6.dp).background(Color(0xFFFFA040), MaterialTheme.shapes.extraSmall))
+                Text(
+                    "${runtimeDiagnostics.triggerCount} trigger${if (runtimeDiagnostics.triggerCount == 1) "" else "s"} write " +
+                        "${runtimeDiagnostics.affectedScreenCount} screen${if (runtimeDiagnostics.affectedScreenCount == 1) "" else "s"} at runtime",
+                    fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val runtimeScreens = runtimeDiagnostics.valuesByScreen.entries.sortedBy { it.key }
+            if (runtimeScreens.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.padding(top = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    for ((screenIndex, values) in runtimeScreens.take(8)) {
+                        val x = screenIndex % width
+                        val y = screenIndex / width
+                        val valueLabels = values.sorted().joinToString("/") { value ->
+                            SCROLL_LABELS[value] ?: "?"
+                        }
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = Color(0xFFFFA040).copy(alpha = 0.14f),
+                        ) {
+                            Text(
+                                "${oneBasedRoomCoordinate(x, y)} $valueLabels",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (runtimeScreens.size > 8) {
+                        Text(
+                            "+${runtimeScreens.size - 8} more",
+                            modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp),
+                            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        if (runtimeDiagnostics.competingScreenCount > 0) {
+            Text(
+                "↕ ${runtimeDiagnostics.competingScreenCount} screen${if (runtimeDiagnostics.competingScreenCount == 1) " has" else "s have"} multiple outcomes · last trigger crossed wins",
+                modifier = Modifier.padding(top = 2.dp),
+                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                color = Color(0xFFFFA040),
+            )
+        }
+        if (runtimeDiagnostics.issueCount > 0) {
+            val issueParts = buildList {
+                if (runtimeDiagnostics.invalidTargetCount > 0) add("${runtimeDiagnostics.invalidTargetCount} outside-room target")
+                if (runtimeDiagnostics.invalidValueCount > 0) add("${runtimeDiagnostics.invalidValueCount} invalid value")
+                if (runtimeDiagnostics.emptyCommandCount > 0) add("${runtimeDiagnostics.emptyCommandCount} empty scroll behavior")
+                if (runtimeDiagnostics.unreadableCommandCount > 0) add("${runtimeDiagnostics.unreadableCommandCount} unreadable scroll behavior")
+                if (runtimeDiagnostics.orphanExtensionCount > 0) add("${runtimeDiagnostics.orphanExtensionCount} detached extension")
+            }
+            Text(
+                "⚠ ${issueParts.joinToString()}",
+                modifier = Modifier.padding(top = 2.dp),
+                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

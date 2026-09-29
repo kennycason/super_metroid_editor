@@ -1011,34 +1011,48 @@ internal fun TilePropertiesPanel(
                         }
                         if (RomParser.isScrollPlm(plm.id) && plm.id == 0xB703 && romParser != null) {
                             val rw = roomHeader?.width ?: 0
+                            val rh = roomHeader?.height ?: 0
                             val isCustom = (plm.param and 0xFF00) == 0xCC00
+                            Text("When crossed:", fontSize = 8.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (isCustom) {
                                 val cmdIdx = plm.param and 0xFF
                                 val cmdId = "cmd_$cmdIdx"
                                 val cmds = editorState.getScrollCommand(cmdId)
                                 if (cmds != null) {
                                     for (cmd in cmds) {
+                                        val invalid = cmd.screenIndex !in 0 until (rw * rh) || cmd.scrollValue !in 0..2
                                         Text(
                                             "  ${RomParser.formatScrollCommand(cmd.screenIndex, cmd.scrollValue, rw)}",
                                             fontSize = 8.sp,
-                                            color = Color(0xFFFF8040)
+                                            color = if (invalid) MaterialTheme.colorScheme.error else Color(0xFFFF8040)
                                         )
                                     }
+                                } else {
+                                    Text("  Missing custom scroll behavior", fontSize = 8.sp,
+                                        color = MaterialTheme.colorScheme.error)
                                 }
-                                Text("  (custom)", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+                                Text("Custom scroll behavior", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
                             } else if (rw > 0) {
                                 val cmds = RomParser.decodeScrollCommands(
                                     romParser,
                                     plm.param, rw
                                 )
                                 for ((screenIdx, _, scrollVal) in cmds) {
+                                    val invalid = screenIdx !in 0 until (rw * rh) || scrollVal !in 0..2
                                     Text(
                                         "  ${RomParser.formatScrollCommand(screenIdx, scrollVal, rw)}",
                                         fontSize = 8.sp,
-                                        color = MaterialTheme.colorScheme.outline
+                                        color = if (invalid) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                Text("ROM scroll behavior \$${plm.param.toString(16).uppercase().padStart(4, '0')}",
+                                    fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
                             }
+                        } else if (plm.id in setOf(0xB63B, 0xB63F, 0xB647, 0xB643)) {
+                            Text("Extends an adjacent scroll trigger's activation zone.",
+                                fontSize = 8.sp, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                     if (canRemove) {
@@ -1272,7 +1286,7 @@ internal fun TilePropertiesPanel(
                 }
             }
 
-            // Add Scroll Trigger button + dropdown
+            // Add scroll trigger button + dropdown
             Spacer(modifier = Modifier.height(4.dp))
             var addScrollExpanded by remember { mutableStateOf(false) }
             var showScrollEditor by remember { mutableStateOf(false) }
@@ -1318,7 +1332,7 @@ internal fun TilePropertiesPanel(
                         } else emptyList()
                     }
                     if (originalHere.isNotEmpty()) {
-                        Text("Restore original trigger here:", fontSize = 9.sp,
+                        Text("Restore original scroll trigger here:", fontSize = 9.sp,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold)
@@ -1332,7 +1346,7 @@ internal fun TilePropertiesPanel(
                                             Text(line, fontSize = 9.sp,
                                                 color = Color.White)
                                         }
-                                        Text("original ptr \$${trigger.param.toString(16).uppercase().padStart(4, '0')}",
+                                        Text("Original ROM scroll behavior \$${trigger.param.toString(16).uppercase().padStart(4, '0')}",
                                             fontSize = 7.sp,
                                             color = Color(0xFF99AABB))
                                     }
@@ -1347,7 +1361,7 @@ internal fun TilePropertiesPanel(
                         Divider()
                     }
                     if (reusableCommandPtrs.isNotEmpty()) {
-                        Text("Reuse command:", fontSize = 9.sp,
+                        Text("Use an existing scroll behavior:", fontSize = 9.sp,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold)
@@ -1360,7 +1374,15 @@ internal fun TilePropertiesPanel(
                                         for (line in cmdLines) {
                                             Text(line, fontSize = 9.sp, color = Color.White)
                                         }
-                                        Text("ptr \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
+                                        val useCount = editorState.workingPlms.count {
+                                            it.id == 0xB703 && it.param == cmdPtr
+                                        }
+                                        val useLabel = when (useCount) {
+                                            0 -> "Not currently used"
+                                            1 -> "Used by 1 trigger"
+                                            else -> "Used by $useCount triggers"
+                                        }
+                                        Text("$useLabel · ROM \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
                                             fontSize = 7.sp,
                                             color = Color(0xFF99AABB))
                                     }
@@ -1375,7 +1397,7 @@ internal fun TilePropertiesPanel(
                         Divider()
                     }
                     DropdownMenuItem(
-                        text = { Text("+ New Custom Trigger...", fontSize = 10.sp, color = Color.White) },
+                        text = { Text("+ Create Scroll Behavior...", fontSize = 10.sp, color = Color.White) },
                         onClick = {
                             addScrollExpanded = false
                             showScrollEditor = true
@@ -1383,22 +1405,35 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.height(28.dp)
                     )
                     Divider()
-                    Text("Treadmill extensions:", fontSize = 9.sp,
+                    Text("Extend the activation zone:", fontSize = 9.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         color = Color(0xFFFF8040),
                         fontWeight = FontWeight.Bold)
-                    Text("Widens an adjacent trigger's hitbox",
+                    Text("Place next to a trigger or matching extension",
                         fontSize = 7.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp),
                         color = Color(0xFF99AABB))
                     for ((plmId, label) in listOf(
-                        0xB63B to "→ Extend Right",
-                        0xB63F to "← Extend Left",
-                        0xB647 to "↑ Extend Up",
-                        0xB643 to "↓ Extend Down"
+                        0xB63B to "→ One Tile Right",
+                        0xB63F to "← One Tile Left",
+                        0xB647 to "↑ One Tile Up",
+                        0xB643 to "↓ One Tile Down"
                     )) {
+                        val canPlace = canPlaceScrollExtension(
+                            plmId,
+                            blockX,
+                            blockY,
+                            editorState.workingPlms,
+                        )
                         DropdownMenuItem(
-                            text = { Text(label, fontSize = 10.sp, color = Color.White) },
+                            text = {
+                                Text(
+                                    label,
+                                    fontSize = 10.sp,
+                                    color = if (canPlace) Color.White else Color(0xFF778899),
+                                )
+                            },
+                            enabled = canPlace,
                             onClick = {
                                 addScrollExpanded = false
                                 editorState.addPlm(plmId, blockX, blockY, 0x8000)
@@ -1422,7 +1457,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ New Custom Trigger...", fontSize = 10.sp,
+                        Text("+ Create Scroll Behavior...", fontSize = 10.sp,
                             color = Color(0xFFFF8040).copy(alpha = 0.7f))
                     }
                 }

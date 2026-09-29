@@ -64,15 +64,29 @@ fun ScrollCommandEditor(
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
             .padding(6.dp)
     ) {
-        Text("Scroll Trigger Command", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-        Text("When Samus crosses this tile, these screens change:",
+        Text("Scroll Trigger", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Text("When Samus crosses this tile, change:",
             fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(4.dp))
 
-        // Screen grid
+        // One-based screen grid. ROM indices remain zero-based in the command model.
         val cellSize = 24.dp
+        val axisSize = 14.dp
+        Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+            Spacer(Modifier.size(axisSize))
+            for (col in 0 until roomWidthScreens) {
+                Box(Modifier.size(cellSize), contentAlignment = Alignment.Center) {
+                    Text("${col + 1}", fontSize = 7.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         for (row in 0 until roomHeightScreens) {
             Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                Box(Modifier.size(axisSize), contentAlignment = Alignment.Center) {
+                    Text("${row + 1}", fontSize = 7.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 for (col in 0 until roomWidthScreens) {
                     val idx = row * roomWidthScreens + col
                     val value = entries[idx] // null = not in command
@@ -122,7 +136,7 @@ fun ScrollCommandEditor(
             LegendDot(SCROLL_RED, "Red")
             LegendDot(SCROLL_NONE, "None")
         }
-        Text("Blue=normal camera, Green=normal + lower rows, Red=blocked",
+        Text("Blue normal · Green open with lower view · Red blocks camera",
             fontSize = 7.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         Spacer(Modifier.height(2.dp))

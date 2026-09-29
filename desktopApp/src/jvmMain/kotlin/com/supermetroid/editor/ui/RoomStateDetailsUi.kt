@@ -221,7 +221,7 @@ internal fun stateDifferenceDetail(
     "Layer 2 Motion" ->
         "${describeLayer2Scrolling(selected["bgScrolling"] ?: 0)}; " +
             "Default: ${describeLayer2Scrolling(baseline["bgScrolling"] ?: 0)}"
-    "Room Scrolls" -> "Uses a different camera scroll map"
+    "Room Scrolls" -> "Uses different room scroll data"
     "Special X-Ray" -> "Uses a different special X-Ray block table"
     "Room Logic" -> {
         val parts = buildList {
@@ -586,12 +586,28 @@ internal fun RoomStateComparisonDialog(
 internal fun RoomScrollsHelpDialog(editingAvailable: Boolean, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Room scrolls") },
+        title = { Text("Screen Scrolls") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                ScrollHelpStep(
+                    number = "1",
+                    title = "Initial scrolls",
+                    detail = "Sets each screen when the room loads.",
+                )
+                ScrollHelpStep(
+                    number = "2",
+                    title = "Scroll triggers",
+                    detail = "Crossing an orange trigger changes the marked screens.",
+                )
+                ScrollHelpStep(
+                    number = "3",
+                    title = "Runtime result",
+                    detail = "The last trigger crossed wins until another trigger or room reload.",
+                )
                 Text(
-                    "Room scroll data controls how the camera may move through each screen: red " +
-                        "blocks movement, blue allows normal movement, and green is used by special scrolling behavior.",
+                    "Blue = normal · Green = open with a 31 px lower camera limit · Red = blocks camera",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!editingAvailable) {
                     Text(
@@ -603,4 +619,26 @@ internal fun RoomScrollsHelpDialog(editingAvailable: Boolean, onDismiss: () -> U
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
     )
+}
+
+@Composable
+private fun ScrollHelpStep(number: String, title: String, detail: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier.size(22.dp),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(number, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Column {
+            Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(detail, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

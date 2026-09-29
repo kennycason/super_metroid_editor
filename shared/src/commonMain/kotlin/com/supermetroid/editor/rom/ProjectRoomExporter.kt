@@ -163,7 +163,14 @@ class ProjectRoomExporter(
             }
 
             if (roomEdits.customScrollCommands.isNotEmpty()) {
-                if (applyCustomScrollCommands(roomKey, roomId, roomEdits)) {
+                if (applyCustomScrollCommands(
+                        roomKey,
+                        roomId,
+                        roomEdits,
+                        effectiveWidth,
+                        effectiveHeight,
+                    )
+                ) {
                     roomsPatched.add(roomKey)
                 }
             }
@@ -602,19 +609,36 @@ class ProjectRoomExporter(
         roomKey: String,
         roomId: Int,
         roomEdits: RoomEdits,
+        roomWidth: Int,
+        roomHeight: Int,
         targetStateOffsets: List<Int>? = null,
     ): Boolean {
         val commandIdToPtr = mutableMapOf<String, Int>()
+        val roomScreenCount = roomWidth * roomHeight
         for ((commandId, commands) in roomEdits.customScrollCommands) {
-            if (commands.isEmpty()) continue
+            if (commands.isEmpty()) {
+                failExport(
+                    "Room 0x$roomKey custom scroll behavior '$commandId' is empty; " +
+                        "a trigger must change at least one screen"
+                )
+            }
             val invalidCommand = commands.firstOrNull {
-                it.screenIndex !in 0..0xFF || it.scrollValue !in 0..2
+                it.screenIndex !in 0 until roomScreenCount || it.scrollValue !in 0..2
             }
             if (invalidCommand != null) {
                 failExport(
-                    "Room 0x$roomKey custom scroll command '$commandId' has invalid entry " +
+                    "Room 0x$roomKey custom scroll behavior '$commandId' has invalid entry " +
                         "screen=${invalidCommand.screenIndex}, value=${invalidCommand.scrollValue}; " +
-                        "the encoded ranges are screen 0-255 and value 0-2"
+                        "this ${roomWidth}x${roomHeight} room has screen indices 0-${roomScreenCount - 1} " +
+                        "and camera values must be 0-2"
+                )
+            }
+            val duplicateTarget = commands.groupingBy { it.screenIndex }.eachCount()
+                .entries.firstOrNull { (_, count) -> count > 1 }
+            if (duplicateTarget != null) {
+                failExport(
+                    "Room 0x$roomKey custom scroll behavior '$commandId' writes screen " +
+                        "${duplicateTarget.key} more than once"
                 )
             }
             val bytes = ByteArray(commands.size * 2 + 1)
@@ -2054,7 +2078,14 @@ class ProjectRoomExporter(
                 applyPlmChanges(roomKey, roomId, scopedRoomEdits, targetOffsets)
             }
             if (stateEdits.customScrollCommands.isNotEmpty()) {
-                applyCustomScrollCommands(roomKey, roomId, scopedRoomEdits, targetOffsets)
+                applyCustomScrollCommands(
+                    roomKey,
+                    roomId,
+                    scopedRoomEdits,
+                    effectiveWidth,
+                    effectiveHeight,
+                    targetOffsets,
+                )
             }
             if (stateEdits.enemyChanges.isNotEmpty()) {
                 val enemySetPtr = readU16(romData, stateOffset + 8)

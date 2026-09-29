@@ -2000,10 +2000,10 @@ class RomParser(
 
         fun scrollPlmName(plmId: Int): String? = when (plmId) {
             0xB703 -> "Scroll trigger"
-            0xB63B -> "Zone ext →"
-            0xB647 -> "Zone ext ↑"
-            0xB63F -> "Zone ext ←"
-            0xB643 -> "Zone ext ↓"
+            0xB63B -> "Scroll ext →"
+            0xB647 -> "Scroll ext ↑"
+            0xB63F -> "Scroll ext ←"
+            0xB643 -> "Scroll ext ↓"
             else -> null
         }
 
@@ -2023,16 +2023,17 @@ class RomParser(
         }
 
         fun scrollValueLabel(v: Int): String = when (v) {
-            0x00 -> "Red (blocked)"
+            0x00 -> "Red (blocks camera)"
             0x01 -> "Blue (normal)"
-            0x02 -> "Green (lower rows)"
+            0x02 -> "Green (open + lower view)"
             else -> "?$v"
         }
 
         fun formatScrollCommand(screenIdx: Int, scrollVal: Int, roomWidth: Int): String {
-            val col = screenIdx % roomWidth
-            val row = screenIdx / roomWidth
-            return "Screen ($col,$row) → ${scrollValueLabel(scrollVal)}"
+            if (roomWidth <= 0) return "Screen ? → ${scrollValueLabel(scrollVal)}"
+            val col = screenIdx % roomWidth + 1
+            val row = screenIdx / roomWidth + 1
+            return "Screen ($col, $row) → ${scrollValueLabel(scrollVal)}"
         }
 
         // Door cap colors matching the in-game door shield appearance

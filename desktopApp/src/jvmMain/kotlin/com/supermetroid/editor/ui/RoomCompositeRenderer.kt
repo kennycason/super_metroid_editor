@@ -309,7 +309,7 @@ internal fun buildCompositeImage(
         val scrollColors = arrayOf(
             java.awt.Color(200, 40, 40, 40),   // Red (hidden)
             java.awt.Color(40, 80, 200, 40),    // Blue (explorable)
-            java.awt.Color(40, 160, 50, 40),    // Green (PLM-gated)
+            java.awt.Color(40, 160, 50, 40),    // Green (open with lower vertical clamp)
         )
         val scrollBorderColors = arrayOf(
             java.awt.Color(200, 40, 40, 120),

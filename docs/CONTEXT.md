@@ -146,13 +146,13 @@ Screenshots and reference images for SMILE editors (BTS, enemy, FX, PLM).
 
 Three layers that interact at runtime:
 
-1. **Static scroll data** — 1 byte per screen at `roomScrollsPtr` (state data +14). Values: $00=Red (locked), $01=Blue (open), $02=Green (PLM-gated).
+1. **Static scroll data** — 1 byte per screen at `roomScrollsPtr` (state data +14). Values: $00=Red (camera blocked), $01=Blue (normal), $02=Green (open with a 31-pixel lower vertical clamp offset).
 2. **Door ASM** — Runs AFTER static scrolls load, can override specific screens.
 3. **Scroll PLMs** — PLM $B703 triggers at runtime when Samus walks over treadmill blocks.
 
 **Load order**: Static → PLMs created → Door ASM executes → Gameplay begins.
 
-**Common pitfall**: Changing static scrolls without removing vanilla scroll PLMs causes them to fight at runtime.
+**Common pitfall**: The static table contains only the initial room scrolls. Scroll PLMs overwrite individual values when crossed; the last trigger that writes a screen wins until another trigger or room reload. Changing static scrolls without updating obsolete vanilla scroll PLMs can therefore produce runtime behavior that disagrees with the initial scrolls.
 
 ---
 
