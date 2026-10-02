@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
 import com.supermetroid.editor.rom.KraidSpritemap
@@ -95,45 +96,7 @@ fun KraidSpriteEditor(
         KraidComponent.Body(KraidSpritemap.BODY_TILEMAPS[0])
     ) }
 
-    var editingPixels by remember { mutableStateOf<IntArray?>(null) }
-    var editingWidth by remember { mutableStateOf(0) }
-    var editingHeight by remember { mutableStateOf(0) }
-    var editingPalette by remember { mutableStateOf<IntArray?>(null) }
-    var editingLabel by remember { mutableStateOf("") }
-    var editingIsTileSheet by remember { mutableStateOf(false) }
-    var editingAssembledSprite by remember { mutableStateOf<KraidSpritemap.AssembledSprite?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
-
-    val ep = editingPixels
-    if (ep != null) {
-        SpritePixelEditor(
-            label = editingLabel,
-            initialPixels = ep,
-            imageWidth = editingWidth,
-            imageHeight = editingHeight,
-            fixedPalette = editingPalette,
-            referenceImage = null,
-            onApply = { pixels ->
-                if (editingIsTileSheet) {
-                    editorState.applyKraidTileSheetEdits(pixels, editingWidth, editingHeight)
-                } else {
-                    val sprite = editingAssembledSprite
-                    if (sprite != null) {
-                        editorState.applyKraidComponentEdits(sprite, pixels)
-                    }
-                }
-                refreshKey++
-            },
-            onClose = {
-                editingPixels = null
-                editingPalette = null
-                editingIsTileSheet = false
-                editingAssembledSprite = null
-            },
-            modifier = modifier
-        )
-        return
-    }
 
     Column(modifier = modifier.fillMaxSize()) {
         Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -169,8 +132,8 @@ fun KraidSpriteEditor(
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             Text("Tile Sheet", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
+                            Surface(color = Color(0xFF665522), shape = RoundedCornerShape(3.dp)) {
+                                Text("PAUSED", fontSize = 7.sp, color = Color(0xFFFFDD88),
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
                             }
                             if (editorState.hasCustomKraidTileSheet()) {
@@ -212,37 +175,11 @@ fun KraidSpriteEditor(
                 onSelectComponent = { selectedComponent = it },
                 showOamComponents = showOamComponents,
                 refreshKey = refreshKey,
-                onEditPixels = { comp ->
-                    val rp = romParser ?: return@KraidComponentsTab
-                    val sprite = renderKraidComponent(editorState, rp, comp) ?: return@KraidComponentsTab
-                    editingPixels = sprite.pixels.copyOf()
-                    editingWidth = sprite.width
-                    editingHeight = sprite.height
-                    editingPalette = editorState.getKraidPalette(rp)
-                    editingLabel = "Kraid ${comp.displayName}"
-                    editingIsTileSheet = false
-                    editingAssembledSprite = if (comp is KraidComponent.OamEntity) null else sprite
-                },
-                onRefresh = { refreshKey++ },
                 modifier = Modifier.weight(1f)
             )
 
             KraidTab.TILE_SHEET -> KraidTileSheetTab(
                 editorState = editorState,
-                romParser = romParser,
-                refreshKey = refreshKey,
-                onEditTiles = {
-                    val rp = romParser ?: return@KraidTileSheetTab
-                    val result = editorState.loadKraidTileSheet(rp) ?: return@KraidTileSheetTab
-                    val (pixels, w, h) = result
-                    editingPixels = pixels
-                    editingWidth = w
-                    editingHeight = h
-                    editingPalette = editorState.getKraidSheetPalette()
-                    editingLabel = "Kraid Tile Sheet"
-                    editingIsTileSheet = true
-                    editingAssembledSprite = null
-                },
                 onRefresh = { refreshKey++ },
                 modifier = Modifier.weight(1f)
             )
@@ -297,8 +234,6 @@ private fun KraidComponentsTab(
     onSelectComponent: (KraidComponent) -> Unit,
     showOamComponents: Boolean = false,
     refreshKey: Int,
-    onEditPixels: (KraidComponent) -> Unit,
-    onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(modifier = modifier.fillMaxSize()) {
@@ -315,7 +250,7 @@ private fun KraidComponentsTab(
                 Text("Species: \$E2BF \u00b7 AI: \$A7", fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp))
-                Text("Body: 128 BG2 tiles from \$B9:FA38\nOAM: 240 tiles from \$AB:CC00",
+                Text("Body: BG2 tiles from room tileset \$1A\nOAM: 240 tiles from \$AB:CC00",
                     fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
                 Divider()
@@ -353,10 +288,10 @@ private fun KraidComponentsTab(
                     }
                 }
             } else {
-                Text("Room: \$A59F \u00b7 Tileset: 27 \u00b7 AI: \$A7", fontSize = 9.sp,
+                Text("Room: \$A59F \u00b7 Tileset: \$1A \u00b7 AI: \$A7", fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp))
-                Text("128 tiles from \$B9:FA38. Body rendered via BG2 " +
+                Text("Body tiles from room tileset \$1A. Rendered via BG2 " +
                     "nametable + body tilemaps for rising states.",
                     fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
@@ -394,8 +329,6 @@ private fun KraidComponentsTab(
             editorState = editorState,
             romParser = romParser,
             refreshKey = refreshKey,
-            onEditPixels = onEditPixels,
-            onRefresh = onRefresh,
             modifier = Modifier.weight(1f).fillMaxHeight()
         )
     }
@@ -485,8 +418,6 @@ private fun KraidComponentDetail(
     editorState: EditorState,
     romParser: RomParser?,
     refreshKey: Int,
-    onEditPixels: (KraidComponent) -> Unit,
-    @Suppress("UNUSED_PARAMETER") onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -526,9 +457,9 @@ private fun KraidComponentDetail(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (comp !is KraidComponent.OamEntity) {
                 Button(
-                    onClick = { onEditPixels(comp) },
-                    enabled = romParser != null
-                ) { Text("Edit Pixels", fontSize = 11.sp) }
+                    onClick = {},
+                    enabled = false
+                ) { Text("Pixel Editing Paused", fontSize = 11.sp) }
             }
 
             OutlinedButton(
@@ -599,9 +530,10 @@ private fun KraidComponentDetail(
                 shape = RoundedCornerShape(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Kraid body tiles from \$B9:FA38 (128 tiles, tile index base 0x100). " +
-                    "Pixel edits write to the 4bpp tile data and affect all views.",
-                    fontSize = 9.sp, color = Color(0xFF88CC88),
+                Text("Kraid's BG2 body preview comes from room tileset \$1A. " +
+                    "Pixel editing is paused while exact source ownership and export targets are validated; " +
+                    "preview and PNG export remain available.",
+                    fontSize = 9.sp, color = Color(0xFFCCCC88),
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
             }
@@ -678,126 +610,75 @@ private fun KraidComponentDetail(
 @Composable
 private fun KraidTileSheetTab(
     editorState: EditorState,
-    romParser: RomParser?,
-    refreshKey: Int,
-    onEditTiles: () -> Unit,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val hasCustom = editorState.hasCustomKraidTileSheet()
 
-    var sheetBitmap by remember(refreshKey) { mutableStateOf<ImageBitmap?>(null) }
-    var loadError by remember(refreshKey) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(refreshKey, romParser) {
-        val rp = romParser
-        if (rp == null) {
-            loadError = "Load a ROM to view tile sheet"
-            return@LaunchedEffect
-        }
-        sheetBitmap = try {
-            val result = editorState.loadKraidTileSheet(rp)
-            if (result != null) {
-                val (pixels, w, h) = result
-                val img = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-                img.setRGB(0, 0, w, h, pixels, 0, w)
-                img.toComposeImageBitmap()
-            } else null
-        } catch (e: Exception) { loadError = e.message; null }
-    }
-
-    Column(modifier = modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Kraid Sprite Tile Sheet", fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface)
-                Text("128 tiles \u00b7 Bank \$B9: FA38 \u00b7 VRAM base 0x0100",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("These tiles form Kraid's body on BG2. Edits are written to the ROM on export.",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Kraid Sprite Tile Sheet",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Source mapping under exact-assembly review",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Use Components for accurate previews and PNG reference exports.",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (hasCustom) {
-                    Surface(color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(4.dp)) {
-                        Text("Custom tile data active \u2014 will patch ROM on export",
-                            fontSize = 9.sp, color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "A legacy Kraid pixel edit is present and will block ROM export",
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
                     }
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp),
-                horizontalAlignment = Alignment.End) {
-                Button(
-                    onClick = onEditTiles,
-                    enabled = romParser != null
-                ) { Text("Edit Tiles", fontSize = 11.sp) }
-
-                if (hasCustom) {
-                    OutlinedButton(
-                        onClick = { editorState.resetKraidTileSheet(); onRefresh() },
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error)
-                    ) { Text("Reset to ROM Default", fontSize = 11.sp) }
-                }
+            if (hasCustom) {
+                OutlinedButton(
+                    onClick = { editorState.resetKraidTileSheet(); onRefresh() },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Reset Legacy Edit", fontSize = 11.sp) }
             }
         }
 
         Divider()
 
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth()
-                .background(Color(0xFF111122), RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.TopStart
+        Surface(
+            color = MaterialTheme.colorScheme.errorContainer,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            when {
-                loadError != null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(loadError ?: "Error", fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                sheetBitmap == null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(24.dp))
-                    }
-                }
-                else -> {
-                    Image(
-                        bitmap = sheetBitmap!!,
-                        contentDescription = "Kraid tile sheet",
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .let { m ->
-                                val bm = sheetBitmap!!
-                                m.size((bm.width * 4).dp, (bm.height * 4).dp)
-                            }
-                    )
-                }
-            }
-        }
-
-        val palette = editorState.getKraidSheetPalette()
-        if (palette != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Palette:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                palette.forEachIndexed { _, argb ->
-                    val alpha = (argb ushr 24) and 0xFF
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (alpha == 0) Color(0xFF444444) else Color(argb))
-                            .border(0.5.dp, Color(0x40FFFFFF), RoundedCornerShape(2.dp))
-                    )
-                }
-            }
+            Text(
+                BossSpriteExportSafety.KRAID_PIXEL_EDIT_REASON,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(12.dp),
+            )
         }
     }
 }

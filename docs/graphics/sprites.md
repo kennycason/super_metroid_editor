@@ -1,5 +1,27 @@
 # Super Metroid Sprite System — Complete Reference
 
+> **Parity audit warning (2026-10-02):** The generic header/OAM format sections
+> remain useful, but the boss ID/bank tables below contain known stale assignments.
+> Do not use those tables for implementation until they are regenerated from the
+> exact disassembly. See [`../validation/README.md`](../validation/README.md) for
+> the confirmed mismatches, safe evidence order, and correction queue.
+
+### Current boss pixel-editing safety boundary
+
+- Ordinary enemy raw tile edits still export through the species header's verified
+  `GRAPHADR` range and exact `tileDataSize`.
+- Phantoon's **Components** editor remains enabled. It edits the room-tileset tiles
+  used by the named extended BG2 tilemaps.
+- Phantoon's old standalone **Tile Sheet** mapping is quarantined because it resolves
+  inside Mother Brain leg graphics (`$B7:9000..9FFF`). Existing legacy edits block
+  export until reset.
+- Kraid component/tile-sheet pixel export is quarantined because the old target
+  `$B9:FA38` is a compressed BG2 tilemap, not pixel graphics. Preview and PNG export
+  remain available while the tileset/OAM ownership mapping is rebuilt from source.
+
+These are fail-closed export rules, not claims that the bosses cannot be edited. The
+correct source-backed edit model is tracked as parity milestone P0.6.
+
 ## Overview
 
 Super Metroid uses three distinct sprite rendering systems:

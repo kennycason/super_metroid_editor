@@ -872,9 +872,6 @@ class EditorState(
     fun applyPhantoonComponentEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite, editedPixels: IntArray) = phantoonSprite.applyComponentEdits(romParser, sprite, editedPixels)
     fun getPhantoonPalette(romParser: RomParser) = phantoonSprite.getPalette(romParser)
     fun hasCustomPhantoonComponents() = phantoonSprite.hasCustomComponents()
-    fun loadPhantoonTileSheet(romParser: RomParser) = phantoonSprite.loadTileSheet(romParser)
-    fun getSpriteSheetPalette() = phantoonSprite.getSheetPalette()
-    fun applyPhantoonTileSheetEdits(pixels: IntArray, w: Int, h: Int) = phantoonSprite.applyTileSheetEdits(pixels, w, h)
     fun hasCustomPhantoonTileSheet() = phantoonSprite.hasCustomTileSheet()
     fun resetPhantoonTileSheet() = phantoonSprite.resetTileSheet()
 
@@ -885,10 +882,6 @@ class EditorState(
     fun renderKraidBodyTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.BodyTilemapDef) = kraidSprite.renderBodyTilemap(romParser, def)
     fun renderKraidBigSprmap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.ComponentDef) = kraidSprite.renderBigSprmap(romParser, def)
     fun getKraidPalette(romParser: RomParser) = kraidSprite.getPalette(romParser)
-    fun applyKraidComponentEdits(sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyComponentEdits(sprite, editedPixels)
-    fun loadKraidTileSheet(romParser: RomParser) = kraidSprite.loadTileSheet(romParser)
-    fun getKraidSheetPalette() = kraidSprite.getSheetPalette()
-    fun applyKraidTileSheetEdits(pixels: IntArray, w: Int, h: Int) = kraidSprite.applyTileSheetEdits(pixels, w, h)
     fun hasCustomKraidTileSheet() = kraidSprite.hasCustomTileSheet()
     fun resetKraidTileSheet() = kraidSprite.resetTileSheet()
 

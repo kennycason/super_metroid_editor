@@ -3,14 +3,16 @@ package com.supermetroid.editor.rom
 /**
  * Handles boss/enemy sprite tile graphics for the sprite editor.
  *
- * Super Metroid enemy sprites are stored as 4bpp tile blocks. Boss sprites (Phantoon, Kraid)
- * use LZ5-compressed data in banks $B7/$B9. Regular enemy sprites use raw (uncompressed)
- * 4bpp data at the GRAPHADR address in the species header.
+ * Super Metroid enemy sprites are stored as 4bpp tile blocks. Regular enemy sprites use raw
+ * (uncompressed) 4bpp data at the GRAPHADR address in the species header. Bosses may combine
+ * raw OAM graphics, room tilesets, variable tiles, and BG tilemaps; they must be mapped from the
+ * exact assembly rather than treated as one generic compressed format.
  * Each 8x8 tile = 32 bytes (standard SNES 4bpp interleaved format):
  *   - Bytes  0-15: bitplanes 0+1 interleaved (2 bytes per row × 8 rows)
  *   - Bytes 16-31: bitplanes 2+3 interleaved (2 bytes per row × 8 rows)
  *
- * Tile block addresses confirmed via PhantoonSpriteInvestigateTest (room $CD13 enemy GFX set).
+ * The legacy Phantoon/Kraid block constants below are retained only to read/reset old project data
+ * and support investigation tests. They are disproved export mappings and must never be written.
  */
 data class EnemyTileEditValidation(
     val speciesId: Int,
@@ -79,24 +81,23 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         )
 
         /**
-         * Phantoon sprite tile blocks — verified via room $CD13 enemy GFX set analysis.
-         * All 4 Phantoon species ($E4BF body, $E4FF/$E53F/$E57F components) share these.
-         *
-         * The 5-byte GFX entry format parsed from raw $8F:8D1D data:
-         *   Entry 0: [00 03] [B7] [0F 17] → VRAM=0x0300, bank=$B7, src=0x170F → $B7:170F
-         *   Entry at +30: [80 03] [B7] [08 18] → VRAM=0x0380, bank=$B7, src=0x1808 → $B7:1808
+         * Disproved legacy Phantoon blocks. Their PC offsets resolve to $B7:970F/$B7:9808,
+         * inside the exact assembly's Mother Brain leg graphics ($B7:9000..$B7:9FFF).
+         * Kept temporarily so old project data can be detected and reset.
          */
+        @Deprecated("Incorrect legacy mapping into Mother Brain leg graphics; never use for export")
         val PHANTOON_BLOCKS = listOf(
-            SpriteBlock(0x1B970F, 0xB7170F, 0x0300, "Phantoon Tiles A"),
-            SpriteBlock(0x1B9808, 0xB71808, 0x0380, "Phantoon Tiles B")
+            SpriteBlock(0x1B970F, 0xB7970F, 0x0300, "Legacy Phantoon Block A (unsafe)"),
+            SpriteBlock(0x1B9808, 0xB79808, 0x0380, "Legacy Phantoon Block B (unsafe)")
         )
 
         /**
-         * Kraid sprite tile block — 128 tiles LZ-compressed in bank $B9.
-         * Loaded by Kraid_SetupGfxWithTilePrioClear ($A7:AAC6) to $7E:4000.
+         * Disproved legacy Kraid block. $B9:FA38 is a compressed BG2 tilemap, not 4bpp pixels.
+         * Kept temporarily so old project data can be detected and reset.
          */
+        @Deprecated("Incorrect legacy mapping to a compressed BG2 tilemap; never use for export")
         val KRAID_BLOCKS = listOf(
-            SpriteBlock(0x1CFA38, 0xB9FA38, 0x0100, "Kraid Tiles")
+            SpriteBlock(0x1CFA38, 0xB9FA38, 0x0100, "Legacy Kraid BG2 Tilemap (unsafe)")
         )
 
         /**
@@ -124,10 +125,8 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             0xffe80070.toInt()      // 15: bright pink
         )
 
-        /**
-         * Known tile block addresses for supported enemies.
-         * Each entry: species ID → list of SpriteBlocks.
-         */
+        /** Disproved legacy boss mappings, retained for old-data investigation only. */
+        @Deprecated("Contains disproved boss mappings; use exact per-owner source models")
         val ENEMY_TILE_BLOCKS = mapOf(
             0xE4BF to PHANTOON_BLOCKS,
             0xE2BF to KRAID_BLOCKS,

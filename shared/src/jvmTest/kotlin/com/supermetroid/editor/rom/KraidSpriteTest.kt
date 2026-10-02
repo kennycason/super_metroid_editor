@@ -10,10 +10,12 @@ class KraidSpriteTest {
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
-    fun `kraid loads successfully from tileset 27`() {
+    fun `kraid loads successfully from tileset 1A`() {
         val rp = loadTestRom() ?: return
         val kraid = KraidSpritemap(rp)
         assertTrue(kraid.load(), "Kraid should load successfully")
+        assertEquals(0x1A, TileGraphics.KRAID_TILESET, "Kraid's exact room tileset ID")
+        assertEquals(0x1A, kraid.getTilesetId(), "Kraid room state should select tileset \$1A")
         assertNotNull(kraid.getTileData(), "Tile data should be extracted from tileset")
         assertNotNull(kraid.getPalette(), "Palette should be loaded")
         assertEquals(128 * 32, kraid.getTileData()!!.size, "Should have 128 tiles × 32 bytes")

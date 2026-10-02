@@ -804,25 +804,16 @@ object RomValidator {
                 relocationSupported = true,
             )
         }
-        for ((key, b64) in gfx.spriteTileBlocks) {
-            val block = when {
-                key.startsWith("phantoon:") -> key.removePrefix("phantoon:").toIntOrNull()
-                    ?.let { EnemySpriteGraphics.PHANTOON_BLOCKS.getOrNull(it) }
-                key.startsWith("kraid:") -> key.removePrefix("kraid:").toIntOrNull()
-                    ?.let { EnemySpriteGraphics.KRAID_BLOCKS.getOrNull(it) }
-                else -> null
-            }
-            if (block != null) {
-                validateCompressedPayload(
-                    issues = issues,
-                    parser = parser,
-                    label = "Sprite block $key",
-                    category = "Sprite Export",
-                    b64 = b64,
-                    snesAddress = block.snesAddress,
-                    requiredMultiple = RomConstants.BYTES_PER_4BPP_TILE,
-                    limitToOriginalRawSize = true,
-                )
+        for (key in gfx.spriteTileBlocks.keys) {
+            val blockedReason = BossSpriteExportSafety.blockedReason(key)
+            if (blockedReason != null) {
+                issues.add(Issue(
+                    Severity.ERROR,
+                    "Sprite Export",
+                    null,
+                    "Project",
+                    "Sprite tile edit '$key' cannot export. $blockedReason",
+                ))
             }
         }
         return issues

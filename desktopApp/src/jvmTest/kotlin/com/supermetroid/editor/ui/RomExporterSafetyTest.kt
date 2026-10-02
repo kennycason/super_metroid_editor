@@ -276,6 +276,46 @@ class RomExporterSafetyTest {
         assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
     }
 
+    @Test
+    fun `legacy Phantoon tile sheet blocks before touching Mother Brain graphics`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "phantoon-quarantine.smc")
+        input.writeBytes(original!!)
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.spriteTileBlocks["phantoon:0"] =
+                Base64.getEncoder().encodeToString(ByteArray(32))
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("Mother Brain leg graphics"))
+        assertArrayEquals(original, input.readBytes())
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
+    @Test
+    fun `Kraid pixel edit blocks before replacing the BG2 tilemap`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "kraid-quarantine.smc")
+        input.writeBytes(original!!)
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.spriteTileBlocks["kraid:0"] =
+                Base64.getEncoder().encodeToString(ByteArray(32))
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("BG2 tilemap at \$B9:FA38"))
+        assertArrayEquals(original, input.readBytes())
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
     private fun writeU24(data: ByteArray, offset: Int, value: Int) {
         data[offset] = (value and 0xFF).toByte()
         data[offset + 1] = ((value ushr 8) and 0xFF).toByte()

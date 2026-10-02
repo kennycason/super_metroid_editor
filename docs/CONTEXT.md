@@ -26,15 +26,20 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | `$83`     | FX entries, door data blocks (DDBs)                              |
 | `$84`     | PLM headers and routines                                         |
 | `$89`     | Item graphics source data                                        |
-| `$90`     | Beam/weapon damage tables                                        |
-| `$91`     | Samus physics/movement                                           |
+| `$90-$92` | Samus drawing, movement, poses, animation, and spritemaps         |
+| `$9B-$9F` | Samus graphics                                                   |
 | `$94`     | Block collision handlers                                         |
 | `$A0`     | Enemy species headers (64 bytes each)                            |
 | `$A1`     | Enemy population sets (per room)                                 |
-| `$A2`     | Mini-boss AI (Spore Spawn, Botwoon, Crocomire, Golden Torizo)    |
-| `$A3`     | Utility entity AI (elevator, save station, ship)                 |
-| `$A7`     | Boss AI (Kraid, Phantoon, Draygon)                               |
-| `$A8`     | Boss AI (Ridley, Mother Brain)                                   |
+| `$A2-$A3` | Standard enemy AI                                                |
+| `$A4`     | Crocomire AI                                                     |
+| `$A5`     | Draygon and Spore Spawn AI                                       |
+| `$A6`     | Ridley, Mini-Kraid, and related enemy AI                         |
+| `$A7`     | Kraid, Phantoon, Etecoon, and Dachora AI                         |
+| `$A8`     | Standard enemy AI                                                |
+| `$A9`     | Mother Brain, Baby Metroid, and corpse AI                        |
+| `$AA`     | Bomb/Golden Torizo, statues, and Shaktool AI                     |
+| `$B2-$B3` | Space Pirate, pipe enemy, Botwoon, and escape-animal AI          |
 | `$B4`     | Enemy GFX sets, drop tables, resistances                         |
 | `$B9`     | CRE (Common Room Elements) — tiles + tile table                  |
 | `$C0-$CE` | Compressed level data (tiles)                                    |
@@ -92,6 +97,12 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`project/codebase_notes.md`](project/codebase_notes.md) | Local repo/codebase map, current sound branch architecture notes, and piano-roll editor implementation notes. |
 | [`project/parity_hardening_backlog.md`](project/parity_hardening_backlog.md) | Current quality-first priority order, completed hardening, and remaining SMILE-parity risks. |
 
+### Validation (`docs/validation/`)
+
+| File | Contents |
+|------|----------|
+| [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
+
 ### Analysis Scripts (`docs/code/`)
 
 | Script                                                         | Usage                                                                                                                       |
@@ -131,10 +142,13 @@ Screenshots and reference images for SMILE editors (BTS, enemy, FX, PLM).
 
 ### Boss AI Banks
 
-- **$A7**: Kraid, Phantoon, Draygon, Etecoon, Dachora
-- **$A8**: Ridley, Mother Brain
-- **$A2**: Spore Spawn, Botwoon, Crocomire, Golden Torizo
-- **$A6**: Mini-Kraid
+- **$A4**: Crocomire
+- **$A5**: Draygon, Spore Spawn
+- **$A6**: Ridley, Mini-Kraid
+- **$A7**: Kraid, Phantoon
+- **$A9**: Mother Brain
+- **$AA**: Bomb Torizo, Golden Torizo
+- **$B3**: Botwoon
 
 ### Pre-rendered Enemy Sprite PNGs
 
@@ -226,12 +240,12 @@ Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 
 | Patrick Johnston bank logs    | https://patrickjohnston.org/bank/8F (also /B4, /A0, /A7, /A8, etc.)                                       |
 | Metroid Construction wiki     | https://wiki.metroidconstruction.com/                                                                     |
 | SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
-| Exact SM disassembly          | `~/code/super_metroid/sm_disassembly/` — canonical 65816 instructions, masks, and hardcoded references    |
+| Exact SM disassembly          | `~/code/sm/sm_disassembly/` — canonical 65816 instructions, labels, extracted assets, and byte-identical build |
 | SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
 | MapRandomizer                 | `~/code/super_metroid/MapRandomizer/` — Door handling, room geometry                                      |
 | SM Mod 3.0.80                 | `docs/Super Metroid Mod 3.0.80/SMMM_black.html` — Community reference (ground truth for species IDs)      |
 | SMILE source                  | `~/code/super_metroid/smile/` — Original SM editor                                                        |
-| Local SM reference root       | `~/code/sm/` — currently contains `vspcplay`; always inspect it for relevant additions before engine/audio work |
+| Local SM reference root       | `~/code/sm/` — contains the exact disassembly/build toolchain and other local SM references; inspect it before engine/audio work |
 
 These local repositories are standing implementation references, not optional
 reminders. Before changing ROM layout, engine behavior, graphics, rooms, or

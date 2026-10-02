@@ -607,7 +607,8 @@ data class TilesetGfxData(
     val tileTables: MutableMap<String, String> = mutableMapOf(),      // key = tilesetId, value = base64 raw variable metatile table
     var creTileTable: String? = null,                                  // base64 raw CRE metatile table, shared
     val enemyGfx: MutableMap<String, String> = mutableMapOf(),       // key = speciesId hex, value = base64 PNG bytes
-    val spriteTileBlocks: MutableMap<String, String> = mutableMapOf(), // key = "boss:N" (e.g. "phantoon:0"), value = base64 raw 4bpp
+    // Active keys use "enemy:<speciesHex>". Legacy "phantoon:*"/"kraid:*" keys are read only for reset/blocking.
+    val spriteTileBlocks: MutableMap<String, String> = mutableMapOf(), // value = base64 raw 4bpp
     val palettes: MutableMap<String, String> = mutableMapOf(),        // key = tilesetId, value = base64 BGR555 (256 bytes raw)
     val spritePalettes: MutableMap<String, String> = mutableMapOf(),  // key = regionId (e.g. "samus_power"), value = base64 BGR555
     val paletteEffects: MutableMap<String, String> = mutableMapOf()  // key = regionId or "tileset:N", value = effectId

@@ -69,8 +69,8 @@ class TileGraphics(private val romParser: RomParser) {
         const val STANDARD_VAR_TILE_TABLE_MAX_BYTES = (METATILE_COUNT - CRE_METATILE_COUNT) * 8
         const val CERES_VAR_TILE_TABLE_MAX_BYTES = METATILE_COUNT * 8
 
-        // Kraid's room uses tileset/graphics set 27
-        const val KRAID_TILESET = 27
+        // Exact RoomState_Kraid_0/1 uses tileset $1A (decimal 26).
+        const val KRAID_TILESET = 0x1A
 
         const val CERES_AREA = 6
 
@@ -155,7 +155,7 @@ class TileGraphics(private val romParser: RomParser) {
      *     Otherwise CRE (256 metatiles) is prepended: [CRE 0-255][VAR 256-1023].
      *   - Graphics: CRE normally overlays at offset 0x5000 (tiles 640-1023).
      *     Exceptions:
-     *       * Tileset 27 (Kraid) has no CRE overlay.
+     *       * Tileset $1A (Kraid) has no CRE overlay.
      *       * Mode 7 Ceres/Ridley tilesets 17-20 use a split-plane 32K layout, so
      *         byte 0x5000 is area tile plane data, not a CRE boundary.
      */
@@ -205,7 +205,7 @@ class TileGraphics(private val romParser: RomParser) {
         //  - Variable GFX fills all 1024 tile slots (>= 32K) AND the tile table
         //    doesn't cover all metatiles (CRE metatile defs are prepended and may
         //    reference tiles 640+, e.g. tileset 26 / Kraid's room)
-        //  - Tileset 27 (Kraid sprite), per SMILE source
+        //  - Tileset $1A (Kraid), confirmed by RoomState_Kraid_0/1 in the exact assembly
         //  - Caller explicitly requested noCre
         val gfxLayout = if (usesMode7SplitPlaneLayout(tilesetId, varGfx.size)) {
             GfxLayout.SPLIT_PLANES_4BPP

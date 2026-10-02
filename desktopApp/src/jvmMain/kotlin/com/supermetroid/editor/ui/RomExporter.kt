@@ -7,6 +7,7 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
+import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -917,6 +918,10 @@ internal class RomExporter(
         val romData = writePlan.romData
         var gfxPatched = 0
         val gfxData = project.customGfx
+        for (key in gfxData.spriteTileBlocks.keys) {
+            val blockedReason = BossSpriteExportSafety.blockedReason(key) ?: continue
+            throw RomWritePlanException("Sprite tile edit '$key' cannot export. $blockedReason")
+        }
         if (gfxData.enemyGfx.isNotEmpty()) {
             throw RomWritePlanException(
                 "Legacy PNG enemy graphics cannot be exported safely. Reopen each affected enemy in the sprite " +
@@ -1138,49 +1143,8 @@ internal class RomExporter(
             onLog("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
         }
 
-        // Apply Phantoon sprite tile patches (raw 4bpp → LZ5 compress → write to $B7)
-        onLog("[EXPORT] Phantoon sprite blocks: spriteTileBlocks.keys=${gfxData.spriteTileBlocks.keys}, size=${gfxData.spriteTileBlocks.size}")
-        for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
-            val b64 = gfxData.spriteTileBlocks["phantoon:$i"]
-            if (b64 == null) continue
-            val rawBytes = decode(b64, "Phantoon sprite block $i")
-            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
-                "Phantoon sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
-                    RomConstants.BYTES_PER_4BPP_TILE
-            }
-            writeLZ5(
-                rawBytes,
-                block.snesAddress,
-                "Phantoon sprite block $i",
-                limitToOriginalRawSize = true,
-            )
-            gfxPatched++
-        }
-
-        // Apply Kraid sprite tile patches (raw 4bpp → LZ5 compress → write to $B9)
-        for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.withIndex()) {
-            val b64 = gfxData.spriteTileBlocks["kraid:$i"]
-            if (b64 == null) continue
-            val rawBytes = decode(b64, "Kraid sprite block $i")
-            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
-                "Kraid sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
-                    RomConstants.BYTES_PER_4BPP_TILE
-            }
-            writeLZ5(
-                rawBytes,
-                block.snesAddress,
-                "Kraid sprite block $i",
-                limitToOriginalRawSize = true,
-            )
-            gfxPatched++
-        }
-
         for (key in gfxData.spriteTileBlocks.keys) {
             val valid = when {
-                key.startsWith("phantoon:") -> key.removePrefix("phantoon:").toIntOrNull()
-                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.indices } == true
-                key.startsWith("kraid:") -> key.removePrefix("kraid:").toIntOrNull()
-                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.indices } == true
                 key.startsWith("enemy:") -> key.removePrefix("enemy:").toIntOrNull(16) != null
                 else -> false
             }

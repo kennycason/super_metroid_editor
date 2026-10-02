@@ -270,6 +270,28 @@ class RomValidatorTest {
         }
 
         @Test
+        fun `project graphics validation quarantines disproved boss sprite mappings`() {
+            val parser = romParser ?: return
+            val project = SmEditProject(romPath = "test.smc")
+            val encodedTile = Base64.getEncoder().encodeToString(ByteArray(RomConstants.BYTES_PER_4BPP_TILE))
+            project.customGfx.spriteTileBlocks["phantoon:0"] = encodedTile
+            project.customGfx.spriteTileBlocks["kraid:0"] = encodedTile
+
+            val issues = RomValidator.checkProjectGraphicsExportFit(parser, project)
+
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR &&
+                    it.message.contains("phantoon:0") &&
+                    it.message.contains("Mother Brain leg graphics")
+            })
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR &&
+                    it.message.contains("kraid:0") &&
+                    it.message.contains("BG2 tilemap at \$B9:FA38")
+            })
+        }
+
+        @Test
         fun `project owner validation rejects duplicate enabled patches and room aliases`() {
             val project = SmEditProject(romPath = "test.smc")
             project.patches.add(SmPatch(id = "duplicate", name = "First", enabled = true))

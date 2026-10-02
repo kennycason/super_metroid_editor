@@ -1,13 +1,11 @@
 package com.supermetroid.editor.rom
 
 /**
- * Handles Kraid's sprite data by combining the room tileset (tileset 27)
- * with Kraid's LZ-compressed 4bpp tiles at $B9:FA38.
+ * Handles Kraid's composite graphics from room tileset $1A (decimal 26), named BG2 tilemaps,
+ * and the separate OAM species rendered by [EnemySpritemap].
  *
- * During gameplay, Kraid's AI loads 128 tiles into VRAM at tile index base
- * 0x100 (overwriting room tileset tiles at those indices). The BG2 nametable
- * ($B9:FE3E) and body tilemaps ($A7:97C8+) reference BOTH room tileset tiles
- * (indices 0x00-0xFF) and Kraid-specific tiles (0x100-0x17F).
+ * The BG2 nametable ($B9:FE3E) and body tilemaps ($A7:97C8+) reference the room tileset's
+ * Kraid graphics. $B9:FA38 is another compressed BG2 tilemap, not 4bpp pixel data.
  *
  * Palette row 6 is overwritten with kKraid_Palette2 ($A7:86C7) during the
  * fight. Each nametable entry specifies which palette row to use.
@@ -18,8 +16,8 @@ class KraidSpritemap(private val romParser: RomParser) {
         const val KRAID_ROOM_SNES = 0x8FA59F
         private const val KRAID_ROOM_HANDLE = "kraid"
         private const val KRAID_ROOM_NAME = "Kraid's Room"
-        const val TILE_GFX_SNES = 0xB9FA38
-        const val TILE_GFX_PC = 0x1CFA38
+        const val UPPER_BG2_TILEMAP_SNES = 0xB9FA38
+        const val UPPER_BG2_TILEMAP_PC = 0x1CFA38
         const val NAMETABLE_SNES = 0xB9FE3E
         const val NAMETABLE_PC = 0x1CFE3E
         /** kKraid_Palette2 — loaded to BG palette row 6 during the fight. */
@@ -122,8 +120,8 @@ class KraidSpritemap(private val romParser: RomParser) {
     }
 
     /**
-     * Load room tileset 27 and override palette row 6 with kKraid_Palette2.
-     * Kraid's body tiles (0x100-0x17F) are already part of tileset 27 —
+     * Load room tileset $1A and override palette row 6 with kKraid_Palette2.
+     * Kraid's body tiles (0x100-0x17F) are already part of tileset $1A —
      * no injection needed. ($B9:FA38 is a background TILEMAP, not tile graphics.)
      */
     private fun setupTileGraphics(): TileGraphics? {

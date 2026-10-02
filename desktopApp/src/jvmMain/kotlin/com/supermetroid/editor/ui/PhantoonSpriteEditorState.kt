@@ -1,16 +1,13 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.TilesetGfxData
-import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.PhantoonSpritemap
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TileGraphics
-import io.github.oshai.kotlinlogging.KotlinLogging
-
-private val phantoonSpriteLog = KotlinLogging.logger {}
 
 /**
- * Manages Phantoon assembled-sprite (BG2 tilemap path) and tile-sheet state for the editor.
+ * Manages Phantoon's assembled BG2 component path and reset of quarantined legacy sheet data.
  *
  * [applyCustomGfx] is a callback into EditorState so that project-level GFX overrides are
  * applied to the tilemap graphics without duplicating that logic here.
@@ -21,8 +18,6 @@ class PhantoonSpriteEditorState(
     private val onDirty: () -> Unit,
 ) {
     private var spritemap: PhantoonSpritemap? = null
-    private var sheetGfx: EnemySpriteGraphics? = null
-    private var sheetPalette: IntArray? = null
 
     fun getSpritemap(romParser: RomParser): PhantoonSpritemap? {
         spritemap?.let { return it }
@@ -60,60 +55,15 @@ class PhantoonSpriteEditorState(
         return customGfx().varGfx.containsKey(sm.getTilesetId().toString())
     }
 
-    fun loadTileSheet(romParser: RomParser): Triple<IntArray, Int, Int>? {
-        val gfx = EnemySpriteGraphics(romParser)
-        val customOverrides = mutableMapOf<Int, ByteArray>()
-        for ((i, _) in EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
-            val b64 = customGfx().spriteTileBlocks["phantoon:$i"] ?: continue
-            try { customOverrides[i] = java.util.Base64.getDecoder().decode(b64) } catch (_: Exception) {}
-        }
-        val loaded = if (customOverrides.isEmpty()) {
-            gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS)
-        } else {
-            gfx.loadWithOverrides(EnemySpriteGraphics.PHANTOON_BLOCKS, customOverrides)
-        }
-        if (!loaded) return null
-        val palette = EnemySpriteGraphics.PHANTOON_PALETTE
-        sheetGfx = gfx
-        sheetPalette = palette
-        phantoonSpriteLog.debug { "[SPRITE] loadPhantoonTileSheet: loaded ${gfx.getTileCount()} tiles, palette=${palette.size} colors" }
-        return gfx.renderSheet(palette)
-    }
-
-    fun getSheetPalette(): IntArray? = sheetPalette
-
-    fun applyTileSheetEdits(pixels: IntArray, w: Int, h: Int) {
-        val gfx = sheetGfx ?: run {
-            phantoonSpriteLog.warn { "[SPRITE] ABORT: sheetGfx is null — was loadTileSheet() called first?" }
-            return
-        }
-        val palette = sheetPalette ?: run {
-            phantoonSpriteLog.warn { "[SPRITE] ABORT: sheetPalette is null" }
-            return
-        }
-        gfx.importFromArgb(pixels, w, h, palette)
-        val rawBlocks = gfx.getRawBlocks() ?: run {
-            phantoonSpriteLog.warn { "[SPRITE] ABORT: getRawBlocks() returned null after importFromArgb" }
-            return
-        }
-        for ((i, raw) in rawBlocks.withIndex()) {
-            customGfx().spriteTileBlocks["phantoon:$i"] =
-                java.util.Base64.getEncoder().encodeToString(raw)
-        }
-        onDirty()
-    }
-
     fun hasCustomTileSheet(): Boolean =
-        EnemySpriteGraphics.PHANTOON_BLOCKS.indices.any { i ->
-            customGfx().spriteTileBlocks.containsKey("phantoon:$i")
+        customGfx().spriteTileBlocks.keys.any {
+            it.startsWith(BossSpriteExportSafety.PHANTOON_KEY_PREFIX)
         }
 
     fun resetTileSheet() {
-        EnemySpriteGraphics.PHANTOON_BLOCKS.indices.forEach { i ->
-            customGfx().spriteTileBlocks.remove("phantoon:$i")
-        }
-        sheetGfx = null
-        sheetPalette = null
+        customGfx().spriteTileBlocks.keys
+            .filter { it.startsWith(BossSpriteExportSafety.PHANTOON_KEY_PREFIX) }
+            .forEach { customGfx().spriteTileBlocks.remove(it) }
         spritemap = null
         onDirty()
     }
@@ -121,7 +71,5 @@ class PhantoonSpriteEditorState(
     /** Invalidate cached ROM-derived data when a new ROM is loaded. */
     fun invalidate() {
         spritemap = null
-        sheetGfx = null
-        sheetPalette = null
     }
 }
