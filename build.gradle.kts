@@ -12,7 +12,46 @@ subprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         val isolatedTestHome = temporaryDir.resolve("user-home")
         systemProperty("user.home", isolatedTestHome.absolutePath)
+        systemProperty("smedit.repositoryRoot", rootProject.projectDir.absolutePath)
+        listOf(
+            "smedit.testRom",
+            "smedit.disassemblyDir",
+            "smedit.requireParityFixtures",
+            "smedit.testOutputDir",
+            "smedit.kaizoTestRom",
+        ).forEach { propertyName ->
+            providers.systemProperty(propertyName).orNull?.let { value ->
+                systemProperty(propertyName, value)
+            }
+        }
         doFirst { isolatedTestHome.mkdirs() }
+    }
+}
+
+val parityPython = providers.environmentVariable("PYTHON").orElse("python3")
+
+tasks.register<Exec>("parityBootstrap") {
+    group = "verification"
+    description = "Clone/fetch the pinned Super Metroid disassembly into parity/work"
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/bootstrap.py")
+    onlyIf {
+        System.getenv("SMEDIT_DISASSEMBLY_DIR").isNullOrBlank() &&
+            providers.systemProperty("smedit.disassemblyDir").orNull.isNullOrBlank()
+    }
+}
+
+tasks.register<Exec>("parityCheck") {
+    group = "verification"
+    description = "Strictly validate the configured vanilla ROM and pinned disassembly fixtures"
+    dependsOn("parityBootstrap")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/check_fixtures.py")
+    providers.systemProperty("smedit.testRom").orNull?.let { value ->
+        environment("SMEDIT_TEST_ROM", value)
+    }
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
     }
 }
 

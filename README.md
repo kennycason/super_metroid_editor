@@ -144,6 +144,13 @@ git submodule update --init --recursive
 
 The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
 
+### ROM/disassembly parity development
+
+The optional [parity harness](parity/README.md) provisions a pinned Super Metroid
+disassembly checkout and validates a user-supplied clean ROM for source-backed
+regression tests. It is developer tooling only; the editor and release builds have
+no dependency on the ROM or disassembly checkout.
+
 ## CLI
 
 The `cli` module provides headless ROM data export and patch building without a GUI dependency. See [CLI.md](CLI.md) for command usage, build JSON examples, IPS-only generation, and the shared headless API.

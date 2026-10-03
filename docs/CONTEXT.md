@@ -102,6 +102,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
+| [`../parity/README.md`](../parity/README.md) | Portable fixture/bootstrap contract for the pinned source oracle and user-supplied clean ROM. |
 
 ### Analysis Scripts (`docs/code/`)
 

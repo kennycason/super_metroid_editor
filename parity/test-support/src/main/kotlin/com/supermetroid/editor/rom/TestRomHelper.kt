@@ -1,0 +1,162 @@
+package com.supermetroid.editor.rom
+
+import org.opentest4j.TestAbortedException
+import java.io.File
+import java.security.MessageDigest
+import java.util.Properties
+
+/**
+ * Test-only fixture contract shared by every JVM test module.
+ *
+ * This source directory is added only to test compilations. Production code and
+ * packaged applications do not depend on the ROM or disassembly checkout.
+ */
+object TestRomHelper {
+    const val TEST_ROM_ENV = "SMEDIT_TEST_ROM"
+    const val DISASSEMBLY_ENV = "SMEDIT_DISASSEMBLY_DIR"
+    const val STRICT_ENV = "SMEDIT_REQUIRE_PARITY_FIXTURES"
+
+    private const val TEST_ROM_PROPERTY = "smedit.testRom"
+    private const val DISASSEMBLY_PROPERTY = "smedit.disassemblyDir"
+    private const val STRICT_PROPERTY = "smedit.requireParityFixtures"
+    private const val REPOSITORY_ROOT_PROPERTY = "smedit.repositoryRoot"
+    private const val TEST_OUTPUT_PROPERTY = "smedit.testOutputDir"
+
+    /**
+     * Compatibility facade for existing tests. Missing configuration throws a
+     * [TestAbortedException], so this never silently returns null.
+     */
+    fun loadRomBytes(): ByteArray? = requireRomBytes()
+
+    fun loadRomParser(): RomParser? = requireRomParser()
+
+    /** Load and validate the configured clean, unheadered vanilla ROM. */
+    fun requireRomBytes(): ByteArray {
+        val path = configuredValue(TEST_ROM_PROPERTY, TEST_ROM_ENV)
+            ?: unavailable(
+                "Vanilla ROM fixture is not configured. Set $TEST_ROM_ENV=/absolute/path/to/clean.sfc " +
+                    "or -D$TEST_ROM_PROPERTY=/absolute/path/to/clean.sfc."
+            )
+        val file = File(path).expandAndCanonicalize()
+        check(file.isFile) { "$TEST_ROM_ENV does not name a file: $file" }
+        return file.readBytes().also(::validateVanillaRom)
+    }
+
+    fun requireRomParser(): RomParser = RomParser(requireRomBytes())
+
+    /** Resolve and validate the pinned disassembly source checkout. */
+    fun requireDisassemblyDir(): File {
+        val configured = configuredValue(DISASSEMBLY_PROPERTY, DISASSEMBLY_ENV)
+        val directory = configured?.let(::File)
+            ?: File(repositoryRoot(), "parity/work/sm_disassembly").takeIf { it.isDirectory }
+            ?: unavailable(
+                "Disassembly fixture is not configured. Run ./gradlew parityBootstrap, set " +
+                    "$DISASSEMBLY_ENV=/absolute/path/to/sm_disassembly, or use -D$DISASSEMBLY_PROPERTY=..."
+            )
+        return directory.expandAndCanonicalize().also(::validateDisassemblyDir)
+    }
+
+    /** Diagnostic output always belongs in a build directory, never source fixtures. */
+    fun outputDir(): File {
+        val configured = System.getProperty(TEST_OUTPUT_PROPERTY)?.trim()?.takeIf { it.isNotEmpty() }
+        return (configured?.let(::File) ?: File("build/test-output"))
+            .expandAndCanonicalize()
+            .apply { mkdirs() }
+    }
+
+    fun repositoryFile(relativePath: String): File =
+        File(repositoryRoot(), relativePath).canonicalFile
+
+    internal fun configuredValue(
+        propertyName: String,
+        environmentName: String,
+        propertyLookup: (String) -> String? = System::getProperty,
+        environmentLookup: (String) -> String? = System::getenv,
+    ): String? = sequenceOf(propertyLookup(propertyName), environmentLookup(environmentName))
+        .mapNotNull { it?.trim()?.takeIf(String::isNotEmpty) }
+        .firstOrNull()
+
+    internal fun validateVanillaRom(bytes: ByteArray) {
+        val reference = referenceProperties()
+        val expectedSize = reference.getProperty("rom.size").toInt()
+        check(bytes.size == expectedSize) {
+            "Vanilla ROM fixture has ${bytes.size} bytes; expected $expectedSize unheadered bytes"
+        }
+        val expectedHash = reference.getProperty("rom.sha256")
+        val actualHash = sha256(bytes)
+        check(actualHash == expectedHash) {
+            "Vanilla ROM fixture SHA-256 is $actualHash; expected $expectedHash"
+        }
+    }
+
+    internal fun validateDisassemblyDir(directory: File) {
+        check(directory.isDirectory) { "Disassembly fixture is not a directory: $directory" }
+        listOf(".git", "src/main.asm", "src/bank_8F.asm", "tools/rip_assets.py").forEach { relative ->
+            check(File(directory, relative).exists()) {
+                "Disassembly fixture is missing $relative: $directory"
+            }
+        }
+        val expectedCommit = referenceProperties().getProperty("disassembly.commit")
+        val actualCommit = gitOutput(directory, "rev-parse", "HEAD")
+        check(actualCommit == expectedCommit) {
+            "Disassembly fixture is at $actualCommit; expected pinned commit $expectedCommit"
+        }
+        val trackedChanges = gitOutput(directory, "status", "--porcelain", "--untracked-files=no")
+        check(trackedChanges.isEmpty()) {
+            "Disassembly fixture has tracked changes:\n$trackedChanges"
+        }
+    }
+
+    internal fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+
+    private fun strictFixturesRequired(): Boolean {
+        val value = configuredValue(STRICT_PROPERTY, STRICT_ENV) ?: return false
+        return value.equals("true", ignoreCase = true) || value == "1" || value.equals("yes", ignoreCase = true)
+    }
+
+    private fun unavailable(message: String): Nothing {
+        if (strictFixturesRequired()) error(message)
+        throw TestAbortedException(message)
+    }
+
+    private fun referenceProperties(): Properties = Properties().apply {
+        File(repositoryRoot(), "parity/reference.properties").inputStream().use { input -> load(input) }
+    }
+
+    private fun gitOutput(directory: File, vararg arguments: String): String {
+        val command = listOf("git", "-C", directory.absolutePath) + arguments
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+        check(process.waitFor() == 0) {
+            "Git command failed for disassembly fixture: ${command.joinToString(" ")}\n$output"
+        }
+        return output
+    }
+
+    private fun repositoryRoot(): File {
+        System.getProperty(REPOSITORY_ROOT_PROPERTY)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            return File(it).canonicalFile
+        }
+        var candidate: File? = File(System.getProperty("user.dir")).canonicalFile
+        while (candidate != null) {
+            if (File(candidate, "parity/reference.properties").isFile) return candidate
+            candidate = candidate.parentFile
+        }
+        error("Cannot locate repository root containing parity/reference.properties")
+    }
+
+    private fun File.expandAndCanonicalize(): File {
+        val expanded = if (path == "~") {
+            File(System.getProperty("user.home"))
+        } else if (path.startsWith("~/") || path.startsWith("~\\")) {
+            File(System.getProperty("user.home"), path.substring(2))
+        } else {
+            this
+        }
+        return expanded.canonicalFile
+    }
+}

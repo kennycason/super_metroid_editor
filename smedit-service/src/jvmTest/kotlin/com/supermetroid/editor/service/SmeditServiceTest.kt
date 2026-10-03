@@ -21,6 +21,7 @@ import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
+import com.supermetroid.editor.rom.TestRomHelper
 import io.ktor.client.call.body
 import io.ktor.client.request.accept
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -36,8 +37,6 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import org.junit.jupiter.api.Assumptions.assumeTrue
-import java.io.File
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -250,7 +249,6 @@ class SmeditServiceTest {
     @Test
     fun `patch endpoint applies spider ball patch and request item placement`() = testApplication {
         val romBytes = loadTestRomBytes()
-        assumeTrue(romBytes != null, "Test ROM not found")
         application {
             smeditServiceModule()
         }
@@ -271,7 +269,7 @@ class SmeditServiceTest {
                     )
                 ),
             ),
-            romBytes = requireNotNull(romBytes),
+            romBytes = romBytes,
         )
         val response = client.post("/patch?format=json") {
             contentType(ContentType.Application.Json)
@@ -293,7 +291,6 @@ class SmeditServiceTest {
     @Test
     fun `patch endpoint applies mazetroid generator and places starter items`() = testApplication {
         val romBytes = loadTestRomBytes()
-        assumeTrue(romBytes != null, "Test ROM not found")
         application {
             smeditServiceModule()
         }
@@ -304,7 +301,7 @@ class SmeditServiceTest {
                 mazetroid = true,
                 seed = 123456L,
             ),
-            romBytes = requireNotNull(romBytes),
+            romBytes = romBytes,
         )
         val response = client.post("/patch?format=json") {
             contentType(ContentType.Application.Json)
@@ -617,18 +614,7 @@ class SmeditServiceTest {
             }
         )
 
-    private fun loadTestRomBytes(): ByteArray? {
-        val paths = listOf(
-            "test-resources/Super Metroid (JU) [!].smc",
-            "../test-resources/Super Metroid (JU) [!].smc",
-            "/Users/kenny/code/super_metroid_dev/test-resources/Super Metroid (JU) [!].smc",
-        )
-        return paths
-            .asSequence()
-            .map(::File)
-            .firstOrNull { it.exists() }
-            ?.readBytes()
-    }
+    private fun loadTestRomBytes(): ByteArray = TestRomHelper.requireRomBytes()
 
     private fun higherJumpBaseRom(): ByteArray =
         standardLayoutRom().also { it[0x81EB9] = 0x04 }

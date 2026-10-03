@@ -107,12 +107,7 @@ class PhantoonSpriteMapTest {
 
     @Test
     fun `dump Phantoon species header for spritemap analysis`() {
-        val parser = TestRomHelper.loadRomParser()
-            ?: run {
-                println("Test ROM not found, skipping")
-                assertTrue(true)
-                return
-            }
+        val parser = TestRomHelper.requireRomParser()
         val rom = parser.getRomData()
         val headerPc = parser.snesToPc(0xA0E4BF)
 

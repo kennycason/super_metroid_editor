@@ -18,9 +18,10 @@ yet proven.
 
 ## Baseline and sources of truth
 
-The current local reference checkout is:
+The pinned reference is:
 
-- Repository: `~/code/sm/sm_disassembly`
+- Repository: `https://github.com/InsaneFirebat/sm_disassembly.git`
+- Managed local checkout: `parity/work/sm_disassembly` (ignored)
 - Commit: `11c906f547edc1b57f5a5923cf977fe7b50a3694`
 - Commit date: 2026-09-26
 - Extracted assets: 1,130 `.bin` files, approximately 5.4 MiB
@@ -40,6 +41,8 @@ Use evidence in this order:
 
 The disassembly checkout is a development oracle, not a runtime dependency. Normal
 SMEDIT builds and user projects must not require a personal absolute path.
+See [`../../parity/README.md`](../../parity/README.md) for portable setup and the
+strict fixture-identity command.
 
 ## Status language
 
@@ -91,11 +94,12 @@ SMEDIT has much more machinery than a first glance suggests:
 
 Those tests are a good regression base. They do not yet establish full source parity.
 
-### Validation weaknesses
+### Remaining validation weaknesses
 
-- `TestRomHelper` contains a user-specific absolute fallback path.
-- ROM-backed tests commonly use `loadTestRom() ?: return`. If the fixture is absent,
-  JUnit reports a successful test rather than a skip or failure.
+- P0.2 removed user-specific fixture lookup. The shared test-only helper now aborts
+  missing-fixture tests explicitly, so legacy `loadTestRom() ?: return` callers are
+  reported as skipped before reaching the silent return. Those redundant nullable
+  call sites can be simplified incrementally.
 - At least 25 ROM test files are diagnostic/audit/render/export-style tools. Several
   print observations or write PNGs without asserting correctness.
 - Some render tests scan arbitrary bank bytes for data that merely looks like a
@@ -194,8 +198,8 @@ This matrix tracks source-backed proof, not feature existence.
 
 | ID | Unit | Current status | Next proof |
 |---|---|---|---|
-| F-01 | Exact assembly build | **Verified** | Keep commit and clean-ROM hashes in a machine-readable fixture. |
-| F-02 | Vanilla ROM fixture discovery | **Covered** | Replace personal path and silent returns with an explicit test fixture contract. |
+| F-01 | Exact assembly build | **Verified** | Pin and validate commit/ROM identity through `parity/reference.properties`. |
+| F-02 | Portable private-fixture contract | **Verified** | Bootstrap/check commands, shared test-only lookup, exact hash validation, and explicit skip/fail behavior. |
 | F-03 | `symbols.sym` reader | **Queued** | Parse bank/address/name and expose lookups to parity tests. |
 | F-04 | Extracted-asset manifest | **Queued** | Read `rip_assets.py`/assembly `incbin`s into address, size, name records. |
 | F-05 | Address drift test | **Queued** | Assert SMEDIT constants against named symbols. |
@@ -296,7 +300,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 - [x] **P0.1** Quarantine the Phantoon legacy tile-sheet export and all current
   Kraid sprite pixel exports with a clear validation blocker.
-- [ ] **P0.2** Add an explicit parity-fixture contract for the vanilla ROM and
+- [x] **P0.2** Add an explicit parity-fixture contract for the vanilla ROM and
   disassembly checkout; remove personal absolute test paths and silent success.
 - [ ] **P0.3** Parse `symbols.sym` and assert a small seed set of named addresses.
 - [ ] **P0.4** Parse assembly `incbin`s / `rip_assets.py` into an asset-range manifest.
@@ -362,6 +366,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-02 | Corrected Kraid tileset identity | Exact `RoomState_Kraid_0/1` uses tileset `$1A` (decimal 26); SMEDIT UI/comments and its special-case constant incorrectly said decimal 27. |
 | 2026-10-02 | Found canonical documentation drift | Exact source bank/ID ownership disagrees with the current boss reference tables. |
 | 2026-10-02 | Quarantined disproved boss sprite exports | Removed the dangerous loader/writer paths, added validator/export blockers and regression tests, disabled affected pixel-editing surfaces, and retained reset controls for old project data. Phantoon Components remains editable through its separate tileset-backed path; 86 focused tests pass. |
+| 2026-10-02 | Added portable parity fixtures | Added the pinned `parity/` workspace, ignored managed clone, exact ROM hash check, strict `parityCheck`, and one test-only fixture helper across JVM modules. A 107-test configured-fixture run passed; without the ROM, legacy ROM-backed cases report skipped instead of passing. |
 
 ## Deliberately deferred
 

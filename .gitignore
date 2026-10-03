@@ -53,6 +53,10 @@ room_model/datasets/
 # But keep test-resources directory structure
 !test-resources/.gitkeep
 
+# Local disassembly checkout and parity output (managed by parity/bootstrap.py)
+parity/work/
+parity/reports/
+
 # Libretro cores (downloaded .so/.dylib/.dll)
 cores/
 

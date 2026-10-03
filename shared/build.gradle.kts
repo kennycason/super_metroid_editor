@@ -143,6 +143,7 @@ kotlin {
         }
         
         val jvmTest by getting {
+            kotlin.srcDir(rootProject.file("parity/test-support/src/main/kotlin"))
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.junit.jupiter:junit-jupiter:5.10.0")
