@@ -1,15 +1,16 @@
 # Super Metroid Sprite System — Complete Reference
 
-> **Parity audit warning (2026-10-02):** The generic header/OAM format sections
-> remain useful, but the boss ID/bank tables below contain known stale assignments.
-> Do not use those tables for implementation until they are regenerated from the
-> exact disassembly. See [`../validation/README.md`](../validation/README.md) for
-> the confirmed mismatches, safe evidence order, and correction queue.
+> **Parity status (2026-10-04):** The 64-byte species-header and raw `GRAPHADR`
+> ownership sections are now source/ROM verified for all 164 headers. The boss
+> ID/bank and composition tables below still contain known stale assignments; do
+> not use those tables for implementation until they are regenerated from exact
+> source. See [`../validation/README.md`](../validation/README.md).
 
 ### Current boss pixel-editing safety boundary
 
-- Ordinary enemy raw tile edits still export through the species header's verified
-  `GRAPHADR` range and exact `tileDataSize`.
+- Ordinary enemy raw tile edits export through the species header's verified
+  `GRAPHADR` range and exact `tileDataSize`. Cross-edit conflict handling for the
+  intentional aliases and overlaps remains an E-09 requirement.
 - Phantoon's **Components** editor remains enabled. It edits the room-tileset tiles
   used by the named extended BG2 tilemaps.
 - Phantoon's old standalone **Tile Sheet** mapping is quarantined because it resolves
@@ -30,8 +31,8 @@ Super Metroid uses three distinct sprite rendering systems:
 2. **BG2 Tilemaps** — Phantoon and Kraid use background layer 2 for their large bodies
 3. **DMA-loaded sprites** — Bosses with dynamic tile loading during fight phases
 
-All enemy species have a 64-byte header at bank `$A0` containing stats, graphics pointers,
-palette info, and AI routine addresses.
+The vanilla NTSC source assembles 164 enemy species headers in bank `$A0`. Each is
+64 bytes and contains stats, graphics pointers, palette info, and AI routine addresses.
 
 ---
 
@@ -78,7 +79,36 @@ The game copies exactly `tileDataSize & 0x7FFF` bytes from this address into VRA
 Multiple enemies can share the same GRAPHADR block with different tileDataSizes
 (each species uses the first N bytes of the shared block).
 
-Bosses (Phantoon, Kraid, etc.) use separate LZ5-compressed DMA-based tile loading instead.
+Boss headers can also have valid raw `GRAPHADR` transfers, but that range alone is
+not their complete render recipe. Phantoon, Kraid, Ridley, Mother Brain, and other
+special cases additionally use BG layers, room tilesets, staged DMA, custom OAM, or
+linked enemy slots as directed by their AI.
+
+### Source-Backed Header and GRAPHADR Verification (2026-10-04)
+
+`parityEnemyHeaders` parses all 164 assembled `EnemyHeader` macro calls rather than
+discovering likely headers by scanning ROM. It evaluates all 29 arguments per call
+(4,756 fields), verifies both four-byte zero-padding regions, and compares the exact
+64-byte record with the rebuilt ROM and SMEDIT's production parser. One source-declared
+unused header and all nine zero-size graphics headers remain explicit. Six species set
+bit 15 of `tileDataSize`; the flag is recorded separately from the transfer byte count.
+
+The 155 nonempty graphics associations resolve to 100 unique address/size ranges and
+99 named extracted assets. This is not a one-header/one-file relationship:
+
+- 25 groups share a start address, and 24 groups share an exact range.
+- Nine distinct range pairs overlap. Seven are nested at the same start; two begin at
+  different addresses.
+- Six species transfers span adjacent asset declarations. Ridley and Ceres Ridley each
+  cover five `Tiles_Ridley_*` chunks; Ceres Door covers three. Lava Rocks/Rinka and
+  Geruta intentionally continue into a prefix of the following named asset.
+
+The manifest records every contiguous segment, so a gap, stale size, renamed asset,
+or changed overlap fails parity. The overlap inventory is also an edit-safety boundary:
+writing one valid species range can modify bytes another species uses. E-09 remains
+partial until project/export logic detects conflicts between simultaneous edits instead
+of validating each block only in isolation. Machine-readable evidence is in ignored
+`parity/reports/enemy-headers.json`.
 
 ### Palette Loading
 
@@ -225,41 +255,43 @@ Draygon body has 32767 HP (effectively invincible to normal attacks).
 
 ## Editor-Supported Enemies
 
-The editor supports **110+ enemies** via `EnemySpriteGraphics.EDITOR_ENEMIES`, with live tile sheet
-rendering, OAM spritemap assembly, and pixel editing for all of them.
+The sprite editor currently catalogs **128 source-valid species IDs** through
+`EnemySpriteGraphics.EDITOR_ENEMIES`. The broader name catalog contains 150 of the
+164 source headers. Catalog membership does not itself prove successful OAM assembly:
+the all-species render classification remains milestone E-08.
 
 ### Categories
 
-| Category | Examples | Count |
-|----------|----------|-------|
-| Boss | Phantoon, Kraid, Crocomire, Draygon, Ridley, Mother Brain, Big Metroid | 9 |
-| Mini-Boss | Spore Spawn, Botwoon, Mini Kraid, Torizo, Golden Torizo | 5 |
-| Wall Crawlers | Zoomer, Zeela, Geemer, Beetom, Sova | 5 |
-| Hoppers | Sidehopper, Dessgeega | 6 |
-| Flyers | Skree, Reo, Waver, Alcoon, Fireflea, Atomic, Mella, Mellow | 12 |
-| Kihunters | Kihunter (Hachi 1-3), Kzan | 4 |
-| Rippers | Ripper, Ripper II variants | 3 |
-| Stationary/Plants | Cacatac, Boyon, Yapping Maw, Viola, Powamp, etc. | 17 |
-| Aquatic/Maridia | Sciser, Oum, Skultera, Ebi, Alcoon, Yard, Zoa | 9 |
-| Norfair | Holtz, Rinka, Squeept, Geruta, Hibashi, Lavaman, Dragon | 9 |
-| Spawners | Zeb, Zebbo, Gamet, Geega, Dori | 6 |
-| Space Pirates | 12 variants (Norfair, Maridia, Tourian, Mk.II, Mk.III) | 12 |
-| Hachi (Bees) | Hachi 1-3 | 3 |
-| Friendly/Misc | Etecoon, Samus' Ship, Mella, Menu | 5 |
-| Mechanisms | Door Shutters, Shattered Glass, Work Robot | 5 |
-| Other | Boulder (RSTONE), Multiviola, Polyp, Zero, Metroid, Puyo | 6 |
+These are current UI groupings, not engine types or render guarantees:
+
+| UI category | Catalog entries |
+|---|---:|
+| Boss | 16 |
+| Mini-Boss | 8 |
+| Space Pirate | 12 |
+| Mechanism | 6 |
+| Enemy (default) | 86 |
+| **Total** | **128** |
+
+The source's 164 headers include internal pieces, projectiles, cutscene entities,
+unused data, and other records the sprite editor does not currently catalog. E-08
+will replace these coarse UI buckets with an evidence-backed render classification.
 
 ### Rendering Modes
 
-- **OAM Spritemap Assembly** — Standard enemies: init function tracing → instruction list → spritemap → assembled sprite
-- **BG2 Tilemap Rendering** — Phantoon (`PhantoonSpritemap.kt`), Kraid (`KraidSpritemap.kt`)
-- **Raw Tile Sheet** — All enemies show their 4bpp tile sheet with pixel editing support
+- **OAM Spritemap Assembly** — Standard enemies where init/instruction tracing succeeds
+- **Special composition** — Boss-specific BG2, OAM, DMA, room-tile, and linked-slot paths;
+  the old Phantoon/Kraid generic export mappings are quarantined
+- **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
+  raw ownership alone does not prove complete composition or conflict-free editing
 
 ### Pixel Editing
 
-All enemies support tile sheet pixel editing via `SpritePixelEditor`. Custom tile data is stored
-in the project file under `customGfx.spriteTileBlocks["enemy:<speciesId>"]` and exported to the
-patched ROM.
+Supported raw edits are stored in the project file under
+`customGfx.spriteTileBlocks["enemy:<speciesId>"]` and exported to the patched ROM.
+The validator enforces the selected header's exact range and size. It does not yet
+coordinate two project edits that target aliased or overlapping ranges, and the
+quarantined boss mappings remain non-exportable. See E-09 in the validation matrix.
 
 ### Pre-Rendered PNG Fallbacks
 Enemies without successful OAM spritemap tracing still display their tile sheet.
@@ -296,7 +328,8 @@ Enemy GFX Set ($B4)
 
 | Test File | What it validates |
 |-----------|-------------------|
-| `EnemySpriteRenderTest.kt` | Palette detection, tile decompression, render, stats verification |
+| `EnemyHeaderSourceParityTest.kt` | All 164 source macro records, production parsing, raw range segments, aliases, overlaps, and pixel hashes |
+| `EnemySpriteRenderTest.kt` | Palette detection, raw tile decoding, render, stats verification |
 | `EnemyExportDiagTest.kt` | Population roundtrip, GFX set, properties bit 0x2000, kill count |
 | `EnemySpritemapTest.kt` | OAM parsing, instruction tracing, assembled sprites |
 | `EnemyTileScanTest.kt` | GRAPHADR decompression, tileDataSize mask, palette row 0 |

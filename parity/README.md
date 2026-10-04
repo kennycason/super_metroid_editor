@@ -22,6 +22,12 @@ packaged application, project format, or ROM exporter.
   direct engine consumer.
 - `tile_format_oracle.py` independently decodes source-owned 2bpp/4bpp pixels and
   metatile semantics, including Ceres's global split-plane layout.
+- `animated_tiles_manifest.py` traces bank-$87 animation lists to exact raw payloads,
+  durations, object DMA sizes/destinations, FX activation bits, and engine consumers.
+- `item_plm_graphics_manifest.py` proves bank-$89 upgrade-item pixels, all 51 PLM
+  variants, palette arguments, four runtime slots, and eight draw pointers.
+- `enemy_header_manifest.py` evaluates every bank-$A0 `EnemyHeader` macro and maps
+  each raw `GRAPHADR` transfer through named assets, aliases, and overlaps.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
 - `test-support/` provides one fixture contract to JVM tests in all modules.
 
@@ -41,8 +47,9 @@ export SMEDIT_TEST_ROM='/absolute/path/to/clean/unheadered/Super Metroid.sfc'
 `parityReport` depends on the bootstrap, build, fixture check, catalogs, and strict
 tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
-`parityTilesets`, and `parityTileFormats` tasks remain available for focused
-investigation.
+`parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
+`parityItemPlmGraphics`, and `parityEnemyHeaders` tasks remain
+available for focused investigation.
 
 `parityBootstrap` clones/fetches
 `https://github.com/InsaneFirebat/sm_disassembly.git` and checks out the commit in
@@ -114,13 +121,44 @@ compare every decoded pixel and source-table placement through SMEDIT's producti
 paths, exercise H/V/HV rendering, and exhaustively decode and re-encode all 65,536
 possible metatile words.
 
+`parityAnimatedTiles` writes ignored `parity/reports/animated-tiles.json`. It walks
+all reachable bank-$87 instruction-list branches and proves 94 unique timed frame
+instructions across 20 object definitions. Every frame source matches one of 68
+exact extracted payloads and its object's DMA size; 65 payloads are referenced and
+the three source-declared unused `X` ranges remain explicit orphans. The manifest
+also verifies all 64 area/FX-bit mappings, eleven spawn sites, three handler calls,
+and the NMI DMA consumer that transfers from bank `$87` to each object's VRAM word
+destination. This corrected the old 64-payload inventory, which had omitted four
+files whose names begin `UNUSED_AnimatedTiles_`.
+
+`parityItemPlmGraphics` writes ignored
+`parity/reports/item-plm-graphics.json`. It proves the 17 contiguous `$100`-byte
+bank-$89 upgrade-item payloads and independently decodes their 136 standard-4bpp
+tiles. The source graph must contain exactly one visible, one Chozo-orb, and one
+shot-block load for every item (51 PLM IDs total), with matching source pointers and
+eight palette bytes. Tagged JVM tests compare those IDs with `RomParser.ITEM_DEFS`,
+then verify the four wrapping VRAM/TileTable/starting-tile slots, eight frame draw
+pointers, generated metatile semantics, and the interpreter dispatch call.
+
+`parityEnemyHeaders` writes ignored `parity/reports/enemy-headers.json`. It parses
+all 164 exact bank-`$A0` `EnemyHeader` macro calls and evaluates their 4,756 fields,
+including source labels, decimal/hex expressions, bank extraction, and NTSC regional
+values. Each assembled 64-byte record and its two zero-padding regions must match the
+rebuilt ROM and SMEDIT's complete production parser. The 155 nonempty raw-graphics
+associations reduce to 100 unique address/size ranges and resolve contiguously through
+168 segments to 99 named extracted assets. The report pins all 25 shared-start groups,
+24 exact-range alias groups, nine overlap pairs, and six multi-asset species ranges;
+tagged JVM tests compare every raw byte and independently decoded pixel hash through
+SMEDIT's production paths. This proves raw ownership, not OAM/composite assembly or
+conflict-free simultaneous editing of overlapping ranges.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
-foundation, LZ5, tileset, CRE, and tile-format chain and writes ignored
+foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, and enemy-header chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
 command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile
-totals, and JUnit results. Any live mismatch fails the task after the underlying
-evidence has been evaluated.
+totals, animated-tile/item-PLM/enemy-graphics ownership, and JUnit results. Any live
+mismatch fails the task after the underlying evidence has been evaluated.
 
 ## Overrides and normal tests
 
@@ -152,6 +190,7 @@ Do not run `git pull` inside the managed checkout and call the result equivalent
 Updating the oracle means deliberately changing `disassembly.commit`, regenerating
 the manifests, running the strict parity suite, and reviewing every resulting
 difference. The report currently covers the foundation, LZ5 compression, tileset
-pointers, CRE ownership, tile pixel layouts, and metatile semantics; subsystem
-coverage expands incrementally through the matrix in
+pointers, CRE ownership, tile pixel layouts, metatile semantics, animated-tile DMA
+ownership, item-PLM graphics/slot ownership, and enemy-header/`GRAPHADR` ownership;
+subsystem coverage expands through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

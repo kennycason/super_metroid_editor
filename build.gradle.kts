@@ -127,10 +127,54 @@ tasks.register<Exec>("parityTileFormats") {
     }
 }
 
+tasks.register<Exec>("parityAnimatedTiles") {
+    group = "verification"
+    description = "Generate source-backed animated-tile objects, frames, and DMA destinations"
+    dependsOn("parityAssets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/animated_tiles_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityItemPlmGraphics") {
+    group = "verification"
+    description = "Generate source-backed item PLM graphics, IDs, tables, and VRAM placement"
+    dependsOn("parityAssets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/item_plm_graphics_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityEnemyHeaders") {
+    group = "verification"
+    description = "Generate source-backed enemy species headers and GRAPHADR ownership"
+    dependsOn("parityAssets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/enemy_header_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
-    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", "parityTilesets", "parityTileFormats", ":shared:parityTest")
+    dependsOn(
+        "parityCheck",
+        "paritySymbols",
+        "parityAssets",
+        "parityLz5Oracle",
+        "parityTilesets",
+        "parityTileFormats",
+        "parityAnimatedTiles",
+        "parityItemPlmGraphics",
+        "parityEnemyHeaders",
+        ":shared:parityTest",
+    )
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/report.py")
 }

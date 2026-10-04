@@ -91,6 +91,10 @@ object TestRomHelper {
         referenceProperties().getProperty(name)?.toIntOrNull()
             ?: error("Missing integer parity reference property: $name")
 
+    fun referenceString(name: String): String =
+        referenceProperties().getProperty(name)
+            ?: error("Missing parity reference property: $name")
+
     internal fun configuredValue(
         propertyName: String,
         environmentName: String,

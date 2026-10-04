@@ -153,8 +153,14 @@ no dependency on the ROM or disassembly checkout.
 
 After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
 complete pinned asset-extraction and assembly build, including a byte-identity check.
-Use `./gradlew parityReport` for the complete strict foundation and LZ5 regression
-and its ignored JSON/Markdown evidence bundle.
+Use `./gradlew parityReport` to run the complete strict regression and generate an
+ignored JSON/Markdown evidence bundle. The suite independently checks all extracted
+asset ranges, LZ5 streams, tileset/CRE pointers, tile and metatile decoding, animated
+tiles, item-PLM graphics, and all 164 enemy species headers plus their raw `GRAPHADR`
+ownership and aliases. These checks are deliberately source-backed: plausible-looking
+renders are not counted as parity unless named disassembly data, rebuilt-ROM bytes,
+and SMEDIT's production path agree. Current coverage and the ordered expansion plan
+are tracked in [the parity validation matrix](docs/validation/README.md).
 
 ## CLI
 

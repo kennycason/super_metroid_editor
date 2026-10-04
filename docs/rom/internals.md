@@ -432,6 +432,79 @@ its 768-entry variable table. Details and exact layouts are in
 [`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md); machine-readable
 hashes live in ignored `parity/reports/tile-formats.json`.
 
+### Animated-Tile Objects and DMA (VERIFIED 2026-10-03)
+
+Bank `$87` contains 68 raw animated-tile payloads totaling 9,376 bytes. Twenty
+six-byte object headers pair an instruction-list pointer with a byte count and VRAM
+word destination. The source/ROM control-flow manifest reaches 94 unique timed frame
+instructions (98 object-frame associations), and every frame's payload size matches
+the owning object's transfer size. Sixty-five payloads are referenced; the three
+explicit unused `X` ranges at `$87:9064/$92E4/$9F04` are preserved as orphans.
+
+The FX byte at entry offset `+14` is an eight-bit animated-tile activation mask.
+All eight area lists and their 64 bit-to-object mappings at `$83:AC56` are asserted.
+The full direct consumer inventory is eleven spawn calls, three handler calls, and
+the NMI DMA call to `$80:9416`, which transfers from fixed source bank `$87` to the
+object's VRAM word destination. See
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md) for formats and the
+destination table; machine-readable evidence is in ignored
+`parity/reports/animated-tiles.json`.
+
+This subsystem includes the Tourian entrance's animated boss **statues**. It does
+not describe the live bosses' multi-part OAM, BG layers, staged DMA, or AI-driven
+animation; those remain the `B-01..B-07` composition cases in the validation matrix.
+
+### Item PLM Graphics and Runtime Slots (VERIFIED 2026-10-04)
+
+The 17 upgrade pickups use 17 contiguous, uncompressed `$100`-byte standard-4bpp
+payloads at `$89:8000..90FF`. Each payload contains eight tiles: four quadrants for
+each of two animation frames. The three forms of every upgrade item—visible, Chozo
+orb, and shot block—produce 51 source instruction lists and 51 PLM IDs. All match
+SMEDIT's `RomParser.ITEM_DEFS` catalog.
+
+`Instruction_PLM_LoadItemPLMGFX` at `$84:8764` queues a `$100`-byte bank-`$89` DMA
+and writes eight metatile words using embedded palette indices. Its counter at
+`$7E:1C2D` cycles `0→2→4→6→0`, selecting four slots: VRAM word destinations
+`$3E00/$3E80/$3F00/$3F80`, tile IDs `$3E0..3FF`, and metatiles `$8E..95`. Thus a
+fifth concurrent upgrade item wraps and visually replaces slot 0 without changing
+collection semantics. Five palette profiles exist, and the two four-entry frame
+draw tables are at `$84:E05F` and `$84:E077`.
+
+`parityItemPlmGraphics` verifies the source declarations, rebuilt ROM bytes,
+independent pixel hashes, all load arguments and palette bytes, runtime tables, draw
+pointers, and interpreter call. Machine-readable evidence lives in ignored
+`parity/reports/item-plm-graphics.json`; the detailed format is in
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md).
+
+### Enemy Species Headers and GRAPHADR Ownership (VERIFIED 2026-10-04)
+
+Bank `$A0` contains 164 assembled, 64-byte `EnemyHeader` records. The source-backed
+manifest evaluates every expression in all 29 macro arguments per record—4,756 fields
+total—and checks the resulting words/bytes, both four-byte zero-padding regions, and
+the complete header against the rebuilt ROM. SMEDIT now exposes the same complete
+record through `EnemySpriteGraphics.readSpeciesHeader`; both user-facing enemy catalogs
+are constrained to actual source header starts rather than plausible bank offsets.
+
+The header's 24-bit `tileData` / `GRAPHADR` value at `+$36` points to raw standard-4bpp
+bytes, while `tileDataSize & $7FFF` gives the transfer length and bit 15 selects the
+alternate runtime VRAM layout. Of 164 headers, 155 have nonempty graphics ranges, nine
+have a zero transfer size, and six set the layout flag. The nonempty associations reduce
+to 100 unique ranges over 93 unique starts and map contiguously through 168 segments to
+99 named extracted assets.
+
+Aliasing is part of the format, not manifest noise: 25 start-address groups and 24
+exact-range groups are shared. Nine distinct range pairs overlap, including two
+cross-start cases where Lava Rocks/Rinka extend into `Tiles_Squeept` and Geruta extends
+into `Tiles_Holtz`. Six species ranges span more than one asset declaration; the two
+Ridley headers each cover all five adjacent `Tiles_Ridley_*` chunks.
+
+`parityEnemyHeaders` verifies source expressions, symbol offsets, rebuilt-ROM bytes,
+independent 4bpp pixel hashes, production parsing, catalog membership, and the complete
+segment/alias/overlap inventory. Evidence lives in ignored
+`parity/reports/enemy-headers.json`; OAM instruction/spritemap interpretation and
+alias-aware edit conflict handling remain separate E-03..E-10 work in the validation
+matrix. See [`../graphics/sprites.md`](../graphics/sprites.md) for the header layout.
+
 ### PLM Set Handling Across States (VERIFIED)
 
 Export correctly:

@@ -693,7 +693,155 @@ End Sub
 
 ---
 
-## 6. SMILE's Complete Rendering Pipeline
+## 6. Runtime Animated-Tile VRAM Patches
+
+Animated tiles are a separate bank-`$87` runtime system. They do not change the
+metatile table. Instead, each active object periodically DMA-copies a raw byte range
+over an existing VRAM destination, so room blocks using those tile slots display the
+new frame.
+
+An animated-tile object is six bytes:
+
+```
++0  instruction-list pointer within bank $87
++2  transfer size in bytes
++4  VRAM word address
+```
+
+A normal timed frame instruction is four bytes:
+
+```
++0  duration in frames
++2  source address within bank $87
+```
+
+`Spawn_AnimatedTilesObject` (`$87:8027`) copies the list pointer, size, and VRAM
+address into one of six runtime slots. `Process_AnimatedTilesObject` (`$87:8085`)
+advances each instruction list. During NMI,
+`ProcessAnimatedTilesObjectVRAMTransfers` (`$80:9416`) uses DMA mode `$1801`, a
+fixed source bank of `$87`, the object's byte count, and its VRAM word destination.
+
+The room FX entry's byte `+14` is an eight-bit activation mask. The engine selects
+one eight-entry list for the current area through
+`AreaSpecific_AnimatedTilesObjectList_Pointers` at `$83:AC56`; each set bit spawns
+the corresponding object. Lava, acid, rain, and spores are also spawned by their FX
+type routines. The Tourian entrance statues and two treadmill cases have direct room
+setup/main-ASM spawn sites.
+
+### Verified object destinations
+
+| Object | Bytes per frame | VRAM word destination |
+|---|---:|---:|
+| Nothing | `$0000` | `$0000` |
+| Vertical spikes | `$0080` | `$3880` |
+| Horizontal spikes | `$0080` | `$3D60` |
+| Crateria lake | `$0200` | `$1B00` |
+| Unused Crateria lava variants | `$00C0` | `$0A00` / `$0640` |
+| Wrecked Ship screen | `$0080` | `$19C0` |
+| Wrecked Ship treadmill, both directions | `$0020` | `$00E0` |
+| Brinstar plant mouth | `$00E0` | `$0410` |
+| Maridia sand ceiling | `$0040` | `$1000` |
+| Maridia falling sand | `$0020` | `$1020` |
+| Lava / acid | `$0040` | `$4280` |
+| Rain | `$0050` | `$4280` |
+| Spores | `$0030` | `$4280` |
+| Tourian Phantoon statue | `$0080` | `$7800` |
+| Tourian Ridley statue | `$0040` | `$7220` |
+| Tourian Kraid statue | `$0040` | `$0B40` |
+| Tourian Draygon statue | `$0080` | `$0CA0` |
+
+VRAM addresses here are word addresses written to `$2116`; multiply by two for a
+byte address. Payload sizes such as `$30` and `$50` show why these assets must be
+treated as exact DMA patches, not assumed to be independent whole 4bpp tile sheets.
+
+### Source-backed animated-tile verification (2026-10-03)
+
+`parityAnimatedTiles` traces every reachable branch of all 20 object definitions.
+It proves 94 unique timed frame instructions / 98 object-frame associations and all
+64 area/activation-bit mappings. The exact asset inventory is 68 payloads totaling
+9,376 bytes: 65 are referenced by frames, while three source-declared unused `X`
+ranges are preserved as explicit orphans. Seven payloads have `UNUSED_` source
+labels in total, including the four reachable unused-Crateria-lava frames.
+
+The older count of 64 came from matching filenames beginning `AnimatedTiles_`; that
+missed the four files beginning `UNUSED_AnimatedTiles_CrateriaLava_`. The manifest
+also inventories eleven spawn calls, three handler calls, and the one NMI DMA call,
+so a new object, destination, payload, or consumer cannot silently appear.
+
+Despite names such as `AnimatedTiles_KraidStatue_*`, this system animates the
+**Tourian background statues**, not Kraid's boss body. Actual Kraid, Mother Brain,
+Ridley, and other multi-part boss composition belongs to the enemy/OAM/DMA/BG-layer
+parity work described in [`../validation/README.md`](../validation/README.md).
+
+---
+
+## 7. Runtime Item-PLM Graphics
+
+The four expansion pickups (energy tank, missile, super missile, and power bomb)
+draw fixed CRE metatiles. The other 17 upgrade pickups use a separate dynamic
+system. They are room-layer PLM images, not OAM enemy sprites.
+
+Each upgrade owns one uncompressed `$100`-byte standard-4bpp payload in bank `$89`.
+That is eight 8×8 tiles: four quadrants for animation frame 0 followed by four for
+frame 1. `Instruction_PLM_LoadItemPLMGFX` at `$84:8764` queues the payload for DMA,
+then writes eight metatile words into WRAM `TileTable` at `$7E:A000`. For quadrant
+`q`, the generated word is:
+
+```
+startingTile + q | (paletteIndex[q] << 10)
+```
+
+The palette indices are eight bytes embedded after the source pointer in each PLM
+instruction list. Five distinct profiles exist across the 17 items: the all-zero
+profile plus X-Ray, Ice, Wave, and Plasma overrides.
+
+### Four wrapping item slots
+
+The allocator counter at `$7E:1C2D` takes values `0, 2, 4, 6`, then wraps through
+`AND #$0006`. The value is stored in the PLM's `$7E:DF0C` field and indexes all
+three two-byte tables below.
+
+| Slot | Counter | DMA VRAM word address | 8×8 tile IDs | TileTable byte offset | Frame metatiles |
+|---:|---:|---:|---:|---:|---:|
+| 0 | `0` | `$3E00` | `$3E0..3E7` | `$0470` | `$8E/$8F` |
+| 1 | `2` | `$3E80` | `$3E8..3EF` | `$0480` | `$90/$91` |
+| 2 | `4` | `$3F00` | `$3F0..3F7` | `$0490` | `$92/$93` |
+| 3 | `6` | `$3F80` | `$3F8..3FF` | `$04A0` | `$94/$95` |
+
+VRAM destinations are word addresses; their byte destinations are `$7C00`,
+`$7D00`, `$7E00`, and `$7F00`. A fifth simultaneously spawned upgrade PLM wraps
+to slot 0 and replaces its graphics/metatile words. Collection behavior is
+unchanged, but the earlier item's picture can be wrong.
+
+The frame-0 pointer table at `$84:E05F` and frame-1 table at `$84:E077` each have
+four entries. Their eight draw instructions select metatiles `$8E..95` exactly.
+
+### Source-backed item verification (2026-10-04)
+
+`parityItemPlmGraphics` proves all 17 contiguous bank-`$89` payloads (`$89:8000`
+through `$89:90FF`), 136 independently decoded 4bpp tiles / 34 item frames, all 51
+visible/Chozo-orb/shot-block load records and PLM IDs, five palette profiles, the
+four allocator tables, eight draw pointers, and the interpreter dispatch call.
+Tagged JVM tests compare every pixel hash through `TileDecoder`, every source PLM ID
+with `RomParser.ITEM_DEFS`, and the generated metatile semantics with
+`TileGraphics.decodeMetatileWord`.
+
+This closes source/ROM parity for the runtime mechanism; it does not yet add a
+pixel-art item preview to SMEDIT. The editor currently represents placed items by
+catalog labels/markers while preserving their PLM IDs.
+
+### Enemy-graphics boundary
+
+Enemy species graphics are not another room-tileset or item-PLM payload. Their
+bank-`$A0` headers identify raw `GRAPHADR` transfers that can alias, overlap, or span
+several adjacent extracted assets. That ownership layer is now source/ROM verified
+for all 164 species headers by `parityEnemyHeaders`; see
+[`sprites.md`](sprites.md#source-backed-header-and-graphadr-verification-2026-10-04).
+OAM instruction lists, composite bosses, and staged runtime DMA remain later layers.
+
+---
+
+## 8. SMILE's Complete Rendering Pipeline
 
 ### Entry point: `DrawTiles` (from `UGraphics.bas`)
 
@@ -804,6 +952,14 @@ For each of 1024 metatiles: ◄────────────────�
 | Load CRE+tileset+palette      | `$82:E78C`   | `$01678C`   | core routine (`$E783` is the DB-setting wrapper) |
 | Load level+CRE+tiletable      | `$82:E7D3`   | `$0167D3`   | —                   |
 | Load CRE bitset               | `$82:DDF1`   | `$015DF1`   | —                   |
+| Animated-tile area-list pointers | `$83:AC56` | `$01AC56` | 8 area pointers     |
+| Spawn animated-tile object    | `$87:8027`   | `$038027`   | 6-byte object header |
+| Process animated-tile object  | `$87:8085`   | `$038085`   | timed instruction list |
+| Animated-tile NMI DMA         | `$80:9416`   | `$001416`   | bank `$87` → object VRAM destination |
+| Item-PLM GFX payloads         | `$89:8000`   | `$048000`   | 17 × `$100` bytes through `$89:90FF` |
+| Load item-PLM GFX             | `$84:8764`   | `$020764`   | bank `$89`, `$100`-byte DMA, four slots |
+| Item-PLM slot tables          | `$84:87CD`   | `$0207CD`   | VRAM, TileTable offsets, starting tiles |
+| Item frame draw tables        | `$84:E05F`   | `$02605F`   | frame 0; frame 1 at `$84:E077` |
 | Room headers start (Crateria) | `$8F:91F8`   | `$0711F8`   | variable            |
 
 ## Sources

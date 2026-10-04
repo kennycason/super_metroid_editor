@@ -263,6 +263,104 @@ def tile_format_checks(
     ]
 
 
+def animated_tile_checks(
+    test_results: Dict[str, object], animated_tiles: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.AnimatedTileSourceParityTest",
+        "all animated tile objects frames activations and DMA consumers match source",
+    )
+    totals = animated_tiles["totals"]
+    return [
+        {
+            "id": "G-08",
+            "name": "Animated tiles",
+            "status": status,
+            "evidence": (
+                f"All {totals['assetCount']} bank-$87 payloads, "
+                f"{totals['uniqueFrameInstructionCount']} reachable frame instructions, "
+                f"{totals['objectCount']} object definitions, {totals['areaBitMappingCount']} "
+                f"area/bit mappings, and {totals['consumerCount']} engine call sites match source and ROM."
+            ),
+        }
+    ]
+
+
+def item_plm_graphics_checks(
+    test_results: Dict[str, object], item_plm_graphics: Dict[str, object]
+) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.ItemPlmGraphicsSourceParityTest"
+    payload_status = named_test_status(
+        test_results,
+        class_name,
+        "all item PLM payloads pixels variants and editor IDs match source",
+    )
+    placement_status = named_test_status(
+        test_results,
+        class_name,
+        "item PLM four slot allocator metatile tables and VRAM placement match source",
+    )
+    status = "pass" if payload_status == "pass" and placement_status == "pass" else "mismatch"
+    totals = item_plm_graphics["totals"]
+    return [
+        {
+            "id": "G-09",
+            "name": "Item/PLM graphics",
+            "status": status,
+            "evidence": (
+                f"All {totals['assetCount']} bank-$89 payloads / {totals['tileCount']} 4bpp tiles, "
+                f"{totals['loadRecordCount']} visible/Chozo/shot-block PLM IDs and load records, "
+                f"{totals['drawPointerCount']} draw pointers, and {totals['slotCount']} runtime "
+                "VRAM/metatile slots match source, ROM, and SMEDIT's item catalog."
+            ),
+        }
+    ]
+
+
+def enemy_header_checks(
+    test_results: Dict[str, object], enemy_headers: Dict[str, object]
+) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.EnemyHeaderSourceParityTest"
+    header_status = named_test_status(
+        test_results,
+        class_name,
+        "all bank A0 enemy header macro fields match the production parser",
+    )
+    graphics_status = named_test_status(
+        test_results,
+        class_name,
+        "every GRAPHADR range alias and extracted asset segment matches source",
+    )
+    totals = enemy_headers["totals"]
+    return [
+        {
+            "id": "E-01",
+            "name": "Enemy species headers",
+            "status": header_status,
+            "evidence": (
+                f"All {totals['headerCount']} bank-$A0 headers / "
+                f"{totals['macroFieldCount']:,} macro fields match source, rebuilt ROM, "
+                "and SMEDIT's production parser; the one source-declared unused header "
+                "remains explicit."
+            ),
+        },
+        {
+            "id": "E-02",
+            "name": "Enemy GRAPHADR ownership",
+            "status": graphics_status,
+            "evidence": (
+                f"All {totals['nonEmptyGraphicsHeaderCount']} nonempty species associations / "
+                f"{totals['uniqueGraphicsRangeCount']} unique ranges map without gaps to "
+                f"{totals['sourceAssetCount']} named assets; "
+                f"{totals['startAliasGroupCount']} shared-start groups, "
+                f"{totals['overlappingUniqueRangePairCount']} overlapping range pairs, and "
+                f"{totals['multiAssetGraphicsHeaderCount']} multi-asset ranges are explicit."
+            ),
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -271,6 +369,9 @@ def markdown_report(report: Dict[str, object]) -> str:
     lz5 = report["lz5"]
     tilesets = report["tilesets"]
     tile_formats = report["tileFormats"]
+    animated_tiles = report["animatedTiles"]
+    item_plm_graphics = report["itemPlmGraphics"]
+    enemy_headers = report["enemyHeaders"]
     tests = report["tests"]
     lines = [
         "# SMEDIT Parity Report",
@@ -344,12 +445,31 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{tile_formats['metatileTableResourceCount']}** source tables.",
             f"- Standard area payloads: **{tile_formats['shortStandard4bppResourceCount']}** define "
             "576 tiles followed by the engine's 64-tile reserved blank gap before CRE.",
+            f"- Animated tiles: **{animated_tiles['assetCount']}** bank-$87 payloads, "
+            f"**{animated_tiles['referencedAssetCount']}** referenced by "
+            f"**{animated_tiles['uniqueFrameInstructionCount']}** frame instructions across "
+            f"**{animated_tiles['objectCount']}** objects; **{animated_tiles['orphanAssetCount']}** "
+            "explicit unused payloads remain unreferenced.",
+            f"- Item PLM graphics: **{item_plm_graphics['assetCount']}** bank-$89 payloads / "
+            f"**{item_plm_graphics['tileCount']}** tiles feed **{item_plm_graphics['loadRecordCount']}** "
+            f"PLM variants through **{item_plm_graphics['slotCount']}** wrapping runtime slots and "
+            f"**{item_plm_graphics['drawPointerCount']}** draw pointers.",
+            f"- Enemy headers: **{enemy_headers['headerCount']}** source macros / "
+            f"**{enemy_headers['macroFieldCount']:,}** fields; "
+            f"**{enemy_headers['nonEmptyGraphicsHeaderCount']}** nonempty GRAPHADR associations "
+            f"map to **{enemy_headers['uniqueGraphicsRangeCount']}** unique ranges and "
+            f"**{enemy_headers['sourceAssetCount']}** named assets.",
+            f"- Enemy GRAPHADR ownership: **{enemy_headers['startAliasGroupCount']}** shared-start "
+            f"groups, **{enemy_headers['overlappingUniqueRangePairCount']}** overlapping unique-range "
+            f"pairs, and **{enemy_headers['multiAssetGraphicsHeaderCount']}** species ranges spanning "
+            "multiple adjacent extracted assets.",
             f"- Strict parity tests: **{tests['tests']}** run, **{tests['failures']}** failures, "
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, compression, tileset, tile-format, alias, and CRE records are in "
-            "`symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, and `tile-formats.json` beside this report.",
+            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, alias, and CRE records "
+            "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
+            "`animated-tiles.json`, `item-plm-graphics.json`, and `enemy-headers.json` beside this report.",
             "",
         ]
     )
@@ -368,15 +488,22 @@ def main() -> int:
     lz5_path = report_dir / "lz5.json"
     tilesets_path = report_dir / "tilesets.json"
     tile_formats_path = report_dir / "tile-formats.json"
+    animated_tiles_path = report_dir / "animated-tiles.json"
+    item_plm_graphics_path = report_dir / "item-plm-graphics.json"
+    enemy_headers_path = report_dir / "enemy-headers.json"
     if (
         not symbols_path.is_file()
         or not assets_path.is_file()
         or not lz5_path.is_file()
         or not tilesets_path.is_file()
         or not tile_formats_path.is_file()
+        or not animated_tiles_path.is_file()
+        or not item_plm_graphics_path.is_file()
+        or not enemy_headers_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format reports are missing; run ./gradlew parityReport",
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header reports are missing; "
+            "run ./gradlew parityReport",
             file=sys.stderr,
         )
         return 2
@@ -387,6 +514,9 @@ def main() -> int:
     lz5 = json.loads(lz5_path.read_text(encoding="utf-8"))
     tilesets = json.loads(tilesets_path.read_text(encoding="utf-8"))
     tile_formats = json.loads(tile_formats_path.read_text(encoding="utf-8"))
+    animated_tiles = json.loads(animated_tiles_path.read_text(encoding="utf-8"))
+    item_plm_graphics = json.loads(item_plm_graphics_path.read_text(encoding="utf-8"))
+    enemy_headers = json.loads(enemy_headers_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
         raise ValueError("symbol report count does not match the pinned reference")
@@ -468,13 +598,106 @@ def main() -> int:
         if tile_formats["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"tile-format aggregate {field} does not match the pinned reference")
 
+    pinned_animated_tile_totals = {
+        "assetCount": "animatedTiles.asset.count",
+        "assetByteCount": "animatedTiles.asset.byte.count",
+        "referencedAssetCount": "animatedTiles.asset.referenced.count",
+        "orphanAssetCount": "animatedTiles.asset.orphan.count",
+        "sourceDeclaredUnusedAssetCount": "animatedTiles.asset.sourceDeclaredUnused.count",
+        "objectCount": "animatedTiles.object.count",
+        "nonEmptyObjectCount": "animatedTiles.object.nonEmpty.count",
+        "uniqueFrameInstructionCount": "animatedTiles.frame.unique.count",
+        "objectFrameAssociationCount": "animatedTiles.frame.objectAssociation.count",
+        "areaListCount": "animatedTiles.areaList.count",
+        "areaBitMappingCount": "animatedTiles.areaBitMapping.count",
+        "consumerCount": "animatedTiles.consumer.count",
+        "spawnConsumerCount": "animatedTiles.consumer.spawn.count",
+        "handlerConsumerCount": "animatedTiles.consumer.handler.count",
+        "dmaConsumerCount": "animatedTiles.consumer.dma.count",
+    }
+    for field, property_name in pinned_animated_tile_totals.items():
+        if int(animated_tiles["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"animated-tile total {field} does not match the pinned reference")
+    pinned_animated_tile_hashes = {
+        "assets": "animatedTiles.asset.aggregate.sha256",
+        "objects": "animatedTiles.object.aggregate.sha256",
+        "frames": "animatedTiles.frame.aggregate.sha256",
+        "areaActivation": "animatedTiles.areaActivation.aggregate.sha256",
+    }
+    for field, property_name in pinned_animated_tile_hashes.items():
+        if animated_tiles["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"animated-tile aggregate {field} does not match the pinned reference")
+
+    pinned_item_plm_totals = {
+        "assetCount": "itemPlm.asset.count",
+        "assetByteCount": "itemPlm.asset.byte.count",
+        "tileCount": "itemPlm.tile.count",
+        "frameCount": "itemPlm.frame.count",
+        "loadRecordCount": "itemPlm.loadRecord.count",
+        "plmIdCount": "itemPlm.id.count",
+        "visiblePlmCount": "itemPlm.visible.count",
+        "chozoPlmCount": "itemPlm.chozo.count",
+        "hiddenPlmCount": "itemPlm.hidden.count",
+        "paletteProfileCount": "itemPlm.paletteProfile.count",
+        "slotCount": "itemPlm.slot.count",
+        "drawPointerCount": "itemPlm.drawPointer.count",
+        "dispatchCallCount": "itemPlm.dispatch.count",
+    }
+    for field, property_name in pinned_item_plm_totals.items():
+        if int(item_plm_graphics["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"item-PLM total {field} does not match the pinned reference")
+    pinned_item_plm_hashes = {
+        "assets": "itemPlm.asset.aggregate.sha256",
+        "pixels": "itemPlm.pixel.aggregate.sha256",
+        "loadRecords": "itemPlm.loadRecord.aggregate.sha256",
+        "slots": "itemPlm.slot.aggregate.sha256",
+    }
+    for field, property_name in pinned_item_plm_hashes.items():
+        if item_plm_graphics["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"item-PLM aggregate {field} does not match the pinned reference")
+
+    pinned_enemy_header_totals = {
+        "headerCount": "enemyHeaders.header.count",
+        "headerByteCount": "enemyHeaders.header.byte.count",
+        "macroFieldCount": "enemyHeaders.macroField.count",
+        "sourceDeclaredUnusedHeaderCount": "enemyHeaders.header.sourceDeclaredUnused.count",
+        "nonEmptyGraphicsHeaderCount": "enemyHeaders.graphics.nonEmptyHeader.count",
+        "zeroSizeGraphicsHeaderCount": "enemyHeaders.graphics.zeroSizeHeader.count",
+        "alternateVramLayoutHeaderCount": "enemyHeaders.graphics.alternateVramLayoutHeader.count",
+        "uniqueGraphicsStartCount": "enemyHeaders.graphics.uniqueStart.count",
+        "uniqueGraphicsRangeCount": "enemyHeaders.graphics.uniqueRange.count",
+        "graphicsAssociationByteCount": "enemyHeaders.graphics.associationByte.count",
+        "graphicsTileAssociationCount": "enemyHeaders.graphics.tileAssociation.count",
+        "sourceAssetCount": "enemyHeaders.graphics.sourceAsset.count",
+        "sourceAssetSegmentAssociationCount": "enemyHeaders.graphics.segmentAssociation.count",
+        "multiAssetGraphicsHeaderCount": "enemyHeaders.graphics.multiAssetHeader.count",
+        "startAliasGroupCount": "enemyHeaders.graphics.startAliasGroup.count",
+        "exactRangeAliasGroupCount": "enemyHeaders.graphics.exactRangeAliasGroup.count",
+        "overlappingUniqueRangePairCount": "enemyHeaders.graphics.overlapPair.count",
+        "crossStartOverlapPairCount": "enemyHeaders.graphics.crossStartOverlapPair.count",
+    }
+    for field, property_name in pinned_enemy_header_totals.items():
+        if int(enemy_headers["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"enemy-header total {field} does not match the pinned reference")
+    pinned_enemy_header_hashes = {
+        "headers": "enemyHeaders.header.aggregate.sha256",
+        "sourceFields": "enemyHeaders.sourceField.aggregate.sha256",
+        "graphics": "enemyHeaders.graphics.aggregate.sha256",
+        "overlaps": "enemyHeaders.overlap.aggregate.sha256",
+    }
+    for field, property_name in pinned_enemy_header_hashes.items():
+        if enemy_headers["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"enemy-header aggregate {field} does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
         + tileset_checks(tests, tilesets)
+        + animated_tile_checks(tests, animated_tiles)
+        + item_plm_graphics_checks(tests, item_plm_graphics)
     )
     graphics_checks.sort(key=lambda check: str(check["id"]))
-    checks = foundation_checks(tests) + graphics_checks
+    checks = foundation_checks(tests) + graphics_checks + enemy_header_checks(tests, enemy_headers)
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
         status: raw_summary[status]
@@ -482,9 +705,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 4,
+        "schemaVersion": 7,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-and-shared-graphics",
+        "scope": "foundation-compression-shared-graphics-and-enemy-headers",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -534,6 +757,45 @@ def main() -> int:
             "metatileCount": tile_formats["totals"]["metatileCount"],
             "metatileWordCount": tile_formats["totals"]["metatileWordCount"],
             "aggregateHashes": tile_formats["aggregateHashes"],
+        },
+        "animatedTiles": {
+            "assetCount": animated_tiles["totals"]["assetCount"],
+            "assetByteCount": animated_tiles["totals"]["assetByteCount"],
+            "referencedAssetCount": animated_tiles["totals"]["referencedAssetCount"],
+            "orphanAssetCount": animated_tiles["totals"]["orphanAssetCount"],
+            "sourceDeclaredUnusedAssetCount": animated_tiles["totals"]["sourceDeclaredUnusedAssetCount"],
+            "objectCount": animated_tiles["totals"]["objectCount"],
+            "uniqueFrameInstructionCount": animated_tiles["totals"]["uniqueFrameInstructionCount"],
+            "areaBitMappingCount": animated_tiles["totals"]["areaBitMappingCount"],
+            "consumerCount": animated_tiles["totals"]["consumerCount"],
+            "aggregateHashes": animated_tiles["aggregateHashes"],
+        },
+        "itemPlmGraphics": {
+            "assetCount": item_plm_graphics["totals"]["assetCount"],
+            "assetByteCount": item_plm_graphics["totals"]["assetByteCount"],
+            "tileCount": item_plm_graphics["totals"]["tileCount"],
+            "frameCount": item_plm_graphics["totals"]["frameCount"],
+            "loadRecordCount": item_plm_graphics["totals"]["loadRecordCount"],
+            "plmIdCount": item_plm_graphics["totals"]["plmIdCount"],
+            "paletteProfileCount": item_plm_graphics["totals"]["paletteProfileCount"],
+            "slotCount": item_plm_graphics["totals"]["slotCount"],
+            "drawPointerCount": item_plm_graphics["totals"]["drawPointerCount"],
+            "aggregateHashes": item_plm_graphics["aggregateHashes"],
+        },
+        "enemyHeaders": {
+            "headerCount": enemy_headers["totals"]["headerCount"],
+            "macroFieldCount": enemy_headers["totals"]["macroFieldCount"],
+            "sourceDeclaredUnusedHeaderCount": enemy_headers["totals"]["sourceDeclaredUnusedHeaderCount"],
+            "nonEmptyGraphicsHeaderCount": enemy_headers["totals"]["nonEmptyGraphicsHeaderCount"],
+            "uniqueGraphicsStartCount": enemy_headers["totals"]["uniqueGraphicsStartCount"],
+            "uniqueGraphicsRangeCount": enemy_headers["totals"]["uniqueGraphicsRangeCount"],
+            "sourceAssetCount": enemy_headers["totals"]["sourceAssetCount"],
+            "multiAssetGraphicsHeaderCount": enemy_headers["totals"]["multiAssetGraphicsHeaderCount"],
+            "startAliasGroupCount": enemy_headers["totals"]["startAliasGroupCount"],
+            "exactRangeAliasGroupCount": enemy_headers["totals"]["exactRangeAliasGroupCount"],
+            "overlappingUniqueRangePairCount": enemy_headers["totals"]["overlappingUniqueRangePairCount"],
+            "crossStartOverlapPairCount": enemy_headers["totals"]["crossStartOverlapPairCount"],
+            "aggregateHashes": enemy_headers["aggregateHashes"],
         },
         "tests": tests,
     }

@@ -196,7 +196,7 @@ class BossStatsTest {
 
         val enemies = listOf(
             0xDCFF to "Zoomer",
-            0xD91F to "Geemer",
+            0xDC3F to "Geemer (horizontal)",
             0xD93F to "Sidehopper",
             0xD87F to "Reo",
             0xD47F to "Ripper",

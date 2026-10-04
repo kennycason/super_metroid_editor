@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""
+r"""
 Scan all enemy species headers from a Super Metroid ROM.
 
-Reads the 64-byte species header at bank $A0 for every known enemy,
+Reads the 64-byte species header at bank $A0 for every source-declared enemy,
 extracting stats, palette pointers, tile data pointers, AI bank, and
 hitbox dimensions. Outputs structured text suitable for pasting into
 documentation markdown files.
@@ -37,9 +37,9 @@ def read_u8(rom, offset):
     return rom[offset]
 
 
-# Known enemy species IDs and names
-# Sourced from RomParser.ENEMY_NAMES in the Kotlin codebase
-# These are the CORRECT species IDs as offsets within bank $A0
+# Exact source header starts, verified by parityEnemyHeaders. Human-readable names
+# prefer community terminology where established; internal-only entries follow the
+# source labels. Never add a plausible-looking offset without a source header.
 KNOWN_ENEMIES = {
     # ── Projectiles / Effects ──
     0xCEBF: "Boyon",
@@ -82,32 +82,25 @@ KNOWN_ENEMIES = {
     0xD6BF: "Fireflea",
     0xD6FF: "Skultera",
     0xD73F: "Elevator",
-    0xD75F: "Zoomer (grey)",
     0xD77F: "Sciser",
     0xD7BF: "Oum",
-    0xD7DF: "Ripper II",
     0xD7FF: "Tripper",
     0xD83F: "Skree (variant)",
     0xD87F: "Reo",
-    0xD89F: "Waver",
     0xD8BF: "Reo (variant)",
-    0xD91F: "Geemer",
     0xD8FF: "Metroid (modified)",
     0xD93F: "Sidehopper",
     0xD97F: "Dessgeega",
-    0xD99F: "Dessgeega (big)",
     0xD9BF: "Sidehopper (big)",
-    0xD9DF: "Sidehopper (big, variant)",
     0xD9FF: "Sidehopper (invincible)",
     # ── Flyers / Misc ──
     0xDA3F: "Dessgeega",
     0xDA7F: "Zoa",
     0xDABF: "Viola",
+    0xDAFF: "Respawn",
     0xDB3F: "Bang",
-    0xDB4F: "Ship",
     0xDB7F: "Skree (Norfair)",
     0xDBBF: "Yard",
-    0xDBCF: "Kago",
     0xDBFF: "Reflec",
     # ── Wall-crawlers ──
     0xDC3F: "Geemer (horizontal)",
@@ -118,11 +111,13 @@ KNOWN_ENEMIES = {
     0xDD7F: "Metroid",
     # ── Bosses ──
     0xDDBF: "Crocomire",
+    0xDDFF: "Crocomire (tongue)",
     0xDE3F: "Draygon (body)",
     0xDE7F: "Draygon (eye)",
     0xDEBF: "Draygon (tail)",
     0xDEFF: "Draygon (arms)",
     0xDF3F: "Spore Spawn",
+    0xDF7F: "Spore Spawn (stalk)",
     # ── Boulder / Kzan ──
     0xDFBF: "Boulder",
     0xDFFF: "Kzan",
@@ -157,6 +152,7 @@ KNOWN_ENEMIES = {
     0xE6BF: "Eye",
     0xE6FF: "Fune",
     0xE73F: "Namihe",
+    0xE77F: "Coven",
     0xE7BF: "Yapping Maw",
     0xE7FF: "Kago",
     # ── Norfair / Maridia ──
@@ -180,39 +176,60 @@ KNOWN_ENEMIES = {
     # ── Mother Brain ──
     0xEC3F: "Mother Brain (phase 1)",
     0xEC7F: "Mother Brain (phase 2)",
+    0xECBF: "Baby Metroid cutscene",
+    0xECFF: "Mother Brain tubes",
     # ── Special / Remains ──
     0xED3F: "Torizo Corpse",
     0xED7F: "Hopper (remains)",
+    0xEDBF: "Sidehopper corpse 2",
+    0xEDFF: "Zoomer corpse",
+    0xEE3F: "Ripper corpse",
+    0xEE7F: "Skree corpse",
     0xEEBF: "Big Metroid",
     0xEEFF: "Torizo",
     0xEF3F: "Torizo (orbs)",
     0xEF7F: "Torizo (gold)",
     0xEFBF: "Torizo (gold orbs)",
+    0xEFFF: "Tourian statue",
     # ── Spawners / Misc ──
+    0xF03F: "Tourian statue ghost",
     0xF07F: "Shaktool",
     0xF0BF: "Shattered Glass",
+    0xF0FF: "Chozo",
+    0xF153: "Spinning turtle eye (unused)",
     0xF193: "Zeb",
     0xF1D3: "Zebbo",
     0xF213: "Gamet",
     0xF253: "Geega",
     0xF293: "Botwoon",
+    0xF2D3: "Etecoon (escape)",
+    0xF313: "Dachora (escape)",
     # ── Space Pirates ──
-    0xF353: "Space Pirate",
-    0xF413: "Space Pirate (Norfair)",
-    0xF453: "Space Pirate (Maridia)",
-    0xF493: "Space Pirate (Tourian)",
-    0xF593: "Space Pirate Mk.II (Norfair)",
-    0xF613: "Space Pirate Mk.II (Tourian)",
-    0xF653: "Space Pirate Mk.III",
-    0xF693: "Space Pirate Mk.III (Brinstar)",
-    0xF6D3: "Space Pirate Mk.III (Norfair)",
-    0xF713: "Space Pirate Mk.III (Norfair alt)",
-    0xF753: "Space Pirate Mk.III (Maridia)",
-    0xF793: "Space Pirate Mk.III (Tourian)",
+    0xF353: "Space Pirate (grey wall)",
+    0xF393: "Space Pirate (green wall)",
+    0xF3D3: "Space Pirate (red wall)",
+    0xF413: "Space Pirate (gold wall)",
+    0xF453: "Space Pirate (magenta wall)",
+    0xF493: "Space Pirate (silver wall)",
+    0xF4D3: "Space Pirate (grey ninja)",
+    0xF513: "Space Pirate (green ninja)",
+    0xF553: "Space Pirate (red ninja)",
+    0xF593: "Space Pirate (gold ninja)",
+    0xF5D3: "Space Pirate (magenta ninja)",
+    0xF613: "Space Pirate (silver ninja)",
+    0xF653: "Space Pirate (grey walking)",
+    0xF693: "Space Pirate (green walking)",
+    0xF6D3: "Space Pirate (red walking)",
+    0xF713: "Space Pirate (gold walking)",
+    0xF753: "Space Pirate (magenta walking)",
+    0xF793: "Space Pirate (silver walking)",
     # ── Ceres-only ──
     0xE1FF: "Ceres Smoke/Steam",
     0xE23F: "Ceres Door FX",
 }
+
+if len(KNOWN_ENEMIES) != 164:
+    raise RuntimeError(f"Expected 164 source enemy headers, found {len(KNOWN_ENEMIES)}")
 
 # Boss grouping for documentation (using correct species IDs)
 BOSS_GROUPS = {

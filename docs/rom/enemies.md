@@ -2,9 +2,19 @@
 
 ## Enemy Species Header (Bank $A0, 64 bytes each)
 
-Each enemy species has a 64-byte header at `$A0:XXXX`. The species ID is the 16-bit
-address within bank $A0. The name pointer at offset `+0x3E` points to a ROM string
-in bank $B4 (Japanese dev names like RSTONE, SABOTEN, HOTARY).
+The vanilla NTSC source assembles 164 enemy species headers, each 64 bytes at
+`$A0:XXXX`. The species ID is the 16-bit address within bank $A0. The name pointer
+at offset `+0x3E` points to a ROM string in bank $B4 (Japanese dev names like
+RSTONE, SABOTEN, HOTARY).
+
+This inventory is source/ROM verified as of 2026-10-04. `parityEnemyHeaders`
+evaluates all 4,756 `EnemyHeader` macro fields, checks the complete records through
+SMEDIT's production parser, and maps the 155 nonempty raw `GRAPHADR` associations
+to named extracted assets. The mapping deliberately preserves shared starts,
+exact aliases, partial overlaps, and transfers spanning adjacent assets. See
+[`../graphics/sprites.md`](../graphics/sprites.md#source-backed-header-and-graphadr-verification-2026-10-04)
+for the byte layout and edit-safety implications; machine-readable evidence is in
+ignored `parity/reports/enemy-headers.json`.
 
 ## Enemy Population Set (Bank $A1)
 

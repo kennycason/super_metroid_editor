@@ -28,6 +28,45 @@ data class EnemyTileEditValidation(
     val expectedTileCount: Int? get() = expectedSize?.div(EnemySpriteGraphics.BYTES_PER_TILE)
 }
 
+/** Complete 64-byte bank-$A0 enemy species header. */
+data class EnemySpeciesHeader(
+    val speciesId: Int,
+    val rawTileDataSize: Int,
+    val palettePointer: Int,
+    val health: Int,
+    val damage: Int,
+    val width: Int,
+    val height: Int,
+    val aiBank: Int,
+    val hurtAiTime: Int,
+    val cry: Int,
+    val bossId: Int,
+    val initAi: Int,
+    val parts: Int,
+    val unused: Int,
+    val mainAi: Int,
+    val grappleAi: Int,
+    val hurtAi: Int,
+    val frozenAi: Int,
+    val timeIsFrozen: Int,
+    val deathAnimation: Int,
+    val deathAnimationUnused: Long,
+    val powerBombReaction: Int,
+    val variantIndex: Int,
+    val variantUnused: Long,
+    val enemyTouch: Int,
+    val enemyShot: Int,
+    val spritemap: Int,
+    val tileDataAddress: Int,
+    val layer: Int,
+    val dropsPointer: Int,
+    val vulnerabilitiesPointer: Int,
+    val namePointer: Int,
+) {
+    val tileDataSize: Int get() = rawTileDataSize and 0x7FFF
+    val alternateVramLayout: Boolean get() = rawTileDataSize and 0x8000 != 0
+}
+
 class EnemySpriteGraphics(private val romParser: RomParser) {
 
     companion object {
@@ -299,14 +338,54 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
          * @return Triple(tileDataSize, hp, damage) or null
          */
         fun readSpeciesStats(romParser: RomParser, speciesId: Int): Triple<Int, Int, Int>? {
+            val header = readSpeciesHeader(romParser, speciesId) ?: return null
+            return Triple(header.tileDataSize, header.health, header.damage)
+        }
+
+        /** Parse every field in one assembled 64-byte `EnemyHeader` macro. */
+        fun readSpeciesHeader(romParser: RomParser, speciesId: Int): EnemySpeciesHeader? {
             val rom = romParser.getRomData()
             val pc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
-            if (pc < 0 || pc + 8 > rom.size) return null
-            val rawTileSize = readU16(rom, pc)
-            val tileSize = rawTileSize and 0x7FFF // bit 15 is a VRAM offset flag, not size
-            val hp = readU16(rom, pc + 4)
-            val damage = readU16(rom, pc + 6)
-            return Triple(tileSize, hp, damage)
+            if (pc < 0 || pc + 0x40 > rom.size) return null
+            fun u16(offset: Int): Int = readU16(rom, pc + offset)
+            fun u32(offset: Int): Long =
+                (readU24(rom, pc + offset).toLong() and 0xFFFFFFL) or
+                    ((readU8(rom, pc + offset + 3).toLong() and 0xFFL) shl 24)
+
+            return EnemySpeciesHeader(
+                speciesId = speciesId and 0xFFFF,
+                rawTileDataSize = u16(0x00),
+                palettePointer = u16(0x02),
+                health = u16(0x04),
+                damage = u16(0x06),
+                width = u16(0x08),
+                height = u16(0x0A),
+                aiBank = readU8(rom, pc + 0x0C),
+                hurtAiTime = readU8(rom, pc + 0x0D),
+                cry = u16(0x0E),
+                bossId = u16(0x10),
+                initAi = u16(0x12),
+                parts = u16(0x14),
+                unused = u16(0x16),
+                mainAi = u16(0x18),
+                grappleAi = u16(0x1A),
+                hurtAi = u16(0x1C),
+                frozenAi = u16(0x1E),
+                timeIsFrozen = u16(0x20),
+                deathAnimation = u16(0x22),
+                deathAnimationUnused = u32(0x24),
+                powerBombReaction = u16(0x28),
+                variantIndex = u16(0x2A),
+                variantUnused = u32(0x2C),
+                enemyTouch = u16(0x30),
+                enemyShot = u16(0x32),
+                spritemap = u16(0x34),
+                tileDataAddress = readU24(rom, pc + 0x36),
+                layer = readU8(rom, pc + 0x39),
+                dropsPointer = u16(0x3A),
+                vulnerabilitiesPointer = u16(0x3C),
+                namePointer = u16(0x3E),
+            )
         }
 
         /**
@@ -318,14 +397,11 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
          * @return SpriteBlock with pcAddress and snesAddress, or null
          */
         fun readGraphicsBlock(romParser: RomParser, speciesId: Int): SpriteBlock? {
-            val rom = romParser.getRomData()
-            val pc = romParser.snesToPc(RomConstants.BANK_ENEMY_AI or speciesId)
-            if (pc < 0 || pc + 0x39 > rom.size) return null
-            val gfxOffset = readU16(rom, pc + 0x36)
-            val gfxBank = readU8(rom, pc + 0x38)
-            if (gfxBank == 0 && gfxOffset == 0) return null
-            val snesAddr = (gfxBank shl 16) or gfxOffset
+            val header = readSpeciesHeader(romParser, speciesId) ?: return null
+            val snesAddr = header.tileDataAddress
+            if (snesAddr == 0) return null
             val pcAddr = romParser.snesToPc(snesAddr)
+            val rom = romParser.getRomData()
             if (pcAddr < 0 || pcAddr >= rom.size) return null
             return SpriteBlock(pcAddr, snesAddr, 0, "Tiles")
         }

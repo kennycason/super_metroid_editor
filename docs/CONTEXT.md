@@ -72,8 +72,8 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 
 | File                                                     | Contents                                                                                                                                                                                                                                                                         | When to read                                               |
 |----------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-| [`graphics/tile_pipeline.md`](graphics/tile_pipeline.md) | **Complete tile rendering pipeline.** Tileset pointer table ($8F:E6A2), 2bpp/4bpp tile decompression, metatile definitions, CRE tiles, palette loading, VRAM layout.                                                                                                             | Before modifying TileGraphics or TileDecoder               |
-| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** 64-byte species header format, OAM spritemap format (5-byte entries), instruction list tracing, BG2 tilemap rendering (Phantoon/Kraid), enemy GFX set 4-entry hardware limit, all boss data tables (ROM-scanned), rendering pipeline summary. | Before modifying EnemySpriteGraphics or adding new enemies |
+| [`graphics/tile_pipeline.md`](graphics/tile_pipeline.md) | **Complete tile rendering pipeline.** Tileset pointer table ($8F:E6A2), 2bpp/4bpp tile decompression, metatile definitions, CRE tiles, animated-tile DMA, item-PLM graphics/slots, palette loading, VRAM layout.                                                                                          | Before modifying TileGraphics, TileDecoder, room tile animation, or item graphics |
+| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 64-byte species headers and raw `GRAPHADR` ownership/aliases, OAM spritemap format (5-byte entries), instruction-list tracing, BG2 tilemap rendering, enemy GFX set 4-entry hardware limit, and the remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
 
 ### Reference Data (`docs/reference/`)
 
@@ -102,13 +102,13 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build, source-symbol/asset/LZ5/tileset catalogs, CRE ownership, independent tile/metatile format proof, strict fixture contract, and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, and all-species enemy-header/`GRAPHADR` proof; strict fixture contract; and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 
 | Script                                                         | Usage                                                                                                                       |
 |----------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
-| [`code/scan_enemies.py`](code/scan_enemies.py)                 | Scan all enemy species headers from ROM. Outputs text, markdown tables, or JSON. `python3 scan_enemies.py <rom> --markdown` |
+| [`code/scan_enemies.py`](code/scan_enemies.py)                 | Scan the source-verified inventory of all 164 enemy species headers from ROM. Outputs text, Markdown tables, or JSON. `python3 scan_enemies.py <rom> --markdown` |
 | [`code/dump_room_data.py`](code/dump_room_data.py)             | Dump detailed room data: headers, states, doors, PLMs, door blocks. `python3 dump_room_data.py <rom> 0x91F8`                |
 | [`code/compare_doors.py`](code/compare_doors.py)               | Compare door data between vanilla and edited ROMs.                                                                          |
 | [`code/scan_state_selectors.py`](code/scan_state_selectors.py) | Scan all room state selectors across the ROM.                                                                               |

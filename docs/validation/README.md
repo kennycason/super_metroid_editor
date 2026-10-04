@@ -203,7 +203,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve standalone boss/Samus constants and all 87 tileset pointer fields are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -217,8 +217,8 @@ This matrix tracks source-backed proof, not feature existence.
 | G-05 | CRE graphics/tile table | **Verified** | Exact compressed/decoded sizes and hashes, the adjacent ROM split, WRAM/VRAM boundaries, semantic tile range, and all four direct engine consumers are source-backed. |
 | G-06 | 29 tileset pointer triples | **Verified** | All 87 fields match the clean ROM, detected catalog, source labels, named assets, and decoded hashes; 20 intentional alias groups are explicit. |
 | G-07 | Metatile words | **Verified** | All 45,056 source words match exact runtime placement/ownership and semantic hashes; all 65,536 possible words exhaustively round-trip tile/palette/priority/H/V fields. |
-| G-08 | Animated tiles | **Queued** | Verify all 64 extracted sequences and runtime destinations. |
-| G-09 | Item/PLM graphics | **Partial** | Verify all 17 extracted assets, tables, and VRAM placement. |
+| G-08 | Animated tiles | **Verified** | All 68 bank-$87 payloads, 94 reachable timed frame instructions, 20 object headers/DMA destinations, 64 area-bit mappings, and 15 engine call sites match named source and clean ROM. |
+| G-09 | Item/PLM graphics | **Verified** | All 17 bank-$89 payloads / 136 tiles, 51 visible/Chozo/shot-block PLM IDs and load records, five palette profiles, four runtime slots, and eight draw pointers match source, clean ROM, and SMEDIT's catalog/decoder. |
 
 ### Rooms and world data
 
@@ -242,8 +242,8 @@ This matrix tracks source-backed proof, not feature existence.
 
 | ID | Unit | Current status | Source-backed target |
 |---|---|---|---|
-| E-01 | All bank `$A0` 64-byte species headers | **Partial** | Generate the species inventory and compare every macro field. |
-| E-02 | `GRAPHADR` raw tile ranges | **Partial** | Compare source label, exact size, aliases, and ROM bytes for every species. |
+| E-01 | All bank `$A0` 64-byte species headers | **Verified** | All 164 assembled headers / 4,756 macro fields match exact source expressions, rebuilt-ROM bytes, and SMEDIT's full production parser; one explicitly unused header remains inventoried. |
+| E-02 | `GRAPHADR` raw tile ranges | **Verified** | All 155 nonempty species associations map to 100 unique ranges and 99 named assets with byte/pixel identity; 25 shared-start groups, 24 exact-range aliases, nine overlapping range pairs, and six multi-asset ranges are explicit. |
 | E-03 | Palette pointer/bank behavior | **Partial** | Compare every species plus runtime palette overrides and multi-row cases. |
 | E-04 | Standard 5-byte OAM entries | **Covered** | Assert signed X/Y, size, tile, name table, priority, palette, and flips. |
 | E-05 | Extended/multibox spritemaps | **Covered** | Match named structures and child/hitbox pointers, not bank scans. |
@@ -311,8 +311,8 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 ### P1 — Prove the ordinary enemy pipeline end to end
 
-- [ ] **P1.1** Generate all species headers from `EnemyHeader` macros and compare all fields.
-- [ ] **P1.2** Compare every `GRAPHADR` range and alias with named enemy tile assets.
+- [x] **P1.1** Generate all species headers from `EnemyHeader` macros and compare all fields.
+- [x] **P1.2** Compare every `GRAPHADR` range and alias with named enemy tile assets.
 - [ ] **P1.3** Turn the OAM parser tests into named-source format fixtures.
 - [ ] **P1.4** Measure instruction-list opcode/control-flow coverage; list every miss.
 - [ ] **P1.5** Validate three vertical slices: Zoomer, Sidehopper, and one Space Pirate.
@@ -359,7 +359,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | Date | Change | Evidence |
 |---|---|---|
 | 2026-10-02 | Established exact source oracle | Asar build produced a byte-identical ROM with the hashes above. |
-| 2026-10-02 | Inventoried extracted assets | 1,130 `.bin` files; major groups include 418 Samus tiles, 246 level-data streams, 197 tile payloads, 70 backgrounds, and 64 animated-tile payloads. |
+| 2026-10-02 | Inventoried extracted assets | 1,130 `.bin` files; major groups include 418 Samus tiles, 246 level-data streams, 197 tile payloads, and 70 backgrounds. The initial filename-prefix count of 64 animated-tile payloads was later corrected to 68. |
 | 2026-10-02 | Ran focused SMEDIT baseline | 114 tests, 0 failures across selected room/graphics/sprite/Samus suites. |
 | 2026-10-02 | Found Phantoon legacy range mismatch | SMEDIT `$B7:970F/$B7:9808` falls inside exact `Tiles_MotherBrainLegs`; exact Phantoon tiles are `$AC:AA00`. |
 | 2026-10-02 | Found Kraid legacy range mismatch | SMEDIT `$B9:FA38` is exact `Background_Brinstar_1A_Kraid_Upper`, not pixel graphics. |
@@ -375,6 +375,9 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-03 | Proved all tileset pointer triples | A source-derived manifest maps 87 pointer fields across 29 tilesets to 55 named assets (14 tables, 16 graphics, 25 palettes), verifies the secondary pointer table, and records 20 intentional alias groups. Clean-ROM/catalog pointers and all decoded hashes match. |
 | 2026-10-03 | Proved CRE ownership and consumers | CRE graphics are 8,349 compressed / 12,288 decoded bytes and end exactly at the 1,431 compressed / 2,048 decoded-byte CRE tile table. Runtime boundaries, all 1,024 CRE subtile references, and both graphics plus both table consumer routines are asserted. This also corrected the old documentation's reversed metatile-table order. |
 | 2026-10-03 | Proved tile pixels and metatile semantics | An independent source oracle now covers 10,944 4bpp tiles, 256 Layer-3 2bpp tiles, and 45,056 metatile words. It proved the two global split-plane Ceres payloads, corrected the unused legacy 2bpp/4bpp decoder, distinguished the normal 576-tile source payload from its 640-tile runtime capacity, and caught Kraid's CRE-table ownership independently of its graphics overlay. |
+| 2026-10-03 | Proved animated-tile ownership and DMA | Source/ROM graph traversal covers 68 raw payloads, 94 reachable timed frame instructions, 20 object definitions, all 64 area/FX-bit mappings, and all 15 spawn/handler/DMA call sites. Sixty-five payloads are referenced; three explicitly unused `X` ranges are orphaned. The proof corrected the old 64-file prefix count, which omitted four `UNUSED_AnimatedTiles_CrateriaLava_*` files. |
+| 2026-10-04 | Proved item-PLM graphics and slot ownership | All 17 contiguous bank-$89 payloads decode to 136 standard-4bpp tiles / 34 frames. The 51 visible/Chozo/shot-block source PLM IDs match `RomParser.ITEM_DEFS`; all source pointers, palette bytes, four wrapping VRAM/metatile slots, eight draw pointers, and the interpreter call are asserted. This establishes the fifth-item visual-overwrite boundary without confusing pickup images with OAM sprites. |
+| 2026-10-04 | Proved every enemy species header and raw graphics range | All 164 bank-$A0 headers / 4,756 source macro fields now match rebuilt-ROM bytes and SMEDIT's full 64-byte parser. All 155 nonempty `GRAPHADR` associations decode byte/pixel-exactly and resolve through 168 contiguous segments into 99 named assets. The manifest makes 25 shared starts, nine overlap pairs, six cross-asset transfers, and six bit-15 alternate-layout headers explicit; it also removed eight catalog IDs that landed mid-header. |
 
 ## Deliberately deferred
 
