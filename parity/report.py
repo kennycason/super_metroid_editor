@@ -117,7 +117,10 @@ def foundation_checks(test_results: Dict[str, object]) -> List[Dict[str, object]
             "id": "F-05",
             "name": "Address drift coverage",
             "status": "partial" if test_status == "pass" else "mismatch",
-            "evidence": "Twelve seed constants are checked; the remaining address inventory is not yet mapped.",
+            "evidence": (
+                "Twelve standalone constants plus all 87 tileset fields are source-linked; "
+                "the remaining address inventory is not yet mapped."
+            ),
         },
         {
             "id": "F-06",
@@ -180,12 +183,53 @@ def compression_checks(test_results: Dict[str, object], lz5: Dict[str, object]) 
     ]
 
 
+def tileset_checks(test_results: Dict[str, object], tilesets: Dict[str, object]) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.TilesetSourceParityTest"
+    cre_status = named_test_status(
+        test_results,
+        class_name,
+        "CRE ownership boundaries and every engine consumer match source",
+    )
+    pointer_status = named_test_status(
+        test_results,
+        class_name,
+        "all 29 tileset pointer triples match named source assets",
+    )
+    cre = tilesets["cre"]
+    graphics = cre["graphics"]
+    tile_table = cre["tileTable"]
+    return [
+        {
+            "id": "G-05",
+            "name": "CRE graphics/tile table ownership",
+            "status": cre_status,
+            "evidence": (
+                f"Exact {graphics['decompressedSize']:,}-byte graphics and "
+                f"{tile_table['decompressedSize']:,}-byte metatile payloads, contiguous ROM split, "
+                f"runtime WRAM/VRAM boundaries, and all "
+                f"{graphics['consumers']['consumerCount'] + tile_table['consumers']['consumerCount']} "
+                "direct engine consumers match source."
+            ),
+        },
+        {
+            "id": "G-06",
+            "name": "Tileset pointer manifest",
+            "status": pointer_status,
+            "evidence": (
+                f"All {tilesets['pointerFieldCount']} fields in {tilesets['tilesetCount']} pointer triples "
+                f"map to {tilesets['uniqueResourceCount']} named assets; intentional aliases are explicit."
+            ),
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
     symbols = report["symbols"]
     assets = report["assets"]
     lz5 = report["lz5"]
+    tilesets = report["tilesets"]
     tests = report["tests"]
     lines = [
         "# SMEDIT Parity Report",
@@ -238,12 +282,25 @@ def markdown_report(report: Dict[str, object]) -> str:
                 f"{command}={count:,}" for command, count in lz5["commandCounts"].items()
             )
             + ".",
+            f"- Tilesets: **{tilesets['count']}** triples / **{tilesets['pointerFieldCount']}** fields map to "
+            f"**{tilesets['uniqueResourceCount']}** named source assets "
+            f"({tilesets['uniqueResourceCounts']['tileTable']} tables, "
+            f"{tilesets['uniqueResourceCounts']['graphics']} graphics, "
+            f"{tilesets['uniqueResourceCounts']['palette']} palettes).",
+            "- Intentional tileset alias groups: "
+            + ", ".join(
+                f"{kind}={count}" for kind, count in tilesets["aliasGroupCounts"].items()
+            )
+            + ".",
+            f"- CRE: **{tilesets['cre']['graphicsDecompressedBytes']:,}** graphics bytes and "
+            f"**{tilesets['cre']['tileTableDecompressedBytes']:,}** tile-table bytes; "
+            f"**{tilesets['cre']['consumerCount']}** direct engine consumers inventoried.",
             f"- Strict parity tests: **{tests['tests']}** run, **{tests['failures']}** failures, "
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
-            "- Address drift: **12** named SMEDIT constants currently mapped.",
+            "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, and compression records are in `symbols.json`, `assets.json`, "
-            "and `lz5.json` beside this report.",
+            "Detailed symbol, asset, compression, tileset, alias, and CRE records are in `symbols.json`, "
+            "`assets.json`, `lz5.json`, and `tilesets.json` beside this report.",
             "",
         ]
     )
@@ -260,14 +317,21 @@ def main() -> int:
     symbols_path = report_dir / "symbols.json"
     assets_path = report_dir / "assets.json"
     lz5_path = report_dir / "lz5.json"
-    if not symbols_path.is_file() or not assets_path.is_file() or not lz5_path.is_file():
-        print("ERROR: symbol/asset/LZ5 reports are missing; run ./gradlew parityReport", file=sys.stderr)
+    tilesets_path = report_dir / "tilesets.json"
+    if (
+        not symbols_path.is_file()
+        or not assets_path.is_file()
+        or not lz5_path.is_file()
+        or not tilesets_path.is_file()
+    ):
+        print("ERROR: symbol/asset/LZ5/tileset reports are missing; run ./gradlew parityReport", file=sys.stderr)
         return 2
 
     reference = read_properties(REFERENCE_FILE)
     symbols = json.loads(symbols_path.read_text(encoding="utf-8"))
     assets = json.loads(assets_path.read_text(encoding="utf-8"))
     lz5 = json.loads(lz5_path.read_text(encoding="utf-8"))
+    tilesets = json.loads(tilesets_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
         raise ValueError("symbol report count does not match the pinned reference")
@@ -288,7 +352,42 @@ def main() -> int:
         ):
             raise ValueError(f"LZ5 command {command} count does not match the pinned reference")
 
-    checks = foundation_checks(tests) + compression_checks(tests, lz5)
+    pinned_tileset_fields = {
+        "tilesetCount": "tilesets.count",
+        "pointerFieldCount": "tilesets.pointerFields.count",
+        "uniqueResourceCount": "tilesets.resources.unique.count",
+    }
+    for field, property_name in pinned_tileset_fields.items():
+        if int(tilesets[field]) != int(reference[property_name]):
+            raise ValueError(f"tileset report field {field} does not match the pinned reference")
+    for kind in ("tileTable", "graphics", "palette"):
+        if int(tilesets["uniqueResourceCounts"][kind]) != int(
+            reference[f"tilesets.{kind}.unique.count"]
+        ):
+            raise ValueError(f"tileset {kind} unique count does not match the pinned reference")
+        if int(tilesets["aliasGroupCounts"][kind]) != int(
+            reference[f"tilesets.{kind}.aliasGroups.count"]
+        ):
+            raise ValueError(f"tileset {kind} alias count does not match the pinned reference")
+    for kind, property_prefix in (("graphics", "cre.graphics"), ("tileTable", "cre.tileTable")):
+        cre_resource = tilesets["cre"][kind]
+        expected_fields = {
+            "compressedSize": f"{property_prefix}.compressedBytes",
+            "decompressedSize": f"{property_prefix}.decompressedBytes",
+        }
+        for field, property_name in expected_fields.items():
+            if int(cre_resource[field]) != int(reference[property_name]):
+                raise ValueError(f"CRE {kind} {field} does not match the pinned reference")
+        if int(cre_resource["consumers"]["consumerCount"]) != int(
+            reference[f"{property_prefix}.consumer.count"]
+        ):
+            raise ValueError(f"CRE {kind} consumer count does not match the pinned reference")
+        if int(cre_resource["consumers"]["referenceCount"]) != int(
+            reference[f"{property_prefix}.reference.count"]
+        ):
+            raise ValueError(f"CRE {kind} reference count does not match the pinned reference")
+
+    checks = foundation_checks(tests) + compression_checks(tests, lz5) + tileset_checks(tests, tilesets)
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
         status: raw_summary[status]
@@ -296,9 +395,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-and-lz5",
+        "scope": "foundation-compression-and-shared-tilesets",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -322,6 +421,21 @@ def main() -> int:
             "unusedStreamCount": lz5["unusedCompressedStreamCount"],
             "maxDecompressedSize": lz5["maxDecompressedSize"],
             "commandCounts": lz5["aggregateCommandCounts"],
+        },
+        "tilesets": {
+            "count": tilesets["tilesetCount"],
+            "pointerFieldCount": tilesets["pointerFieldCount"],
+            "uniqueResourceCount": tilesets["uniqueResourceCount"],
+            "uniqueResourceCounts": tilesets["uniqueResourceCounts"],
+            "aliasGroupCounts": tilesets["aliasGroupCounts"],
+            "cre": {
+                "graphicsDecompressedBytes": tilesets["cre"]["graphics"]["decompressedSize"],
+                "tileTableDecompressedBytes": tilesets["cre"]["tileTable"]["decompressedSize"],
+                "consumerCount": (
+                    tilesets["cre"]["graphics"]["consumers"]["consumerCount"]
+                    + tilesets["cre"]["tileTable"]["consumers"]["consumerCount"]
+                ),
+            },
         },
         "tests": tests,
     }

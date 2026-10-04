@@ -17,6 +17,9 @@ packaged application, project format, or ROM exporter.
   exact ROM range, size, aliases, and content hash.
 - `lz5_oracle.py` independently models `$80:B119`, classifies exact compressed
   assets, and records decoded sizes, hashes, and command coverage.
+- `tileset_manifest.py` resolves all 29 source pointer triples to named assets,
+  records intentional aliases, and proves CRE ROM/RAM/VRAM ownership plus every
+  direct engine consumer.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
 - `test-support/` provides one fixture contract to JVM tests in all modules.
 
@@ -35,8 +38,8 @@ export SMEDIT_TEST_ROM='/absolute/path/to/clean/unheadered/Super Metroid.sfc'
 
 `parityReport` depends on the bootstrap, build, fixture check, catalogs, and strict
 tagged tests. The individual `parityBootstrap`, `parityCheck`,
-`parityBuildReference`, `paritySymbols`, `parityAssets`, and `parityLz5Oracle` tasks
-remain available for focused investigation.
+`parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
+`parityTilesets` tasks remain available for focused investigation.
 
 `parityBootstrap` clones/fetches
 `https://github.com/InsaneFirebat/sm_disassembly.git` and checks out the commit in
@@ -86,12 +89,23 @@ all 421 classified streams to match those decoded sizes and SHA-256 hashes and t
 survive SMEDIT decode/re-encode/decode byte-exactly. The pinned vanilla corpus uses
 commands 0–6; command 7 is covered separately by a synthetic engine-format test.
 
+`parityTilesets` writes ignored `parity/reports/tilesets.json`. It parses the source
+definitions rather than maintaining a second pointer list: all 29 table entries and
+the secondary `Tileset_Pointers` table must be contiguous and ordered, and each of
+the 87 fields must resolve through `symbols.sym`, the extracted asset manifest, and
+the independent LZ5 oracle. The report records 55 unique payloads and every
+intentional alias group. It also proves the two CRE streams' exact boundary,
+decoded ownership, semantic tile range, and all direct assembly references. Tagged
+JVM tests then compare that source manifest with the clean ROM, SMEDIT's detected
+graphics catalog, production constants, and decoded hashes. A stale pointer,
+renamed/unmapped asset, changed alias, or added/removed CRE consumer fails parity.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
-foundation and LZ5 chain and writes ignored `parity-report.json` and
+foundation, LZ5, tileset, and CRE chain and writes ignored `parity-report.json` and
 `parity-report.md` beside the detailed catalogs. The report records exact commits and
-hashes, pass/partial/mismatch/uncovered counts, warnings, command coverage, and JUnit
-results. Any live mismatch fails the task after the underlying evidence has been
-evaluated.
+hashes, pass/partial/mismatch/uncovered counts, warnings, command coverage, pointer
+and alias counts, CRE consumers, and JUnit results. Any live mismatch fails the task
+after the underlying evidence has been evaluated.
 
 ## Overrides and normal tests
 
@@ -122,6 +136,6 @@ module's `build/test-output/`, never into `test-resources/`.
 Do not run `git pull` inside the managed checkout and call the result equivalent.
 Updating the oracle means deliberately changing `disassembly.commit`, regenerating
 the manifests, running the strict parity suite, and reviewing every resulting
-difference. The report currently covers the foundation and LZ5 compression;
-subsystem coverage expands incrementally through the matrix in
+difference. The report currently covers the foundation, LZ5 compression, tileset
+pointers, and CRE ownership; subsystem coverage expands incrementally through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

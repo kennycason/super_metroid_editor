@@ -108,6 +108,51 @@ The table spans from `$8F:E6A2` to `$8F:E7A6` (29 × 9 = 261 bytes).
 Immediately following at `$8F:E7A7` is a secondary table P.JBoy labels
 "Tileset pointers" (29 × 2 = 58 bytes of 16-bit within-bank pointers).
 
+### Source-owned pointer manifest (verified 2026-10-03)
+
+The exact source labels below are the canonical mapping. Repeated labels are
+intentional aliases, not missing assets. Across the 87 fields there are 55 unique
+compressed payloads: 14 metatile tables, 16 graphics sets, and 25 palettes.
+
+| ID | Tileset | Metatile-table asset | Graphics asset | Palette asset |
+|---:|---|---|---|---|
+| `$00` | Upper Crateria | `TileTables_0_1_UpperCrateria` | `Tiles_0_1_UpperCrateria` | `Palettes_0_UpperCrateria` |
+| `$01` | Red Crateria | `TileTables_0_1_UpperCrateria` | `Tiles_0_1_UpperCrateria` | `Palettes_1_RedCrateria` |
+| `$02` | Lower Crateria | `TileTables_2_3_LowerCrateria` | `Tiles_2_3_LowerCrateria` | `Palettes_2_LowerCrateria` |
+| `$03` | Old Tourian | `TileTables_2_3_LowerCrateria` | `Tiles_2_3_LowerCrateria` | `Palettes_3_OldTourian` |
+| `$04` | Wrecked Ship — power on | `TileTables_4_5_WreckedShip` | `Tiles_4_5_WreckedShip` | `Palettes_4_WreckedShip_PowerOn` |
+| `$05` | Wrecked Ship — power off | `TileTables_4_5_WreckedShip` | `Tiles_4_5_WreckedShip` | `Palettes_5_WreckedShip_PowerOff` |
+| `$06` | Green/blue Brinstar | `TileTables_6_GreenBlueBrinstar` | `Tiles_6_GreenBlueBrinstar` | `Palettes_6_GreenBlueBrinstar` |
+| `$07` | Red Brinstar / Kraid's lair | `TileTables_7_8_RedBrinstar_Kraid_StatuesHall` | `Tiles_7_8_RedBrinstar_Kraid_StatuesHall` | `Palettes_7_RedBrinstar_Kraid` |
+| `$08` | Pre-Tourian entrance corridor | `TileTables_7_8_RedBrinstar_Kraid_StatuesHall` | `Tiles_7_8_RedBrinstar_Kraid_StatuesHall` | `Palettes_8_StatuesHall` |
+| `$09` | Heated Norfair | `TileTables_9_A_Norfair` | `Tiles_9_A_Norfair` | `Palettes_9_HeatedNorfair` |
+| `$0A` | Unheated Norfair | `TileTables_9_A_Norfair` | `Tiles_9_A_Norfair` | `Palettes_A_UnheatedNorfair` |
+| `$0B` | Sandless Maridia | `TileTables_B_SandlessMaridia` | `Tiles_B_SandlessMaridia` | `Palettes_B_SandlessMaridia` |
+| `$0C` | Sandy Maridia | `TileTables_C_SandyMaridia` | `Tiles_C_SandyMaridia` | `Palettes_C_SandyMaridia` |
+| `$0D` | Tourian | `TileTables_D_E_Tourian` | `Tiles_D_E_Tourian` | `Palettes_D_Tourian` |
+| `$0E` | Mother Brain's room | `TileTables_D_E_Tourian` | `Tiles_D_E_Tourian` | `Palettes_E_MotherBrain` |
+| `$0F` | Blue Ceres | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_F_10_Ceres` | `Palettes_F_11_13_BlueCeres` |
+| `$10` | White Ceres | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_F_10_Ceres` | `Palettes_10_12_14_WhiteCeres` |
+| `$11` | Blue Ceres elevator | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_11_12_CeresElevator` | `Palettes_F_11_13_BlueCeres` |
+| `$12` | White Ceres elevator | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_11_12_CeresElevator` | `Palettes_10_12_14_WhiteCeres` |
+| `$13` | Blue Ceres Ridley's room | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_13_14_CeresRidley` | `Palettes_F_11_13_BlueCeres` |
+| `$14` | White Ceres Ridley's room | `TileTables_F_10_11_12_13_14_Ceres` | `Tiles_13_14_CeresRidley` | `Palettes_10_12_14_WhiteCeres` |
+| `$15` | Map room / Tourian entrance | `TileTables_15_16_17_18_19_UtilityRoom_Statues` | `Tiles_15_16_17_18_19_UtilityRoom_Statues` | `Palettes_Map_Statues` |
+| `$16` | Wrecked Ship map — power off | `TileTables_15_16_17_18_19_UtilityRoom_Statues` | `Tiles_15_16_17_18_19_UtilityRoom_Statues` | `Palettes_16_WreckedShipMap_PowerOff` |
+| `$17` | Blue refill room | `TileTables_15_16_17_18_19_UtilityRoom_Statues` | `Tiles_15_16_17_18_19_UtilityRoom_Statues` | `Palettes_17_BlueRefill` |
+| `$18` | Yellow refill room | `TileTables_15_16_17_18_19_UtilityRoom_Statues` | `Tiles_15_16_17_18_19_UtilityRoom_Statues` | `Palettes_18_YellowRefill` |
+| `$19` | Save room | `TileTables_15_16_17_18_19_UtilityRoom_Statues` | `Tiles_15_16_17_18_19_UtilityRoom_Statues` | `Palettes_19_SaveStation` |
+| `$1A` | Kraid's room | `TileTables_1A_Kraid` | `Tiles_1A_Kraid` | `Palettes_1A_Kraid` |
+| `$1B` | Crocomire's room | `TileTables_1B_Crocomire` | `Tiles_1B_Crocomire` | `Palettes_1B_Crocomire` |
+| `$1C` | Draygon's room | `TileTables_1C_Draygon` | `Tiles_1C_Draygon` | `Palettes_1C_Draygon` |
+
+There are 8 aliased metatile-table groups, 10 aliased graphics groups, and 2
+aliased palette groups. `parityTilesets` derives those groups from source and writes
+their complete membership to ignored `parity/reports/tilesets.json`; the committed
+counts in `parity/reference.properties` make an unreviewed alias change fail parity.
+SMEDIT export uses copy-on-write, so editing one member can repoint only that entry
+without mutating the source shared by its siblings.
+
 ---
 
 ## 2. Metatile Table (Tile Table) — Exact Byte Layout
@@ -231,9 +276,15 @@ The full 1024-entry tile table is assembled from **two compressed sources**:
 2. **CRE tile table** — at fixed SNES address `$B9:A09D` (PC `$1CA09D`).
    Provides definitions for common elements (doors, save stations, etc.).
 
-Both are compressed with SM's LZ5 format. When decompressed, they are combined
-into the full 1024-entry table. The variable tile table fills the **lower**
-metatile indices and the CRE tile table fills the **upper** indices.
+Both are compressed with SM's LZ5 format. In a normal non-Ceres room, they are
+combined into the full 1024-entry table in this exact order:
+
+- CRE: `$7E:A000..A7FF`, metatile IDs `$000..0FF` (256 entries).
+- Tileset-specific/SCE: `$7E:A800..BFFF`, metatile IDs `$100..3FF` (up to 768 entries).
+
+The previous version of this document had those two metatile-ID ranges reversed.
+Ceres is the important exception: its full tileset table is decompressed at
+`$7E:A000` and the separate CRE table is skipped.
 
 ---
 
@@ -389,16 +440,21 @@ End Sub
 
 ### CRE (Common Room Elements)
 
-CRE provides universal tiles present in **every** room: doors, save stations,
-energy recharge, missile refill, spikes, shot blocks, crumble blocks, bomb blocks,
-speed booster blocks, grapple blocks, etc.
+CRE provides common room art such as doors, save stations, energy recharge,
+missile refill, spikes, shot blocks, crumble blocks, bomb blocks, speed booster
+blocks, and grapple blocks. Normal rooms combine it with their tileset-specific
+data; Ceres/Mode-7 and other engine-special layouts are explicit exceptions.
 
 ### Fixed ROM addresses
 
-| Data                  | SNES Address | PC Offset  | Approx Compressed Size |
-|-----------------------|-------------|------------|------------------------|
-| CRE 8×8 tile graphics | `$B9:8000`  | `$1C8000`  | ~$209D bytes           |
-| CRE tile table        | `$B9:A09D`  | `$1CA09D`  | ~$597 bytes            |
+| Data | Source label | SNES address | PC offset | Compressed | Decoded |
+|---|---|---:|---:|---:|---:|
+| CRE 8×8 tile graphics | `CRE_Tiles_Compressed` | `$B9:8000` | `$1C8000` | `$209D` / 8,349 bytes | `$3000` / 12,288 bytes |
+| CRE tile table | `CRE_TileTable_Compressed` | `$B9:A09D` | `$1CA09D` | `$0597` / 1,431 bytes | `$0800` / 2,048 bytes |
+
+The graphics compressed range is exactly `$B9:8000..A09C`; its exclusive end is
+the tile table's `$B9:A09D` start. This is an exact source boundary, not an
+approximation inferred from the next pointer.
 
 From SMILE's `SmileMod1.bas`:
 
@@ -407,16 +463,23 @@ Public CRETilesOffset As Long   ' = &H1C8000  (default offset of CRE tiles)
 Public CRETTableOffset As Long  ' = &H1CA09D  (default offset of CRE tile table)
 ```
 
-### CRE pointers in ROM (4 total, for repointing)
+### Complete CRE engine-consumer inventory
 
-From the Metroid Construction CRE repointing thread:
+These are not four contiguous three-byte pointer fields. Each routine constructs a
+24-bit decompression source through separate bank and low-word immediate loads. The
+source-backed inventory scans every assembly file and fails if an unclassified
+reference appears or if a consumer is added/removed.
 
-| PC Address | Points To          | Data Type         |
-|------------|--------------------|--------------------|
-| `$016415`  | CRE 8×8 GFX       | 3-byte SNES ptr   |
-| `$016797`  | CRE 8×8 GFX       | 3-byte SNES ptr   |
-| `$01683D`  | CRE tile table     | 3-byte SNES ptr   |
-| `$016AED`  | CRE tile table     | 3-byte SNES ptr   |
+| Resource | Consumer routine | Low-word load | Runtime destination/behavior |
+|---|---|---:|---|
+| CRE graphics | `DoorTransitionFunction_PlaceSamus_LoadTiles` | `$82:E418` | When the destination CRE bitset requests it (except the post-Crocomire special door), decode to staging buffer `$7E:7000..9FFF`, then transfer to VRAM `$2800..3FFF` as needed. |
+| CRE graphics | `Load_CRETiles_TilesetTiles_and_TilesetPalette` | `$82:E79A` | Decode directly to VRAM byte range `$5000..7FFF` (VRAM words `$2800..3FFF`). |
+| CRE tile table | `LoadLevelData_CRE_TileTable_ScrollData_PLMs_DoorASM_RoomASM` | `$82:E840` | Non-Ceres: decode CRE to `$7E:A000..A7FF`, then the selected tileset table to `$7E:A800`. Ceres: skip CRE and decode the full selected table at `$7E:A000`. |
+| CRE tile table | `Load_Level_Scroll_and_CRE_Data` | `$82:EAF0` | Same split, but reload CRE only when CRE bit `$0002` requests it; Ceres again loads its full table at `$7E:A000`. |
+
+The two bank-load instructions are at `$82:E413/$82:E795` for graphics and
+`$82:E83B/$82:EAEB` for the table. The manifest records all eight instruction
+references as four paired consumers.
 
 ### VRAM layout: How they combine
 
@@ -426,11 +489,13 @@ When loading a room, the game decompresses and places tile graphics into VRAM:
 VRAM byte offset    8×8 Tile numbers     Source
 ----------------    ----------------     ------
 $0000 - $4FFF       Tiles 0-639          Variable tileset (per graphics set)
-$5000 - $7FFF       Tiles 640-1023       CRE tiles (always the same)
+$5000 - $7FFF       Tiles 640-1023       CRE tiles (standard layout)
 ```
 
-The variable tileset **always** occupies the first `$5000` bytes = 640 tiles × 32 bytes.
-CRE tiles begin at byte offset `$5000` = tile index 640 = `$280`.
+In the standard layout, the variable tileset occupies the first `$5000` bytes =
+640 tiles × 32 bytes. CRE begins at byte offset `$5000` = tile index 640 = `$280`
+and contains exactly 384 tiles through index 1023. Ceres/Mode-7 and Kraid's room use
+special layouts and must not be forced through this standard overlay rule.
 
 From SMILE's `DecompressTilesForRip` (`UGraphics.bas`):
 
@@ -450,11 +515,13 @@ CombineArrays VarTiles, CRETiles, SizeOfVarTiles, SizeOfCRETiles, &H0, &H5000&, 
 ### Tile table combining
 
 Similarly, the metatile tables combine:
-- **Variable tile table** (from tileset entry bytes 0-2): provides metatile
-  definitions for the lower range of the 1024 indices. These metatiles reference
-  tile numbers 0-639 (the variable 8×8 tiles).
-- **CRE tile table** (from `$B9:A09D`): provides metatile definitions for the
-  upper range. These metatiles reference tile numbers 640+ (the CRE 8×8 tiles).
+- **CRE tile table** (from `$B9:A09D`): occupies metatile IDs `$000..0FF` at
+  `$7E:A000..A7FF`. All 1,024 subtile words in the vanilla table reference CRE
+  graphics tile numbers 640–1023.
+- **Variable tile table** (from tileset entry bytes 0-2): follows at `$7E:A800`
+  and provides metatile IDs `$100..3FF` in the standard layout.
+- **Ceres exception**: a full 8 KiB tileset table replaces both regions beginning
+  at `$7E:A000`; the separate CRE table is not loaded.
 
 ### What `DecompressTiles` and `DecompressTtable` do
 
@@ -676,16 +743,16 @@ For each of 1024 metatiles: ◄────────────────�
 |-------------------------------|---------------|-------------|---------------------|
 | Tileset table                 | `$8F:E6A2`   | `$07E6A2`   | 261 (29×9)          |
 | Tileset pointers (secondary)  | `$8F:E7A7`   | `$07E7A7`   | 58 (29×2)           |
-| CRE 8×8 tile graphics        | `$B9:8000`   | `$1C8000`   | ~$209D compressed   |
-| CRE tile table                | `$B9:A09D`   | `$1CA09D`   | ~$597 compressed    |
-| CRE GFX pointer #1            | —             | `$016415`   | 3-byte ptr          |
-| CRE GFX pointer #2            | —             | `$016797`   | 3-byte ptr          |
-| CRE tile table pointer #1     | —             | `$01683D`   | 3-byte ptr          |
-| CRE tile table pointer #2     | —             | `$016AED`   | 3-byte ptr          |
+| CRE 8×8 tile graphics        | `$B9:8000`   | `$1C8000`   | `$209D` compressed → `$3000` decoded |
+| CRE tile table                | `$B9:A09D`   | `$1CA09D`   | `$0597` compressed → `$0800` decoded |
+| CRE GFX low-word load #1      | `$82:E418`   | `$016418`   | paired immediate load |
+| CRE GFX low-word load #2      | `$82:E79A`   | `$01679A`   | paired immediate load |
+| CRE tile-table low-word load #1 | `$82:E840` | `$016840`   | paired immediate load |
+| CRE tile-table low-word load #2 | `$82:EAF0` | `$016AF0`   | paired immediate load |
 | Decompression (hardcoded dst) | `$80:B0FF`   | `$0030FF`   | —                   |
 | Decompression (variable dst)  | `$80:B119`   | `$003119`   | —                   |
 | Decompress to VRAM            | `$80:B271`   | `$003271`   | —                   |
-| Load CRE+tileset+palette      | `$82:E783`   | `$016783`   | —                   |
+| Load CRE+tileset+palette      | `$82:E78C`   | `$01678C`   | core routine (`$E783` is the DB-setting wrapper) |
 | Load level+CRE+tiletable      | `$82:E7D3`   | `$0167D3`   | —                   |
 | Load CRE bitset               | `$82:DDF1`   | `$015DF1`   | —                   |
 | Room headers start (Crateria) | `$8F:91F8`   | `$0711F8`   | variable            |

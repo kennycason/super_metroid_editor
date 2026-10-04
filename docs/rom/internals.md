@@ -383,6 +383,33 @@ Run `./gradlew parityReport` with `SMEDIT_TEST_ROM` configured to regenerate the
 evidence in ignored `parity/reports/lz5.json` and the aggregate report. See
 [`../../parity/README.md`](../../parity/README.md).
 
+### Tileset and CRE Ownership (VERIFIED 2026-10-03)
+
+`parityTilesets` parses the exact `$8F:E6A2` source table and proves all 29
+tile-table/graphics/palette triples against the clean ROM and SMEDIT's detected
+catalog. The 87 fields resolve to 55 source assets: 14 metatile tables, 16 graphics
+sets, and 25 palettes. Twenty intentional alias groups are recorded and pinned.
+
+The two CRE source ranges in bank `$B9` are adjacent: 8,349 compressed graphics
+bytes at `$B9:8000..A09C`, then the 1,431-byte compressed table at `$B9:A09D`.
+They decode to exactly 384 4bpp tiles (12,288 bytes) and 256 metatiles (2,048
+bytes). Standard runtime ownership is:
+
+- CRE graphics: tiles 640–1023, VRAM bytes `$5000..7FFF`; the door-transition
+  staging path uses WRAM `$7E:7000..9FFF`.
+- CRE metatiles: IDs `$000..0FF`, WRAM `$7E:A000..A7FF`.
+- Tileset-specific metatiles: IDs `$100..3FF`, WRAM beginning `$7E:A800`.
+
+All 1,024 words in the CRE metatile table reference tiles 640–1023. The complete
+direct consumer set is two graphics routines (`$82:E3C0`, `$82:E78C`) and two
+table-loading routines (`$82:E7D3`, `$82:EA73`). Ceres skips the separate CRE table
+and loads its full tileset table at `$7E:A000`; door transitions may retain existing
+CRE data unless the destination room's CRE bitset requests a refresh. The full
+per-instruction inventory and decoded hashes live in ignored
+`parity/reports/tilesets.json`; see
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md) for the named 29-row
+asset map.
+
 ### PLM Set Handling Across States (VERIFIED)
 
 Export correctly:

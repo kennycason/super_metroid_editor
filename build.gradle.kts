@@ -105,10 +105,21 @@ tasks.register<Exec>("parityLz5Oracle") {
     }
 }
 
+tasks.register<Exec>("parityTilesets") {
+    group = "verification"
+    description = "Generate the source-derived tileset pointer and CRE ownership manifest"
+    dependsOn("paritySymbols", "parityLz5Oracle")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/tileset_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
-    description = "Run strict foundation/LZ5 parity and write JSON/Markdown reports"
-    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", ":shared:parityTest")
+    description = "Run strict source/ROM parity and write JSON/Markdown reports"
+    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", "parityTilesets", ":shared:parityTest")
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/report.py")
 }
