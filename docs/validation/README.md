@@ -203,7 +203,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve standalone boss/Samus constants and all 87 tileset pointer fields are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/species-status chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -245,11 +245,11 @@ This matrix tracks source-backed proof, not feature existence.
 | E-01 | All bank `$A0` 64-byte species headers | **Verified** | All 164 assembled headers / 4,756 macro fields match exact source expressions, rebuilt-ROM bytes, and SMEDIT's full production parser; one explicitly unused header remains inventoried. |
 | E-02 | `GRAPHADR` raw tile ranges | **Verified** | All 155 nonempty species associations map to 100 unique ranges and 99 named assets with byte/pixel identity; 25 shared-start groups, 24 exact-range aliases, nine overlapping range pairs, and six multi-asset ranges are explicit. |
 | E-03 | Palette pointer/bank behavior | **Partial** | Compare every species plus runtime palette overrides and multi-row cases. |
-| E-04 | Standard 5-byte OAM entries | **Covered** | Assert signed X/Y, size, tile, name table, priority, palette, and flips. |
-| E-05 | Extended/multibox spritemaps | **Covered** | Match named structures and child/hitbox pointers, not bank scans. |
-| E-06 | Instruction-list interpreter | **Partial** | Replace pattern-search coverage claims with opcode/control-flow coverage metrics. |
-| E-07 | VRAM destination/name-table mapping | **Partial** | Recreate `ProcessEnemyTilesets` and runtime DMA destinations exactly. |
-| E-08 | All-species render inventory | **Queued** | Classify each species as verified OAM, composite, nonvisual, projectile, or unsupported. |
+| E-04 | Standard 5-byte OAM entries | **Verified** | All 2,312 named structures / 14,400 entries match source bytes and production decoding for signed X/Y, size, tile/name-table, priority, palette, and flips; all 12 valid empty structures remain explicit. |
+| E-05 | Extended/multibox spritemaps | **Verified** | All 811 named extended structures / 1,984 child links and 99 extended tilemaps / 2,763 words match source offsets, child types, hitbox pointers, runs, and production parsing. |
+| E-06 | Instruction-list interpreter | **Partial** | All 1,139 named lists / 7,820 records are source- and ROM-pinned. The generic fixed-chunk fallback recovers 2,543 of 4,395 renderable source frames (57.9%), misses 1,852 frames across 465 lists, and crosses named-list boundaries for 4,718 candidates. A fail-closed bounded interpreter now proves the Zoomer, Sidehopper, and walking Space Pirate visual paths, but broad handler/state semantics remain incomplete. |
+| E-07 | VRAM destination/name-table mapping | **Partial** | The eight active zero-transfer species now have exact read-only graphics providers: standard global sprite tiles for Elevator/Steam, shared Mother Brain head tiles for Zebetite/tubes, normal Baby Metroid tiles for the cutscene entity, and the Sidehopper-owned common corpse payload for three corpse species. Their independently resolved palette ownership remains editable or read-only as appropriate. Full `ProcessEnemyTilesets`, arbitrary room VRAM, and dynamic DMA modeling remain. |
+| E-08 | All-species render inventory | **Partial** | All 164 source headers are pinned as 134 assembled, 14 tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed. Production paths render 148 species. The inventory is complete; the 14 tile-sheet-only assembly gaps remain implementation work. |
 | E-09 | Sprite tile edit/export | **Partial** | Parse/edit/export/reparse, assert exact owned ranges and aliases. |
 | E-10 | Pre-rendered PNG fallbacks | **Partial** | Make fallback visible; never count it as a successful ROM-derived render. |
 
@@ -313,11 +313,14 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 - [x] **P1.1** Generate all species headers from `EnemyHeader` macros and compare all fields.
 - [x] **P1.2** Compare every `GRAPHADR` range and alias with named enemy tile assets.
-- [ ] **P1.3** Turn the OAM parser tests into named-source format fixtures.
-- [ ] **P1.4** Measure instruction-list opcode/control-flow coverage; list every miss.
-- [ ] **P1.5** Validate three vertical slices: Zoomer, Sidehopper, and one Space Pirate.
-- [ ] **P1.6** Produce an all-species status report that distinguishes assembled,
+- [x] **P1.3** Turn the OAM parser tests into named-source format fixtures.
+- [x] **P1.4** Measure instruction-list opcode/control-flow coverage; list every miss.
+- [x] **P1.5** Validate three vertical slices: Zoomer, Sidehopper, and one Space Pirate.
+- [x] **P1.6** Produce an all-species status report that distinguishes assembled,
   tile-sheet-only, composite, nonvisual, and failed.
+- [x] **P1.7** Resolve every active zero-transfer visual species through source-pinned
+  runtime graphics and palette owners; keep borrowed graphics/global palettes read-only
+  without suppressing independently loaded header palettes.
 
 ### P2 — Prove special composition
 
@@ -348,6 +351,12 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 ### P5 — Prepare, but do not yet ship, assembly-project mode
 
 - [ ] Define a source workspace descriptor and supported disassembly version.
+- [ ] Let SMEDIT provision the supported `sm_disassembly` checkout as an explicit
+  assembly workspace, then index its banks, labels, macros, and assets for a native
+  ASM editor mode.
+- [ ] Keep SMEDIT-authored comments, relationships, validation facts, and editing
+  context in a versioned overlay database so upstream source stays clean and can be
+  refreshed deliberately.
 - [ ] Make the reference manifest usable without hardcoded ROM addresses in UI code.
 - [ ] Add read-only browsing from source symbol to SMEDIT object and rendered asset.
 - [ ] Prototype source-owned asset edits in a disposable checkout.
@@ -378,6 +387,11 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-03 | Proved animated-tile ownership and DMA | Source/ROM graph traversal covers 68 raw payloads, 94 reachable timed frame instructions, 20 object definitions, all 64 area/FX-bit mappings, and all 15 spawn/handler/DMA call sites. Sixty-five payloads are referenced; three explicitly unused `X` ranges are orphaned. The proof corrected the old 64-file prefix count, which omitted four `UNUSED_AnimatedTiles_CrateriaLava_*` files. |
 | 2026-10-04 | Proved item-PLM graphics and slot ownership | All 17 contiguous bank-$89 payloads decode to 136 standard-4bpp tiles / 34 frames. The 51 visible/Chozo/shot-block source PLM IDs match `RomParser.ITEM_DEFS`; all source pointers, palette bytes, four wrapping VRAM/metatile slots, eight draw pointers, and the interpreter call are asserted. This establishes the fifth-item visual-overwrite boundary without confusing pickup images with OAM sprites. |
 | 2026-10-04 | Proved every enemy species header and raw graphics range | All 164 bank-$A0 headers / 4,756 source macro fields now match rebuilt-ROM bytes and SMEDIT's full 64-byte parser. All 155 nonempty `GRAPHADR` associations decode byte/pixel-exactly and resolve through 168 contiguous segments into 99 named assets. The manifest makes 25 shared starts, nine overlap pairs, six cross-asset transfers, and six bit-15 alternate-layout headers explicit; it also removed eight catalog IDs that landed mid-header. |
+| 2026-10-04 | Proved every named enemy OAM structure | A source-derived manifest and production-parser tests now cover 2,312 standard spritemaps / 14,400 entries, 811 extended spritemaps / 1,984 child associations, and 99 extended tilemaps / 2,763 words. The proof fixed valid zero-entry “nothing” spritemaps and the engine's low-byte-only extended child count (`$1001` Ceres steam), preserves OAM priority, recognizes source naming variants including eight one-off Zebetite labels, and explicitly excludes one source-declared Torizo orphan entry whose count is missing. |
+| 2026-10-04 | Measured every named enemy instruction list | The source manifest covers 1,139 lists / 7,820 records: 4,573 timed frames and 3,247 handler occurrences at 502 unique addresses. It pins exact operand widths and conservative control-flow classes, explicitly excludes 21 similarly named lists/routines owned by other interpreters, and validates the report against SMEDIT's generic preview fallback. That scanner recovers only 2,543 of 4,395 renderable source frames, misses 1,852 across 465 lists, and can walk into adjacent named blocks; its explicit miss inventory became the baseline for the bounded P1.5 interpreter. |
+| 2026-10-04 | Proved three ordinary-enemy vertical slices | Zoomer, Sidehopper, and the grey walking Space Pirate now have source-backed header, GRAPHADR, palette, entry-list, handler path, timed-frame, standard/extended OAM, geometry, render, and species-animation checks. The bounded interpreter preserves 17 frame occurrences / 15 unique spritemaps and eight handler occurrences, follows fallthrough and loops, stops at sleep, retains repeated poses, and fails explicitly on unknown handlers. This fixed Sidehopper's zero-frame preview and a test that had mislabeled stone Zoomer `$DD3F` as Sidehopper instead of using `$D93F`. |
+| 2026-10-04 | Classified every source enemy species | A production-path ledger now covers all 164 source headers: 126 assembled, 14 tile-sheet-only, 14 composite, two nonvisual, and eight failed; 140 have a real assembled preview. It reports source/catalog membership, GRAPHADR/palette availability, preview path, frame count, and an explicit reason per species. The audit also fixed Botwoon routing so the editor uses its 14-part composite pose instead of the generic head-only OAM path. |
+| 2026-10-04 | Resolved all zero-transfer visual species | Source-backed runtime ownership recovered Elevator, Ceres Steam, Zebetite, cutscene Baby Metroid, Mother Brain tubes, and the three non-owner corpse species. All eight now render 19 visible timed frames from exact lists/assets/palettes while their shared/global graphics remain read-only. Palette ownership is independent: five retain editable header palettes and three use read-only global rows. The complete ledger moves to 134 assembled / 14 tile-sheet-only / 14 composite / two nonvisual / zero failed, with 148 assembled previews. |
 
 ## Deliberately deferred
 

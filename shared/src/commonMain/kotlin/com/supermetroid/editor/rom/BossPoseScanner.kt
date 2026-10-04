@@ -51,6 +51,7 @@ class BossPoseScanner(private val romParser: RomParser) {
         /** Check if a species has known instruction lists from the decompilation. */
         fun hasKnownPoses(speciesId: Int): Boolean =
             speciesId == SPECIES_DRAYGON_BODY ||
+                speciesId == SPECIES_BOTWOON ||
                 speciesId in TORIZO_POSE_SPECIES_IDS ||
                 KNOWN_INSTR_LISTS.containsKey(speciesId)
 

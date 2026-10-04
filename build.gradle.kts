@@ -160,6 +160,39 @@ tasks.register<Exec>("parityEnemyHeaders") {
     }
 }
 
+tasks.register<Exec>("parityEnemyOam") {
+    group = "verification"
+    description = "Generate source-backed standard, extended, and tilemap enemy OAM structures"
+    dependsOn("paritySymbols")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/enemy_oam_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityEnemyInstructions") {
+    group = "verification"
+    description = "Measure named enemy instruction-list records and production preview coverage"
+    dependsOn("parityEnemyOam")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/enemy_instruction_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityEnemyVerticalSlices") {
+    group = "verification"
+    description = "Generate source-backed Zoomer, Sidehopper, and Space Pirate slices"
+    dependsOn("parityEnemyHeaders", "parityEnemyInstructions")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/enemy_vertical_slice_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -173,6 +206,9 @@ tasks.register<Exec>("parityReport") {
         "parityAnimatedTiles",
         "parityItemPlmGraphics",
         "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+        "parityEnemyVerticalSlices",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

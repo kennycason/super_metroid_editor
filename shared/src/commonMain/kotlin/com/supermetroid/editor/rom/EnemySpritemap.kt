@@ -21,9 +21,9 @@ package com.supermetroid.editor.rom
  *     - n: name table select (tile number bit 8)
  *     - cccccccc: tile number low 8 bits
  *
- * The instruction list at $0F92,x uses 4-byte entries:
- *   [timer(2)] [spritemap_ptr(2)]
- * Entries with timer >= 0x8000 are control opcodes (skipped).
+ * Instruction lists interleave frame records with variable-width control
+ * instructions. The discovery helpers below are intentionally best-effort;
+ * exact control-flow interpretation is a separate concern from OAM parsing.
  */
 class EnemySpritemap(private val romParser: RomParser) {
 
@@ -34,7 +34,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val palRow: Int,
         val hFlip: Boolean,
         val vFlip: Boolean,
-        val is16x16: Boolean
+        val is16x16: Boolean,
+        val priority: Int = 0
     )
 
     data class Spritemap(
@@ -46,6 +47,24 @@ class EnemySpritemap(private val romParser: RomParser) {
         val duration: Int,
         val spritemap: Spritemap,
         val renderableFrame: RenderableFrame = RenderableFrame.Oam(spritemap)
+    )
+
+    internal enum class InstructionTraceTermination {
+        LOOP,
+        SLEEP,
+        WAIT,
+        DELETE,
+        FRAME_LIMIT,
+        OPERATION_LIMIT,
+        UNSUPPORTED_HANDLER,
+        INVALID_DATA,
+    }
+
+    internal data class InstructionTrace(
+        val frames: List<AnimationFrame>,
+        val handlerAddresses: List<Int>,
+        val termination: InstructionTraceTermination,
+        val terminalAddress: Int,
     )
 
     data class AssembledSprite(
@@ -162,7 +181,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         if (pc < 0 || pc + 2 > rom.size) return null
 
         val count = readU16(rom, pc)
-        if (count !in 1..64) return null
+        // The shared "nothing" spritemaps are valid zero-entry structures.
+        if (count !in 0..64) return null
         if (pc + 2 + count * 5 > rom.size) return null
 
         val entries = mutableListOf<OamEntry>()
@@ -179,10 +199,11 @@ class EnemySpritemap(private val romParser: RomParser) {
 
             val tileNum = attr and 0x01FF
             val palRow = (attr shr 9) and 7
+            val priority = (attr shr 12) and 3
             val hFlip = (attr shr 14) and 1 != 0
             val vFlip = (attr shr 15) and 1 != 0
 
-            entries.add(OamEntry(xOffset, yOffset, tileNum, palRow, hFlip, vFlip, is16x16))
+            entries.add(OamEntry(xOffset, yOffset, tileNum, palRow, hFlip, vFlip, is16x16, priority))
         }
         return Spritemap(entries, snesAddr)
     }
@@ -207,7 +228,9 @@ class EnemySpritemap(private val romParser: RomParser) {
         val pc = romParser.snesToPc(snesAddr)
         if (pc < 0 || pc + 2 > rom.size) return null
 
-        val count = readU16(rom, pc)
+        // Vanilla reads only the low byte. Ceres steam deliberately uses a
+        // non-zero high byte ($1001), which must not turn into 4097 children.
+        val count = readU16(rom, pc) and 0xFF
         if (count !in 1..64) return null
         if (pc + 2 + count * 8 > rom.size) return null
 
@@ -293,6 +316,16 @@ class EnemySpritemap(private val romParser: RomParser) {
         val initPc = romParser.snesToPc((aiBank shl 16) or initAiPtr)
         if (initPc < 0 || initPc + 20 > rom.size) return null
 
+        SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS[speciesId and 0xFFFF]
+            ?.takeIf { (it ushr 16) == aiBank }
+            ?.let { verifiedList ->
+                traceInstructionList(verifiedList, maxFrames = 1)
+                    .frames
+                    .firstOrNull()
+                    ?.spritemap
+                    ?.let { return it }
+            }
+
         // Read tile data size to validate spritemap results
         val rawTileSize = readU16(rom, headerPc)
         val tileCount = (rawTileSize and 0x7FFF) / RomConstants.BYTES_PER_4BPP_TILE
@@ -328,9 +361,42 @@ class EnemySpritemap(private val romParser: RomParser) {
         val initPc = romParser.snesToPc((aiBank shl 16) or initAiPtr)
         if (initPc < 0 || initPc + 20 > rom.size) return emptyList()
 
+        val verifiedList = SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS[speciesId and 0xFFFF]
+        if (verifiedList != null && (verifiedList ushr 16) == aiBank) {
+            val trace = traceInstructionList(verifiedList, maxFrames)
+            if (
+                trace.frames.isNotEmpty() &&
+                trace.termination != InstructionTraceTermination.UNSUPPORTED_HANDLER &&
+                trace.termination != InstructionTraceTermination.INVALID_DATA
+            ) {
+                return trace.frames
+            }
+        }
+
         val instrListPtr = findInstructionListPointer(rom, initPc, aiBank) ?: return emptyList()
         return parseAnimationFrames(rom, instrListPtr, aiBank, maxFrames)
     }
+
+    /**
+     * Test seam for validating the legacy best-effort scanner against every
+     * named source instruction list, including lists that no species init AI
+     * happens to expose through [findAnimationFrames].
+     */
+    internal fun parseAnimationFramesAt(
+        snesAddr: Int,
+        maxFrames: Int = 32,
+    ): List<AnimationFrame> = parseAnimationFrames(
+        romParser.getRomData(),
+        snesAddr and 0xFFFF,
+        (snesAddr ushr 16) and 0xFF,
+        maxFrames,
+    )
+
+    /** Source-bounded interpreter used by the verified ordinary-enemy slices. */
+    internal fun traceInstructionListAt(
+        snesAddr: Int,
+        maxFrames: Int = 32,
+    ): InstructionTrace = traceInstructionList(snesAddr, maxFrames)
 
     fun findSpecialPreviewSpritemap(speciesId: Int): Spritemap? =
         when (speciesId) {
@@ -854,6 +920,40 @@ class EnemySpritemap(private val romParser: RomParser) {
         private const val METROID_SPECIES_ID = 0xDD7F
         private const val SUSPENSOR_PLATFORM_SPECIES_ID = 0xD83F
         private const val EXTENDED_TILEMAP_BASE_DEST = 0x2000
+        private const val MAX_INTERPRETER_OPERATIONS = 512
+
+        /**
+         * Exact vanilla entry lists proved by the source parity fixtures. These
+         * are deliberately narrow until additional init-AI paths are modeled.
+         */
+        private val SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS = mapOf(
+            0xD73F to 0xA394D6, // Elevator: global standard sprite tiles
+            0xD93F to 0xA3AA82, // Sidehopper, landed upside-up (init0 = 0)
+            0xDCFF to 0xA3E25C, // Zoomer, upside-right (init orientation = 0)
+            0xE1FF to 0xA6F061, // Ceres steam, visible up animation
+            0xE27F to 0xA6FDCC, // Big zebetite, HP >= 800
+            0xECBF to 0xA9CFA2, // Baby Metroid cutscene, initial animation
+            0xECFF to 0xA98C69, // Mother Brain falling tubes, bottom-left
+            0xEDFF to 0xA9ECF5, // Zoomer corpse, parameter 1 = 0
+            0xEE3F to 0xA9ED07, // Ripper corpse, parameter 1 = 0
+            0xEE7F to 0xA9ED13, // Skree corpse, parameter 1 = 0
+            0xF653 to 0xB2FB64, // Grey walking Space Pirate, facing left (init0 bit 0 = 0)
+        )
+
+        /** Handlers whose exact operand widths and linear behavior source parity proves. */
+        private val SOURCE_VERIFIED_LINEAR_HANDLERS = mapOf(
+            0xA3AA68 to 2, // Sidehopper: queue sound [[Y]]
+            0xA3AAFE to 0, // Sidehopper: ready to hop
+            0xA3E660 to 2, // Crawler/Zoomer: function = [[Y]]
+            0xA6F11D to 0, // Ceres steam: intangible and invisible
+            0xA6F135 to 0, // Ceres steam: tangible and visible
+            0xB2FCB8 to 2, // Walking pirate: function = [[Y]]
+        )
+
+        /** Source handlers which unconditionally replace the list pointer. */
+        private val SOURCE_VERIFIED_GOTO_HANDLERS = mapOf(
+            0xA9CFB4 to 0xA9CFA2, // Baby Metroid: go to initial animation
+        )
 
         private val METROID_INSIDE_SPRITEMAP_ADDRS = intArrayOf(
             0xA3F10D,
@@ -1316,6 +1416,125 @@ class EnemySpritemap(private val romParser: RomParser) {
         }
         if (frames.isEmpty()) return null
         return SpriteAnimation(enemyName, frames, loop = true)
+    }
+
+    /**
+     * Interpret the source-verified subset of the vanilla enemy instruction
+     * language. Unknown handlers stop with an explicit status so callers never
+     * mistake a guessed width for a successful trace.
+     */
+    private fun traceInstructionList(
+        startSnesAddr: Int,
+        maxFrames: Int,
+    ): InstructionTrace {
+        val rom = romParser.getRomData()
+        val bank = startSnesAddr and 0xFF0000
+        val frames = mutableListOf<AnimationFrame>()
+        val handlers = mutableListOf<Int>()
+        val visited = mutableSetOf<Long>()
+        var address = startSnesAddr
+        var loopCounter = 0
+
+        fun finish(termination: InstructionTraceTermination): InstructionTrace =
+            InstructionTrace(frames, handlers, termination, address)
+
+        fun pcFor(snesAddress: Int, bytes: Int): Int? {
+            val pc = romParser.snesToPc(snesAddress)
+            return pc.takeIf { it >= 0 && it + bytes <= rom.size }
+        }
+
+        fun wordAt(snesAddress: Int): Int? =
+            pcFor(snesAddress, 2)?.let { readU16(rom, it) }
+
+        fun byteAt(snesAddress: Int): Int? =
+            pcFor(snesAddress, 1)?.let { rom[it].toInt() and 0xFF }
+
+        fun advance(bytes: Int) {
+            address = bank or (((address and 0xFFFF) + bytes) and 0xFFFF)
+        }
+
+        repeat(MAX_INTERPRETER_OPERATIONS) {
+            val state = ((address.toLong() and 0xFFFFFFL) shl 16) or (loopCounter.toLong() and 0xFFFF)
+            if (!visited.add(state)) return finish(InstructionTraceTermination.LOOP)
+
+            val opcode = wordAt(address) ?: return finish(InstructionTraceTermination.INVALID_DATA)
+            if (opcode < 0x8000) {
+                val spritemapPointer = wordAt(bank or (((address and 0xFFFF) + 2) and 0xFFFF))
+                    ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                val spritemapAddress = bank or spritemapPointer
+                val (renderable, flattened) = parseRenderableSpritemap(spritemapAddress)
+                    ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                frames += AnimationFrame(opcode, flattened, renderable)
+                advance(4)
+                if (frames.size >= maxFrames) {
+                    return finish(InstructionTraceTermination.FRAME_LIMIT)
+                }
+                return@repeat
+            }
+
+            val handlerAddress = bank or opcode
+            handlers += handlerAddress
+            SOURCE_VERIFIED_GOTO_HANDLERS[handlerAddress]?.let { target ->
+                address = target
+                return@repeat
+            }
+            SOURCE_VERIFIED_LINEAR_HANDLERS[handlerAddress]?.let { operandBytes ->
+                advance(2 + operandBytes)
+                return@repeat
+            }
+
+            when (opcode) {
+                0x807C -> return finish(InstructionTraceTermination.DELETE)
+                0x808A -> advance(4) // call function [[Y]]
+                0x809C -> advance(6) // call function [[Y]] with A = [[Y] + 2]
+                0x80ED -> { // go to [[Y]]
+                    val target = wordAt(bank or (((address and 0xFFFF) + 2) and 0xFFFF))
+                        ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                    address = bank or target
+                }
+                0x80F2 -> { // go to Y + signed byte [[Y]]
+                    val operandAddress = bank or (((address and 0xFFFF) + 2) and 0xFFFF)
+                    val relative = byteAt(operandAddress)
+                        ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                    val signed = if (relative >= 0x80) relative - 0x100 else relative
+                    address = bank or (((operandAddress and 0xFFFF) + signed) and 0xFFFF)
+                }
+                0x8108, 0x8110 -> { // decrement timer; branch while non-zero
+                    loopCounter = (loopCounter - 1) and 0xFFFF
+                    if (loopCounter != 0) {
+                        val target = wordAt(bank or (((address and 0xFFFF) + 2) and 0xFFFF))
+                            ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                        address = bank or target
+                    } else {
+                        advance(4)
+                    }
+                }
+                0x8118 -> { // decrement timer; relative branch while non-zero
+                    loopCounter = (loopCounter - 1) and 0xFFFF
+                    if (loopCounter != 0) {
+                        val operandAddress = bank or (((address and 0xFFFF) + 2) and 0xFFFF)
+                        val relative = byteAt(operandAddress)
+                            ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                        val signed = if (relative >= 0x80) relative - 0x100 else relative
+                        address = bank or (((operandAddress and 0xFFFF) + signed) and 0xFFFF)
+                    } else {
+                        advance(3)
+                    }
+                }
+                0x8123 -> { // timer = [[Y]]
+                    loopCounter = wordAt(bank or (((address and 0xFFFF) + 2) and 0xFFFF))
+                        ?: return finish(InstructionTraceTermination.INVALID_DATA)
+                    advance(4)
+                }
+                0x812C -> advance(4) // skip the next instruction word
+                0x812F -> return finish(InstructionTraceTermination.SLEEP)
+                0x813A -> return finish(InstructionTraceTermination.WAIT)
+                0x814B -> advance(9) // seven-byte VRAM-transfer operand
+                0x8173, 0x817D -> advance(2) // off-screen processing flag
+                else -> return finish(InstructionTraceTermination.UNSUPPORTED_HANDLER)
+            }
+        }
+        return finish(InstructionTraceTermination.OPERATION_LIMIT)
     }
 
     private fun parseAnimationFrames(

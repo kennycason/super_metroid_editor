@@ -73,7 +73,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File                                                     | Contents                                                                                                                                                                                                                                                                         | When to read                                               |
 |----------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
 | [`graphics/tile_pipeline.md`](graphics/tile_pipeline.md) | **Complete tile rendering pipeline.** Tileset pointer table ($8F:E6A2), 2bpp/4bpp tile decompression, metatile definitions, CRE tiles, animated-tile DMA, item-PLM graphics/slots, palette loading, VRAM layout.                                                                                          | Before modifying TileGraphics, TileDecoder, room tile animation, or item graphics |
-| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 64-byte species headers and raw `GRAPHADR` ownership/aliases, OAM spritemap format (5-byte entries), instruction-list tracing, BG2 tilemap rendering, enemy GFX set 4-entry hardware limit, and the remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
+| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 species headers, raw `GRAPHADR` ownership/aliases, all named standard/extended OAM structures and tilemaps, measured coverage for all 1,139 named enemy instruction lists, complete Zoomer/Sidehopper/walking-Pirate visual slices, all-species production render status, BG2 rendering, enemy GFX set 4-entry hardware limit, and remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
 
 ### Reference Data (`docs/reference/`)
 
@@ -102,7 +102,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, and all-species enemy-header/`GRAPHADR` proof; strict fixture contract; and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, all-species enemy-header/`GRAPHADR`, named enemy-OAM proof, exhaustive enemy instruction-list measurement, three integrated ordinary-enemy slices, and the complete species render-status ledger; strict fixture contract; and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 
@@ -230,6 +230,21 @@ Shot=X(0x0040), Jump=A(0x0080), Dash=B(0x8000), ItemSel=Select(0x2000), ItemCanc
 ## IPS Patch Export
 
 Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 3-byte "EOF" footer. RLE: size=0 → `[2-byte run, 1-byte fill]`.
+
+---
+
+## Enemy Sprite Parity Status
+
+The source-complete ledger covers all 164 bank-`$A0` species headers: 134 assembled,
+14 tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed; 148
+species produce a ROM-derived assembled preview. Eight visual species intentionally
+declare a zero-byte graphics transfer. Their previews borrow exact shared/global VRAM
+providers (standard sprite tiles, Mother Brain head tiles, Baby Metroid tiles, or the
+common corpse payload), but those bytes remain read-only and are never exposed as the
+species' own tile edit/export range. Palette ownership is separate: five of those
+headers still load and own their palette row, while three select global runtime rows.
+See `docs/graphics/sprites.md` and
+`docs/validation/README.md` for the ownership table and remaining work.
 
 ---
 

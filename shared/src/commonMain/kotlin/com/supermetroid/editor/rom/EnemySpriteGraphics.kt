@@ -28,6 +28,39 @@ data class EnemyTileEditValidation(
     val expectedTileCount: Int? get() = expectedSize?.div(EnemySpriteGraphics.BYTES_PER_TILE)
 }
 
+/** Who owns bytes borrowed only for an assembled enemy preview. */
+enum class EnemyPreviewAssetOwnership {
+    SPECIES_HEADER,
+    SHARED_SPECIES,
+    GLOBAL_RUNTIME,
+}
+
+/**
+ * A render-only tile source. [editable] is deliberately false for graphics
+ * which the species header does not transfer through ProcessEnemyTilesets.
+ */
+data class EnemyPreviewTileSource(
+    val bytes: ByteArray,
+    val snesAddress: Int,
+    val byteCount: Int,
+    val label: String,
+    val ownership: EnemyPreviewAssetOwnership,
+    val sourceSpeciesId: Int? = null,
+    val compressed: Boolean = false,
+) {
+    val editable: Boolean get() = ownership == EnemyPreviewAssetOwnership.SPECIES_HEADER
+}
+
+/** Palette selected for preview, which can also be global/runtime-owned. */
+data class EnemyPreviewPaletteSource(
+    val colors: IntArray,
+    val snesAddress: Int,
+    val label: String,
+    val ownership: EnemyPreviewAssetOwnership,
+) {
+    val editable: Boolean get() = ownership == EnemyPreviewAssetOwnership.SPECIES_HEADER
+}
+
 /** Complete 64-byte bank-$A0 enemy species header. */
 data class EnemySpeciesHeader(
     val speciesId: Int,
@@ -90,6 +123,26 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val MOTHER_BRAIN_LEGS_TILES_SNES = 0xB79000
         private const val MOTHER_BRAIN_HEAD_TILES_SIZE = 0x1000
         private const val MOTHER_BRAIN_LEGS_TILES_SIZE = 0x1000
+        private const val STANDARD_SPRITE_TILES_SNES = 0x9AD200
+        private const val STANDARD_SPRITE_TILES_SIZE = 0x2000
+        private const val BABY_METROID_TILES_SNES = 0xB18400
+        private const val BABY_METROID_TILES_SIZE = 0x0C00
+        private const val CORPSE_COMMON_TILES_SNES = 0xB7C000
+        private const val CORPSE_COMMON_TILES_SIZE = 0x0E00
+        private const val COMMON_SPRITE_PALETTE_2_SNES = 0x9A8140
+        private const val COMMON_SPRITE_PALETTE_5_SNES = 0x9A81A0
+
+        private const val ELEVATOR_SPECIES_ID = 0xD73F
+        private const val CERES_STEAM_SPECIES_ID = 0xE1FF
+        private const val ZEBETITE_SPECIES_ID = 0xE27F
+        private const val MOTHER_BRAIN_HEAD_SPECIES_ID = 0xEC3F
+        private const val BABY_METROID_CUTSCENE_SPECIES_ID = 0xECBF
+        private const val MOTHER_BRAIN_TUBES_SPECIES_ID = 0xECFF
+        private const val CORPSE_SIDEHOPPER_SPECIES_ID = 0xED7F
+        private const val CORPSE_ZOOMER_SPECIES_ID = 0xEDFF
+        private const val CORPSE_RIPPER_SPECIES_ID = 0xEE3F
+        private const val CORPSE_SKREE_SPECIES_ID = 0xEE7F
+        private const val BABY_METROID_SPECIES_ID = 0xEEBF
         private const val CROCOMIRE_SKELETON_CHUNK_SIZE_BYTES = 0x200
         private const val TORIZO_SPECIES_ID = 0xEEFF
         private const val TORIZO_ORBS_SPECIES_ID = 0xEF3F
@@ -282,6 +335,44 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             return pal
         }
 
+        /**
+         * Resolve the palette that is actually present when the species is
+         * drawn. Elevator, Ceres steam, and zebetites bypass the palette field
+         * in their headers and select already-loaded global sprite rows in AI.
+         */
+        fun loadEnemyPreviewPaletteSource(
+            romParser: RomParser,
+            speciesId: Int,
+        ): EnemyPreviewPaletteSource? {
+            val global = when (speciesId and 0xFFFF) {
+                ELEVATOR_SPECIES_ID,
+                CERES_STEAM_SPECIES_ID -> Triple(
+                    COMMON_SPRITE_PALETTE_5_SNES,
+                    "Common sprite palette 5",
+                    EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
+                )
+                ZEBETITE_SPECIES_ID -> Triple(
+                    COMMON_SPRITE_PALETTE_2_SNES,
+                    "Common sprite palette 2",
+                    EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
+                )
+                else -> null
+            }
+            if (global != null) {
+                val colors = readPaletteAt(romParser, global.first) ?: return null
+                return EnemyPreviewPaletteSource(colors, global.first, global.second, global.third)
+            }
+
+            val header = readSpeciesHeader(romParser, speciesId) ?: return null
+            val colors = readEnemyPalette(romParser, speciesId) ?: return null
+            return EnemyPreviewPaletteSource(
+                colors = colors,
+                snesAddress = (header.aiBank shl 16) or header.palettePointer,
+                label = "Species palette",
+                ownership = EnemyPreviewAssetOwnership.SPECIES_HEADER,
+            )
+        }
+
         private fun torizoDisplayPaletteAddress(speciesId: Int): Int? =
             when (speciesId) {
                 TORIZO_SPECIES_ID -> TORIZO_NORMAL_PALETTE_SNES
@@ -422,6 +513,104 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             return rom.copyOfRange(block.pcAddress, block.pcAddress + tileDataSize)
         }
 
+        /**
+         * Resolve the bytes needed to draw a species without changing the
+         * species' edit/export ownership. A zero tile-data size means the game
+         * does not transfer graphics for that header; these explicit mappings
+         * reproduce the bytes which are already in VRAM at draw time.
+         */
+        fun loadEnemyPreviewTileSource(
+            romParser: RomParser,
+            speciesId: Int,
+            enemyTileData: ByteArray? = null,
+        ): EnemyPreviewTileSource? {
+            val id = speciesId and 0xFFFF
+            val header = readSpeciesHeader(romParser, id) ?: return null
+            // Ignore stale/custom project blocks for zero-transfer headers. They
+            // are not species-owned merely because a project contains that key.
+            val owned = if (header.tileDataSize > 0) {
+                enemyTileData ?: loadEnemyTileData(romParser, id)
+            } else {
+                null
+            }
+            if (owned != null) {
+                return EnemyPreviewTileSource(
+                    bytes = owned,
+                    snesAddress = header.tileDataAddress,
+                    byteCount = owned.size,
+                    label = "Species GRAPHADR",
+                    ownership = EnemyPreviewAssetOwnership.SPECIES_HEADER,
+                    sourceSpeciesId = id,
+                )
+            }
+
+            return when (id) {
+                ELEVATOR_SPECIES_ID -> rawPreviewSource(
+                    romParser,
+                    STANDARD_SPRITE_TILES_SNES,
+                    STANDARD_SPRITE_TILES_SIZE,
+                    "Standard sprite tiles",
+                    EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
+                )
+                CERES_STEAM_SPECIES_ID -> rawPreviewSource(
+                    romParser,
+                    STANDARD_SPRITE_TILES_SNES,
+                    STANDARD_SPRITE_TILES_SIZE,
+                    "Standard sprite tiles",
+                    EnemyPreviewAssetOwnership.GLOBAL_RUNTIME,
+                )
+                ZEBETITE_SPECIES_ID,
+                MOTHER_BRAIN_TUBES_SPECIES_ID -> rawPreviewSource(
+                    romParser,
+                    MOTHER_BRAIN_HEAD_TILES_SNES,
+                    MOTHER_BRAIN_HEAD_TILES_SIZE,
+                    "Mother Brain head tiles",
+                    EnemyPreviewAssetOwnership.SHARED_SPECIES,
+                    MOTHER_BRAIN_HEAD_SPECIES_ID,
+                )
+                BABY_METROID_CUTSCENE_SPECIES_ID -> rawPreviewSource(
+                    romParser,
+                    BABY_METROID_TILES_SNES,
+                    BABY_METROID_TILES_SIZE,
+                    "Baby Metroid tiles",
+                    EnemyPreviewAssetOwnership.SHARED_SPECIES,
+                    BABY_METROID_SPECIES_ID,
+                )
+                CORPSE_ZOOMER_SPECIES_ID,
+                CORPSE_RIPPER_SPECIES_ID,
+                CORPSE_SKREE_SPECIES_ID -> rawPreviewSource(
+                    romParser,
+                    CORPSE_COMMON_TILES_SNES,
+                    CORPSE_COMMON_TILES_SIZE,
+                    "Sidehopper/Zoomer/Ripper/Skree corpse tiles",
+                    EnemyPreviewAssetOwnership.SHARED_SPECIES,
+                    CORPSE_SIDEHOPPER_SPECIES_ID,
+                )
+                else -> null
+            }
+        }
+
+        private fun rawPreviewSource(
+            romParser: RomParser,
+            snesAddress: Int,
+            byteCount: Int,
+            label: String,
+            ownership: EnemyPreviewAssetOwnership,
+            sourceSpeciesId: Int? = null,
+        ): EnemyPreviewTileSource? {
+            val pc = romParser.snesToPc(snesAddress)
+            val rom = romParser.getRomData()
+            if (pc < 0 || pc + byteCount > rom.size) return null
+            return EnemyPreviewTileSource(
+                bytes = rom.copyOfRange(pc, pc + byteCount),
+                snesAddress = snesAddress,
+                byteCount = byteCount,
+                label = label,
+                ownership = ownership,
+                sourceSpeciesId = sourceSpeciesId,
+            )
+        }
+
         fun validateEnemyTileEdit(
             romParser: RomParser,
             speciesId: Int,
@@ -525,7 +714,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             speciesId: Int,
             enemyTileData: ByteArray? = null
         ): ByteArray? {
-            return enemyTileData ?: loadEnemyTileData(romParser, speciesId)
+            return loadEnemyPreviewTileSource(romParser, speciesId, enemyTileData)?.bytes
         }
 
         fun loadCrocomireRoomTileData(romParser: RomParser): ByteArray? {

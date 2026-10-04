@@ -501,9 +501,61 @@ Ridley headers each cover all five adjacent `Tiles_Ridley_*` chunks.
 `parityEnemyHeaders` verifies source expressions, symbol offsets, rebuilt-ROM bytes,
 independent 4bpp pixel hashes, production parsing, catalog membership, and the complete
 segment/alias/overlap inventory. Evidence lives in ignored
-`parity/reports/enemy-headers.json`; OAM instruction/spritemap interpretation and
-alias-aware edit conflict handling remain separate E-03..E-10 work in the validation
-matrix. See [`../graphics/sprites.md`](../graphics/sprites.md) for the header layout.
+`parity/reports/enemy-headers.json`. Palette overrides, instruction control flow,
+render classification, and edit UX remain separate E-03/E-06..E-10 work in the
+validation matrix. See [`../graphics/sprites.md`](../graphics/sprites.md) for the
+header layout.
+
+### Enemy OAM and Extended Spritemaps (VERIFIED 2026-10-04)
+
+The named source corpus in banks `$A0`, `$A2..AA`, and `$B2..B3` contains 2,312
+standard spritemaps with 14,400 five-byte OAM entries, 811 extended/multibox
+spritemaps with 1,984 child associations, and 99 extended tilemaps with 441 runs /
+2,763 words. `parityEnemyOam` independently decodes these structures from the
+byte-identical reference ROM and tests every field and pointer through
+`EnemySpritemap`'s production parsers.
+
+Standard counts may be zero for shared “nothing” structures. Extended counts use
+only the low byte of the count word; the high byte is ignored by the engine, and
+Ceres steam intentionally uses `$1001` to mean one child. Extended children contain
+signed 16-bit X/Y offsets, a same-bank standard-OAM or `$FFFE` extended-tilemap
+pointer, and a hitbox pointer. Instruction lists remain variable-width programs:
+timed frames are `[duration, spritemap]`, while words at or above `$8000` dispatch
+handlers with handler-specific operands and branches. `parityEnemyInstructions`
+now pins all 1,139 named lists / 7,820 records and measures the present scanner:
+2,543 of 4,395 renderable source frames recovered, 1,852 missed across 465 lists,
+and no semantic execution of 502 unique handler addresses in the generic fallback.
+A bounded interpreter now proves complete visual paths for Zoomer, Sidehopper, and
+the grey walking Space Pirate (17 frame occurrences / 15 unique spritemaps), including
+fallthrough, backward loops, sleep, repeated frames, and extended OAM. Broad
+interpretation remains later E-06 work. See [`../graphics/sprites.md`](../graphics/sprites.md);
+machine-readable evidence is in ignored `parity/reports/enemy-oam.json` and
+`parity/reports/enemy-instructions.json`, with the three integrated slices in
+`parity/reports/enemy-vertical-slices.json`.
+
+### Enemy Species Rendering Status (MEASURED 2026-10-04)
+
+The source-complete E-08 ledger executes SMEDIT's production preview paths for every
+one of the 164 bank-`$A0` headers. It classifies 134 as assembled, 14 as known
+composites, 14 as tile-sheet-only, two as nonvisual, and zero as failed; 148 species
+produce at least one assembled frame. A tile sheet is explicitly not an assembled
+render.
+
+Eight active visual headers legitimately transfer zero graphics bytes. Their E-07
+preview contract follows runtime ownership instead: Elevator and Ceres Steam borrow
+the global standard sprite bank, Zebetite and Mother Brain tubes borrow Mother Brain
+head graphics, cutscene Baby Metroid borrows the normal Baby Metroid payload, and the
+three small corpse species borrow the Sidehopper-owned common corpse payload. Global
+palette rows 5 and 2 are selected for Elevator/Steam and Zebetite respectively. These
+providers are preview-only; a zero-byte species never gains a writable tile range.
+`ProcessEnemyTilesets` copies palettes independently of the graphics byte count, so
+the cutscene Baby Metroid, falling tubes, and three corpse palette rows remain
+header-owned and editable even though their borrowed graphics do not.
+
+The ledger is generated as ignored `parity/reports/enemy-species-status.json` and
+`.md`, while totals and a deterministic row hash are pinned. The run also proved that
+Botwoon's existing composite scanner was unreachable from the editor's known-pose
+gate; that gate now routes Botwoon to its head-plus-13-segment renderer.
 
 ### PLM Set Handling Across States (VERIFIED)
 

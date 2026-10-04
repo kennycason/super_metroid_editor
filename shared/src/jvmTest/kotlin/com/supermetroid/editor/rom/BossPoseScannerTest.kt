@@ -260,6 +260,8 @@ class BossPoseScannerTest {
     @Test
     fun `Botwoon body poses include projectile body and tail segments`() {
         val rp = loadTestRom() ?: return
+        assertTrue(BossPoseScanner.hasKnownPoses(0xF293),
+            "The editor must route Botwoon through its composite body renderer")
         val scanner = BossPoseScanner(rp)
         val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xF293) ?: return
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xF293) ?: return

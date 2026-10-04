@@ -137,8 +137,15 @@ fun EnemySpriteViewer(
     val stats = remember(entry.speciesId) {
         EnemySpriteGraphics.readSpeciesStats(rp, entry.speciesId)
     }
-    val palette = remember(entry.speciesId, paletteRefreshKey) {
-        editorState.loadEnemyPalette(rp, entry.speciesId)
+    val previewPaletteSource = remember(entry.speciesId, paletteRefreshKey) {
+        EnemySpriteGraphics.loadEnemyPreviewPaletteSource(rp, entry.speciesId)
+    }
+    val palette = remember(entry.speciesId, paletteRefreshKey, previewPaletteSource) {
+        if (previewPaletteSource?.editable == true) {
+            editorState.loadEnemyPalette(rp, entry.speciesId)
+        } else {
+            previewPaletteSource?.colors
+        }
     }
     val gfxBlock = remember(entry.speciesId) {
         EnemySpriteGraphics.readGraphicsBlock(rp, entry.speciesId)
@@ -150,13 +157,17 @@ fun EnemySpriteViewer(
     val tileData = remember(entry.speciesId, refreshKey) {
         editorState.loadEnemyTileData(rp, entry.speciesId)
     }
+    val previewTileSource = remember(entry.speciesId, refreshKey, tileData) {
+        EnemySpriteGraphics.loadEnemyPreviewTileSource(rp, entry.speciesId, tileData)
+    }
+    val previewTileData = previewTileSource?.bytes
     val tileValidation = remember(entry.speciesId, refreshKey, tileData) {
         tileData?.let { EnemySpriteGraphics.validateEnemyTileEdit(rp, entry.speciesId, it) }
     }
 
     val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
         val pal = palette ?: return@remember null
-        val td = tileData ?: return@remember null
+        val td = previewTileData ?: return@remember null
         if (usesSpecialAssembledPreview) {
             val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
             val scanner = BossPoseScanner(rp)
@@ -235,12 +246,16 @@ fun EnemySpriteViewer(
                         "${(gfxBlock.snesAddress and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
                     InfoRow("GFX Address", snesHex)
                 }
+                if (previewTileSource?.editable == false) {
+                    InfoRow("Preview GFX", "${previewTileSource.label} (read-only)")
+                }
             }
         }
 
         // Palette display + editor
         if (palette != null) {
-            val hasCustomPal = editorState.hasCustomEnemyPalette(entry.speciesId)
+            val paletteEditable = previewPaletteSource?.editable == true
+            val hasCustomPal = paletteEditable && editorState.hasCustomEnemyPalette(entry.speciesId)
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp),
@@ -260,7 +275,11 @@ fun EnemySpriteViewer(
                                 shape = RoundedCornerShape(3.dp)
                             ) {
                                 Text(
-                                    if (hasCustomPal) "CUSTOM" else "ROM",
+                                    when {
+                                        !paletteEditable -> "READ-ONLY"
+                                        hasCustomPal -> "CUSTOM"
+                                        else -> "ROM"
+                                    },
                                     fontSize = 7.sp,
                                     color = if (hasCustomPal) Color(0xFF8888FF) else Color(0xFF88FF88),
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
@@ -288,7 +307,12 @@ fun EnemySpriteViewer(
                         }
                     }
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
-                    Text("Click a color to edit", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (paletteEditable) "Click a color to edit"
+                        else "${previewPaletteSource?.label ?: "Runtime palette"} is borrowed for preview",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         for (i in 0 until 16) {
                             val argb = palette[i]
@@ -301,7 +325,7 @@ fun EnemySpriteViewer(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(RoundedCornerShape(3.dp))
-                                    .clickable {
+                                    .clickable(enabled = paletteEditable) {
                                         editingColorIdx = if (editingColorIdx == i) -1 else i
                                     }
                                     .background(
@@ -318,7 +342,7 @@ fun EnemySpriteViewer(
                     }
 
                     // HSV color picker for selected color
-                    if (editingColorIdx in 1 until 16) {
+                    if (paletteEditable && editingColorIdx in 1 until 16) {
                         Divider(modifier = Modifier.padding(vertical = 2.dp))
                         Text("Edit Color #$editingColorIdx", fontSize = 11.sp, fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface)
@@ -343,7 +367,7 @@ fun EnemySpriteViewer(
         val scope = rememberCoroutineScope()
         val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
             val pal = palette ?: return@remember null
-            val td = tileData ?: return@remember null
+            val td = previewTileData ?: return@remember null
             if (usesStaticAssembledPreviewOnly) {
                 null
             } else if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {

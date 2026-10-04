@@ -28,6 +28,15 @@ packaged application, project format, or ROM exporter.
   variants, palette arguments, four runtime slots, and eight draw pointers.
 - `enemy_header_manifest.py` evaluates every bank-$A0 `EnemyHeader` macro and maps
   each raw `GRAPHADR` transfer through named assets, aliases, and overlaps.
+- `enemy_oam_manifest.py` inventories every named standard OAM, extended/multibox,
+  and extended-tilemap structure in the enemy AI banks and independently decodes
+  their fields and links.
+- `enemy_instruction_manifest.py` parses every named enemy instruction-list source
+  block and measures the current preview scanner against exact records and boundaries.
+- `enemy_vertical_slice_manifest.py` joins exact headers, graphics/palettes,
+  instruction paths, and OAM geometry for Zoomer, Sidehopper, and a walking Space Pirate.
+- `EnemySpeciesStatusSourceParityTest` probes every source header through production
+  render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
 - `test-support/` provides one fixture contract to JVM tests in all modules.
 
@@ -48,7 +57,8 @@ export SMEDIT_TEST_ROM='/absolute/path/to/clean/unheadered/Super Metroid.sfc'
 tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
-`parityItemPlmGraphics`, and `parityEnemyHeaders` tasks remain
+`parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
+`parityEnemyInstructions`, and `parityEnemyVerticalSlices` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -152,8 +162,57 @@ tagged JVM tests compare every raw byte and independently decoded pixel hash thr
 SMEDIT's production paths. This proves raw ownership, not OAM/composite assembly or
 conflict-free simultaneous editing of overlapping ranges.
 
+`parityEnemyOam` writes ignored `parity/reports/enemy-oam.json`. It derives the
+corpus from named source labels in banks `$A0`, `$A2..AA`, and `$B2..B3`, while
+recognizing the disassembly's singular/plural and bank-$B2 `Spitemaps` spellings.
+The manifest covers 2,312 standard structures / 14,400 five-byte OAM entries,
+811 extended structures / 1,984 child associations, and 99 extended tilemaps /
+2,763 words. Tagged JVM tests compare every signed offset, tile/name-table bit,
+palette, priority, flip, size, child/hitbox pointer, and tilemap run with SMEDIT's
+production parser. This proof corrected two real parser gaps: the shared zero-entry
+“nothing” structures are valid, and the engine ignores an extended spritemap count
+word's high byte (Ceres steam deliberately stores `$1001`). The one excluded Torizo
+label is source-declared as an orphaned OAM entry with a missing count, not a
+spritemap structure.
+
+`parityEnemyInstructions` writes ignored
+`parity/reports/enemy-instructions.json`. It parses all 1,139 named enemy-list source
+blocks into 7,820 variable-width records (4,573 frames and 3,247 handler occurrences),
+checks exact rebuilt-ROM ranges, inventories 502 handler addresses and their observed
+operand widths/control-flow shapes, and lists every preview miss. The tagged JVM test
+then runs SMEDIT's actual generic fallback scanner from every named list address. It proves
+the fallback recovers 2,543 of 4,395 renderable source frames, misses 1,852
+across 465 lists, skips all handler semantics, and can detect 4,718 candidates after
+crossing named block boundaries. This task measures the gap; it does not claim E-06
+is complete.
+
+`parityEnemyVerticalSlices` writes ignored
+`parity/reports/enemy-vertical-slices.json`. It proves three complete ordinary-enemy
+visual paths: Zoomer `$DCFF`, Sidehopper `$D93F`, and grey walking Space Pirate
+`$F653`. The fixtures join exact species headers, GRAPHADR and palette bytes, source
+entry lists, handler order/widths, 17 timed frame occurrences, 15 unique standard or
+extended spritemaps, flattened OAM semantics, geometry, and rendered production
+animations. The bounded interpreter follows exact fallthrough and `GotoY` loops,
+stops at sleep, preserves repeated frames, and reports unknown handlers instead of
+guessing their width. Nonvisual handler side effects remain outside this visual slice.
+
+The tagged all-species status test writes ignored
+`parity/reports/enemy-species-status.json` and `.md`. Unlike the legacy diagnostic,
+it begins with all 164 source headers, never treats a raw tile sheet as assembled,
+and runs the production ordinary OAM, special OAM, known boss, Kraid BG2, and Phantoon
+BG2 paths. The pinned result is 134 assembled, 14 tile-sheet-only, 14 composite, two
+nonvisual, and zero failed, with real assembled previews for 148 species. Every row
+includes catalog membership and a reason. A dedicated source test also proves all
+eight zero-transfer visual species against their exact shared/global graphics,
+runtime palette, source entry list, and visible rendered frames; these providers are
+read-only and never become writable `GRAPHADR` ranges. The same proof keeps graphics
+and palette ownership independent: five zero-transfer headers still own their palette
+row, while Elevator, Steam, and Zebetite use read-only global rows. This audit also found and fixed
+Botwoon's editor routing: its existing 14-part composite renderer is now used.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
-foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, and enemy-header chain and writes ignored
+foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
+enemy-OAM, enemy-instruction, enemy-slice, and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
 command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile
@@ -191,6 +250,9 @@ Updating the oracle means deliberately changing `disassembly.commit`, regenerati
 the manifests, running the strict parity suite, and reviewing every resulting
 difference. The report currently covers the foundation, LZ5 compression, tileset
 pointers, CRE ownership, tile pixel layouts, metatile semantics, animated-tile DMA
-ownership, item-PLM graphics/slot ownership, and enemy-header/`GRAPHADR` ownership;
-subsystem coverage expands through the matrix in
+ownership, item-PLM graphics/slot ownership, enemy-header/`GRAPHADR` ownership, and
+named standard/extended enemy OAM ownership and decoding, plus enemy instruction-list
+structure, preview misses, three end-to-end ordinary-enemy slices, and the complete
+164-species production render-status ledger. Subsystem
+coverage expands through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

@@ -361,6 +361,120 @@ def enemy_header_checks(
     ]
 
 
+def enemy_oam_checks(
+    test_results: Dict[str, object], enemy_oam: Dict[str, object]
+) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.EnemyOamSourceParityTest"
+    standard_status = named_test_status(
+        test_results,
+        class_name,
+        "all named standard enemy OAM structures match the production parser",
+    )
+    extended_status = named_test_status(
+        test_results,
+        class_name,
+        "all named extended enemy spritemaps and tilemaps match the production parser",
+    )
+    totals = enemy_oam["totals"]
+    return [
+        {
+            "id": "E-04",
+            "name": "Standard enemy OAM structures",
+            "status": standard_status,
+            "evidence": (
+                f"All {totals['standardLabelCount']:,} named structures / "
+                f"{totals['standardEntryCount']:,} entries match source bytes and SMEDIT field decoding, "
+                f"including {totals['standardZeroEntryCount']} valid empty structures and priority/flip/size semantics."
+            ),
+        },
+        {
+            "id": "E-05",
+            "name": "Extended/multibox enemy structures",
+            "status": extended_status,
+            "evidence": (
+                f"All {totals['extendedLabelCount']:,} extended spritemaps / "
+                f"{totals['extendedChildAssociationCount']:,} child associations and "
+                f"{totals['tilemapLabelCount']} extended tilemaps / {totals['tilemapWordCount']:,} words "
+                "match source pointers, signed offsets, hitboxes, and production parsing."
+            ),
+        },
+    ]
+
+
+def enemy_instruction_checks(
+    test_results: Dict[str, object],
+    enemy_instructions: Dict[str, object],
+    enemy_vertical_slices: Dict[str, object],
+) -> List[Dict[str, object]]:
+    inventory_status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.EnemyInstructionSourceParityTest",
+        "all named enemy instruction lists match source records and measured preview coverage",
+    )
+    slice_status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.EnemyVerticalSliceSourceParityTest",
+        "Zoomer Sidehopper and walking Space Pirate match complete source slices",
+    )
+    totals = enemy_instructions["totals"]
+    slice_totals = enemy_vertical_slices["totals"]
+    return [
+        {
+            "id": "E-06",
+            "name": "Enemy instruction-list interpreter",
+            # Passing proves the inventory and the measured limitation. It does
+            # not turn the current fixed-chunk scanner into a control-flow
+            # interpreter, so this remains intentionally partial.
+            "status": (
+                "partial"
+                if inventory_status == "pass" and slice_status == "pass"
+                else "mismatch"
+            ),
+            "evidence": (
+                f"Source structure is pinned for {totals['enemyListCount']:,} lists / "
+                f"{totals['recordCount']:,} records. The current preview recovers "
+                f"{totals['productionRecoveredSourceFrameCount']:,} of "
+                f"{totals['productionRenderableFrameCount']:,} renderable source frames "
+                f"({totals['productionMissedSourceFrameCount']:,} misses across "
+                f"{totals['listsWithMissedSourceFrames']:,} lists). The manifest proves common-family "
+                f"widths for {totals['commonWidthKnownHandlerCount']} of "
+                f"{totals['uniqueHandlerCount']} handler addresses, but the generic scanner executes none; "
+                f"every miss is listed. A bounded interpreter now proves "
+                f"{slice_totals['sliceCount']} complete ordinary-enemy slices / "
+                f"{slice_totals['frameOccurrenceCount']} frame occurrences."
+            ),
+        }
+    ]
+
+
+def enemy_species_status_checks(
+    test_results: Dict[str, object], enemy_species_status: Dict[str, object]
+) -> List[Dict[str, object]]:
+    inventory_status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.EnemySpeciesStatusSourceParityTest",
+        "all source enemy species have an explicit editor rendering status",
+    )
+    totals = enemy_species_status["totals"]
+    return [
+        {
+            "id": "E-08",
+            "name": "All-species render inventory",
+            # Passing proves a complete, pinned support ledger. Tile-sheet-only
+            # and failed species remain implementation work, so E-08 is partial.
+            "status": "partial" if inventory_status == "pass" else "mismatch",
+            "evidence": (
+                f"All {totals['speciesCount']} source headers are classified: "
+                f"{totals['assembledCount']} assembled, {totals['compositeCount']} composite, "
+                f"{totals['tile-sheet-onlyCount']} tile-sheet-only, "
+                f"{totals['nonvisualCount']} nonvisual, and {totals['failedCount']} failed. "
+                f"Production preview paths render {totals['previewAvailableCount']} species; "
+                "the detailed ledger names every remaining gap."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -372,6 +486,10 @@ def markdown_report(report: Dict[str, object]) -> str:
     animated_tiles = report["animatedTiles"]
     item_plm_graphics = report["itemPlmGraphics"]
     enemy_headers = report["enemyHeaders"]
+    enemy_oam = report["enemyOam"]
+    enemy_instructions = report["enemyInstructions"]
+    enemy_vertical_slices = report["enemyVerticalSlices"]
+    enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
         "# SMEDIT Parity Report",
@@ -463,13 +581,37 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"groups, **{enemy_headers['overlappingUniqueRangePairCount']}** overlapping unique-range "
             f"pairs, and **{enemy_headers['multiAssetGraphicsHeaderCount']}** species ranges spanning "
             "multiple adjacent extracted assets.",
+            f"- Enemy OAM: **{enemy_oam['standardLabelCount']:,}** named standard structures / "
+            f"**{enemy_oam['standardEntryCount']:,}** entries, **{enemy_oam['extendedLabelCount']:,}** "
+            f"extended structures / **{enemy_oam['extendedChildAssociationCount']:,}** child links, and "
+            f"**{enemy_oam['tilemapLabelCount']}** extended tilemaps / "
+            f"**{enemy_oam['tilemapWordCount']:,}** words.",
+            f"- Enemy instructions: **{enemy_instructions['listCount']:,}** named lists / "
+            f"**{enemy_instructions['recordCount']:,}** source records; the current preview recovers "
+            f"**{enemy_instructions['recoveredSourceFrameCount']:,}** of "
+            f"**{enemy_instructions['renderableFrameCount']:,}** renderable source frames and misses "
+            f"**{enemy_instructions['missedSourceFrameCount']:,}** across "
+            f"**{enemy_instructions['listsWithMissedFrames']:,}** lists.",
+            f"- Verified enemy slices: **{enemy_vertical_slices['sliceCount']}** "
+            f"(Zoomer, Sidehopper, walking Space Pirate), covering "
+            f"**{enemy_vertical_slices['frameCount']}** source frame occurrences / "
+            f"**{enemy_vertical_slices['uniqueFrameSpritemapCount']}** unique spritemaps and "
+            f"**{enemy_vertical_slices['handlerCount']}** handler occurrences through production tracing and rendering.",
+            f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
+            f"**{enemy_species_status['compositeCount']}** composite, "
+            f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
+            f"**{enemy_species_status['nonvisualCount']}** nonvisual, and "
+            f"**{enemy_species_status['failedCount']}** failed; production preview paths cover "
+            f"**{enemy_species_status['previewAvailableCount']} / {enemy_species_status['speciesCount']}** source species.",
             f"- Strict parity tests: **{tests['tests']}** run, **{tests['failures']}** failures, "
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, alias, and CRE records "
+            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
-            "`animated-tiles.json`, `item-plm-graphics.json`, and `enemy-headers.json` beside this report.",
+            "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, and `enemy-species-status.json` beside this report. "
+            "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
     )
@@ -491,6 +633,10 @@ def main() -> int:
     animated_tiles_path = report_dir / "animated-tiles.json"
     item_plm_graphics_path = report_dir / "item-plm-graphics.json"
     enemy_headers_path = report_dir / "enemy-headers.json"
+    enemy_oam_path = report_dir / "enemy-oam.json"
+    enemy_instructions_path = report_dir / "enemy-instructions.json"
+    enemy_vertical_slices_path = report_dir / "enemy-vertical-slices.json"
+    enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
         or not assets_path.is_file()
@@ -500,9 +646,13 @@ def main() -> int:
         or not animated_tiles_path.is_file()
         or not item_plm_graphics_path.is_file()
         or not enemy_headers_path.is_file()
+        or not enemy_oam_path.is_file()
+        or not enemy_instructions_path.is_file()
+        or not enemy_vertical_slices_path.is_file()
+        or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -517,6 +667,10 @@ def main() -> int:
     animated_tiles = json.loads(animated_tiles_path.read_text(encoding="utf-8"))
     item_plm_graphics = json.loads(item_plm_graphics_path.read_text(encoding="utf-8"))
     enemy_headers = json.loads(enemy_headers_path.read_text(encoding="utf-8"))
+    enemy_oam = json.loads(enemy_oam_path.read_text(encoding="utf-8"))
+    enemy_instructions = json.loads(enemy_instructions_path.read_text(encoding="utf-8"))
+    enemy_vertical_slices = json.loads(enemy_vertical_slices_path.read_text(encoding="utf-8"))
+    enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
         raise ValueError("symbol report count does not match the pinned reference")
@@ -689,6 +843,113 @@ def main() -> int:
         if enemy_headers["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"enemy-header aggregate {field} does not match the pinned reference")
 
+    pinned_enemy_oam_totals = {
+        "standardLabelCount": "enemyOam.standard.label.count",
+        "standardUniqueAddressCount": "enemyOam.standard.uniqueAddress.count",
+        "standardUnusedLabelCount": "enemyOam.standard.unusedLabel.count",
+        "standardZeroEntryCount": "enemyOam.standard.zeroEntry.count",
+        "standardEntryCount": "enemyOam.standard.entry.count",
+        "standard8x8EntryCount": "enemyOam.standard.entry8x8.count",
+        "standard16x16EntryCount": "enemyOam.standard.entry16x16.count",
+        "extendedLabelCount": "enemyOam.extended.label.count",
+        "extendedUniqueAddressCount": "enemyOam.extended.uniqueAddress.count",
+        "extendedUnusedLabelCount": "enemyOam.extended.unusedLabel.count",
+        "extendedChildAssociationCount": "enemyOam.extended.child.count",
+        "extendedOamChildAssociationCount": "enemyOam.extended.oamChild.count",
+        "extendedTilemapChildAssociationCount": "enemyOam.extended.tilemapChild.count",
+        "uniqueHitboxAddressCount": "enemyOam.extended.hitboxAddress.count",
+        "tilemapLabelCount": "enemyOam.tilemap.label.count",
+        "tilemapUniqueAddressCount": "enemyOam.tilemap.uniqueAddress.count",
+        "tilemapUnusedLabelCount": "enemyOam.tilemap.unusedLabel.count",
+        "tilemapRunCount": "enemyOam.tilemap.run.count",
+        "tilemapWordCount": "enemyOam.tilemap.word.count",
+    }
+    for field, property_name in pinned_enemy_oam_totals.items():
+        if int(enemy_oam["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"enemy-OAM total {field} does not match the pinned reference")
+    pinned_enemy_oam_hashes = {
+        "standard": "enemyOam.standard.aggregate.sha256",
+        "extended": "enemyOam.extended.aggregate.sha256",
+        "tilemaps": "enemyOam.tilemap.aggregate.sha256",
+    }
+    for field, property_name in pinned_enemy_oam_hashes.items():
+        if enemy_oam["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"enemy-OAM aggregate {field} does not match the pinned reference")
+
+    pinned_enemy_instruction_totals = {
+        "enemyListCount": "enemyInstructions.list.count",
+        "sourceDeclaredUnusedListCount": "enemyInstructions.list.sourceDeclaredUnused.count",
+        "excludedNonEnemyListCount": "enemyInstructions.list.excludedNonEnemy.count",
+        "recordCount": "enemyInstructions.record.count",
+        "frameRecordCount": "enemyInstructions.frame.count",
+        "uniqueFrameSpritemapCount": "enemyInstructions.frame.uniqueSpritemap.count",
+        "handlerOccurrenceCount": "enemyInstructions.handler.occurrence.count",
+        "uniqueHandlerCount": "enemyInstructions.handler.unique.count",
+        "commonWidthKnownHandlerCount": "enemyInstructions.handler.commonWidthKnown.count",
+        "unsupportedHandlerCount": "enemyInstructions.handler.unsupported.count",
+        "inconsistentHandlerWidthCount": "enemyInstructions.handler.inconsistentWidth.count",
+        "productionRenderableFrameCount": "enemyInstructions.preview.renderableFrame.count",
+        "productionUnrenderableFrameCount": "enemyInstructions.preview.unrenderableFrame.count",
+        "productionRecoveredSourceFrameCount": "enemyInstructions.preview.recoveredSourceFrame.count",
+        "productionMissedSourceFrameCount": "enemyInstructions.preview.missedSourceFrame.count",
+        "productionOutOfBlockFrameCount": "enemyInstructions.preview.outOfBlockFrame.count",
+        "listsWithMissedSourceFrames": "enemyInstructions.preview.listWithMiss.count",
+        "listsWithUnsupportedHandlers": "enemyInstructions.handler.listWithUnsupported.count",
+        "frameOnlyListCount": "enemyInstructions.list.frameOnly.count",
+        "handlerOnlyListCount": "enemyInstructions.list.handlerOnly.count",
+        "sourceCommentAddressMismatchCount": "enemyInstructions.sourceCommentAddressMismatch.count",
+    }
+    for field, property_name in pinned_enemy_instruction_totals.items():
+        if int(enemy_instructions["totals"][field]) != int(reference[property_name]):
+            raise ValueError(
+                f"enemy-instruction total {field} does not match the pinned reference"
+            )
+    pinned_enemy_instruction_hashes = {
+        "lists": "enemyInstructions.list.aggregate.sha256",
+        "handlers": "enemyInstructions.handler.aggregate.sha256",
+        "misses": "enemyInstructions.miss.aggregate.sha256",
+    }
+    for field, property_name in pinned_enemy_instruction_hashes.items():
+        if enemy_instructions["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(
+                f"enemy-instruction aggregate {field} does not match the pinned reference"
+            )
+
+    pinned_enemy_slice_totals = {
+        "sliceCount": "enemyVerticalSlices.slice.count",
+        "frameOccurrenceCount": "enemyVerticalSlices.frame.count",
+        "uniqueFrameSpritemapCount": "enemyVerticalSlices.frame.uniqueSpritemap.count",
+        "handlerOccurrenceCount": "enemyVerticalSlices.handler.count",
+        "standardFrameOccurrenceCount": "enemyVerticalSlices.frame.standard.count",
+        "extendedFrameOccurrenceCount": "enemyVerticalSlices.frame.extended.count",
+    }
+    for field, property_name in pinned_enemy_slice_totals.items():
+        if int(enemy_vertical_slices["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"enemy-slice total {field} does not match the pinned reference")
+    if enemy_vertical_slices["aggregateHashes"]["slices"] != reference[
+        "enemyVerticalSlices.aggregate.sha256"
+    ]:
+        raise ValueError("enemy-slice aggregate does not match the pinned reference")
+
+    pinned_enemy_species_status_totals = {
+        "speciesCount": "enemySpeciesStatus.species.count",
+        "assembledCount": "enemySpeciesStatus.assembled.count",
+        "tile-sheet-onlyCount": "enemySpeciesStatus.tile-sheet-only.count",
+        "compositeCount": "enemySpeciesStatus.composite.count",
+        "nonvisualCount": "enemySpeciesStatus.nonvisual.count",
+        "failedCount": "enemySpeciesStatus.failed.count",
+        "previewAvailableCount": "enemySpeciesStatus.previewAvailable.count",
+        "tileDataAvailableCount": "enemySpeciesStatus.tileDataAvailable.count",
+        "paletteAvailableCount": "enemySpeciesStatus.paletteAvailable.count",
+    }
+    for field, property_name in pinned_enemy_species_status_totals.items():
+        if int(enemy_species_status["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"enemy-species status total {field} does not match the pinned reference")
+    if enemy_species_status["aggregateHashes"]["species"] != reference[
+        "enemySpeciesStatus.aggregate.sha256"
+    ]:
+        raise ValueError("enemy-species status aggregate does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -697,7 +958,14 @@ def main() -> int:
         + item_plm_graphics_checks(tests, item_plm_graphics)
     )
     graphics_checks.sort(key=lambda check: str(check["id"]))
-    checks = foundation_checks(tests) + graphics_checks + enemy_header_checks(tests, enemy_headers)
+    checks = (
+        foundation_checks(tests)
+        + graphics_checks
+        + enemy_header_checks(tests, enemy_headers)
+        + enemy_oam_checks(tests, enemy_oam)
+        + enemy_instruction_checks(tests, enemy_instructions, enemy_vertical_slices)
+        + enemy_species_status_checks(tests, enemy_species_status)
+    )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
         status: raw_summary[status]
@@ -705,9 +973,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 7,
+        "schemaVersion": 11,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-and-enemy-headers",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -796,6 +1064,58 @@ def main() -> int:
             "overlappingUniqueRangePairCount": enemy_headers["totals"]["overlappingUniqueRangePairCount"],
             "crossStartOverlapPairCount": enemy_headers["totals"]["crossStartOverlapPairCount"],
             "aggregateHashes": enemy_headers["aggregateHashes"],
+        },
+        "enemyOam": {
+            "standardLabelCount": enemy_oam["totals"]["standardLabelCount"],
+            "standardEntryCount": enemy_oam["totals"]["standardEntryCount"],
+            "standardZeroEntryCount": enemy_oam["totals"]["standardZeroEntryCount"],
+            "extendedLabelCount": enemy_oam["totals"]["extendedLabelCount"],
+            "extendedChildAssociationCount": enemy_oam["totals"]["extendedChildAssociationCount"],
+            "extendedOamChildAssociationCount": enemy_oam["totals"]["extendedOamChildAssociationCount"],
+            "extendedTilemapChildAssociationCount": enemy_oam["totals"]["extendedTilemapChildAssociationCount"],
+            "tilemapLabelCount": enemy_oam["totals"]["tilemapLabelCount"],
+            "tilemapRunCount": enemy_oam["totals"]["tilemapRunCount"],
+            "tilemapWordCount": enemy_oam["totals"]["tilemapWordCount"],
+            "aggregateHashes": enemy_oam["aggregateHashes"],
+        },
+        "enemyInstructions": {
+            "listCount": enemy_instructions["totals"]["enemyListCount"],
+            "recordCount": enemy_instructions["totals"]["recordCount"],
+            "frameCount": enemy_instructions["totals"]["frameRecordCount"],
+            "handlerOccurrenceCount": enemy_instructions["totals"]["handlerOccurrenceCount"],
+            "uniqueHandlerCount": enemy_instructions["totals"]["uniqueHandlerCount"],
+            "supportedHandlerCount": enemy_instructions["totals"]["commonWidthKnownHandlerCount"],
+            "unsupportedHandlerCount": enemy_instructions["totals"]["unsupportedHandlerCount"],
+            "renderableFrameCount": enemy_instructions["totals"]["productionRenderableFrameCount"],
+            "unrenderableFrameCount": enemy_instructions["totals"]["productionUnrenderableFrameCount"],
+            "recoveredSourceFrameCount": enemy_instructions["totals"]["productionRecoveredSourceFrameCount"],
+            "missedSourceFrameCount": enemy_instructions["totals"]["productionMissedSourceFrameCount"],
+            "outOfBlockFrameCount": enemy_instructions["totals"]["productionOutOfBlockFrameCount"],
+            "listsWithMissedFrames": enemy_instructions["totals"]["listsWithMissedSourceFrames"],
+            "listsWithUnsupportedHandlers": enemy_instructions["totals"]["listsWithUnsupportedHandlers"],
+            "sourceCommentAddressMismatchCount": enemy_instructions["totals"]["sourceCommentAddressMismatchCount"],
+            "aggregateHashes": enemy_instructions["aggregateHashes"],
+        },
+        "enemyVerticalSlices": {
+            "sliceCount": enemy_vertical_slices["totals"]["sliceCount"],
+            "frameCount": enemy_vertical_slices["totals"]["frameOccurrenceCount"],
+            "uniqueFrameSpritemapCount": enemy_vertical_slices["totals"]["uniqueFrameSpritemapCount"],
+            "handlerCount": enemy_vertical_slices["totals"]["handlerOccurrenceCount"],
+            "standardFrameCount": enemy_vertical_slices["totals"]["standardFrameOccurrenceCount"],
+            "extendedFrameCount": enemy_vertical_slices["totals"]["extendedFrameOccurrenceCount"],
+            "aggregateHashes": enemy_vertical_slices["aggregateHashes"],
+        },
+        "enemySpeciesStatus": {
+            "speciesCount": enemy_species_status["totals"]["speciesCount"],
+            "assembledCount": enemy_species_status["totals"]["assembledCount"],
+            "tileSheetOnlyCount": enemy_species_status["totals"]["tile-sheet-onlyCount"],
+            "compositeCount": enemy_species_status["totals"]["compositeCount"],
+            "nonvisualCount": enemy_species_status["totals"]["nonvisualCount"],
+            "failedCount": enemy_species_status["totals"]["failedCount"],
+            "previewAvailableCount": enemy_species_status["totals"]["previewAvailableCount"],
+            "tileDataAvailableCount": enemy_species_status["totals"]["tileDataAvailableCount"],
+            "paletteAvailableCount": enemy_species_status["totals"]["paletteAvailableCount"],
+            "aggregateHashes": enemy_species_status["aggregateHashes"],
         },
         "tests": tests,
     }

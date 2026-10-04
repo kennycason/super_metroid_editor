@@ -157,10 +157,23 @@ Use `./gradlew parityReport` to run the complete strict regression and generate 
 ignored JSON/Markdown evidence bundle. The suite independently checks all extracted
 asset ranges, LZ5 streams, tileset/CRE pointers, tile and metatile decoding, animated
 tiles, item-PLM graphics, and all 164 enemy species headers plus their raw `GRAPHADR`
-ownership and aliases. These checks are deliberately source-backed: plausible-looking
-renders are not counted as parity unless named disassembly data, rebuilt-ROM bytes,
-and SMEDIT's production path agree. Current coverage and the ordered expansion plan
-are tracked in [the parity validation matrix](docs/validation/README.md).
+ownership and aliases, plus all 2,312 named standard and 811 extended enemy OAM
+structures. It also inventories all 1,139 named enemy instruction lists and reports
+every frame the current best-effort preview scanner misses. These checks are
+deliberately source-backed: plausible-looking renders are not counted as parity
+unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
+Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
+header → graphics/palette → instruction path → OAM composition → rendered-animation
+vertical slices. A separate source-complete ledger probes all 164 species through the
+production renderer and distinguishes assembled, composite, tile-sheet-only,
+nonvisual, and failed support without counting a raw tile sheet as a successful sprite.
+It also models all eight visual species with zero-byte header transfers through exact
+read-only shared/global VRAM providers, bringing the pinned ledger to zero failed
+species without granting those headers false tile edit/export ownership. Palette
+ownership is tracked separately because five of those headers still load and own
+their palette row.
+Current coverage and the ordered expansion plan are tracked in
+[the parity validation matrix](docs/validation/README.md).
 
 ## CLI
 
