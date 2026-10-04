@@ -410,6 +410,28 @@ per-instruction inventory and decoded hashes live in ignored
 [`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md) for the named 29-row
 asset map.
 
+### Tile Formats and Metatile Semantics (VERIFIED 2026-10-03)
+
+`parityTileFormats` independently decodes the named source assets, then tagged JVM
+tests compare every result with SMEDIT's production paths. The verified corpus is
+10,944 4bpp tiles across 16 unique tileset graphics payloads plus CRE, 256 standard
+Layer-3 2bpp tiles, and 45,056 words across 14 unique tileset metatile tables plus
+CRE. All 65,536 possible metatile words also round-trip their 10-bit tile index,
+3-bit palette, priority, horizontal-flip, and vertical-flip fields.
+
+Two exceptional Ceres graphics resources store 1,024 tiles as global plane halves:
+all bp0/bp2 data, then all bp1/bp3 data. Kraid instead stores 1,024 conventional
+interleaved tiles. The thirteen normal graphics resources each define 576 tiles in
+the 640-slot variable runtime region, leaving tiles 576–639 blank before CRE begins
+at 640. This distinction is asserted so an unowned reserved gap cannot be mistaken
+for source art.
+
+Kraid demonstrates that graphics and metatile ownership are separate: it suppresses
+the CRE graphics overlay, but still combines the 256-entry CRE metatile table with
+its 768-entry variable table. Details and exact layouts are in
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md); machine-readable
+hashes live in ignored `parity/reports/tile-formats.json`.
+
 ### PLM Set Handling Across States (VERIFIED)
 
 Export correctly:

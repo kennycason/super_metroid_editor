@@ -116,10 +116,21 @@ tasks.register<Exec>("parityTilesets") {
     }
 }
 
+tasks.register<Exec>("parityTileFormats") {
+    group = "verification"
+    description = "Generate independent source-backed tile pixel and metatile semantics"
+    dependsOn("parityTilesets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/tile_format_oracle.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
-    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", "parityTilesets", ":shared:parityTest")
+    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", "parityTilesets", "parityTileFormats", ":shared:parityTest")
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/report.py")
 }

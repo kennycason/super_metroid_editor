@@ -286,6 +286,23 @@ The previous version of this document had those two metatile-ID ranges reversed.
 Ceres is the important exception: its full tileset table is decompressed at
 `$7E:A000` and the separate CRE table is skipped.
 
+### Source-backed metatile verification (2026-10-03)
+
+`parityTileFormats` independently parses all 15 unique source tables: 14 tileset
+tables plus CRE. Together they contain 11,264 metatiles / 45,056 subtile words.
+The JVM parity test checks each raw table, every word's exact combined-table offset,
+and its decoded tile, palette, priority, H-flip, and V-flip fields. It also tests all
+65,536 possible 16-bit words for lossless decode/encode round trips.
+
+This makes table ownership explicit rather than inferring it from graphics:
+
+- The thirteen non-Ceres tables (including Kraid) each provide 768 entries at IDs
+  `$100..3FF`; CRE supplies IDs `$000..0FF`.
+- Kraid therefore still owns a normal CRE metatile-table region even though its
+  full 1,024-tile graphics payload suppresses the CRE graphics overlay.
+- The one shared Ceres table supplies all 1,024 entries at IDs `$000..3FF`, so the
+  separate CRE table is not part of its runtime table.
+
 ---
 
 ## 3. SNES 4bpp Tile Format — Exact Bit Layout
@@ -357,6 +374,34 @@ color_index = bp0 | (bp1 << 1) | (bp2 << 2) | (bp3 << 3)   # 0-15
 Color index 0 is transparent for sprites, but opaque for BG tiles
 (though the SNES PPU treats palette entry 0 of each sub-palette as transparent
 for BG tiles behind higher-priority layers).
+
+### Global split-plane Ceres layout
+
+`Tiles_11_12_CeresElevator` and `Tiles_13_14_CeresRidley` are each 32 KiB / 1,024
+tiles, but are not a sequence of standard 32-byte tiles. They store two global
+16 KiB halves:
+
+```
+bytes $0000..3FFF   bp0 rows 0..7, then bp2 rows 0..7, for every tile
+bytes $4000..7FFF   bp1 rows 0..7, then bp3 rows 0..7, for every tile
+```
+
+For tile `n`, bp0/bp2 begin at `n * 16`; bp1/bp3 begin at `$4000 + n * 16`.
+Tilesets `$11..14` use this layout. Kraid (`$1A`) also owns all 1,024 tile slots,
+but its payload uses the standard interleaved layout above.
+
+### Standard 2bpp layout
+
+Layer-3 tiles use 16 bytes per 8×8 tile: each row is `[bp0, bp1]`, and the
+leftmost pixel is bit 7. `Tiles_Standard_BG3` at `$9A:B200` is exactly 4,096 bytes
+or 256 tiles. The shared `TileDecoder` is used by the production Layer-3 path, so
+the parity oracle checks the same codec that renders those tiles.
+
+Across the 16 unique tileset graphics resources plus CRE, `parityTileFormats`
+compares 10,944 decoded 4bpp tiles pixel-for-pixel with an independent Python
+decoder. Thirteen normal source payloads contain 576 tiles each, Kraid contains
+1,024 standard tiles, the two split-plane resources contain 1,024 each, and CRE
+contains 384. The oracle also checks all 256 standard BG3 2bpp tiles.
 
 ### Conversion (from SNESLab wiki algorithm)
 
@@ -488,14 +533,18 @@ When loading a room, the game decompresses and places tile graphics into VRAM:
 ```
 VRAM byte offset    8×8 Tile numbers     Source
 ----------------    ----------------     ------
-$0000 - $4FFF       Tiles 0-639          Variable tileset (per graphics set)
+$0000 - $47FF       Tiles 0-575          Variable source payload (normal layout)
+$4800 - $4FFF       Tiles 576-639        Blank/reserved runtime gap
 $5000 - $7FFF       Tiles 640-1023       CRE tiles (standard layout)
 ```
 
-In the standard layout, the variable tileset occupies the first `$5000` bytes =
-640 tiles × 32 bytes. CRE begins at byte offset `$5000` = tile index 640 = `$280`
-and contains exactly 384 tiles through index 1023. Ceres/Mode-7 and Kraid's room use
-special layouts and must not be forced through this standard overlay rule.
+The standard runtime region reserves the first `$5000` bytes = 640 tile slots for
+tileset-specific graphics, but each vanilla normal source payload defines only
+`$4800` bytes = 576 tiles. The `$800`-byte / 64-tile gap is zero-filled; it is not
+owned by the compressed source. CRE begins at byte offset `$5000` = tile index 640
+= `$280` and contains exactly 384 tiles through index 1023. Ceres elevator/Ridley
+tilesets `$11..14` use the full split-plane layout, while Kraid `$1A` uses a full
+standard layout; neither receives the normal CRE graphics overlay.
 
 From SMILE's `DecompressTilesForRip` (`UGraphics.bas`):
 
@@ -711,10 +760,10 @@ LunarRender8x8(
 ROM ──decompress──→ Ttable[8192 bytes] ────────────────────────────┐
      (tile table)   (1024 entries × 4 × 2-byte words)             │
                                                                     │
-ROM ──decompress──→ Variable Tiles[≤$5000] ┐                       │
+ROM ──decompress──→ Variable Tiles[$4800] ┐                        │
      (4bpp GFX)                             ├──combine──→ Tiles[]   │
 ROM ──decompress──→ CRE Tiles[] ───────────┘             (4bpp)    │
-     (CRE at $B9:8000)          placed at offset $5000             │
+     (CRE at $B9:8000)    after blank $4800..4FFF, at $5000        │
                                                                     │
                     Tiles[] ──LunarCreatePixelMap──→ Pixelmap[]     │
                     (4bpp)     (decode bitplanes)   (1 byte/pixel)  │

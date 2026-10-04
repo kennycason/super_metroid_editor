@@ -223,6 +223,46 @@ def tileset_checks(test_results: Dict[str, object], tilesets: Dict[str, object])
     ]
 
 
+def tile_format_checks(
+    test_results: Dict[str, object], tile_formats: Dict[str, object]
+) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.TileFormatSourceParityTest"
+    pixels_status = named_test_status(
+        test_results,
+        class_name,
+        "all source tiles match independent 2bpp and 4bpp pixel oracles",
+    )
+    metatiles_status = named_test_status(
+        test_results,
+        class_name,
+        "every source metatile word and combined table placement matches oracle",
+    )
+    totals = tile_formats["totals"]
+    return [
+        {
+            "id": "G-04",
+            "name": "2bpp/4bpp tile decoding",
+            "status": pixels_status,
+            "evidence": (
+                f"Independent planar decoding matches {totals['graphics4bppTileCount']:,} 4bpp tiles "
+                f"across {totals['graphics4bppResourceCount']} resources and "
+                f"{totals['graphics2bppTileCount']:,} standard BG3 2bpp tiles, including "
+                "global split-plane Ceres data and all flip combinations."
+            ),
+        },
+        {
+            "id": "G-07",
+            "name": "Metatile word semantics",
+            "status": metatiles_status,
+            "evidence": (
+                f"All {totals['metatileWordCount']:,} source words in "
+                f"{totals['metatileTableResourceCount']} tables match tile/palette/priority/flip semantics "
+                "and runtime CRE/tileset placement; all 65,536 word values round-trip."
+            ),
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -230,6 +270,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     assets = report["assets"]
     lz5 = report["lz5"]
     tilesets = report["tilesets"]
+    tile_formats = report["tileFormats"]
     tests = report["tests"]
     lines = [
         "# SMEDIT Parity Report",
@@ -295,12 +336,20 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"- CRE: **{tilesets['cre']['graphicsDecompressedBytes']:,}** graphics bytes and "
             f"**{tilesets['cre']['tileTableDecompressedBytes']:,}** tile-table bytes; "
             f"**{tilesets['cre']['consumerCount']}** direct engine consumers inventoried.",
+            f"- Planar pixels: **{tile_formats['graphics4bppTileCount']:,}** 4bpp tiles across "
+            f"**{tile_formats['graphics4bppResourceCount']}** resources plus "
+            f"**{tile_formats['graphics2bppTileCount']:,}** standard BG3 2bpp tiles.",
+            f"- Metatiles: **{tile_formats['metatileCount']:,}** entries / "
+            f"**{tile_formats['metatileWordCount']:,}** words across "
+            f"**{tile_formats['metatileTableResourceCount']}** source tables.",
+            f"- Standard area payloads: **{tile_formats['shortStandard4bppResourceCount']}** define "
+            "576 tiles followed by the engine's 64-tile reserved blank gap before CRE.",
             f"- Strict parity tests: **{tests['tests']}** run, **{tests['failures']}** failures, "
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, compression, tileset, alias, and CRE records are in `symbols.json`, "
-            "`assets.json`, `lz5.json`, and `tilesets.json` beside this report.",
+            "Detailed symbol, asset, compression, tileset, tile-format, alias, and CRE records are in "
+            "`symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, and `tile-formats.json` beside this report.",
             "",
         ]
     )
@@ -318,13 +367,18 @@ def main() -> int:
     assets_path = report_dir / "assets.json"
     lz5_path = report_dir / "lz5.json"
     tilesets_path = report_dir / "tilesets.json"
+    tile_formats_path = report_dir / "tile-formats.json"
     if (
         not symbols_path.is_file()
         or not assets_path.is_file()
         or not lz5_path.is_file()
         or not tilesets_path.is_file()
+        or not tile_formats_path.is_file()
     ):
-        print("ERROR: symbol/asset/LZ5/tileset reports are missing; run ./gradlew parityReport", file=sys.stderr)
+        print(
+            "ERROR: symbol/asset/LZ5/tileset/tile-format reports are missing; run ./gradlew parityReport",
+            file=sys.stderr,
+        )
         return 2
 
     reference = read_properties(REFERENCE_FILE)
@@ -332,6 +386,7 @@ def main() -> int:
     assets = json.loads(assets_path.read_text(encoding="utf-8"))
     lz5 = json.loads(lz5_path.read_text(encoding="utf-8"))
     tilesets = json.loads(tilesets_path.read_text(encoding="utf-8"))
+    tile_formats = json.loads(tile_formats_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
         raise ValueError("symbol report count does not match the pinned reference")
@@ -387,7 +442,39 @@ def main() -> int:
         ):
             raise ValueError(f"CRE {kind} reference count does not match the pinned reference")
 
-    checks = foundation_checks(tests) + compression_checks(tests, lz5) + tileset_checks(tests, tilesets)
+    pinned_tile_format_totals = {
+        "graphics4bppResourceCount": "tileFormats.graphics4bpp.resource.count",
+        "tilesetGraphics4bppResourceCount": "tileFormats.graphics4bpp.tilesetResource.count",
+        "creGraphics4bppResourceCount": "tileFormats.graphics4bpp.creResource.count",
+        "standard4bppResourceCount": "tileFormats.graphics4bpp.standardResource.count",
+        "splitPlane4bppResourceCount": "tileFormats.graphics4bpp.splitPlaneResource.count",
+        "shortStandard4bppResourceCount": "tileFormats.graphics4bpp.shortStandardResource.count",
+        "graphics4bppTileCount": "tileFormats.graphics4bpp.tile.count",
+        "graphics2bppResourceCount": "tileFormats.graphics2bpp.resource.count",
+        "graphics2bppTileCount": "tileFormats.graphics2bpp.tile.count",
+        "metatileTableResourceCount": "tileFormats.metatileTable.resource.count",
+        "metatileCount": "tileFormats.metatile.count",
+        "metatileWordCount": "tileFormats.metatileWord.count",
+    }
+    for field, property_name in pinned_tile_format_totals.items():
+        if int(tile_formats["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"tile-format total {field} does not match the pinned reference")
+    pinned_tile_format_hashes = {
+        "graphics4bppPixels": "tileFormats.graphics4bpp.aggregatePixel.sha256",
+        "graphics2bppPixels": "tileFormats.graphics2bpp.aggregatePixel.sha256",
+        "metatileSemantics": "tileFormats.metatile.aggregateSemantic.sha256",
+    }
+    for field, property_name in pinned_tile_format_hashes.items():
+        if tile_formats["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"tile-format aggregate {field} does not match the pinned reference")
+
+    graphics_checks = (
+        compression_checks(tests, lz5)
+        + tile_format_checks(tests, tile_formats)
+        + tileset_checks(tests, tilesets)
+    )
+    graphics_checks.sort(key=lambda check: str(check["id"]))
+    checks = foundation_checks(tests) + graphics_checks
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
         status: raw_summary[status]
@@ -395,9 +482,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-and-shared-tilesets",
+        "scope": "foundation-compression-and-shared-graphics",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -436,6 +523,17 @@ def main() -> int:
                     + tilesets["cre"]["tileTable"]["consumers"]["consumerCount"]
                 ),
             },
+        },
+        "tileFormats": {
+            "graphics4bppResourceCount": tile_formats["totals"]["graphics4bppResourceCount"],
+            "graphics4bppTileCount": tile_formats["totals"]["graphics4bppTileCount"],
+            "graphics2bppResourceCount": tile_formats["totals"]["graphics2bppResourceCount"],
+            "graphics2bppTileCount": tile_formats["totals"]["graphics2bppTileCount"],
+            "shortStandard4bppResourceCount": tile_formats["totals"]["shortStandard4bppResourceCount"],
+            "metatileTableResourceCount": tile_formats["totals"]["metatileTableResourceCount"],
+            "metatileCount": tile_formats["totals"]["metatileCount"],
+            "metatileWordCount": tile_formats["totals"]["metatileWordCount"],
+            "aggregateHashes": tile_formats["aggregateHashes"],
         },
         "tests": tests,
     }

@@ -27,6 +27,8 @@ class RomParser(
     internal val romData: ByteArray,
     private val roomCatalogOverride: RomRoomCatalog? = null,
 ) {
+    private val tileDecoder = TileDecoder()
+
     /** Isolated copy used to build a project-room workspace without mutating the input ROM. */
     fun copyRomData(): ByteArray = romData.copyOf()
     private val hasHeader: Boolean
@@ -1442,24 +1444,6 @@ class RomParser(
     }
 
     /**
-     * Decode a single 2bpp tile from ROM. Returns 64 pixel values (0-3), row-major.
-     */
-    private fun decode2bppTile(pc: Int): IntArray {
-        val pixels = IntArray(64)
-        for (row in 0 until 8) {
-            val off = pc + row * 2
-            if (off + 1 >= romData.size) break
-            val bp0 = romData[off].toInt() and 0xFF
-            val bp1 = romData[off + 1].toInt() and 0xFF
-            for (col in 0 until 8) {
-                val bit = 7 - col
-                pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
-            }
-        }
-        return pixels
-    }
-
-    /**
      * Render a Layer 3 image for a given fxType.
      * Returns an ARGB pixel array (width × height) where width=256, height=264
      * (32 tiles × 8px = 256, 33 tiles × 8px = 264).
@@ -1472,13 +1456,21 @@ class RomParser(
         val height = RomConstants.L3_TILEMAP_ROWS * 8  // 264
 
         // Load base 2bpp tiles (256 tiles at D3200)
-        val baseTiles = Array(256) { decode2bppTile(romStartOffset + RomConstants.L3_BASE_GFX_PC + it * 16) }
+        val baseTiles = Array(256) {
+            tileDecoder.decode2bppTileIndices(
+                romData,
+                romStartOffset + RomConstants.L3_BASE_GFX_PC + it * 16,
+            )
+        }
 
         // Apply fxType-specific replacement tiles (overwrite first 4)
         val replacementAddr = RomConstants.L3_REPLACEMENT_GFX[fxType]
         if (replacementAddr != null) {
             for (t in 0 until 4) {
-                baseTiles[t] = decode2bppTile(romStartOffset + replacementAddr + t * 16)
+                baseTiles[t] = tileDecoder.decode2bppTileIndices(
+                    romData,
+                    romStartOffset + replacementAddr + t * 16,
+                )
             }
         }
 

@@ -102,7 +102,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build, source-symbol/asset/LZ5/tileset catalogs, CRE ownership proof, strict fixture contract, and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build, source-symbol/asset/LZ5/tileset catalogs, CRE ownership, independent tile/metatile format proof, strict fixture contract, and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 

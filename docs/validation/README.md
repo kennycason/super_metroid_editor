@@ -203,7 +203,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve standalone boss/Samus constants and all 87 tileset pointer fields are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -213,10 +213,10 @@ This matrix tracks source-backed proof, not feature existence.
 | G-01 | LoROM/headered address conversion | **Covered** | Exhaustively compare symbol addresses and both ROM layouts. |
 | G-02 | LZ5 decompression | **Verified** | Independent `$80:B119` oracle plus Kotlin checks match decoded size/hash for all 421 exact streams; malformed input fails closed. |
 | G-03 | LZ5 recompression | **Verified** | All 421 payloads survive SMEDIT encode/decode byte-exactly; destination capacity and the 64 KiB engine maximum are enforced. |
-| G-04 | 2bpp/4bpp tile decoding | **Covered** | Fixed extracted tiles plus approved pixel hashes and flip cases. |
+| G-04 | 2bpp/4bpp tile decoding | **Verified** | Independent source oracle matches all 10,944 4bpp tiles and 256 Layer-3 2bpp tiles through production decoders, including standard, global split-plane Ceres, blank-gap, and flip cases. |
 | G-05 | CRE graphics/tile table | **Verified** | Exact compressed/decoded sizes and hashes, the adjacent ROM split, WRAM/VRAM boundaries, semantic tile range, and all four direct engine consumers are source-backed. |
 | G-06 | 29 tileset pointer triples | **Verified** | All 87 fields match the clean ROM, detected catalog, source labels, named assets, and decoded hashes; 20 intentional alias groups are explicit. |
-| G-07 | Metatile words | **Covered** | Exhaustive tile/palette/priority/H/V field parity and round trip. |
+| G-07 | Metatile words | **Verified** | All 45,056 source words match exact runtime placement/ownership and semantic hashes; all 65,536 possible words exhaustively round-trip tile/palette/priority/H/V fields. |
 | G-08 | Animated tiles | **Queued** | Verify all 64 extracted sequences and runtime destinations. |
 | G-09 | Item/PLM graphics | **Partial** | Verify all 17 extracted assets, tables, and VRAM placement. |
 
@@ -374,6 +374,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-03 | Proved LZ5 decode/recompression parity | An independent `$80:B119` model classified 421 exact streams (417 active, 4 unused). SMEDIT matches every decoded size/hash and every payload survives re-encoding; strict malformed-input and 64 KiB destination checks replaced two permissive duplicate decoders. |
 | 2026-10-03 | Proved all tileset pointer triples | A source-derived manifest maps 87 pointer fields across 29 tilesets to 55 named assets (14 tables, 16 graphics, 25 palettes), verifies the secondary pointer table, and records 20 intentional alias groups. Clean-ROM/catalog pointers and all decoded hashes match. |
 | 2026-10-03 | Proved CRE ownership and consumers | CRE graphics are 8,349 compressed / 12,288 decoded bytes and end exactly at the 1,431 compressed / 2,048 decoded-byte CRE tile table. Runtime boundaries, all 1,024 CRE subtile references, and both graphics plus both table consumer routines are asserted. This also corrected the old documentation's reversed metatile-table order. |
+| 2026-10-03 | Proved tile pixels and metatile semantics | An independent source oracle now covers 10,944 4bpp tiles, 256 Layer-3 2bpp tiles, and 45,056 metatile words. It proved the two global split-plane Ceres payloads, corrected the unused legacy 2bpp/4bpp decoder, distinguished the normal 576-tile source payload from its 640-tile runtime capacity, and caught Kraid's CRE-table ownership independently of its graphics overlay. |
 
 ## Deliberately deferred
 

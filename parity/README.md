@@ -20,6 +20,8 @@ packaged application, project format, or ROM exporter.
 - `tileset_manifest.py` resolves all 29 source pointer triples to named assets,
   records intentional aliases, and proves CRE ROM/RAM/VRAM ownership plus every
   direct engine consumer.
+- `tile_format_oracle.py` independently decodes source-owned 2bpp/4bpp pixels and
+  metatile semantics, including Ceres's global split-plane layout.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
 - `test-support/` provides one fixture contract to JVM tests in all modules.
 
@@ -39,7 +41,8 @@ export SMEDIT_TEST_ROM='/absolute/path/to/clean/unheadered/Super Metroid.sfc'
 `parityReport` depends on the bootstrap, build, fixture check, catalogs, and strict
 tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
-`parityTilesets` tasks remain available for focused investigation.
+`parityTilesets`, and `parityTileFormats` tasks remain available for focused
+investigation.
 
 `parityBootstrap` clones/fetches
 `https://github.com/InsaneFirebat/sm_disassembly.git` and checks out the commit in
@@ -100,12 +103,24 @@ JVM tests then compare that source manifest with the clean ROM, SMEDIT's detecte
 graphics catalog, production constants, and decoded hashes. A stale pointer,
 renamed/unmapped asset, changed alias, or added/removed CRE consumer fails parity.
 
+`parityTileFormats` writes ignored `parity/reports/tile-formats.json`. Its Python
+decoder is independent of SMEDIT and proves all 10,944 source-owned 4bpp tiles,
+the 256 standard Layer-3 2bpp tiles, and 45,056 metatile words. It distinguishes
+standard interleaved 4bpp from the global split-plane Ceres elevator/Ridley
+payloads. It also records that thirteen normal graphics payloads define 576 tiles
+inside a 640-tile runtime region, leaving indices 576–639 blank before CRE begins
+at 640; reserved capacity is not attributed to a source asset. Tagged JVM tests
+compare every decoded pixel and source-table placement through SMEDIT's production
+paths, exercise H/V/HV rendering, and exhaustively decode and re-encode all 65,536
+possible metatile words.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
-foundation, LZ5, tileset, and CRE chain and writes ignored `parity-report.json` and
-`parity-report.md` beside the detailed catalogs. The report records exact commits and
-hashes, pass/partial/mismatch/uncovered counts, warnings, command coverage, pointer
-and alias counts, CRE consumers, and JUnit results. Any live mismatch fails the task
-after the underlying evidence has been evaluated.
+foundation, LZ5, tileset, CRE, and tile-format chain and writes ignored
+`parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
+records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
+command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile
+totals, and JUnit results. Any live mismatch fails the task after the underlying
+evidence has been evaluated.
 
 ## Overrides and normal tests
 
@@ -137,5 +152,6 @@ Do not run `git pull` inside the managed checkout and call the result equivalent
 Updating the oracle means deliberately changing `disassembly.commit`, regenerating
 the manifests, running the strict parity suite, and reviewing every resulting
 difference. The report currently covers the foundation, LZ5 compression, tileset
-pointers, and CRE ownership; subsystem coverage expands incrementally through the matrix in
+pointers, CRE ownership, tile pixel layouts, and metatile semantics; subsystem
+coverage expands incrementally through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

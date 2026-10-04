@@ -9,7 +9,8 @@ package com.supermetroid.editor.rom
  *   2. Decompress tile table → 1024 metatile entries × 8 bytes
  *      Each metatile = 4 SNES BG tilemap words (TL, TR, BL, BR)
  *   3. Decompress 8x8 tile graphics (4bpp planar, 32 bytes/tile)
- *      Variable tiles: indices 0-639, CRE tiles: indices 640-1023
+ *      Standard runtime region: variable indices 0-639, CRE indices 640-1023.
+ *      Vanilla normal payloads define 0-575 and leave 576-639 blank/reserved.
  *   4. Load palette: 8 sub-palettes × 16 colors (BGR555)
  *   5. Render: level data tile index → metatile → 4 sub-tiles → pixels
  *
@@ -51,7 +52,7 @@ class TileGraphics(private val romParser: RomParser) {
         const val CRE_TILE_TABLE_SNES = 0xB9A09D
         
         // Tile counts
-        const val VARIABLE_TILE_COUNT = 640   // Tiles 0-639
+        const val VARIABLE_TILE_COUNT = 640   // Runtime capacity 0-639; normal sources define 0-575
         const val CRE_TILE_START = 640        // CRE tiles start at index 640
         const val CRE_METATILE_COUNT = 256    // CRE metatile definitions occupy slots 0-255
         const val TOTAL_TILES = 1024          // 0-1023
@@ -669,7 +670,7 @@ class TileGraphics(private val romParser: RomParser) {
     fun creMetatileCount(): Int = cachedCreTableMetatileCount
 
     fun isCreMetatileIndex(index: Int): Boolean =
-        cachedHasCre && index in 0 until cachedCreTableMetatileCount
+        index in 0 until cachedCreTableMetatileCount
 
     fun isVariableMetatileIndex(index: Int): Boolean =
         index in cachedVarTableStartMetatile until (cachedVarTableStartMetatile + cachedVarTableMetatileCount)
