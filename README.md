@@ -151,6 +151,11 @@ disassembly checkout and validates a user-supplied clean ROM for source-backed
 regression tests. It is developer tooling only; the editor and release builds have
 no dependency on the ROM or disassembly checkout.
 
+After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
+complete pinned asset-extraction and assembly build, including a byte-identity check.
+Use `./gradlew parityReport` for the complete strict foundation regression and its
+ignored JSON/Markdown evidence bundle.
+
 ## CLI
 
 The `cli` module provides headless ROM data export and patch building without a GUI dependency. See [CLI.md](CLI.md) for command usage, build JSON examples, IPS-only generation, and the shared headless API.

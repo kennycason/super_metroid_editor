@@ -198,12 +198,12 @@ This matrix tracks source-backed proof, not feature existence.
 
 | ID | Unit | Current status | Next proof |
 |---|---|---|---|
-| F-01 | Exact assembly build | **Verified** | Pin and validate commit/ROM identity through `parity/reference.properties`. |
+| F-01 | Exact assembly build | **Verified** | `parityBuildReference` reproducibly extracts assets, builds pinned Asar, emits symbols, and requires byte identity. |
 | F-02 | Portable private-fixture contract | **Verified** | Bootstrap/check commands, shared test-only lookup, exact hash validation, and explicit skip/fail behavior. |
-| F-03 | `symbols.sym` reader | **Queued** | Parse bank/address/name and expose lookups to parity tests. |
-| F-04 | Extracted-asset manifest | **Queued** | Read `rip_assets.py`/assembly `incbin`s into address, size, name records. |
-| F-05 | Address drift test | **Queued** | Assert SMEDIT constants against named symbols. |
-| F-06 | One parity report command | **Queued** | Emit pass/mismatch/uncovered counts without generating source-tree artifacts. |
+| F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
+| F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
+| F-05 | Address drift test | **Partial** | Twelve tileset, boss, and Samus constants are source-linked; inventory and map the remainder. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -302,9 +302,9 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   Kraid sprite pixel exports with a clear validation blocker.
 - [x] **P0.2** Add an explicit parity-fixture contract for the vanilla ROM and
   disassembly checkout; remove personal absolute test paths and silent success.
-- [ ] **P0.3** Parse `symbols.sym` and assert a small seed set of named addresses.
-- [ ] **P0.4** Parse assembly `incbin`s / `rip_assets.py` into an asset-range manifest.
-- [ ] **P0.5** Add a single parity-report Gradle task with no source-tree output.
+- [x] **P0.3** Parse `symbols.sym` and assert a small seed set of named addresses.
+- [x] **P0.4** Parse assembly `incbin`s / `rip_assets.py` into an asset-range manifest.
+- [x] **P0.5** Add a single parity-report Gradle task with no source-tree output.
 - [ ] **P0.6** Correct the Phantoon and Kraid load/edit/export ownership using named
   raw graphics and tileset resources; add expected-before checks for every target.
 - [ ] **P0.7** Regenerate/correct the boss IDs and bank ownership in permanent docs.
@@ -367,6 +367,10 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-02 | Found canonical documentation drift | Exact source bank/ID ownership disagrees with the current boss reference tables. |
 | 2026-10-02 | Quarantined disproved boss sprite exports | Removed the dangerous loader/writer paths, added validator/export blockers and regression tests, disabled affected pixel-editing surfaces, and retained reset controls for old project data. Phantoon Components remains editable through its separate tileset-backed path; 86 focused tests pass. |
 | 2026-10-02 | Added portable parity fixtures | Added the pinned `parity/` workspace, ignored managed clone, exact ROM hash check, strict `parityCheck`, and one test-only fixture helper across JVM modules. A 107-test configured-fixture run passed; without the ROM, legacy ROM-backed cases report skipped instead of passing. |
+| 2026-10-02 | Automated the exact reference build | `parityBuildReference` provisions pinned Asar 1.81 source, extracts private assets into the ignored checkout, emits `SM.sfc` and `symbols.sym`, and fails unless the ROM is byte-identical. |
+| 2026-10-02 | Added the source-symbol catalog | A strict WLA parser exports 64,992 named labels; seed parity assertions tie tileset, boss, and Samus constants directly to exact source symbols. |
+| 2026-10-02 | Added the extracted-asset manifest | All 1,130 active NTSC `incbin` files now have source labels, exact ROM ranges, sizes, aliases, and hashes; all match the rebuilt ROM. The report also records 17 PAL-only declarations and 55 advisory source-comment size mismatches. |
+| 2026-10-02 | Added the unified foundation report | `parityReport` executes the strict build/catalog/manifest/tagged-test chain and writes ignored JSON plus Markdown with exact identity and pass/partial/mismatch/uncovered counts. |
 
 ## Deliberately deferred
 

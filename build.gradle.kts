@@ -55,6 +55,53 @@ tasks.register<Exec>("parityCheck") {
     }
 }
 
+tasks.register<Exec>("parityBuildReference") {
+    group = "verification"
+    description = "Extract private assets and rebuild the pinned disassembly byte-identically"
+    dependsOn("parityBootstrap")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/build_reference.py")
+    providers.systemProperty("smedit.testRom").orNull?.let { value ->
+        environment("SMEDIT_TEST_ROM", value)
+    }
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+    providers.systemProperty("smedit.asar").orNull?.let { value ->
+        environment("SMEDIT_ASAR", value)
+    }
+}
+
+tasks.register<Exec>("paritySymbols") {
+    group = "verification"
+    description = "Generate the searchable source-symbol catalog under parity/reports"
+    dependsOn("parityBuildReference")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/symbol_catalog.py", "--json")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityAssets") {
+    group = "verification"
+    description = "Generate and validate the source-backed asset range manifest"
+    dependsOn("parityBuildReference")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/asset_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
+tasks.register<Exec>("parityReport") {
+    group = "verification"
+    description = "Run strict foundation parity and write JSON/Markdown reports"
+    dependsOn("parityCheck", "paritySymbols", "parityAssets", ":shared:parityTest")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/report.py")
+}
+
 // ── Build snes9x libretro core from submodule ──────────────────────────────
 
 val buildLibretroCore by tasks.registering(Exec::class) {

@@ -13,24 +13,6 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
     // ─── ROM address constants (SNES addresses) ─────────────────────
 
-    /** Frame progression pointer table: 2-byte ptrs indexed by animation ID */
-    private val FRAME_PROG_PTRS = 0x92D94E
-
-    /** Top-half DMA table pointers: 13 × 2-byte ptrs */
-    private val TOP_DMA_PTRS = 0x92D91E
-
-    /** Bottom-half DMA table pointers: 13 × 2-byte ptrs */
-    private val BOT_DMA_PTRS = 0x92D938
-
-    /** Upper body tilemap index: 2-byte ptrs indexed by animation ID */
-    private val UPPER_TILEMAP_INDEX = 0x929263
-
-    /** Lower body tilemap index: 2-byte ptrs indexed by animation ID */
-    private val LOWER_TILEMAP_INDEX = 0x92945D
-
-    /** Tilemap pointer table base */
-    private val TILEMAP_PTRS = 0x92808D
-
     /** Default VRAM population (256 tiles = 8KB) at $9A:D200 */
     private val DEFAULT_VRAM = 0x9AD200
 
@@ -352,6 +334,14 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     // ─── Animation names ─────────────────────────────────────────────
 
     companion object {
+        /** Source-backed address constants exposed internally for parity drift tests. */
+        internal const val FRAME_PROG_PTRS = 0x92D94E
+        internal const val TOP_DMA_PTRS = 0x92D91E
+        internal const val BOT_DMA_PTRS = 0x92D938
+        internal const val UPPER_TILEMAP_INDEX = 0x929263
+        internal const val LOWER_TILEMAP_INDEX = 0x92945D
+        internal const val TILEMAP_PTRS = 0x92808D
+
         /** Named animation groups with their animation IDs and descriptions */
         val ANIMATION_GROUPS = listOf(
             AnimGroup("Stand", listOf(0, 1, 2, 3, 4, 5, 6, 7, 8), "Idle standing"),

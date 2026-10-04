@@ -10,6 +10,12 @@ packaged application, project format, or ROM exporter.
   expected size and SHA-256.
 - `bootstrap.py` provisions that exact disassembly revision.
 - `check_fixtures.py` validates fixture identity before strict parity work.
+- `build_reference.py` extracts private assets, builds pinned Asar when needed,
+  rebuilds the disassembly, and generates `symbols.sym`.
+- `symbol_catalog.py` strictly parses, searches, and exports Asar's WLA labels.
+- `asset_manifest.py` maps every active extracted `incbin` to its named symbol,
+  exact ROM range, size, aliases, and content hash.
+- `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
 - `test-support/` provides one fixture contract to JVM tests in all modules.
 
 The cloned checkout lives in ignored `parity/work/`. Generated reports will live in
@@ -21,10 +27,14 @@ upstream repository is committed here.
 Requirements are Git, Python 3, and the normal SMEDIT/JDK toolchain.
 
 ```bash
-./gradlew parityBootstrap
 export SMEDIT_TEST_ROM='/absolute/path/to/clean/unheadered/Super Metroid.sfc'
-./gradlew parityCheck
+./gradlew parityReport
 ```
+
+`parityReport` depends on the bootstrap, build, fixture check, catalogs, and strict
+tagged tests. The individual `parityBootstrap`, `parityCheck`,
+`parityBuildReference`, `paritySymbols`, and `parityAssets` tasks remain available
+for focused investigation.
 
 `parityBootstrap` clones/fetches
 `https://github.com/InsaneFirebat/sm_disassembly.git` and checks out the commit in
@@ -39,6 +49,38 @@ latest upstream branch: parity results must be reproducible.
 
 The clean ROM remains user-supplied and is never downloaded. The pinned source clone
 contains upstream disassembly material under its own license and remains ignored.
+
+`parityBuildReference` additionally clones the pinned Asar 1.81 source into
+`parity/work/asar`, builds it locally with CMake, extracts all disassembly assets from
+the configured private ROM, and assembles `SM.sfc` plus `symbols.sym`. It fails unless
+the result is byte-identical to the configured ROM. Generated assets, the rebuilt ROM,
+symbols, Asar source, and compiler output all remain inside ignored `parity/work/`.
+This task requires CMake and a C++ compiler; use `SMEDIT_ASAR=/path/to/asar` to supply
+an existing Asar 1.81 executable instead.
+
+`paritySymbols` writes a deterministic, searchable catalog to ignored
+`parity/reports/symbols.json`. Direct name and address queries are also available:
+
+```bash
+python3 parity/symbol_catalog.py Tiles_Phantoon
+python3 parity/symbol_catalog.py --address AC:AA00
+```
+
+Parity tests read the same WLA label section and compare named source symbols with
+SMEDIT constants, turning address drift into a test failure.
+
+`parityAssets` writes ignored `parity/reports/assets.json`. It requires all 1,130
+active NTSC assets to have one source declaration and named address, verifies their
+bytes against the exact rebuilt ROM range, rejects overlaps, and separately records
+the 17 PAL-only declarations. Assembly comment sizes are advisory: disagreements are
+reported explicitly, while extracted bytes plus the byte-identical ROM remain the
+authority.
+
+`parityReport` is the normal strict entry point after setup. It performs the complete
+foundation chain and writes ignored `parity-report.json` and `parity-report.md` beside
+the detailed catalogs. The report records exact commits and hashes, pass/partial/
+mismatch/uncovered counts, warnings, and JUnit results. Any live mismatch fails the
+task after the underlying evidence has been evaluated.
 
 ## Overrides and normal tests
 
@@ -59,6 +101,7 @@ missing fixtures fail during a selected Gradle test run, add:
 
 The `parityCheck` Gradle task also accepts `-Dsmedit.testRom=...` and
 `-Dsmedit.disassemblyDir=...` when shell environment variables are inconvenient.
+`parityBuildReference` accepts those properties plus `-Dsmedit.asar=...`.
 
 Pure unit tests remain fixture-independent. Diagnostic images are written under a
 module's `build/test-output/`, never into `test-resources/`.
@@ -67,6 +110,7 @@ module's `build/test-output/`, never into `test-resources/`.
 
 Do not run `git pull` inside the managed checkout and call the result equivalent.
 Updating the oracle means deliberately changing `disassembly.commit`, regenerating
-future manifests, running the strict parity suite, and reviewing every resulting
-difference. The future all-subsystem report is tracked separately as P0.5 in
+the manifests, running the strict parity suite, and reviewing every resulting
+difference. The report currently covers the foundation; subsystem coverage expands
+incrementally through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).
