@@ -204,17 +204,7 @@ class RomParser(
 
     // ─── LZ5 Decompression ──────────────────────────────────────────────
     //
-    // Ported from the verified working Python implementation:
-    //   https://github.com/aremath/sm_rando/blob/master/rom_tools/compress/decompress.py
-    // Algorithm spec: https://sneslab.net/wiki/LZ5
-    //
-    // Commands 0-6 are standard, command 7 is extended (2-byte header).
-    // 0xFF terminates decompression.
-    //
-    // CRITICAL differences from our old broken implementation:
-    //   1. 0xFF IS the end marker (not a no-op)
-    //   2. Command 6 (Negative Repeat) takes 1 byte (relative offset), not 2
-    //   3. Dictionary copies wrap around when referencing past current output end
+    // The shared strict codec follows Decompression_VariableDestination at $80:B119.
     
     fun decompressLZ2(snesAddress: Int): ByteArray {
         val startPc = snesToPc(snesAddress)
@@ -232,176 +222,16 @@ class RomParser(
     
     /** Decompress LZ5 and return (decompressed data, ROM bytes consumed). */
     fun decompressLZ5AtPcWithSize(startPc: Int): Pair<ByteArray, Int> {
-        val result = decompressLZ5AtPc(startPc)
-        // Re-scan to find end position (where 0xFF terminator is)
-        var pos = startPc
-        while (pos < romData.size) {
-            val cmd = romData[pos].toInt() and 0xFF
-            if (cmd == 0xFF) { pos++; break }
-            val topBits = (cmd shr 5) and 7
-            val length: Int
-            if (topBits == 7) {
-                val cmdCode = (cmd shr 2) and 7
-                length = ((cmd and 0x03) shl 8 or (romData[pos + 1].toInt() and 0xFF)) + 1
-                pos += 2
-            } else {
-                val cmdCode = topBits
-                length = (cmd and 0x1F) + 1
-                pos += 1
-            }
-            val cmdCode = if (topBits == 7) (cmd shr 2) and 7 else topBits
-            when (cmdCode) {
-                0 -> pos += length       // direct copy: skip length data bytes
-                1 -> pos += 1            // byte fill: 1 byte
-                2 -> pos += 2            // word fill: 2 bytes
-                3 -> pos += 1            // increasing fill: 1 byte
-                4, 5 -> pos += 2         // absolute copy: 2-byte address
-                6, 7 -> pos += 1         // relative copy: 1 byte offset
-            }
-        }
-        return Pair(result, pos - startPc)
+        val result = LZ5Codec.decompress(romData, startPc)
+        return result.data to result.consumed
     }
     
     /**
      * Decompress LZ5 data starting at the given PC offset.
-     * Ported directly from aremath/sm_rando decompress.py
+     * Malformed, unterminated, or bank-overflowing streams are rejected.
      */
-    fun decompressLZ5AtPc(startPc: Int): ByteArray {
-        val dst = ByteArray(0x20000) // 128KB max output (some rooms are very large)
-        var dstPos = 0
-        var pos = startPc
-        
-        while (pos < romData.size) {
-            val nextCmd = romData[pos].toInt() and 0xFF
-            
-            // 0xFF = end of compressed data
-            if (nextCmd == 0xFF) {
-                pos++
-                break
-            }
-            
-            val cmdCode: Int
-            val length: Int
-            
-            val topBits = (nextCmd shr 5) and 7
-            if (topBits == 7) {
-                // Extended command: 2-byte header
-                // Bits 5-3 of first byte = actual command
-                // Last 2 bits of first byte + all 8 bits of second byte = 10-bit length
-                cmdCode = (nextCmd shr 2) and 7
-                val highBits = nextCmd and 0x03
-                val lowBits = romData[pos + 1].toInt() and 0xFF
-                length = ((highBits shl 8) or lowBits) + 1
-                pos += 2
-            } else {
-                // Standard command: 1-byte header
-                cmdCode = topBits
-                length = (nextCmd and 0x1F) + 1
-                pos += 1
-            }
-            
-            when (cmdCode) {
-                0 -> {
-                    // Direct copy: copy next `length` bytes from source
-                    for (i in 0 until length) {
-                        if (pos >= romData.size) break
-                        dst[dstPos++] = romData[pos++]
-                    }
-                }
-                1 -> {
-                    // Byte fill: repeat one byte `length` times
-                    val fillByte = romData[pos++]
-                    for (i in 0 until length) {
-                        dst[dstPos++] = fillByte
-                    }
-                }
-                2 -> {
-                    // Word fill: alternate two bytes for `length` bytes
-                    val b1 = romData[pos++]
-                    val b2 = romData[pos++]
-                    for (i in 0 until length) {
-                        dst[dstPos++] = if (i % 2 == 0) b1 else b2
-                    }
-                }
-                3 -> {
-                    // Increasing fill: write byte, increment by 1, `length` times
-                    var b = romData[pos++].toInt() and 0xFF
-                    for (i in 0 until length) {
-                        dst[dstPos++] = (b and 0xFF).toByte()
-                        b++
-                    }
-                }
-                4 -> {
-                    // Repeat (absolute address copy): copy `length` bytes from
-                    // absolute position in output buffer. Wraps if past current end.
-                    val addr = (romData[pos].toInt() and 0xFF) or
-                        ((romData[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    copyFromOutput(dst, dstPos, addr, length) { it }
-                    dstPos += length
-                }
-                5 -> {
-                    // XOR Repeat: same as cmd 4 but XOR each byte with 0xFF
-                    val addr = (romData[pos].toInt() and 0xFF) or
-                        ((romData[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    copyFromOutput(dst, dstPos, addr, length) { (it.toInt() xor 0xFF).toByte() }
-                    dstPos += length
-                }
-                6 -> {
-                    // Negative Repeat (relative address copy): copy `length` bytes
-                    // from (current_position - offset) in output buffer.
-                    // Takes only 1 byte for the relative offset!
-                    val relOffset = romData[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    copyFromOutput(dst, dstPos, srcAddr, length) { it }
-                    dstPos += length
-                }
-                7 -> {
-                    // Extended cmd 7 = Negative XOR Repeat (relative + XOR 0xFF)
-                    val relOffset = romData[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    copyFromOutput(dst, dstPos, srcAddr, length) { (it.toInt() xor 0xFF).toByte() }
-                    dstPos += length
-                }
-            }
-            
-            if (dstPos >= dst.size) break // Safety
-        }
-        
-        return dst.copyOf(dstPos)
-    }
-    
-    /**
-     * Copy bytes from output buffer with wrap-around support.
-     * When the copy range extends past what has been written, bytes wrap
-     * (repeat from the start of the copied portion).
-     * Ported from aremath/sm_rando get_copy_bytes().
-     */
-    private fun copyFromOutput(
-        dst: ByteArray, dstPos: Int, srcAddr: Int, length: Int, 
-        transform: (Byte) -> Byte
-    ) {
-        // First pass: copy bytes that already exist in the output
-        var srcIdx = srcAddr
-        var written = 0
-        while (written < length && srcIdx < dstPos) {
-            if (srcIdx >= 0) {
-                dst[dstPos + written] = transform(dst[srcIdx])
-            } else {
-                dst[dstPos + written] = transform(0)
-            }
-            written++
-            srcIdx++
-        }
-        // Second pass: wrap-around — copy from what we just wrote
-        var wrapIdx = 0
-        while (written < length) {
-            dst[dstPos + written] = transform(dst[dstPos + wrapIdx])
-            written++
-            wrapIdx++
-        }
-    }
+    fun decompressLZ5AtPc(startPc: Int): ByteArray =
+        LZ5Codec.decompress(romData, startPc).data
     
     // ─── FX data parsing ──────────────────────────────────────────────
 
@@ -1167,8 +997,7 @@ class RomParser(
         val levelDataPtr = stateData["levelDataPtr"] ?: room.levelDataPtr
         val plmSetPtr = stateData["plmSetPtr"] ?: room.plmSetPtr
         val enemySetPtr = stateData["enemySetPtr"] ?: room.enemySetPtr
-        val (_, compSize) = decompressLZ2WithSize(levelDataPtr)
-        val decompData = decompressLZ2(levelDataPtr)
+        val (decompData, compSize) = decompressLZ2WithSize(levelDataPtr)
         val plms = parsePlmSet(plmSetPtr)
         val enemies = parseEnemyPopulation(enemySetPtr)
         val scrollSize = room.width * room.height

@@ -56,7 +56,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`rom/write_safety.md`](rom/write_safety.md) | Transactional export invariants, byte/resource ownership, patch hashes and preconditions, allocation claims, IPS validation, reports, and the Spike Olympics safety result. | Before adding any patch, allocator, hook, or ROM writer |
 | [`rom/environmental_damage.md`](rom/environmental_damage.md) | Heated-room, lava, and acid damage rates; fixed-point ROM locations; native suit mitigation; desktop and headless configuration. | When changing environmental damage |
 | [`rom/limits.md`](rom/limits.md)           | Per-room limits (PLMs, enemies, FX, scrolls, dimensions), bank free space sizes, scroll values, layer 2/BG scrolling, FX type codes.                                                                                                                                                                                   | When adding validation or hitting export errors |
-| [`rom/internals.md`](rom/internals.md)     | Deep engine reference. Door system end-to-end (15-step transition state machine), PLM execution lifecycle, block collision dispatch, free space management patterns, reference codebase paths.                                                                                                                         | When implementing new engine features           |
+| [`rom/internals.md`](rom/internals.md)     | Deep engine reference. Door transition state machine, PLM lifecycle, block collision dispatch, strict source-backed LZ5 behavior, free-space patterns, and reference codebase paths.                                                                                                                                    | When implementing new engine features           |
 | [`rom/hex_edits.txt`](rom/hex_edits.txt)   | Extensive recipe list for raw hex edits: physics, beams, missiles, morph ball, suits, doors, HUD, FX, sounds.                                                                                                                                                                                                          | When creating new patches                       |
 | [`rom/sound.md`](rom/sound.md)             | SPC-700 sound system: ARAM layout, transfer block format, song set pointer table (`$8F:E7E1`), BRR sample format, sample directory, music triggering, SFX libraries, CPU-SPC transfer protocol, SMEDIT sample replacement strategy.                                                                                    | When working on audio features                  |
 | [`rom/enemies.md`](rom/enemies.md)         | Enemy species headers, population sets, multi-piece/possessor system (types A-D), verified name mapping with ROM strings and SMILE GIF visual IDs.                                                                                                                                                                     | When working on enemy editing or validation     |
@@ -102,7 +102,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build, source-symbol and asset catalogs, strict fixture contract, and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build, source-symbol/asset/LZ5 catalogs, strict fixture contract, and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 
@@ -241,7 +241,7 @@ Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 
 | Patrick Johnston bank logs    | https://patrickjohnston.org/bank/8F (also /B4, /A0, /A7, /A8, etc.)                                       |
 | Metroid Construction wiki     | https://wiki.metroidconstruction.com/                                                                     |
 | SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
-| Exact SM disassembly          | `~/code/sm/sm_disassembly/` — canonical 65816 instructions, labels, extracted assets, and byte-identical build |
+| Exact SM disassembly          | `parity/work/sm_disassembly/` — ignored, pinned checkout provisioned by `./gradlew parityBootstrap`; override with `SMEDIT_DISASSEMBLY_DIR` |
 | SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
 | MapRandomizer                 | `~/code/super_metroid/MapRandomizer/` — Door handling, room geometry                                      |
 | SM Mod 3.0.80                 | `docs/Super Metroid Mod 3.0.80/SMMM_black.html` — Community reference (ground truth for species IDs)      |

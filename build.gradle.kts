@@ -94,10 +94,21 @@ tasks.register<Exec>("parityAssets") {
     }
 }
 
+tasks.register<Exec>("parityLz5Oracle") {
+    group = "verification"
+    description = "Independently classify and decode every extracted LZ5 stream"
+    dependsOn("parityAssets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/lz5_oracle.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
-    description = "Run strict foundation parity and write JSON/Markdown reports"
-    dependsOn("parityCheck", "paritySymbols", "parityAssets", ":shared:parityTest")
+    description = "Run strict foundation/LZ5 parity and write JSON/Markdown reports"
+    dependsOn("parityCheck", "paritySymbols", "parityAssets", "parityLz5Oracle", ":shared:parityTest")
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/report.py")
 }

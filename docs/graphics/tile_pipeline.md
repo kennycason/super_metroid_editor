@@ -365,6 +365,13 @@ Command byte format:
 
 Lower 5 bits = length - 1 for short commands.
 Extended ($E0+): 10-bit length from {bits 1-0 of cmd byte, next byte}.
+Because `$FF` terminates first, command 7 only has extended headers `$FC..$FE`
+(lengths 1..768); it has no short form or 769..1024-byte encoding.
+
+SMEDIT uses one strict `LZ5Codec` for ROM parsing and export verification. The pinned
+source-backed parity suite independently decodes all 421 exact compressed assets and
+checks every decoded size/hash plus recompression; see
+[`../validation/README.md`](../validation/README.md#shared-graphics-and-compression).
 
 SMILE uses `LunarDecompress` with format=4 (LC_LZ5) for all SM decompression:
 

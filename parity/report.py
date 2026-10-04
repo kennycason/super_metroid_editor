@@ -134,11 +134,58 @@ def foundation_checks(test_results: Dict[str, object]) -> List[Dict[str, object]
     ]
 
 
+def named_test_status(test_results: Dict[str, object], class_name: str, name_prefix: str) -> str:
+    matches = [
+        case
+        for case in test_results["cases"]
+        if case["className"] == class_name and str(case["name"]).startswith(name_prefix)
+    ]
+    if len(matches) != 1:
+        return "mismatch"
+    return "pass" if matches[0]["status"] == "pass" else "mismatch"
+
+
+def compression_checks(test_results: Dict[str, object], lz5: Dict[str, object]) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.LZ5SourceParityTest"
+    decode_status = named_test_status(
+        test_results,
+        class_name,
+        "every extracted LZ5 stream matches the independent source oracle",
+    )
+    recompress_status = named_test_status(
+        test_results,
+        class_name,
+        "every extracted LZ5 payload survives SMEDIT recompression",
+    )
+    stream_count = int(lz5["exactCompressedStreamCount"])
+    return [
+        {
+            "id": "G-02",
+            "name": "LZ5 decompression",
+            "status": decode_status,
+            "evidence": (
+                f"All {stream_count} exact extracted streams match independent decoded sizes/hashes; "
+                "malformed and destination-overflowing streams are rejected."
+            ),
+        },
+        {
+            "id": "G-03",
+            "name": "LZ5 recompression",
+            "status": recompress_status,
+            "evidence": (
+                f"All {stream_count} decoded payloads survive SMEDIT encode/decode byte-exactly; "
+                "the 64 KiB engine destination limit is enforced."
+            ),
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
     symbols = report["symbols"]
     assets = report["assets"]
+    lz5 = report["lz5"]
     tests = report["tests"]
     lines = [
         "# SMEDIT Parity Report",
@@ -155,7 +202,7 @@ def markdown_report(report: Dict[str, object]) -> str:
         f"| Asar | `{identity['asarVersion']}` at `{identity['asarCommit']}` |",
         f"| Generated | `{report['generatedAt']}` |",
         "",
-        "## Foundation status",
+        "## Parity status",
         "",
         "| Status | Count |",
         "|---|---:|",
@@ -183,11 +230,20 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{assets['inactiveCount']}** PAL-only declarations recorded.",
             f"- Source comment warnings: **{assets['sourceCommentSizeMismatchCount']}** size comments "
             "disagree with authoritative extracted/assembled bytes.",
+            f"- LZ5: **{lz5['exactStreamCount']}** exact streams "
+            f"(**{lz5['activeStreamCount']}** active, **{lz5['unusedStreamCount']}** unused), "
+            f"largest decoded payload **{lz5['maxDecompressedSize']:,} bytes**.",
+            "- LZ5 command use in the vanilla corpus: "
+            + ", ".join(
+                f"{command}={count:,}" for command, count in lz5["commandCounts"].items()
+            )
+            + ".",
             f"- Strict parity tests: **{tests['tests']}** run, **{tests['failures']}** failures, "
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** named SMEDIT constants currently mapped.",
             "",
-            "Detailed symbol and asset records are in `symbols.json` and `assets.json` beside this report.",
+            "Detailed symbol, asset, and compression records are in `symbols.json`, `assets.json`, "
+            "and `lz5.json` beside this report.",
             "",
         ]
     )
@@ -203,20 +259,36 @@ def main() -> int:
     report_dir = args.report_dir.expanduser().resolve()
     symbols_path = report_dir / "symbols.json"
     assets_path = report_dir / "assets.json"
-    if not symbols_path.is_file() or not assets_path.is_file():
-        print("ERROR: symbol/asset reports are missing; run through ./gradlew parityReport", file=sys.stderr)
+    lz5_path = report_dir / "lz5.json"
+    if not symbols_path.is_file() or not assets_path.is_file() or not lz5_path.is_file():
+        print("ERROR: symbol/asset/LZ5 reports are missing; run ./gradlew parityReport", file=sys.stderr)
         return 2
 
     reference = read_properties(REFERENCE_FILE)
     symbols = json.loads(symbols_path.read_text(encoding="utf-8"))
     assets = json.loads(assets_path.read_text(encoding="utf-8"))
+    lz5 = json.loads(lz5_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
         raise ValueError("symbol report count does not match the pinned reference")
     if assets["activeAssetCount"] != int(reference["assets.ntsc.count"]):
         raise ValueError("asset report count does not match the pinned reference")
+    pinned_lz5_fields = {
+        "exactCompressedStreamCount": "lz5.streams.count",
+        "activeCompressedStreamCount": "lz5.streams.active.count",
+        "unusedCompressedStreamCount": "lz5.streams.unused.count",
+        "maxDecompressedSize": "lz5.output.maxBytes",
+    }
+    for field, property_name in pinned_lz5_fields.items():
+        if int(lz5[field]) != int(reference[property_name]):
+            raise ValueError(f"LZ5 report field {field} does not match the pinned reference")
+    for command in range(8):
+        if int(lz5["aggregateCommandCounts"][str(command)]) != int(
+            reference[f"lz5.command.{command}.count"]
+        ):
+            raise ValueError(f"LZ5 command {command} count does not match the pinned reference")
 
-    checks = foundation_checks(tests)
+    checks = foundation_checks(tests) + compression_checks(tests, lz5)
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
         status: raw_summary[status]
@@ -224,9 +296,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation",
+        "scope": "foundation-and-lz5",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -244,6 +316,13 @@ def main() -> int:
             "inactiveCount": assets["inactiveOrUnavailableIncbinCount"],
             "sourceCommentSizeMismatchCount": assets["sourceCommentSizeMismatchCount"],
         },
+        "lz5": {
+            "exactStreamCount": lz5["exactCompressedStreamCount"],
+            "activeStreamCount": lz5["activeCompressedStreamCount"],
+            "unusedStreamCount": lz5["unusedCompressedStreamCount"],
+            "maxDecompressedSize": lz5["maxDecompressedSize"],
+            "commandCounts": lz5["aggregateCommandCounts"],
+        },
         "tests": tests,
     }
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +332,7 @@ def main() -> int:
     markdown_path.write_text(markdown_report(report), encoding="utf-8")
     print(f"Parity report: {overall.upper()}")
     print(
-        "  Foundation: "
+        "  Checks: "
         f"{summary['pass']} pass, {summary['partial']} partial, "
         f"{summary['mismatch']} mismatch, {summary['uncovered']} uncovered"
     )

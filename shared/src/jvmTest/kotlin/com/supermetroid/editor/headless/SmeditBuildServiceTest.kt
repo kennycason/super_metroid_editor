@@ -998,12 +998,19 @@ class SmeditBuildServiceTest {
 
     @Test
     fun `headless ROM build rejects project graphics it cannot export`() {
+        val original = ByteArray(0x300000) { 0xFF.toByte() }
+        val parser = RomParser(original)
+        val tablePc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES)
+        val tileTableSnes = 0xC08000
+        val tileTablePc = parser.snesToPc(tileTableSnes)
+        writeU24(original, tablePc, tileTableSnes)
+        LZ5Compressor.compress(ByteArray(8)).copyInto(original, tileTablePc)
         val project = SmEditProject(romPath = "base.smc").also {
             it.customGfx.tileTables["0"] = Base64.getEncoder().encodeToString(ByteArray(8))
         }
 
         val error = assertFailsWith<IllegalArgumentException> {
-            SmeditBuildService().build(ByteArray(0x300000) { 0xFF.toByte() }, SmeditBuildRequest(), project)
+            SmeditBuildService().build(original, SmeditBuildRequest(), project)
         }
 
         assertTrue(error.message.orEmpty().contains("cannot safely export"))

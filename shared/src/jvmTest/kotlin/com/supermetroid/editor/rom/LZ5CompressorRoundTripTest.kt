@@ -1,22 +1,21 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import kotlin.test.assertFailsWith
 
 /**
  * Pure-data LZ5 round-trip tests — no ROM file required.
- * Compresses synthetic data with LZ5Compressor, then decompresses
- * with RomParser and verifies the output matches the input.
+ * Compresses synthetic data with LZ5Compressor, then uses the shared strict codec
+ * to verify the output matches the input.
  */
 class LZ5CompressorRoundTripTest {
 
     private fun roundTrip(data: ByteArray): ByteArray {
         val compressed = LZ5Compressor.compress(data)
-        // Wrap in a buffer large enough for RomParser to parse
-        val buf = ByteArray(compressed.size + 0x200)
-        System.arraycopy(compressed, 0, buf, 0, compressed.size)
-        return RomParser(buf).decompressLZ5AtPc(0)
+        return LZ5Codec.decompress(compressed).data
     }
 
     @Test
@@ -118,4 +117,93 @@ class LZ5CompressorRoundTripTest {
         val compressed = LZ5Compressor.compress(data)
         assertTrue(compressed.last() == 0xFF.toByte(), "Last byte should be 0xFF terminator")
     }
+
+    @Test
+    fun `strict decoder implements all eight engine commands`() {
+        val compressed = byteArrayOf(
+            0x03, 0x10, 0x20, 0x30, 0x40,             // 0: direct copy
+            0x22, 0xAA.toByte(),                       // 1: byte fill
+            0x43, 0x11, 0x22,                         // 2: word fill
+            0x62, 0xFE.toByte(),                       // 3: incrementing fill
+            0x83.toByte(), 0x00, 0x00,                 // 4: absolute copy
+            0xA3.toByte(), 0x00, 0x00,                 // 5: inverted absolute copy
+            0xC3.toByte(), 0x04,                       // 6: sliding copy
+            0xFC.toByte(), 0x03, 0x04,                 // 7: inverted sliding copy
+            0xFF.toByte(),
+        )
+        val expected = byteArrayOf(
+            0x10, 0x20, 0x30, 0x40,
+            0xAA.toByte(), 0xAA.toByte(), 0xAA.toByte(),
+            0x11, 0x22, 0x11, 0x22,
+            0xFE.toByte(), 0xFF.toByte(), 0x00,
+            0x10, 0x20, 0x30, 0x40,
+            0xEF.toByte(), 0xDF.toByte(), 0xCF.toByte(), 0xBF.toByte(),
+            0xEF.toByte(), 0xDF.toByte(), 0xCF.toByte(), 0xBF.toByte(),
+            0x10, 0x20, 0x30, 0x40,
+        )
+
+        val result = LZ5Codec.decompress(compressed)
+        assertArrayEquals(expected, result.data)
+        assertEquals(compressed.size, result.consumed)
+    }
+
+    @Test
+    fun `strict decoder reports consumed bytes including terminator`() {
+        val compressedWithTrailingData = byteArrayOf(0x00, 0x42, 0xFF.toByte(), 0x55)
+        val result = LZ5Codec.decompress(compressedWithTrailingData)
+
+        assertArrayEquals(byteArrayOf(0x42), result.data)
+        assertEquals(3, result.consumed)
+    }
+
+    @Test
+    fun `strict decoder rejects truncated and unterminated streams`() {
+        listOf(
+            byteArrayOf(),
+            byteArrayOf(0xE0.toByte()),
+            byteArrayOf(0x02, 0x01),
+            byteArrayOf(0x20),
+            byteArrayOf(0x40, 0x01),
+            byteArrayOf(0x60),
+            byteArrayOf(0x80.toByte(), 0x00),
+            byteArrayOf(0xA0.toByte(), 0x00),
+            byteArrayOf(0xC0.toByte()),
+            byteArrayOf(0xFC.toByte(), 0x00),
+            byteArrayOf(0x00, 0x01),
+        ).forEach { malformed ->
+            assertFailsWith<LZ5Codec.FormatException>("stream=${malformed.toHex()}") {
+                LZ5Codec.decompress(malformed)
+            }
+        }
+    }
+
+    @Test
+    fun `strict decoder rejects references to unwritten output`() {
+        val invalidAbsoluteCopy = byteArrayOf(0x80.toByte(), 0x00, 0x00, 0xFF.toByte())
+        val zeroDistanceSlidingCopy = byteArrayOf(
+            0x00, 0x12,
+            0xC0.toByte(), 0x00,
+            0xFF.toByte(),
+        )
+
+        assertFailsWith<LZ5Codec.FormatException> { LZ5Codec.decompress(invalidAbsoluteCopy) }
+        assertFailsWith<LZ5Codec.FormatException> { LZ5Codec.decompress(zeroDistanceSlidingCopy) }
+    }
+
+    @Test
+    fun `engine destination limit is enforced`() {
+        val threeByteFill = byteArrayOf(0x22, 0x00, 0xFF.toByte())
+        assertFailsWith<LZ5Codec.FormatException> {
+            LZ5Codec.decompress(threeByteFill, maxOutputSize = 2)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            LZ5Compressor.compress(ByteArray(LZ5Codec.MAX_ENGINE_OUTPUT + 1))
+        }
+
+        val fullBank = ByteArray(LZ5Codec.MAX_ENGINE_OUTPUT)
+        assertArrayEquals(fullBank, roundTrip(fullBank))
+    }
+
+    private fun ByteArray.toHex(): String =
+        joinToString(separator = "") { byte -> "%02X".format(byte.toInt() and 0xFF) }
 }

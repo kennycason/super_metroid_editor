@@ -513,7 +513,13 @@ One byte per tile. Meaning depends on block type:
 - 0x0B: Super missile only, permanent
 - 0x0C-0x0F: Map to PLM `$B62F` (no-op) — **non-functional in vanilla SM**
 
-### Implementation: `RomParser.decompressLZ2WithSize()`, `LZ5Compressor.compress()`
+### Implementation: `LZ5Codec`, `RomParser.decompressLZ2WithSize()`, `LZ5Compressor.compress()`
+
+`LZ5Codec` is the single strict decoder used by parsing and export verification. It
+returns both decoded bytes and exact source consumption (including the terminator),
+rejects malformed streams, and enforces the engine's destination-bank capacity. The
+source-backed corpus and recompression proof are documented in
+[`internals.md`](internals.md#lz5-compression-compatibility-verified-2026-10-03).
 
 ---
 

@@ -203,7 +203,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve tileset, boss, and Samus constants are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5 chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -211,8 +211,8 @@ This matrix tracks source-backed proof, not feature existence.
 | ID | Unit | Current status | Source-backed target |
 |---|---|---|---|
 | G-01 | LoROM/headered address conversion | **Covered** | Exhaustively compare symbol addresses and both ROM layouts. |
-| G-02 | LZ5 decompression | **Covered** | Compare every compressed extracted asset's decoded size/hash. |
-| G-03 | LZ5 recompression | **Covered** | Decode/re-encode/decode every asset; enforce engine destination limits. |
+| G-02 | LZ5 decompression | **Verified** | Independent `$80:B119` oracle plus Kotlin checks match decoded size/hash for all 421 exact streams; malformed input fails closed. |
+| G-03 | LZ5 recompression | **Verified** | All 421 payloads survive SMEDIT encode/decode byte-exactly; destination capacity and the 64 KiB engine maximum are enforced. |
 | G-04 | 2bpp/4bpp tile decoding | **Covered** | Fixed extracted tiles plus approved pixel hashes and flip cases. |
 | G-05 | CRE graphics/tile table | **Partial** | Verify both compressed resources, split boundary, and all pointer users. |
 | G-06 | 29 tileset pointer triples | **Partial** | Compare every table entry with named `Tiles`, `TileTables`, and `Palettes` assets. |
@@ -371,6 +371,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-02 | Added the source-symbol catalog | A strict WLA parser exports 64,992 named labels; seed parity assertions tie tileset, boss, and Samus constants directly to exact source symbols. |
 | 2026-10-02 | Added the extracted-asset manifest | All 1,130 active NTSC `incbin` files now have source labels, exact ROM ranges, sizes, aliases, and hashes; all match the rebuilt ROM. The report also records 17 PAL-only declarations and 55 advisory source-comment size mismatches. |
 | 2026-10-02 | Added the unified foundation report | `parityReport` executes the strict build/catalog/manifest/tagged-test chain and writes ignored JSON plus Markdown with exact identity and pass/partial/mismatch/uncovered counts. |
+| 2026-10-03 | Proved LZ5 decode/recompression parity | An independent `$80:B119` model classified 421 exact streams (417 active, 4 unused). SMEDIT matches every decoded size/hash and every payload survives re-encoding; strict malformed-input and 64 KiB destination checks replaced two permissive duplicate decoders. |
 
 ## Deliberately deferred
 

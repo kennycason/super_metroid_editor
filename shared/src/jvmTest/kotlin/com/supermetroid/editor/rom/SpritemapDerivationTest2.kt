@@ -1,12 +1,15 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Assertions.*
 import java.io.File
 
 /**
  * Debug tile matching: examine why pattern-independent matching fails.
  */
+@Disabled("Exploratory test used the disproved legacy Phantoon/Mother Brain mapping")
+@Suppress("DEPRECATION")
 class SpritemapDerivationTest2 {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()

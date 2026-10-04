@@ -25,7 +25,7 @@ class EnemyTileScanTest {
     inner class GraphicsAddress {
 
         @Test
-        fun `GRAPHADR decompresses to at least tileDataSize bytes for all editor enemies`() {
+        fun `GRAPHADR exposes exactly tileDataSize raw bytes for all editor enemies`() {
             val parser = loadTestRom() ?: return
 
             for ((speciesId, name) in ALL_ENEMIES) {
@@ -37,16 +37,16 @@ class EnemyTileScanTest {
                 val block = EnemySpriteGraphics.readGraphicsBlock(parser, speciesId)
                 assertNotNull(block, "$name: GRAPHADR block should not be null")
 
-                val data = parser.decompressLZ5AtPc(block!!.pcAddress)
-                assertTrue(data.size >= tileDataSize,
-                    "$name: GRAPHADR decompresses to ${data.size} bytes, need at least $tileDataSize")
+                val data = EnemySpriteGraphics.loadEnemyTileData(parser, speciesId)
+                assertNotNull(data, "$name: raw GRAPHADR data should load")
+                assertEquals(tileDataSize, data!!.size,
+                    "$name: GRAPHADR should expose exactly tileDataSize raw bytes")
 
-                val truncated = data.copyOf(tileDataSize)
-                val nonZero = truncated.count { it.toInt() != 0 }
+                val nonZero = data.count { it.toInt() != 0 }
                 assertTrue(nonZero > tileDataSize / 10,
                     "$name: tile data should have significant non-zero content ($nonZero/$tileDataSize)")
 
-                println("$name: tileDataSize=$tileDataSize, decompressed=${data.size}, nonZero=$nonZero")
+                println("$name: tileDataSize=$tileDataSize, raw=${data.size}, nonZero=$nonZero")
             }
         }
 

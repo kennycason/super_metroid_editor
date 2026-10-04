@@ -153,8 +153,8 @@ no dependency on the ROM or disassembly checkout.
 
 After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
 complete pinned asset-extraction and assembly build, including a byte-identity check.
-Use `./gradlew parityReport` for the complete strict foundation regression and its
-ignored JSON/Markdown evidence bundle.
+Use `./gradlew parityReport` for the complete strict foundation and LZ5 regression
+and its ignored JSON/Markdown evidence bundle.
 
 ## CLI
 

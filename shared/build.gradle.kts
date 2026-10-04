@@ -161,7 +161,7 @@ val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
 tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
     group = "verification"
     description = "Run strict source/ROM parity-tagged tests"
-    dependsOn(tasks.named("jvmTestClasses"), rootProject.tasks.named("parityBuildReference"))
+    dependsOn(tasks.named("jvmTestClasses"), rootProject.tasks.named("parityLz5Oracle"))
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath
     useJUnitPlatform { includeTags("parity") }

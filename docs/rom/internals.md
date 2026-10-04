@@ -315,8 +315,19 @@ Both use the same command byte structure. SM's `DecompressToMem` ($80:B119) hand
 **Extended format**: byte starts with 0xE0+, cmd in bits 4-2, length = ((byte & 3) << 8 | next) + 1 (max 1024).
 **Terminator**: 0xFF.
 
-Our compressor (`LZ5Compressor.kt`) uses cmds 0-4,6. Round-trip verified against
-our decompressor. Game's decompressor at `~/code/sm/src/sm_80.c:2488`.
+Commands 0–6 have short and extended forms. Command 7 exists only in extended form:
+`$FC..$FE` encode lengths 1..768, while `$FF` is consumed as the terminator before
+command decoding. A command-7 length above 768 is therefore not representable.
+
+SMEDIT's compressor uses commands 0–4 and 6. The shared strict decoder is modeled on
+`Decompression_VariableDestination` at `$80:B119` in the pinned disassembly. Both
+`RomParser` and export round-trip validation use that one implementation.
+
+The decoder rejects missing terminators, truncated operands, references to unwritten
+output, and output beyond the supplied destination capacity. The engine advances a
+16-bit destination index without changing the destination bank, so the absolute
+maximum is 64 KiB; a caller decompressing at a non-zero bank offset must supply the
+smaller remaining capacity. The `$FF` terminator counts as a consumed source byte.
 
 ---
 
@@ -348,13 +359,29 @@ Previous approach (PLM propagation) was ineffective because:
 - Only propagated from other states; couldn't help rooms with 1 state or doors with no
   cap in ANY state
 
-### LZ5 Compression Compatibility (VERIFIED)
+### LZ5 Compression Compatibility (VERIFIED 2026-10-03)
 
-Our `LZ5Compressor` produces valid compressed data that SM's `DecompressToMem` handles
-correctly. Verified by:
-1. Round-trip: compress → decompress → compare with original
-2. Command-by-command comparison with game's decompressor (`sm_80.c:2488`)
-3. All 8 command types match the game's format
+The source-backed parity harness now provides independent evidence rather than testing
+SMEDIT only against itself:
+
+1. A Python model derived directly from `$80:B119` strictly decodes every extracted
+   asset that is exactly one complete LZ5 stream.
+2. The pinned NTSC corpus contains 421 such streams: 417 active and 4 unused. They
+   include 250 level-data, 70 background, 38 tile, 25 palette, 23 tilemap, and 15
+   tile-table payloads. The largest expands to 62,722 bytes.
+3. SMEDIT's Kotlin codec matches the independent decoded size and SHA-256 for every
+   stream.
+4. Every decoded payload survives SMEDIT compress → strict decompress with identical
+   bytes.
+5. Vanilla exercises commands 0–6. It never uses command 7, so inverted sliding copy
+   is covered by a dedicated synthetic format test instead of being attributed to the
+   corpus.
+6. Focused tests cover all eight commands, extended lengths, exact source consumption,
+   malformed/truncated streams, invalid backreferences, and destination overflow.
+
+Run `./gradlew parityReport` with `SMEDIT_TEST_ROM` configured to regenerate the live
+evidence in ignored `parity/reports/lz5.json` and the aggregate report. See
+[`../../parity/README.md`](../../parity/README.md).
 
 ### PLM Set Handling Across States (VERIFIED)
 

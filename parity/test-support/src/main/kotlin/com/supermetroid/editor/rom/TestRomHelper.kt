@@ -79,6 +79,18 @@ object TestRomHelper {
     fun repositoryFile(relativePath: String): File =
         File(repositoryRoot(), relativePath).canonicalFile
 
+    fun requireParityReport(relativePath: String, producingTask: String): File {
+        val report = repositoryFile("parity/reports/$relativePath")
+        if (!report.isFile) {
+            unavailable("Parity report is missing: $report. Run ./gradlew $producingTask.")
+        }
+        return report
+    }
+
+    fun referenceInt(name: String): Int =
+        referenceProperties().getProperty(name)?.toIntOrNull()
+            ?: error("Missing integer parity reference property: $name")
+
     internal fun configuredValue(
         propertyName: String,
         environmentName: String,
