@@ -25,6 +25,51 @@ Boss defeated flag: **$7E:D82B** bit 0x01
 | Tentacles contact damage | $A0:E545 | 0x106545 | 40 |
 | Mouth contact damage | $A0:E585 | 0x106585 | 40 |
 
+## Graphics, composition, and safe editing
+
+Phantoon is four independently animated enemy slots, not one ordinary OAM sprite:
+
+| Slot | Species | Active instruction-list role |
+|---|---:|---|
+| Body | `$E4BF` | Body tilemap with invulnerable, full-body, or eye-only hitboxes |
+| Eye | `$E4FF` | Three eyelid states plus nine independently selected eyeball directions |
+| Tentacles | `$E53F` | Three paired left/right frames in a `0 → 1 → 2 → 1` loop |
+| Mouth | `$E57F` | Normal plus two flame-spawn poses |
+
+All four headers point to `Tiles_Phantoon` at `$AC:AA00` and the base header palette
+at `$A7:CA01`. That 3 KiB raw payload is the enemy/OBJ transfer contract; it is not
+the visible body's editable BG2 pixel owner.
+
+The visible boss is assembled from **22 active extended BG2 tilemaps** at
+`$A7:E0AA..E3D1`. They write into the shared 32×32 BG2 map beginning at destination
+`$2000` and reference the powered-off Wrecked Ship room graphics from tileset `$05`.
+The used artwork occupies a stable 10×14-tile (80×112-pixel) region:
+
+- one body tilemap;
+- three eye/lid tilemaps;
+- nine eyeball directions;
+- three left and three right tentacle tilemaps;
+- three mouth tilemaps.
+
+Runtime color comes from eight health palettes at `$A7:CB41..CC40`. The active
+full-health palette is `Palette_Phantoon_HealthBased_7` at **`$A7:CC21`**.
+`$A7:CA21` contains a byte-identical clone, but the source marks it unused; editor
+code must not use it as the active ownership address.
+
+SMEDIT's Components view exposes every active tilemap. The Compositions view assembles
+the closed-eye body and all nine gaze directions at their shared runtime coordinates,
+and the Animations view renders five exactly bounded source lists (eye open, two
+eye-close paths, tentacles, and mouth flame spawn) with their original timing. Since
+the four slots advance independently in-game, each animation preview holds the other
+slots in source-valid resting poses rather than implying one global Phantoon frame list.
+
+Pixel edits write through the normal tileset relocation unit `varGfx["5"]`. The
+source-owned graphics prefix is `$4800` bytes; SMEDIT's production buffer also carries
+the standard reserved `$800`-byte variable-tile gap. BG2 placement, instruction lists,
+hitboxes, and the separate `$AC:AA00` OBJ payload remain read-only. `parityPhantoon`
+pins this boundary and deterministic pixels for all components, animations, and gaze
+compositions.
+
 ## Behavior Data Tables (Bank $A7)
 
 All tables are plain data (u16 LE words). No ASM patches needed — just value writes.

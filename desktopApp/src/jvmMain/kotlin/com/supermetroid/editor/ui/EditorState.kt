@@ -869,7 +869,24 @@ class EditorState(
     // ── Phantoon sprite delegates ─────────────────────────────────────────
 
     fun getPhantoonSpritemap(romParser: RomParser) = phantoonSprite.getSpritemap(romParser)
-    fun renderPhantoonComponent(romParser: RomParser, def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef) = phantoonSprite.renderComponent(romParser, def)
+    fun renderPhantoonComponent(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+    ) = phantoonSprite.renderComponent(romParser, def, paletteStage)
+    fun renderPhantoonFullBody(
+        romParser: RomParser,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+        eyeball: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef? = null,
+    ) = phantoonSprite.renderFullBody(romParser, paletteStage, eyeball)
+    fun renderPhantoonAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.PhantoonSpritemap.AnimationDef,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+    ) = phantoonSprite.renderAnimation(romParser, def, paletteStage)
     fun applyPhantoonComponentEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite, editedPixels: IntArray) = phantoonSprite.applyComponentEdits(romParser, sprite, editedPixels)
     fun getPhantoonPalette(romParser: RomParser) = phantoonSprite.getPalette(romParser)
     fun hasCustomPhantoonComponents() = phantoonSprite.hasCustomComponents()

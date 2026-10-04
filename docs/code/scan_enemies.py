@@ -141,9 +141,9 @@ KNOWN_ENEMIES = {
     0xE47F: "Kraid Nail (bad trajectory)",
     # ── Phantoon ──
     0xE4BF: "Phantoon",
-    0xE4FF: "Phantoon (piece)",
-    0xE53F: "Phantoon (piece 2)",
-    0xE57F: "Phantoon (piece 3)",
+    0xE4FF: "Phantoon Eye",
+    0xE53F: "Phantoon Tentacles",
+    0xE57F: "Phantoon Mouth",
     # ── Friendly / Misc ──
     0xE5BF: "Etecoon",
     0xE5FF: "Dachora",

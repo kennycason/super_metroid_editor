@@ -3,6 +3,9 @@ package com.supermetroid.editor.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,8 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,7 +54,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.image.BufferedImage
 
-private enum class SpriteEditorTab { COMPONENTS, TILE_SHEET }
+private enum class SpriteEditorTab { COMPONENTS, COMPOSITIONS, ANIMATIONS, TILE_SHEET }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -102,6 +107,7 @@ fun PhantoonSpriteEditor(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -121,6 +127,18 @@ fun PhantoonSpriteEditor(
                             }
                         }
                     },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == SpriteEditorTab.COMPOSITIONS,
+                    onClick = { activeTab = SpriteEditorTab.COMPOSITIONS },
+                    label = { Text("Compositions", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == SpriteEditorTab.ANIMATIONS,
+                    onClick = { activeTab = SpriteEditorTab.ANIMATIONS },
+                    label = { Text("Animations", fontSize = 10.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
@@ -168,6 +186,20 @@ fun PhantoonSpriteEditor(
                 modifier = Modifier.weight(1f)
             )
 
+            SpriteEditorTab.COMPOSITIONS -> CompositionsTab(
+                editorState = editorState,
+                romParser = romParser,
+                refreshKey = refreshKey,
+                modifier = Modifier.weight(1f),
+            )
+
+            SpriteEditorTab.ANIMATIONS -> AnimationsTab(
+                editorState = editorState,
+                romParser = romParser,
+                refreshKey = refreshKey,
+                modifier = Modifier.weight(1f),
+            )
+
             SpriteEditorTab.TILE_SHEET -> TileSheetTab(
                 editorState = editorState,
                 onRefresh = { refreshKey++ },
@@ -192,43 +224,48 @@ private fun ComponentsTab(
     Row(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .width(200.dp)
+                .width(230.dp)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                .verticalScroll(rememberScrollState())
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("Room: \$CD13 · Tileset: 5 · AI: \$A7", fontSize = 9.sp,
+            Text("Room: \$CD13 · Tileset: \$05 · AI: \$A7", fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp))
-            Text("BG2 tilemap components rendered from the room tileset. " +
-                "Editing a tile updates all instances of that tile.",
+            Text("All 22 active BG2 tilemaps. Editing a tile updates every component that shares it.",
                 fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
             Divider()
             Spacer(Modifier.height(4.dp))
 
-            PhantoonSpritemap.COMPONENT_TILEMAPS.forEach { def ->
-                val isSelected = selectedDef.tilemapSnes == def.tilemapSnes
-                Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelectDef(def) },
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            PhantoonSpritemap.ComponentGroup.values().forEach { group ->
+                Text(group.displayName, fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp))
+                PhantoonSpritemap.COMPONENT_TILEMAPS.filter { it.group == group }.forEach { def ->
+                    val isSelected = selectedDef.tilemapSnes == def.tilemapSnes
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { onSelectDef(def) },
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        ComponentThumb(def, editorState, romParser, refreshKey, size = 32)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(def.name, fontSize = 10.sp, fontWeight = FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurface)
-                            Text("\$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 9.sp,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            ComponentThumb(def, editorState, romParser, refreshKey, size = 32)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(def.name.substringAfter("· "), fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface)
+                                Text("\$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 9.sp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -268,7 +305,7 @@ private fun ComponentDetailPanel(
                     color = MaterialTheme.colorScheme.onSurface)
                 Text("Tilemap: \$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Species: \$${def.speciesId}", fontSize = 10.sp,
+                Text("${def.sourceLabel} · Species \$${def.speciesId}", fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -341,9 +378,11 @@ private fun ComponentDetailPanel(
                         bitmap = bm,
                         contentDescription = "Phantoon ${def.name}",
                         modifier = Modifier
-                            .padding(16.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .size((bm.width * 4).dp, (bm.height * 4).dp)
+                            .fillMaxSize(0.86f)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        contentScale = ContentScale.Fit,
+                        filterQuality = FilterQuality.None,
                     )
                 } else {
                     CircularProgressIndicator(Modifier.size(24.dp))
@@ -395,6 +434,227 @@ private fun ComponentThumb(
             contentAlignment = Alignment.Center
         ) {
             Text("?", fontSize = (size / 3).sp, color = Color(0xFF666688))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CompositionsTab(
+    editorState: EditorState,
+    romParser: RomParser?,
+    refreshKey: Int,
+    modifier: Modifier = Modifier,
+) {
+    var selectedEyeball by remember { mutableStateOf<PhantoonSpritemap.ComponentDef?>(null) }
+    var selectedPalette by remember { mutableStateOf(PhantoonSpritemap.PALETTE_STAGES.last()) }
+    val spriteBitmap by produceState<ImageBitmap?>(
+        initialValue = null,
+        selectedEyeball,
+        selectedPalette,
+        refreshKey,
+        romParser,
+    ) {
+        value = romParser?.let { parser ->
+            editorState.renderPhantoonFullBody(parser, selectedPalette, selectedEyeball)?.let { sprite ->
+                val image = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
+                image.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
+                image.toComposeImageBitmap()
+            }
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Runtime Palette", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PhantoonSpritemap.PALETTE_STAGES.forEach { stage ->
+                FilterChip(
+                    selected = selectedPalette == stage,
+                    onClick = { selectedPalette = stage },
+                    label = { Text(stage.name, fontSize = 9.sp) },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
+        }
+
+        Divider()
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.width(230.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                    .padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Complete BG2 Poses", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                (listOf<PhantoonSpritemap.ComponentDef?>(null) + PhantoonSpritemap.EYEBALL_TILEMAPS)
+                    .forEach { eyeball ->
+                        val selected = selectedEyeball == eyeball
+                        val label = eyeball?.name?.substringAfter("· ") ?: "Eye closed"
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { selectedEyeball = eyeball },
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            )
+                        }
+                    }
+            }
+
+            Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    selectedEyeball?.name?.let { "Full body · ${it.substringAfter("· ")}" }
+                        ?: "Full body · eye closed",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Complete 80×112 composition using the parts' shared runtime BG2 coordinates",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                        .background(Color(0xFF111122), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val bitmap = spriteBitmap
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = "Complete Phantoon composition",
+                            modifier = Modifier.fillMaxSize(0.9f).padding(8.dp),
+                            contentScale = ContentScale.Fit,
+                            filterQuality = FilterQuality.None,
+                        )
+                    } else if (romParser != null) {
+                        CircularProgressIndicator(Modifier.size(24.dp))
+                    } else {
+                        Text(
+                            "Load a ROM to view compositions",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnimationsTab(
+    editorState: EditorState,
+    romParser: RomParser?,
+    refreshKey: Int,
+    modifier: Modifier = Modifier,
+) {
+    var selectedAnimation by remember { mutableStateOf(PhantoonSpritemap.ANIMATIONS.first()) }
+    var selectedPalette by remember { mutableStateOf(PhantoonSpritemap.PALETTE_STAGES.last()) }
+    val animation by produceState<com.supermetroid.editor.rom.SpriteAnimation?>(
+        initialValue = null,
+        selectedAnimation,
+        selectedPalette,
+        refreshKey,
+        romParser,
+    ) {
+        value = romParser?.let {
+            editorState.renderPhantoonAnimation(it, selectedAnimation, selectedPalette)
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Runtime Palette", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PhantoonSpritemap.PALETTE_STAGES.forEach { stage ->
+                FilterChip(
+                    selected = selectedPalette == stage,
+                    onClick = { selectedPalette = stage },
+                    label = { Text(stage.name, fontSize = 9.sp) },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
+        }
+
+        Divider()
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.width(230.dp).fillMaxHeight().padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Source Instruction Lists", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                PhantoonSpritemap.ANIMATIONS.forEach { definition ->
+                    val selected = definition == selectedAnimation
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { selectedAnimation = definition },
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
+                            Text(definition.name, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                "\$${definition.snesAddr.toString(16).uppercase()}–\$${definition.endSnesAddrExclusive.toString(16).uppercase()}",
+                                fontSize = 8.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(selectedAnimation.name, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Complete 80×112 BG2 composition · ${animation?.frames?.size ?: 0} source frame(s) · " +
+                        if (selectedAnimation.loop) "loops" else "one-shot",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Body, eye, tentacles, and mouth are independent enemy slots; this animates the selected " +
+                        "source list while holding the other slots in source-valid resting poses.",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                AnimationPlayer(
+                    animation = animation,
+                    previewSize = 420,
+                    showExportButtons = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

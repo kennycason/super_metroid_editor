@@ -65,7 +65,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 
 | File                                       | Contents                                                                                                                                                                 | Key Data                                                                    |
 |--------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| [`bosses/phantoon.md`](bosses/phantoon.md) | Phantoon species IDs, all behavior data table addresses (eye timers, flame patterns, figure-8 speeds, wave constants), AI routines, safe vs. ASM-required modifications. | Species: $E4BF body, $E4FF/$E53F/$E57F flames. Room $CD13, AI $A7. HP=2500. |
+| [`bosses/phantoon.md`](bosses/phantoon.md) | Phantoon's four independently animated slots, exact 22-tilemap BG2 composition, eight health palettes, safe pixel ownership, and all behavior data tables (eye timers, flame patterns, figure-8 speeds, wave constants). | Species: `$E4BF` body, `$E4FF` eye, `$E53F` tentacles, `$E57F` mouth. Room `$CD13`, tileset `$05`, AI `$A7`. HP=2500. |
 | [`bosses/kraid.md`](bosses/kraid.md)       | Kraid species IDs, stats/AI, exact 64×64 BG2/head recipe, palettes, linked OAM ownership, and safe edit boundary. **Note: $D2BF is Squeept, NOT Kraid.** | Species: $E2BF. Room $A59F, tileset $1A, AI $A7. HP=1000. |
 
 ### Graphics & Sprites (`docs/graphics/`)

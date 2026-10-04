@@ -182,6 +182,13 @@ uses its six exact action lists (24 frame occurrences / 14 unique poses), avoidi
 old shared-bank scan that mixed in Ridley data. Deterministic pixel hashes cover every
 one of those frames, while head pixel edits save through the ordinary complete-tileset
 relocation path. `./gradlew parityKraid` runs that focused slice.
+Phantoon has the same complete-composition treatment: all four independently animated
+enemy slots, 22 active BG2 tilemaps and extended-spritemap wrappers, 19 instruction
+lists, three hitbox sets, the room-tileset pixel owner, separate raw OBJ payload, and
+all eight health palettes are pinned. The editor renders every component, nine gaze
+poses, and five bounded part animations as complete 80×112 compositions, with
+deterministic hashes and safe `varGfx["5"]` pixel ownership. `./gradlew parityPhantoon`
+runs that focused slice.
 Current coverage and the ordered expansion plan are tracked in
 [the parity validation matrix](docs/validation/README.md).
 

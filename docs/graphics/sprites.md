@@ -3,9 +3,9 @@
 > **Parity status (2026-10-04):** All 164 species headers, raw `GRAPHADR`
 > ownership, and every named standard/extended enemy OAM structure are now
 > source/ROM verified through SMEDIT's production parsers. Instruction-list
-> control flow and complete boss composition are still partial. The boss ID/bank
-> tables below contain known stale assignments; do not use those tables for
-> implementation until regenerated from exact source. See
+> control flow and boss composition beyond Kraid/Phantoon are still partial. The
+> remaining boss ID/bank tables below contain known stale assignments; do not use
+> those tables for implementation until regenerated from exact source. See
 > [`../validation/README.md`](../validation/README.md).
 
 ### Current boss pixel-editing safety boundary
@@ -16,7 +16,9 @@
   Earlier editor feedback and an intentional identical-alias editing model remain
   E-09 requirements.
 - Phantoon's **Components** editor remains enabled. It edits the room-tileset tiles
-  used by the named extended BG2 tilemaps.
+  used by all 22 active extended BG2 tilemaps. The Animations view composes the body,
+  eye, tentacles, and mouth in their shared runtime coordinates and exposes all eight
+  health palettes.
 - Phantoon's old standalone **Tile Sheet** mapping is quarantined because it resolves
   inside Mother Brain leg graphics (`$B7:9000..9FFF`). Existing legacy edits block
   export until reset.
@@ -314,11 +316,22 @@ hitbox, animation, and ownership manifest.
 | Entity | Species ID | HP | Dmg | Palette | Init AI | Tile Size |
 |--------|-----------|-----|------|---------|---------|-----------|
 | Body | `$E4BF` | 2500 | 40 | `$A7:CA01` | `$A7:CDF3` | 3072 |
-| Flame (small) | `$E4FF` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
-| Flame (medium) | `$E53F` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
-| Flame (large) | `$E57F` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
+| Eye | `$E4FF` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
+| Tentacles | `$E53F` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
+| Mouth | `$E57F` | 2500 | 40 | `$A7:CA01` | `$A7:CE55` | 1024 |
 
-All entities share GFX at `$AC:AA00`. Phantoon uses BG2 tilemaps for rendering.
+The header palette `$A7:CA01` and shared raw `$AC:AA00` OBJ payload are separate from
+the visible boss's BG2 recipe. The live room uses tileset `$05`; 22 active tilemaps at
+`$A7:E0AA..E3D1` place the body, three eye lids, nine eyeball directions, six tentacle
+halves, and three mouth poses. Eight health palettes span `$A7:CB41..CC40`; active
+full-health is `$A7:CC21`, while `$A7:CA21` is only an unused byte-identical clone.
+
+SMEDIT exposes all 22 components, the closed-eye full body plus all nine gaze poses in
+its Compositions view, and five exact bounded part animations (13 timed frame occurrences).
+Because the four enemy slots animate independently, animation previews hold the other
+three slots in source-valid resting poses. Pixel edits persist through `varGfx["5"]`;
+the tilemaps, instruction lists, hitboxes, and raw OBJ payload remain read-only. See
+`docs/bosses/phantoon.md` and `parityPhantoon` for the complete ownership manifest.
 
 ### Draygon (AI Bank $A7/$A8)
 
@@ -408,9 +421,9 @@ editor. A raw tile sheet never counts as an assembled sprite.
 | Nonvisual | 2 | The respawn sentinel and one source-declared unused header have no standalone visual contract. |
 | Failed | 0 | Every active visual species now has at least an assembled, composite, or tile-sheet path. |
 
-The tile-sheet-only set is Puyo, Owtch, Choot, Sbug, Sbug2, Kzan Bottom, Ridley
-Explosion, Evir, Evir Projectile, Magdollite, Beetom, both Sidehopper corpse headers,
-and Tourian Statue Ghost.
+The current tile-sheet-only set is Puyo (`$CFBF` and `$E1BF`), Owtch, Choot, both Reo
+headers, Kihunter, Evir, Zero, Lavaman, Beetom, Hopper remains, the Torizo corpse
+helper, and unnamed species `$F03F`.
 
 The former eight failures have zero-size header transfers, but are not empty. Elevator
 and Ceres Steam use the always-loaded standard sprite tiles and common sprite palette
@@ -494,6 +507,7 @@ Enemy GFX Set ($B4)
 | `EnemySpritemapTest.kt` | OAM parsing, instruction tracing, assembled sprites |
 | `EnemyTileScanTest.kt` | GRAPHADR decompression, tileDataSize mask, palette row 0 |
 | `PhantoonSpritemapRoundtripTest.kt` | Pixel-perfect match vs reference PNG, edit roundtrip |
+| `PhantoonSourceParityTest.kt` | All four slots, 22 tilemaps/extended spritemaps, 19 lists, eight health palettes, full-body/gaze rendering, five bounded animations, hashes, and edit ownership |
 
 ---
 

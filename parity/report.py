@@ -510,6 +510,35 @@ def kraid_checks(
     ]
 
 
+def phantoon_checks(
+    test_results: Dict[str, object], phantoon: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.PhantoonSourceParityTest",
+        "Phantoon BG2 composition palettes and animations match the source manifest",
+    )
+    totals = phantoon["totals"]
+    return [
+        {
+            "id": "B-02",
+            "name": "Phantoon source renderer",
+            "status": status,
+            "evidence": (
+                f"All {totals['headerCount']} independently animated enemy slots, "
+                f"{totals['tilemapCount']} active BG2 tilemaps / {totals['tilemapWordCount']} words, "
+                f"{totals['extendedSpritemapCount']} extended spritemaps, and "
+                f"{totals['instructionListCount']} instruction lists / "
+                f"{totals['frameOccurrenceCount']} frame occurrences are source-pinned. "
+                f"Production renders {totals['productionAnimationCount']} exact part animations / "
+                f"{totals['productionAnimationFrameCount']} frame occurrences as complete compositions, "
+                f"supports all {totals['healthPaletteCount']} health palettes, and safely edits the "
+                "source-owned tileset-$05 graphics prefix while keeping placement data read-only."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -525,6 +554,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     enemy_instructions = report["enemyInstructions"]
     enemy_vertical_slices = report["enemyVerticalSlices"]
     kraid = report["kraid"]
+    phantoon = report["phantoon"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -636,6 +666,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"- Kraid: **{kraid['headMapCount']}** custom BG2 head maps / "
             f"**{kraid['customFrameCount']}** frame occurrences, **{kraid['paletteStateCount']}** "
             f"palette states, and **{kraid['linkedOamHeaderCount']}** linked OAM headers are source-pinned.",
+            f"- Phantoon: **{phantoon['tilemapCount']}** active BG2 tilemaps / "
+            f"**{phantoon['tilemapWordCount']}** words, **{phantoon['instructionListCount']}** part lists / "
+            f"**{phantoon['frameCount']}** frame occurrences, and **{phantoon['healthPaletteCount']}** "
+            "runtime health palettes are source-pinned.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -649,7 +683,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -676,6 +710,7 @@ def main() -> int:
     enemy_instructions_path = report_dir / "enemy-instructions.json"
     enemy_vertical_slices_path = report_dir / "enemy-vertical-slices.json"
     kraid_path = report_dir / "kraid.json"
+    phantoon_path = report_dir / "phantoon.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -690,10 +725,11 @@ def main() -> int:
         or not enemy_instructions_path.is_file()
         or not enemy_vertical_slices_path.is_file()
         or not kraid_path.is_file()
+        or not phantoon_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -712,6 +748,7 @@ def main() -> int:
     enemy_instructions = json.loads(enemy_instructions_path.read_text(encoding="utf-8"))
     enemy_vertical_slices = json.loads(enemy_vertical_slices_path.read_text(encoding="utf-8"))
     kraid = json.loads(kraid_path.read_text(encoding="utf-8"))
+    phantoon = json.loads(phantoon_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1010,6 +1047,40 @@ def main() -> int:
         if kraid["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"Kraid aggregate {field} does not match the pinned reference")
 
+    pinned_phantoon_totals = {
+        "roomStateCount": "phantoon.roomState.count",
+        "headerCount": "phantoon.header.count",
+        "tilemapCount": "phantoon.tilemap.count",
+        "tilemapRunCount": "phantoon.tilemap.run.count",
+        "tilemapWordCount": "phantoon.tilemap.word.count",
+        "extendedSpritemapCount": "phantoon.extendedSpritemap.count",
+        "extendedChildCount": "phantoon.extendedChild.count",
+        "instructionListCount": "phantoon.instructionList.count",
+        "frameOccurrenceCount": "phantoon.frame.count",
+        "handlerOccurrenceCount": "phantoon.handler.count",
+        "productionAnimationCount": "phantoon.productionAnimation.count",
+        "productionAnimationFrameCount": "phantoon.productionAnimation.frame.count",
+        "paletteStateCount": "phantoon.paletteState.count",
+        "healthPaletteCount": "phantoon.healthPalette.count",
+        "hitboxCount": "phantoon.hitbox.count",
+    }
+    for field, property_name in pinned_phantoon_totals.items():
+        if int(phantoon["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Phantoon total {field} does not match the pinned reference")
+    pinned_phantoon_hashes = {
+        "ownership": "phantoon.ownership.aggregate.sha256",
+        "headers": "phantoon.header.aggregate.sha256",
+        "tilemaps": "phantoon.tilemap.aggregate.sha256",
+        "extendedSpritemaps": "phantoon.extendedSpritemap.aggregate.sha256",
+        "instructionLists": "phantoon.instructionList.aggregate.sha256",
+        "productionAnimations": "phantoon.productionAnimation.aggregate.sha256",
+        "palettes": "phantoon.palette.aggregate.sha256",
+        "hitboxes": "phantoon.hitbox.aggregate.sha256",
+    }
+    for field, property_name in pinned_phantoon_hashes.items():
+        if phantoon["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Phantoon aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -1045,6 +1116,7 @@ def main() -> int:
         + enemy_instruction_checks(tests, enemy_instructions, enemy_vertical_slices)
         + enemy_species_status_checks(tests, enemy_species_status)
         + kraid_checks(tests, kraid)
+        + phantoon_checks(tests, phantoon)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1053,9 +1125,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 12,
+        "schemaVersion": 13,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1201,6 +1273,20 @@ def main() -> int:
             "backgroundMapConsumerAssociationCount": kraid["totals"]["backgroundMapConsumerAssociationCount"],
             "roomBackgroundTileConsumerCount": kraid["totals"]["roomBackgroundTileConsumerCount"],
             "aggregateHashes": kraid["aggregateHashes"],
+        },
+        "phantoon": {
+            "roomStateCount": phantoon["totals"]["roomStateCount"],
+            "headerCount": phantoon["totals"]["headerCount"],
+            "tilemapCount": phantoon["totals"]["tilemapCount"],
+            "tilemapRunCount": phantoon["totals"]["tilemapRunCount"],
+            "tilemapWordCount": phantoon["totals"]["tilemapWordCount"],
+            "extendedSpritemapCount": phantoon["totals"]["extendedSpritemapCount"],
+            "instructionListCount": phantoon["totals"]["instructionListCount"],
+            "frameCount": phantoon["totals"]["frameOccurrenceCount"],
+            "productionAnimationCount": phantoon["totals"]["productionAnimationCount"],
+            "productionAnimationFrameCount": phantoon["totals"]["productionAnimationFrameCount"],
+            "healthPaletteCount": phantoon["totals"]["healthPaletteCount"],
+            "aggregateHashes": phantoon["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

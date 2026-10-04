@@ -38,6 +38,9 @@ packaged application, project format, or ROM exporter.
 - `kraid_manifest.py` proves Kraid's complete tileset/BG2/head-interpreter/palette/linked-OAM
   recipe, all 12 active linked-OAM lists, Mini Kraid's six bounded action lists, and the
   boundary between editable pixels and read-only placement data.
+- `phantoon_manifest.py` proves all four Phantoon slots, 22 active BG2 tilemaps and
+  extended spritemaps, 19 part instruction lists, eight health palettes, hitboxes,
+  room-tileset ownership, and the separate raw OBJ payload.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -61,7 +64,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
-`parityEnemyInstructions`, `parityEnemyVerticalSlices`, and `parityKraid` tasks remain
+`parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`, and
+`parityPhantoon` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -213,9 +217,18 @@ and palette ownership independent: five zero-transfer headers still own their pa
 row, while Elevator, Steam, and Zebetite use read-only global rows. This audit also found and fixed
 Botwoon's editor routing: its existing 14-part composite renderer is now used.
 
+`parityPhantoon` writes ignored `parity/reports/phantoon.json`. It distinguishes the
+four enemy-header slots (body, eye, tentacles, and mouth) from the flame-size labels
+that had drifted into newer documentation, proves all 22 active BG2 tilemaps and their
+22 extended-spritemap wrappers, and pins all 19 instruction lists / 27 frame
+occurrences. Production renders five exact bounded part animations as 13 complete
+80×112 compositions, exposes nine gaze directions and all eight health palettes, and
+persists BG pixels through the normal tileset-$05 path. The raw `$AC:AA00` OBJ payload
+is recorded separately; placement structures remain read-only.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, and enemy-species-status chain and writes ignored
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
 command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile

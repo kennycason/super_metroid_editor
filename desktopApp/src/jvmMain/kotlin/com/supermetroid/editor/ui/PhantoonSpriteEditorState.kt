@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.TilesetGfxData
 import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.PhantoonSpritemap
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.TileGraphics
 
 /**
@@ -31,7 +32,27 @@ class PhantoonSpriteEditorState(
     fun renderComponent(
         romParser: RomParser,
         def: PhantoonSpritemap.ComponentDef,
-    ): PhantoonSpritemap.AssembledSprite? = getSpritemap(romParser)?.renderComponent(def)
+        paletteStage: PhantoonSpritemap.PaletteStageDef = PhantoonSpritemap.PALETTE_STAGES.last(),
+    ): PhantoonSpritemap.AssembledSprite? =
+        getSpritemap(romParser)?.renderComponent(def, paletteStage)
+
+    fun renderFullBody(
+        romParser: RomParser,
+        paletteStage: PhantoonSpritemap.PaletteStageDef = PhantoonSpritemap.PALETTE_STAGES.last(),
+        eyeball: PhantoonSpritemap.ComponentDef? = null,
+    ): PhantoonSpritemap.AssembledSprite? =
+        getSpritemap(romParser)?.renderFullBody(paletteStage, eyeball)
+
+    fun renderAnimation(
+        romParser: RomParser,
+        def: PhantoonSpritemap.AnimationDef,
+        paletteStage: PhantoonSpritemap.PaletteStageDef = PhantoonSpritemap.PALETTE_STAGES.last(),
+    ): SpriteAnimation? = getSpritemap(romParser)?.renderAnimation(def, paletteStage)
+
+    fun readPalette(
+        romParser: RomParser,
+        stage: PhantoonSpritemap.PaletteStageDef,
+    ): IntArray? = getSpritemap(romParser)?.readPalette(stage)
 
     fun applyComponentEdits(
         romParser: RomParser,

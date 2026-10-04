@@ -2038,9 +2038,9 @@ class RomParser(
             0xE47F to "Kraid Nail (bad trajectory)",
             // ── Phantoon ──
             0xE4BF to "Phantoon",
-            0xE4FF to "Phantoon (piece)",
-            0xE53F to "Phantoon (piece 2)",
-            0xE57F to "Phantoon (piece 3)",
+            0xE4FF to "Phantoon Eye",
+            0xE53F to "Phantoon Tentacles",
+            0xE57F to "Phantoon Mouth",
             // ── Friendly / Misc ──
             0xE5BF to "Etecoon",
             0xE5FF to "Dachora",
