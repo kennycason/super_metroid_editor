@@ -170,6 +170,7 @@ tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
         rootProject.tasks.named("parityEnemyOam"),
         rootProject.tasks.named("parityEnemyInstructions"),
         rootProject.tasks.named("parityEnemyVerticalSlices"),
+        rootProject.tasks.named("parityKraid"),
     )
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath

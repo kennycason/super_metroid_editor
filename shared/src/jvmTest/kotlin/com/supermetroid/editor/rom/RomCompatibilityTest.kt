@@ -325,8 +325,8 @@ class RomCompatibilityTest {
 
         val kraid = KraidSpritemap(parser)
         assertTrue(kraid.load(), "Kraid special spritemap should load")
-        val kraidBody = requireNotNull(kraid.renderBodyTilemap(KraidSpritemap.BODY_TILEMAPS.last()))
-        assertTrue(kraidBody.pixels.count { it != 0 } > 100, "Kraid body should have visible pixels")
+        val kraidHead = requireNotNull(kraid.renderHeadTilemap(KraidSpritemap.HEAD_TILEMAPS.last()))
+        assertTrue(kraidHead.pixels.count { it != 0 } > 100, "Kraid head should have visible pixels")
     }
 
     @Test

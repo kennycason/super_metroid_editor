@@ -36,6 +36,7 @@ class BossSpriteEditorStateSafetyTest {
         }
         val state = KraidSpriteEditorState(
             customGfx = { gfx },
+            applyCustomGfx = { _, _ -> },
             onDirty = {},
         )
 

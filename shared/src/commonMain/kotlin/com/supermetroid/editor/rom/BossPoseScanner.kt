@@ -50,7 +50,8 @@ class BossPoseScanner(private val romParser: RomParser) {
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
         fun hasKnownPoses(speciesId: Int): Boolean =
-            speciesId == SPECIES_DRAYGON_BODY ||
+            speciesId == MiniKraidSpritemap.SPECIES_ID ||
+                speciesId == SPECIES_DRAYGON_BODY ||
                 speciesId == SPECIES_BOTWOON ||
                 speciesId in TORIZO_POSE_SPECIES_IDS ||
                 KNOWN_INSTR_LISTS.containsKey(speciesId)
@@ -465,6 +466,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         if (speciesId == SPECIES_DRAYGON_BODY) {
             return scanDraygonCompositePoses(minEntries)
         }
+        if (speciesId == MiniKraidSpritemap.SPECIES_ID) {
+            return scanMiniKraidPoses(minEntries)
+        }
         if (speciesId == SPECIES_BOTWOON) {
             return scanBotwoonCompositePoses(minEntries)
         }
@@ -484,6 +488,18 @@ class BossPoseScanner(private val romParser: RomParser) {
         // Strategy 2: Fall back to AI bank scan
         return scanAiBank(aiBank, tileCount, minEntries, maxBboxSize)
     }
+
+    private fun scanMiniKraidPoses(minEntries: Int): List<BossPose> =
+        MiniKraidSpritemap.POSES.mapNotNull { pose ->
+            val spritemap = smap.parseSpritemap(pose.snesAddr) ?: return@mapNotNull null
+            if (spritemap.entries.size < minEntries) return@mapNotNull null
+            BossPose(
+                name = pose.name,
+                spritemap = spritemap,
+                entryCount = spritemap.entries.size,
+                durationTicks = 8,
+            )
+        }
 
     /**
      * Parse spritemaps from known instruction list addresses.

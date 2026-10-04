@@ -98,6 +98,32 @@ class EnemySpritemapTest {
     }
 
     @Test
+    fun `lower OAM index draws over later entries`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = ByteArray(2 * RomConstants.BYTES_PER_4BPP_TILE)
+        for (row in 0 until 8) {
+            tileData[row * 2] = 0xFF.toByte() // Tile 0: palette index 1.
+            tileData[RomConstants.BYTES_PER_4BPP_TILE + row * 2 + 1] = 0xFF.toByte() // Tile 1: index 2.
+        }
+        val palette = IntArray(16).also {
+            it[1] = 0xFFFF0000.toInt()
+            it[2] = 0xFF00FF00.toInt()
+        }
+        val entries = listOf(
+            EnemySpritemap.OamEntry(0, 0, 0, 0, false, false, false, 2),
+            EnemySpritemap.OamEntry(0, 0, 1, 0, false, false, false, 2),
+        )
+
+        val rendered = smap.renderSpritemap(EnemySpritemap.Spritemap(entries, 0), tileData, palette)
+        assertNotNull(rendered)
+        assertTrue(
+            rendered!!.pixels.all { it == palette[1] },
+            "The first source entry becomes the lower OAM index and must win overlaps",
+        )
+    }
+
+    @Test
     fun `find animation frames for Zoomer`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)

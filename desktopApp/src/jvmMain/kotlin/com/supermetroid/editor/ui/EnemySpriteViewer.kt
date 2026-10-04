@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,7 @@ import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
 import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.BossPoseScanner
+import com.supermetroid.editor.rom.MiniKraidSpritemap
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
@@ -365,11 +367,21 @@ fun EnemySpriteViewer(
 
         // Enemy animation (OAM instruction list frames)
         val scope = rememberCoroutineScope()
-        val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
+        val isMiniKraid = entry.speciesId == MiniKraidSpritemap.SPECIES_ID
+        var miniKraidSequenceIndex by remember(entry.speciesId) { mutableStateOf(0) }
+        val enemyAnimation = remember(
+            entry.speciesId,
+            refreshKey,
+            paletteRefreshKey,
+            miniKraidSequenceIndex,
+        ) {
             val pal = palette ?: return@remember null
             val td = previewTileData ?: return@remember null
             if (usesStaticAssembledPreviewOnly) {
                 null
+            } else if (isMiniKraid) {
+                val def = MiniKraidSpritemap.SEQUENCES[miniKraidSequenceIndex.coerceIn(0, MiniKraidSpritemap.SEQUENCES.lastIndex)]
+                MiniKraidSpritemap(rp).renderAnimation(def, td, pal)
             } else if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
                 val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
                 val scanner = BossPoseScanner(rp)
@@ -404,9 +416,37 @@ fun EnemySpriteViewer(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Animation Preview (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
+                    Text(
+                        if (isMiniKraid) "Source Action Animation (${enemyAnimation.frames.size} frames)"
+                        else "Animation Preview (${enemyAnimation.frames.size} frames)",
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
+
+                    if (isMiniKraid) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            MiniKraidSpritemap.SEQUENCES.forEachIndexed { index, def ->
+                                val selected = index == miniKraidSequenceIndex
+                                Surface(
+                                    modifier = Modifier.clickable { miniKraidSequenceIndex = index },
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(5.dp),
+                                ) {
+                                    Text(
+                                        def.name,
+                                        fontSize = 8.sp,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     AnimationPlayer(
                         animation = enemyAnimation,
@@ -493,7 +533,10 @@ fun EnemySpriteViewer(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Body Pose Preview (${bossPoses.size} found)", fontSize = 14.sp,
+                        Text(
+                            if (isMiniKraid) "Source Pose Preview (${bossPoses.size} exact)"
+                            else "Body Pose Preview (${bossPoses.size} found)",
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                         Divider(modifier = Modifier.padding(vertical = 2.dp))
 

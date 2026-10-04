@@ -520,7 +520,10 @@ class EnemySpritemap(private val romParser: RomParser) {
 
         val pixels = IntArray(w * h)
 
-        for (entry in spritemap.entries) {
+        // The engine copies source entries to ascending OAM slots. SNES OBJ overlap
+        // priority is the reverse of a painter's algorithm: the lower OAM index wins.
+        // Draw high indices first so the first source entry is composited on top.
+        for (entry in spritemap.entries.asReversed()) {
             val localTile = entry.tileNum and 0xFF
             val entryPalette = oamPaletteRows[entry.palRow] ?: palette
 

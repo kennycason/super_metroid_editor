@@ -172,6 +172,16 @@ read-only shared/global VRAM providers, bringing the pinned ledger to zero faile
 species without granting those headers false tile edit/export ownership. Palette
 ownership is tracked separately because five of those headers still load and own
 their palette row.
+Kraid additionally has a dedicated complete-composition proof: the no-CRE tileset
+`$1A` graphics, active and unreferenced compressed BG2 maps, four custom-interpreter
+head frames, mouth hitboxes, every health/hurt/death palette state, and the eight
+headers linked to `$AB:CC00`. The production editor renders all four live 64×64 BG2
+body states and their exact head sequences, ten selectable runtime palette stages,
+and 12 bounded linked-OAM animations (173 frame occurrences). Mini Kraid separately
+uses its six exact action lists (24 frame occurrences / 14 unique poses), avoiding the
+old shared-bank scan that mixed in Ridley data. Deterministic pixel hashes cover every
+one of those frames, while head pixel edits save through the ordinary complete-tileset
+relocation path. `./gradlew parityKraid` runs that focused slice.
 Current coverage and the ordered expansion plan are tracked in
 [the parity validation matrix](docs/validation/README.md).
 

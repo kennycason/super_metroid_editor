@@ -109,6 +109,38 @@ class RomExporterSafetyTest {
     }
 
     @Test
+    fun `Kraid BG2 pixel edits export as the complete tileset 1A resource`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "kraid-tileset-gfx.smc")
+        input.writeBytes(original!!)
+        val parser = RomParser(original)
+        val tilesetId = TileGraphics.KRAID_TILESET
+        val graphics = TileGraphics(parser)
+        assertTrue(graphics.loadTileset(tilesetId))
+        val replacement = requireNotNull(graphics.getRawVarGfx()).copyOf()
+        assertEquals(TileGraphics.ROOM_GFX_MAX_BYTES, replacement.size)
+        replacement[0] = (replacement[0].toInt() xor 1).toByte()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.varGfx[tilesetId.toString()] =
+                Base64.getEncoder().encodeToString(replacement)
+        }
+
+        val outputPath = requireNotNull(RomExporter(project, parser).export())
+        val exported = File(outputPath).readBytes()
+        val tableEntryPc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES) + tilesetId * 9
+        val exportedPointer = readU24(exported, tableEntryPc + 3)
+        assertArrayEquals(replacement, RomParser(exported).decompressLZ2(exportedPointer))
+
+        val legacyBg2Pc = parser.snesToPc(0xB9FA38)
+        assertArrayEquals(
+            original.copyOfRange(legacyBg2Pc, legacyBg2Pc + 1030),
+            exported.copyOfRange(legacyBg2Pc, legacyBg2Pc + 1030),
+            "The old false Kraid target is placement data and must remain untouched",
+        )
+    }
+
+    @Test
     fun `ordinary tileset graphics cannot overwrite the CRE region`() {
         val original = TestRomHelper.loadRomBytes()
         assumeTrue(original != null, "Test ROM not found")

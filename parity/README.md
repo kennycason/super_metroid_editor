@@ -35,6 +35,9 @@ packaged application, project format, or ROM exporter.
   block and measures the current preview scanner against exact records and boundaries.
 - `enemy_vertical_slice_manifest.py` joins exact headers, graphics/palettes,
   instruction paths, and OAM geometry for Zoomer, Sidehopper, and a walking Space Pirate.
+- `kraid_manifest.py` proves Kraid's complete tileset/BG2/head-interpreter/palette/linked-OAM
+  recipe, all 12 active linked-OAM lists, Mini Kraid's six bounded action lists, and the
+  boundary between editable pixels and read-only placement data.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -58,7 +61,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
-`parityEnemyInstructions`, and `parityEnemyVerticalSlices` tasks remain
+`parityEnemyInstructions`, `parityEnemyVerticalSlices`, and `parityKraid` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches

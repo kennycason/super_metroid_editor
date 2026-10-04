@@ -42,7 +42,7 @@ class SourceSymbolParityTest {
             "Tileset_Table_0_UpperCrateria" to TileGraphics.TILESET_TABLE_SNES,
             "RoomHeader_Kraid" to KraidSpritemap.KRAID_ROOM_SNES,
             "Background_Brinstar_1A_Kraid_Upper" to KraidSpritemap.UPPER_BG2_TILEMAP_SNES,
-            "Background_Brinstar_1A_Kraid_Lower_0" to KraidSpritemap.NAMETABLE_SNES,
+            "Background_Brinstar_1A_Kraid_Lower_0" to KraidSpritemap.LOWER_BG2_TILEMAP_SNES,
             "RoomHeader_Phantoon" to PhantoonSpritemap.PHANTOON_ROOM_SNES,
             "UNUSED_Palette_Phantoon_A7CA21" to PhantoonSpritemap.PALETTE_SNES,
             "SamusTilesAnimation_AnimationDefinitionPointers" to SamusSpriteDecoder.FRAME_PROG_PTRS,

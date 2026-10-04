@@ -14,15 +14,15 @@ class KraidSpriteInvestigateTest {
         (rom[pc].toInt() and 0xFF) or ((rom[pc + 1].toInt() and 0xFF) shl 8)
 
     @Test
-    fun `decompress Kraid tile graphics at B9 FA38`() {
+    fun `decompress Kraid upper BG2 tilemap at B9 FA38`() {
         val parser = loadTestRom() ?: run { println("ROM not found, skipping"); return }
         val pcAddr = parser.snesToPc(0xB9FA38)
-        println("Kraid tile GFX: SNES=\$B9:FA38  PC=0x${pcAddr.toString(16)}")
+        println("Kraid upper BG2 tilemap: SNES=\$B9:FA38  PC=0x${pcAddr.toString(16)}")
 
         val raw = parser.decompressLZ5AtPc(pcAddr)
-        val tileCount = raw.size / 32
-        println("Decompressed: ${raw.size} bytes = $tileCount tiles (8x8, 4bpp)")
-        assertTrue(tileCount > 0, "Expected tiles from Kraid tile data")
+        val wordCount = raw.size / 2
+        println("Decompressed: ${raw.size} bytes = $wordCount BG2 words")
+        assertEquals(0x1000, raw.size, "Upper map is two 32x32 screen blocks")
 
         val nonZero = raw.count { it.toInt() != 0 }
         println("Non-zero bytes: $nonZero / ${raw.size} (${nonZero * 100 / raw.size}%)")
@@ -50,14 +50,14 @@ class KraidSpriteInvestigateTest {
     }
 
     @Test
-    fun `read kKraidTilemaps 0-3 at A7 97C8`() {
+    fun `read Kraid head tilemaps 0-3 at A7 97C8`() {
         val parser = loadTestRom() ?: run { println("ROM not found, skipping"); return }
         val rom = parser.getRomData()
 
         val tilemapAddrs = listOf(0xA797C8, 0xA79AC8, 0xA79DC8, 0xA7A0C8)
         for ((idx, snes) in tilemapAddrs.withIndex()) {
             val pc = parser.snesToPc(snes)
-            println("\nkKraidTilemaps_$idx: SNES=\$${snes.toString(16).uppercase()}  PC=0x${pc.toString(16)}")
+            println("\nTilemap_KraidHead_$idx: SNES=\$${snes.toString(16).uppercase()}  PC=0x${pc.toString(16)}")
 
             val size = 32 * 12 * 2
             val entries = (0 until size / 2).map { i -> rd16(rom, pc + i * 2) }
@@ -67,52 +67,9 @@ class KraidSpriteInvestigateTest {
             println("  Non-empty entries: $nonEmpty / ${size / 2}")
             if (uniqueTiles.isNotEmpty()) {
                 println("  Tile index range: 0x${uniqueTiles.min().toString(16)}..0x${uniqueTiles.max().toString(16)}")
-                val roomTiles = uniqueTiles.filter { it < 0x100 }.size
-                val kraidTiles = uniqueTiles.filter { it in 0x100..0x17F }.size
-                println("  Room tileset tiles (< 0x100): $roomTiles, Kraid tiles (0x100-0x17F): $kraidTiles")
+                println("  Tileset \$1A references span the full 10-bit BG tile index domain")
             }
             println("  Palette rows used: $palRows")
-        }
-    }
-
-    @Test
-    fun `analyze BigSprmap entries at A7 E27E onwards`() {
-        val parser = loadTestRom() ?: run { println("ROM not found, skipping"); return }
-        val rom = parser.getRomData()
-
-        val bigSprmapAddrs = listOf(
-            0xA7E27E, 0xA7E292, 0xA7E2A6, 0xA7E2BA, 0xA7E2CE,
-            0xA7E2E2, 0xA7E2F6, 0xA7E30A, 0xA7E39A, 0xA7E3B6
-        )
-
-        for (snes in bigSprmapAddrs) {
-            val pc = parser.snesToPc(snes)
-            val firstWord = rd16(rom, pc)
-            print("BigSprmap \$${snes.toString(16).uppercase()}: header=0x${firstWord.toString(16)}")
-
-            if (firstWord == 0xFFFE) {
-                var offset = pc + 2
-                var rows = 0
-                var totalTiles = 0
-                val tileNums = mutableSetOf<Int>()
-                val palRows = mutableSetOf<Int>()
-                while (true) {
-                    val dest = rd16(rom, offset)
-                    if (dest == 0xFFFF) break
-                    val count = rd16(rom, offset + 2)
-                    totalTiles += count
-                    for (i in 0 until count) {
-                        val tw = rd16(rom, offset + 4 + i * 2)
-                        tileNums.add(tw and 0x03FF)
-                        palRows.add((tw shr 10) and 7)
-                    }
-                    offset += 4 + count * 2
-                    rows++
-                }
-                println(" — FFFE format, $rows rows, $totalTiles tiles, palettes=$palRows, tile range 0x${tileNums.minOrNull()?.toString(16)}..0x${tileNums.maxOrNull()?.toString(16)}")
-            } else {
-                println(" — NOT FFFE format")
-            }
         }
     }
 
@@ -144,7 +101,7 @@ class KraidSpriteInvestigateTest {
 
         val tiles = sm.getTileData() ?: fail("No tile data")
         val palette = sm.getPalette() ?: fail("No palette")
-        println("Kraid tiles: ${tiles.size / 32} tiles from \$B9:FA38")
+        println("Kraid room tiles: ${tiles.size / 32} tiles from Tiles_1A_Kraid")
 
         val gfx = EnemySpriteGraphics(parser)
         gfx.loadFromRaw(listOf(tiles))
@@ -186,7 +143,7 @@ class KraidSpriteInvestigateTest {
     }
 
     @Test
-    fun `render Kraid body tilemaps with room tileset`() {
+    fun `render Kraid head tilemaps with room tileset`() {
         val parser = loadTestRom() ?: run { println("ROM not found, skipping"); return }
 
         val sm = KraidSpritemap(parser)
@@ -195,8 +152,8 @@ class KraidSpriteInvestigateTest {
         val outDir = File("build/test-output")
         outDir.mkdirs()
 
-        for (def in KraidSpritemap.BODY_TILEMAPS) {
-            val sprite = sm.renderBodyTilemap(def)
+        for (def in KraidSpritemap.HEAD_TILEMAPS) {
+            val sprite = sm.renderHeadTilemap(def)
             if (sprite == null) { println("WARN: ${def.name} render failed"); continue }
             val nonTransparent = sprite.pixels.count { (it ushr 24) and 0xFF > 0 }
             println("${def.name}: ${sprite.width}x${sprite.height}, ${nonTransparent} non-transparent pixels")
@@ -210,25 +167,38 @@ class KraidSpriteInvestigateTest {
     }
 
     @Test
-    fun `render Kraid BigSprmap components`() {
-        val parser = loadTestRom() ?: run { println("ROM not found, skipping"); return }
-
-        val sm = KraidSpritemap(parser)
-        assertTrue(sm.load(), "KraidSpritemap.load() failed")
-
+    fun `render source-backed Kraid animation samples`() {
+        val parser = loadTestRom() ?: return
         val outDir = File("build/test-output")
         outDir.mkdirs()
 
-        for (def in KraidSpritemap.BIGSPRMAP_COMPONENTS) {
-            val sprite = sm.renderBigSprmap(def)
-            if (sprite == null) { println("WARN: ${def.name} render failed"); continue }
-            val nonTransparent = sprite.pixels.count { (it ushr 24) and 0xFF > 0 }
-            println("${def.name}: ${sprite.width}x${sprite.height}, ${nonTransparent} non-transparent pixels")
-
-            val img = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
-            img.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
-            val safeName = def.name.replace(Regex("[^a-zA-Z0-9]"), "_")
-            ImageIO.write(img, "PNG", File(outDir, "kraid_${safeName}.png"))
+        val kraid = KraidSpritemap(parser)
+        assertTrue(kraid.load())
+        val oamSamples = listOf("arm-normal", "foot-walk-forward", "nail")
+        for (key in oamSamples) {
+            val def = KraidSpritemap.OAM_SEQUENCES.first { it.key == key }
+            val tiles = EnemySpriteGraphics.loadEnemyTileData(parser, def.speciesId) ?: fail("No ${def.name} tiles")
+            val animation = kraid.renderOamAnimation(def, tiles) ?: fail("No ${def.name} animation")
+            writeFramePng(animation.frames[animation.frames.size / 2], File(outDir, "kraid_${key}.png"))
         }
+
+        val miniTiles = EnemySpriteGraphics.loadEnemyTileData(parser, MiniKraidSpritemap.SPECIES_ID)
+            ?: fail("No Mini Kraid tiles")
+        val miniPalette = EnemySpriteGraphics.readEnemyPalette(parser, MiniKraidSpritemap.SPECIES_ID)
+            ?: fail("No Mini Kraid palette")
+        val mini = MiniKraidSpritemap(parser)
+        for (key in listOf("step-forward-left", "fire-right")) {
+            val def = MiniKraidSpritemap.SEQUENCES.first { it.key == key }
+            val animation = mini.renderAnimation(def, miniTiles, miniPalette) ?: fail("No ${def.name}")
+            writeFramePng(animation.frames[1], File(outDir, "mini_kraid_${key}.png"))
+        }
+
     }
+
+    private fun writeFramePng(frame: SpriteAnimationFrame, file: File) {
+        val image = BufferedImage(frame.width, frame.height, BufferedImage.TYPE_INT_ARGB)
+        image.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+        ImageIO.write(image, "PNG", file)
+    }
+
 }

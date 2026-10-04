@@ -193,6 +193,21 @@ tasks.register<Exec>("parityEnemyVerticalSlices") {
     }
 }
 
+tasks.register<Exec>("parityKraid") {
+    group = "verification"
+    description = "Generate Kraid's source-backed BG2, palette, and linked-OAM recipe"
+    dependsOn(
+        "parityTilesets",
+        "parityEnemyHeaders",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/kraid_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -209,6 +224,7 @@ tasks.register<Exec>("parityReport") {
         "parityEnemyOam",
         "parityEnemyInstructions",
         "parityEnemyVerticalSlices",
+        "parityKraid",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

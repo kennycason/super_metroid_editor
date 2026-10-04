@@ -4,8 +4,8 @@ package com.supermetroid.editor.rom
  * Fail-closed boundary for legacy boss sprite-tile project data whose original
  * ROM mappings were disproved by the exact assembly audit.
  *
- * Keep these blockers until the editor has source-backed ownership for every
- * tile range written by the corresponding boss editor.
+ * These prefixes are permanently legacy-only. Current source-backed component editors
+ * use normal tileset keys and never pass through this mapping.
  */
 object BossSpriteExportSafety {
     const val PHANTOON_KEY_PREFIX = "phantoon:"
@@ -17,9 +17,9 @@ object BossSpriteExportSafety {
             "or reset this legacy tile-sheet edit before export."
 
     const val KRAID_PIXEL_EDIT_REASON =
-        "Kraid sprite pixel export is temporarily disabled: the previous mapping targets the compressed " +
-            "BG2 tilemap at \$B9:FA38, not tile graphics. Reset the Kraid pixel edit before export while " +
-            "the exact tileset/OAM ownership mapping is completed."
+        "Kraid legacy pixel export is disabled: this old project key targets the compressed BG2 " +
+            "tilemap at \$B9:FA38, not tile graphics. Reset the legacy edit; current Kraid head edits " +
+            "are safely stored as the complete tileset \$1A graphics resource."
 
     fun blockedReason(projectKey: String): String? = when {
         projectKey.startsWith(PHANTOON_KEY_PREFIX) -> PHANTOON_LEGACY_TILE_SHEET_REASON

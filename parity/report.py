@@ -475,6 +475,41 @@ def enemy_species_status_checks(
     ]
 
 
+def kraid_checks(
+    test_results: Dict[str, object], kraid: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.KraidSourceParityTest",
+        "Kraid BG2 composition and ownership match the source manifest",
+    )
+    totals = kraid["totals"]
+    return [
+        {
+            "id": "B-01",
+            "name": "Kraid and Mini Kraid source renderers",
+            "status": status,
+            "evidence": (
+                f"Tileset $1A's complete 32 KiB no-CRE graphics resource, "
+                f"{totals['backgroundMapCount']} compressed room maps "
+                f"({totals['activeBackgroundMapCount']} active), {totals['headMapCount']} custom "
+                f"32x12 head maps / {totals['customFrameOccurrenceCount']} frame occurrences, "
+                f"{totals['paletteStateCount']} palette states, and "
+                f"{totals['linkedOamHeaderCount']} headers sharing the $AB:CC00 OAM range are pinned. "
+                f"Production also parses and renders {totals['activeOamSequenceCount']} exact linked-OAM "
+                f"sequences / {totals['activeOamFrameOccurrenceCount']} frame occurrences. Mini Kraid has "
+                f"{totals['miniKraidSequenceCount']} exact lists / "
+                f"{totals['miniKraidFrameOccurrenceCount']} frame occurrences / "
+                f"{totals['miniKraidUniquePoseCount']} unique source poses instead of a shared-bank scan. "
+                f"All {totals['backgroundMapConsumerAssociationCount']} BG-map and "
+                f"{totals['roomBackgroundTileConsumerCount']} room-background-tile consumer associations are named. "
+                "Production renders and safely edits the 32x11 uploaded head region through varGfx[\"26\"]; "
+                "deterministic pixel hashes pin all four full-body states and every parsed animation frame."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -489,6 +524,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     enemy_oam = report["enemyOam"]
     enemy_instructions = report["enemyInstructions"]
     enemy_vertical_slices = report["enemyVerticalSlices"]
+    kraid = report["kraid"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -597,6 +633,9 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{enemy_vertical_slices['frameCount']}** source frame occurrences / "
             f"**{enemy_vertical_slices['uniqueFrameSpritemapCount']}** unique spritemaps and "
             f"**{enemy_vertical_slices['handlerCount']}** handler occurrences through production tracing and rendering.",
+            f"- Kraid: **{kraid['headMapCount']}** custom BG2 head maps / "
+            f"**{kraid['customFrameCount']}** frame occurrences, **{kraid['paletteStateCount']}** "
+            f"palette states, and **{kraid['linkedOamHeaderCount']}** linked OAM headers are source-pinned.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -610,7 +649,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -636,6 +675,7 @@ def main() -> int:
     enemy_oam_path = report_dir / "enemy-oam.json"
     enemy_instructions_path = report_dir / "enemy-instructions.json"
     enemy_vertical_slices_path = report_dir / "enemy-vertical-slices.json"
+    kraid_path = report_dir / "kraid.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -649,10 +689,11 @@ def main() -> int:
         or not enemy_oam_path.is_file()
         or not enemy_instructions_path.is_file()
         or not enemy_vertical_slices_path.is_file()
+        or not kraid_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -670,6 +711,7 @@ def main() -> int:
     enemy_oam = json.loads(enemy_oam_path.read_text(encoding="utf-8"))
     enemy_instructions = json.loads(enemy_instructions_path.read_text(encoding="utf-8"))
     enemy_vertical_slices = json.loads(enemy_vertical_slices_path.read_text(encoding="utf-8"))
+    kraid = json.loads(kraid_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -931,6 +973,43 @@ def main() -> int:
     ]:
         raise ValueError("enemy-slice aggregate does not match the pinned reference")
 
+    pinned_kraid_totals = {
+        "roomStateCount": "kraid.roomState.count",
+        "backgroundMapCount": "kraid.backgroundMap.count",
+        "activeBackgroundMapCount": "kraid.backgroundMap.active.count",
+        "headMapCount": "kraid.headMap.count",
+        "customSequenceCount": "kraid.sequence.count",
+        "customFrameOccurrenceCount": "kraid.sequence.frame.count",
+        "customHandlerOccurrenceCount": "kraid.sequence.handler.count",
+        "mouthHitboxCount": "kraid.mouthHitbox.count",
+        "paletteStateCount": "kraid.paletteState.count",
+        "linkedOamHeaderCount": "kraid.oamHeader.count",
+        "linkedOamInstructionListCount": "kraid.oamInstructionList.count",
+        "linkedOamFrameOccurrenceCount": "kraid.oamFrame.count",
+        "activeOamSequenceCount": "kraid.activeOamSequence.count",
+        "activeOamFrameOccurrenceCount": "kraid.activeOamFrame.count",
+        "miniKraidSequenceCount": "kraid.miniKraid.sequence.count",
+        "miniKraidFrameOccurrenceCount": "kraid.miniKraid.frame.count",
+        "miniKraidUniquePoseCount": "kraid.miniKraid.pose.count",
+        "backgroundMapConsumerAssociationCount": "kraid.backgroundMap.consumerAssociation.count",
+        "roomBackgroundTileConsumerCount": "kraid.roomBackgroundTiles.consumer.count",
+    }
+    for field, property_name in pinned_kraid_totals.items():
+        if int(kraid["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Kraid total {field} does not match the pinned reference")
+    pinned_kraid_hashes = {
+        "ownership": "kraid.ownership.aggregate.sha256",
+        "headMaps": "kraid.headMap.aggregate.sha256",
+        "customSequences": "kraid.sequence.aggregate.sha256",
+        "palettes": "kraid.palette.aggregate.sha256",
+        "liveCompositeTilemap": "kraid.compositeTilemap.sha256",
+        "activeOamSequences": "kraid.activeOamSequence.aggregate.sha256",
+        "miniKraid": "kraid.miniKraid.aggregate.sha256",
+    }
+    for field, property_name in pinned_kraid_hashes.items():
+        if kraid["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Kraid aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -965,6 +1044,7 @@ def main() -> int:
         + enemy_oam_checks(tests, enemy_oam)
         + enemy_instruction_checks(tests, enemy_instructions, enemy_vertical_slices)
         + enemy_species_status_checks(tests, enemy_species_status)
+        + kraid_checks(tests, kraid)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -973,9 +1053,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 11,
+        "schemaVersion": 12,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1104,6 +1184,23 @@ def main() -> int:
             "standardFrameCount": enemy_vertical_slices["totals"]["standardFrameOccurrenceCount"],
             "extendedFrameCount": enemy_vertical_slices["totals"]["extendedFrameOccurrenceCount"],
             "aggregateHashes": enemy_vertical_slices["aggregateHashes"],
+        },
+        "kraid": {
+            "roomStateCount": kraid["totals"]["roomStateCount"],
+            "backgroundMapCount": kraid["totals"]["backgroundMapCount"],
+            "activeBackgroundMapCount": kraid["totals"]["activeBackgroundMapCount"],
+            "headMapCount": kraid["totals"]["headMapCount"],
+            "customSequenceCount": kraid["totals"]["customSequenceCount"],
+            "customFrameCount": kraid["totals"]["customFrameOccurrenceCount"],
+            "customHandlerCount": kraid["totals"]["customHandlerOccurrenceCount"],
+            "mouthHitboxCount": kraid["totals"]["mouthHitboxCount"],
+            "paletteStateCount": kraid["totals"]["paletteStateCount"],
+            "linkedOamHeaderCount": kraid["totals"]["linkedOamHeaderCount"],
+            "linkedOamInstructionListCount": kraid["totals"]["linkedOamInstructionListCount"],
+            "linkedOamFrameCount": kraid["totals"]["linkedOamFrameOccurrenceCount"],
+            "backgroundMapConsumerAssociationCount": kraid["totals"]["backgroundMapConsumerAssociationCount"],
+            "roomBackgroundTileConsumerCount": kraid["totals"]["roomBackgroundTileConsumerCount"],
+            "aggregateHashes": kraid["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

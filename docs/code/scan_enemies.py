@@ -124,7 +124,7 @@ KNOWN_ENEMIES = {
     0xE03F: "Kihunter",
     0xE07F: "Hibashi",
     0xE0BF: "Puromi",
-    0xE0FF: "Mini Kraid (belly spike)",
+    0xE0FF: "Mini Kraid",
     # ── Ridley / Puyo ──
     0xE13F: "Ceres Ridley",
     0xE17F: "Ridley",
@@ -132,13 +132,13 @@ KNOWN_ENEMIES = {
     0xE27F: "Zebetite",
     # ── Kraid (verified from room enemy set $A1:9EB5) ──
     0xE2BF: "Kraid",
-    0xE2FF: "Kraid (upper body)",
-    0xE33F: "Kraid (belly spike 1)",
-    0xE37F: "Kraid (belly spike 2)",
-    0xE3BF: "Kraid (belly spike 3)",
-    0xE3FF: "Kraid (flying claw 1)",
-    0xE43F: "Kraid (flying claw 2)",
-    0xE47F: "Kraid (flying claw 3)",
+    0xE2FF: "Kraid Arm",
+    0xE33F: "Kraid Lint (top)",
+    0xE37F: "Kraid Lint (middle)",
+    0xE3BF: "Kraid Lint (bottom)",
+    0xE3FF: "Kraid Foot",
+    0xE43F: "Kraid Nail",
+    0xE47F: "Kraid Nail (bad trajectory)",
     # ── Phantoon ──
     0xE4BF: "Phantoon",
     0xE4FF: "Phantoon (piece)",
@@ -402,7 +402,7 @@ def format_markdown_enemies(enemies):
     boss_ids = set()
     for ids in BOSS_GROUPS.values():
         boss_ids.update(ids)
-    miniboss_ids = {0xE0FF}  # Mini Kraid belly spike
+    miniboss_ids = {0xE0FF}  # Mini Kraid
     utility_ids = {0xD73F, 0xD07F, 0xD0BF, 0xD13F, 0xD17F, 0xD1BF,  # Elevator, Ship, Chozo
                    0xD4FF, 0xD53F, 0xD57F, 0xD5BF, 0xD5FF,  # Door shutters
                    0xE1FF, 0xE23F}  # Ceres effects

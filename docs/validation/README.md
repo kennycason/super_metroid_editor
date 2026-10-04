@@ -133,9 +133,9 @@ resettable export blocker.
 
 Status: **Mismatch — P0 safety item**
 
-#### 2. Legacy Kraid tile-sheet export points at a BG2 tilemap
+#### 2. Legacy Kraid tile-sheet export pointed at a BG2 tilemap
 
-Current `EnemySpriteGraphics.KRAID_BLOCKS` identifies `$B9:FA38` as compressed Kraid
+The quarantined legacy `EnemySpriteGraphics.KRAID_BLOCKS` identifies `$B9:FA38` as compressed Kraid
 sprite graphics. The exact assembly labels it
 `Background_Brinstar_1A_Kraid_Upper`, a compressed BG2 tilemap. It is not 4bpp tile
 graphics.
@@ -146,13 +146,21 @@ The exact source distinguishes three resources:
 - `Tiles_1A_Kraid.bin` = compressed room tileset graphics
 - `$B9:FA38` = compressed upper Kraid BG2 tilemap
 
-`KraidSpritemap`'s assembled path correctly gets Kraid's BG body tiles from tileset
-`$1A`. Before P0.1, both assembled-component and legacy tile-sheet edits were persisted
+Before P0.1, both assembled-component and legacy tile-sheet edits were persisted
 under `kraid:0`, and the exporter wrote either form through the false `$B9:FA38`
-mapping. P0.1 removed the legacy loader/writer, paused Kraid pixel editing, and made any
-old `kraid:*` data a resettable export blocker.
+mapping. P0.1 removed that loader/writer and made old `kraid:*` data a resettable
+export blocker. B-01 subsequently proved the complete recipe: tileset `$1A` owns all
+1024 BG tiles and has no CRE graphics overlay; `$B9:FA38/$B9:FE3E` form the active
+64×64 BG2 room map; and `$A7:97C8..A0C8` are four 32×12 head maps whose first 32×11
+rows are uploaded by the custom interpreter. Head pixel editing now saves the complete
+32 KiB `Tiles_1A_Kraid` unit through `varGfx["26"]`, while placement maps remain
+read-only and `$AB:CC00` remains a distinct linked OAM resource.
+The production UI now exposes four full BG2 body states, four exact head animations,
+ten paired runtime palette stages, and 12 bounded linked-OAM animations containing 173
+frame occurrences. Mini Kraid uses six exact action lists with 24 frame occurrences
+and 14 unique poses; the previous shared-bank scan no longer admits Ridley data.
 
-Status: **Mismatch — P0 safety item**
+Status: **Resolved and parity-pinned — B-01**
 
 #### 3. Boss documentation has shifted IDs and banks
 
@@ -245,7 +253,7 @@ This matrix tracks source-backed proof, not feature existence.
 | E-01 | All bank `$A0` 64-byte species headers | **Verified** | All 164 assembled headers / 4,756 macro fields match exact source expressions, rebuilt-ROM bytes, and SMEDIT's full production parser; one explicitly unused header remains inventoried. |
 | E-02 | `GRAPHADR` raw tile ranges | **Verified** | All 155 nonempty species associations map to 100 unique ranges and 99 named assets with byte/pixel identity; 25 shared-start groups, 24 exact-range aliases, nine overlapping range pairs, and six multi-asset ranges are explicit. |
 | E-03 | Palette pointer/bank behavior | **Partial** | Compare every species plus runtime palette overrides and multi-row cases. |
-| E-04 | Standard 5-byte OAM entries | **Verified** | All 2,312 named structures / 14,400 entries match source bytes and production decoding for signed X/Y, size, tile/name-table, priority, palette, and flips; all 12 valid empty structures remain explicit. |
+| E-04 | Standard 5-byte OAM entries | **Verified** | All 2,312 named structures / 14,400 entries match source bytes and production decoding for signed X/Y, size, tile/name-table, priority, palette, and flips; lower-index-wins OBJ overlap order is reproduced, and all 12 valid empty structures remain explicit. |
 | E-05 | Extended/multibox spritemaps | **Verified** | All 811 named extended structures / 1,984 child links and 99 extended tilemaps / 2,763 words match source offsets, child types, hitbox pointers, runs, and production parsing. |
 | E-06 | Instruction-list interpreter | **Partial** | All 1,139 named lists / 7,820 records are source- and ROM-pinned. The generic fixed-chunk fallback recovers 2,543 of 4,395 renderable source frames (57.9%), misses 1,852 frames across 465 lists, and crosses named-list boundaries for 4,718 candidates. A fail-closed bounded interpreter now proves the Zoomer, Sidehopper, and walking Space Pirate visual paths, but broad handler/state semantics remain incomplete. |
 | E-07 | VRAM destination/name-table mapping | **Partial** | The eight active zero-transfer species now have exact read-only graphics providers: standard global sprite tiles for Elevator/Steam, shared Mother Brain head tiles for Zebetite/tubes, normal Baby Metroid tiles for the cutscene entity, and the Sidehopper-owned common corpse payload for three corpse species. Their independently resolved palette ownership remains editable or read-only as appropriate. Full `ProcessEnemyTilesets`, arbitrary room VRAM, and dynamic DMA modeling remain. |
@@ -260,7 +268,7 @@ BG layers, per-frame DMA, linked enemy slots, palette FX, and room-owned graphic
 
 | Order | Case | Relevant exact sources | Current status |
 |---|---|---|---|
-| B-01 | Kraid | AI `$A7`; OAM tiles `$AB:CC00`; BG2 tilemaps `$A7:97C8...` and `$B9:FA38...`; tileset `$1A` | **Mismatch/Partial** |
+| B-01 | Kraid + Mini Kraid | AI `$A7/$A6`; OAM tiles `$AB:CC00/$AB:8000`; BG2 tilemaps `$A7:97C8...` and `$B9:FA38...`; tileset `$1A` | **Verified** |
 | B-02 | Phantoon | AI/extended tilemaps `$A7`; raw tiles `$AC:AA00`; Wrecked Ship room tileset/palette | **Mismatch/Partial** |
 | B-03 | Draygon | AI `$A5`; raw tiles `$B0:C800`; tileset `$1C`; four linked species | **Partial** |
 | B-04 | Ridley | AI `$A6`; staged tile chunks `$B0:9400...`; ribs/claws `$B0:B800...`; custom OAM add routine | **Partial** |
@@ -298,14 +306,14 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 ### P0 — Make the oracle trustworthy and remove known hazards
 
-- [x] **P0.1** Quarantine the Phantoon legacy tile-sheet export and all current
-  Kraid sprite pixel exports with a clear validation blocker.
+- [x] **P0.1** Quarantine the disproved Phantoon/Kraid legacy tile-sheet mappings
+  with clear validation blockers. Later source-backed component paths use separate keys.
 - [x] **P0.2** Add an explicit parity-fixture contract for the vanilla ROM and
   disassembly checkout; remove personal absolute test paths and silent success.
 - [x] **P0.3** Parse `symbols.sym` and assert a small seed set of named addresses.
 - [x] **P0.4** Parse assembly `incbin`s / `rip_assets.py` into an asset-range manifest.
 - [x] **P0.5** Add a single parity-report Gradle task with no source-tree output.
-- [ ] **P0.6** Correct the Phantoon and Kraid load/edit/export ownership using named
+- [x] **P0.6** Correct the Phantoon and Kraid load/edit/export ownership using named
   raw graphics and tileset resources; add expected-before checks for every target.
 - [ ] **P0.7** Regenerate/correct the boss IDs and bank ownership in permanent docs.
 
@@ -324,7 +332,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 ### P2 — Prove special composition
 
-- [ ] **P2.1** Kraid complete recipe and safe edit ownership.
+- [x] **P2.1** Kraid complete recipe and safe edit ownership.
 - [ ] **P2.2** Phantoon complete recipe and safe edit ownership.
 - [ ] **P2.3** Draygon body/eye/tail/arms composition and room dependencies.
 - [ ] **P2.4** Ridley staged DMA, body/wings/tail, Ceres variant, and palettes.
@@ -392,6 +400,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-04 | Proved three ordinary-enemy vertical slices | Zoomer, Sidehopper, and the grey walking Space Pirate now have source-backed header, GRAPHADR, palette, entry-list, handler path, timed-frame, standard/extended OAM, geometry, render, and species-animation checks. The bounded interpreter preserves 17 frame occurrences / 15 unique spritemaps and eight handler occurrences, follows fallthrough and loops, stops at sleep, retains repeated poses, and fails explicitly on unknown handlers. This fixed Sidehopper's zero-frame preview and a test that had mislabeled stone Zoomer `$DD3F` as Sidehopper instead of using `$D93F`. |
 | 2026-10-04 | Classified every source enemy species | A production-path ledger now covers all 164 source headers: 126 assembled, 14 tile-sheet-only, 14 composite, two nonvisual, and eight failed; 140 have a real assembled preview. It reports source/catalog membership, GRAPHADR/palette availability, preview path, frame count, and an explicit reason per species. The audit also fixed Botwoon routing so the editor uses its 14-part composite pose instead of the generic head-only OAM path. |
 | 2026-10-04 | Resolved all zero-transfer visual species | Source-backed runtime ownership recovered Elevator, Ceres Steam, Zebetite, cutscene Baby Metroid, Mother Brain tubes, and the three non-owner corpse species. All eight now render 19 visible timed frames from exact lists/assets/palettes while their shared/global graphics remain read-only. Palette ownership is independent: five retain editable header palettes and three use read-only global rows. The complete ledger moves to 134 assembled / 14 tile-sheet-only / 14 composite / two nonvisual / zero failed, with 148 assembled previews. |
+| 2026-10-04 | Proved Kraid's complete graphics recipe | The dedicated manifest pins tileset `$1A`'s complete 32 KiB no-CRE edit unit, three compressed BG2 maps and their active/unreferenced consumers, four stored 32×12 head maps and the interpreter's 32×11 DMA boundary, 21 custom frame occurrences, eight mouth hitboxes, 21 palette states, and eight headers sharing `$AB:CC00`. Production now composes all four 512×512 live BG2 views pixel-exactly and persists head edits through the normal tileset relocation path. Source entity names replace the former belly-spike/flying-claw guesses. |
 
 ## Deliberately deferred
 

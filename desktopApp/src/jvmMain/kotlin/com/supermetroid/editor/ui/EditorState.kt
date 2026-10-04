@@ -339,6 +339,7 @@ class EditorState(
 
     val kraidSprite = KraidSpriteEditorState(
         customGfx = { project.customGfx },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
         onDirty = { dirty = true },
     )
 
@@ -878,10 +879,30 @@ class EditorState(
     // ── Kraid sprite delegates ────────────────────────────────────────────
 
     fun getKraidSpritemap(romParser: RomParser) = kraidSprite.getSpritemap(romParser)
-    fun renderKraidFullBody(romParser: RomParser) = kraidSprite.renderFullBody(romParser)
-    fun renderKraidBodyTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.BodyTilemapDef) = kraidSprite.renderBodyTilemap(romParser, def)
-    fun renderKraidBigSprmap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.ComponentDef) = kraidSprite.renderBigSprmap(romParser, def)
+    fun renderKraidFullBody(
+        romParser: RomParser,
+        head: com.supermetroid.editor.rom.KraidSpritemap.HeadTilemapDef =
+            com.supermetroid.editor.rom.KraidSpritemap.HEAD_TILEMAPS.first(),
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
+    ) = kraidSprite.renderFullBody(romParser, head, paletteStage)
+    fun renderKraidFullBodyAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.KraidSpritemap.HeadSequenceDef,
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
+    ) = kraidSprite.renderFullBodyAnimation(romParser, def, paletteStage)
+    fun renderKraidOamAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.KraidSpritemap.OamSequenceDef,
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
+    ): com.supermetroid.editor.rom.SpriteAnimation? {
+        val tileData = loadEnemyTileData(romParser, def.speciesId) ?: return null
+        return kraidSprite.renderOamAnimation(romParser, def, tileData, paletteStage)
+    }
+    fun renderKraidHeadTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.HeadTilemapDef) = kraidSprite.renderHeadTilemap(romParser, def)
+    fun applyKraidHeadEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyHeadEdits(romParser, sprite, editedPixels)
     fun getKraidPalette(romParser: RomParser) = kraidSprite.getPalette(romParser)
+    fun hasCustomKraidComponents() = kraidSprite.hasCustomComponents()
     fun hasCustomKraidTileSheet() = kraidSprite.hasCustomTileSheet()
     fun resetKraidTileSheet() = kraidSprite.resetTileSheet()
 

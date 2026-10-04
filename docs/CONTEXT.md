@@ -66,7 +66,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File                                       | Contents                                                                                                                                                                 | Key Data                                                                    |
 |--------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | [`bosses/phantoon.md`](bosses/phantoon.md) | Phantoon species IDs, all behavior data table addresses (eye timers, flame patterns, figure-8 speeds, wave constants), AI routines, safe vs. ASM-required modifications. | Species: $E4BF body, $E4FF/$E53F/$E57F flames. Room $CD13, AI $A7. HP=2500. |
-| [`bosses/kraid.md`](bosses/kraid.md)       | Kraid species IDs (8 entities), HP/damage for all parts, AI routines, room enemy set layout. **Note: $D2BF is Squeept, NOT Kraid.**                                      | Species: $E2BF body. Room $A59F, AI $A7. HP=1000.                           |
+| [`bosses/kraid.md`](bosses/kraid.md)       | Kraid species IDs, stats/AI, exact 64×64 BG2/head recipe, palettes, linked OAM ownership, and safe edit boundary. **Note: $D2BF is Squeept, NOT Kraid.** | Species: $E2BF. Room $A59F, tileset $1A, AI $A7. HP=1000. |
 
 ### Graphics & Sprites (`docs/graphics/`)
 
@@ -245,6 +245,21 @@ species' own tile edit/export range. Palette ownership is separate: five of thos
 headers still load and own their palette row, while three select global runtime rows.
 See `docs/graphics/sprites.md` and
 `docs/validation/README.md` for the ownership table and remaining work.
+
+Kraid's P2.1 source slice is complete. Its large body is a 64×64 BG2 composition,
+not an OAM body: active compressed maps at `$B9:FA38/$B9:FE3E` use the complete
+1024-tile/no-CRE tileset `$1A`, and the custom `$A7:AF3D` interpreter copies only
+32×11 rows from one of four stored 32×12 head maps. Head pixel edits therefore save
+the complete `varGfx["26"]` resource through normal safe relocation. The arm, three
+lints, foot, and two nail variants instead share the independent 240-tile OAM range
+`$AB:CC00..EA00`. `parityKraid`/`KraidSourceParityTest` pin this ownership, all 21
+custom head-frame occurrences, eight mouth hitboxes, 21 palette states, four live
+composites, and all 12 bounded linked-OAM sequences / 173 frame occurrences. Mini
+Kraid `$E0FF` is separately pinned to six bounded `$A6` action lists / 24 frame
+occurrences / 14 unique poses; never infer its poses by scanning shared Ridley bank
+`$A6`. The editor hashes every rendered animation frame. Placement tilemaps remain
+read-only, and main Kraid's independently positioned OAM entities remain separate
+from the BG2 animation canvas.
 
 ---
 

@@ -9,14 +9,14 @@ All Kraid entities live in bank `$A0`. Confirmed from Kraid's room enemy set at 
 
 | Entity | Species ID | Bank $A0 Offset | PC Offset | HP | Contact Dmg | Size |
 |--------|-----------|-----------------|-----------|-----|-------------|------|
-| Kraid (body) | `$E2BF` | `$A0:E2BF` | `0x1062BF` | 1000 | 20 | 56×144 |
-| Kraid (upper body) | `$E2FF` | `$A0:E2FF` | `0x1062FF` | 1000 | 20 | 48×48 |
-| Kraid (belly spike 1) | `$E33F` | `$A0:E33F` | `0x10633F` | 1000 | 10 | 24×8 |
-| Kraid (belly spike 2) | `$E37F` | `$A0:E37F` | `0x10637F` | 1000 | 10 | 24×8 |
-| Kraid (belly spike 3) | `$E3BF` | `$A0:E3BF` | `0x1063BF` | 1000 | 10 | 24×8 |
-| Kraid (flying claw 1) | `$E3FF` | `$A0:E3FF` | `0x1063FF` | 1000 | 20 | 8×8 |
-| Kraid (flying claw 2) | `$E43F` | `$A0:E43F` | `0x10643F` | 10 | 10 | 8×8 |
-| Kraid (flying claw 3) | `$E47F` | `$A0:E47F` | `0x10647F` | 10 | 10 | 8×8 |
+| Kraid | `$E2BF` | `$A0:E2BF` | `0x1062BF` | 1000 | 20 | 56×144 |
+| Kraid arm | `$E2FF` | `$A0:E2FF` | `0x1062FF` | 1000 | 20 | 48×48 |
+| Kraid lint (top) | `$E33F` | `$A0:E33F` | `0x10633F` | 1000 | 10 | 24×8 |
+| Kraid lint (middle) | `$E37F` | `$A0:E37F` | `0x10637F` | 1000 | 10 | 24×8 |
+| Kraid lint (bottom) | `$E3BF` | `$A0:E3BF` | `0x1063BF` | 1000 | 10 | 24×8 |
+| Kraid foot | `$E3FF` | `$A0:E3FF` | `0x1063FF` | 1000 | 20 | 8×8 |
+| Kraid nail | `$E43F` | `$A0:E43F` | `0x10643F` | 10 | 10 | 8×8 |
+| Kraid nail (bad trajectory) | `$E47F` | `$A0:E47F` | `0x10647F` | 10 | 10 | 8×8 |
 
 Room ID: **`$A59F`** (Brinstar, area 1)  
 AI Bank: **`$A7`** (shared with Phantoon, Etecoon, Dachora)  
@@ -39,19 +39,19 @@ The 64-byte species header layout (offsets from species base PC):
 |-----------|-------------|-----------|---------|
 | Kraid HP | `$A0:E2C3` | `0x1062C3` | 1000 |
 | Contact Damage | `$A0:E2C5` | `0x1062C5` | 20 |
-| Belly Spike Damage | `$A0:E345` | `0x106345` | 10 (shared pattern × 3) |
-| Flying Claw Damage | `$A0:E405` | `0x106405` | 20 |
+| Lint Contact Damage | `$A0:E345` | `0x106345` | 10 (same default for all three lints) |
+| Foot Contact Damage | `$A0:E405` | `0x106405` | 20 |
 
-> Belly spikes (E33F, E37F, E3BF) all default to 10 damage and HP=1000 (effectively indestructible).
-> Flying claws vary: E3FF has HP=1000/Dmg=20, E43F/E47F have HP=10/Dmg=10.
+> The old SMEDIT labels “belly spikes” and “flying claws” conflated separate source entities.
+> The assembly names `$E33F..E3BF` lints, `$E3FF` the foot, and `$E43F/$E47F` nails.
 
 ## AI Routine Addresses (Bank $A7)
 
 | Routine | SNES Address | PC Offset | Description |
 |---------|-------------|-----------|-------------|
-| Init AI | `$A7:0003` | `0x130003` | Kraid + all sub-entity initialization |
-| Main AI | `$A7:0000` | `0x130000` | Per-frame main loop |
-| Hurt AI | `$A7:800F` | `0x13800F` | Damage reaction handler |
+| Init AI | `$A7:A959` | `0x13A959` | Main Kraid initialization |
+| Main AI | `$A7:AC21` | `0x13AC21` | Per-frame main loop |
+| Hurt AI | `$A7:804C` | `0x13804C` | No-op Kraid hurt callback; palette flashing is handled by main AI |
 | Touch AI | `$A7:949F` | `0x13949F` | Contact with Samus |
 | Shot AI | `$A7:804C` | `0x13804C` | Projectile hit handler |
 
@@ -59,8 +59,52 @@ The 64-byte species header layout (offsets from species base PC):
 
 1. **HP** — `$A0:E2C3` (+4 from species base). Only the main body HP matters for the fight.
 2. **Contact damage** — `$A0:E2C5` (+6 from species base). Controls body-slam damage.
-3. **Belly spike damage** — `$A0:E345`, `$A0:E385`, `$A0:E3C5` (one per spike type).
-4. **Flying claw damage** — `$A0:E405`, `$A0:E445`, `$A0:E485`.
+3. **Lint damage** — `$A0:E345`, `$A0:E385`, `$A0:E3C5` (top/middle/bottom).
+4. **Foot/nail damage** — `$A0:E405`, `$A0:E445`, `$A0:E485`.
+
+## Graphics Composition and Safe Ownership
+
+Kraid is not one giant enemy spritemap. The source-backed render recipe has three
+separate resource families:
+
+1. `Tiles_1A_Kraid` (`$BC:DFF0`, compressed) expands to exactly 32 KiB / 1024
+   4bpp BG tiles. Tileset `$1A` has no CRE graphics overlay, so the complete
+   decompressed resource is the safe edit/export unit (`varGfx["26"]`).
+2. `Background_Brinstar_1A_Kraid_Upper` (`$B9:FA38`) and
+   `...Lower_0` (`$B9:FE3E`) each expand to two 32×32 BG2 screen blocks. Together
+   they form the active 64×64 BG2 map. `...Lower_1` exists in source but is only
+   referenced by an unreferenced library-background definition. Each active map is
+   consumed by both the room library-background loader and
+   `SetupKraidGFXWithTheTilePriorityCleared`.
+3. `Tilemap_KraidHead_0..3` (`$A7:97C8`, `$9AC8`, `$9DC8`, `$A0C8`) are four
+   stored 32×12 head maps. `ProcessKraidInstList` uploads only `$02C0` bytes—the
+   first 32×11 rows—to the upper-left BG2 screen block. The last stored row is
+   intentionally never drawn.
+
+The arm, lints, foot, and nails are ordinary/extended OAM. All eight Kraid species
+headers point to the same raw `$AB:CC00..EA00` `Tiles_Kraid` range (7680 bytes / 240
+tiles) and `$A7:8687` sprite palette. That linked OAM range is independent of the
+room tileset graphics above. Kraid also owns 21 named palette states: the base OAM
+and room-background palettes, BG hurt/health/death states, and OAM hurt/health states.
+Tileset `$1A` palette row 7 byte-matches `Palette_Kraid_BG_8_8` (the full-health
+state); the separate room-background fade targets row 6.
+The small 512-byte `Tiles_KraidRoomBackground` payload is another independent
+environment resource, consumed by `InitAI_Kraid`, `DrawKraidsRoomBackground`, and
+`UnpauseHook_KraidIsDead`.
+
+SMEDIT's Kraid editor exposes these layers without pretending they are one giant OAM
+sprite. **Components** shows all four complete 512×512 live BG2 body states and the
+four editable head sources. **Animations** plays the four exact custom head lists over
+the complete body, offers ten paired health/hurt/death palette stages, and plays twelve
+source-bounded linked-OAM lists: five foot, four arm, two lint, and one nail sequence.
+Those lists contain 173 rendered frame occurrences. The separate canvases are
+intentional: the runtime places linked enemies in room space, and their independent AI
+does not provide one canonical, synchronized whole-boss timeline to merge with BG2.
+
+`./gradlew parityKraid` regenerates the ignored `parity/reports/kraid.json` proof;
+the strict `parityReport` additionally checks production head/composite pixel hashes
+and a complete-resource edit round trip. It also hashes every rendered frame from the
+four head lists, twelve linked-OAM lists, and six Mini Kraid lists.
 
 ## Behavior Editor Fields (Bank $A7)
 
@@ -118,23 +162,34 @@ The Kraid behavior editor writes named data-table words and selected immediate o
 Enemy set at `$A1:9EB5` (default/alive state). Entries are 16 bytes each, terminated by `$FFFF`.
 
 ```
-E2BF @ (256, 536)  ← main body
-E2FF @ (232, 488)  ← upper body
-E33F @ (200, 528)  ← belly spike row 1
-E37F @ (176, 592)  ← belly spike row 2
-E3BF @ (178, 648)  ← belly spike row 3
-E3FF @ (256, 632)  ← flying claw 1
-E43F @ (232, 488)  ← flying claw 2
-E47F @ (232, 488)  ← flying claw 3
+E2BF @ (256, 536)  ← Kraid
+E2FF @ (232, 488)  ← arm
+E33F @ (200, 528)  ← lint (top)
+E37F @ (176, 592)  ← lint (middle)
+E3BF @ (178, 648)  ← lint (bottom)
+E3FF @ (256, 632)  ← foot
+E43F @ (232, 488)  ← nail
+E47F @ (232, 488)  ← nail (bad trajectory)
 ```
 
 ## Mini Kraid
 
-Mini Kraid (the pre-fight encounter in Baby Kraid Room) uses separate species:
+Mini Kraid (the pre-fight encounter in Baby Kraid Room) is a separate, ordinary
+OAM enemy. It is not one of main Kraid's linked sub-entities:
 
 | Entity | Species ID | PC Offset |
 |--------|-----------|-----------|
-| Mini Kraid belly spike | `$E0FF` | `0x1060FF` |
+| Mini Kraid | `$E0FF` | `0x1060FF` |
+
+Its six active action lists are bounded at `$A6:99AE–9A42` and use fourteen
+unique active spritemaps at `$A6:9C64–A08E`. SMEDIT renders those named lists
+directly; scanning all of shared bank `$A6` also finds unrelated Ridley data and
+must not be used for Mini Kraid pose discovery. The editor now exposes forward step,
+backward step, and spit actions in both directions. Together they contain 24 frame
+occurrences, all parity-pinned against the exact source order, duration, address, and
+rendered pixels. Its source places foreground limb entries before the torso; SMEDIT
+uses the SNES's lower-OAM-index-wins overlap rule so the hand and curled front leg draw
+over the body instead of disappearing behind it.
 
 ## References
 

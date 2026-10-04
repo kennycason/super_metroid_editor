@@ -20,9 +20,10 @@
 - Phantoon's old standalone **Tile Sheet** mapping is quarantined because it resolves
   inside Mother Brain leg graphics (`$B7:9000..9FFF`). Existing legacy edits block
   export until reset.
-- Kraid component/tile-sheet pixel export is quarantined because the old target
-  `$B9:FA38` is a compressed BG2 tilemap, not pixel graphics. Preview and PNG export
-  remain available while the tileset/OAM ownership mapping is rebuilt from source.
+- Kraid's old `kraid:*` tile-sheet mapping remains quarantined because `$B9:FA38`
+  is a compressed BG2 tilemap. The source-backed Components editor is now enabled:
+  head edits save the complete no-CRE tileset `$1A` resource through `varGfx["26"]`.
+  The independent `$AB:CC00` linked OAM sheet remains a separate resource.
 
 These are fail-closed export rules, not claims that the bosses cannot be edited. The
 correct source-backed edit model is tracked as parity milestone P0.6.
@@ -197,6 +198,12 @@ child. One unused Torizo label is excluded explicitly because the source identif
 it as an orphaned five-byte entry with a missing count, not a spritemap structure.
 The ignored machine-readable evidence is `parity/reports/enemy-oam.json`.
 
+Standard OAM overlap follows SNES hardware order: the engine copies a spritemap's
+first source entry to the lower OAM index, and the lower index wins when opaque OBJ
+pixels overlap. SMEDIT therefore composites standard entries in reverse painter order
+(last source entry first). This is visibly important for layered sprites such as Mini
+Kraid, whose foreground arm and curled front leg precede its torso entries.
+
 ### Source-Backed Instruction-List Coverage (2026-10-04)
 
 `parityEnemyInstructions` parses named source blocks rather than scanning ROM for
@@ -281,17 +288,26 @@ index 0). Adding unneeded entries corrupts VRAM layout.
 
 | Entity | Species ID | HP | Dmg | Hitbox | Palette | Init AI | Tile Size |
 |--------|-----------|-----|------|--------|---------|---------|-----------|
-| Body | `$E2BF` | 1000 | 20 | 56x144 | `$A7:8687` | `$A7:A959` | 7680 |
-| Upper body | `$E2FF` | 1000 | 20 | 48x48 | `$A7:8687` | `$A7:AB43` | 7680 |
-| Belly spike 1 | `$E33F` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:AB68` | 7680 |
-| Belly spike 2 | `$E37F` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:AB9C` | 7680 |
-| Belly spike 3 | `$E3BF` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:ABCA` | 7680 |
-| Flying claw 1 | `$E3FF` | 1000 | 20 | 8x8 | `$A7:8687` | `$A7:ABF8` | 7680 |
-| Flying claw 2 | `$E43F` | 10 | 10 | 8x8 | `$A7:8687` | `$A7:BCEF` | 7680 |
-| Flying claw 3 | `$E47F` | 10 | 10 | 8x8 | `$A7:8687` | `$A7:BD2D` | 7680 |
+| Kraid | `$E2BF` | 1000 | 20 | 56x144 | `$A7:8687` | `$A7:A959` | 7680 |
+| Arm | `$E2FF` | 1000 | 20 | 48x48 | `$A7:8687` | `$A7:AB43` | 7680 |
+| Lint (top) | `$E33F` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:AB68` | 7680 |
+| Lint (middle) | `$E37F` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:AB9C` | 7680 |
+| Lint (bottom) | `$E3BF` | 1000 | 10 | 24x8 | `$A7:8687` | `$A7:ABCA` | 7680 |
+| Foot | `$E3FF` | 1000 | 20 | 8x8 | `$A7:8687` | `$A7:ABF8` | 7680 |
+| Nail | `$E43F` | 10 | 10 | 8x8 | `$A7:8687` | `$A7:BCEF` | 7680 |
+| Nail (bad trajectory) | `$E47F` | 10 | 10 | 8x8 | `$A7:8687` | `$A7:BD2D` | 7680 |
 
-All entities share GFX at `$AB:CC00` and palette at `$A7:8687`.
-Kraid uses BG2 tilemaps + room tileset injection (not OAM spritemaps).
+All eight headers share the exact raw OAM range `$AB:CC00..EA00` and palette
+`$A7:8687`. The arm, lints, foot, and nails use ordinary/extended OAM structures.
+Kraid's large body and animated head are a separate BG2 composition: two active
+compressed 64×32 room halves plus one of four 32×11 uploaded head frames, all
+referencing the complete 1024-tile, no-CRE tileset `$1A` graphics resource. SMEDIT
+now renders all four 64×64 live body states, four source head animations, ten paired
+runtime palette stages, and 12 bounded linked-OAM animations with 173 frame
+occurrences. It safely persists head pixel edits through the ordinary `varGfx["26"]`
+tileset relocation path. The tilemaps themselves remain read-only placement data. See
+`docs/bosses/kraid.md` and `parityKraid` for the exact consumer, palette-state,
+hitbox, animation, and ownership manifest.
 
 ### Phantoon (Room $CD13, AI Bank $A7)
 
@@ -344,7 +360,12 @@ Draygon body has 32767 HP (effectively invincible to normal attacks).
 | Crocomire bridge | `$D17F` | 100 | 60 | `$A2` | `$AE:CD20` |
 | Crocomire spike wall | `$D1BF` | 90 | 50 | `$A2` | `$AE:B400` |
 | Golden Torizo | `$D23F` | 10 | 40 | `$A2` | `$AE:B800` |
-| Mini-Kraid spike | `$E0FF` | 400 | 100 | `$A6` | `$AB:8000` |
+| Mini Kraid | `$E0FF` | 400 | 100 | `$A6` | `$AB:8000` |
+
+Mini Kraid is a complete ordinary OAM enemy, not a spike component. Its renderer uses
+six exact source-bounded action lists—forward/backward step and spit, facing both
+directions—for 24 frame occurrences and 14 unique spritemaps. It never scans shared
+bank `$A6`, which would incorrectly admit neighboring Ridley structures.
 
 ---
 
@@ -413,7 +434,8 @@ frame count, category, and reason. Counts and the complete row hash are pinned i
 
 - **OAM Spritemap Assembly** — Standard enemies where init/instruction tracing succeeds
 - **Special composition** — Boss-specific BG2, OAM, DMA, room-tile, and linked-slot paths;
-  the old Phantoon/Kraid generic export mappings are quarantined
+  the old Phantoon/Kraid generic mappings are quarantined, while their source-backed
+  component editors use normal tileset ownership
 - **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
   raw ownership alone does not prove complete composition or conflict-free editing
 

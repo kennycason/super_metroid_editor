@@ -180,8 +180,8 @@ internal val HEADLESS_WEAPON_SLOTS = listOf(
 internal val HEADLESS_BOSS_STAT_FIELDS = listOf(
     HeadlessBossStatField("kraid_hp", "Kraid HP", 0xE2BF, 4, 1000, "Kraid", listOf(0xE2FF)),
     HeadlessBossStatField("kraid_contact", "Contact Damage", 0xE2BF, 6, 20, "Kraid", listOf(0xE2FF)),
-    HeadlessBossStatField("kraid_belly_spike", "Belly Spike Damage", 0xE33F, 6, 10, "Kraid", listOf(0xE37F, 0xE3BF)),
-    HeadlessBossStatField("kraid_claw", "Flying Claw Damage", 0xE3FF, 6, 20, "Kraid"),
+    HeadlessBossStatField("kraid_belly_spike", "Lint Contact Damage", 0xE33F, 6, 10, "Kraid", listOf(0xE37F, 0xE3BF)),
+    HeadlessBossStatField("kraid_claw", "Foot Contact Damage", 0xE3FF, 6, 20, "Kraid"),
     HeadlessBossStatField("phantoon_hp", "Phantoon HP", 0xE4BF, 4, 2500, "Phantoon"),
     HeadlessBossStatField("phantoon_contact", "Contact Damage", 0xE4BF, 6, 40, "Phantoon"),
     HeadlessBossStatField("phantoon_flame1", "Eye Contact", 0xE4FF, 6, 40, "Phantoon"),
