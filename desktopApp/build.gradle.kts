@@ -80,15 +80,25 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs(macGestureJvmArgs + appLoggingJvmArgs)
 }
 
-// Ensure the libretro core is built before running or packaging
+// Ensure the libretro core is built before running or packaging.
+// lsnes is an optional TAS extra: do not build, copy, or ship smedit-lsnes-worker here.
 tasks.named("jvmMainClasses") {
     dependsOn(rootProject.tasks.named("buildLibretroCore"))
 }
 
-// Wire the copy into packaging tasks so the core is bundled in the app
+// Wire the libretro core into packaging. Never copy a leftover local lsnes worker.
 afterEvaluate {
     tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach {
         dependsOn(copyLibretroToAppResources)
+        doFirst {
+            val workerNames = setOf("smedit-lsnes-worker", "smedit-lsnes-worker.exe")
+            val appResources = layout.buildDirectory.dir("appResources").get().asFile
+            if (appResources.isDirectory) {
+                appResources.walkTopDown()
+                    .filter { it.isFile && it.name in workerNames }
+                    .forEach { it.delete() }
+            }
+        }
     }
 }
 

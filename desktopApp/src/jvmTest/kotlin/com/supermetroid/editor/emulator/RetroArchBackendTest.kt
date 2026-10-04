@@ -29,6 +29,7 @@ class RetroArchBackendTest {
         val backends = EmulatorRegistry.availableBackends()
         assert(backends.contains("retroarch")) { "Expected 'retroarch' in available backends: $backends" }
         assert(backends.contains("libretro")) { "Expected 'libretro' in available backends: $backends" }
+        assert(backends.contains("lsnes-b25")) { "Expected 'lsnes-b25' in available backends: $backends" }
     }
 
     @Test
