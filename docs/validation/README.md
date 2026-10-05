@@ -275,7 +275,8 @@ BG layers, per-frame DMA, linked enemy slots, palette FX, and room-owned graphic
 | B-04 | Ridley | AI `$A6`; staged tile chunks `$B0:9400...`; ribs/claws `$B0:B800...`; custom OAM add routine | **Verified** |
 | B-05 | Mother Brain | AI `$A9`; body `$B0:E800`; head/legs `$B7:8000/$B7:9000`; tileset `$0E`; HDMA/palette phases | **Verified graphics / Partial effects** |
 | B-06 | Crocomire | AI `$A4`; body/skeleton/melting transfers; tileset `$1B` | **Verified graphics** |
-| B-07 | Spore Spawn, Botwoon, Torizos | AI `$A5/$B3/$AA`; dynamic and multi-part special cases | **Queued** |
+| B-07 | Spore Spawn | AI `$A5`; extended body plus bank-`$86/$8D` stalk/spawner/spore projectiles | **Verified graphics** |
+| B-08 | Botwoon and Torizos | AI `$B3/$AA`; dynamic and multi-part special cases | **Queued** |
 
 For each case, validate the complete composition recipe—not only one attractive frame.
 That includes which layer draws each part, initial enemy-slot ordering, tile transfer
@@ -343,7 +344,11 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   and target-dependent neck motion.
 - [x] **P2.6a** Crocomire living BG2/OBJ assembly, tongue, melting overlays,
   skeleton DMA, exact source animations, palettes, and safe body ownership.
-- [ ] **P2.6b** Crocomire bridge/lava/environmental effects and remaining mini-bosses.
+- [ ] **P2.6b** Crocomire bridge/lava/environmental effects.
+- [x] **P2.7a** Spore Spawn body/stalk runtime assembly, spawner/spore projectiles,
+  health/death palettes, exact source animations, and shared pixel ownership.
+- [ ] **P2.7b** Spore Spawn fight-path simulation, dust/explosion effects, and room
+  death-palette rendering; Botwoon and Torizo expansion.
 
 ### P3 — Prove Samus
 
@@ -412,6 +417,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-04 | Proved Mother Brain's split phase-1/2 graphics recipe | The dedicated manifest pins head/body `$EC3F/$EC7F`, tileset `$0E`, four physical pixel owners, 26 head maps / 189 OAM entries, 16 active extended body maps / 145 children, six BG2 maps / 290 words, and 49 active body/head lists / 243 timed frames. Production assembles torso, limbs, five neck segments, and independent head; exposes four health and all ten correctly split rainbow main/back-leg palette stages; and hashes every curated composition and animation. Phase-1 room machinery and remaining HDMA/projectile effects stay explicitly outside the sprite canvas. |
 | 2026-10-05 | Proved and consolidated Ridley's shared encounter renderer | Ceres `$E13F` and Norfair `$E17F` now share one top-level workspace while remaining distinct ROM headers. The manifest pins five contiguous base assets / `$2000` bytes, the `$0400`-byte low-page forward/explosion asset and `$E001` enemy-set placement, six ribs/claws DMA assets, 11 extended body maps / 41 children, 17 body-child maps / 164 entries, 12 wing maps / 56 entries, 19 tail maps, four palette stages, and eight encounter lists / 34 timed frames. Production hashes all complete compositions and 11 curated animations, including Ceres lunge, the correct forward turn, and baby-Metroid retrieval. |
 | 2026-10-05 | Proved Crocomire's living, melting, and skeleton renderer | The dedicated manifest pins body/tongue `$DDBF/$DDFF`, tileset `$1B`, the editable `$2600`-byte living OBJ owner, two `$0C00` melting overlays, six `$0200` skeleton DMA chunks, 74 standard maps / 683 entries, 94 extended maps / 463 children, 11 BG2 maps / 606 words, six palette rows, and 36 active lists / 233 timed frames. Production renders 20 guided animations / 218 frames plus complete compositions and components with deterministic hashes while preserving the room-BG, body, melting, and skeleton ownership boundaries. The audit also replaced a stale mini-boss table that had mislabeled ordinary `$A2` species `$CEFF..D23F` as Spore Spawn, Botwoon, Crocomire, and Torizo. |
+| 2026-10-05 | Proved Spore Spawn's cross-bank body and stalk renderer | The dedicated manifest pins body/stalk headers `$DF3F/$DF7F`, their shared `$AC:9C00` / `$0E00`-byte pixel owner, 22 standard maps / 365 entries, 12 active plus seven unused extended body maps, seven bank-`$8D` projectile maps, 27 sprite/room palette rows, and nine active lists / 41 timed frames. Production composes all four bank-`$86` stalk projectiles with the body using the exact `$A5:EC49` quarter/half/three-quarter interpolation, exposes six body animations plus spawner/spore sequences, and preserves one safe editable source. |
 
 ## Deliberately deferred
 

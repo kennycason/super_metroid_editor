@@ -348,6 +348,10 @@ class EditorState(
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
     )
 
+    val sporeSpawnSprite = SporeSpawnSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val motherBrainSprite = MotherBrainSpriteEditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
@@ -1012,6 +1016,66 @@ class EditorState(
     fun resetCrocomireObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID)
         crocomireSprite.invalidate()
+    }
+
+    // ── Spore Spawn sprite delegates ────────────────────────────────────
+
+    fun renderSporeSpawnComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderComposition(romParser, definition, palette)
+    fun renderSporeSpawnComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderComponent(romParser, definition, palette)
+    fun renderSporeSpawnAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.InstructionListDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderAnimation(romParser, definition, palette)
+    fun renderSporeSpawnSpawnerAnimation(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderSpawnerAnimation(romParser, palette)
+    fun renderSporeSpawnSporeAnimation(romParser: RomParser) =
+        sporeSpawnSprite.renderSporeAnimation(romParser)
+    fun loadSporeSpawnSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedSporeSpawnCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applySporeSpawnObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) {
+        val colors = sporeSpawnSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        sporeSpawnSprite.invalidate()
+    }
+    fun hasCustomSporeSpawnObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
+    fun resetSporeSpawnObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
+        sporeSpawnSprite.invalidate()
     }
 
     // ── Mother Brain sprite delegates ──────────────────────────────────
@@ -2879,7 +2943,10 @@ class EditorState(
         // Clear cached sprite editor state so it reloads from the new ROM/project
         phantoonSprite.invalidate()
         draygonSprite.invalidate()
+        crocomireSprite.invalidate()
+        sporeSpawnSprite.invalidate()
         motherBrainSprite.invalidate()
+        ridleySprite.invalidate()
         kraidSprite.invalidate()
 
         _roomEditOrder.clear()

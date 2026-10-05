@@ -283,6 +283,23 @@ tasks.register<Exec>("parityCrocomire") {
     }
 }
 
+tasks.register<Exec>("paritySporeSpawn") {
+    group = "verification"
+    description = "Generate Spore Spawn's cross-bank body, stalk, projectile, palette, and animation recipe"
+    dependsOn(
+        "paritySymbols",
+        "parityAssets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/spore_spawn_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -305,6 +322,7 @@ tasks.register<Exec>("parityReport") {
         "parityMotherBrain",
         "parityRidley",
         "parityCrocomire",
+        "paritySporeSpawn",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

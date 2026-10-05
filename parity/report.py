@@ -659,6 +659,34 @@ def crocomire_checks(
     ]
 
 
+def spore_spawn_checks(
+    test_results: Dict[str, object], spore_spawn: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.SporeSpawnSourceParityTest",
+        "Spore Spawn body stalk projectiles palettes and animations match source",
+    )
+    totals = spore_spawn["totals"]
+    return [
+        {
+            "id": "B-07",
+            "name": "Spore Spawn cross-bank source renderer",
+            "status": status,
+            "evidence": (
+                f"Both linked headers and the {totals['assetByteCount']}-byte shared OBJ owner are pinned with "
+                f"{totals['activeExtendedSpritemapCount']} active body maps / "
+                f"{totals['activeExtendedChildCount']} child links, "
+                f"{totals['projectileSpritemapCount']} stalk/spawner/spore projectile maps, and "
+                f"{totals['paletteCount']} palette rows. Production decodes all "
+                f"{totals['instructionListCount']} boss lists / {totals['frameOccurrenceCount']} timed frames "
+                "and composes the four bank-$86 stalk projectiles with the bank-$A5 body using the exact "
+                "quarter/half/three-quarter runtime interpolation."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -679,6 +707,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     ridley = report["ridley"]
     mother_brain = report["motherBrain"]
     crocomire = report["crocomire"]
+    spore_spawn = report["sporeSpawn"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -812,6 +841,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{crocomire['standardSpritemapCount']}** OBJ maps, **{crocomire['tilemapCount']}** BG2 maps, and "
             f"**{crocomire['instructionListCount']}** active lists / **{crocomire['frameCount']}** timed frames "
             "cover the living, melting, and skeleton phases with distinct runtime pixel owners.",
+            f"- Spore Spawn: **{spore_spawn['activeExtendedSpritemapCount']}** active body maps, "
+            f"**{spore_spawn['projectileSpritemapCount']}** stalk/spawner/spore projectile maps, and "
+            f"**{spore_spawn['instructionListCount']}** lists / **{spore_spawn['frameCount']}** timed frames "
+            "are source-pinned across banks $A5, $86, and $8D.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -825,7 +858,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -857,6 +890,7 @@ def main() -> int:
     ridley_path = report_dir / "ridley.json"
     mother_brain_path = report_dir / "mother-brain.json"
     crocomire_path = report_dir / "crocomire.json"
+    spore_spawn_path = report_dir / "spore-spawn.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -876,10 +910,11 @@ def main() -> int:
         or not ridley_path.is_file()
         or not mother_brain_path.is_file()
         or not crocomire_path.is_file()
+        or not spore_spawn_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -903,6 +938,7 @@ def main() -> int:
     ridley = json.loads(ridley_path.read_text(encoding="utf-8"))
     mother_brain = json.loads(mother_brain_path.read_text(encoding="utf-8"))
     crocomire = json.loads(crocomire_path.read_text(encoding="utf-8"))
+    spore_spawn = json.loads(spore_spawn_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1436,6 +1472,7 @@ def main() -> int:
         + ridley_checks(tests, ridley)
         + mother_brain_checks(tests, mother_brain)
         + crocomire_checks(tests, crocomire)
+        + spore_spawn_checks(tests, spore_spawn)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1444,9 +1481,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 17,
+        "schemaVersion": 18,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1671,6 +1708,19 @@ def main() -> int:
             "guidedAnimationFrameCount": crocomire["totals"]["guidedAnimationFrameCount"],
             "paletteCount": crocomire["totals"]["paletteCount"],
             "aggregateHashes": crocomire["aggregateHashes"],
+        },
+        "sporeSpawn": {
+            "headerCount": spore_spawn["totals"]["headerCount"],
+            "assetByteCount": spore_spawn["totals"]["assetByteCount"],
+            "standardSpritemapCount": spore_spawn["totals"]["standardSpritemapCount"],
+            "activeExtendedSpritemapCount": spore_spawn["totals"]["activeExtendedSpritemapCount"],
+            "activeExtendedChildCount": spore_spawn["totals"]["activeExtendedChildCount"],
+            "projectileSpritemapCount": spore_spawn["totals"]["projectileSpritemapCount"],
+            "instructionListCount": spore_spawn["totals"]["instructionListCount"],
+            "frameCount": spore_spawn["totals"]["frameOccurrenceCount"],
+            "guidedAnimationCount": spore_spawn["totals"]["guidedAnimationCount"],
+            "paletteCount": spore_spawn["totals"]["paletteCount"],
+            "aggregateHashes": spore_spawn["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

@@ -455,6 +455,22 @@ occurrences. Only the living `$2600` OBJ owner is editable through the sprite
 workspace. See [`../bosses/crocomire.md`](../bosses/crocomire.md) and
 `parityCrocomire` for the runtime transfers and safe-edit boundary.
 
+### Spore Spawn (Room `$9DC7`, AI Bank `$A5`)
+
+Spore Spawn's `$DF3F` body and `$DF7F` alias share the one `$0E00`-byte
+`Tiles_SporeSpawn` owner at `$AC:9C00`, but the visible stalk is not another enemy
+body. Initialization spawns four bank-`$86` stalk projectiles whose one-entry map is
+stored in bank `$8D`; `$A5:EC49` places them at a fixed base and the exact quarter,
+half, and three-quarter points between the stalk origin and moving body target.
+
+The dedicated workspace joins those projectiles to 12 active extended body maps,
+consolidates the spawner/spore animations, and exposes four health plus eight death
+body palettes. Strict parity covers all 22 body-child OAM maps / 365 entries, seven
+projectile maps, nine active lists / 41 timed frames, seven source-declared unused
+extended maps, and all 27 boss/room palette rows. Only the shared pixel payload is
+editable; placement, motion, and room palette effects stay read-only. See
+[`../bosses/spore_spawn.md`](../bosses/spore_spawn.md) and `paritySporeSpawn`.
+
 ### Mini-Bosses
 
 | Boss | Species ID | HP | Dmg | AI Bank | GFX |

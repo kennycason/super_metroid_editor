@@ -52,6 +52,9 @@ packaged application, project format, or ROM exporter.
 - `crocomire_manifest.py` proves Crocomire's shared body/tongue source, tileset-$1B
   BG2 owner, two melting overlays, six skeleton DMA chunks, every OAM/BG2 map,
   active/unused instruction list, and all six palette rows.
+- `spore_spawn_manifest.py` proves Spore Spawn's shared body/stalk pixel owner,
+  bank-$A5 extended body, bank-$86 stalk/spawner/spore projectiles, bank-$8D maps,
+  exact stalk-position routine, active/unused OAM inventory, lists, and 27 palettes.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -272,9 +275,17 @@ palette rows, and all 36 active instruction lists / 233 timed frame occurrences.
 Production parity hashes ten complete compositions, five isolated components, and
 all 20 guided animations / 218 frames across Fight, Tongue, Melting, and Skeleton.
 
+`paritySporeSpawn` writes ignored `parity/reports/spore-spawn.json`. It pins both
+headers and their shared `$AC:9C00` / `$0E00`-byte pixel owner, 22 standard maps /
+365 entries, 12 active plus seven source-declared unused extended body maps, seven
+projectile maps, and all nine boss instruction lists / 41 timed frames. It also pins
+the four health, eight body-death, and fourteen room-death palette rows. Production
+parity hashes complete body/stalk compositions, isolated body/projectile components,
+six guided body animations, and the spawner/spore sequences.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire,
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
