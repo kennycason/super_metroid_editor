@@ -3,7 +3,7 @@
 > **Parity status (2026-10-04):** All 164 species headers, raw `GRAPHADR`
 > ownership, and every named standard/extended enemy OAM structure are now
 > source/ROM verified through SMEDIT's production parsers. Instruction-list
-> control flow and boss composition beyond Kraid/Phantoon are still partial. The
+> control flow and boss composition beyond Kraid/Phantoon/Draygon are still partial. The
 > remaining boss ID/bank tables below contain known stale assignments; do not use
 > those tables for implementation until regenerated from exact source. See
 > [`../validation/README.md`](../validation/README.md).
@@ -26,6 +26,10 @@
   is a compressed BG2 tilemap. The source-backed Components editor is now enabled:
   head edits save the complete no-CRE tileset `$1A` resource through `varGfx["26"]`.
   The independent `$AB:CC00` linked OAM sheet remains a separate resource.
+- Draygon's dedicated view is currently read-only. It combines room tileset `$1C`
+  BG2 pixels with the separate `$B0:C800` enemy OBJ payload, exposes ten complete
+  poses, 39 bounded animations, eight health stages, and the hurt flash. Flattened
+  composite editing stays disabled because a visible pixel may belong to either owner.
 
 These are fail-closed export rules, not claims that the bosses cannot be edited. The
 correct source-backed edit model is tracked as parity milestone P0.6.
@@ -333,15 +337,29 @@ three slots in source-valid resting poses. Pixel edits persist through `varGfx["
 the tilemaps, instruction lists, hitboxes, and raw OBJ payload remain read-only. See
 `docs/bosses/phantoon.md` and `parityPhantoon` for the complete ownership manifest.
 
-### Draygon (AI Bank $A7/$A8)
+### Draygon (Room `$DA60`, AI Bank `$A5`)
 
-| Entity | Species ID | HP | Dmg | Hitbox | Palette | Init AI | GFX |
-|--------|-----------|-----|------|--------|---------|---------|-----|
-| Body | `$E5BF` | 32767 | 0 | 6x7 | `$A7:E7FE` | `$A7:E912` | `$AC:8200` |
-| Turret | `$E5FF` | 32767 | 0 | 8x24 | `$A7:F225` | `$A7:F4DD` | `$AC:8800` |
-| Goop | `$E63F` | 300 | 100 | 16x20 | `$A8:8687` | `$A8:87E0` | `$B1:9400` |
+| Runtime slot | Species ID | HP | Damage | Header palette | Init AI | Raw transfer |
+|---|---:|---:|---:|---|---|---:|
+| Body | `$DE3F` | 6000 | 160 | `$A5:A1F7` | `$A5:8687` | `$2000` |
+| Eye | `$DE7F` | 6000 | 160 | special no-op pointer `$A5:8069` | `$A5:C46B` | `$1800` |
+| Tail | `$DEBF` | 6000 | 160 | `$A5:A1F7` | `$A5:C599` | `$1800` |
+| Arms | `$DEFF` | 6000 | 160 | `$A5:A1F7` | `$A5:C5AD` | `$1800` |
 
-Draygon body has 32767 HP (effectively invincible to normal attacks).
+All four slots point at the same raw enemy payload, `Tiles_Draygon` at
+`$B0:C800..E7FF`; the body is the single enemy-set transfer and the other headers
+use prefixes of those bytes. That is only the OBJ half of the recipe. Both live and
+dead room states select tileset `$1C`, whose decompressed `$4800` graphics payload
+feeds 48 extended BG2 tilemaps. Bank `$A5` joins those maps with 94 standard OAM maps
+through 103 extended spritemaps.
+
+The dedicated renderer parses all 57 active named instruction lists and renders the
+39 lists containing frames: 250 timed frame occurrences, each assembled with
+source-valid resting poses for the other independent slots. It also exposes eight
+health-dependent replacements for palette indexes 9–12 and the white hurt-flash
+palette. Ten static compositions cover left/right resting poses and every eye gaze.
+See [`../bosses/draygon.md`](../bosses/draygon.md) and `parityDraygon` for exact
+ownership, source inventories, and the current read-only placement boundary.
 
 ### Ridley (AI Bank $A8)
 
@@ -411,7 +429,8 @@ coarse UI buckets are therefore navigation aids, not rendering-support claims.
 The strict E-08 ledger starts with every source header rather than the 128-entry
 sprite picker or bundled PNG filenames. It calls the same tile, palette, ordinary
 OAM, special OAM, boss-pose, Kraid BG2, and Phantoon BG2 production paths used by the
-editor. A raw tile sheet never counts as an assembled sprite.
+editor, including Draygon's dedicated split BG2/OBJ renderer. A raw tile sheet never
+counts as an assembled sprite.
 
 | Status | Count | Meaning |
 |---|---:|---|
@@ -448,7 +467,8 @@ frame count, category, and reason. Counts and the complete row hash are pinned i
 - **OAM Spritemap Assembly** — Standard enemies where init/instruction tracing succeeds
 - **Special composition** — Boss-specific BG2, OAM, DMA, room-tile, and linked-slot paths;
   the old Phantoon/Kraid generic mappings are quarantined, while their source-backed
-  component editors use normal tileset ownership
+  component editors use normal tileset ownership; Draygon keeps its two pixel owners
+  explicit and placement read-only
 - **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
   raw ownership alone does not prove complete composition or conflict-free editing
 
@@ -508,6 +528,7 @@ Enemy GFX Set ($B4)
 | `EnemyTileScanTest.kt` | GRAPHADR decompression, tileDataSize mask, palette row 0 |
 | `PhantoonSpritemapRoundtripTest.kt` | Pixel-perfect match vs reference PNG, edit roundtrip |
 | `PhantoonSourceParityTest.kt` | All four slots, 22 tilemaps/extended spritemaps, 19 lists, eight health palettes, full-body/gaze rendering, five bounded animations, hashes, and edit ownership |
+| `DraygonSourceParityTest.kt` | Four slots, split BG2/OBJ ownership, 94 OAM + 103 extended + 48 BG2 maps, 57 lists, 250 production frames, palettes, hitboxes, and deterministic complete-composition hashes |
 
 ---
 

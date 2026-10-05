@@ -241,6 +241,7 @@ internal fun SpritesTabCanvas(
         when (selected.speciesId) {
             0xE4BF -> PhantoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xE2BF -> KraidSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xDE3F -> DraygonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             else -> EnemySpriteViewer(entry = selected, romParser = romParser, editorState = editorState, modifier = modifier)
         }
     }

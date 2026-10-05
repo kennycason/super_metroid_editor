@@ -337,6 +337,11 @@ class EditorState(
         onDirty = { dirty = true },
     )
 
+    val draygonSprite = DraygonSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
+    )
+
     val kraidSprite = KraidSpriteEditorState(
         customGfx = { project.customGfx },
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
@@ -892,6 +897,19 @@ class EditorState(
     fun hasCustomPhantoonComponents() = phantoonSprite.hasCustomComponents()
     fun hasCustomPhantoonTileSheet() = phantoonSprite.hasCustomTileSheet()
     fun resetPhantoonTileSheet() = phantoonSprite.resetTileSheet()
+
+    // ── Draygon sprite delegates ──────────────────────────────────────────
+
+    fun renderDraygonComposition(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderComposition(romParser, def, palette)
+    fun renderDraygonAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderAnimation(romParser, def, palette)
 
     // ── Kraid sprite delegates ────────────────────────────────────────────
 
@@ -2635,6 +2653,7 @@ class EditorState(
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         phantoonSprite.invalidate()
+        draygonSprite.invalidate()
         kraidSprite.invalidate()
 
         _roomEditOrder.clear()

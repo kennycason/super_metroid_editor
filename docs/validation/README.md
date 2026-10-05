@@ -86,7 +86,7 @@ SMEDIT has much more machinery than a first glance suggests:
   metatiles, palettes, flips, and pixel round trips.
 - Enemy rendering supports standard OAM, extended/multibox spritemaps, multiple
   palette rows, and several runtime tile-transfer special cases.
-- Kraid and Phantoon have source-pinned BG2/extended-tilemap composition and animation
+- Kraid, Phantoon, and Draygon have source-pinned BG2/extended-tilemap composition and animation
   renderers; Ridley has a
   dedicated pose wrapper; Samus has pose, DMA, tilemap, palette, and animation code.
 - The focused 2026-10-02 baseline ran 114 tests across the room, tile,
@@ -271,7 +271,7 @@ BG layers, per-frame DMA, linked enemy slots, palette FX, and room-owned graphic
 |---|---|---|---|
 | B-01 | Kraid + Mini Kraid | AI `$A7/$A6`; OAM tiles `$AB:CC00/$AB:8000`; BG2 tilemaps `$A7:97C8...` and `$B9:FA38...`; tileset `$1A` | **Verified** |
 | B-02 | Phantoon | AI/extended tilemaps `$A7`; raw OBJ tiles `$AC:AA00`; tileset `$05`; eight health palettes | **Verified** |
-| B-03 | Draygon | AI `$A5`; raw tiles `$B0:C800`; tileset `$1C`; four linked species | **Partial** |
+| B-03 | Draygon | AI `$A5`; raw tiles `$B0:C800`; tileset `$1C`; four linked species | **Verified** |
 | B-04 | Ridley | AI `$A6`; staged tile chunks `$B0:9400...`; ribs/claws `$B0:B800...`; custom OAM add routine | **Partial** |
 | B-05 | Mother Brain | AI `$A9`; body `$B0:E800`; head/legs `$B7:8000/$B7:9000`; tileset `$0E`; HDMA/palette phases | **Partial** |
 | B-06 | Crocomire | AI `$A4`; body/skeleton/melting transfers; tileset `$1B` | **Partial** |
@@ -335,7 +335,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 - [x] **P2.1** Kraid complete recipe and safe edit ownership.
 - [x] **P2.2** Phantoon complete recipe and safe edit ownership.
-- [ ] **P2.3** Draygon body/eye/tail/arms composition and room dependencies.
+- [x] **P2.3** Draygon body/eye/tail/arms composition and room dependencies.
 - [ ] **P2.4** Ridley staged DMA, body/wings/tail, Ceres variant, and palettes.
 - [ ] **P2.5** Mother Brain phase 1/2 body/head/legs, palettes, and HDMA states.
 - [ ] **P2.6** Crocomire and remaining mini-bosses.
@@ -403,6 +403,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-04 | Resolved all zero-transfer visual species | Source-backed runtime ownership recovered Elevator, Ceres Steam, Zebetite, cutscene Baby Metroid, Mother Brain tubes, and the three non-owner corpse species. All eight now render 19 visible timed frames from exact lists/assets/palettes while their shared/global graphics remain read-only. Palette ownership is independent: five retain editable header palettes and three use read-only global rows. The complete ledger moves to 134 assembled / 14 tile-sheet-only / 14 composite / two nonvisual / zero failed, with 148 assembled previews. |
 | 2026-10-04 | Proved Kraid's complete graphics recipe | The dedicated manifest pins tileset `$1A`'s complete 32 KiB no-CRE edit unit, three compressed BG2 maps and their active/unreferenced consumers, four stored 32×12 head maps and the interpreter's 32×11 DMA boundary, 21 custom frame occurrences, eight mouth hitboxes, 21 palette states, and eight headers sharing `$AB:CC00`. Production now composes all four 512×512 live BG2 views pixel-exactly and persists head edits through the normal tileset relocation path. Source entity names replace the former belly-spike/flying-claw guesses. |
 | 2026-10-04 | Proved Phantoon's complete graphics recipe | The dedicated manifest pins all four enemy slots (body, eye, tentacles, mouth), 22 active BG2 tilemaps / 240 words, 22 extended spritemaps, 19 instruction lists / 27 frame occurrences, three hitbox sets, the raw `$AC:AA00` OBJ payload, tileset `$05` BG ownership, and all eight health palettes. Production now renders all 22 components, nine gaze compositions, and five bounded part animations / 13 full-body frame occurrences. It also corrected the editor from the unused `$A7:CA21` palette clone to active full-health `$A7:CC21`, replaces the stale flame-size species names, and keeps placement data read-only while pixel edits use `varGfx["5"]`. |
+| 2026-10-04 | Proved Draygon's complete four-slot graphics recipe | The dedicated manifest pins body/eye/tail/arms (`$DE3F/$DE7F/$DEBF/$DEFF`), tileset `$1C` room BG ownership, the separate `$B0:C800` OBJ payload, 94 standard OAM maps / 632 entries, 103 extended maps, 48 BG2 maps / 980 words, 57 active lists, five source-declared unused lists, 47 hitboxes, six full palettes, and the eight-row health table. Production renders ten complete poses and all 39 frame-bearing lists / 250 full-composition frame occurrences with deterministic hashes. The editor now exposes guided composition, animation, palette, and source-owner views while leaving ambiguous flattened placement/pixel editing read-only. |
 
 ## Deliberately deferred
 

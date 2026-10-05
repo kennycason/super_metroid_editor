@@ -189,6 +189,13 @@ all eight health palettes are pinned. The editor renders every component, nine g
 poses, and five bounded part animations as complete 80×112 compositions, with
 deterministic hashes and safe `varGfx["5"]` pixel ownership. `./gradlew parityPhantoon`
 runs that focused slice.
+Draygon now has a dedicated split-owner renderer instead of a hand-picked boss-pose
+scan. It combines tileset `$1C` BG2 graphics with the shared `$B0:C800` OBJ payload,
+assembles body/eye/tail/arms at runtime coordinates, exposes ten poses, all eight
+health stages plus hurt flash, and renders all 39 frame-bearing source lists (250
+complete frame occurrences). The Sources view makes the two pixel owners explicit;
+placement and flattened composite editing remain read-only. `./gradlew parityDraygon`
+runs the focused proof.
 Current coverage and the ordered expansion plan are tracked in
 [the parity validation matrix](docs/validation/README.md).
 

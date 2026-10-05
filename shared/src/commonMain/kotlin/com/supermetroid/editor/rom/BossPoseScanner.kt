@@ -947,14 +947,15 @@ class BossPoseScanner(private val romParser: RomParser) {
     fun renderPose(
         pose: BossPose,
         tileData: ByteArray,
-        palette: IntArray
+        palette: IntArray,
+        extendedTilemapTileData: ByteArray? = null,
     ): EnemySpritemap.AssembledSprite? {
         val renderTileData = when (pose.tileDataVariant) {
             TileDataVariant.DEFAULT -> tileData
             TileDataVariant.CROCOMIRE_SKELETON ->
                 EnemySpriteGraphics.applyCrocomireSkeletonTileData(romParser, tileData) ?: tileData
         }
-        val bgTileData = when {
+        val bgTileData = extendedTilemapTileData ?: when {
             pose.usesCrocomireBgTileData -> crocomireRoomTileData()
             pose.usesDraygonBgTileData -> draygonRoomTileData()
             pose.usesMotherBrainBgTileData -> motherBrainRoomTileData()
@@ -980,6 +981,23 @@ class BossPoseScanner(private val romParser: RomParser) {
             extendedTilemapTileData = bgTileData
         ) ?: return null
         return autoCrop(assembled, pose.spritemap)
+    }
+
+    /** Render one source-valid Draygon composition from its independently animated slots. */
+    fun renderDraygonComposition(
+        name: String,
+        frameAddresses: List<Int>,
+        tileData: ByteArray,
+        palette: IntArray,
+        roomTileData: ByteArray? = null,
+    ): EnemySpritemap.AssembledSprite? {
+        val pose = createDraygonCompositePose(
+            label = name,
+            durationTicks = 1,
+            frameAddresses = frameAddresses,
+            minEntries = 1,
+        ) ?: return null
+        return renderPose(pose, tileData, palette, roomTileData)
     }
 
     private fun crocomireRoomTileData(): ByteArray? {

@@ -223,6 +223,21 @@ tasks.register<Exec>("parityPhantoon") {
     }
 }
 
+tasks.register<Exec>("parityDraygon") {
+    group = "verification"
+    description = "Generate Draygon's source-backed BG2, OAM, palette, and four-slot animation recipe"
+    dependsOn(
+        "parityTilesets",
+        "parityEnemyHeaders",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/draygon_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -241,6 +256,7 @@ tasks.register<Exec>("parityReport") {
         "parityEnemyVerticalSlices",
         "parityKraid",
         "parityPhantoon",
+        "parityDraygon",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

@@ -41,6 +41,9 @@ packaged application, project format, or ROM exporter.
 - `phantoon_manifest.py` proves all four Phantoon slots, 22 active BG2 tilemaps and
   extended spritemaps, 19 part instruction lists, eight health palettes, hitboxes,
   room-tileset ownership, and the separate raw OBJ payload.
+- `draygon_manifest.py` proves all four Draygon slots, tileset-$1C BG2 ownership,
+  the separate shared OBJ payload, every OAM/tilemap structure, active and unused
+  instruction lists, health palettes, thresholds, and all 47 hitboxes.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -65,7 +68,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
 `parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`, and
-`parityPhantoon` tasks remain
+`parityPhantoon`, and `parityDraygon` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -207,7 +210,7 @@ The tagged all-species status test writes ignored
 `parity/reports/enemy-species-status.json` and `.md`. Unlike the legacy diagnostic,
 it begins with all 164 source headers, never treats a raw tile sheet as assembled,
 and runs the production ordinary OAM, special OAM, known boss, Kraid BG2, and Phantoon
-BG2 paths. The pinned result is 134 assembled, 14 tile-sheet-only, 14 composite, two
+BG2 paths (including Draygon's known boss path). The pinned result is 134 assembled, 14 tile-sheet-only, 14 composite, two
 nonvisual, and zero failed, with real assembled previews for 148 species. Every row
 includes catalog membership and a reason. A dedicated source test also proves all
 eight zero-transfer visual species against their exact shared/global graphics,
@@ -226,9 +229,18 @@ occurrences. Production renders five exact bounded part animations as 13 complet
 persists BG pixels through the normal tileset-$05 path. The raw `$AC:AA00` OBJ payload
 is recorded separately; placement structures remain read-only.
 
+`parityDraygon` writes ignored `parity/reports/draygon.json`. It proves both room
+states use tileset `$1C`, separates the decompressed `$4800` room-BG payload from
+the shared raw `$B0:C800` OBJ transfer, and pins four species headers, 94 standard
+OAM maps, 103 extended maps, 48 BG2 tilemaps, 57 active lists, five source-declared
+unused lists, six full palettes, eight health rows, thresholds, and 47 hitboxes.
+Production renders ten static complete poses and all 39 frame-bearing lists / 250
+frame occurrences as four-slot compositions; deterministic hashes cover every
+rendered pose, palette, and frame.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, and enemy-species-status chain and writes ignored
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
 command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile

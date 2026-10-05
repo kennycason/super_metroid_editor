@@ -172,6 +172,15 @@ class EnemySpeciesStatusSourceParityTest {
                     if (count > 0) return PreviewProbe("Phantoon BG2 composite renderer", count)
                 }
             }
+            if (speciesId == DRAYGON_SPECIES_ID) {
+                val draygon = DraygonSpritemap(parser)
+                if (draygon.load(tileData)) {
+                    val count = DraygonSpritemap.ANIMATIONS.sumOf { definition ->
+                        draygon.renderAnimation(definition)?.frames?.size ?: 0
+                    }
+                    if (count > 0) return PreviewProbe("Draygon BG2 and OBJ composite renderer", count)
+                }
+            }
             val standardRenderTiles = EnemySpriteGraphics.loadStandardOamRenderTileData(
                 parser,
                 speciesId,
@@ -367,6 +376,7 @@ class EnemySpeciesStatusSourceParityTest {
     companion object {
         private const val KRAID_SPECIES_ID = 0xE2BF
         private const val PHANTOON_SPECIES_ID = 0xE4BF
+        private const val DRAYGON_SPECIES_ID = 0xDE3F
 
         /** Explicit source/runtime composition cases; do not infer these from tile count. */
         private val COMPOSITE_SPECIES = mapOf(
