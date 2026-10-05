@@ -612,10 +612,14 @@ class EnemySpritemap(private val romParser: RomParser) {
         extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         val flattened = flattenExtendedSpritemap(ext)
-        val oamChildren = ext.children.filterIsInstance<ExtendedChild.Oam>().let { children ->
-            if (options.reverseExtendedOamDrawOrder) children.asReversed() else children
-        }
-        val oamCommands = oamChildren.flatMap { buildOamCommands(it, options) }
+        val oamCommands = ext.children.filterIsInstance<ExtendedChild.Oam>()
+            .flatMap { buildOamCommands(it, options) }
+            .let { commands ->
+                // Extended children append all of their entries to ascending OAM
+                // slots. Reverse the complete flattened command stream—not merely
+                // the child list—when reproducing lower-OAM-index overlap priority.
+                if (options.reverseExtendedOamDrawOrder) commands.asReversed() else commands
+            }
         val tilemapCommands = buildExtendedTilemapCommands(ext, options)
         val layers = buildExtendedDrawLayers(ext, options, oamCommands, tilemapCommands)
         val commands = layers.flatMap { it.commands }

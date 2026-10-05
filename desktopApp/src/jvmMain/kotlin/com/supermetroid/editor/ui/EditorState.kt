@@ -342,6 +342,12 @@ class EditorState(
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
     )
 
+    val crocomireSprite = CrocomireSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+        loadEnemyPalette = { parser, speciesId -> enemySprite.loadEnemyPalette(parser, speciesId) },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
+    )
+
     val motherBrainSprite = MotherBrainSpriteEditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
@@ -958,6 +964,54 @@ class EditorState(
     fun resetDraygonObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
         draygonSprite.invalidate()
+    }
+
+    // ── Crocomire sprite delegates ───────────────────────────────────────
+
+    fun renderCrocomireComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.CompositionDef,
+    ) = crocomireSprite.renderComposition(romParser, definition)
+    fun renderCrocomireComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.ComponentDef,
+    ) = crocomireSprite.renderComponent(romParser, definition)
+    fun renderCrocomireAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.InstructionListDef,
+    ) = crocomireSprite.renderAnimation(romParser, definition)
+    fun loadCrocomireSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.PixelSourceDef,
+    ) = crocomireSprite.loadSourceSheet(romParser, definition)
+    fun renderEditedCrocomireCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) = crocomireSprite.renderEditedCompositions(romParser, pixels, width, height)
+    fun applyCrocomireObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = crocomireSprite.getEditingPalette(romParser) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        crocomireSprite.invalidate()
+    }
+    fun hasCustomCrocomireObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID)
+    fun resetCrocomireObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID)
+        crocomireSprite.invalidate()
     }
 
     // ── Mother Brain sprite delegates ──────────────────────────────────

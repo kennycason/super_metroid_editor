@@ -436,18 +436,34 @@ Walking and crouch/stand previews apply the source instruction handlers' cumulat
 enemy-position changes to the full assembly, so the BG2 torso, OBJ limbs, neck, and
 head travel together rather than leaving the upper body pinned in place.
 
+### Crocomire (Room `$A98D`, AI Bank `$A4`)
+
+The boss body `$DDBF` and tongue `$DDFF` share `Tiles_Crocomire` at `$AD:8000`.
+The body's raw `$A600` header size contains the alternate-layout bit, leaving an
+effective `$2600`-byte transfer; the tongue aliases its first `$2000` bytes. Living
+poses combine that OBJ source at physical tile `$D0` with room-owned BG2 graphics
+from tileset `$1B`.
+
+Death does not reuse the living sheet unchanged. Two `$0C00` melting payloads at
+`$A4:A07D/$AC7D` replace physical tiles beginning at `$130`, followed by six
+`$0200` skeleton chunks from `$AD:A600..B1FF` uploaded to non-contiguous tile
+destinations. The dedicated renderer keeps all four ownership classes separate,
+then assembles 74 standard maps, 94 extended maps, and 11 BG2 maps with the exact
+palette rows. Its guided UI exposes all 20 multi-frame Fight/Tongue/Melting/Skeleton
+lists (218 frames), while strict parity covers all 36 active lists / 233 timed frame
+occurrences. Only the living `$2600` OBJ owner is editable through the sprite
+workspace. See [`../bosses/crocomire.md`](../bosses/crocomire.md) and
+`parityCrocomire` for the runtime transfers and safe-edit boundary.
+
 ### Mini-Bosses
 
 | Boss | Species ID | HP | Dmg | AI Bank | GFX |
 |------|-----------|-----|------|---------|-----|
-| Spore Spawn body | `$CEFF` | 20 | 40 | `$A2` | `$AC:D000` |
-| Spore Spawn spore | `$CF7F` | 20000 | 0 | `$A2` | `$AC:D400` |
-| Botwoon body | `$D07F` | 20 | 40 | `$A2` | `$AD:B600` |
-| Botwoon body (2nd) | `$D0BF` | 20 | 40 | `$A2` | `$AD:B600` |
-| Crocomire body | `$D13F` | 30 | 16 | `$A2` | `$AE:C920` |
-| Crocomire bridge | `$D17F` | 100 | 60 | `$A2` | `$AE:CD20` |
-| Crocomire spike wall | `$D1BF` | 90 | 50 | `$A2` | `$AE:B400` |
-| Golden Torizo | `$D23F` | 10 | 40 | `$A2` | `$AE:B800` |
+| Spore Spawn | `$DF3F` | 960 | 12 | `$A5` | `$AC:9C00` |
+| Spore Spawn stalk | `$DF7F` | 960 | 12 | `$A5` | `$AC:9C00` |
+| Botwoon | `$F293` | 3000 | 120 | `$B3` | `$B7:E300` |
+| Bomb Torizo | `$EEFF` | 800 | 8 | `$AA` | `$AF:C200` |
+| Golden Torizo | `$EF7F` | 13500 | 160 | `$AA` | `$AF:C200` |
 | Mini Kraid | `$E0FF` | 400 | 100 | `$A6` | `$AB:8000` |
 
 Mini Kraid is a complete ordinary OAM enemy, not a spike component. Its renderer uses
@@ -463,7 +479,7 @@ The sprite editor currently catalogs **121 source-valid species IDs** through
 `EnemySpriteGraphics.EDITOR_ENEMIES`. The broader name catalog contains 150 of the
 164 source headers. Catalog membership does not itself prove successful OAM assembly;
 the source-complete status ledger below measures the actual production preview path.
-Phantoon, Draygon, and Mother Brain each appear once: their internal enemy slots remain fully
+Phantoon, Draygon, Mother Brain, and Crocomire each appear once: their internal enemy slots remain fully
 represented inside the dedicated boss editor instead of duplicating navigation rows.
 
 ### Categories
@@ -488,7 +504,8 @@ coarse UI buckets are therefore navigation aids, not rendering-support claims.
 The strict E-08 ledger starts with every source header rather than the 121-entry
 sprite picker or bundled PNG filenames. It calls the same tile, palette, ordinary
 OAM, special OAM, boss-pose, Kraid BG2, and Phantoon BG2 production paths used by the
-editor, including Draygon's split BG2/OBJ and Mother Brain's split room-BG/OBJ
+editor, including Draygon's split BG2/OBJ, Mother Brain's split room-BG/OBJ, and
+Crocomire's room-BG/living-OBJ/melting/skeleton
 renderers. A raw tile sheet never
 counts as an assembled sprite.
 
@@ -529,7 +546,8 @@ frame count, category, and reason. Counts and the complete row hash are pinned i
   the old Phantoon/Kraid generic mappings are quarantined, while their source-backed
   component editors use normal tileset ownership; Draygon keeps its two pixel owners
   explicit; Mother Brain keeps its four body owners explicit and exposes only the
-  unambiguous head sheet for editing; placement remains read-only
+  unambiguous head sheet for editing; Crocomire keeps room, living, melting, and
+  skeleton payloads distinct; placement remains read-only
 - **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
   raw ownership alone does not prove complete composition or conflict-free editing
 
@@ -592,6 +610,7 @@ Enemy GFX Set ($B4)
 | `DraygonSourceParityTest.kt` | Four slots, split BG2/OBJ ownership, 94 OAM + 103 extended + 48 BG2 maps, 57 lists, 250 production frames, palettes, hitboxes, and deterministic complete-composition hashes |
 | `RidleySourceParityTest.kt` | Both encounter headers, five shared base assets, the low-page forward/explosion asset and enemy-set placement, six ribs/claws DMA assets, 11 body + 12 wing + 19 tail maps, encounter lists, pointer tables, palettes, and deterministic complete-composition hashes |
 | `MotherBrainSourceParityTest.kt` | Both phases, four physical pixel owners, head/body/BG2 structures, exact curated source animations, split palette stages, and deterministic complete-composition hashes |
+| `CrocomireSourceParityTest.kt` | Body/tongue aliasing, tileset `$1B`, living/melting/skeleton assets, all active OAM/BG2/list structures, six palettes, and deterministic composition/component/animation hashes |
 
 ---
 

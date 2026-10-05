@@ -267,6 +267,22 @@ tasks.register<Exec>("parityRidley") {
     }
 }
 
+tasks.register<Exec>("parityCrocomire") {
+    group = "verification"
+    description = "Generate Crocomire's split BG2, OBJ, melting, skeleton-DMA, palette, and animation recipe"
+    dependsOn(
+        "parityTilesets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/crocomire_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -288,6 +304,7 @@ tasks.register<Exec>("parityReport") {
         "parityDraygon",
         "parityMotherBrain",
         "parityRidley",
+        "parityCrocomire",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

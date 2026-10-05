@@ -218,7 +218,14 @@ the exact head source is editable with live phase-1/2 references, while the comb
 four-owner body sheet is read-only. `./gradlew parityMotherBrain` pins both headers,
 all head/body/BG2 maps, 49 body/head lists / 243 timed frames, and deterministic
 composition/animation pixels.
-Dedicated Kraid, Phantoon, Draygon, Ridley, and Mother Brain workspaces open on Animations and
+Crocomire now follows the same source-owned model across its entire visual lifecycle.
+The editor combines tileset `$1B` BG2 art with the editable `$AD:8000` living OBJ
+payload, then swaps in the exact two melting overlays and six skeleton DMA chunks for
+death frames. `./gradlew parityCrocomire` pins both body/tongue headers, all 179 active
+OAM/extended/BG2 structures, six palette rows, and all 36 active instruction lists /
+233 timed frames. The guided workspace exposes 20 full animations grouped by Fight,
+Tongue, Melting, and Skeleton while keeping each runtime pixel owner explicit.
+Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, and Crocomire workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

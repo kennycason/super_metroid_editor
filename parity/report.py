@@ -630,6 +630,35 @@ def mother_brain_checks(
     ]
 
 
+def crocomire_checks(
+    test_results: Dict[str, object], crocomire: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.CrocomireSourceParityTest",
+        "Crocomire split graphics death phases and animations match source",
+    )
+    totals = crocomire["totals"]
+    return [
+        {
+            "id": "B-06",
+            "name": "Crocomire living/melting/skeleton source renderer",
+            "status": status,
+            "evidence": (
+                f"Both linked headers, {totals['assetCount']} pixel assets / "
+                f"{totals['assetByteCount']} bytes, {totals['standardSpritemapCount']} OBJ maps / "
+                f"{totals['standardOamEntryCount']} entries, {totals['extendedSpritemapCount']} extended maps, "
+                f"and {totals['tilemapCount']} BG2 maps / {totals['tilemapWordCount']} words are pinned. "
+                f"Production decodes all {totals['instructionListCount']} active lists / "
+                f"{totals['frameOccurrenceCount']} timed frames and renders "
+                f"{totals['guidedAnimationCount']} guided animations / "
+                f"{totals['guidedAnimationFrameCount']} frames. Tileset-$1B room pixels, the editable living "
+                "OBJ payload, two melting overlays, and six skeleton DMA chunks remain distinct owners."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -649,6 +678,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     draygon = report["draygon"]
     ridley = report["ridley"]
     mother_brain = report["motherBrain"]
+    crocomire = report["crocomire"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -778,6 +808,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{mother_brain['bodyTilemapCount']}** BG2 maps, and "
             f"**{mother_brain['instructionListCount']}** body/head lists / "
             f"**{mother_brain['frameCount']}** timed frames are source-pinned.",
+            f"- Crocomire: **{crocomire['extendedSpritemapCount']}** extended maps, "
+            f"**{crocomire['standardSpritemapCount']}** OBJ maps, **{crocomire['tilemapCount']}** BG2 maps, and "
+            f"**{crocomire['instructionListCount']}** active lists / **{crocomire['frameCount']}** timed frames "
+            "cover the living, melting, and skeleton phases with distinct runtime pixel owners.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -791,7 +825,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -822,6 +856,7 @@ def main() -> int:
     draygon_path = report_dir / "draygon.json"
     ridley_path = report_dir / "ridley.json"
     mother_brain_path = report_dir / "mother-brain.json"
+    crocomire_path = report_dir / "crocomire.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -840,10 +875,11 @@ def main() -> int:
         or not draygon_path.is_file()
         or not ridley_path.is_file()
         or not mother_brain_path.is_file()
+        or not crocomire_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -866,6 +902,7 @@ def main() -> int:
     draygon = json.loads(draygon_path.read_text(encoding="utf-8"))
     ridley = json.loads(ridley_path.read_text(encoding="utf-8"))
     mother_brain = json.loads(mother_brain_path.read_text(encoding="utf-8"))
+    crocomire = json.loads(crocomire_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1320,6 +1357,45 @@ def main() -> int:
         if mother_brain["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"Mother Brain aggregate {field} does not match the pinned reference")
 
+    pinned_crocomire_totals = {
+        "headerCount": "crocomire.header.count",
+        "assetCount": "crocomire.asset.count",
+        "assetByteCount": "crocomire.asset.byte.count",
+        "standardSpritemapCount": "crocomire.standardSpritemap.count",
+        "standardOamEntryCount": "crocomire.standardOamEntry.count",
+        "extendedSpritemapCount": "crocomire.extendedSpritemap.count",
+        "extendedChildCount": "crocomire.extendedChild.count",
+        "tilemapCount": "crocomire.tilemap.count",
+        "tilemapRunCount": "crocomire.tilemap.run.count",
+        "tilemapWordCount": "crocomire.tilemap.word.count",
+        "instructionListCount": "crocomire.instructionList.count",
+        "frameOccurrenceCount": "crocomire.frame.count",
+        "uniqueFrameCount": "crocomire.frame.unique.count",
+        "handlerOccurrenceCount": "crocomire.handler.count",
+        "guidedAnimationCount": "crocomire.guidedAnimation.count",
+        "guidedAnimationFrameCount": "crocomire.guidedAnimation.frame.count",
+        "unusedInstructionListCount": "crocomire.unusedInstructionList.count",
+        "paletteCount": "crocomire.palette.count",
+    }
+    for field, property_name in pinned_crocomire_totals.items():
+        if int(crocomire["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Crocomire total {field} does not match the pinned reference")
+    pinned_crocomire_hashes = {
+        "ownership": "crocomire.ownership.aggregate.sha256",
+        "headers": "crocomire.header.aggregate.sha256",
+        "assets": "crocomire.asset.aggregate.sha256",
+        "standardSpritemaps": "crocomire.standardSpritemap.aggregate.sha256",
+        "extendedSpritemaps": "crocomire.extendedSpritemap.aggregate.sha256",
+        "tilemaps": "crocomire.tilemap.aggregate.sha256",
+        "instructionLists": "crocomire.instructionList.aggregate.sha256",
+        "guidedAnimations": "crocomire.guidedAnimation.aggregate.sha256",
+        "unusedInstructionLists": "crocomire.unusedInstructionList.aggregate.sha256",
+        "palettes": "crocomire.palette.aggregate.sha256",
+    }
+    for field, property_name in pinned_crocomire_hashes.items():
+        if crocomire["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Crocomire aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -1359,6 +1435,7 @@ def main() -> int:
         + draygon_checks(tests, draygon)
         + ridley_checks(tests, ridley)
         + mother_brain_checks(tests, mother_brain)
+        + crocomire_checks(tests, crocomire)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1367,9 +1444,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 16,
+        "schemaVersion": 17,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1576,6 +1653,24 @@ def main() -> int:
             "healthPalettePairCount": mother_brain["totals"]["healthPaletteRowCount"] // 2,
             "rainbowPaletteStageCount": mother_brain["totals"]["rainbowPaletteStageCount"],
             "aggregateHashes": mother_brain["aggregateHashes"],
+        },
+        "crocomire": {
+            "headerCount": crocomire["totals"]["headerCount"],
+            "assetCount": crocomire["totals"]["assetCount"],
+            "assetByteCount": crocomire["totals"]["assetByteCount"],
+            "standardSpritemapCount": crocomire["totals"]["standardSpritemapCount"],
+            "standardOamEntryCount": crocomire["totals"]["standardOamEntryCount"],
+            "extendedSpritemapCount": crocomire["totals"]["extendedSpritemapCount"],
+            "extendedChildCount": crocomire["totals"]["extendedChildCount"],
+            "tilemapCount": crocomire["totals"]["tilemapCount"],
+            "tilemapWordCount": crocomire["totals"]["tilemapWordCount"],
+            "instructionListCount": crocomire["totals"]["instructionListCount"],
+            "frameCount": crocomire["totals"]["frameOccurrenceCount"],
+            "uniqueFrameCount": crocomire["totals"]["uniqueFrameCount"],
+            "guidedAnimationCount": crocomire["totals"]["guidedAnimationCount"],
+            "guidedAnimationFrameCount": crocomire["totals"]["guidedAnimationFrameCount"],
+            "paletteCount": crocomire["totals"]["paletteCount"],
+            "aggregateHashes": crocomire["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],
