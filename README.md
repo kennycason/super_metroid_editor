@@ -238,7 +238,13 @@ its own history vector, preserves the independent body loop during spits, and ex
 all eight health palettes. `./gradlew parityBotwoon` pins the shared `$B7:E300` pixel
 owner, active and unused head/projectile structures, critical history routines, and
 17 guided animations / 87 rendered frames.
-Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, and Botwoon workspaces open on Animations and
+Bomb and Golden Torizo now share one source-accurate Torizo workspace rather than
+appearing as duplicate encounter/orb headers. It keeps the editable `$AF:C200` body
+distinct from eye/damage/egg-release DMA overlays, Golden egg pixels, and Bomb statue
+fragments; all eight Golden health-palette pairs are selectable. `./gradlew parityTorizo`
+pins 106 active full-body maps, 91 body-child maps, 70 bank-`$8D` projectile/effect
+maps, 16 runtime transfers, and 236 guided body/projectile animation frames.
+Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, and Torizo workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

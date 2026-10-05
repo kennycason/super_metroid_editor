@@ -58,6 +58,9 @@ packaged application, project format, or ROM exporter.
 - `botwoon_manifest.py` proves Botwoon's shared head/body/tail/spit pixel owner,
   bank-$B3 head and position history, bank-$86 body/spit projectile lists, bank-$8D
   maps, health-speed cadence, active/unused inventories, and eight runtime palettes.
+- `torizo_manifest.py` proves Bomb/Golden Torizo's shared body source, distinct runtime
+  overlays/egg/statue owners, bank-$AA body and bank-$86/$8D projectile paths, all
+  Golden health-palette rows, and the drop-only role of the two orb headers.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -82,7 +85,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
 `parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`,
-`parityPhantoon`, `parityDraygon`, `parityRidley`, and `parityMotherBrain` tasks remain
+`parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
+`parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, and `parityTorizo` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -293,9 +297,17 @@ lists, 18 active projectile lists, nine runtime tables/routines, and nine palett
 Production parity hashes complete straight/curved/partial-history compositions,
 isolated components, all eight swim and spit directions, and the spit projectile.
 
+`parityTorizo` writes ignored `parity/reports/torizo.json`. It pins all four family
+headers while distinguishing the two real encounters from the two projectile drop
+records, four pixel owners / 12,288 bytes, 106 active extended body maps, 91 active
+body-child maps, 70 active bank-`$8D` projectile/effect maps, 112 active body lists,
+50 bank-`$86` projectile instruction symbols, 16 runtime tile transfers, and 26
+palette rows. Production parity hashes Bomb/Golden compositions, isolated components,
+all 13 selectable palette stages, and 206 body plus 30 projectile animation frames.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon,
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

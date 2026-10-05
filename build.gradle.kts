@@ -317,6 +317,23 @@ tasks.register<Exec>("parityBotwoon") {
     }
 }
 
+tasks.register<Exec>("parityTorizo") {
+    group = "verification"
+    description = "Generate Bomb/Golden Torizo shared OBJ, runtime overlay, projectile, palette, and animation ownership"
+    dependsOn(
+        "paritySymbols",
+        "parityAssets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/torizo_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -341,6 +358,7 @@ tasks.register<Exec>("parityReport") {
         "parityCrocomire",
         "paritySporeSpawn",
         "parityBotwoon",
+        "parityTorizo",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

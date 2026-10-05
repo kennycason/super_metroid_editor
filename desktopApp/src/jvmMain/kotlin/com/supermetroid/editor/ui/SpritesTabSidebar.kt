@@ -245,6 +245,7 @@ internal fun SpritesTabCanvas(
             0xDDBF -> CrocomireSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xDF3F -> SporeSpawnSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xF293 -> BotwoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xEEFF -> TorizoSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xEC3F -> MotherBrainSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             0xE17F -> RidleySpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             else -> EnemySpriteViewer(entry = selected, romParser = romParser, editorState = editorState, modifier = modifier)

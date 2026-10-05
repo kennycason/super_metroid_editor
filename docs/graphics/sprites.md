@@ -1,9 +1,11 @@
 # Super Metroid Sprite System — Complete Reference
 
-> **Parity status (2026-10-04):** All 164 species headers, raw `GRAPHADR`
+> **Parity status (2026-10-05):** All 164 species headers, raw `GRAPHADR`
 > ownership, and every named standard/extended enemy OAM structure are now
 > source/ROM verified through SMEDIT's production parsers. Instruction-list
-> control flow and boss composition beyond Kraid/Phantoon/Draygon/Mother Brain are still partial. The
+> control flow remains a measured best-effort preview; focused source renderers now
+> cover Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn,
+> Botwoon, and Torizo. The
 > remaining boss ID/bank tables below contain known stale assignments; do not use
 > those tables for implementation until regenerated from exact source. See
 > [`../validation/README.md`](../validation/README.md).
@@ -488,6 +490,23 @@ source-timed spits, the spit projectile, eight health palettes, and partial emer
 Only the shared pixel payload is editable. See
 [`../bosses/botwoon.md`](../bosses/botwoon.md) and `parityBotwoon`.
 
+### Bomb / Golden Torizo (AI Bank `$AA`)
+
+Bomb `$EEFF` and Golden `$EF7F` Torizo share the `$2000`-byte body source at
+`$AF:C200`, body instruction machinery, and extended OAM. The apparent `$EF3F/$EFBF`
+“orb enemies” are drop-chance headers referenced by bank-`$86` projectile code, not
+separate visible Torizos, so all four records resolve through one editor workspace.
+
+The base body is only one of four pixel owners. A read-only `$AA:B279` overlay supplies
+eye, destroyed-gut/face, and three egg-release DMA states; `$AF:E200` supplies Golden
+egg/hatchling art; `$AD:B200` supplies Bomb statue fragments. The dedicated renderer
+keeps low/high physical OBJ pages distinct, applies all 16 transfers only to their
+matching frames, and exposes all eight two-row Golden health-palette stages. Strict
+parity covers 106 active body maps, 91 active body-child maps, 70 active bank-`$8D`
+projectile/effect maps, and 206 body plus 30 projectile animation frames. Only the
+shared base body is editable. See [`../bosses/torizo.md`](../bosses/torizo.md) and
+`parityTorizo`.
+
 ### Mini-Bosses
 
 | Boss | Species ID | HP | Dmg | AI Bank | GFX |
@@ -644,6 +663,9 @@ Enemy GFX Set ($B4)
 | `RidleySourceParityTest.kt` | Both encounter headers, five shared base assets, the low-page forward/explosion asset and enemy-set placement, six ribs/claws DMA assets, 11 body + 12 wing + 19 tail maps, encounter lists, pointer tables, palettes, and deterministic complete-composition hashes |
 | `MotherBrainSourceParityTest.kt` | Both phases, four physical pixel owners, head/body/BG2 structures, exact curated source animations, split palette stages, and deterministic complete-composition hashes |
 | `CrocomireSourceParityTest.kt` | Body/tongue aliasing, tileset `$1B`, living/melting/skeleton assets, all active OAM/BG2/list structures, six palettes, and deterministic composition/component/animation hashes |
+| `SporeSpawnSourceParityTest.kt` | Shared body/stalk pixels, interpolated projectile placement, body/projectile OAM, palettes, animations, and deterministic render hashes |
+| `BotwoonSourceParityTest.kt` | Shared head/body/tail pixels, circular position history, health-speed cadence, head/projectile structures, guided animations, and deterministic render hashes |
+| `TorizoSourceParityTest.kt` | Four family headers, split base/overlay/egg/statue pixels, body/body-child/projectile OAM, runtime transfers, health palettes, and deterministic animation hashes |
 
 ---
 

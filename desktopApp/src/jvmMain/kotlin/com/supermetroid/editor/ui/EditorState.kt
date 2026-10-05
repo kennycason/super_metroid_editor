@@ -356,6 +356,10 @@ class EditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
 
+    val torizoSprite = TorizoSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val motherBrainSprite = MotherBrainSpriteEditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
@@ -1144,6 +1148,65 @@ class EditorState(
     fun resetBotwoonObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID)
         botwoonSprite.invalidate()
+    }
+
+    // ── Torizo sprite delegates ────────────────────────────────────────
+
+    fun renderTorizoComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderComposition(romParser, definition, palette)
+    fun renderTorizoComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderComponent(romParser, definition, palette)
+    fun renderTorizoAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderAnimation(romParser, definition, palette)
+    fun renderTorizoProjectileAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.ProjectileAnimationDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderProjectileAnimation(romParser, definition, palette)
+    fun loadTorizoSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedTorizoCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyTorizoObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) {
+        val colors = torizoSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        torizoSprite.invalidate()
+    }
+    fun hasCustomTorizoObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID)
+    fun resetTorizoObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID)
+        torizoSprite.invalidate()
     }
 
     // ── Mother Brain sprite delegates ──────────────────────────────────
@@ -3013,6 +3076,8 @@ class EditorState(
         draygonSprite.invalidate()
         crocomireSprite.invalidate()
         sporeSpawnSprite.invalidate()
+        botwoonSprite.invalidate()
+        torizoSprite.invalidate()
         motherBrainSprite.invalidate()
         ridleySprite.invalidate()
         kraidSprite.invalidate()

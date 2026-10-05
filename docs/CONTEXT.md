@@ -69,6 +69,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`bosses/draygon.md`](bosses/draygon.md) | Draygon's four independent enemy slots, split room-BG2/enemy-OBJ ownership, exact OAM/tilemap/list inventories, health palettes, dedicated editor views, and read-only placement boundary. | Species: `$DE3F` body, `$DE7F` eye, `$DEBF` tail, `$DEFF` arms. Room `$DA60`, tileset `$1C`, AI `$A5`. HP=6000. |
 | [`bosses/kraid.md`](bosses/kraid.md)       | Kraid species IDs, stats/AI, exact 64×64 BG2/head recipe, palettes, linked OAM ownership, and safe edit boundary. **Note: $D2BF is Squeept, NOT Kraid.** | Species: $E2BF. Room $A59F, tileset $1A, AI $A7. HP=1000. |
 | [`bosses/mother_brain.md`](bosses/mother_brain.md) | Mother Brain's phase-1 room-art boundary, phase-2 room-BG/head/limb/body ownership, exact map/list inventories, neck geometry, health/rainbow palettes, and safe head-edit boundary. | Species: `$EC3F` head, `$EC7F` body. Room `$DD58`, tileset `$0E`, AI `$A9`. HP=18000. |
+| [`bosses/torizo.md`](bosses/torizo.md) | Bomb/Golden Torizo's shared body, low/high OBJ pages, runtime eye/damage/egg transfers, Golden health palettes, projectile/effect maps, consolidated editor, and safe edit boundary. | Encounters: `$EEFF/$EF7F`; drop-only headers: `$EF3F/$EFBF`; shared GFX `$AF:C200`; AI `$AA`. |
 
 ### Graphics & Sprites (`docs/graphics/`)
 
@@ -282,6 +283,15 @@ spacing at all three health speeds. `parityBotwoon` pins the shared `$B7:E300`
 `$1800`-byte pixel owner, head/projectile maps and lists, history routines, nine
 palette rows, and deterministic complete compositions/animations. See
 `docs/bosses/botwoon.md` for the safe-edit and simulation boundary.
+
+Bomb and Golden Torizo's focused slice is source-pinned as one shared visual family.
+The `$EEFF/$EF7F` encounters own the same `$AF:C200` base while `$EF3F/$EFBF` are
+projectile drop records rather than extra visible enemies. Production keeps that
+editable base separate from the `$AA:B279` runtime overlays, `$AF:E200` Golden egg,
+and `$AD:B200` Bomb statue pixels, while preserving both physical OBJ pages.
+`parityTorizo` pins 106 active full-body maps, 91 body-child maps, 70 active bank-`$8D`
+projectile/effect maps, 16 runtime transfers, 26 palette rows, and deterministic
+pixels for 236 guided frames. See `docs/bosses/torizo.md` for exact ownership.
 
 ---
 

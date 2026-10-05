@@ -715,6 +715,33 @@ def botwoon_checks(
     ]
 
 
+def torizo_checks(
+    test_results: Dict[str, object], torizo: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.TorizoSourceParityTest",
+        "Torizo shared body runtime overlays projectiles palettes and animations match source",
+    )
+    totals = torizo["totals"]
+    return [
+        {
+            "id": "B-09",
+            "name": "Bomb/Golden Torizo shared-source renderer",
+            "status": status,
+            "evidence": (
+                f"All {totals['headerCount']} family headers and {totals['assetByteCount']} source bytes are pinned, "
+                f"including {totals['activeExtendedSpritemapCount']} active body maps, "
+                f"{totals['activeStandardSpritemapCount']} body-child OAM maps, and "
+                f"{totals['activeProjectileSpritemapCount']} bank-$8D projectile/effect maps. Production applies "
+                f"all {totals['runtimeTransferCount']} eye, damage, and egg-release DMA transfers and exposes "
+                f"{totals['paletteRowCount']} encounter/health palette rows while keeping the shared editable "
+                "OBJ owner distinct from runtime overlays, Golden egg pixels, and Bomb statue fragments."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -737,6 +764,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     crocomire = report["crocomire"]
     spore_spawn = report["sporeSpawn"]
     botwoon = report["botwoon"]
+    torizo = report["torizo"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -879,6 +907,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{botwoon['guidedAnimationCount']}** guided animations / "
             f"**{botwoon['guidedAnimationFrameCount']}** rendered frames, and "
             f"**{botwoon['paletteCount']}** palette rows are source-pinned across banks $B3, $86, and $8D.",
+            f"- Torizo: **{torizo['activeBodySpritemapCount']}** active full-body maps, "
+            f"**{torizo['activeBodyChildSpritemapCount']}** active body-child maps, "
+            f"**{torizo['activeProjectileSpritemapCount']}** active projectile/effect maps, "
+            f"**{torizo['runtimeTransferCount']}** runtime tile transfers, and "
+            f"**{torizo['paletteRowCount']}** palette rows are source-pinned across the unified Bomb/Golden workspace.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -892,7 +925,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -926,6 +959,7 @@ def main() -> int:
     crocomire_path = report_dir / "crocomire.json"
     spore_spawn_path = report_dir / "spore-spawn.json"
     botwoon_path = report_dir / "botwoon.json"
+    torizo_path = report_dir / "torizo.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -947,10 +981,11 @@ def main() -> int:
         or not crocomire_path.is_file()
         or not spore_spawn_path.is_file()
         or not botwoon_path.is_file()
+        or not torizo_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -976,6 +1011,7 @@ def main() -> int:
     crocomire = json.loads(crocomire_path.read_text(encoding="utf-8"))
     spore_spawn = json.loads(spore_spawn_path.read_text(encoding="utf-8"))
     botwoon = json.loads(botwoon_path.read_text(encoding="utf-8"))
+    torizo = json.loads(torizo_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1511,6 +1547,7 @@ def main() -> int:
         + crocomire_checks(tests, crocomire)
         + spore_spawn_checks(tests, spore_spawn)
         + botwoon_checks(tests, botwoon)
+        + torizo_checks(tests, torizo)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1519,9 +1556,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 19,
+        "schemaVersion": 20,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1773,6 +1810,21 @@ def main() -> int:
             "guidedAnimationFrameCount": botwoon["totals"]["guidedAnimationFrameCount"],
             "paletteCount": botwoon["totals"]["paletteCount"],
             "aggregateHashes": botwoon["aggregateHashes"],
+        },
+        "torizo": {
+            "headerCount": torizo["totals"]["headerCount"],
+            "assetByteCount": torizo["totals"]["assetByteCount"],
+            "activeBodySpritemapCount": torizo["totals"]["activeExtendedSpritemapCount"],
+            "unusedBodySpritemapCount": torizo["totals"]["unusedExtendedSpritemapCount"],
+            "activeBodyChildSpritemapCount": torizo["totals"]["activeStandardSpritemapCount"],
+            "unusedBodyChildSpritemapCount": torizo["totals"]["unusedStandardSpritemapCount"],
+            "activeProjectileSpritemapCount": torizo["totals"]["activeProjectileSpritemapCount"],
+            "unusedProjectileSpritemapCount": torizo["totals"]["unusedProjectileSpritemapCount"],
+            "bodyInstructionListCount": torizo["totals"]["activeBodyInstructionListCount"],
+            "projectileInstructionSymbolCount": torizo["totals"]["projectileInstructionSymbolCount"],
+            "runtimeTransferCount": torizo["totals"]["runtimeTransferCount"],
+            "paletteRowCount": torizo["totals"]["paletteRowCount"],
+            "aggregateHashes": torizo["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

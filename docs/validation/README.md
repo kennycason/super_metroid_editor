@@ -277,7 +277,7 @@ BG layers, per-frame DMA, linked enemy slots, palette FX, and room-owned graphic
 | B-06 | Crocomire | AI `$A4`; body/skeleton/melting transfers; tileset `$1B` | **Verified graphics** |
 | B-07 | Spore Spawn | AI `$A5`; extended body plus bank-`$86/$8D` stalk/spawner/spore projectiles | **Verified graphics** |
 | B-08 | Botwoon | AI `$B3`; enemy head plus 13 history-following bank-`$86/$8D` body projectiles | **Verified graphics** |
-| B-09 | Torizos | AI `$AA`; dynamic and multi-part special cases | **Queued** |
+| B-09 | Torizos | AI `$AA`; shared body, runtime tile replacement, health palettes, and bank-`$86/$8D` projectiles | **Verified graphics** |
 
 For each case, validate the complete composition recipe—not only one attractive frame.
 That includes which layer draws each part, initial enemy-slot ordering, tile transfer
@@ -352,8 +352,12 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   death-palette rendering.
 - [x] **P2.8a** Botwoon enemy head, twelve animated body projectiles, tail, spit,
   circular position-history placement, health palettes, and shared pixel ownership.
-- [ ] **P2.8b** Botwoon full hole/fight/death-path simulation and room-priority effects;
-  Torizo expansion.
+- [ ] **P2.8b** Botwoon full hole/fight/death-path simulation and room-priority effects.
+- [x] **P2.9a** Bomb/Golden Torizo shared body, low/high OBJ pages, eye/damage/egg
+  runtime transfers, Golden health palettes, projectile/effect maps, exact guided
+  animations, and safe shared-source ownership.
+- [ ] **P2.9b** Torizo full encounter simulation: AI decisions, collision, room events,
+  sound/explosion timing, and Bomb statue fragment motion.
 
 ### P3 — Prove Samus
 
@@ -424,6 +428,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-05 | Proved Crocomire's living, melting, and skeleton renderer | The dedicated manifest pins body/tongue `$DDBF/$DDFF`, tileset `$1B`, the editable `$2600`-byte living OBJ owner, two `$0C00` melting overlays, six `$0200` skeleton DMA chunks, 74 standard maps / 683 entries, 94 extended maps / 463 children, 11 BG2 maps / 606 words, six palette rows, and 36 active lists / 233 timed frames. Production renders 20 guided animations / 218 frames plus complete compositions and components with deterministic hashes while preserving the room-BG, body, melting, and skeleton ownership boundaries. The audit also replaced a stale mini-boss table that had mislabeled ordinary `$A2` species `$CEFF..D23F` as Spore Spawn, Botwoon, Crocomire, and Torizo. |
 | 2026-10-05 | Proved Spore Spawn's cross-bank body and stalk renderer | The dedicated manifest pins body/stalk headers `$DF3F/$DF7F`, their shared `$AC:9C00` / `$0E00`-byte pixel owner, 22 standard maps / 365 entries, 12 active plus seven unused extended body maps, seven bank-`$8D` projectile maps, 27 sprite/room palette rows, and nine active lists / 41 timed frames. Production composes all four bank-`$86` stalk projectiles with the body using the exact `$A5:EC49` quarter/half/three-quarter interpolation, exposes six body animations plus spawner/spore sequences, and preserves one safe editable source. |
 | 2026-10-05 | Proved Botwoon's position-history body renderer | The dedicated manifest pins header `$F293`, the shared `$B7:E300` / `$1800`-byte head/body/tail/spit owner, 30 active plus ten unused head maps, 46 active plus 52 unused projectile maps, 26 active plus five unused head lists, 18 active projectile lists, nine runtime tables/routines, and nine palette rows. Production assembles the head with twelve independently oriented body projectiles and one tail from the source's circular-history cadence, preserves the independent four-phase body loop through spits, exposes 17 guided animations / 87 frames, and corrects the former 16-pixel static preview spacing to the source-derived 12 pixels. |
+| 2026-10-05 | Proved and consolidated the Bomb/Golden Torizo renderer | One Torizo workspace now represents the real `$EEFF/$EF7F` encounters while keeping `$EF3F/$EFBF` as their actual projectile drop records. The manifest pins four pixel owners / 12,288 bytes, 106 active full-body maps, 91 body-child maps, 70 active plus four unused bank-`$8D` projectile/effect maps, 112 active body lists / 564 timed frames, 50 bank-`$86` projectile instruction symbols, 16 runtime tile transfers, and 26 palette rows. Production preserves both physical OBJ pages, applies eye/damage/egg overlays per state, exposes all eight Golden health pairs, and hashes 206 body plus 30 projectile guided frames while allowing edits only to the shared `$AF:C200` base. |
 
 ## Deliberately deferred
 
