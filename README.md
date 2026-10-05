@@ -244,7 +244,14 @@ distinct from eye/damage/egg-release DMA overlays, Golden egg pixels, and Bomb s
 fragments; all eight Golden health-palette pairs are selectable. `./gradlew parityTorizo`
 pins 106 active full-body maps, 91 body-child maps, 70 bank-`$8D` projectile/effect
 maps, 16 runtime transfers, and 236 guided body/projectile animation frames.
-Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, and Torizo workspaces open on Animations and
+The normal Metroid now has an exact three-owner renderer instead of the earlier
+hand-made shell approximation. It synchronizes bank-`$A3` insides with bank-`$B4`
+shell and electricity sprite objects, including two source-labelled unused lists
+that are reached by live fallthrough. `./gradlew parityMetroid` pins the shared
+`$AE:9000` pixel owner, 31 total OAM maps, four independent companion tracks / 270
+ticks, and deterministic complete animations. See
+[the Metroid ownership note](docs/graphics/metroid.md).
+Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, and Metroid workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

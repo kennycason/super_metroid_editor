@@ -507,6 +507,20 @@ projectile/effect maps, and 206 body plus 30 projectile animation frames. Only t
 shared base body is editable. See [`../bosses/torizo.md`](../bosses/torizo.md) and
 `parityTorizo`.
 
+### Normal Metroid (`$DD7F`, AI Bank `$A3`)
+
+The normal Metroid is a three-owner composite even though all pixels come from one
+`$1000`-byte `Tiles_Metroid` transfer at `$AE:9000`. The enemy draws four inside
+maps; bank-`$B4` sprite objects `$32` and `$34` independently draw 24 electricity
+maps and three shell maps at the enemy position. Their entry lists deliberately fall
+through into source-labelled unused `$33/$35` lists, so those instruction bodies are
+runtime-active and `$35` supplies the third shell pose.
+
+The dedicated editor synchronizes all three tracks, exposes representative complete
+compositions and every component, and safely edits the one shared pixel owner with
+live assembled references. Placement, companion creation, and timing stay read-only.
+See [`metroid.md`](metroid.md) and `parityMetroid` for exact boundaries and timings.
+
 ### Mini-Bosses
 
 | Boss | Species ID | HP | Dmg | AI Bank | GFX |
@@ -599,7 +613,8 @@ frame count, category, and reason. Counts and the complete row hash are pinned i
   component editors use normal tileset ownership; Draygon keeps its two pixel owners
   explicit; Mother Brain keeps its four body owners explicit and exposes only the
   unambiguous head sheet for editing; Crocomire keeps room, living, melting, and
-  skeleton payloads distinct; placement remains read-only
+  skeleton payloads distinct; normal Metroid synchronizes enemy insides with its
+  shell/electricity sprite objects; placement remains read-only
 - **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
   raw ownership alone does not prove complete composition or conflict-free editing
 
@@ -666,6 +681,7 @@ Enemy GFX Set ($B4)
 | `SporeSpawnSourceParityTest.kt` | Shared body/stalk pixels, interpolated projectile placement, body/projectile OAM, palettes, animations, and deterministic render hashes |
 | `BotwoonSourceParityTest.kt` | Shared head/body/tail pixels, circular position history, health-speed cadence, head/projectile structures, guided animations, and deterministic render hashes |
 | `TorizoSourceParityTest.kt` | Four family headers, split base/overlay/egg/statue pixels, body/body-child/projectile OAM, runtime transfers, health palettes, and deterministic animation hashes |
+| `MetroidSourceParityTest.kt` | Shared pixels/palette, four inside + three shell + 24 electricity maps, independent companion timing, both live fallthrough continuations, and deterministic complete-animation hashes |
 
 ---
 

@@ -742,6 +742,33 @@ def torizo_checks(
     ]
 
 
+def metroid_checks(
+    test_results: Dict[str, object], metroid: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.MetroidSourceParityTest",
+        "Metroid insides shell electricity timing and renders match source",
+    )
+    totals = metroid["totals"]
+    return [
+        {
+            "id": "B-10",
+            "name": "Metroid three-owner runtime renderer",
+            "status": status,
+            "evidence": (
+                f"The {totals['assetByteCount']}-byte shared OBJ owner, "
+                f"{totals['insideSpritemapCount']} enemy-inside maps, "
+                f"{totals['shellSpritemapCount']} shell maps, and "
+                f"{totals['electricitySpritemapCount']} electricity maps are pinned. Production synchronizes "
+                f"all {totals['spriteObjectFrameOccurrenceCount']} companion frame occurrences / "
+                f"{totals['spriteObjectTickCount']} ticks and proves that both source-labelled unused lists "
+                "are runtime-active fallthrough continuations of sprite objects $32 and $34."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -765,6 +792,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     spore_spawn = report["sporeSpawn"]
     botwoon = report["botwoon"]
     torizo = report["torizo"]
+    metroid = report["metroid"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -912,6 +940,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{torizo['activeProjectileSpritemapCount']}** active projectile/effect maps, "
             f"**{torizo['runtimeTransferCount']}** runtime tile transfers, and "
             f"**{torizo['paletteRowCount']}** palette rows are source-pinned across the unified Bomb/Golden workspace.",
+            f"- Metroid: **{metroid['insideSpritemapCount']}** inside maps, "
+            f"**{metroid['shellSpritemapCount']}** shell maps, and "
+            f"**{metroid['electricitySpritemapCount']}** electricity maps are source-pinned across "
+            f"**{metroid['spriteObjectFrameOccurrenceCount']}** independently timed companion frames; "
+            f"**{metroid['fallthroughContinuationCount']}** source-labelled unused lists are proven runtime-active continuations.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -925,7 +958,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -960,6 +993,7 @@ def main() -> int:
     spore_spawn_path = report_dir / "spore-spawn.json"
     botwoon_path = report_dir / "botwoon.json"
     torizo_path = report_dir / "torizo.json"
+    metroid_path = report_dir / "metroid.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -982,10 +1016,11 @@ def main() -> int:
         or not spore_spawn_path.is_file()
         or not botwoon_path.is_file()
         or not torizo_path.is_file()
+        or not metroid_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1012,6 +1047,7 @@ def main() -> int:
     spore_spawn = json.loads(spore_spawn_path.read_text(encoding="utf-8"))
     botwoon = json.loads(botwoon_path.read_text(encoding="utf-8"))
     torizo = json.loads(torizo_path.read_text(encoding="utf-8"))
+    metroid = json.loads(metroid_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1548,6 +1584,7 @@ def main() -> int:
         + spore_spawn_checks(tests, spore_spawn)
         + botwoon_checks(tests, botwoon)
         + torizo_checks(tests, torizo)
+        + metroid_checks(tests, metroid)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1556,9 +1593,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 20,
+        "schemaVersion": 21,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1825,6 +1862,18 @@ def main() -> int:
             "runtimeTransferCount": torizo["totals"]["runtimeTransferCount"],
             "paletteRowCount": torizo["totals"]["paletteRowCount"],
             "aggregateHashes": torizo["aggregateHashes"],
+        },
+        "metroid": {
+            "headerCount": metroid["totals"]["headerCount"],
+            "assetByteCount": metroid["totals"]["assetByteCount"],
+            "insideSpritemapCount": metroid["totals"]["insideSpritemapCount"],
+            "shellSpritemapCount": metroid["totals"]["shellSpritemapCount"],
+            "electricitySpritemapCount": metroid["totals"]["electricitySpritemapCount"],
+            "spriteObjectFrameOccurrenceCount": metroid["totals"]["spriteObjectFrameOccurrenceCount"],
+            "spriteObjectTickCount": metroid["totals"]["spriteObjectTickCount"],
+            "fallthroughContinuationCount": metroid["totals"]["fallthroughContinuationCount"],
+            "paletteCount": metroid["totals"]["paletteCount"],
+            "aggregateHashes": metroid["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

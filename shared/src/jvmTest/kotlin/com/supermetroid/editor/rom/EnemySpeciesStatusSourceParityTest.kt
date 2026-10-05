@@ -380,7 +380,7 @@ class EnemySpeciesStatusSourceParityTest {
 
         /** Explicit source/runtime composition cases; do not infer these from tile count. */
         private val COMPOSITE_SPECIES = mapOf(
-            0xDD7F to "The visible Metroid combines independently animated inside and shell OAM spritemaps.",
+            0xDD7F to "The visible Metroid combines independently animated inside, shell, and electricity OAM owners.",
             0xDDBF to "Crocomire mixes extended OAM, room BG tiles, and a separate skeleton tile transfer.",
             0xDE3F to "Draygon's body is composed from multiple extended-OAM parts and room BG tile data.",
             0xDE7F to "Draygon's eye participates in the boss's shared extended-OAM/room-tile composition.",

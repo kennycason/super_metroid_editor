@@ -358,6 +358,11 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   animations, and safe shared-source ownership.
 - [ ] **P2.9b** Torizo full encounter simulation: AI decisions, collision, room events,
   sound/explosion timing, and Bomb statue fragment motion.
+- [x] **P2.10a** Normal Metroid three-owner assembly: enemy insides, shell/electricity
+  sprite objects, exact independent timing, fallthrough continuations, and shared
+  editable pixel ownership.
+- [ ] **P2.10b** Metroid gameplay simulation: latch/drain transition phase, freeze,
+  bomb-release behavior, collision, and synchronized flashing.
 
 ### P3 — Prove Samus
 
@@ -429,6 +434,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-05 | Proved Spore Spawn's cross-bank body and stalk renderer | The dedicated manifest pins body/stalk headers `$DF3F/$DF7F`, their shared `$AC:9C00` / `$0E00`-byte pixel owner, 22 standard maps / 365 entries, 12 active plus seven unused extended body maps, seven bank-`$8D` projectile maps, 27 sprite/room palette rows, and nine active lists / 41 timed frames. Production composes all four bank-`$86` stalk projectiles with the body using the exact `$A5:EC49` quarter/half/three-quarter interpolation, exposes six body animations plus spawner/spore sequences, and preserves one safe editable source. |
 | 2026-10-05 | Proved Botwoon's position-history body renderer | The dedicated manifest pins header `$F293`, the shared `$B7:E300` / `$1800`-byte head/body/tail/spit owner, 30 active plus ten unused head maps, 46 active plus 52 unused projectile maps, 26 active plus five unused head lists, 18 active projectile lists, nine runtime tables/routines, and nine palette rows. Production assembles the head with twelve independently oriented body projectiles and one tail from the source's circular-history cadence, preserves the independent four-phase body loop through spits, exposes 17 guided animations / 87 frames, and corrects the former 16-pixel static preview spacing to the source-derived 12 pixels. |
 | 2026-10-05 | Proved and consolidated the Bomb/Golden Torizo renderer | One Torizo workspace now represents the real `$EEFF/$EF7F` encounters while keeping `$EF3F/$EFBF` as their actual projectile drop records. The manifest pins four pixel owners / 12,288 bytes, 106 active full-body maps, 91 body-child maps, 70 active plus four unused bank-`$8D` projectile/effect maps, 112 active body lists / 564 timed frames, 50 bank-`$86` projectile instruction symbols, 16 runtime tile transfers, and 26 palette rows. Production preserves both physical OBJ pages, applies eye/damage/egg overlays per state, exposes all eight Golden health pairs, and hashes 206 body plus 30 projectile guided frames while allowing edits only to the shared `$AF:C200` base. |
+| 2026-10-05 | Proved the normal Metroid's three-owner renderer | The dedicated manifest pins `$DD7F`, its shared `$AE:9000` / `$1000`-byte pixel owner, four enemy-inside maps, three shell maps, 24 electricity maps, two enemy lists, and four independent bank-`$B4` companion tracks / 124 frame occurrences / 270 ticks. Production synchronizes all three layers, preserves transparent draw intervals, and proves that the lists labelled unused objects `$33/$35` are runtime-active fallthrough continuations of live objects `$32/$34`; the `$35` continuation supplies the previously omitted third shell map. |
 
 ## Deliberately deferred
 

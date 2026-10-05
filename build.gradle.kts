@@ -334,6 +334,23 @@ tasks.register<Exec>("parityTorizo") {
     }
 }
 
+tasks.register<Exec>("parityMetroid") {
+    group = "verification"
+    description = "Generate the normal Metroid's insides, shell, electricity, palette, and timing ownership"
+    dependsOn(
+        "paritySymbols",
+        "parityAssets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/metroid_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -359,6 +376,7 @@ tasks.register<Exec>("parityReport") {
         "paritySporeSpawn",
         "parityBotwoon",
         "parityTorizo",
+        "parityMetroid",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

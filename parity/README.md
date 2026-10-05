@@ -61,6 +61,9 @@ packaged application, project format, or ROM exporter.
 - `torizo_manifest.py` proves Bomb/Golden Torizo's shared body source, distinct runtime
   overlays/egg/statue owners, bank-$AA body and bank-$86/$8D projectile paths, all
   Golden health-palette rows, and the drop-only role of the two orb headers.
+- `metroid_manifest.py` proves the normal Metroid's shared pixel owner, bank-$A3
+  insides, bank-$B4 shell/electricity companions, exact independent timing, and the
+  two source-labelled unused lists that are runtime-active through fallthrough.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -86,7 +89,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
 `parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
-`parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, and `parityTorizo` tasks remain
+`parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`, and
+`parityMetroid` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches

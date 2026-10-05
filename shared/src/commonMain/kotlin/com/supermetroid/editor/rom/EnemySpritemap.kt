@@ -421,7 +421,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         palette: IntArray
     ): AssembledSprite? =
         when (speciesId) {
-            METROID_SPECIES_ID -> renderMetroidFrame(tileData, palette, frameIndex = 0)
+            METROID_SPECIES_ID -> MetroidSpritemap(romParser).let { renderer ->
+                if (renderer.load(tileData)) renderer.renderComposition(MetroidSpritemap.COMPOSITIONS.first())
+                else null
+            }
             SUSPENSOR_PLATFORM_SPECIES_ID ->
                 findSpecialPreviewSpritemap(speciesId)?.let { renderSpritemap(it, tileData, palette) }
             else -> null
@@ -434,7 +437,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         enemyName: String
     ): SpriteAnimation? =
         when (speciesId) {
-            METROID_SPECIES_ID -> buildMetroidAnimation(tileData, palette, enemyName)
+            METROID_SPECIES_ID -> MetroidSpritemap(romParser).let { renderer ->
+                if (!renderer.load(tileData)) null
+                else renderer.renderAnimation(MetroidSpritemap.ANIMATIONS.first())?.copy(name = enemyName)
+            }
             SUSPENSOR_PLATFORM_SPECIES_ID -> buildSuspensorPlatformAnimation(tileData, palette, enemyName)
             else -> null
         }
@@ -1005,18 +1011,6 @@ class EnemySpritemap(private val romParser: RomParser) {
             0xA9CFB4 to 0xA9CFA2, // Baby Metroid: go to initial animation
         )
 
-        private val METROID_INSIDE_SPRITEMAP_ADDRS = intArrayOf(
-            0xA3F10D,
-            0xA3F137,
-            0xA3F157,
-            0xA3F181
-        )
-        private val METROID_SHELL_SPRITEMAP_ADDRS = intArrayOf(
-            0xA3F071,
-            0xA3F0A5,
-            0xA3F0D9
-        )
-        private val METROID_SHELL_FRAME_SEQUENCE = intArrayOf(0, 1, 2, 1)
         private val SUSPENSOR_PLATFORM_SPRITEMAP_ADDRS = intArrayOf(
             0xA3A021,
             0xA3A02D,
@@ -1394,60 +1388,6 @@ class EnemySpritemap(private val romParser: RomParser) {
             frames = animFrames,
             loop = true
         )
-    }
-
-    private fun buildMetroidAnimation(
-        tileData: ByteArray,
-        palette: IntArray,
-        enemyName: String
-    ): SpriteAnimation? {
-        val insideFrames = metroidInsideFrames()
-        if (insideFrames.isEmpty()) return null
-
-        val frames = insideFrames.mapIndexedNotNull { idx, frame ->
-            val assembled = renderMetroidFrame(tileData, palette, idx, frame.spritemap) ?: return@mapIndexedNotNull null
-            SpriteAnimationFrame(
-                pixels = assembled.pixels,
-                width = assembled.width,
-                height = assembled.height,
-                durationTicks = frame.duration.takeIf { it > 0 } ?: 8,
-                label = "$enemyName Frame ${idx + 1}"
-            )
-        }
-        if (frames.isEmpty()) return null
-        return SpriteAnimation(enemyName, frames, loop = true)
-    }
-
-    private fun metroidInsideFrames(): List<AnimationFrame> {
-        val traced = findAnimationFrames(METROID_SPECIES_ID, maxFrames = 8)
-        if (traced.isNotEmpty()) return traced
-        val fallback = mutableListOf<AnimationFrame>()
-        for (addr in METROID_INSIDE_SPRITEMAP_ADDRS) {
-            val smap = parseSpritemap(addr) ?: continue
-            fallback.add(AnimationFrame(8, smap))
-        }
-        return fallback
-    }
-
-    private fun renderMetroidFrame(
-        tileData: ByteArray,
-        palette: IntArray,
-        frameIndex: Int,
-        inside: Spritemap? = metroidInsideFrames().getOrNull(frameIndex)?.spritemap
-    ): AssembledSprite? {
-        val insideSmap = inside ?: return null
-        val shellIndex = METROID_SHELL_FRAME_SEQUENCE[frameIndex % METROID_SHELL_FRAME_SEQUENCE.size]
-        val shellSmap = parseSpritemap(METROID_SHELL_SPRITEMAP_ADDRS[shellIndex])
-        val merged = if (shellSmap != null) {
-            // The shell is a separate sprite object, but it must win overlap with
-            // the enemy-owned insides. Lower OAM indices win on SNES, and the
-            // renderer composites one spritemap in that same order, so place the
-            // shell entries first rather than treating this as painter's order.
-            Spritemap(shellSmap.entries + insideSmap.entries, insideSmap.snesAddress)
-        } else {
-            insideSmap
-        }
-        return renderSpritemap(merged, tileData, palette)
     }
 
     private fun buildSuspensorPlatformAnimation(

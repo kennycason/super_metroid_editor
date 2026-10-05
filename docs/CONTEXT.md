@@ -293,6 +293,14 @@ and `$AD:B200` Bomb statue pixels, while preserving both physical OBJ pages.
 projectile/effect maps, 16 runtime transfers, 26 palette rows, and deterministic
 pixels for 236 guided frames. See `docs/bosses/torizo.md` for exact ownership.
 
+Normal Metroid `$DD7F` is also source-pinned as a three-owner composite. Bank `$A3`
+draws four inside maps while bank `$B4` sprite objects `$32/$34` independently draw
+24 electricity and three shell maps from the same `$AE:9000` pixel transfer. The
+source-labelled unused `$33/$35` lists are live fallthrough continuations, not dead
+data; `$35` supplies the third shell map. `parityMetroid` pins all four tracks / 124
+companion frame occurrences / 270 ticks and deterministic complete renders. See
+`docs/graphics/metroid.md` for timing and edit ownership.
+
 ---
 
 ## External References

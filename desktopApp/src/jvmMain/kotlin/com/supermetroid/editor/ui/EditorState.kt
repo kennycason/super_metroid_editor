@@ -352,6 +352,10 @@ class EditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
 
+    val metroidSprite = MetroidSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val botwoonSprite = BotwoonSpriteEditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
@@ -1084,6 +1088,54 @@ class EditorState(
     fun resetSporeSpawnObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
         sporeSpawnSprite.invalidate()
+    }
+
+    // ── Metroid sprite delegates ───────────────────────────────────────
+
+    fun renderMetroidComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.CompositionDef,
+    ) = metroidSprite.renderComposition(romParser, definition)
+    fun renderMetroidComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.ComponentDef,
+    ) = metroidSprite.renderComponent(romParser, definition)
+    fun renderMetroidAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.AnimationDef,
+    ) = metroidSprite.renderAnimation(romParser, definition)
+    fun loadMetroidSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.PixelSourceDef,
+    ) = metroidSprite.loadSourceSheet(romParser, definition)
+    fun renderEditedMetroidCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) = metroidSprite.renderEditedCompositions(romParser, pixels, width, height)
+    fun applyMetroidObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = metroidSprite.getEditingPalette(romParser) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        metroidSprite.invalidate()
+    }
+    fun hasCustomMetroidObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID)
+    fun resetMetroidObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID)
+        metroidSprite.invalidate()
     }
 
     // ── Botwoon sprite delegates ────────────────────────────────────────
