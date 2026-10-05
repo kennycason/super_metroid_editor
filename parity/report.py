@@ -568,6 +568,36 @@ def draygon_checks(
     ]
 
 
+def ridley_checks(
+    test_results: Dict[str, object], ridley: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.RidleySourceParityTest",
+        "Ridley shared encounters DMA assembly palettes and animations match source",
+    )
+    totals = ridley["totals"]
+    return [
+        {
+            "id": "B-04",
+            "name": "Ridley shared Norfair/Ceres source renderer",
+            "status": status,
+            "evidence": (
+                f"Both encounter headers share {totals['baseAssetCount']} contiguous base assets / "
+                f"{totals['baseAssetByteCount']} bytes, while "
+                f"{totals['runtimeDmaAssetCount']} ribs/claws DMA assets remain separately owned. "
+                f"The custom assembly pins {totals['bodyExtendedSpritemapCount']} body maps / "
+                f"{totals['bodyExtendedChildCount']} child links, "
+                f"{totals['wingSpritemapCount']} wing maps, {totals['tailSpritemapCount']} tail maps, "
+                f"and {totals['animationListCount']} encounter lists / "
+                f"{totals['animationFrameCount']} timed frames. Production hashes all "
+                f"{totals['paletteStageCount']} palette stages, complete compositions, and curated animations; "
+                "Ceres-only actions and hit-counter palette behavior remain explicit inside one Ridley editor."
+            ),
+        }
+    ]
+
+
 def mother_brain_checks(
     test_results: Dict[str, object], mother_brain: Dict[str, object]
 ) -> List[Dict[str, object]]:
@@ -617,6 +647,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     kraid = report["kraid"]
     phantoon = report["phantoon"]
     draygon = report["draygon"]
+    ridley = report["ridley"]
     mother_brain = report["motherBrain"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -737,6 +768,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{draygon['extendedSpritemapCount']}** extended maps, **{draygon['tilemapCount']}** BG2 maps, "
             f"and **{draygon['productionAnimationCount']}** production lists / "
             f"**{draygon['productionAnimationFrameCount']}** complete frame occurrences are source-pinned.",
+            f"- Ridley: **{ridley['bodyExtendedSpritemapCount']}** body maps, "
+            f"**{ridley['wingSpritemapCount']}** wing maps, **{ridley['tailSpritemapCount']}** tail maps, "
+            f"**{ridley['runtimeDmaAssetCount']}** ribs/claws DMA assets, and "
+            f"**{ridley['animationListCount']}** encounter lists / **{ridley['animationFrameCount']}** "
+            "timed frames are source-pinned across the shared Norfair/Ceres visual recipe.",
             f"- Mother Brain: **{mother_brain['headSpritemapCount']}** head maps, "
             f"**{mother_brain['bodyExtendedSpritemapCount']}** extended body maps, "
             f"**{mother_brain['bodyTilemapCount']}** BG2 maps, and "
@@ -755,7 +791,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `mother-brain.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -784,6 +820,7 @@ def main() -> int:
     kraid_path = report_dir / "kraid.json"
     phantoon_path = report_dir / "phantoon.json"
     draygon_path = report_dir / "draygon.json"
+    ridley_path = report_dir / "ridley.json"
     mother_brain_path = report_dir / "mother-brain.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -801,11 +838,12 @@ def main() -> int:
         or not kraid_path.is_file()
         or not phantoon_path.is_file()
         or not draygon_path.is_file()
+        or not ridley_path.is_file()
         or not mother_brain_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Mother-Brain/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -826,6 +864,7 @@ def main() -> int:
     kraid = json.loads(kraid_path.read_text(encoding="utf-8"))
     phantoon = json.loads(phantoon_path.read_text(encoding="utf-8"))
     draygon = json.loads(draygon_path.read_text(encoding="utf-8"))
+    ridley = json.loads(ridley_path.read_text(encoding="utf-8"))
     mother_brain = json.loads(mother_brain_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -1198,6 +1237,48 @@ def main() -> int:
         if draygon["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"Draygon aggregate {field} does not match the pinned reference")
 
+    pinned_ridley_totals = {
+        "headerCount": "ridley.header.count",
+        "baseAssetCount": "ridley.baseAsset.count",
+        "baseAssetByteCount": "ridley.baseAsset.byte.count",
+        "runtimeDmaAssetCount": "ridley.runtimeDmaAsset.count",
+        "runtimeDmaByteCount": "ridley.runtimeDmaAsset.byte.count",
+        "bodyExtendedSpritemapCount": "ridley.bodyExtendedSpritemap.count",
+        "bodyExtendedChildCount": "ridley.bodyExtendedChild.count",
+        "bodyChildSpritemapCount": "ridley.bodyChildSpritemap.count",
+        "bodyChildOamEntryCount": "ridley.bodyChildOamEntry.count",
+        "wingSpritemapCount": "ridley.wingSpritemap.count",
+        "wingOamEntryCount": "ridley.wingOamEntry.count",
+        "tailSpritemapCount": "ridley.tailSpritemap.count",
+        "tailOamEntryCount": "ridley.tailOamEntry.count",
+        "animationListCount": "ridley.animationList.count",
+        "activeAnimationListCount": "ridley.animationList.active.count",
+        "unusedAnimationListCount": "ridley.animationList.unused.count",
+        "animationFrameCount": "ridley.animation.frame.count",
+        "animationHandlerCount": "ridley.animation.handler.count",
+        "paletteStageCount": "ridley.paletteStage.count",
+        "runtimeTableCount": "ridley.runtimeTable.count",
+    }
+    for field, property_name in pinned_ridley_totals.items():
+        if int(ridley["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Ridley total {field} does not match the pinned reference")
+    pinned_ridley_hashes = {
+        "ownership": "ridley.ownership.aggregate.sha256",
+        "headers": "ridley.header.aggregate.sha256",
+        "baseAssets": "ridley.baseAsset.aggregate.sha256",
+        "runtimeAssets": "ridley.runtimeAsset.aggregate.sha256",
+        "bodyExtendedSpritemaps": "ridley.bodyExtendedSpritemap.aggregate.sha256",
+        "bodyChildSpritemaps": "ridley.bodyChildSpritemap.aggregate.sha256",
+        "wingSpritemaps": "ridley.wingSpritemap.aggregate.sha256",
+        "tailSpritemaps": "ridley.tailSpritemap.aggregate.sha256",
+        "animationLists": "ridley.animationList.aggregate.sha256",
+        "runtimeTables": "ridley.runtimeTable.aggregate.sha256",
+        "palettes": "ridley.palette.aggregate.sha256",
+    }
+    for field, property_name in pinned_ridley_hashes.items():
+        if ridley["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Ridley aggregate {field} does not match the pinned reference")
+
     pinned_mother_brain_totals = {
         "roomStateCount": "motherBrain.roomState.count",
         "activeRoomStateCount": "motherBrain.activeRoomState.count",
@@ -1276,6 +1357,7 @@ def main() -> int:
         + kraid_checks(tests, kraid)
         + phantoon_checks(tests, phantoon)
         + draygon_checks(tests, draygon)
+        + ridley_checks(tests, ridley)
         + mother_brain_checks(tests, mother_brain)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
@@ -1285,9 +1367,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 15,
+        "schemaVersion": 16,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-mother-brain-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1463,6 +1545,20 @@ def main() -> int:
             "healthPaletteStageCount": draygon["totals"]["healthPaletteStageCount"],
             "hitboxCount": draygon["totals"]["hitboxCount"],
             "aggregateHashes": draygon["aggregateHashes"],
+        },
+        "ridley": {
+            "headerCount": ridley["totals"]["headerCount"],
+            "baseAssetCount": ridley["totals"]["baseAssetCount"],
+            "baseAssetByteCount": ridley["totals"]["baseAssetByteCount"],
+            "runtimeDmaAssetCount": ridley["totals"]["runtimeDmaAssetCount"],
+            "bodyExtendedSpritemapCount": ridley["totals"]["bodyExtendedSpritemapCount"],
+            "bodyExtendedChildCount": ridley["totals"]["bodyExtendedChildCount"],
+            "wingSpritemapCount": ridley["totals"]["wingSpritemapCount"],
+            "tailSpritemapCount": ridley["totals"]["tailSpritemapCount"],
+            "animationListCount": ridley["totals"]["animationListCount"],
+            "animationFrameCount": ridley["totals"]["animationFrameCount"],
+            "paletteStageCount": ridley["totals"]["paletteStageCount"],
+            "aggregateHashes": ridley["aggregateHashes"],
         },
         "motherBrain": {
             "roomStateCount": mother_brain["totals"]["roomStateCount"],

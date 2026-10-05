@@ -37,6 +37,8 @@ class EnemySpriteGraphicsTest {
         assertEquals(1, entries.count { it.speciesId in setOf(0xE4BF, 0xE4FF, 0xE53F, 0xE57F) })
         assertEquals("Mother Brain", entries.single { it.speciesId == 0xEC3F }.name)
         assertEquals(1, entries.count { it.speciesId in setOf(0xEC3F, 0xEC7F) })
+        assertEquals("Ridley", entries.single { it.speciesId == 0xE17F }.name)
+        assertEquals(1, entries.count { it.speciesId in setOf(0xE13F, 0xE17F) })
     }
 
     @Test

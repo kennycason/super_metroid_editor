@@ -44,6 +44,8 @@ packaged application, project format, or ROM exporter.
 - `draygon_manifest.py` proves all four Draygon slots, tileset-$1C BG2 ownership,
   the separate shared OBJ payload, every OAM/tilemap structure, active and unused
   instruction lists, health palettes, thresholds, and all 47 hitboxes.
+- `ridley_manifest.py` proves the shared Norfair/Ceres pixel owner, both distinct
+  headers, body/wings/tail assembly, ribs/claws DMA, encounter lists, and palettes.
 - `mother_brain_manifest.py` proves Mother Brain's phase-1 room-art boundary and
   phase-2 four-owner composition, both headers, every head/body/BG2 placement map,
   all body/head instruction lists, four health pairs, and ten two-row rainbow stages.
@@ -71,7 +73,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
 `parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`,
-`parityPhantoon`, `parityDraygon`, and `parityMotherBrain` tasks remain
+`parityPhantoon`, `parityDraygon`, `parityRidley`, and `parityMotherBrain` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -241,6 +243,16 @@ Production renders ten static complete poses and all 39 frame-bearing lists / 25
 frame occurrences as four-slot compositions; deterministic hashes cover every
 rendered pose, palette, and frame.
 
+`parityRidley` writes ignored `parity/reports/ridley.json`. It proves that Ceres
+`$E13F` and Norfair `$E17F` share the same five-asset `$2000` graphics payload and
+palette while retaining distinct AI/stats/layer headers. It also proves that enemy-set
+word `$E001` places the separate `$B0:B400` payload at physical OBJ tiles `$E0..FF`
+for the facing-forward turn. It pins six separate ribs/claws DMA assets, 11 extended
+body maps, 17 body-child maps, 12 wing maps, 19 tail maps, six runtime placement/
+pointer/DMA tables, four palette stages, and eight encounter instruction lists / 34
+timed frames. Production parity hashes all complete compositions and 11 curated
+animations, including the Ceres lunge and active baby-Metroid retrieval sequence.
+
 `parityMotherBrain` writes ignored `parity/reports/mother-brain.json`. It keeps the
 phase-1 head separate from room-owned glass/tube/machinery art, then proves the
 phase-2 tileset-$0E torso, `$B7:8000` head/neck, `$B7:9000` limbs, and `$B0:E800`
@@ -251,7 +263,7 @@ all 15 selectable palette stages, seven compositions, and rendered animation fra
 
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Mother Brain,
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

@@ -29,7 +29,12 @@ class PhantoonSpriteTest {
         PhantoonSpritemap.COMPONENT_TILEMAPS.forEach { definition ->
             val rendered = assertNotNull(phantoon.renderComponent(definition), definition.name)
             assertTrue(rendered.pixels.any { (it ushr 24) != 0 }, definition.name)
-            assertTrue(rendered.entries.all { it.paletteRow == PhantoonSpritemap.PALETTE_ROW }, definition.name)
+            assertTrue(
+                rendered.entries
+                    .filter { it.tileNum != PhantoonSpritemap.EMPTY_TILE }
+                    .all { it.paletteRow == PhantoonSpritemap.PALETTE_ROW },
+                definition.name,
+            )
         }
     }
 

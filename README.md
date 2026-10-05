@@ -201,6 +201,15 @@ BG2/OBJ placement and flattened composite editing remain read-only.
 Draygon entry and one Phantoon entry; their eye/tail/arms and eye/tentacle/mouth slots
 live inside those complete boss editors instead of appearing as duplicate top-level
 rows.
+Ridley now follows the same model. Ceres `$E13F` and Norfair `$E17F` remain distinct
+ROM encounters but share one top-level Ridley workspace because their five-part
+`$B0:9400..B3FF` source, palette, body, wings, tail, and ribs/claws machinery are the
+same. Its forward turn also resolves the enemy set's read-only `$B0:B400` auxiliary
+payload at physical OBJ tiles `$E0..FF`, instead of misreading local tail art.
+Ceres-only lunge and baby-Metroid retrieval actions are labeled inside the animation
+browser. `./gradlew parityRidley` pins both headers, the exact two-page VRAM layout,
+11 body maps, 12 wing maps, 19 tail maps, six runtime DMA assets, four palettes, and
+deterministic complete composition/animation pixels.
 Mother Brain now has the same focused treatment. The editor keeps phase 1's enemy
 head distinct from its room-owned glass/machinery, while phase 2 assembles the
 tileset-$0E torso, staged head/limb OBJ, body supplement, five neck segments, and
@@ -209,7 +218,7 @@ the exact head source is editable with live phase-1/2 references, while the comb
 four-owner body sheet is read-only. `./gradlew parityMotherBrain` pins both headers,
 all head/body/BG2 maps, 49 body/head lists / 243 timed frames, and deterministic
 composition/animation pixels.
-Dedicated Kraid, Phantoon, Draygon, and Mother Brain workspaces open on Animations and
+Dedicated Kraid, Phantoon, Draygon, Ridley, and Mother Brain workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

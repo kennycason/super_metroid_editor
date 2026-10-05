@@ -498,6 +498,14 @@ cross-start cases where Lava Rocks/Rinka extend into `Tiles_Squeept` and Geruta 
 into `Tiles_Holtz`. Six species ranges span more than one asset declaration; the two
 Ridley headers each cover all five adjacent `Tiles_Ridley_*` chunks.
 
+One Ridley render dependency crosses that ordinary owner boundary. The same enemy set
+includes Ridley Explosion `$E1BF`, whose `$8400` size field selects a `$0400` transfer
+and alternate layout; enemy-set word `$E001` places its `$B0:B400` bytes at buffer
+offset `$0400`, which transfers to VRAM `$6E00` / physical OBJ tiles `$E0..FF`.
+Ridley's facing-forward map reads that low page, while its normal body/wings/tail read
+the main species page at `$100..1FF`. The focused `parityRidley` manifest pins the
+cross-species placement; the generic header manifest continues to pin each byte owner.
+
 `parityEnemyHeaders` verifies source expressions, symbol offsets, rebuilt-ROM bytes,
 independent 4bpp pixel hashes, production parsing, catalog membership, and the complete
 segment/alias/overlap inventory. Evidence lives in ignored

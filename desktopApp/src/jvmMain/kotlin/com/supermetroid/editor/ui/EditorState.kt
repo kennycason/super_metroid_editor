@@ -346,6 +346,10 @@ class EditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
 
+    val ridleySprite = RidleySpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val kraidSprite = KraidSpriteEditorState(
         customGfx = { project.customGfx },
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
@@ -1013,6 +1017,69 @@ class EditorState(
     fun resetMotherBrainHeadSource() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID)
         motherBrainSprite.invalidate()
+    }
+
+    // ── Ridley sprite delegates ─────────────────────────────────────────
+
+    fun renderRidleyComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderComposition(romParser, definition, palette)
+    fun renderRidleyAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderAnimation(romParser, definition, palette)
+    fun renderRidleyBody(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.BodyDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderBody(romParser, definition, palette)
+    fun renderRidleyWing(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.WingDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderWing(romParser, definition, palette)
+    fun renderRidleyTail(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.OamComponentDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderTail(romParser, definition, palette)
+    fun loadRidleyBaseSource(romParser: RomParser) = ridleySprite.loadBaseSource(romParser)
+    fun loadRidleyRuntimeSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.RuntimeSourceDef,
+    ) = ridleySprite.loadRuntimeSource(romParser, definition)
+    fun renderEditedRidleyCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyRidleySourceEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val palette = ridleySprite.getSpritemap(romParser)?.readPalette() ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = palette,
+        )
+        ridleySprite.invalidate()
+    }
+    fun hasCustomRidleySource() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID)
+    fun resetRidleySource() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID)
+        ridleySprite.invalidate()
     }
 
     // ── Kraid sprite delegates ────────────────────────────────────────────

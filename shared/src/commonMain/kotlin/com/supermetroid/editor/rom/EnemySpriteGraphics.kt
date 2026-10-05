@@ -242,7 +242,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             // Bosses
             0xE4BF to "Boss", 0xE4FF to "Boss", 0xE53F to "Boss", 0xE57F to "Boss",
             0xE2BF to "Boss", 0xDDBF to "Boss", 0xDE3F to "Boss", 0xDE7F to "Boss",
-            0xDEBF to "Boss", 0xDEFF to "Boss", 0xE13F to "Boss", 0xE17F to "Boss",
+            0xDEBF to "Boss", 0xDEFF to "Boss", 0xE17F to "Boss",
             0xEC3F to "Boss", 0xEC7F to "Boss", 0xEEBF to "Boss", 0xE27F to "Boss",
             // Mini-Bosses
             0xDF3F to "Mini-Boss", 0xF293 to "Mini-Boss", 0xE0FF to "Mini-Boss",
@@ -262,7 +262,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private val EDITOR_ENEMY_IDS = listOf(
             // Bosses
             0xE4BF, 0xE2BF, 0xDDBF,
-            0xDE3F, 0xE13F, 0xE17F,
+            0xDE3F, 0xE17F,
             0xEC3F, 0xEEBF, 0xE27F,
             // Mini-Bosses
             0xDF3F, 0xF293, 0xE0FF, 0xEEFF, 0xEF3F, 0xEF7F, 0xEFBF, 0xED3F,

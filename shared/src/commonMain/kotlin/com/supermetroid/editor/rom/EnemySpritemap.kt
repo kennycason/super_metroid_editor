@@ -508,7 +508,9 @@ class EnemySpritemap(private val romParser: RomParser) {
         spritemap: Spritemap,
         tileData: ByteArray,
         palette: IntArray,
-        oamPaletteRows: Map<Int, IntArray> = emptyMap()
+        oamPaletteRows: Map<Int, IntArray> = emptyMap(),
+        oamTileNumberMode: OamTileNumberMode = OamTileNumberMode.LOW_8,
+        oamTileNumberBase: Int = 0,
     ): AssembledSprite? {
         if (spritemap.entries.isEmpty()) return null
 
@@ -535,7 +537,13 @@ class EnemySpritemap(private val romParser: RomParser) {
         // priority is the reverse of a painter's algorithm: the lower OAM index wins.
         // Draw high indices first so the first source entry is composited on top.
         for (entry in spritemap.entries.asReversed()) {
-            val localTile = entry.tileNum and 0xFF
+            val localTile = oamTileNumber(
+                entry,
+                RenderOptions(
+                    oamTileNumberMode = oamTileNumberMode,
+                    oamTileNumberBase = oamTileNumberBase,
+                ),
+            )
             val entryPalette = oamPaletteRows[entry.palRow] ?: palette
 
             if (entry.is16x16) {
@@ -556,7 +564,14 @@ class EnemySpritemap(private val romParser: RomParser) {
         extendedTilemapTileData: ByteArray? = null
     ): AssembledSprite? {
         return when (frame) {
-            is RenderableFrame.Oam -> renderSpritemap(frame.spritemap, tileData, palette, options.oamPaletteRows)
+            is RenderableFrame.Oam -> renderSpritemap(
+                frame.spritemap,
+                tileData,
+                palette,
+                options.oamPaletteRows,
+                options.oamTileNumberMode,
+                options.oamTileNumberBase,
+            )
             is RenderableFrame.Extended -> renderExtendedSpritemap(
                 frame.spritemap,
                 tileData,
@@ -1420,7 +1435,11 @@ class EnemySpritemap(private val romParser: RomParser) {
         val shellIndex = METROID_SHELL_FRAME_SEQUENCE[frameIndex % METROID_SHELL_FRAME_SEQUENCE.size]
         val shellSmap = parseSpritemap(METROID_SHELL_SPRITEMAP_ADDRS[shellIndex])
         val merged = if (shellSmap != null) {
-            Spritemap(insideSmap.entries + shellSmap.entries, insideSmap.snesAddress)
+            // The shell is a separate sprite object, but it must win overlap with
+            // the enemy-owned insides. Lower OAM indices win on SNES, and the
+            // renderer composites one spritemap in that same order, so place the
+            // shell entries first rather than treating this as painter's order.
+            Spritemap(shellSmap.entries + insideSmap.entries, insideSmap.snesAddress)
         } else {
             insideSmap
         }

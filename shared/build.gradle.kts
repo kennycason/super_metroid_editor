@@ -121,7 +121,10 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
 kotlin {
     jvm {
         testRuns["test"].executionTask.configure {
-            useJUnitPlatform()
+            // Source/ROM parity has its own fixture-generating parityTest task.
+            // Running those 25 heavyweight tests again in the ordinary suite can
+            // exhaust the test worker while building the all-species render atlas.
+            useJUnitPlatform { excludeTags("parity") }
             systemProperty("smedit.expandedRomFixture", System.getProperty("smedit.expandedRomFixture", ""))
             systemProperty("smedit.expandedRomRenderOut", System.getProperty("smedit.expandedRomRenderOut", ""))
         }
@@ -174,6 +177,7 @@ tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
         rootProject.tasks.named("parityPhantoon"),
         rootProject.tasks.named("parityDraygon"),
         rootProject.tasks.named("parityMotherBrain"),
+        rootProject.tasks.named("parityRidley"),
     )
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath

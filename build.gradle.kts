@@ -253,6 +253,20 @@ tasks.register<Exec>("parityMotherBrain") {
     }
 }
 
+tasks.register<Exec>("parityRidley") {
+    group = "verification"
+    description = "Generate Ridley's shared Norfair/Ceres graphics, OAM, DMA, palette, and animation recipe"
+    dependsOn(
+        "parityEnemyHeaders",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/ridley_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -273,6 +287,7 @@ tasks.register<Exec>("parityReport") {
         "parityPhantoon",
         "parityDraygon",
         "parityMotherBrain",
+        "parityRidley",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

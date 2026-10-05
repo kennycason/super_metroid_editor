@@ -383,13 +383,23 @@ painting. Placement and flattened BG2/OBJ edits remain read-only.
 See [`../bosses/draygon.md`](../bosses/draygon.md) and `parityDraygon` for exact
 ownership, source inventories, and the current placement boundary.
 
-### Ridley (AI Bank $A8)
+### Ridley (AI Bank `$A6`)
 
-| Entity | Species ID | HP | Dmg | Hitbox | Palette | Init AI | GFX |
-|--------|-----------|-----|------|--------|---------|---------|-----|
-| Body | `$E67F` | 300 | 100 | 8x8 | `$A8:8687` | `$A8:88B0` | `$B1:9400` |
-| Fireball | `$E6BF` | 20 | 0 | 8x8 | `$A8:8F8C` | `$A8:9058` | `$B1:9A00` |
-| Tail | `$E6FF` | 20 | 10 | 16x16 | `$A8:9379` | `$A8:96E3` | `$B1:9E00` |
+| Encounter | Species ID | HP | Dmg | Layer | Palette | Init AI | GFX |
+|---|---:|---:|---:|---:|---|---|---|
+| Ceres | `$E13F` | 32767 | 5 | 5 | `$A6:E14F` | `$A6:A0F5` | `$B0:9400..B3FF` |
+| Norfair | `$E17F` | 18000 | 160 | 2 | `$A6:E14F` | `$A6:A0F5` | `$B0:9400..B3FF` |
+
+These are distinct encounter headers over one visual recipe. Five contiguous assets
+form the shared 256-tile source; six later `$B0:B800..B9FF` assets supply runtime
+ribs/claws DMA. The enemy set additionally places the read-only `$B0:B400` Ridley-
+explosion payload at physical OBJ tiles `$E0..FF`; the facing-forward body selects
+that low page while ordinary Ridley parts select `$100..1FF`. Bank `$A6` combines 11
+extended body maps with 12 wing maps and an articulated tail built from three segment
+maps plus 16 directional tips. The editor therefore exposes one Ridley workspace and
+labels Ceres-only lunge/retrieve actions inside it. See
+[`../bosses/ridley.md`](../bosses/ridley.md) and `parityRidley` for the complete
+ownership, assembly, palette, and safe-edit contract.
 
 ### Mother Brain (Room `$DD58`, AI Bank `$A9`)
 
@@ -580,6 +590,8 @@ Enemy GFX Set ($B4)
 | `PhantoonSpritemapRoundtripTest.kt` | Pixel-perfect match vs reference PNG, edit roundtrip |
 | `PhantoonSourceParityTest.kt` | All four slots, 22 tilemaps/extended spritemaps, 19 lists, eight health palettes, full-body/gaze rendering, five bounded animations, hashes, and edit ownership |
 | `DraygonSourceParityTest.kt` | Four slots, split BG2/OBJ ownership, 94 OAM + 103 extended + 48 BG2 maps, 57 lists, 250 production frames, palettes, hitboxes, and deterministic complete-composition hashes |
+| `RidleySourceParityTest.kt` | Both encounter headers, five shared base assets, the low-page forward/explosion asset and enemy-set placement, six ribs/claws DMA assets, 11 body + 12 wing + 19 tail maps, encounter lists, pointer tables, palettes, and deterministic complete-composition hashes |
+| `MotherBrainSourceParityTest.kt` | Both phases, four physical pixel owners, head/body/BG2 structures, exact curated source animations, split palette stages, and deterministic complete-composition hashes |
 
 ---
 
