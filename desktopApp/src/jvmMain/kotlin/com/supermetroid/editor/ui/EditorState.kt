@@ -905,11 +905,51 @@ class EditorState(
         def: com.supermetroid.editor.rom.DraygonSpritemap.CompositionDef,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
     ) = draygonSprite.renderComposition(romParser, def, palette)
+    fun renderDraygonComponent(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.ComponentDef,
+        side: com.supermetroid.editor.rom.DraygonSpritemap.Side,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderComponent(romParser, def, side, palette)
     fun renderDraygonAnimation(
         romParser: RomParser,
         def: com.supermetroid.editor.rom.DraygonSpritemap.AnimationDef,
         palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
     ) = draygonSprite.renderAnimation(romParser, def, palette)
+    fun loadDraygonObjSheet(romParser: RomParser) = draygonSprite.loadObjSheet(romParser)
+    fun renderEditedDraygonObjCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderEditedObjCompositions(romParser, pixels, width, height, palette)
+    fun applyDraygonObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = draygonSprite.getPalette(
+            romParser,
+            com.supermetroid.editor.rom.DraygonSpritemap.PALETTE_STAGES.first(),
+        ) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        draygonSprite.invalidate()
+    }
+    fun hasCustomDraygonObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
+    fun resetDraygonObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
+        draygonSprite.invalidate()
+    }
 
     // ── Kraid sprite delegates ────────────────────────────────────────────
 

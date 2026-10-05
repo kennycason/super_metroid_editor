@@ -19,17 +19,28 @@
   used by all 22 active extended BG2 tilemaps. The Animations view composes the body,
   eye, tentacles, and mouth in their shared runtime coordinates and exposes all eight
   health palettes.
-- Phantoon's old standalone **Tile Sheet** mapping is quarantined because it resolves
-  inside Mother Brain leg graphics (`$B7:9000..9FFF`). Existing legacy edits block
-  export until reset.
+- Phantoon's old standalone tile-sheet mapping is listed only as a quarantined legacy
+  item in **Sources** because it resolves inside Mother Brain leg graphics
+  (`$B7:9000..9FFF`). Existing legacy edits block export until reset.
 - Kraid's old `kraid:*` tile-sheet mapping remains quarantined because `$B9:FA38`
   is a compressed BG2 tilemap. The source-backed Components editor is now enabled:
   head edits save the complete no-CRE tileset `$1A` resource through `varGfx["26"]`.
   The independent `$AB:CC00` linked OAM sheet remains a separate resource.
-- Draygon's dedicated view is currently read-only. It combines room tileset `$1C`
-  BG2 pixels with the separate `$B0:C800` enemy OBJ payload, exposes ten complete
-  poses, 39 bounded animations, eight health stages, and the hurt flash. Flattened
-  composite editing stays disabled because a visible pixel may belong to either owner.
+- Draygon combines room tileset `$1C` BG2 pixels with the separate `$B0:C800` enemy
+  OBJ payload, exposes ten complete poses, 39 bounded animations, eight health stages,
+  and the hurt flash. Its exact body-owned `$2000` OBJ source is editable and previews
+  all named compositions live; flattened composite editing stays disabled because a
+  visible pixel may belong to either owner.
+
+The dedicated Kraid, Phantoon, and Draygon workspaces use one navigation model and
+open at the richest available level: **Animations** are timed assembled behavior,
+**Compositions** are static assembled poses, **Components** are runtime pieces, and
+**Sources** are underlying pixel owners. A complex workspace without animations
+defaults to Compositions; ordinary enemies keep their compact single-page viewer.
+Selecting a component always changes the isolated preview. Editing is capability-based:
+Phantoon BG2 component pixels reversibly map to tileset `$05`, while a Draygon extended
+component can mix BG2 and OBJ children and therefore links to its unambiguous OBJ source
+editor instead of offering a dangerous flattened edit.
 
 These are fail-closed export rules, not claims that the bosses cannot be edited. The
 correct source-backed edit model is tracked as parity milestone P0.6.
@@ -358,8 +369,11 @@ The dedicated renderer parses all 57 active named instruction lists and renders 
 source-valid resting poses for the other independent slots. It also exposes eight
 health-dependent replacements for palette indexes 9–12 and the white hurt-flash
 palette. Ten static compositions cover left/right resting poses and every eye gaze.
+The Sources tab edits the exact `$2000` body-owned OBJ payload, stores it under
+`spriteTileBlocks["enemy:DE3F"]`, and reassembles every named composition live while
+painting. Placement and flattened BG2/OBJ edits remain read-only.
 See [`../bosses/draygon.md`](../bosses/draygon.md) and `parityDraygon` for exact
-ownership, source inventories, and the current read-only placement boundary.
+ownership, source inventories, and the current placement boundary.
 
 ### Ridley (AI Bank $A8)
 
@@ -402,10 +416,12 @@ bank `$A6`, which would incorrectly admit neighboring Ridley structures.
 
 ## Editor-Supported Enemies
 
-The sprite editor currently catalogs **128 source-valid species IDs** through
+The sprite editor currently catalogs **122 source-valid species IDs** through
 `EnemySpriteGraphics.EDITOR_ENEMIES`. The broader name catalog contains 150 of the
 164 source headers. Catalog membership does not itself prove successful OAM assembly;
 the source-complete status ledger below measures the actual production preview path.
+Phantoon and Draygon each appear once: their internal enemy slots remain fully
+represented inside the dedicated boss editor instead of duplicating navigation rows.
 
 ### Categories
 
@@ -413,12 +429,12 @@ These are current UI groupings, not engine types or render guarantees:
 
 | UI category | Catalog entries |
 |---|---:|
-| Boss | 16 |
+| Boss | 10 |
 | Mini-Boss | 8 |
 | Space Pirate | 12 |
 | Mechanism | 6 |
 | Enemy (default) | 86 |
-| **Total** | **128** |
+| **Total** | **122** |
 
 The source's 164 headers include internal pieces, projectiles, cutscene entities,
 unused data, and other records the sprite editor does not currently catalog. These
@@ -426,7 +442,7 @@ coarse UI buckets are therefore navigation aids, not rendering-support claims.
 
 ### All-species rendering status
 
-The strict E-08 ledger starts with every source header rather than the 128-entry
+The strict E-08 ledger starts with every source header rather than the 122-entry
 sprite picker or bundled PNG filenames. It calls the same tile, palette, ordinary
 OAM, special OAM, boss-pose, Kraid BG2, and Phantoon BG2 production paths used by the
 editor, including Draygon's dedicated split BG2/OBJ renderer. A raw tile sheet never

@@ -57,7 +57,14 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.image.BufferedImage
 
-private enum class KraidTab { COMPONENTS, ANIMATIONS, TILE_SHEET, OAM_TILES }
+private enum class KraidTab { ANIMATIONS, COMPOSITIONS, COMPONENTS, SOURCES }
+private enum class KraidSource { BG2, OBJ }
+private fun defaultKraidTab(): KraidTab = when {
+    KraidSpritemap.HEAD_SEQUENCES.isNotEmpty() || KraidSpritemap.OAM_SEQUENCES.isNotEmpty() ->
+        KraidTab.ANIMATIONS
+    KraidSpritemap.HEAD_TILEMAPS.isNotEmpty() -> KraidTab.COMPOSITIONS
+    else -> KraidTab.COMPONENTS
+}
 
 private sealed class KraidComponent(val displayName: String) {
     data class FullBody(val head: KraidSpritemap.HeadTilemapDef) :
@@ -94,8 +101,11 @@ fun KraidSpriteEditor(
     romParser: RomParser?,
     modifier: Modifier = Modifier
 ) {
-    var activeTab by remember { mutableStateOf(KraidTab.COMPONENTS) }
+    var activeTab by remember { mutableStateOf(defaultKraidTab()) }
     var selectedComponent by remember { mutableStateOf<KraidComponent>(
+        KraidComponent.Head(KraidSpritemap.HEAD_TILEMAPS[0])
+    ) }
+    var selectedComposition by remember { mutableStateOf<KraidComponent>(
         KraidComponent.FullBody(KraidSpritemap.HEAD_TILEMAPS[0])
     ) }
 
@@ -142,54 +152,32 @@ fun KraidSpriteEditor(
                     color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(12.dp))
                 FilterChip(
-                    selected = activeTab == KraidTab.COMPONENTS,
-                    onClick = { activeTab = KraidTab.COMPONENTS },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text("Components", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
-                        }
-                    },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
                     selected = activeTab == KraidTab.ANIMATIONS,
                     onClick = { activeTab = KraidTab.ANIMATIONS },
                     label = { Text("Animations", fontSize = 10.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
-                    selected = activeTab == KraidTab.TILE_SHEET,
-                    onClick = { activeTab = KraidTab.TILE_SHEET },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text("BG2 Source", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("EXACT", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
-                            if (editorState.hasCustomKraidComponents() || editorState.hasCustomKraidTileSheet()) {
-                                Text("\u25CF", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                    },
+                    selected = activeTab == KraidTab.COMPOSITIONS,
+                    onClick = { activeTab = KraidTab.COMPOSITIONS },
+                    label = { Text("Compositions", fontSize = 10.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
-                    selected = activeTab == KraidTab.OAM_TILES,
-                    onClick = { activeTab = KraidTab.OAM_TILES },
+                    selected = activeTab == KraidTab.COMPONENTS,
+                    onClick = { activeTab = KraidTab.COMPONENTS },
+                    label = { Text("Components", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == KraidTab.SOURCES,
+                    onClick = { activeTab = KraidTab.SOURCES },
                     label = {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically) {
-                            Text("OAM Tiles", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+                            Text("Sources", fontSize = 10.sp)
+                            if (editorState.hasCustomKraidComponents() || editorState.hasCustomKraidTileSheet()) {
+                                Text("\u25CF", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     },
@@ -208,6 +196,7 @@ fun KraidSpriteEditor(
                 romParser = romParser,
                 selectedComponent = selectedComponent,
                 onSelectComponent = { selectedComponent = it },
+                compositionsOnly = false,
                 refreshKey = refreshKey,
                 onEditHead = { component ->
                     val rp = romParser ?: return@KraidComponentsTab
@@ -221,6 +210,17 @@ fun KraidSpriteEditor(
                 modifier = Modifier.weight(1f)
             )
 
+            KraidTab.COMPOSITIONS -> KraidComponentsTab(
+                editorState = editorState,
+                romParser = romParser,
+                selectedComponent = selectedComposition,
+                onSelectComponent = { selectedComposition = it },
+                compositionsOnly = true,
+                refreshKey = refreshKey,
+                onEditHead = {},
+                modifier = Modifier.weight(1f),
+            )
+
             KraidTab.ANIMATIONS -> KraidAnimationsTab(
                 editorState = editorState,
                 romParser = romParser,
@@ -228,16 +228,12 @@ fun KraidSpriteEditor(
                 modifier = Modifier.weight(1f),
             )
 
-            KraidTab.TILE_SHEET -> KraidTileSheetTab(
-                editorState = editorState,
-                onRefresh = { refreshKey++ },
-                modifier = Modifier.weight(1f)
-            )
-
-            KraidTab.OAM_TILES -> KraidOamTileSheetTab(
+            KraidTab.SOURCES -> KraidSourcesTab(
                 editorState = editorState,
                 romParser = romParser,
                 refreshKey = refreshKey,
+                onRefresh = { refreshKey++ },
+                onOpenComponents = { activeTab = KraidTab.COMPONENTS },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -285,6 +281,7 @@ private fun KraidComponentsTab(
     romParser: RomParser?,
     selectedComponent: KraidComponent,
     onSelectComponent: (KraidComponent) -> Unit,
+    compositionsOnly: Boolean,
     refreshKey: Int,
     onEditHead: (KraidComponent.Head) -> Unit,
     modifier: Modifier = Modifier
@@ -302,31 +299,33 @@ private fun KraidComponentsTab(
             Text("Room: \$A59F · Tileset: \$1A · AI: \$A7", fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp))
-            Text("BG2 is the full body. Arm, foot, lints, and nails are separately drawn OAM.",
+            Text(if (compositionsOnly) "Complete BG2 body states with their ROM head frames."
+                else "Editable BG2 heads and the separately drawn linked OAM parts.",
                 fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
             Divider()
             Spacer(Modifier.height(4.dp))
 
-            Text("Full BG2 Body States", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
-                KraidComponentItem(KraidComponent.FullBody(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
-            }
+            if (compositionsOnly) {
+                Text("Complete BG2 Body States", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
+                    KraidComponentItem(KraidComponent.FullBody(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                }
+            } else {
+                Text("Editable Head Tilemaps", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
+                    KraidComponentItem(KraidComponent.Head(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                }
 
-            Spacer(Modifier.height(8.dp))
-            Text("Editable Head Tilemaps", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            KraidSpritemap.HEAD_TILEMAPS.forEach { def ->
-                KraidComponentItem(KraidComponent.Head(def), selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
-            }
-
-            Spacer(Modifier.height(8.dp))
-            Divider()
-            Text("Linked OAM Components", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            KRAID_OAM_ENTITIES.forEach { entity ->
-                KraidComponentItem(entity, selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                Spacer(Modifier.height(8.dp))
+                Divider()
+                Text("Linked OAM Components", fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                KRAID_OAM_ENTITIES.forEach { entity ->
+                    KraidComponentItem(entity, selectedComponent, editorState, romParser, refreshKey, onSelectComponent)
+                }
             }
         }
 
@@ -583,7 +582,7 @@ private fun KraidComponentDetail(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (comp is KraidComponent.OamEntity) {
                                 Text("This sub-entity's init AI doesn't follow the standard " +
-                                    "spritemap pattern. View tiles in the OAM Tiles tab.",
+                                    "spritemap pattern. View tiles in Sources → Enemy OBJ.",
                                     fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                     lineHeight = 12.sp)
                             }
@@ -824,6 +823,59 @@ private fun KraidAnimationChoiceItem(
                 is KraidAnimationChoice.Oam -> "${choice.def.key} · ${if (choice.def.extended) "extended" else "OAM"}"
             }
             Text(detail, fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun KraidSourcesTab(
+    editorState: EditorState,
+    romParser: RomParser?,
+    refreshKey: Int,
+    onRefresh: () -> Unit,
+    onOpenComponents: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var selected by remember { mutableStateOf(KraidSource.BG2) }
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Pixel source", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            FilterChip(
+                selected = selected == KraidSource.BG2,
+                onClick = { selected = KraidSource.BG2 },
+                label = { Text("Room BG2", fontSize = 9.sp) },
+                modifier = Modifier.height(28.dp),
+            )
+            FilterChip(
+                selected = selected == KraidSource.OBJ,
+                onClick = { selected = KraidSource.OBJ },
+                label = { Text("Enemy OBJ", fontSize = 9.sp) },
+                modifier = Modifier.height(28.dp),
+            )
+            if (selected == KraidSource.BG2) {
+                Button(onClick = onOpenComponents) {
+                    Text("Choose Editable Component", fontSize = 9.sp)
+                }
+            }
+        }
+        Divider()
+        when (selected) {
+            KraidSource.BG2 -> KraidTileSheetTab(
+                editorState = editorState,
+                onRefresh = onRefresh,
+                modifier = Modifier.weight(1f),
+            )
+            KraidSource.OBJ -> KraidOamTileSheetTab(
+                editorState = editorState,
+                romParser = romParser,
+                refreshKey = refreshKey,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

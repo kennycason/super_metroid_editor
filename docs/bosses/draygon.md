@@ -58,10 +58,11 @@ The strict `parityDraygon` slice pins:
 - 5 source-declared unused lists, kept separate from production;
 - 47 hitbox structures, `Hitbox_Draygon_0..2E`.
 
-The dedicated editor exposes ten static compositions: left/right idle plus four gaze
-directions on each side. Its animation filters select side and independently animated
-part (body, face overlay, eye, tail, or arms). Fire-goop and roar lists are face
-overlays over the resting body rather than body replacements.
+The dedicated editor covers ten static compositions through two compact controls:
+facing (left/right) and one shared pose list (idle plus four gaze directions). Its
+animation filters select side and independently animated part (body, face overlay,
+eye, tail, or arms). Fire-goop and roar lists are face overlays over the resting body
+rather than body replacements.
 
 ## Palettes
 
@@ -72,11 +73,20 @@ thresholds 5250, 4500, 3750, 3000, 2250, 1500, 750, and 0. The terminator is `$F
 
 ## Editor and export boundary
 
-The Compositions and Animations views are exact, source-bounded previews. The Sources
-view identifies which visible pixels come from room BG2 or enemy OBJ storage. Placement,
-instruction records, hitboxes, and flattened composite pixel editing remain read-only.
-This is deliberate: until an edit surface preserves the child/run ownership of every
-pixel, writing a composite could silently modify the wrong resource.
+The editor follows the shared boss layout: Components renders each of the four runtime
+slots in isolation for the selected facing, Compositions shows the ten complete poses,
+Animations plays the exact bounded lists, and Sources exposes pixel ownership. The
+full `$2000` body-owned OBJ payload is
+editable there and saves as `spriteTileBlocks["enemy:DE3F"]`. While painting, the
+reference panel reassembles every named Draygon pose from the in-progress bytes. A
+stable full-health palette is used for the indexed 4bpp round trip; the runtime health
+and hurt palettes remain preview choices.
+
+BG2/OBJ placement, instruction records, hitboxes, and flattened composite pixel
+editing remain read-only. This includes the isolated component previews: an extended
+spritemap frame can contain both BG2 and OBJ children, so a flattened edit cannot
+identify which BG2 run or OBJ tile owns a visible pixel. The component panel links to
+the exact OBJ source editor instead.
 
 `DraygonSourceParityTest` pins raw owners, decoded tileset bytes, every source record,
 all palettes, all ten compositions, and all 250 rendered production frame occurrences

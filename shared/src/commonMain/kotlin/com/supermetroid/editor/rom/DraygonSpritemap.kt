@@ -60,6 +60,30 @@ class DraygonSpritemap(private val romParser: RomParser) {
             CompositionDef("right-look-down", "Facing right · look down", Side.RIGHT, 0xA5A6D9),
         )
 
+        /** The four independently positioned runtime enemy slots. */
+        val COMPONENTS = listOf(
+            ComponentDef(
+                "body", "Body", BODY_SPECIES_ID, AnimationPart.BODY_BASE,
+                LEFT_DEFAULTS.body, RIGHT_DEFAULTS.body,
+                "BG2 body regions plus OBJ details",
+            ),
+            ComponentDef(
+                "eye", "Eye", EYE_SPECIES_ID, AnimationPart.EYE,
+                LEFT_DEFAULTS.eye, RIGHT_DEFAULTS.eye,
+                "Independent eye position and expression slot",
+            ),
+            ComponentDef(
+                "tail", "Tail", TAIL_SPECIES_ID, AnimationPart.TAIL,
+                LEFT_DEFAULTS.tail, RIGHT_DEFAULTS.tail,
+                "Independent idle, whip, and flail slot",
+            ),
+            ComponentDef(
+                "arms", "Arms", ARMS_SPECIES_ID, AnimationPart.ARMS,
+                LEFT_DEFAULTS.arms, RIGHT_DEFAULTS.arms,
+                "Independent idle, grab, and dying slot",
+            ),
+        )
+
         /** Every active, source-named Draygon instruction list that contains frames. */
         val ANIMATIONS = listOf(
             AnimationDef("body-left-reset", "Body · reset", Side.LEFT, AnimationPart.BODY_BASE, 0xA597BB, 0xA597D1, false, "InstList_DraygonBody_FacingLeft_Reset"),
@@ -138,6 +162,18 @@ class DraygonSpritemap(private val romParser: RomParser) {
         val eyeFrameSnes: Int,
     )
 
+    data class ComponentDef(
+        val key: String,
+        val name: String,
+        val speciesId: Int,
+        val part: AnimationPart,
+        val leftFrameSnes: Int,
+        val rightFrameSnes: Int,
+        val detail: String,
+    ) {
+        fun frameSnes(side: Side): Int = if (side == Side.LEFT) leftFrameSnes else rightFrameSnes
+    }
+
     data class AnimationDef(
         val key: String,
         val name: String,
@@ -203,6 +239,17 @@ class DraygonSpritemap(private val romParser: RomParser) {
             paletteStage,
         )
     }
+
+    /** Render one runtime slot by itself, normalized to that component's bounds. */
+    fun renderComponent(
+        def: ComponentDef,
+        side: Side,
+        paletteStage: PaletteStageDef = PALETTE_STAGES.first(),
+    ): EnemySpritemap.AssembledSprite? = renderFrames(
+        "${def.name} · facing ${side.displayName.lowercase()}",
+        listOf(def.frameSnes(side)),
+        paletteStage,
+    )
 
     fun loadAnimation(def: AnimationDef): SourceAnimation? {
         val rom = romParser.getRomData()

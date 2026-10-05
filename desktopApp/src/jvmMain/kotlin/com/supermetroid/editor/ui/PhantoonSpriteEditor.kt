@@ -54,7 +54,12 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.image.BufferedImage
 
-private enum class SpriteEditorTab { COMPONENTS, COMPOSITIONS, ANIMATIONS, TILE_SHEET }
+private enum class PhantoonEditorTab { ANIMATIONS, COMPOSITIONS, COMPONENTS, SOURCES }
+private fun defaultPhantoonEditorTab(): PhantoonEditorTab = when {
+    PhantoonSpritemap.ANIMATIONS.isNotEmpty() -> PhantoonEditorTab.ANIMATIONS
+    PhantoonSpritemap.EYEBALL_TILEMAPS.isNotEmpty() -> PhantoonEditorTab.COMPOSITIONS
+    else -> PhantoonEditorTab.COMPONENTS
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,7 +68,7 @@ fun PhantoonSpriteEditor(
     romParser: RomParser?,
     modifier: Modifier = Modifier
 ) {
-    var activeTab by remember { mutableStateOf(SpriteEditorTab.COMPONENTS) }
+    var activeTab by remember { mutableStateOf(defaultPhantoonEditorTab()) }
     var selectedDef by remember { mutableStateOf(PhantoonSpritemap.COMPONENT_TILEMAPS.first()) }
 
     // Pixel editor state
@@ -116,41 +121,29 @@ fun PhantoonSpriteEditor(
                     color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(12.dp))
                 FilterChip(
-                    selected = activeTab == SpriteEditorTab.COMPONENTS,
-                    onClick = { activeTab = SpriteEditorTab.COMPONENTS },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Components", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
-                        }
-                    },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
-                    selected = activeTab == SpriteEditorTab.COMPOSITIONS,
-                    onClick = { activeTab = SpriteEditorTab.COMPOSITIONS },
-                    label = { Text("Compositions", fontSize = 10.sp) },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
-                    selected = activeTab == SpriteEditorTab.ANIMATIONS,
-                    onClick = { activeTab = SpriteEditorTab.ANIMATIONS },
+                    selected = activeTab == PhantoonEditorTab.ANIMATIONS,
+                    onClick = { activeTab = PhantoonEditorTab.ANIMATIONS },
                     label = { Text("Animations", fontSize = 10.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
-                    selected = activeTab == SpriteEditorTab.TILE_SHEET,
-                    onClick = { activeTab = SpriteEditorTab.TILE_SHEET },
+                    selected = activeTab == PhantoonEditorTab.COMPOSITIONS,
+                    onClick = { activeTab = PhantoonEditorTab.COMPOSITIONS },
+                    label = { Text("Compositions", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == PhantoonEditorTab.COMPONENTS,
+                    onClick = { activeTab = PhantoonEditorTab.COMPONENTS },
+                    label = { Text("Components", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == PhantoonEditorTab.SOURCES,
+                    onClick = { activeTab = PhantoonEditorTab.SOURCES },
                     label = {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tile Sheet", fontSize = 10.sp)
-                            Surface(color = Color(0xFF665522), shape = RoundedCornerShape(3.dp)) {
-                                Text("PAUSED", fontSize = 7.sp, color = Color(0xFFFFDD88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
+                            Text("Sources", fontSize = 10.sp)
                             if (editorState.hasCustomPhantoonTileSheet()) {
                                 Text("●", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary)
                             }
@@ -166,7 +159,7 @@ fun PhantoonSpriteEditor(
         }
 
         when (activeTab) {
-            SpriteEditorTab.COMPONENTS -> ComponentsTab(
+            PhantoonEditorTab.COMPONENTS -> ComponentsTab(
                 editorState = editorState,
                 romParser = romParser,
                 selectedDef = selectedDef,
@@ -186,23 +179,24 @@ fun PhantoonSpriteEditor(
                 modifier = Modifier.weight(1f)
             )
 
-            SpriteEditorTab.COMPOSITIONS -> CompositionsTab(
+            PhantoonEditorTab.COMPOSITIONS -> CompositionsTab(
                 editorState = editorState,
                 romParser = romParser,
                 refreshKey = refreshKey,
                 modifier = Modifier.weight(1f),
             )
 
-            SpriteEditorTab.ANIMATIONS -> AnimationsTab(
+            PhantoonEditorTab.ANIMATIONS -> AnimationsTab(
                 editorState = editorState,
                 romParser = romParser,
                 refreshKey = refreshKey,
                 modifier = Modifier.weight(1f),
             )
 
-            SpriteEditorTab.TILE_SHEET -> TileSheetTab(
+            PhantoonEditorTab.SOURCES -> PhantoonSourcesTab(
                 editorState = editorState,
                 onRefresh = { refreshKey++ },
+                onOpenComponents = { activeTab = PhantoonEditorTab.COMPONENTS },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -660,16 +654,17 @@ private fun AnimationsTab(
 }
 
 @Composable
-private fun TileSheetTab(
+private fun PhantoonSourcesTab(
     editorState: EditorState,
     onRefresh: () -> Unit,
+    onOpenComponents: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val hasCustom = editorState.hasCustomPhantoonTileSheet()
 
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -677,18 +672,13 @@ private fun TileSheetTab(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "Phantoon Legacy Tile Sheet",
+                    "Pixel sources",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
-                    "Incorrect legacy mapping quarantined",
-                    fontSize = 9.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "The Components editor remains available and writes through Phantoon's room tileset.",
+                    "Components edits the active room-owned pixels. Other source data stays visible but read-only.",
                     fontSize = 9.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -719,18 +709,54 @@ private fun TileSheetTab(
 
         Divider()
 
-        Surface(
-            color = MaterialTheme.colorScheme.errorContainer,
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                BossSpriteExportSafety.PHANTOON_LEGACY_TILE_SHEET_REASON,
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                lineHeight = 14.sp,
-                modifier = Modifier.padding(12.dp),
-            )
+        PhantoonSourceCard(
+            title = "Room BG2 source · editable",
+            source = "Tileset \$05 · varGfx[\"5\"]",
+            detail = "Used by all 22 active BG2 component tilemaps. Select Components to paint these pixels.",
+        )
+        Button(onClick = onOpenComponents) {
+            Text("Choose Editable BG2 Component", fontSize = 10.sp)
+        }
+        PhantoonSourceCard(
+            title = "Enemy OBJ source · read-only",
+            source = "Tiles_Phantoon · \$AC:AA00..B5FF · \$C00 bytes",
+            detail = "Shared by body, eye, tentacle, and mouth headers; not used by the current BG2 component editor.",
+        )
+        PhantoonSourceCard(
+            title = "Placement and timing · read-only",
+            source = "AI bank \$A7 · extended tilemaps and instruction lists",
+            detail = "Compositions and Animations preserve the source-backed coordinates and timing.",
+        )
+
+        if (hasCustom) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    BossSpriteExportSafety.PHANTOON_LEGACY_TILE_SHEET_REASON,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhantoonSourceCard(title: String, source: String, detail: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(source, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+            Text(detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

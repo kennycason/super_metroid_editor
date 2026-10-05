@@ -62,6 +62,10 @@ and the Animations view renders five exactly bounded source lists (eye open, two
 eye-close paths, tentacles, and mouth flame spawn) with their original timing. Since
 the four slots advance independently in-game, each animation preview holds the other
 slots in source-valid resting poses rather than implying one global Phantoon frame list.
+The Sources view identifies the editable room BG2 owner, the separate read-only
+`$AC:AA00` OBJ payload, and any quarantined legacy tile-sheet project data. Its editable
+source action returns to the component chooser because each component tilemap provides
+the reversible pixel-to-room-tile mapping needed for a safe write.
 
 Pixel edits write through the normal tileset relocation unit `varGfx["5"]`. The
 source-owned graphics prefix is `$4800` bytes; SMEDIT's production buffer also carries

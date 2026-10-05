@@ -2010,7 +2010,7 @@ class RomParser(
             0xDD7F to "Metroid",
             // ── Bosses ──
             0xDDBF to "Crocomire",
-            0xDE3F to "Draygon (body)",
+            0xDE3F to "Draygon",
             0xDE7F to "Draygon (eye)",
             0xDEBF to "Draygon (tail)",
             0xDEFF to "Draygon (arms)",

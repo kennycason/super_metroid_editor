@@ -25,6 +25,27 @@ class DraygonSpriteTest {
     }
 
     @Test
+    fun `runtime component selector renders each slot in isolation`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val draygon = DraygonSpritemap(parser)
+        assertTrue(draygon.load())
+        assertEquals(4, DraygonSpritemap.COMPONENTS.size)
+
+        DraygonSpritemap.Side.values().forEach { side ->
+            val components = DraygonSpritemap.COMPONENTS.map { definition ->
+                assertNotNull(draygon.renderComponent(definition, side), "${side.displayName} ${definition.name}")
+            }
+            assertEquals(4, components.map { it.pixels.contentHashCode() }.distinct().size)
+            assertTrue(components.all { sprite -> sprite.pixels.any { (it ushr 24) != 0 } })
+
+            val composition = assertNotNull(
+                draygon.renderComposition(DraygonSpritemap.COMPOSITIONS.first { it.side == side }),
+            )
+            assertTrue(components.none { it.pixels.contentEquals(composition.pixels) })
+        }
+    }
+
+    @Test
     fun `all active source animations parse and render as complete four-slot poses`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val draygon = DraygonSpritemap(parser)
@@ -63,5 +84,21 @@ class DraygonSpriteTest {
 
         val whiteFlash = assertNotNull(draygon.readPalette(DraygonSpritemap.WHITE_FLASH))
         assertTrue(health.none { it.contentEquals(whiteFlash) })
+    }
+
+    @Test
+    fun `full health palette round trips the editable OBJ sheet byte exactly`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val draygon = DraygonSpritemap(parser)
+        assertTrue(draygon.load())
+        val raw = assertNotNull(draygon.getRawEnemyTileData())
+        val palette = assertNotNull(draygon.readPalette(DraygonSpritemap.PALETTE_STAGES.first()))
+        val gfx = EnemySpriteGraphics(parser)
+        gfx.loadFromRaw(listOf(raw))
+        val (pixels, width, height) = assertNotNull(gfx.renderSheet(palette, cols = 16))
+
+        gfx.importFromArgb(pixels, width, height, palette, cols = 16)
+
+        assertTrue(raw.contentEquals(assertNotNull(gfx.getRawBlocks()).single()))
     }
 }

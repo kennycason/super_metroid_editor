@@ -94,8 +94,9 @@ class EnemySpriteEditorState(
         pixels: IntArray,
         w: Int,
         h: Int,
+        paletteOverride: IntArray? = null,
     ) {
-        val palette = loadEnemyPalette(romParser, speciesId) ?: return
+        val palette = paletteOverride ?: loadEnemyPalette(romParser, speciesId) ?: return
         val tileData = loadEnemyTileData(romParser, speciesId) ?: return
         val gfx = EnemySpriteGraphics(romParser)
         gfx.loadFromRaw(listOf(tileData))

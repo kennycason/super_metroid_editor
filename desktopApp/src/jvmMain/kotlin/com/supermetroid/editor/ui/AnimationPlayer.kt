@@ -58,6 +58,12 @@ import com.supermetroid.editor.rom.SpriteAnimationFrame
 import kotlinx.coroutines.delay
 import java.awt.image.BufferedImage
 
+internal fun animationPlaybackStartFrame(frameCount: Int, loop: Boolean, currentFrame: Int): Int {
+    if (frameCount <= 0) return 0
+    val safeFrame = currentFrame.coerceIn(0, frameCount - 1)
+    return if (frameCount > 1 && !loop && safeFrame == frameCount - 1) 0 else safeFrame
+}
+
 /**
  * Compose widget for playing sprite animations with transport controls.
  *
@@ -109,6 +115,13 @@ fun AnimationPlayer(
     val safeFrame = activeFrame.coerceIn(0, frames.size - 1)
     val frame = frames[safeFrame]
 
+    fun startPlayback() {
+        if (frames.size <= 1) return
+        val startFrame = animationPlaybackStartFrame(frames.size, animation.loop, safeFrame)
+        if (startFrame != safeFrame) setFrame(startFrame)
+        setPlaying(true)
+    }
+
     // Auto-play timer
     LaunchedEffect(isPlaying, safeFrame, speedMultiplier, animation) {
         if (!isPlaying || frames.size <= 1) return@LaunchedEffect
@@ -138,7 +151,10 @@ fun AnimationPlayer(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (event.key) {
-                    Key.Spacebar -> { setPlaying(!isPlaying); true }
+                    Key.Spacebar -> {
+                        if (isPlaying) setPlaying(false) else startPlayback()
+                        true
+                    }
                     Key.DirectionLeft -> {
                         setPlaying(false)
                         setFrame(if (safeFrame > 0) safeFrame - 1 else frames.size - 1)
@@ -235,7 +251,7 @@ fun AnimationPlayer(
             } else {
                 IconButton(
                     onClick = {
-                        if (frames.size > 1) setPlaying(true)
+                        startPlayback()
                     },
                     modifier = Modifier.size(36.dp)
                 ) {

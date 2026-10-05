@@ -193,9 +193,17 @@ Draygon now has a dedicated split-owner renderer instead of a hand-picked boss-p
 scan. It combines tileset `$1C` BG2 graphics with the shared `$B0:C800` OBJ payload,
 assembles body/eye/tail/arms at runtime coordinates, exposes ten poses, all eight
 health stages plus hurt flash, and renders all 39 frame-bearing source lists (250
-complete frame occurrences). The Sources view makes the two pixel owners explicit;
-placement and flattened composite editing remain read-only. `./gradlew parityDraygon`
-runs the focused proof.
+complete frame occurrences). Its exact `$2000` OBJ owner is editable in Sources via
+`spriteTileBlocks["enemy:DE3F"]`; every named composition updates live while painting.
+BG2/OBJ placement and flattened composite editing remain read-only.
+`./gradlew parityDraygon` runs the focused proof. Sprite navigation presents one
+Draygon entry and one Phantoon entry; their eye/tail/arms and eye/tentacle/mouth slots
+live inside those complete boss editors instead of appearing as duplicate top-level
+rows. Dedicated Kraid, Phantoon, and Draygon workspaces now open on Animations and
+follow the same top-level drill-down: Animations, Compositions, Components, and
+Sources. If a future complex workspace has no animations it falls back to
+Compositions. Component selection always renders the selected piece; edit buttons
+appear only where its pixels map unambiguously back to one source owner.
 Current coverage and the ordered expansion plan are tracked in
 [the parity validation matrix](docs/validation/README.md).
 
