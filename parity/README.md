@@ -55,6 +55,9 @@ packaged application, project format, or ROM exporter.
 - `spore_spawn_manifest.py` proves Spore Spawn's shared body/stalk pixel owner,
   bank-$A5 extended body, bank-$86 stalk/spawner/spore projectiles, bank-$8D maps,
   exact stalk-position routine, active/unused OAM inventory, lists, and 27 palettes.
+- `botwoon_manifest.py` proves Botwoon's shared head/body/tail/spit pixel owner,
+  bank-$B3 head and position history, bank-$86 body/spit projectile lists, bank-$8D
+  maps, health-speed cadence, active/unused inventories, and eight runtime palettes.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -283,9 +286,16 @@ the four health, eight body-death, and fourteen room-death palette rows. Product
 parity hashes complete body/stalk compositions, isolated body/projectile components,
 six guided body animations, and the spawner/spore sequences.
 
+`parityBotwoon` writes ignored `parity/reports/botwoon.json`. It pins the `$F293`
+header and shared `$B7:E300` / `$1800`-byte pixel owner, 30 active plus ten unused
+head maps, 46 active plus 52 unused projectile maps, 26 active plus five unused head
+lists, 18 active projectile lists, nine runtime tables/routines, and nine palette rows.
+Production parity hashes complete straight/curved/partial-history compositions,
+isolated components, all eight swim and spit directions, and the spit projectile.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn,
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

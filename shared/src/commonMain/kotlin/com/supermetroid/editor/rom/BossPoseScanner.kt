@@ -312,22 +312,22 @@ class BossPoseScanner(private val romParser: RomParser) {
                 intArrayOf(0x8DB70E, 0x8DB715, 0x8DB71C, 0x8DB723),
                 0x8DB72A,
                 0,
-                16
+                12
             ),
             BotwoonDirection(
                 "Up Right",
                 0xB3E37D,
                 intArrayOf(0x8DB6F2, 0x8DB6F9, 0x8DB700, 0x8DB707),
                 0x8DB75B,
-                -11,
-                11
+                -8,
+                8
             ),
             BotwoonDirection(
                 "Right",
                 0xB3E371,
                 intArrayOf(0x8DB6D6, 0x8DB6DD, 0x8DB6E4, 0x8DB6EB),
                 0x8DB754,
-                -16,
+                -12,
                 0
             ),
             BotwoonDirection(
@@ -335,8 +335,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                 0xB3E365,
                 intArrayOf(0x8DB6BA, 0x8DB6C1, 0x8DB6C8, 0x8DB6CF),
                 0x8DB74D,
-                -11,
-                -11
+                -8,
+                -8
             ),
             BotwoonDirection(
                 "Down",
@@ -344,22 +344,22 @@ class BossPoseScanner(private val romParser: RomParser) {
                 intArrayOf(0x8DB69E, 0x8DB6A5, 0x8DB6AC, 0x8DB6B3),
                 0x8DB746,
                 0,
-                -16
+                -12
             ),
             BotwoonDirection(
                 "Down Left",
                 0xB3E341,
                 intArrayOf(0x8DB666, 0x8DB66D, 0x8DB674, 0x8DB67B),
                 0x8DB73F,
-                11,
-                -11
+                8,
+                -8
             ),
             BotwoonDirection(
                 "Left",
                 0xB3E335,
                 intArrayOf(0x8DB64A, 0x8DB651, 0x8DB658, 0x8DB65F),
                 0x8DB738,
-                16,
+                12,
                 0
             ),
             BotwoonDirection(
@@ -367,8 +367,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                 0xB3E329,
                 intArrayOf(0x8DB62E, 0x8DB635, 0x8DB63C, 0x8DB643),
                 0x8DB731,
-                11,
-                11
+                8,
+                8
             ),
         )
 

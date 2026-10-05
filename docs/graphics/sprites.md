@@ -471,6 +471,23 @@ extended maps, and all 27 boss/room palette rows. Only the shared pixel payload 
 editable; placement, motion, and room palette effects stay read-only. See
 [`../bosses/spore_spawn.md`](../bosses/spore_spawn.md) and `paritySporeSpawn`.
 
+### Botwoon (Room `$D95E`, AI Bank `$B3`)
+
+Botwoon's `$F293` enemy draws only its head. Initialization spawns thirteen bank-`$86`
+enemy projectiles—twelve body segments and one tail—whose one-entry maps live in bank
+`$8D`. All parts plus the five-frame spit share the one `$1800`-byte `Tiles_Botwoon`
+owner at `$B7:E300`.
+
+The body is sampled from a `$400`-byte circular history of four-byte head positions.
+Health stages use `$18/$10/$0C` byte distances at speeds 2/3/4, which means 6/4/3
+history frames and the same 12-pixel steady segment cadence in every stage. Each link
+selects its own eight-way body orientation from the vector to the preceding link; the
+last projectile selects the matching tail map. The dedicated workspace renders this
+per-link behavior, all eight head directions, independent four-phase body motion,
+source-timed spits, the spit projectile, eight health palettes, and partial emergence.
+Only the shared pixel payload is editable. See
+[`../bosses/botwoon.md`](../bosses/botwoon.md) and `parityBotwoon`.
+
 ### Mini-Bosses
 
 | Boss | Species ID | HP | Dmg | AI Bank | GFX |

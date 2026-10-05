@@ -300,6 +300,23 @@ tasks.register<Exec>("paritySporeSpawn") {
     }
 }
 
+tasks.register<Exec>("parityBotwoon") {
+    group = "verification"
+    description = "Generate Botwoon's head, history-following body, projectile, palette, and animation recipe"
+    dependsOn(
+        "paritySymbols",
+        "parityAssets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/botwoon_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -323,6 +340,7 @@ tasks.register<Exec>("parityReport") {
         "parityRidley",
         "parityCrocomire",
         "paritySporeSpawn",
+        "parityBotwoon",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

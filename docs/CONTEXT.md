@@ -273,6 +273,16 @@ all ten split rainbow main/back-leg palettes. Only the unambiguous head owner is
 editable; HDMA beam shape, projectiles, room destruction, and target-driven neck
 motion remain separate engine-effect work.
 
+Botwoon's focused slice is source-pinned as a dynamic composite, not a long static
+enemy spritemap. The `$F293` enemy owns the head and a `$400`-byte circular position
+history; thirteen bank-`$86` projectiles draw twelve independently oriented body
+segments plus the tail using bank-`$8D` OAM. The `$18/$10/$0C` history distances are
+byte offsets into four-byte records, producing the same 12-pixel steady segment
+spacing at all three health speeds. `parityBotwoon` pins the shared `$B7:E300`
+`$1800`-byte pixel owner, head/projectile maps and lists, history routines, nine
+palette rows, and deterministic complete compositions/animations. See
+`docs/bosses/botwoon.md` for the safe-edit and simulation boundary.
+
 ---
 
 ## External References

@@ -687,6 +687,34 @@ def spore_spawn_checks(
     ]
 
 
+def botwoon_checks(
+    test_results: Dict[str, object], botwoon: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.BotwoonSourceParityTest",
+        "Botwoon head body history palettes projectiles and animations match source",
+    )
+    totals = botwoon["totals"]
+    return [
+        {
+            "id": "B-08",
+            "name": "Botwoon position-history source renderer",
+            "status": status,
+            "evidence": (
+                f"The {totals['assetByteCount']}-byte shared OBJ owner, "
+                f"{totals['activeHeadSpritemapCount']} active head maps, "
+                f"{totals['activeProjectileSpritemapCount']} active body/tail/spit maps, "
+                f"{totals['activeHeadInstructionListCount']} active head lists, and "
+                f"{totals['paletteCount']} palette rows are pinned. Production composes the enemy head "
+                "with twelve animated body projectiles and one tail by sampling the circular position "
+                "history at the source's health-dependent byte distances; every speed stage preserves "
+                "the same 12-pixel segment cadence."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -708,6 +736,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     mother_brain = report["motherBrain"]
     crocomire = report["crocomire"]
     spore_spawn = report["sporeSpawn"]
+    botwoon = report["botwoon"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -845,6 +874,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{spore_spawn['projectileSpritemapCount']}** stalk/spawner/spore projectile maps, and "
             f"**{spore_spawn['instructionListCount']}** lists / **{spore_spawn['frameCount']}** timed frames "
             "are source-pinned across banks $A5, $86, and $8D.",
+            f"- Botwoon: **{botwoon['activeHeadSpritemapCount']}** active head maps, "
+            f"**{botwoon['activeProjectileSpritemapCount']}** active body/tail/spit projectile maps, "
+            f"**{botwoon['guidedAnimationCount']}** guided animations / "
+            f"**{botwoon['guidedAnimationFrameCount']}** rendered frames, and "
+            f"**{botwoon['paletteCount']}** palette rows are source-pinned across banks $B3, $86, and $8D.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -858,7 +892,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -891,6 +925,7 @@ def main() -> int:
     mother_brain_path = report_dir / "mother-brain.json"
     crocomire_path = report_dir / "crocomire.json"
     spore_spawn_path = report_dir / "spore-spawn.json"
+    botwoon_path = report_dir / "botwoon.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -911,10 +946,11 @@ def main() -> int:
         or not mother_brain_path.is_file()
         or not crocomire_path.is_file()
         or not spore_spawn_path.is_file()
+        or not botwoon_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -939,6 +975,7 @@ def main() -> int:
     mother_brain = json.loads(mother_brain_path.read_text(encoding="utf-8"))
     crocomire = json.loads(crocomire_path.read_text(encoding="utf-8"))
     spore_spawn = json.loads(spore_spawn_path.read_text(encoding="utf-8"))
+    botwoon = json.loads(botwoon_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1473,6 +1510,7 @@ def main() -> int:
         + mother_brain_checks(tests, mother_brain)
         + crocomire_checks(tests, crocomire)
         + spore_spawn_checks(tests, spore_spawn)
+        + botwoon_checks(tests, botwoon)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1481,9 +1519,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 18,
+        "schemaVersion": 19,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1721,6 +1759,20 @@ def main() -> int:
             "guidedAnimationCount": spore_spawn["totals"]["guidedAnimationCount"],
             "paletteCount": spore_spawn["totals"]["paletteCount"],
             "aggregateHashes": spore_spawn["aggregateHashes"],
+        },
+        "botwoon": {
+            "headerCount": botwoon["totals"]["headerCount"],
+            "assetByteCount": botwoon["totals"]["assetByteCount"],
+            "activeHeadSpritemapCount": botwoon["totals"]["activeHeadSpritemapCount"],
+            "unusedHeadSpritemapCount": botwoon["totals"]["unusedHeadSpritemapCount"],
+            "activeProjectileSpritemapCount": botwoon["totals"]["activeProjectileSpritemapCount"],
+            "unusedProjectileSpritemapCount": botwoon["totals"]["unusedProjectileSpritemapCount"],
+            "activeHeadInstructionListCount": botwoon["totals"]["activeHeadInstructionListCount"],
+            "activeProjectileInstructionListCount": botwoon["totals"]["activeProjectileInstructionListCount"],
+            "guidedAnimationCount": botwoon["totals"]["guidedAnimationCount"],
+            "guidedAnimationFrameCount": botwoon["totals"]["guidedAnimationFrameCount"],
+            "paletteCount": botwoon["totals"]["paletteCount"],
+            "aggregateHashes": botwoon["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

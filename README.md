@@ -231,7 +231,14 @@ segment interpolation, and consolidates the spawner/spore components, four healt
 palettes, and eight body death palettes. `./gradlew paritySporeSpawn` pins the shared
 `$AC:9C00` pixel owner, all body/projectile maps, nine boss lists, and all 27 related
 sprite/room palette rows.
-Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, and Spore Spawn workspaces open on Animations and
+Botwoon now has a dedicated position-history renderer instead of the earlier rigid
+composite approximation. It combines the bank-`$B3` head with twelve animated body
+projectiles and one tail from banks `$86/$8D`, selects each link's orientation from
+its own history vector, preserves the independent body loop during spits, and exposes
+all eight health palettes. `./gradlew parityBotwoon` pins the shared `$B7:E300` pixel
+owner, active and unused head/projectile structures, critical history routines, and
+17 guided animations / 87 rendered frames.
+Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, and Botwoon workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

@@ -352,6 +352,10 @@ class EditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
 
+    val botwoonSprite = BotwoonSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val motherBrainSprite = MotherBrainSpriteEditorState(
         loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
     )
@@ -1076,6 +1080,70 @@ class EditorState(
     fun resetSporeSpawnObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
         sporeSpawnSprite.invalidate()
+    }
+
+    // ── Botwoon sprite delegates ────────────────────────────────────────
+
+    fun renderBotwoonComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+        mouthOpen: Boolean,
+    ) = botwoonSprite.renderComposition(romParser, definition, palette, mouthOpen)
+    fun renderBotwoonComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderComponent(romParser, definition, palette)
+    fun renderBotwoonSwimAnimation(
+        romParser: RomParser,
+        direction: com.supermetroid.editor.rom.BotwoonSpritemap.DirectionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSwimAnimation(romParser, direction, palette)
+    fun renderBotwoonSpitAnimation(
+        romParser: RomParser,
+        direction: com.supermetroid.editor.rom.BotwoonSpritemap.DirectionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSpitAnimation(romParser, direction, palette)
+    fun renderBotwoonSpitProjectileAnimation(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSpitProjectileAnimation(romParser, palette)
+    fun loadBotwoonSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedBotwoonCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyBotwoonObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) {
+        val colors = botwoonSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        botwoonSprite.invalidate()
+    }
+    fun hasCustomBotwoonObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID)
+    fun resetBotwoonObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID)
+        botwoonSprite.invalidate()
     }
 
     // ── Mother Brain sprite delegates ──────────────────────────────────
