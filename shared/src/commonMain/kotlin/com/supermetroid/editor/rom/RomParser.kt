@@ -2070,7 +2070,7 @@ class RomParser(
             0xEBBF to "Kihunter (gold)",
             0xEBFF to "Kihunter (gold, wings)",
             // ── Mother Brain ──
-            0xEC3F to "Mother Brain (phase 1)",
+            0xEC3F to "Mother Brain",
             0xEC7F to "Mother Brain (phase 2)",
             // ── Special / Remains ──
             0xED3F to "Torizo Corpse",

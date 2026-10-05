@@ -4,9 +4,42 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertEquals
-import java.io.File
 
 class KraidSpriteTest {
+
+    @Test
+    fun `complete body adds linked arm claw and foot without changing raw BG2 parity`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val kraid = KraidSpritemap(rp)
+        assertTrue(kraid.load())
+        val raw = kraid.renderFullBody()
+        val complete = kraid.renderCompleteBody()
+        assertNotNull(raw)
+        assertNotNull(complete)
+        val rawData = raw!!
+        val completeData = complete!!
+        assertEquals(rawData.width, completeData.width)
+        assertEquals(rawData.height, completeData.height)
+        assertTrue(!rawData.pixels.contentEquals(completeData.pixels))
+        assertTrue(
+            completeData.pixels.count { (it ushr 24) != 0 } > rawData.pixels.count { (it ushr 24) != 0 },
+            "linked OAM parts should add visible artwork to the BG2 body",
+        )
+        val armTouchesBody = (1 until rawData.height / 2).any { y ->
+            (1 until rawData.width - 1).any { x ->
+                val index = y * rawData.width + x
+                (completeData.pixels[index] ushr 24) != 0 &&
+                    (rawData.pixels[index] ushr 24) == 0 &&
+                    (-1..1).any { dy ->
+                        (-1..1).any { dx ->
+                            (dx != 0 || dy != 0) &&
+                                (rawData.pixels[(y + dy) * rawData.width + x + dx] ushr 24) != 0
+                        }
+                    }
+            }
+        }
+        assertTrue(armTouchesBody, "the live arm anchor should connect its forearm to the BG2 upper arm")
+    }
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
@@ -63,7 +96,8 @@ class KraidSpriteTest {
             val renderedData = rendered!!
             assertEquals(sourceData.frames.size, renderedData.frames.size, def.name)
             assertTrue(renderedData.frames.isNotEmpty(), def.name)
-            assertTrue(renderedData.frames.all { it.width == 512 && it.height == 512 }, def.name)
+            assertEquals(1, renderedData.frames.map { it.width to it.height }.distinct().size, def.name)
+            assertTrue(renderedData.frames.all { it.width >= 512 && it.height >= 512 }, def.name)
             assertTrue(renderedData.frames.all { frame -> frame.pixels.count { it != 0 } > 1000 }, def.name)
         }
     }

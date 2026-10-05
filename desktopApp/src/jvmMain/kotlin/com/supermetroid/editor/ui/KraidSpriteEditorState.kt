@@ -14,6 +14,9 @@ import com.supermetroid.editor.rom.TileGraphics
  */
 class KraidSpriteEditorState(
     private val customGfx: () -> TilesetGfxData,
+    private val loadEnemyTileData: (RomParser, Int) -> ByteArray? = { parser, speciesId ->
+        com.supermetroid.editor.rom.EnemySpriteGraphics.loadEnemyTileData(parser, speciesId)
+    },
     private val applyCustomGfx: (TileGraphics, Int) -> Unit,
     private val onDirty: () -> Unit,
 ) {
@@ -36,13 +39,21 @@ class KraidSpriteEditorState(
         paletteStage: KraidSpritemap.PaletteStageDef =
             KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
     ): KraidSpritemap.AssembledSprite? =
-        getSpritemap(romParser)?.renderFullBody(head, paletteStage)
+        getSpritemap(romParser)?.renderCompleteBody(
+            head,
+            paletteStage,
+            loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+        )
 
     fun renderFullBodyAnimation(
         romParser: RomParser,
         def: KraidSpritemap.HeadSequenceDef,
         paletteStage: KraidSpritemap.PaletteStageDef,
-    ) = getSpritemap(romParser)?.renderFullBodyAnimation(def, paletteStage)
+    ) = getSpritemap(romParser)?.renderFullBodyAnimation(
+        def,
+        paletteStage,
+        loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+    )
 
     fun renderOamAnimation(
         romParser: RomParser,

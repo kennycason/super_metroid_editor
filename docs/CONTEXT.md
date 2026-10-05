@@ -68,6 +68,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`bosses/phantoon.md`](bosses/phantoon.md) | Phantoon's four independently animated slots, exact 22-tilemap BG2 composition, eight health palettes, safe pixel ownership, and all behavior data tables (eye timers, flame patterns, figure-8 speeds, wave constants). | Species: `$E4BF` body, `$E4FF` eye, `$E53F` tentacles, `$E57F` mouth. Room `$CD13`, tileset `$05`, AI `$A7`. HP=2500. |
 | [`bosses/draygon.md`](bosses/draygon.md) | Draygon's four independent enemy slots, split room-BG2/enemy-OBJ ownership, exact OAM/tilemap/list inventories, health palettes, dedicated editor views, and read-only placement boundary. | Species: `$DE3F` body, `$DE7F` eye, `$DEBF` tail, `$DEFF` arms. Room `$DA60`, tileset `$1C`, AI `$A5`. HP=6000. |
 | [`bosses/kraid.md`](bosses/kraid.md)       | Kraid species IDs, stats/AI, exact 64×64 BG2/head recipe, palettes, linked OAM ownership, and safe edit boundary. **Note: $D2BF is Squeept, NOT Kraid.** | Species: $E2BF. Room $A59F, tileset $1A, AI $A7. HP=1000. |
+| [`bosses/mother_brain.md`](bosses/mother_brain.md) | Mother Brain's phase-1 room-art boundary, phase-2 room-BG/head/limb/body ownership, exact map/list inventories, neck geometry, health/rainbow palettes, and safe head-edit boundary. | Species: `$EC3F` head, `$EC7F` body. Room `$DD58`, tileset `$0E`, AI `$A9`. HP=18000. |
 
 ### Graphics & Sprites (`docs/graphics/`)
 
@@ -261,6 +262,16 @@ occurrences / 14 unique poses; never infer its poses by scanning shared Ridley b
 `$A6`. The editor hashes every rendered animation frame. Placement tilemaps remain
 read-only, and main Kraid's independently positioned OAM entities remain separate
 from the BG2 animation canvas.
+
+Mother Brain's focused graphics slice is also source-pinned. Phase 1 renders `$EC3F`
+head OAM over room-owned machinery; phase 2 combines tileset `$0E` torso tiles,
+`$B7:8000` head/neck, `$B7:9000` limbs, `$B0:E800` supplemental body pixels, five
+neck segments, and the independent head. `parityMotherBrain` pins 26 standard maps,
+16 active extended maps, six BG2 maps, and 49 body/head lists / 243 timed frames.
+The consolidated workspace exposes exact curated animations, four health pairs, and
+all ten split rainbow main/back-leg palettes. Only the unambiguous head owner is
+editable; HDMA beam shape, projectiles, room destruction, and target-driven neck
+motion remain separate engine-effect work.
 
 ---
 

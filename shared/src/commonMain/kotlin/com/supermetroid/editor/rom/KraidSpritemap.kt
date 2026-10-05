@@ -44,6 +44,17 @@ class KraidSpritemap(private val romParser: RomParser) {
         /** BG2 screen size 3: four 32x32 screen blocks presented as a 64x64 map. */
         const val BG2_STRIDE = 64
 
+        // The body origin in Kraid's live BG2 map follows MainAI_Kraid's scroll formula:
+        // X = collision half-width ($38), Y = $98. The linked entities are positioned
+        // relative to that body origin by their live AI, not merely by their population data.
+        private const val BODY_BG2_ORIGIN_X = 0x38
+        private const val BODY_BG2_ORIGIN_Y = 0x98
+        // MainAI_KraidArm overwrites the population's spawn position every frame.
+        private const val ARM_BODY_OFFSET_X = 0
+        private const val ARM_BODY_OFFSET_Y = -0x2C
+        private const val FOOT_BODY_OFFSET_X = 0
+        private const val FOOT_BODY_OFFSET_Y = 0x64
+
         val HEAD_TILEMAPS = listOf(
             HeadTilemapDef("Head 0 · mouth closed", 0xA797C8),
             HeadTilemapDef("Head 1 · mouth opening", 0xA79AC8),
@@ -338,6 +349,64 @@ class KraidSpritemap(private val romParser: RomParser) {
         )
     }
 
+    /**
+     * Render the representative complete live boss, including the independently drawn
+     * arm/claw and foot entities that are absent from the raw BG2 composition.
+     *
+     * [renderFullBody] intentionally remains the exact BG2 parity surface. This higher-level
+     * composition mirrors the live linked-entity AI anchors and Kraid's BG2 scroll anchor.
+     */
+    fun renderCompleteBody(
+        head: HeadTilemapDef = HEAD_TILEMAPS.first(),
+        paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
+        oamTileData: ByteArray? = null,
+    ): AssembledSprite? {
+        val body = renderFullBody(head, paletteStage) ?: return null
+        val tiles = oamTileData
+            ?: EnemySpriteGraphics.loadEnemyTileData(romParser, OAM_SEQUENCES.first().speciesId)
+            ?: return body
+        val arm = renderRepresentativeOamPart("arm-normal", tiles, paletteStage)
+        val foot = renderRepresentativeOamPart("foot-neutral", tiles, paletteStage)
+        val positionedParts = listOfNotNull(
+            arm?.let {
+                PositionedOamPart(
+                    it,
+                    BODY_BG2_ORIGIN_X + ARM_BODY_OFFSET_X - it.originX,
+                    BODY_BG2_ORIGIN_Y + ARM_BODY_OFFSET_Y - it.originY,
+                )
+            },
+            foot?.let {
+                PositionedOamPart(
+                    it,
+                    BODY_BG2_ORIGIN_X + FOOT_BODY_OFFSET_X - it.originX,
+                    BODY_BG2_ORIGIN_Y + FOOT_BODY_OFFSET_Y - it.originY,
+                )
+            },
+        )
+        val minX = minOf(0, positionedParts.minOfOrNull { it.left } ?: 0)
+        val minY = minOf(0, positionedParts.minOfOrNull { it.top } ?: 0)
+        val maxX = maxOf(body.width, positionedParts.maxOfOrNull { it.left + it.sprite.width } ?: body.width)
+        val maxY = maxOf(body.height, positionedParts.maxOfOrNull { it.top + it.sprite.height } ?: body.height)
+        val width = maxX - minX
+        val height = maxY - minY
+        val output = IntArray(width * height)
+        blitPixels(output, width, height, body.pixels, body.width, body.height, -minX, -minY)
+        positionedParts.forEach { part ->
+            overlayAt(
+                output, width, height, part.sprite,
+                part.left - minX,
+                part.top - minY,
+            )
+        }
+
+        return body.copy(
+            name = "Complete boss · ${head.name} · arm/claw + foot · ${paletteStage.name}",
+            width = width,
+            height = height,
+            pixels = output,
+        )
+    }
+
     /** Render only the 32x11 bytes the custom Kraid interpreter actually uploads. */
     fun renderHeadTilemap(def: HeadTilemapDef): AssembledSprite? {
         val tg = cachedTileGfx ?: return null
@@ -399,10 +468,12 @@ class KraidSpritemap(private val romParser: RomParser) {
     fun renderFullBodyAnimation(
         def: HeadSequenceDef,
         paletteStage: PaletteStageDef = PALETTE_STAGES.first { it.key == "health-8" },
+        oamTileData: ByteArray? = null,
     ): SpriteAnimation? {
         val animation = loadHeadAnimation(def) ?: return null
         val frames = animation.frames.mapIndexedNotNull { index, frame ->
-            val body = renderFullBody(frame.tilemap, paletteStage) ?: return@mapIndexedNotNull null
+            val body = renderCompleteBody(frame.tilemap, paletteStage, oamTileData)
+                ?: return@mapIndexedNotNull null
             SpriteAnimationFrame(
                 pixels = body.pixels,
                 width = body.width,
@@ -413,6 +484,73 @@ class KraidSpritemap(private val romParser: RomParser) {
         }
         return frames.takeIf { it.isNotEmpty() }?.let {
             SpriteAnimation(def.name, it, loop = def.key != "dying")
+        }
+    }
+
+    private fun renderRepresentativeOamPart(
+        sequenceKey: String,
+        tileData: ByteArray,
+        paletteStage: PaletteStageDef,
+    ): EnemySpritemap.AssembledSprite? {
+        val definition = OAM_SEQUENCES.firstOrNull { it.key == sequenceKey } ?: return null
+        val frame = loadOamAnimation(definition)?.frames?.firstOrNull() ?: return null
+        val partPalette = readOamPalette(paletteStage) ?: return null
+        return EnemySpritemap(romParser).renderRenderableFrame(
+            frame.renderableFrame,
+            tileData,
+            partPalette,
+        )
+    }
+
+    private data class PositionedOamPart(
+        val sprite: EnemySpritemap.AssembledSprite,
+        val left: Int,
+        val top: Int,
+    )
+
+    private fun overlayAt(
+        destination: IntArray,
+        destinationWidth: Int,
+        destinationHeight: Int,
+        sprite: EnemySpritemap.AssembledSprite,
+        left: Int,
+        top: Int,
+    ) {
+        for (sourceY in 0 until sprite.height) {
+            val destinationY = top + sourceY
+            if (destinationY !in 0 until destinationHeight) continue
+            for (sourceX in 0 until sprite.width) {
+                val destinationX = left + sourceX
+                if (destinationX !in 0 until destinationWidth) continue
+                val color = sprite.pixels[sourceY * sprite.width + sourceX]
+                if ((color ushr 24) != 0) {
+                    destination[destinationY * destinationWidth + destinationX] = color
+                }
+            }
+        }
+    }
+
+    private fun blitPixels(
+        destination: IntArray,
+        destinationWidth: Int,
+        destinationHeight: Int,
+        source: IntArray,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        left: Int,
+        top: Int,
+    ) {
+        for (sourceY in 0 until sourceHeight) {
+            val destinationY = top + sourceY
+            if (destinationY !in 0 until destinationHeight) continue
+            for (sourceX in 0 until sourceWidth) {
+                val destinationX = left + sourceX
+                if (destinationX !in 0 until destinationWidth) continue
+                val color = source[sourceY * sourceWidth + sourceX]
+                if ((color ushr 24) != 0) {
+                    destination[destinationY * destinationWidth + destinationX] = color
+                }
+            }
         }
     }
 

@@ -568,6 +568,38 @@ def draygon_checks(
     ]
 
 
+def mother_brain_checks(
+    test_results: Dict[str, object], mother_brain: Dict[str, object]
+) -> List[Dict[str, object]]:
+    test_status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.MotherBrainSourceParityTest",
+        "Mother Brain ownership compositions palettes and animations match source",
+    )
+    totals = mother_brain["totals"]
+    return [
+        {
+            "id": "B-05",
+            "name": "Mother Brain phase 1/2 source renderer",
+            # This slice completes sprite composition and palette ownership. HDMA,
+            # projectiles, room destruction, and target-driven neck AI remain effects work.
+            "status": "partial" if test_status == "pass" else "mismatch",
+            "evidence": (
+                f"Both headers and {totals['activeRoomStateCount']} live room states are pinned with "
+                f"{totals['headSpritemapCount']} head maps / {totals['headOamEntryCount']} OAM entries, "
+                f"{totals['bodyExtendedSpritemapCount']} active extended body maps / "
+                f"{totals['bodyExtendedChildCount']} child links, and {totals['bodyTilemapCount']} BG2 maps / "
+                f"{totals['bodyTilemapWordCount']} words. Production checks "
+                f"{totals['instructionListCount']} body/head lists / {totals['frameOccurrenceCount']} timed frames, "
+                f"{totals['healthPaletteRowCount'] // 2} health pairs, and "
+                f"{totals['rainbowPaletteStageCount']} split main/back-leg rainbow stages. "
+                "Phase-1 room art and phase-2's four physical pixel owners remain explicit; "
+                "remaining fight HDMA and projectile effects are not part of the sprite canvas."
+            ),
+        }
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -585,6 +617,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     kraid = report["kraid"]
     phantoon = report["phantoon"]
     draygon = report["draygon"]
+    mother_brain = report["motherBrain"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -704,6 +737,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{draygon['extendedSpritemapCount']}** extended maps, **{draygon['tilemapCount']}** BG2 maps, "
             f"and **{draygon['productionAnimationCount']}** production lists / "
             f"**{draygon['productionAnimationFrameCount']}** complete frame occurrences are source-pinned.",
+            f"- Mother Brain: **{mother_brain['headSpritemapCount']}** head maps, "
+            f"**{mother_brain['bodyExtendedSpritemapCount']}** extended body maps, "
+            f"**{mother_brain['bodyTilemapCount']}** BG2 maps, and "
+            f"**{mother_brain['instructionListCount']}** body/head lists / "
+            f"**{mother_brain['frameCount']}** timed frames are source-pinned.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -717,7 +755,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `mother-brain.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -746,6 +784,7 @@ def main() -> int:
     kraid_path = report_dir / "kraid.json"
     phantoon_path = report_dir / "phantoon.json"
     draygon_path = report_dir / "draygon.json"
+    mother_brain_path = report_dir / "mother-brain.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -762,10 +801,11 @@ def main() -> int:
         or not kraid_path.is_file()
         or not phantoon_path.is_file()
         or not draygon_path.is_file()
+        or not mother_brain_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Mother-Brain/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -786,6 +826,7 @@ def main() -> int:
     kraid = json.loads(kraid_path.read_text(encoding="utf-8"))
     phantoon = json.loads(phantoon_path.read_text(encoding="utf-8"))
     draygon = json.loads(draygon_path.read_text(encoding="utf-8"))
+    mother_brain = json.loads(mother_brain_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1157,6 +1198,47 @@ def main() -> int:
         if draygon["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"Draygon aggregate {field} does not match the pinned reference")
 
+    pinned_mother_brain_totals = {
+        "roomStateCount": "motherBrain.roomState.count",
+        "activeRoomStateCount": "motherBrain.activeRoomState.count",
+        "headerCount": "motherBrain.header.count",
+        "assetCount": "motherBrain.asset.count",
+        "headSpritemapCount": "motherBrain.headSpritemap.count",
+        "headOamEntryCount": "motherBrain.headOamEntry.count",
+        "bodyExtendedSpritemapCount": "motherBrain.bodyExtendedSpritemap.count",
+        "bodyExtendedChildCount": "motherBrain.bodyExtendedChild.count",
+        "bodyTilemapCount": "motherBrain.bodyTilemap.count",
+        "bodyTilemapRunCount": "motherBrain.bodyTilemap.run.count",
+        "bodyTilemapWordCount": "motherBrain.bodyTilemap.word.count",
+        "instructionListCount": "motherBrain.instructionList.count",
+        "frameOccurrenceCount": "motherBrain.frame.count",
+        "handlerOccurrenceCount": "motherBrain.handler.count",
+        "unusedHeadSpritemapCount": "motherBrain.unusedHeadSpritemap.count",
+        "unusedExtendedSpritemapCount": "motherBrain.unusedExtendedSpritemap.count",
+        "unusedTilemapCount": "motherBrain.unusedTilemap.count",
+        "unusedInstructionListCount": "motherBrain.unusedInstructionList.count",
+        "basePaletteCount": "motherBrain.basePalette.count",
+        "healthPaletteRowCount": "motherBrain.healthPaletteRow.count",
+        "rainbowPaletteStageCount": "motherBrain.rainbowPaletteStage.count",
+    }
+    for field, property_name in pinned_mother_brain_totals.items():
+        if int(mother_brain["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Mother Brain total {field} does not match the pinned reference")
+    pinned_mother_brain_hashes = {
+        "ownership": "motherBrain.ownership.aggregate.sha256",
+        "headers": "motherBrain.header.aggregate.sha256",
+        "assets": "motherBrain.asset.aggregate.sha256",
+        "headSpritemaps": "motherBrain.headSpritemap.aggregate.sha256",
+        "bodyExtendedSpritemaps": "motherBrain.bodyExtendedSpritemap.aggregate.sha256",
+        "bodyTilemaps": "motherBrain.bodyTilemap.aggregate.sha256",
+        "instructions": "motherBrain.instructionList.aggregate.sha256",
+        "unusedStructures": "motherBrain.unusedStructure.aggregate.sha256",
+        "palettes": "motherBrain.palette.aggregate.sha256",
+    }
+    for field, property_name in pinned_mother_brain_hashes.items():
+        if mother_brain["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Mother Brain aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -1194,6 +1276,7 @@ def main() -> int:
         + kraid_checks(tests, kraid)
         + phantoon_checks(tests, phantoon)
         + draygon_checks(tests, draygon)
+        + mother_brain_checks(tests, mother_brain)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1202,9 +1285,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 14,
+        "schemaVersion": 15,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-mother-brain-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1380,6 +1463,23 @@ def main() -> int:
             "healthPaletteStageCount": draygon["totals"]["healthPaletteStageCount"],
             "hitboxCount": draygon["totals"]["hitboxCount"],
             "aggregateHashes": draygon["aggregateHashes"],
+        },
+        "motherBrain": {
+            "roomStateCount": mother_brain["totals"]["roomStateCount"],
+            "activeRoomStateCount": mother_brain["totals"]["activeRoomStateCount"],
+            "headerCount": mother_brain["totals"]["headerCount"],
+            "assetCount": mother_brain["totals"]["assetCount"],
+            "headSpritemapCount": mother_brain["totals"]["headSpritemapCount"],
+            "headOamEntryCount": mother_brain["totals"]["headOamEntryCount"],
+            "bodyExtendedSpritemapCount": mother_brain["totals"]["bodyExtendedSpritemapCount"],
+            "bodyExtendedChildCount": mother_brain["totals"]["bodyExtendedChildCount"],
+            "bodyTilemapCount": mother_brain["totals"]["bodyTilemapCount"],
+            "bodyTilemapWordCount": mother_brain["totals"]["bodyTilemapWordCount"],
+            "instructionListCount": mother_brain["totals"]["instructionListCount"],
+            "frameCount": mother_brain["totals"]["frameOccurrenceCount"],
+            "healthPalettePairCount": mother_brain["totals"]["healthPaletteRowCount"] // 2,
+            "rainbowPaletteStageCount": mother_brain["totals"]["rainbowPaletteStageCount"],
+            "aggregateHashes": mother_brain["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

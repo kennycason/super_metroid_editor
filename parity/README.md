@@ -44,6 +44,9 @@ packaged application, project format, or ROM exporter.
 - `draygon_manifest.py` proves all four Draygon slots, tileset-$1C BG2 ownership,
   the separate shared OBJ payload, every OAM/tilemap structure, active and unused
   instruction lists, health palettes, thresholds, and all 47 hitboxes.
+- `mother_brain_manifest.py` proves Mother Brain's phase-1 room-art boundary and
+  phase-2 four-owner composition, both headers, every head/body/BG2 placement map,
+  all body/head instruction lists, four health pairs, and ten two-row rainbow stages.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -67,8 +70,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
-`parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`, and
-`parityPhantoon`, and `parityDraygon` tasks remain
+`parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`,
+`parityPhantoon`, `parityDraygon`, and `parityMotherBrain` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -238,9 +241,18 @@ Production renders ten static complete poses and all 39 frame-bearing lists / 25
 frame occurrences as four-slot compositions; deterministic hashes cover every
 rendered pose, palette, and frame.
 
+`parityMotherBrain` writes ignored `parity/reports/mother-brain.json`. It keeps the
+phase-1 head separate from room-owned glass/tube/machinery art, then proves the
+phase-2 tileset-$0E torso, `$B7:8000` head/neck, `$B7:9000` limbs, and `$B0:E800`
+supplement. The manifest pins 26 head maps, 16 active extended body maps, six BG2
+tilemaps, and 49 active lists / 243 timed frames. Production parity additionally
+checks every curated assembled animation against its named source records and hashes
+all 15 selectable palette stages, seven compositions, and rendered animation frames.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, and enemy-species-status chain and writes ignored
+enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Mother Brain,
+and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
 command coverage, pointer and alias counts, CRE consumers, decoded tile/metatile

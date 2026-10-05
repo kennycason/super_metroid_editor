@@ -1043,7 +1043,7 @@ class BossPoseScanner(private val romParser: RomParser) {
             return draygonRenderOptions(frame)
         }
         if (speciesId == SPECIES_MOTHER_BRAIN_BODY && frame is EnemySpritemap.RenderableFrame.Extended) {
-            return motherBrainBodyRenderOptions()
+            return motherBrainBodyRenderOptions(frame.spritemap.snesAddress)
         }
         if (speciesId == SPECIES_SPORE_SPAWN && frame is EnemySpritemap.RenderableFrame.Extended) {
             return EnemySpritemap.RenderOptions(reverseExtendedOamDrawOrder = true)
@@ -1085,16 +1085,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         )
     }
 
-    private fun motherBrainBodyRenderOptions(): EnemySpritemap.RenderOptions =
-        EnemySpritemap.RenderOptions(
-            normalizeExtendedTilemaps = true,
-            extendedTilemapOriginX = 0x10,
-            extendedTilemapOriginY = -0x10,
-            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
-            extendedOamOriginX = 0x31,
-            extendedOamOriginY = 0x15,
-            preserveExtendedChildDrawOrder = true,
-            extendedTilemapBlankTiles = setOf(0x0338)
+    private fun motherBrainBodyRenderOptions(snesAddress: Int): EnemySpritemap.RenderOptions =
+        MotherBrainSpritemap.bodyRenderOptions(
+            MotherBrainSpritemap.defaultBodyBg2CenterX(snesAddress),
         )
 
     private fun renderableEntryCount(

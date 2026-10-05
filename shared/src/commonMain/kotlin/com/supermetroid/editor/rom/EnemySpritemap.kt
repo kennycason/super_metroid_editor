@@ -89,6 +89,16 @@ class EnemySpritemap(private val romParser: RomParser) {
         val extendedOamOriginY: Int = 0,
         val preserveExtendedChildDrawOrder: Boolean = false,
         val reverseExtendedOamDrawOrder: Boolean = false,
+        /**
+         * The engine reads an extended tilemap child's X/Y fields while walking the
+         * mixed child list, but ProcessExtendedTilemap writes only to the destinations
+         * encoded in the tilemap itself. Some legacy previews positioned BG tilemaps
+         * from those otherwise-unused fields, so this remains opt-in per source-backed
+         * renderer until their boss-specific BG scroll origins are migrated.
+         */
+        val ignoreExtendedTilemapChildOffsets: Boolean = false,
+        /** Draw OAM priorities below this value behind BG tilemaps and the rest in front. */
+        val extendedTilemapOamPrioritySplit: Int? = null,
         val extendedTilemapBlankTiles: Set<Int> = setOf(0x0338)
     )
 
@@ -163,7 +173,8 @@ class EnemySpritemap(private val romParser: RomParser) {
         val hFlip: Boolean,
         val vFlip: Boolean,
         val is16x16: Boolean,
-        val paletteRow: Int = 0
+        val paletteRow: Int = 0,
+        val priority: Int = 0,
     )
 
     private data class TileDrawLayer(
@@ -635,6 +646,20 @@ class EnemySpritemap(private val romParser: RomParser) {
         oamCommands: List<TileDrawCommand>,
         tilemapCommands: List<TileDrawCommand>
     ): List<TileDrawLayer> {
+        options.extendedTilemapOamPrioritySplit?.let { split ->
+            // Extended OAM children are copied into ascending OAM slots in source order.
+            // Within one OBJ priority, lower OAM indices win overlap, so composite each
+            // group in reverse source order. The caller-provided split models the room's
+            // BG/OBJ priority boundary without pretending every boss uses the same setup.
+            val behind = oamCommands.filter { it.priority < split }.asReversed()
+            val inFront = oamCommands.filter { it.priority >= split }.asReversed()
+            return listOf(
+                TileDrawLayer(behind, usesExtendedTilemapData = false),
+                TileDrawLayer(tilemapCommands, usesExtendedTilemapData = true),
+                TileDrawLayer(inFront, usesExtendedTilemapData = false),
+            ).filter { it.commands.isNotEmpty() }
+        }
+
         if (options.preserveExtendedChildDrawOrder) {
             val layers = mutableListOf<TileDrawLayer>()
             var emittedTilemaps = false
@@ -682,7 +707,8 @@ class EnemySpritemap(private val romParser: RomParser) {
                 hFlip = entry.hFlip,
                 vFlip = entry.vFlip,
                 is16x16 = entry.is16x16,
-                paletteRow = entry.palRow
+                paletteRow = entry.palRow,
+                priority = entry.priority,
             )
         }
     }
@@ -721,8 +747,10 @@ class EnemySpritemap(private val romParser: RomParser) {
         val tileLayer = linkedMapOf<Pair<Int, Int>, TileDrawCommand>()
 
         for (run in positionedRuns) {
-            val y = options.extendedTilemapOriginY + run.child.yOffset + (run.row - minRow) * 8
-            val startX = options.extendedTilemapOriginX + run.child.xOffset + (run.col - minCol) * 8
+            val childX = if (options.ignoreExtendedTilemapChildOffsets) 0 else run.child.xOffset
+            val childY = if (options.ignoreExtendedTilemapChildOffsets) 0 else run.child.yOffset
+            val y = options.extendedTilemapOriginY + childY + (run.row - minRow) * 8
+            val startX = options.extendedTilemapOriginX + childX + (run.col - minCol) * 8
             for ((idx, tileWord) in run.run.tiles.withIndex()) {
                 val x = startX + idx * 8
                 val key = x to y

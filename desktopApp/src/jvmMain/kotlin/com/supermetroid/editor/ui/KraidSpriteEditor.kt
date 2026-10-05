@@ -299,7 +299,7 @@ private fun KraidComponentsTab(
             Text("Room: \$A59F · Tileset: \$1A · AI: \$A7", fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp))
-            Text(if (compositionsOnly) "Complete BG2 body states with their ROM head frames."
+            Text(if (compositionsOnly) "Complete boss states: BG2 body/head plus the linked arm/claw and foot."
                 else "Editable BG2 heads and the separately drawn linked OAM parts.",
                 fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
@@ -493,8 +493,9 @@ private fun KraidComponentDetail(
                 shape = RoundedCornerShape(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Source-backed full-body composition: the two upper and two lower BG2 screen " +
-                    "blocks with ${comp.head.name} copied over the upper-left block exactly as the engine does.",
+                Text("Source-backed complete composition: the two upper and two lower BG2 screen " +
+                    "blocks with ${comp.head.name}, plus representative linked arm/claw and front-foot " +
+                    "OAM at their live body-relative AI anchors.",
                     fontSize = 9.sp, color = Color(0xFF88CC88),
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
@@ -536,8 +537,9 @@ private fun KraidComponentDetail(
                 shape = RoundedCornerShape(6.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Preview framing trims transparent padding only; Export PNG keeps the exact " +
-                    "512×512 canvas. Edit a named head frame or open tileset \$1A for room-wide work.",
+                Text("Preview framing trims transparent padding only; Export PNG preserves the full " +
+                    "BG2 map and its linked OAM. Edit a named head frame " +
+                    "or open tileset \$1A for room-wide work.",
                     fontSize = 9.sp, color = Color(0xFF88CC88),
                     lineHeight = 12.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))

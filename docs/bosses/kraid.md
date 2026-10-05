@@ -94,12 +94,17 @@ environment resource, consumed by `InitAI_Kraid`, `DrawKraidsRoomBackground`, an
 
 SMEDIT's Kraid editor exposes these layers without pretending they are one giant OAM
 sprite. **Components** shows all four complete 512×512 live BG2 body states and the
-four editable head sources. **Animations** plays the four exact custom head lists over
-the complete body, offers ten paired health/hurt/death palette stages, and plays twelve
-source-bounded linked-OAM lists: five foot, four arm, two lint, and one nail sequence.
-Those lists contain 173 rendered frame occurrences. The separate canvases are
-intentional: the runtime places linked enemies in room space, and their independent AI
-does not provide one canonical, synchronized whole-boss timeline to merge with BG2.
+four editable head sources. The assembled body preview additionally places a
+representative arm/claw and front foot using their exact live AI anchors from Kraid's
+BG2 body origin. The arm AI overwrites its room-population position every frame with
+`body + (0,-$2C)`; the foot tracks `body + (0,+$64)`. Following those runtime anchors
+connects the forearm to the BG2 upper arm and keeps the front foot with the body.
+**Animations** plays the four exact custom head lists over that complete representative
+assembly, offers ten paired health/hurt/death palette stages, and separately plays
+twelve source-bounded linked-OAM lists: five foot, four arm, two lint, and one nail
+sequence. Those lists contain 173 rendered frame occurrences. The focused linked-part
+canvases remain intentional: the runtime advances those enemy slots independently and
+does not provide one canonical synchronized whole-boss timeline.
 
 `./gradlew parityKraid` regenerates the ignored `parity/reports/kraid.json` proof;
 the strict `parityReport` additionally checks production head/composite pixel hashes

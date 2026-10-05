@@ -3,7 +3,7 @@
 > **Parity status (2026-10-04):** All 164 species headers, raw `GRAPHADR`
 > ownership, and every named standard/extended enemy OAM structure are now
 > source/ROM verified through SMEDIT's production parsers. Instruction-list
-> control flow and boss composition beyond Kraid/Phantoon/Draygon are still partial. The
+> control flow and boss composition beyond Kraid/Phantoon/Draygon/Mother Brain are still partial. The
 > remaining boss ID/bank tables below contain known stale assignments; do not use
 > those tables for implementation until regenerated from exact source. See
 > [`../validation/README.md`](../validation/README.md).
@@ -31,8 +31,13 @@
   and the hurt flash. Its exact body-owned `$2000` OBJ source is editable and previews
   all named compositions live; flattened composite editing stays disabled because a
   visible pixel may belong to either owner.
+- Mother Brain is one consolidated `$EC3F` workspace. Phase 1 correctly renders the
+  enemy head without pretending that the room-owned glass case is sprite data. Phase 2
+  combines tileset `$0E` torso BG, `$B7:8000/$9000` head and limb OBJ, the `$B0:E800`
+  supplement, five neck segments, and independent palettes. Only the exact head owner
+  is editable; the four-owner body diagnostic remains read-only.
 
-The dedicated Kraid, Phantoon, and Draygon workspaces use one navigation model and
+The dedicated Kraid, Phantoon, Draygon, and Mother Brain workspaces use one navigation model and
 open at the richest available level: **Animations** are timed assembled behavior,
 **Compositions** are static assembled poses, **Components** are runtime pieces, and
 **Sources** are underlying pixel owners. A complex workspace without animations
@@ -321,7 +326,10 @@ compressed 64×32 room halves plus one of four 32×11 uploaded head frames, all
 referencing the complete 1024-tile, no-CRE tileset `$1A` graphics resource. SMEDIT
 now renders all four 64×64 live body states, four source head animations, ten paired
 runtime palette stages, and 12 bounded linked-OAM animations with 173 frame
-occurrences. It safely persists head pixel edits through the ordinary `varGfx["26"]`
+occurrences. The assembled composition now also places the representative linked
+arm/claw and front foot at their live body-relative AI anchors—`(0,-$2C)` and
+`(0,+$64)`, respectively—so the forearm connects and those pieces are no longer
+missing from the full-body preview. It safely persists head pixel edits through the ordinary `varGfx["26"]`
 tileset relocation path. The tilemaps themselves remain read-only placement data. See
 `docs/bosses/kraid.md` and `parityKraid` for the exact consumer, palette-state,
 hitbox, animation, and ownership manifest.
@@ -383,15 +391,40 @@ ownership, source inventories, and the current placement boundary.
 | Fireball | `$E6BF` | 20 | 0 | 8x8 | `$A8:8F8C` | `$A8:9058` | `$B1:9A00` |
 | Tail | `$E6FF` | 20 | 10 | 16x16 | `$A8:9379` | `$A8:96E3` | `$B1:9E00` |
 
-### Mother Brain (AI Bank $A8)
+### Mother Brain (Room `$DD58`, AI Bank `$A9`)
 
-| Entity | Species ID | HP | Dmg | Hitbox | Palette | Init AI | GFX |
-|--------|-----------|-----|------|--------|---------|---------|-----|
-| Phase 1 | `$E73F` | 20 | 10 | 16x16 | `$A8:959D` | `$A8:96E3` | `$B1:9E00` |
-| Phase 2 | `$E77F` | 300 | 60 | 16x16 | `$A8:99AC` | `$A8:9AEE` | `$B1:A600` |
-| Brain | `$E7BF` | 20 | 30 | 8x8 | `$A8:9F4F` | `$A8:A148` | `$B1:AA00` |
-| Bomb | `$E7FF` | 1600 | 0 | 16x16 | `$A8:AAFE` | `$A8:AB46` | `$B1:AE00` |
-| Laser | `$E83F` | 20 | 40 | 8x8 | `$A8:AC1C` | `$A8:AF8B` | `$B1:BC00` |
+| Runtime slot | Species ID | HP | Dmg | Hitbox | Palette | Init AI | Header transfer |
+|---|---:|---:|---:|---:|---|---|---|
+| Head / brain | `$EC3F` | 18000 | 120 | 16x16 | `$A9:9472` | `$A9:8705` | `$1000` from `$B7:8000` |
+| Body | `$EC7F` | 18000 | 120 | 8x8 | `$A9:9472` | `$A9:8687` | `$8600` field → `$0600` from `$B0:E800` |
+
+Phase 1 is the head enemy over room-owned glass, tubes, and machinery. Phase 2 is a
+split composition: tileset `$0E` physical tiles `$160..1FF` draw the torso; staged
+`$B7:8000/$9000` data supplies head/neck and limbs; `$B0:E800` supplies the small
+body-owned supplement; and bank `$A9` joins them through 16 active extended maps.
+Five runtime-positioned neck segments connect the independent head to the body.
+Standard limb OBJ coordinates are already relative to the body enemy origin. The BG2
+torso is the layer that needs scroll compensation: that origin lands at tilemap pixel
+`($20,$3E)` while standing, `($22,$3E)` while walking, and `($26,$3E)` in the shifted
+crouch/stand transition poses. SMEDIT follows those pose-specific runtime anchors so
+the rear leg, feet, torso, neck, and head remain one assembly throughout movement. It
+also mirrors `ProcessExtendedTilemap`: BG2 placement comes from destinations encoded
+inside each tilemap, while the surrounding extended-child X/Y fields are ignored.
+Treating those inert fields as pixel offsets splits the torso during walking and
+crouching. It
+also places priority-2, palette-row-3 rear-leg OBJ behind the high-priority BG2 torso
+and priority-3, palette-row-1 front limbs above it, matching the room's actual SNES
+layer split.
+
+The consolidated editor renders representative phase-1/2/3 compositions and 14
+source-bounded animations, including the exact 15-frame death-beam body list. It
+exposes four health pairs and all ten rainbow main/back-leg palette pairs. The head
+source is safely editable with live phase-1 and phase-2 references; the combined body
+sheet stays read-only because it crosses four owners. See
+[`../bosses/mother_brain.md`](../bosses/mother_brain.md) and `parityMotherBrain`.
+Walking and crouch/stand previews apply the source instruction handlers' cumulative
+enemy-position changes to the full assembly, so the BG2 torso, OBJ limbs, neck, and
+head travel together rather than leaving the upper body pinned in place.
 
 ### Mini-Bosses
 
@@ -416,11 +449,11 @@ bank `$A6`, which would incorrectly admit neighboring Ridley structures.
 
 ## Editor-Supported Enemies
 
-The sprite editor currently catalogs **122 source-valid species IDs** through
+The sprite editor currently catalogs **121 source-valid species IDs** through
 `EnemySpriteGraphics.EDITOR_ENEMIES`. The broader name catalog contains 150 of the
 164 source headers. Catalog membership does not itself prove successful OAM assembly;
 the source-complete status ledger below measures the actual production preview path.
-Phantoon and Draygon each appear once: their internal enemy slots remain fully
+Phantoon, Draygon, and Mother Brain each appear once: their internal enemy slots remain fully
 represented inside the dedicated boss editor instead of duplicating navigation rows.
 
 ### Categories
@@ -429,12 +462,12 @@ These are current UI groupings, not engine types or render guarantees:
 
 | UI category | Catalog entries |
 |---|---:|
-| Boss | 10 |
+| Boss | 9 |
 | Mini-Boss | 8 |
 | Space Pirate | 12 |
 | Mechanism | 6 |
 | Enemy (default) | 86 |
-| **Total** | **122** |
+| **Total** | **121** |
 
 The source's 164 headers include internal pieces, projectiles, cutscene entities,
 unused data, and other records the sprite editor does not currently catalog. These
@@ -442,10 +475,11 @@ coarse UI buckets are therefore navigation aids, not rendering-support claims.
 
 ### All-species rendering status
 
-The strict E-08 ledger starts with every source header rather than the 122-entry
+The strict E-08 ledger starts with every source header rather than the 121-entry
 sprite picker or bundled PNG filenames. It calls the same tile, palette, ordinary
 OAM, special OAM, boss-pose, Kraid BG2, and Phantoon BG2 production paths used by the
-editor, including Draygon's dedicated split BG2/OBJ renderer. A raw tile sheet never
+editor, including Draygon's split BG2/OBJ and Mother Brain's split room-BG/OBJ
+renderers. A raw tile sheet never
 counts as an assembled sprite.
 
 | Status | Count | Meaning |
@@ -484,7 +518,8 @@ frame count, category, and reason. Counts and the complete row hash are pinned i
 - **Special composition** — Boss-specific BG2, OAM, DMA, room-tile, and linked-slot paths;
   the old Phantoon/Kraid generic mappings are quarantined, while their source-backed
   component editors use normal tileset ownership; Draygon keeps its two pixel owners
-  explicit and placement read-only
+  explicit; Mother Brain keeps its four body owners explicit and exposes only the
+  unambiguous head sheet for editing; placement remains read-only
 - **Raw Tile Sheet** — A direct view is possible for nonempty `GRAPHADR` ranges, but
   raw ownership alone does not prove complete composition or conflict-free editing
 

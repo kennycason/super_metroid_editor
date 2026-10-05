@@ -177,7 +177,8 @@ Kraid additionally has a dedicated complete-composition proof: the no-CRE tilese
 head frames, mouth hitboxes, every health/hurt/death palette state, and the eight
 headers linked to `$AB:CC00`. The production editor renders all four live 64×64 BG2
 body states and their exact head sequences, ten selectable runtime palette stages,
-and 12 bounded linked-OAM animations (173 frame occurrences). Mini Kraid separately
+and a representative full assembly with the linked arm/claw and front foot. Twelve
+bounded linked-OAM animations cover 173 frame occurrences. Mini Kraid separately
 uses its six exact action lists (24 frame occurrences / 14 unique poses), avoiding the
 old shared-bank scan that mixed in Ridley data. Deterministic pixel hashes cover every
 one of those frames, while head pixel edits save through the ordinary complete-tileset
@@ -199,7 +200,16 @@ BG2/OBJ placement and flattened composite editing remain read-only.
 `./gradlew parityDraygon` runs the focused proof. Sprite navigation presents one
 Draygon entry and one Phantoon entry; their eye/tail/arms and eye/tentacle/mouth slots
 live inside those complete boss editors instead of appearing as duplicate top-level
-rows. Dedicated Kraid, Phantoon, and Draygon workspaces now open on Animations and
+rows.
+Mother Brain now has the same focused treatment. The editor keeps phase 1's enemy
+head distinct from its room-owned glass/machinery, while phase 2 assembles the
+tileset-$0E torso, staged head/limb OBJ, body supplement, five neck segments, and
+independent head. Four health pairs and all ten rainbow palette records are selectable;
+the exact head source is editable with live phase-1/2 references, while the combined
+four-owner body sheet is read-only. `./gradlew parityMotherBrain` pins both headers,
+all head/body/BG2 maps, 49 body/head lists / 243 timed frames, and deterministic
+composition/animation pixels.
+Dedicated Kraid, Phantoon, Draygon, and Mother Brain workspaces open on Animations and
 follow the same top-level drill-down: Animations, Compositions, Components, and
 Sources. If a future complex workspace has no animations it falls back to
 Compositions. Component selection always renders the selected piece; edit buttons

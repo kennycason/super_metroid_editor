@@ -342,8 +342,13 @@ class EditorState(
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
     )
 
+    val motherBrainSprite = MotherBrainSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val kraidSprite = KraidSpriteEditorState(
         customGfx = { project.customGfx },
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
         applyCustomGfx = ::applyCustomGfxToTileGraphics,
         onDirty = { dirty = true },
     )
@@ -949,6 +954,65 @@ class EditorState(
     fun resetDraygonObjSheet() {
         enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
         draygonSprite.invalidate()
+    }
+
+    // ── Mother Brain sprite delegates ──────────────────────────────────
+
+    fun renderMotherBrainComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderComposition(romParser, definition, palette)
+    fun renderMotherBrainAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderAnimation(romParser, definition, palette)
+    fun renderMotherBrainHead(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.HeadDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderHead(romParser, definition, palette)
+    fun renderMotherBrainBody(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.BodyDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderBody(romParser, definition, palette)
+    fun renderMotherBrainNeck(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderNeck(romParser, palette)
+    fun loadMotherBrainHeadSource(romParser: RomParser) = motherBrainSprite.loadHeadSourceSheet(romParser)
+    fun loadMotherBrainBodySource(romParser: RomParser) = motherBrainSprite.loadBodySourceSheet(romParser)
+    fun renderEditedMotherBrainHeadCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderEditedHeadCompositions(romParser, pixels, width, height, palette)
+    fun applyMotherBrainHeadSourceEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val palette = motherBrainSprite.getSpritemap(romParser)?.readPalette() ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = palette,
+        )
+        motherBrainSprite.invalidate()
+    }
+    fun hasCustomMotherBrainHeadSource() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID)
+    fun resetMotherBrainHeadSource() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID)
+        motherBrainSprite.invalidate()
     }
 
     // ── Kraid sprite delegates ────────────────────────────────────────────
@@ -2694,6 +2758,7 @@ class EditorState(
         // Clear cached sprite editor state so it reloads from the new ROM/project
         phantoonSprite.invalidate()
         draygonSprite.invalidate()
+        motherBrainSprite.invalidate()
         kraidSprite.invalidate()
 
         _roomEditOrder.clear()
