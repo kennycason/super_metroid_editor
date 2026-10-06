@@ -1,237 +1,155 @@
-# Samus Sprite System — ROM Data Reference
+# Samus sprite system
 
-Complete reference for Samus's sprite data in the Super Metroid ROM.
-Verified by test extraction (see `test-resources/samus_poses_sheet.png`).
+This page describes the source-backed Samus graphics path used by SMEDIT. The strict
+oracle is the pinned `sm_disassembly` checkout provisioned by the parity harness, not
+an inferred bank dump or a hand-maintained list of frame lengths.
 
----
+The complete machine-readable graph is generated at
+`parity/reports/samus.json` by `./gradlew paritySamus`. Generated reports, the clean
+ROM, rebuilt ROM, and extracted assets stay ignored and are never distributed.
 
-## Architecture Overview
+## Proven inventory
 
-Samus sprites use a **4-tier indirection system**:
+| Unit | Exact vanilla count |
+|---|---:|
+| Pose IDs | 253 (`$00..FC`) |
+| Unique animation definitions | 156 |
+| Unique definition frames | 1,143 |
+| Frame occurrences through pose aliases | 1,982 |
+| Unique animation-delay streams | 127 |
+| Top/bottom DMA tables | 24 (13 top, 11 bottom) |
+| Seven-byte DMA entries | 435 |
+| Matching extracted `samus-tiles` assets | 435 / 130,464 bytes |
+| Referenced spritemaps | 422 / 1,957 OAM entries |
+| Intentional null half-lookups | 273 |
+| Normal suit palettes | 3 |
 
+The previous documentation count of 418 tile assets was stale. All 435 DMA entries
+now have exactly one named extracted payload with the same source address and byte
+count, and all 435 payloads have exactly one DMA owner.
+
+## Runtime graph
+
+```text
+pose ID
+  +-> animation-delay pointer               $91:B010
+  +-> animation-definition pointer          $92:D94E
+  |     `-> frame: top table/entry + bottom table/entry (4 bytes)
+  |           `-> DMA definition            $92:D91E / $92:D938
+  |                 `-> source bytes in banks $9B..9F
+  +-> top/bottom spritemap indices          $92:9263 / $92:945D
+        `-> frame pointer in spritemap table $92:808D
+              `-> count + five-byte OAM entries
 ```
-Pose ID (0x00-0xFC)
-  → Frame Progression Table ($92:D94E)    [4 bytes per frame: top_table, top_entry, bot_table, bot_entry]
-    → DMA Transfer Tables ($92:D91E/D938) [7 bytes per entry: 3-byte source ptr + 2x 2-byte sizes]
-      → Raw 4bpp Tile Data (banks $9B-$9F) [32 bytes per 8x8 tile]
-```
 
-Separately, **spritemaps** define how to assemble tiles into the final sprite:
-```
-Animation ID
-  → Tilemap Pointer Tables ($92:945D / $92:9263)  [lower body / upper body]
-    → Tilemap List ($92:808D)                       [5 bytes per entry: x, y, tile#, palette, flips]
-```
+“Pose ID” is the clearest term for the 253 outer entries. Several IDs alias the same
+animation definition or delay stream, so calling all 253 independent animations is
+misleading.
 
----
+### Animation definitions and timing
 
-## Key ROM Addresses
+Each pointer at `$92:D94E + pose*2` selects a four-byte-per-frame definition. The
+four bytes are:
 
-### Pointer Tables (Bank $92)
+| Byte | Meaning |
+|---:|---|
+| 0 | Top DMA table index |
+| 1 | Top DMA entry index |
+| 2 | Bottom DMA table index |
+| 3 | Bottom DMA entry index |
 
-| Address | Name | Format | Description |
-|---------|------|--------|-------------|
-| `$92:D94E` | Frame Progression Pointers | 2-byte ptr × 253 animations | Indexed by animation ID → points to 4-byte frame entries |
-| `$92:D91E` | Top-Half DMA Table Ptrs | 2-byte ptr × 13 sets | Indexed by equipment config → points to DMA entry lists |
-| `$92:D938` | Bottom-Half DMA Table Ptrs | 2-byte ptr × 13 sets | Same as top, for lower body |
-| `$92:945D` | Lower Body Tilemap Index | 2-byte ptr × animations | Animation → tilemap pose list base |
-| `$92:9263` | Upper Body Tilemap Index | 2-byte ptr × animations | Animation → tilemap pose list base |
-| `$92:808D` | Tilemap Pointers | 2-byte ptr, variable | Pose → specific tilemap data |
+Definition length is the exact distance to the next named source definition; the
+last definition ends at `$92:ED24`. It is not a terminated byte stream. The old
+SMEDIT fallback that looked for a byte `>= $E0` could truncate valid definitions or
+invent frames and has been removed.
 
-### Frame Progression Entry (4 bytes)
+Timing is separate. `$91:B010` is a 253-entry pointer table selecting one of 127
+source-labelled delay streams. The parity manifest pins every stream's address,
+size, and bytes. Interpreting all bank-$91 timing control semantics for a fully
+faithful playback engine remains later work.
 
-Each pose's frame at `[$92:D94E + animation*2] + pose*4`:
+### DMA definitions and VRAM
 
-| Byte | Field | Description |
-|------|-------|-------------|
-| 0 | `top_tiles_table` | Index into top-half DMA table pointers (0-12) |
-| 1 | `top_tiles_entry` | Entry index within that DMA table |
-| 2 | `bot_tiles_table` | Index into bottom-half DMA table pointers (0-10) |
-| 3 | `bot_tiles_entry` | Entry index within that DMA table |
+`$92:D91E` contains 13 top-table pointers and `$92:D938` contains 11 bottom-table
+pointers. Each selected entry is seven bytes:
 
-### DMA Transfer Entry (7 bytes)
+| Bytes | Meaning |
+|---:|---|
+| 0..2 | 24-bit source address |
+| 3..4 | First-row byte count |
+| 5..6 | Second-row byte count |
 
-Each entry at `[$92:D91E/D938 + table*2] + entry*7`:
+The first bottom chunk targets tile `$08`, the second tile `$18`; the top chunks
+target tiles `$00` and `$10`. SMEDIT starts with the default Samus VRAM population,
+adds weapon tiles, applies bottom DMA, then top DMA—the same order used by the
+production decoder and parity hashes.
 
-| Bytes | Field | Description |
-|-------|-------|-------------|
-| 0-2 | `source_ptr` | 24-bit SNES address to raw tile data (typically in $9B-$9F) |
-| 3-4 | `row1_size` | Byte count for first DMA chunk (tiles starting at tile index `vram_offset`) |
-| 5-6 | `row2_size` | Byte count for second DMA chunk (tiles starting at tile index `0x10 + vram_offset`) |
+Seven top selections intentionally index past the source label used as their named
+table boundary and into the next contiguous definition. The engine performs raw
+pointer arithmetic, so the manifest records these as `topCrossesNamedTable` instead
+of rejecting valid vanilla behavior.
 
-**VRAM layout**: Offsets 0x00/0x08/0x10/0x18 are **tile indices** (byte offset = tile_index × 32).
-Top-half DMA writes to tile indices 0x00 and 0x10. Bottom-half writes to tile indices 0x08 and 0x18.
+### Spritemaps
 
-### Tilemap Entry (5 bytes)
+The top and bottom index tables begin at `$92:9263` and `$92:945D`. A frame lookup
+selects a 16-bit pointer from the table at `$92:808D`; zero means that half has no
+spritemap for that frame. A nonzero structure starts with a 16-bit entry count and
+then five-byte OAM entries:
 
-Each tilemap at the pose pointer, preceded by a 2-byte count:
+| Field | Meaning |
+|---|---|
+| Position word bit 15 | 16x16 when set, otherwise 8x8 |
+| Position word bits 8..0 | Signed 9-bit X offset |
+| Byte 2 | Signed 8-bit Y offset |
+| Attribute bits 8..0 | Tile number |
+| Attribute bits 11..9 | Palette |
+| Attribute bits 13..12 | Priority |
+| Attribute bits 14/15 | X/Y flip |
 
-| Bytes | Bits | Field | Description |
-|-------|------|-------|-------------|
-| 0-1 | 15 | `size` | 0 = 8x8, 1 = 16x16 |
-| 0-1 | 8:0 | `x_offset` | Signed X offset from Samus center (9-bit, sign-extended) |
-| 2 | 7:0 | `y_offset` | Signed Y offset from Samus center (8-bit, sign-extended) |
-| 3-4 | 15 | `y_flip` | Vertical flip |
-| 3-4 | 14 | `x_flip` | Horizontal flip |
-| 3-4 | 12:11 | `priority` | OAM priority (0-3) |
-| 3-4 | 11:9 | `palette` | OAM palette row (typically 4 for Samus) |
-| 3-4 | 8:0 | `tile` | VRAM tile number (9-bit) |
-
-For 16x16 tiles: composed of 4 8x8 tiles: `tile`, `tile+1`, `tile+16`, `tile+17`.
-
----
-
-## Tile Data Storage
-
-### Banks $9B-$9F: Raw 4bpp Tile Graphics
-
-| Bank | Used Bytes | Tiles | Content |
-|------|-----------|-------|---------|
-| `$9B` | 26,367 | ~824 | Samus tile data |
-| `$9C` | 29,954 | ~936 | Samus tile data |
-| `$9D` | 29,454 | ~920 | Samus tile data |
-| `$9E` | 28,846 | ~901 | Samus tile data |
-| `$9F` | 29,006 | ~906 | Samus tile data |
-| **Total** | **143,627** | **~4,488** | **~1,122 logical 16x16 sprites** |
-
-### Default VRAM Data
-
-| Address | Size | Description |
-|---------|------|-------------|
-| `$9A:D200` | 0x2000 (8KB) | Default VRAM population (256 tiles, rows 0x00-0x0F) |
-| `$9A:F200` | 0x100 | Standard weapon tiles (row 0x30) |
-| `$9A:F400` | 0x100 | Ice beam weapon tiles |
-| `$9A:F600` | 0x100 | Wave beam weapon tiles |
-| `$9A:F800` | 0x100 | Plasma beam weapon tiles |
-| `$9A:FA00` | 0x100 | Spazer beam weapon tiles |
-
-### VRAM Row Layout During Gameplay
-
-| Row | Content | Loaded By |
-|-----|---------|-----------|
-| 0x00-0x07 | Upper body tiles (row 1) | Top-half DMA, part 1 |
-| 0x08-0x0F | Lower body tiles (row 1) | Bottom-half DMA, part 1 |
-| 0x10-0x17 | Upper body tiles (row 2) | Top-half DMA, part 2 |
-| 0x18-0x1F | Lower body tiles (row 2) | Bottom-half DMA, part 2 |
-| 0x30-0x37 | Weapon tiles | Loaded from weapon-specific data |
-
----
-
-## Equipment Configurations (DMA Table Sets)
-
-### Top-Half Sets (13 entries at $92:D91E)
-
-| Set | Description | Typical Usage |
-|-----|-------------|---------------|
-| 0 | Power Suit standard | Standing, running |
-| 1 | Power Suit variant | Jumping, falling |
-| 2-8 | Various suit/pose combos | Equipment-dependent |
-| 9 | Shared large set | Multiple poses reference this |
-| 10-12 | Specialty sets | Morphball, screw attack, etc. |
-
-### Bottom-Half Sets (13 entries at $92:D938)
-
-Same structure, indexes lower body tiles.
-
----
+Production collects bottom entries, then top entries, and reverses the combined
+list for draw order. Parity compares this exact result for all 1,982 pose-frame
+occurrences, as well as the fully reconstructed VRAM hash for each occurrence.
 
 ## Palettes
 
-### Suit Palettes (16 colors each, BGR555)
+The normal 16-color BGR555 suit palettes begin at:
 
-| Address | Suit | Notes |
-|---------|------|-------|
-| `$9B:9400` | Power Suit | Default yellow/green/red visor |
-| `$9B:9820` | Varia Suit | Orange/red |
-| `$9B:9C40` | Gravity Suit | Purple/pink |
+| Suit | Address |
+|---|---:|
+| Power | `$9B:9400` |
+| Varia | `$9B:9520` |
+| Gravity | `$9B:9800` |
 
-### Special Palettes
+These correct the old `$9B:9820/$9B:9C40` values. Heat, charge, speed boost,
+shinespark, hurt, death, Crystal Flash, X-Ray, file-select, and other runtime palette
+programs are separate state machines and are not yet claimed complete by S-06.
 
-15 palette modes total: Standard, Loader, Heat, Charge, Speed Boost, Speed Squat,
-Shinespark, Screw Attack, Hyper Beam, Death Suit, Death Flesh, Crystal Flash,
-Door Transition, X-Ray, File Select.
+## What strict parity proves
 
----
+`SamusSourceParityTest` verifies the pinned totals and aggregate hashes, all source
+anchors, every DMA definition and extracted payload, every production-decoded frame's
+tilemap geometry and VRAM contents, all normal suit palette bytes, and that editor
+pose-family IDs remain in range. Death is deliberately absent from ordinary pose
+families because it uses a separate graphics path; `$E7/$E8` are not a generic death
+pair.
 
-## Animations & Poses
+This is strong structural coverage, not yet an independently reviewed visual atlas.
+The remaining work is:
 
-### Animation Count: 253 entries (156 unique)
+1. Interpret exact animation-delay control behavior in playback.
+2. Freeze reviewed Power/Varia/Gravity pixel goldens for every valid pose.
+3. Model special runtime palette programs.
+4. Add representative emulator captures for dynamic states.
+5. Store community sheets as project-owned sources, prove PNG round trips, and build
+   safe expanded-ROM injection. Read-only validation/preview is complete.
 
-### Major Animation Groups (from SpriteSomething manifest)
+See [Community Samus sprites](samus_community_sprites.md) for the SpriteSomething and
+Map Rando interchange contract and staged SMEDIT importer plan.
 
-| Animation | Directions | Description |
-|-----------|-----------|-------------|
-| Stand | 8 | Idle standing, all aim angles |
-| Run | 8 | Running animation (10 frames) |
-| Moonwalk | 6 | Backwards walking |
-| Crouch | 8 | Crouching, all aim angles |
-| Jump | 12 | Jumping, all aim angles |
-| Spin Jump | 2 | Left/right spin |
-| Space Jump | 2 | Space jump animation |
-| Screw Attack | 2 | Screw attack spin |
-| Wall Jump | 2 | Wall jump push-off |
-| Fall | 12 | Falling, all aim angles |
-| Morphball | varies | Rolling morphball |
-| Shinespark | 10 | Speed boost charge |
-| X-Ray | 10 | X-Ray visor sweep |
-| Grapple | varies | Grapple beam swing |
-| Death | varies | Death explosion sequence |
+## Code and evidence
 
-### Total Unique Images: 637 (from SpriteSomething layout.json)
-
-Top categories by frame count:
-- Run: 80 frames
-- Jump: 71 frames
-- Fall: 51 frames
-- Morphball: 48 frames
-- Crouch: 39 frames
-- Grapple: 38 frames
-- Moonwalk: 36 frames
-- Stand: 31 frames
-
----
-
-## Extraction Algorithm (Verified)
-
-```python
-def get_pose(rom, animation, pose):
-    # 1. Get frame progression entry
-    afp = rom.read16(0x92D94E + 2*animation)
-    top_tbl, top_ent, bot_tbl, bot_ent = rom[afp + 4*pose : afp + 4*pose + 4]
-
-    # 2. Get DMA writes (tile data)
-    dma = {}
-    for base, tbl, ent, vram_off in [(0x92D938, bot_tbl, bot_ent, 0x08),
-                                      (0x92D91E, top_tbl, top_ent, 0x00)]:
-        table_ptr = 0x920000 + rom.read16(base + 2*tbl)
-        src_ptr = rom.read24(table_ptr + 7*ent)
-        row1_sz = rom.read16(table_ptr + 7*ent + 3)
-        row2_sz = rom.read16(table_ptr + 7*ent + 5)
-        dma[vram_off]      = rom.bulk_read(src_ptr, row1_sz)
-        dma[0x10+vram_off] = rom.bulk_read(src_ptr + row1_sz, row2_sz)
-
-    # 3. Get tilemaps (lower body reversed, then upper body reversed)
-    tilemaps = []
-    for base in [0x92945D, 0x929263]:
-        idx = rom.read16(base + 2*animation)
-        ptr = 0x920000 + rom.read16(0x92808D + 2*idx + 2*pose)
-        count = rom.read16(ptr)
-        for i in range(count):
-            tilemaps.append(parse_5byte_entry(rom, ptr + 2 + 5*i))
-    tilemaps.reverse()
-
-    # 4. Build VRAM: start with default ($9A:D200), overlay DMA writes
-    # 5. Decode 4bpp tiles and render using tilemap x/y/flip/palette
-    return dma, tilemaps
-```
-
----
-
-## References
-
-- SM Disassembly: `~/code/super_metroid/sm_disassembly/src/bank_92.asm` (pose tables, DMA tables)
-- SM Disassembly: `~/code/super_metroid/sm_disassembly/src/bank_9E.asm` (tile data)
-- SpriteSomething: `~/code/super_metroid/MapRandomizer/SpriteSomething/` (full sprite editor reference)
-- SpriteSomething ROM extraction: `source/snes/metroid3/rom.py` (verified extraction algorithm)
-- SpriteSomething layout manifest: `resources/app/snes/metroid3/samus/manifests/layout.json` (637 images)
-- SpriteSomething animations: `resources/app/snes/metroid3/samus/manifests/animations.json` (44 animation groups)
+- Production decoder: `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SamusSpriteDecoder.kt`
+- Source manifest: `parity/samus_manifest.py`
+- Strict JVM parity: `shared/src/jvmTest/kotlin/com/supermetroid/editor/rom/SamusSourceParityTest.kt`
+- Pinned totals/hashes: `parity/reference.properties`
+- Harness usage: `parity/README.md`

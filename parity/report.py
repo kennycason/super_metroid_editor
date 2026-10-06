@@ -793,6 +793,96 @@ def metroid_checks(
     ]
 
 
+def samus_checks(
+    test_results: Dict[str, object], samus: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.SamusSourceParityTest",
+        "all Samus poses DMA assets spritemaps and base palettes match source",
+    )
+    totals = samus["totals"]
+    return [
+        {
+            "id": "S-01",
+            "name": "Samus pose and timing tables",
+            "status": status,
+            "evidence": (
+                f"All {totals['poseCount']} pose IDs resolve to "
+                f"{totals['uniqueAnimationDefinitionCount']} unique definitions / "
+                f"{totals['animationDefinitionFrameOccurrenceCount']} frame occurrences and "
+                f"{totals['uniqueAnimationDelayCount']} exact delay streams."
+            ),
+        },
+        {
+            "id": "S-02",
+            "name": "Samus top/bottom DMA graph",
+            "status": status,
+            "evidence": (
+                f"All {totals['dmaTableCount']} top/bottom tables and "
+                f"{totals['dmaEntryCount']} seven-byte entries are source-pinned, including "
+                "the engine's intentional contiguous-table indexing."
+            ),
+        },
+        {
+            "id": "S-03",
+            "name": "Samus spritemap indices",
+            "status": status,
+            "evidence": (
+                f"Every pose/frame top and bottom lookup is bounded; "
+                f"{totals['nullSpritemapLookupCount']} null half-lookups remain explicit."
+            ),
+        },
+        {
+            "id": "S-04",
+            "name": "Samus spritemap structures",
+            "status": status,
+            "evidence": (
+                f"All {totals['spritemapCount']} referenced spritemaps / "
+                f"{totals['spritemapEntryCount']} OAM entries match production-decoder geometry."
+            ),
+        },
+        {
+            "id": "S-05",
+            "name": "Samus DMA asset ownership",
+            "status": status,
+            "evidence": (
+                f"The {totals['dmaEntryCount']} DMA entries map bijectively to "
+                f"{totals['tileAssetCount']} extracted payloads / "
+                f"{totals['tileAssetByteCount']:,} bytes; no missing, duplicate, or overread owner remains."
+            ),
+        },
+        {
+            "id": "S-06",
+            "name": "Samus palette states",
+            "status": "partial" if status == "pass" else status,
+            "evidence": (
+                f"All {totals['paletteCount']} normal suit palettes are source-pinned. Runtime heat, "
+                "charge, speed, hurt, death, and other special palette programs remain to be modeled."
+            ),
+        },
+        {
+            "id": "S-07",
+            "name": "Samus all-pose render atlas",
+            "status": "partial" if status == "pass" else status,
+            "evidence": (
+                f"Production tilemap and reconstructed-VRAM hashes match for all "
+                f"{totals['animationDefinitionFrameOccurrenceCount']} pose-frame occurrences; "
+                "independently reviewed Power/Varia/Gravity pixel goldens remain queued."
+            ),
+        },
+        {
+            "id": "S-08",
+            "name": "Samus edit/export ownership",
+            "status": "uncovered" if status == "pass" else status,
+            "evidence": (
+                "Source ownership is now explicit, but editing and SpriteSomething-compatible "
+                "sheet import/export are not implemented yet."
+            ),
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -817,6 +907,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     botwoon = report["botwoon"]
     torizo = report["torizo"]
     metroid = report["metroid"]
+    samus = report["samus"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -970,6 +1061,9 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{metroid['electricitySpritemapCount']}** electricity maps are source-pinned across "
             f"**{metroid['spriteObjectFrameOccurrenceCount']}** independently timed companion frames; "
             f"**{metroid['fallthroughContinuationCount']}** source-labelled unused lists are proven runtime-active continuations.",
+            f"- Samus: **{samus['poseCount']}** poses / **{samus['frameOccurrenceCount']:,}** frame occurrences, "
+            f"**{samus['dmaEntryCount']}** exact DMA payloads, and **{samus['spritemapCount']}** spritemaps are "
+            "source-pinned through production decoding.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -986,7 +1080,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1022,6 +1116,7 @@ def main() -> int:
     botwoon_path = report_dir / "botwoon.json"
     torizo_path = report_dir / "torizo.json"
     metroid_path = report_dir / "metroid.json"
+    samus_path = report_dir / "samus.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1046,11 +1141,12 @@ def main() -> int:
         or not botwoon_path.is_file()
         or not torizo_path.is_file()
         or not metroid_path.is_file()
+        or not samus_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1078,6 +1174,7 @@ def main() -> int:
     botwoon = json.loads(botwoon_path.read_text(encoding="utf-8"))
     torizo = json.loads(torizo_path.read_text(encoding="utf-8"))
     metroid = json.loads(metroid_path.read_text(encoding="utf-8"))
+    samus = json.loads(samus_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -1599,6 +1696,35 @@ def main() -> int:
         if ordinary_enemy_animations["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"ordinary-enemy animation aggregate {field} does not match the pinned reference")
 
+    pinned_samus_totals = {
+        "poseCount": "samus.pose.count",
+        "uniqueAnimationDefinitionCount": "samus.animationDefinition.unique.count",
+        "uniqueAnimationDefinitionFrameCount": "samus.animationDefinition.uniqueFrame.count",
+        "animationDefinitionFrameOccurrenceCount": "samus.animationDefinition.frameOccurrence.count",
+        "uniqueAnimationDelayCount": "samus.animationDelay.unique.count",
+        "dmaTableCount": "samus.dmaTable.count",
+        "dmaEntryCount": "samus.dmaEntry.count",
+        "tileAssetCount": "samus.tileAsset.count",
+        "tileAssetByteCount": "samus.tileAsset.byte.count",
+        "spritemapCount": "samus.spritemap.count",
+        "spritemapEntryCount": "samus.spritemapEntry.count",
+        "nullSpritemapLookupCount": "samus.spritemapLookup.null.count",
+        "paletteCount": "samus.palette.count",
+    }
+    for field, property_name in pinned_samus_totals.items():
+        if int(samus["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"Samus total {field} does not match the pinned reference")
+    pinned_samus_hashes = {
+        "dma": "samus.dma.aggregate.sha256",
+        "animationDelays": "samus.animationDelay.aggregate.sha256",
+        "animations": "samus.animation.aggregate.sha256",
+        "spritemaps": "samus.spritemap.aggregate.sha256",
+        "palettes": "samus.palette.aggregate.sha256",
+    }
+    for field, property_name in pinned_samus_hashes.items():
+        if samus["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"Samus aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -1644,6 +1770,7 @@ def main() -> int:
         + botwoon_checks(tests, botwoon)
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
+        + samus_checks(tests, samus)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1652,9 +1779,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 22,
+        "schemaVersion": 23,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1933,6 +2060,21 @@ def main() -> int:
             "fallthroughContinuationCount": metroid["totals"]["fallthroughContinuationCount"],
             "paletteCount": metroid["totals"]["paletteCount"],
             "aggregateHashes": metroid["aggregateHashes"],
+        },
+        "samus": {
+            "poseCount": samus["totals"]["poseCount"],
+            "uniqueAnimationDefinitionCount": samus["totals"]["uniqueAnimationDefinitionCount"],
+            "frameOccurrenceCount": samus["totals"]["animationDefinitionFrameOccurrenceCount"],
+            "uniqueAnimationDelayCount": samus["totals"]["uniqueAnimationDelayCount"],
+            "dmaTableCount": samus["totals"]["dmaTableCount"],
+            "dmaEntryCount": samus["totals"]["dmaEntryCount"],
+            "tileAssetCount": samus["totals"]["tileAssetCount"],
+            "tileAssetByteCount": samus["totals"]["tileAssetByteCount"],
+            "spritemapCount": samus["totals"]["spritemapCount"],
+            "spritemapEntryCount": samus["totals"]["spritemapEntryCount"],
+            "nullSpritemapLookupCount": samus["totals"]["nullSpritemapLookupCount"],
+            "paletteCount": samus["totals"]["paletteCount"],
+            "aggregateHashes": samus["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],

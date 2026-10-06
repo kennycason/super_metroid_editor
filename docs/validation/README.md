@@ -288,14 +288,15 @@ timing, palette state, hitboxes, and edit/export ownership.
 
 | ID | Unit | Current status | Source-backed target |
 |---|---|---|---|
-| S-01 | Pose/animation tables in `$91/$92` | **Partial** | Enumerate every pose and frame transition from labels. |
-| S-02 | Top/bottom DMA definition tables | **Partial** | Assert `$92:D91E/$92:D938`, every table/entry, source, and byte count. |
-| S-03 | Top/bottom spritemap indices | **Partial** | Assert `$92:9263/$92:945D` and every pose lookup. |
-| S-04 | Spritemap table | **Partial** | Assert `$92:808D`, halves, offsets, flips, and forward-facing exceptions. |
-| S-05 | 418 extracted Samus tile assets | **Queued** | Associate every asset with its DMA entry and prove no missing/overread data. |
-| S-06 | Power/Varia/Gravity palettes | **Covered** | Match all normal, heat, charge, speed, hurt, and special palette states. |
-| S-07 | All-pose render atlas | **Partial** | Deterministic structural checks plus reviewed goldens for every valid pose. |
+| S-01 | Pose/animation tables in `$91/$92` | **Verified structure** | All 253 pose pointers, 156 definitions, 1,982 frame occurrences, and 127 delay streams are source-pinned; full timing-control interpretation remains. |
+| S-02 | Top/bottom DMA definition tables | **Verified** | All 24 tables / 435 entries, including intentional contiguous-table indexing, match source addresses and sizes. |
+| S-03 | Top/bottom spritemap indices | **Verified** | `$92:9263/$92:945D` and every pose-frame lookup are bounded and source-pinned. |
+| S-04 | Spritemap table | **Verified** | All 422 referenced structures / 1,957 entries at `$92:808D` match production geometry, flips, size, and ordering. |
+| S-05 | 435 extracted Samus tile assets | **Verified** | All 435 DMA entries and 435 named payloads form a byte-exact one-to-one ownership graph. |
+| S-06 | Power/Varia/Gravity palettes | **Partial** | The three normal suit rows are exact; heat, charge, speed, hurt, death, and other runtime programs remain. |
+| S-07 | All-pose render atlas | **Partial** | Tilemap and reconstructed-VRAM hashes cover all 1,982 frame occurrences; independently reviewed pixel goldens remain. |
 | S-08 | Samus edit/export | **Queued** | Define safe source ownership before enabling source- or ROM-backed pixel edits. |
+| S-09 | Community sheet import | **Partial** | The pinned decoder matches all 637 named regions for four real sheets, and the Samus workspace provides guided read-only validation, metadata, search, region/palette previews, and transparent-region signals. Project storage, round trip, and ROM injection remain. |
 
 ### Audio and remaining banks
 
@@ -370,11 +371,21 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 ### P3 — Prove Samus
 
-- [ ] **P3.1** Build the source-derived pose/DMA/spritemap manifest.
-- [ ] **P3.2** Associate all 418 extracted tile payloads with their consuming entries.
-- [ ] **P3.3** Validate every pose structurally and report invalid/missing frames.
-- [ ] **P3.4** Review and freeze full Power/Varia/Gravity pose atlases.
-- [ ] **P3.5** Add emulator smoke captures for representative dynamic states.
+- [x] **P3.1** Build the source-derived pose/DMA/spritemap manifest.
+- [x] **P3.2** Associate all 435 extracted tile payloads with their consuming entries.
+- [x] **P3.3** Validate every pose structurally and report invalid/missing frames.
+- [ ] **P3.4** Interpret bank-`$91` delay/control behavior, then review and freeze
+  full Power/Varia/Gravity pose atlases.
+- [ ] **P3.5** Model special runtime palette programs and add emulator smoke captures
+  for representative dynamic states.
+- [x] **P3.6** Pin the SpriteSomething layout contract and add non-mutating community
+  PNG validation/preview with clear per-region errors. The Samus workspace now adds
+  catalog metadata, compact validation, named-region search/groups, palette inspection,
+  transparent-region signals, and a clean return to ROM animations.
+- [ ] **P3.7** Store imported logical images as project-owned Samus source and prove a
+  SpriteSomething-compatible PNG semantic round trip.
+- [ ] **P3.8** Add guarded expanded-ROM injection with expected-before checks, exact
+  diff allowlists, and emulator validation.
 
 ### P4 — Prove rooms and exporters exhaustively
 
@@ -404,8 +415,10 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-10-05 | Completed read-only community Samus validation and preview | The bundled SpriteSomething schema defines 52 rows / 637 named regions / 570 DMA entries. `:shared:communitySamusTest` provisions four hash-pinned MapRandoSprites sheets—including TarThoron's Invisible Samus—and compares every decoded region with the independent upstream extractor. The Samus workspace adds guided file validation, catalog metadata, searchable groups, region/palette previews, and transparent-region signals without mutating project or ROM data. |
+| 2026-10-05 | Proved the vanilla Samus pose/DMA/spritemap graph | `paritySamus` pins 253 poses / 1,982 frame occurrences, 127 delay streams, all 435 DMA assets, 422 spritemaps, and three normal suit palettes. The production decoder matches every frame's geometry and reconstructed VRAM; the old 418-asset count and inferred frame-boundary scan were corrected. |
 | 2026-10-02 | Established exact source oracle | Asar build produced a byte-identical ROM with the hashes above. |
-| 2026-10-02 | Inventoried extracted assets | 1,130 `.bin` files; major groups include 418 Samus tiles, 246 level-data streams, 197 tile payloads, and 70 backgrounds. The initial filename-prefix count of 64 animated-tile payloads was later corrected to 68. |
+| 2026-10-02 | Inventoried extracted assets | 1,130 `.bin` files; the later DMA ownership pass proved 435 Samus tile payloads (the initial 418 filename-prefix count was incomplete), plus 246 level-data streams, 197 tile payloads, and 70 backgrounds. The initial 64 animated-tile count was likewise corrected to 68. |
 | 2026-10-02 | Ran focused SMEDIT baseline | 114 tests, 0 failures across selected room/graphics/sprite/Samus suites. |
 | 2026-10-02 | Found Phantoon legacy range mismatch | SMEDIT `$B7:970F/$B7:9808` falls inside exact `Tiles_MotherBrainLegs`; exact Phantoon tiles are `$AC:AA00`. |
 | 2026-10-02 | Found Kraid legacy range mismatch | SMEDIT `$B9:FA38` is exact `Background_Brinstar_1A_Kraid_Upper`, not pixel graphics. |

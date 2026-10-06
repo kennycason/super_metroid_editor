@@ -67,6 +67,12 @@ packaged application, project format, or ROM exporter.
 - `metroid_manifest.py` proves the normal Metroid's shared pixel owner, bank-$A3
   insides, bank-$B4 shell/electricity companions, exact independent timing, and the
   two source-labelled unused lists that are runtime-active through fallthrough.
+- `samus_manifest.py` proves all 253 pose IDs, definitions and delay streams, the
+  complete top/bottom DMA graph, every referenced spritemap, normal suit palettes,
+  and the one-to-one ownership of all 435 extracted Samus tile payloads.
+- `community_samus_bootstrap.py` provisions hash-pinned MapRandoSprites PNGs in the
+  ignored workspace for Kotlin/SpriteSomething decoder conformance; it never downloads
+  a ROM or commits community artwork.
 - `EnemySpeciesStatusSourceParityTest` probes every source header through production
   render paths and emits the complete assembled/tile-sheet/composite/nonvisual/failed ledger.
 - `report.py` aggregates live fixture, build, symbol, asset, and tagged-test evidence.
@@ -93,8 +99,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityEnemyInstructions`, `parityEnemyVerticalSlices`,
 `parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
-`parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`, and
-`parityMetroid` tasks remain
+`parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
+`parityMetroid`, and `paritySamus` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -110,6 +116,19 @@ latest upstream branch: parity results must be reproducible.
 
 The clean ROM remains user-supplied and is never downloaded. The pinned source clone
 contains upstream disassembly material under its own license and remains ignored.
+
+Community Samus sheet decoding has a separate public-fixture check and does not need a
+ROM or the disassembly:
+
+```bash
+./gradlew :shared:communitySamusTest
+```
+
+That task pins MapRandoSprites commit
+`91fdbf43a4ccf41fc0bd4153eb98c5189bd38a25`, verifies Vanilla, Invisible Samus,
+Outline Samus, and Zero Mission Samus file hashes, and compares all 637 decoded named
+regions against SpriteSomething-derived semantic fingerprints. The checkout remains
+under `parity/work/community/` and is ignored.
 
 `parityBuildReference` additionally clones the pinned Asar 1.81 source into
 `parity/work/asar`, builds it locally with CMake, extracts all disassembly assets from
@@ -331,9 +350,18 @@ body-child maps, 70 active bank-`$8D` projectile/effect maps, 112 active body li
 palette rows. Production parity hashes Bomb/Golden compositions, isolated components,
 all 13 selectable palette stages, and 206 body plus 30 projectile animation frames.
 
+`paritySamus` writes ignored `parity/reports/samus.json`. It pins 253 pose IDs,
+156 unique animation definitions / 1,982 frame occurrences, 127 exact delay streams,
+24 top/bottom DMA tables / 435 entries, 422 referenced spritemaps / 1,957 OAM
+entries, and the three normal suit palettes. Every DMA entry maps bijectively to one
+of 435 extracted `samus-tiles` payloads / 130,464 bytes. The tagged production test
+compares every frame's combined tilemap geometry and fully reconstructed VRAM hash;
+runtime timing control semantics, special palette programs, and independent visual
+goldens remain explicitly partial.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo,
+enemy-OAM, enemy-instruction, enemy-slice, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

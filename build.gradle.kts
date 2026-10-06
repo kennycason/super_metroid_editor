@@ -30,6 +30,13 @@ subprojects {
 
 val parityPython = providers.environmentVariable("PYTHON").orElse("python3")
 
+tasks.register<Exec>("communitySamusFixtures") {
+    group = "verification"
+    description = "Clone/fetch pinned, ignored MapRandoSprites sheets for decoder tests"
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/community_samus_bootstrap.py")
+}
+
 tasks.register<Exec>("parityBootstrap") {
     group = "verification"
     description = "Clone/fetch the pinned Super Metroid disassembly into parity/work"
@@ -368,6 +375,17 @@ tasks.register<Exec>("parityOrdinaryEnemyAnimations") {
     }
 }
 
+tasks.register<Exec>("paritySamus") {
+    group = "verification"
+    description = "Generate Samus pose, DMA, spritemap, palette, and asset-ownership parity"
+    dependsOn("paritySymbols", "parityAssets")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/samus_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -395,6 +413,7 @@ tasks.register<Exec>("parityReport") {
         "parityTorizo",
         "parityMetroid",
         "parityOrdinaryEnemyAnimations",
+        "paritySamus",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

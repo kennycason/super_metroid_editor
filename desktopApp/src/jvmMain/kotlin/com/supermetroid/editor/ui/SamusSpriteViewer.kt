@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
 import com.supermetroid.editor.rom.SamusSpriteDecoder
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
@@ -67,6 +68,28 @@ fun SamusSpriteViewer(
     var selectedAnimIdx by remember { mutableStateOf(0) }
     var exportStatus by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    val communityLoader = remember { CommunitySamusPreviewLoader(SamusCommunitySheetDecoder()) }
+    var communitySession by remember { mutableStateOf<CommunitySamusPreviewSession?>(null) }
+    var communityLoading by remember { mutableStateOf(false) }
+
+    fun openCommunitySheet() {
+        val file = chooseCommunitySamusPng() ?: return
+        scope.launch {
+            communityLoading = true
+            exportStatus = "Validating ${file.name}…"
+            val loaded = withContext(Dispatchers.IO) { communityLoader.load(file) }
+            communitySession = loaded
+            communityLoading = false
+            val errors = loaded.result.issues.count { it.severity == SamusCommunitySheetDecoder.Severity.ERROR }
+            val warnings = loaded.result.issues.count { it.severity == SamusCommunitySheetDecoder.Severity.WARNING }
+            exportStatus = if (loaded.result.isValid) {
+                "Validated ${file.name}: ${loaded.result.sheet?.images?.size ?: 0} named regions" +
+                    if (warnings > 0) " · $warnings warning${if (warnings == 1) "" else "s"}" else ""
+            } else {
+                "${file.name}: $errors validation error${if (errors == 1) "" else "s"}"
+            }
+        }
+    }
 
     // Global playback state — persists across group/variant toggles
     var isPlaying by remember { mutableStateOf(false) }
@@ -99,19 +122,60 @@ fun SamusSpriteViewer(
 
                 Spacer(Modifier.width(16.dp))
 
-                // Suit selector
-                for (suit in SamusSpriteDecoder.SuitType.entries) {
-                    FilterChip(
-                        selected = selectedSuit == suit,
-                        onClick = { selectedSuit = suit },
-                        label = { Text(suit.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 10.sp) },
-                        modifier = Modifier.height(28.dp)
-                    )
+                if (communitySession == null) {
+                    // Suit selector
+                    for (suit in SamusSpriteDecoder.SuitType.entries) {
+                        FilterChip(
+                            selected = selectedSuit == suit,
+                            onClick = { selectedSuit = suit },
+                            label = { Text(suit.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = 10.sp) },
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
+                } else {
+                    Surface(color = Color(0xFF1B3148), shape = RoundedCornerShape(4.dp)) {
+                        Text(
+                            "Community Sheet · Read-only",
+                            fontSize = 9.sp,
+                            color = Color(0xFF93C5FD),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
+                    }
                 }
 
                 Spacer(Modifier.weight(1f))
 
-                // Export All Samus Sprites button
+                Surface(
+                    modifier = Modifier.clickable(enabled = !communityLoading) { openCommunitySheet() },
+                    color = Color(0xFF263755),
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text(
+                        if (communityLoading) "Validating…" else if (communitySession == null) "Open Community Sheet…" else "Choose Another Sheet…",
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        color = Color(0xFF9CC7FF),
+                    )
+                }
+
+                if (communitySession != null) {
+                    Surface(
+                        modifier = Modifier.clickable {
+                            communitySession = null
+                            exportStatus = ""
+                        },
+                        color = Color(0xFF2A2D45),
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "ROM Animations",
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            color = Color(0xFFCCD2E7),
+                        )
+                    }
+                } else {
+                    // Export All Samus Sprites button
                 Surface(
                     modifier = Modifier.clickable {
                         val file = choosePngFile(
@@ -141,6 +205,7 @@ fun SamusSpriteViewer(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         color = Color(0xFF90D090))
                 }
+                }
             }
         }
 
@@ -150,6 +215,14 @@ fun SamusSpriteViewer(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp))
         }
 
+        val activeCommunitySession = communitySession
+        if (activeCommunitySession != null) {
+            CommunitySamusSheetPreview(
+                session = activeCommunitySession,
+                onChooseAnother = ::openCommunitySheet,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
         Row(modifier = Modifier.fillMaxSize()) {
             // ── Left: Animation group list ──
             Column(
@@ -330,6 +403,7 @@ fun SamusSpriteViewer(
                 }
             }
         }
+        }
     }
 }
 
@@ -371,6 +445,15 @@ private fun choosePngFile(dialogTitle: String, defaultName: String): File? {
     return chooser.selectedFile.let {
         if (!it.name.endsWith(".png", ignoreCase = true)) File(it.parentFile, "${it.name}.png") else it
     }
+}
+
+private fun chooseCommunitySamusPng(): File? {
+    val chooser = JFileChooser().apply {
+        dialogTitle = "Open SpriteSomething / MapRando Samus Sheet"
+        fileFilter = FileNameExtensionFilter("Community Samus PNG (876 × 2543)", "png")
+        isAcceptAllFileFilterUsed = false
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile else null
 }
 
 private fun chooseGifFile(dialogTitle: String, defaultName: String): File? {

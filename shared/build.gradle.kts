@@ -124,7 +124,7 @@ kotlin {
             // Source/ROM parity has its own fixture-generating parityTest task.
             // Running those 25 heavyweight tests again in the ordinary suite can
             // exhaust the test worker while building the all-species render atlas.
-            useJUnitPlatform { excludeTags("parity") }
+            useJUnitPlatform { excludeTags("parity", "community-samus") }
             systemProperty("smedit.expandedRomFixture", System.getProperty("smedit.expandedRomFixture", ""))
             systemProperty("smedit.expandedRomRenderOut", System.getProperty("smedit.expandedRomRenderOut", ""))
         }
@@ -184,10 +184,28 @@ tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
         rootProject.tasks.named("parityTorizo"),
         rootProject.tasks.named("parityMetroid"),
         rootProject.tasks.named("parityOrdinaryEnemyAnimations"),
+        rootProject.tasks.named("paritySamus"),
     )
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath
     useJUnitPlatform { includeTags("parity") }
     systemProperty("smedit.requireParityFixtures", "true")
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<org.gradle.api.tasks.testing.Test>("communitySamusTest") {
+    group = "verification"
+    description = "Validate the Kotlin decoder against pinned MapRandoSprites PNGs"
+    dependsOn(
+        tasks.named("jvmTestClasses"),
+        rootProject.tasks.named("communitySamusFixtures"),
+    )
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("community-samus") }
+    systemProperty(
+        "smedit.communitySamusDir",
+        rootProject.file("parity/work/community/MapRandoSprites/samus_sprites").absolutePath,
+    )
     outputs.upToDateWhen { false }
 }

@@ -162,6 +162,16 @@ structures. It also inventories all 1,139 named enemy instruction lists and repo
 every frame the current best-effort preview scanner misses. These checks are
 deliberately source-backed: plausible-looking renders are not counted as parity
 unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
+Samus now has the same source-backed foundation: all 253 pose IDs / 1,982 frame
+occurrences, 127 delay streams, 435 DMA payloads, 422 referenced spritemaps, and the
+three normal suit palettes are pinned. Every frame is checked through the production
+decoder for exact tilemap geometry and reconstructed VRAM; reviewed pose goldens,
+special palette programs, and community-sheet editing remain the next layer. The
+community path now has an exact non-mutating Kotlin decoder for SpriteSomething's
+876 x 2543 PNG contract: four pinned MapRandoSprites sheets, including Invisible
+Samus, match the upstream extractor across all 637 named regions. The Samus workspace
+provides guided read-only metadata, validation, search, region, and palette previews;
+project-owned round trips and guarded ROM injection remain staged follow-ups.
 Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
 header → graphics/palette → instruction path → OAM composition → rendered-animation
 vertical slices. Puyo, Owtch, Choot, both Sbug/roach headers, the two-header Evir

@@ -85,32 +85,31 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
     }
 
     /**
-     * Get the number of frames (poses) for an animation.
-     * Uses the gap to the next animation's pointer to determine the boundary,
-     * since SM's frame tables share overlapping data with no terminators.
+     * Get the number of source-defined graphics frames for a pose.
+     *
+     * These four-byte definition lists have no terminators. Their exact boundaries
+     * are the next distinct source pointer (or `$92:ED24` for the final list).
+     * This is deliberately separate from bank `$91`'s runtime delay/control stream:
+     * externally driven poses such as facing forward and grapple can expose many
+     * graphics frames even though their ordinary delay loop is shorter.
      */
     fun getFrameCount(animationId: Int): Int {
         if (animationId < 0 || animationId >= animationCount) return 0
         val fpPtrOff = romParser.snesToPc(FRAME_PROG_PTRS + 2 * animationId)
         val currentPtr = readU16(rom, fpPtrOff)
 
-        // Binary search for current pointer, use next pointer to compute frame count
+        // Binary search for current pointer, use the next exact definition boundary.
         val idx = sortedFramePointers.binarySearch(currentPtr)
-        if (idx >= 0 && idx + 1 < sortedFramePointers.size) {
-            val nextPtr = sortedFramePointers[idx + 1]
-            val frames = (nextPtr - currentPtr) / 4
-            if (frames in 1..64) return frames
+        if (idx >= 0) {
+            val nextPtr = if (idx + 1 < sortedFramePointers.size) {
+                sortedFramePointers[idx + 1]
+            } else {
+                ANIMATION_DEFINITIONS_END and 0xFFFF
+            }
+            val byteCount = nextPtr - currentPtr
+            if (byteCount > 0 && byteCount % 4 == 0) return byteCount / 4
         }
-
-        // Fallback: scan for control bytes (>= 0xE0) or end-of-data
-        val tableAddr = romParser.snesToPc(0x920000 + currentPtr)
-        var count = 0
-        while (count < 64) {
-            val entry0 = rom[tableAddr + count * 4].toInt() and 0xFF
-            if (entry0 >= 0xE0) break
-            count++
-        }
-        return count.coerceAtLeast(1)
+        return 0
     }
 
     // ─── Pose extraction ─────────────────────────────────────────────
@@ -277,8 +276,9 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
 
             val pixels = renderPose(pose, palette, renderSize, renderSize)
 
-            // Skip empty frames — these are overcounted garbage from getFrameCount().
-            // Valid animation frames always have visible pixels.
+            // Some exact source-definition slots intentionally have no spritemap for
+            // either half (they are selected or advanced by external state logic).
+            // Keep them in parity evidence, but omit them from this visual preview.
             val nonTransparent = pixels.count { (it ushr 24) > 0 }
             if (nonTransparent == 0) continue
 
@@ -341,23 +341,39 @@ class SamusSpriteDecoder(private val romParser: RomParser) {
         internal const val UPPER_TILEMAP_INDEX = 0x929263
         internal const val LOWER_TILEMAP_INDEX = 0x92945D
         internal const val TILEMAP_PTRS = 0x92808D
+        internal const val ANIMATION_DELAY_PTRS = 0x91B010
+        internal const val ANIMATION_DEFINITIONS_END = 0x92ED24
 
-        /** Named animation groups with their animation IDs and descriptions */
+        /**
+         * Source-correct pose families, named to match SpriteSomething/community usage.
+         * Death is intentionally absent: it uses a separate death-sequence graphics path,
+         * not pose IDs E7/E8 (which are landing-from-jump poses).
+         */
         val ANIMATION_GROUPS = listOf(
-            AnimGroup("Stand", listOf(0, 1, 2, 3, 4, 5, 6, 7, 8), "Idle standing"),
-            AnimGroup("Run", listOf(9, 10, 11, 12, 13, 14, 15, 16, 17), "Running"),
-            AnimGroup("Jump", listOf(0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24), "Jumping"),
-            AnimGroup("Spin Jump", listOf(0x25, 0x26), "Spin jump L/R"),
-            AnimGroup("Screw Attack", listOf(0x29, 0x2A), "Screw attack L/R"),
-            AnimGroup("Wall Jump", listOf(0x2B, 0x2C), "Wall jump L/R"),
-            AnimGroup("Fall", listOf(0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38), "Falling"),
-            AnimGroup("Crouch", listOf(0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41), "Crouching"),
-            AnimGroup("Morph Ball", listOf(0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x1D5), "Morph ball"),
-            AnimGroup("Moonwalk", listOf(0x55, 0x56, 0x57, 0x58, 0x59, 0x5A), "Moonwalk backwards"),
-            AnimGroup("Shinespark", listOf(0x69, 0x6A, 0x6B, 0x6C, 0x6D), "Speed boost / shinespark"),
-            AnimGroup("Grapple", listOf(0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C), "Grapple beam"),
-            AnimGroup("Crystal Flash", listOf(0xDB,), "Crystal flash"),
-            AnimGroup("Death", listOf(0xE7, 0xE8), "Death sequence"),
+            AnimGroup("Facing Forward", listOf(0x00, 0x9B), "Power and Varia/Gravity loading poses"),
+            AnimGroup("Stand", listOf(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08), "Standing and aiming"),
+            AnimGroup("Run", listOf(0x09, 0x0A, 0x0B, 0x0C, 0x0F, 0x10, 0x11, 0x12), "Running and aiming"),
+            AnimGroup("Moonwalk", listOf(0x49, 0x4A, 0x75, 0x76, 0x77, 0x78), "Moonwalking and aiming"),
+            AnimGroup("Crouch", listOf(0x27, 0x28, 0x71, 0x72, 0x73, 0x74, 0x85, 0x86), "Crouching and aiming"),
+            AnimGroup("Jump", listOf(0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x4D, 0x4E, 0x51, 0x52, 0x69, 0x6A, 0x6B, 0x6C), "Normal jump variants"),
+            AnimGroup("Spin Jump", listOf(0x19, 0x1A), "Spin jump right/left"),
+            AnimGroup("Space Jump", listOf(0x1B, 0x1C), "Space jump right/left"),
+            AnimGroup("Screw Attack", listOf(0x81, 0x82), "Screw attack right/left"),
+            AnimGroup("Wall Jump", listOf(0x83, 0x84), "Wall jump right/left"),
+            AnimGroup("Fall", listOf(0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x67, 0x68, 0x6D, 0x6E, 0x6F, 0x70), "Falling and aiming"),
+            AnimGroup("Morph Transition", listOf(0x37, 0x38, 0x3D, 0x3E), "Morph and unmorph transitions"),
+            AnimGroup("Morph Ball — Stationary", listOf(0x1D, 0x41, 0x79, 0x7A), "Normal and spring-ball stationary poses"),
+            AnimGroup("Morph Ball — Moving", listOf(0x1E, 0x1F, 0x7B, 0x7C), "Normal and spring-ball rolling poses"),
+            AnimGroup("Morph Ball — Airborne", listOf(0x31, 0x32, 0x7D, 0x7E, 0x7F, 0x80), "Normal and spring-ball airborne poses"),
+            AnimGroup("Damage Boost", listOf(0x4F, 0x50), "Damage boost left/right"),
+            AnimGroup("Knockback", listOf(0x53, 0x54), "Knockback left/right"),
+            AnimGroup("Grapple", (0xA8..0xB9).toList(), "Grapple poses, swing, and wall hang"),
+            AnimGroup("Shinespark", (0xC9..0xCE).toList(), "Horizontal, vertical, and diagonal shinespark"),
+            AnimGroup("Crystal Flash", listOf(0xD3, 0xD4, 0xD7, 0xD8), "Crystal flash and ending"),
+            AnimGroup("X-Ray", listOf(0xD5, 0xD6, 0xD9, 0xDA), "Standing and crouched X-Ray"),
+            AnimGroup("Landing", listOf(0xA4, 0xA5, 0xA6, 0xA7, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7), "Normal, spin, aimed, and firing landings"),
+            AnimGroup("Grabbed by Draygon", (0xBA..0xBE).toList() + (0xEC..0xF0).toList(), "Held and struggling poses"),
+            AnimGroup("Drained", listOf(0xE8, 0xE9, 0xEA, 0xEB), "Mother Brain drain sequence poses"),
         )
 
         /** Quick lookup: first animation of each group for preview */

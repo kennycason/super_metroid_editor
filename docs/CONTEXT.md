@@ -78,6 +78,8 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`graphics/tile_pipeline.md`](graphics/tile_pipeline.md) | **Complete tile rendering pipeline.** Tileset pointer table ($8F:E6A2), 2bpp/4bpp tile decompression, metatile definitions, CRE tiles, animated-tile DMA, item-PLM graphics/slots, palette loading, VRAM layout.                                                                                          | Before modifying TileGraphics, TileDecoder, room tile animation, or item graphics |
 | [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 species headers, raw `GRAPHADR` ownership/aliases, all named standard/extended OAM structures and tilemaps, measured coverage for all 1,139 named enemy instruction lists, complete ordinary-enemy visual slices and explicit helper-selected routes, all-species production render status, BG2 rendering, enemy GFX set 4-entry hardware limit, and remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
 | [`graphics/ordinary_enemy_source_routes.md`](graphics/ordinary_enemy_source_routes.md) | Exact Puyo/Owtch/Choot/Sbug/Evir/Magdollite/Beetom/Kihunter/Sidehopper-corpse helper-selected action routes, multi-slot and split-VRAM caveats, source addresses, and edit/read-only boundaries. | When adding an ordinary enemy that the generic init scanner cannot route |
+| [`graphics/samus_sprites.md`](graphics/samus_sprites.md) | Source-backed Samus pose, delay, DMA, spritemap, VRAM, and normal-palette graph; exact parity counts and remaining timing/palette/golden gaps. | Before modifying `SamusSpriteDecoder`, pose playback, or Samus graphics ownership |
+| [`graphics/samus_community_sprites.md`](graphics/samus_community_sprites.md) | SpriteSomething/MapRandoSprites PNG contract, exact Kotlin decoder/fixtures, read-only Samus-workspace preview, and the staged round-trip/ROM-injection plan. | Before modifying community Samus sheet decoding, preview, import/export, or fixture policy |
 
 ### Reference Data (`docs/reference/`)
 
@@ -326,7 +328,9 @@ companion frame occurrences / 270 ticks and deterministic complete renders. See
 | SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
 | Exact SM disassembly          | `parity/work/sm_disassembly/` — ignored, pinned checkout provisioned by `./gradlew parityBootstrap`; override with `SMEDIT_DISASSEMBLY_DIR` |
 | SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
-| MapRandomizer                 | `~/code/super_metroid/MapRandomizer/` — Door handling, room geometry                                      |
+| MapRandomizer                 | https://github.com/blkerby/MapRandomizer — room geometry and SpriteSomething-based Samus patch pipeline   |
+| MapRandoSprites               | https://github.com/blkerby/MapRandoSprites — community Samus PNG catalog                                   |
+| SpriteSomething               | https://github.com/Artheau/SpriteSomething — standalone Samus sprite import/injection tool                  |
 | SM Mod 3.0.80                 | `docs/Super Metroid Mod 3.0.80/SMMM_black.html` — Community reference (ground truth for species IDs)      |
 | SMILE source                  | `~/code/super_metroid/smile/` — Original SM editor                                                        |
 | Local SM reference root       | `~/code/sm/` — contains the exact disassembly/build toolchain and other local SM references; inspect it before engine/audio work |
