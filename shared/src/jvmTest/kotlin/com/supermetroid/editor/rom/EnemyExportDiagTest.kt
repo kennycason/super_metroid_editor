@@ -154,15 +154,15 @@ class EnemyExportDiagTest {
         val changes = listOf(
             FakeChange("add", 0xE9FF, 1056, 256),
             FakeChange("add", 0xDCFF, 1264, 144),
-            FakeChange("add", 0xD75F, 1216, 192),
-            FakeChange("remove", 0xD75F, 1216, 192),
+            FakeChange("add", 0xD77F, 1216, 192),
+            FakeChange("remove", 0xD77F, 1216, 192),
             FakeChange("remove", 0xE9FF, 1056, 256),
             FakeChange("remove", 0xDCFF, 1264, 144),
             FakeChange("add", 0xD63F, 1312, 128),
             FakeChange("add", 0xDCFF, 1056, 256),
         )
 
-        // BUG (old code): iterate all adds → neededSpecies = {0xE9FF, 0xD75F}
+        // BUG (old code): iterate all adds → neededSpecies = {0xE9FF, 0xD77F}
         val buggyNeeded = mutableSetOf<Int>()
         for (c in changes) {
             if (c.action == "add" && c.enemyId !in existingSpecies) {
@@ -171,8 +171,8 @@ class EnemyExportDiagTest {
         }
         assertTrue(buggyNeeded.contains(0xE9FF),
             "Old code would include removed species 0xE9FF")
-        assertTrue(buggyNeeded.contains(0xD75F),
-            "Old code would include removed species 0xD75F")
+        assertTrue(buggyNeeded.contains(0xD77F),
+            "Old code would include removed species 0xD77F")
 
         // FIX (new code): compute final population, then check needed
         val finalPop = rp.parseEnemyPopulation(room.enemySetPtr).map { it.id }.toMutableList()
@@ -186,8 +186,8 @@ class EnemyExportDiagTest {
         val fixedNeeded = finalSpecies.filter { it !in existingSpecies }
         assertFalse(fixedNeeded.contains(0xE9FF),
             "Fixed code should NOT include removed species 0xE9FF")
-        assertFalse(fixedNeeded.contains(0xD75F),
-            "Fixed code should NOT include removed species 0xD75F")
+        assertFalse(fixedNeeded.contains(0xD77F),
+            "Fixed code should NOT include removed species 0xD77F")
         assertTrue(fixedNeeded.isEmpty(),
             "Zoomer and Waver are already in GFX set, no new entries needed")
     }

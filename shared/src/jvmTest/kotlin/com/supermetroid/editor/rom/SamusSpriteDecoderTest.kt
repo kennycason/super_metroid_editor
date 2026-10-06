@@ -41,8 +41,8 @@ class SamusSpriteDecoderTest {
     fun `standing animation has at least 1 frame`() {
         val rp = loadTestRom() ?: return
         val decoder = SamusSpriteDecoder(rp)
-        val frames = decoder.getFrameCount(0) // animation 0 = stand facing right
-        assertTrue(frames >= 1, "Standing animation should have at least 1 frame, got $frames")
+        val frames = decoder.getFrameCount(0) // pose 0 = facing forward in power suit
+        assertTrue(frames >= 1, "Facing-forward definition should have at least 1 frame, got $frames")
     }
 
     @Test
@@ -50,8 +50,8 @@ class SamusSpriteDecoderTest {
         val rp = loadTestRom() ?: return
         val decoder = SamusSpriteDecoder(rp)
         val pose = decoder.getPose(0, 0)
-        assertNotNull(pose, "Should be able to extract standing pose (anim=0, pose=0)")
-        assertTrue(pose!!.tilemaps.isNotEmpty(), "Standing pose should have tilemap entries")
+        assertNotNull(pose, "Should be able to extract facing-forward pose (pose=0, frame=0)")
+        assertTrue(pose!!.tilemaps.isNotEmpty(), "Facing-forward pose should have tilemap entries")
         assertTrue(pose.vram.size == 32 * 16 * 32, "VRAM should be 16384 bytes (512 tiles)")
     }
 

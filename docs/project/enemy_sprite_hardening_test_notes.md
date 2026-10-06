@@ -43,6 +43,14 @@ The ROM-editable enemy graphics path is the raw 4bpp tile sheet. In the UI this 
 2. Confirm import fails with an expected-dimensions message and does not change the project.
 3. Open Mother Brain body (`$A0:EC7F`) if present.
 4. Confirm generic tile editing is disabled there and the UI explains that MB2 body tiles are split across runtime tile sources.
+5. Open Phantoon's Sources tab and confirm the invalid old tile-sheet mapping appears
+   only when quarantined legacy project data needs to be reset. Confirm Phantoon's
+   separate Components editor remains editable.
+6. Open Kraid's Components and Sources tabs. Confirm component previews and PNG
+   export remain available; head pixel editing uses tileset `$1A`, and old edits can be reset.
+7. With a legacy `phantoon:*` or `kraid:*` tile block in the project, export the ROM.
+   Confirm preflight blocks before creating an output file and identifies the disproved
+   Mother Brain-leg or Kraid-BG2 target respectively.
 
 ## Visual Export Checks
 
@@ -55,4 +63,7 @@ The ROM-editable enemy graphics path is the raw 4bpp tile sheet. In the UI this 
 
 - Raw ordinary enemy tile sheets patch in-place at the species GRAPHADR and must match the species `tileDataSize` exactly.
 - Special boss paths can involve compressed blocks, DMA transfers, room tiles, and runtime composition. Some of those are previewed, but they are not all safe generic tile-sheet edits yet.
+- Phantoon Components and Kraid head Components are the supported boss-pixel paths.
+  Their legacy standalone tile-sheet keys remain intentionally fail-closed because
+  those old addresses were disproved by the source-backed ownership work.
 - Assembled frame import is intentionally not exposed yet because it would need to reverse OAM placement, flips, animation frame selection, and runtime tile sources.

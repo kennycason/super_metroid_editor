@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
@@ -109,6 +110,38 @@ class RomExporterSafetyTest {
     }
 
     @Test
+    fun `Kraid BG2 pixel edits export as the complete tileset 1A resource`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "kraid-tileset-gfx.smc")
+        input.writeBytes(original!!)
+        val parser = RomParser(original)
+        val tilesetId = TileGraphics.KRAID_TILESET
+        val graphics = TileGraphics(parser)
+        assertTrue(graphics.loadTileset(tilesetId))
+        val replacement = requireNotNull(graphics.getRawVarGfx()).copyOf()
+        assertEquals(TileGraphics.ROOM_GFX_MAX_BYTES, replacement.size)
+        replacement[0] = (replacement[0].toInt() xor 1).toByte()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.varGfx[tilesetId.toString()] =
+                Base64.getEncoder().encodeToString(replacement)
+        }
+
+        val outputPath = requireNotNull(RomExporter(project, parser).export())
+        val exported = File(outputPath).readBytes()
+        val tableEntryPc = parser.snesToPc(TileGraphics.TILESET_TABLE_SNES) + tilesetId * 9
+        val exportedPointer = readU24(exported, tableEntryPc + 3)
+        assertArrayEquals(replacement, RomParser(exported).decompressLZ2(exportedPointer))
+
+        val legacyBg2Pc = parser.snesToPc(0xB9FA38)
+        assertArrayEquals(
+            original.copyOfRange(legacyBg2Pc, legacyBg2Pc + 1030),
+            exported.copyOfRange(legacyBg2Pc, legacyBg2Pc + 1030),
+            "The old false Kraid target is placement data and must remain untouched",
+        )
+    }
+
+    @Test
     fun `ordinary tileset graphics cannot overwrite the CRE region`() {
         val original = TestRomHelper.loadRomBytes()
         assumeTrue(original != null, "Test ROM not found")
@@ -177,6 +210,30 @@ class RomExporterSafetyTest {
             byteArrayOf(0x36, 0x84.toByte(), 0x89.toByte(), 0x82.toByte(), 0x40, 0x9D.toByte()),
             exported.copyOfRange(0x29CB4, 0x29CBA),
         )
+    }
+
+    @Test
+    fun `desktop export blocks a placed bundled item when its patch is disabled`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "orphan-custom-item.smc")
+        input.writeBytes(original!!)
+        val spider = PatchRepository.loadBundledPatches()
+            .first { it.id == "bundled_spider_ball_hold_aim_down" }
+            .copy(enabled = false, customItems = mutableListOf())
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.patches += spider
+            it.getOrCreateRoom(0x91F8).plmChanges +=
+                PlmChange("add", 0xF200, 71, 55, 0x53)
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("code patch is disabled"))
+        assertTrue(statuses.lastOrNull().orEmpty().contains("Spider Ball — Hold Aim Down"))
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
     }
 
     @Test
@@ -273,6 +330,46 @@ class RomExporterSafetyTest {
 
         assertNull(outputPath)
         assertTrue(statuses.lastOrNull().orEmpty().contains("Legacy PNG enemy graphics"))
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
+    @Test
+    fun `legacy Phantoon tile sheet blocks before touching Mother Brain graphics`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "phantoon-quarantine.smc")
+        input.writeBytes(original!!)
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.spriteTileBlocks["phantoon:0"] =
+                Base64.getEncoder().encodeToString(ByteArray(32))
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("Mother Brain leg graphics"))
+        assertArrayEquals(original, input.readBytes())
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
+    }
+
+    @Test
+    fun `Kraid pixel edit blocks before replacing the BG2 tilemap`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "kraid-quarantine.smc")
+        input.writeBytes(original!!)
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.customGfx.spriteTileBlocks["kraid:0"] =
+                Base64.getEncoder().encodeToString(ByteArray(32))
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("BG2 tilemap at \$B9:FA38"))
+        assertArrayEquals(original, input.readBytes())
         assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
     }
 

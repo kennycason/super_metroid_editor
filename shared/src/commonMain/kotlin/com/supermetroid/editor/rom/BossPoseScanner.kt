@@ -50,7 +50,9 @@ class BossPoseScanner(private val romParser: RomParser) {
     companion object {
         /** Check if a species has known instruction lists from the decompilation. */
         fun hasKnownPoses(speciesId: Int): Boolean =
-            speciesId == SPECIES_DRAYGON_BODY ||
+            speciesId == MiniKraidSpritemap.SPECIES_ID ||
+                speciesId == SPECIES_DRAYGON_BODY ||
+                speciesId == SPECIES_BOTWOON ||
                 speciesId in TORIZO_POSE_SPECIES_IDS ||
                 KNOWN_INSTR_LISTS.containsKey(speciesId)
 
@@ -310,22 +312,22 @@ class BossPoseScanner(private val romParser: RomParser) {
                 intArrayOf(0x8DB70E, 0x8DB715, 0x8DB71C, 0x8DB723),
                 0x8DB72A,
                 0,
-                16
+                12
             ),
             BotwoonDirection(
                 "Up Right",
                 0xB3E37D,
                 intArrayOf(0x8DB6F2, 0x8DB6F9, 0x8DB700, 0x8DB707),
                 0x8DB75B,
-                -11,
-                11
+                -8,
+                8
             ),
             BotwoonDirection(
                 "Right",
                 0xB3E371,
                 intArrayOf(0x8DB6D6, 0x8DB6DD, 0x8DB6E4, 0x8DB6EB),
                 0x8DB754,
-                -16,
+                -12,
                 0
             ),
             BotwoonDirection(
@@ -333,8 +335,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                 0xB3E365,
                 intArrayOf(0x8DB6BA, 0x8DB6C1, 0x8DB6C8, 0x8DB6CF),
                 0x8DB74D,
-                -11,
-                -11
+                -8,
+                -8
             ),
             BotwoonDirection(
                 "Down",
@@ -342,22 +344,22 @@ class BossPoseScanner(private val romParser: RomParser) {
                 intArrayOf(0x8DB69E, 0x8DB6A5, 0x8DB6AC, 0x8DB6B3),
                 0x8DB746,
                 0,
-                -16
+                -12
             ),
             BotwoonDirection(
                 "Down Left",
                 0xB3E341,
                 intArrayOf(0x8DB666, 0x8DB66D, 0x8DB674, 0x8DB67B),
                 0x8DB73F,
-                11,
-                -11
+                8,
+                -8
             ),
             BotwoonDirection(
                 "Left",
                 0xB3E335,
                 intArrayOf(0x8DB64A, 0x8DB651, 0x8DB658, 0x8DB65F),
                 0x8DB738,
-                16,
+                12,
                 0
             ),
             BotwoonDirection(
@@ -365,8 +367,8 @@ class BossPoseScanner(private val romParser: RomParser) {
                 0xB3E329,
                 intArrayOf(0x8DB62E, 0x8DB635, 0x8DB63C, 0x8DB643),
                 0x8DB731,
-                11,
-                11
+                8,
+                8
             ),
         )
 
@@ -464,6 +466,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         if (speciesId == SPECIES_DRAYGON_BODY) {
             return scanDraygonCompositePoses(minEntries)
         }
+        if (speciesId == MiniKraidSpritemap.SPECIES_ID) {
+            return scanMiniKraidPoses(minEntries)
+        }
         if (speciesId == SPECIES_BOTWOON) {
             return scanBotwoonCompositePoses(minEntries)
         }
@@ -483,6 +488,18 @@ class BossPoseScanner(private val romParser: RomParser) {
         // Strategy 2: Fall back to AI bank scan
         return scanAiBank(aiBank, tileCount, minEntries, maxBboxSize)
     }
+
+    private fun scanMiniKraidPoses(minEntries: Int): List<BossPose> =
+        MiniKraidSpritemap.POSES.mapNotNull { pose ->
+            val spritemap = smap.parseSpritemap(pose.snesAddr) ?: return@mapNotNull null
+            if (spritemap.entries.size < minEntries) return@mapNotNull null
+            BossPose(
+                name = pose.name,
+                spritemap = spritemap,
+                entryCount = spritemap.entries.size,
+                durationTicks = 8,
+            )
+        }
 
     /**
      * Parse spritemaps from known instruction list addresses.
@@ -930,14 +947,15 @@ class BossPoseScanner(private val romParser: RomParser) {
     fun renderPose(
         pose: BossPose,
         tileData: ByteArray,
-        palette: IntArray
+        palette: IntArray,
+        extendedTilemapTileData: ByteArray? = null,
     ): EnemySpritemap.AssembledSprite? {
         val renderTileData = when (pose.tileDataVariant) {
             TileDataVariant.DEFAULT -> tileData
             TileDataVariant.CROCOMIRE_SKELETON ->
                 EnemySpriteGraphics.applyCrocomireSkeletonTileData(romParser, tileData) ?: tileData
         }
-        val bgTileData = when {
+        val bgTileData = extendedTilemapTileData ?: when {
             pose.usesCrocomireBgTileData -> crocomireRoomTileData()
             pose.usesDraygonBgTileData -> draygonRoomTileData()
             pose.usesMotherBrainBgTileData -> motherBrainRoomTileData()
@@ -963,6 +981,23 @@ class BossPoseScanner(private val romParser: RomParser) {
             extendedTilemapTileData = bgTileData
         ) ?: return null
         return autoCrop(assembled, pose.spritemap)
+    }
+
+    /** Render one source-valid Draygon composition from its independently animated slots. */
+    fun renderDraygonComposition(
+        name: String,
+        frameAddresses: List<Int>,
+        tileData: ByteArray,
+        palette: IntArray,
+        roomTileData: ByteArray? = null,
+    ): EnemySpritemap.AssembledSprite? {
+        val pose = createDraygonCompositePose(
+            label = name,
+            durationTicks = 1,
+            frameAddresses = frameAddresses,
+            minEntries = 1,
+        ) ?: return null
+        return renderPose(pose, tileData, palette, roomTileData)
     }
 
     private fun crocomireRoomTileData(): ByteArray? {
@@ -1008,7 +1043,7 @@ class BossPoseScanner(private val romParser: RomParser) {
             return draygonRenderOptions(frame)
         }
         if (speciesId == SPECIES_MOTHER_BRAIN_BODY && frame is EnemySpritemap.RenderableFrame.Extended) {
-            return motherBrainBodyRenderOptions()
+            return motherBrainBodyRenderOptions(frame.spritemap.snesAddress)
         }
         if (speciesId == SPECIES_SPORE_SPAWN && frame is EnemySpritemap.RenderableFrame.Extended) {
             return EnemySpritemap.RenderOptions(reverseExtendedOamDrawOrder = true)
@@ -1050,16 +1085,9 @@ class BossPoseScanner(private val romParser: RomParser) {
         )
     }
 
-    private fun motherBrainBodyRenderOptions(): EnemySpritemap.RenderOptions =
-        EnemySpritemap.RenderOptions(
-            normalizeExtendedTilemaps = true,
-            extendedTilemapOriginX = 0x10,
-            extendedTilemapOriginY = -0x10,
-            oamTileNumberMode = EnemySpritemap.OamTileNumberMode.LOW_9,
-            extendedOamOriginX = 0x31,
-            extendedOamOriginY = 0x15,
-            preserveExtendedChildDrawOrder = true,
-            extendedTilemapBlankTiles = setOf(0x0338)
+    private fun motherBrainBodyRenderOptions(snesAddress: Int): EnemySpritemap.RenderOptions =
+        MotherBrainSpritemap.bodyRenderOptions(
+            MotherBrainSpritemap.defaultBodyBg2CenterX(snesAddress),
         )
 
     private fun renderableEntryCount(

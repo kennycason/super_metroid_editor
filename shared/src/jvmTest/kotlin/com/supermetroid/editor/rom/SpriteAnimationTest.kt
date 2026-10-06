@@ -163,13 +163,13 @@ class SpriteAnimationTest {
     fun `build Sidehopper animation from ROM`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)
-        val speciesId = 0xDD3F // Sidehopper
+        val speciesId = 0xD93F // Sidehopper; $DD3F is the stone Zoomer
         val palette = EnemySpriteGraphics.readEnemyPalette(rp, speciesId) ?: return
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, speciesId) ?: return
 
         val anim = smap.buildAnimation(speciesId, tileData, palette, "Sidehopper")
         assertNotNull(anim, "Sidehopper should produce an animation")
-        assertTrue(anim!!.frames.isNotEmpty(), "Sidehopper should have at least 1 frame")
+        assertEquals(4, anim!!.frames.size, "Sidehopper landed animation should preserve all source frames")
     }
 
     // ─── Samus animation extraction tests ────────────────────────────

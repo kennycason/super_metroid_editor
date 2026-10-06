@@ -18,7 +18,7 @@ class EnemyGfxSetTest {
         assertTrue(palette.any { it != 0 && it != 0x00000000.toInt() },
             "Palette should have non-transparent colors")
 
-        // Verify matches the known Phantoon palette at $A7:CA21
+        // The enemy header points at Phantoon's base palette at $A7:CA01.
         val r1 = (palette[1] shr 16) and 0xFF
         val g1 = (palette[1] shr 8) and 0xFF
         val b1 = palette[1] and 0xFF

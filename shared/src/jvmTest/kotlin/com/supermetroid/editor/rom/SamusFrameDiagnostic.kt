@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * Diagnostic test to identify frame loss and overcounting in Samus animations.
+ * Diagnostic test to identify null and intentionally nonvisual Samus definition slots.
  * Not a regression test — used for analysis.
  */
 class SamusFrameDiagnostic {
@@ -17,7 +17,7 @@ class SamusFrameDiagnostic {
         val decoder = SamusSpriteDecoder(rp)
 
         var totalAnims = 0
-        var overcountAnims = 0
+        var animationsWithEmptyFrames = 0
         var nullFrameAnims = 0
 
         for (group in SamusSpriteDecoder.ANIMATION_GROUPS) {
@@ -58,14 +58,14 @@ class SamusFrameDiagnostic {
 
                 totalAnims++
                 if (nullPoses > 0) nullFrameAnims++
-                if (claimed > validPoses + nullPoses) overcountAnims++
+                if (emptyPoses > 0) animationsWithEmptyFrames++
             }
         }
 
         println("\n=== SUMMARY ===")
         println("Total animations checked: $totalAnims")
         println("Animations with null frames (FRAME_LOSS): $nullFrameAnims")
-        println("Animations with overcount: $overcountAnims")
+        println("Animations with source-defined empty frames: $animationsWithEmptyFrames")
     }
 
     @Test
@@ -73,9 +73,9 @@ class SamusFrameDiagnostic {
         val rp = loadTestRom() ?: return
         val decoder = SamusSpriteDecoder(rp)
 
-        val animId = 0xDB
+        val animId = 0xD3
         val claimed = decoder.getFrameCount(animId)
-        println("Crystal Flash (0xDB): getFrameCount = $claimed")
+        println("Crystal Flash (0xD3): getFrameCount = $claimed")
 
         val palette = decoder.readPalette(SamusSpriteDecoder.SuitType.POWER)
 

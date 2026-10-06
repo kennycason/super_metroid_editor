@@ -84,10 +84,6 @@ internal object ProjectFileService {
         val original = romParser.getRomData()
         val smcPath = exportToRom(project, romParser, onLog, onStatus) ?: return null
         val patched = File(smcPath).readBytes()
-        if (original.size != patched.size) {
-            onLog("[IPS] ROM size mismatch: ${original.size} vs ${patched.size}")
-            return null
-        }
         val ipsData = buildIpsPatch(original, patched)
         val orig = File(project.romPath)
         val version = "v${project.versionMajor}.${project.versionMinor}"

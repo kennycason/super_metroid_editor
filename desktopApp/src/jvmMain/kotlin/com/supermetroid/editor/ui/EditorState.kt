@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.supermetroid.editor.data.CustomItemDef
+import com.supermetroid.editor.data.CommunitySamusSpriteSource
 import com.supermetroid.editor.data.DoorChange
 import com.supermetroid.editor.data.EditOperation
 import com.supermetroid.editor.data.PatchRepository
@@ -65,6 +66,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomRoomCatalog
+import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.ProjectNewRoomMaterializer
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.ensureStateManifest
@@ -226,6 +228,10 @@ class EditorState(
     /** Incremented when palette colors change — triggers reactive re-read in pixel editor and tileset grid. */
     var paletteVersion by mutableStateOf(0)
 
+    /** Incremented when the project-owned community Samus source changes. */
+    var samusSourceVersion by mutableStateOf(0)
+        private set
+
     val undoStack = mutableListOf<EditOperation>()
     val redoStack = mutableListOf<EditOperation>()
     var undoVersion by mutableStateOf(0)
@@ -289,6 +295,24 @@ class EditorState(
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
 
+    fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
+        if (project.customGfx.samusCommunitySource == source) return false
+        project.customGfx.samusCommunitySource = source
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        samusSourceVersion++
+        return true
+    }
+
+    fun restoreBaseRomSamus(): Boolean {
+        if (project.customGfx.samusCommunitySource == null) return false
+        project.customGfx.samusCommunitySource = null
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        samusSourceVersion++
+        return true
+    }
+
     internal fun notifyProjectMutation(romParser: RomParser? = null) {
         dirty = true
         if (romParser != null && currentRoomId != 0) {
@@ -337,8 +361,45 @@ class EditorState(
         onDirty = { dirty = true },
     )
 
+    val draygonSprite = DraygonSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
+    )
+
+    val crocomireSprite = CrocomireSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+        loadEnemyPalette = { parser, speciesId -> enemySprite.loadEnemyPalette(parser, speciesId) },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
+    )
+
+    val sporeSpawnSprite = SporeSpawnSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
+    val metroidSprite = MetroidSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
+    val botwoonSprite = BotwoonSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
+    val torizoSprite = TorizoSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
+    val motherBrainSprite = MotherBrainSpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
+    val ridleySprite = RidleySpriteEditorState(
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+    )
+
     val kraidSprite = KraidSpriteEditorState(
         customGfx = { project.customGfx },
+        loadEnemyTileData = { parser, speciesId -> enemySprite.loadEnemyTileData(parser, speciesId) },
+        applyCustomGfx = ::applyCustomGfxToTileGraphics,
         onDirty = { dirty = true },
     )
 
@@ -868,27 +929,511 @@ class EditorState(
     // ── Phantoon sprite delegates ─────────────────────────────────────────
 
     fun getPhantoonSpritemap(romParser: RomParser) = phantoonSprite.getSpritemap(romParser)
-    fun renderPhantoonComponent(romParser: RomParser, def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef) = phantoonSprite.renderComponent(romParser, def)
+    fun renderPhantoonComponent(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+    ) = phantoonSprite.renderComponent(romParser, def, paletteStage)
+    fun renderPhantoonFullBody(
+        romParser: RomParser,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+        eyeball: com.supermetroid.editor.rom.PhantoonSpritemap.ComponentDef? = null,
+    ) = phantoonSprite.renderFullBody(romParser, paletteStage, eyeball)
+    fun renderPhantoonAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.PhantoonSpritemap.AnimationDef,
+        paletteStage: com.supermetroid.editor.rom.PhantoonSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.PhantoonSpritemap.PALETTE_STAGES.last(),
+    ) = phantoonSprite.renderAnimation(romParser, def, paletteStage)
     fun applyPhantoonComponentEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.PhantoonSpritemap.AssembledSprite, editedPixels: IntArray) = phantoonSprite.applyComponentEdits(romParser, sprite, editedPixels)
     fun getPhantoonPalette(romParser: RomParser) = phantoonSprite.getPalette(romParser)
     fun hasCustomPhantoonComponents() = phantoonSprite.hasCustomComponents()
-    fun loadPhantoonTileSheet(romParser: RomParser) = phantoonSprite.loadTileSheet(romParser)
-    fun getSpriteSheetPalette() = phantoonSprite.getSheetPalette()
-    fun applyPhantoonTileSheetEdits(pixels: IntArray, w: Int, h: Int) = phantoonSprite.applyTileSheetEdits(pixels, w, h)
     fun hasCustomPhantoonTileSheet() = phantoonSprite.hasCustomTileSheet()
     fun resetPhantoonTileSheet() = phantoonSprite.resetTileSheet()
+
+    // ── Draygon sprite delegates ──────────────────────────────────────────
+
+    fun renderDraygonComposition(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderComposition(romParser, def, palette)
+    fun renderDraygonComponent(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.ComponentDef,
+        side: com.supermetroid.editor.rom.DraygonSpritemap.Side,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderComponent(romParser, def, side, palette)
+    fun renderDraygonAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.DraygonSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderAnimation(romParser, def, palette)
+    fun loadDraygonObjSheet(romParser: RomParser) = draygonSprite.loadObjSheet(romParser)
+    fun renderEditedDraygonObjCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.DraygonSpritemap.PaletteStageDef,
+    ) = draygonSprite.renderEditedObjCompositions(romParser, pixels, width, height, palette)
+    fun applyDraygonObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = draygonSprite.getPalette(
+            romParser,
+            com.supermetroid.editor.rom.DraygonSpritemap.PALETTE_STAGES.first(),
+        ) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        draygonSprite.invalidate()
+    }
+    fun hasCustomDraygonObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
+    fun resetDraygonObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.DraygonSpritemap.BODY_SPECIES_ID)
+        draygonSprite.invalidate()
+    }
+
+    // ── Crocomire sprite delegates ───────────────────────────────────────
+
+    fun renderCrocomireComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.CompositionDef,
+    ) = crocomireSprite.renderComposition(romParser, definition)
+    fun renderCrocomireComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.ComponentDef,
+    ) = crocomireSprite.renderComponent(romParser, definition)
+    fun renderCrocomireAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.InstructionListDef,
+    ) = crocomireSprite.renderAnimation(romParser, definition)
+    fun loadCrocomireSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.CrocomireSpritemap.PixelSourceDef,
+    ) = crocomireSprite.loadSourceSheet(romParser, definition)
+    fun renderEditedCrocomireCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) = crocomireSprite.renderEditedCompositions(romParser, pixels, width, height)
+    fun applyCrocomireObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = crocomireSprite.getEditingPalette(romParser) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        crocomireSprite.invalidate()
+    }
+    fun hasCustomCrocomireObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID)
+    fun resetCrocomireObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.CrocomireSpritemap.SPECIES_ID)
+        crocomireSprite.invalidate()
+    }
+
+    // ── Spore Spawn sprite delegates ────────────────────────────────────
+
+    fun renderSporeSpawnComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderComposition(romParser, definition, palette)
+    fun renderSporeSpawnComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderComponent(romParser, definition, palette)
+    fun renderSporeSpawnAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.InstructionListDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderAnimation(romParser, definition, palette)
+    fun renderSporeSpawnSpawnerAnimation(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderSpawnerAnimation(romParser, palette)
+    fun renderSporeSpawnSporeAnimation(romParser: RomParser) =
+        sporeSpawnSprite.renderSporeAnimation(romParser)
+    fun loadSporeSpawnSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.SporeSpawnSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedSporeSpawnCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) = sporeSpawnSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applySporeSpawnObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.SporeSpawnSpritemap.PaletteStageDef,
+    ) {
+        val colors = sporeSpawnSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        sporeSpawnSprite.invalidate()
+    }
+    fun hasCustomSporeSpawnObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
+    fun resetSporeSpawnObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.SporeSpawnSpritemap.SPECIES_ID)
+        sporeSpawnSprite.invalidate()
+    }
+
+    // ── Metroid sprite delegates ───────────────────────────────────────
+
+    fun renderMetroidComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.CompositionDef,
+    ) = metroidSprite.renderComposition(romParser, definition)
+    fun renderMetroidComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.ComponentDef,
+    ) = metroidSprite.renderComponent(romParser, definition)
+    fun renderMetroidAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.AnimationDef,
+    ) = metroidSprite.renderAnimation(romParser, definition)
+    fun loadMetroidSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MetroidSpritemap.PixelSourceDef,
+    ) = metroidSprite.loadSourceSheet(romParser, definition)
+    fun renderEditedMetroidCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) = metroidSprite.renderEditedCompositions(romParser, pixels, width, height)
+    fun applyMetroidObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val colors = metroidSprite.getEditingPalette(romParser) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        metroidSprite.invalidate()
+    }
+    fun hasCustomMetroidObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID)
+    fun resetMetroidObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.MetroidSpritemap.SPECIES_ID)
+        metroidSprite.invalidate()
+    }
+
+    // ── Botwoon sprite delegates ────────────────────────────────────────
+
+    fun renderBotwoonComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+        mouthOpen: Boolean,
+    ) = botwoonSprite.renderComposition(romParser, definition, palette, mouthOpen)
+    fun renderBotwoonComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderComponent(romParser, definition, palette)
+    fun renderBotwoonSwimAnimation(
+        romParser: RomParser,
+        direction: com.supermetroid.editor.rom.BotwoonSpritemap.DirectionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSwimAnimation(romParser, direction, palette)
+    fun renderBotwoonSpitAnimation(
+        romParser: RomParser,
+        direction: com.supermetroid.editor.rom.BotwoonSpritemap.DirectionDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSpitAnimation(romParser, direction, palette)
+    fun renderBotwoonSpitProjectileAnimation(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderSpitProjectileAnimation(romParser, palette)
+    fun loadBotwoonSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.BotwoonSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedBotwoonCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) = botwoonSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyBotwoonObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.BotwoonSpritemap.PaletteStageDef,
+    ) {
+        val colors = botwoonSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        botwoonSprite.invalidate()
+    }
+    fun hasCustomBotwoonObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID)
+    fun resetBotwoonObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.BotwoonSpritemap.SPECIES_ID)
+        botwoonSprite.invalidate()
+    }
+
+    // ── Torizo sprite delegates ────────────────────────────────────────
+
+    fun renderTorizoComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderComposition(romParser, definition, palette)
+    fun renderTorizoComponent(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.ComponentDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderComponent(romParser, definition, palette)
+    fun renderTorizoAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderAnimation(romParser, definition, palette)
+    fun renderTorizoProjectileAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.ProjectileAnimationDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderProjectileAnimation(romParser, definition, palette)
+    fun loadTorizoSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.TorizoSpritemap.PixelSourceDef,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.loadSourceSheet(romParser, definition, palette)
+    fun renderEditedTorizoCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) = torizoSprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyTorizoObjSheetEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.TorizoSpritemap.PaletteStageDef,
+    ) {
+        val colors = torizoSprite.getEditingPalette(romParser, palette) ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = colors,
+        )
+        torizoSprite.invalidate()
+    }
+    fun hasCustomTorizoObjSheet() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID)
+    fun resetTorizoObjSheet() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.TorizoSpritemap.BOMB_SPECIES_ID)
+        torizoSprite.invalidate()
+    }
+
+    // ── Mother Brain sprite delegates ──────────────────────────────────
+
+    fun renderMotherBrainComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderComposition(romParser, definition, palette)
+    fun renderMotherBrainAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderAnimation(romParser, definition, palette)
+    fun renderMotherBrainHead(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.HeadDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderHead(romParser, definition, palette)
+    fun renderMotherBrainBody(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.MotherBrainSpritemap.BodyDef,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderBody(romParser, definition, palette)
+    fun renderMotherBrainNeck(
+        romParser: RomParser,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderNeck(romParser, palette)
+    fun loadMotherBrainHeadSource(romParser: RomParser) = motherBrainSprite.loadHeadSourceSheet(romParser)
+    fun loadMotherBrainBodySource(romParser: RomParser) = motherBrainSprite.loadBodySourceSheet(romParser)
+    fun renderEditedMotherBrainHeadCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.MotherBrainSpritemap.PaletteStageDef,
+    ) = motherBrainSprite.renderEditedHeadCompositions(romParser, pixels, width, height, palette)
+    fun applyMotherBrainHeadSourceEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val palette = motherBrainSprite.getSpritemap(romParser)?.readPalette() ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = palette,
+        )
+        motherBrainSprite.invalidate()
+    }
+    fun hasCustomMotherBrainHeadSource() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID)
+    fun resetMotherBrainHeadSource() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.MotherBrainSpritemap.HEAD_SPECIES_ID)
+        motherBrainSprite.invalidate()
+    }
+
+    // ── Ridley sprite delegates ─────────────────────────────────────────
+
+    fun renderRidleyComposition(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.CompositionDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderComposition(romParser, definition, palette)
+    fun renderRidleyAnimation(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.AnimationDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderAnimation(romParser, definition, palette)
+    fun renderRidleyBody(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.BodyDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderBody(romParser, definition, palette)
+    fun renderRidleyWing(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.WingDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderWing(romParser, definition, palette)
+    fun renderRidleyTail(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.OamComponentDef,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderTail(romParser, definition, palette)
+    fun loadRidleyBaseSource(romParser: RomParser) = ridleySprite.loadBaseSource(romParser)
+    fun loadRidleyRuntimeSource(
+        romParser: RomParser,
+        definition: com.supermetroid.editor.rom.RidleySpritemap.RuntimeSourceDef,
+    ) = ridleySprite.loadRuntimeSource(romParser, definition)
+    fun renderEditedRidleyCompositions(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        palette: com.supermetroid.editor.rom.RidleySpritemap.PaletteStageDef,
+    ) = ridleySprite.renderEditedCompositions(romParser, pixels, width, height, palette)
+    fun applyRidleySourceEdits(
+        romParser: RomParser,
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+    ) {
+        val palette = ridleySprite.getSpritemap(romParser)?.readPalette() ?: return
+        enemySprite.applyEnemyTileSheetEdits(
+            romParser,
+            com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID,
+            pixels,
+            width,
+            height,
+            paletteOverride = palette,
+        )
+        ridleySprite.invalidate()
+    }
+    fun hasCustomRidleySource() =
+        enemySprite.hasCustomEnemyTiles(com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID)
+    fun resetRidleySource() {
+        enemySprite.resetEnemyTiles(com.supermetroid.editor.rom.RidleySpritemap.RIDLEY_SPECIES_ID)
+        ridleySprite.invalidate()
+    }
 
     // ── Kraid sprite delegates ────────────────────────────────────────────
 
     fun getKraidSpritemap(romParser: RomParser) = kraidSprite.getSpritemap(romParser)
-    fun renderKraidFullBody(romParser: RomParser) = kraidSprite.renderFullBody(romParser)
-    fun renderKraidBodyTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.BodyTilemapDef) = kraidSprite.renderBodyTilemap(romParser, def)
-    fun renderKraidBigSprmap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.ComponentDef) = kraidSprite.renderBigSprmap(romParser, def)
+    fun renderKraidFullBody(
+        romParser: RomParser,
+        head: com.supermetroid.editor.rom.KraidSpritemap.HeadTilemapDef =
+            com.supermetroid.editor.rom.KraidSpritemap.HEAD_TILEMAPS.first(),
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef =
+            com.supermetroid.editor.rom.KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
+    ) = kraidSprite.renderFullBody(romParser, head, paletteStage)
+    fun renderKraidFullBodyAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.KraidSpritemap.HeadSequenceDef,
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
+    ) = kraidSprite.renderFullBodyAnimation(romParser, def, paletteStage)
+    fun renderKraidOamAnimation(
+        romParser: RomParser,
+        def: com.supermetroid.editor.rom.KraidSpritemap.OamSequenceDef,
+        paletteStage: com.supermetroid.editor.rom.KraidSpritemap.PaletteStageDef,
+    ): com.supermetroid.editor.rom.SpriteAnimation? {
+        val tileData = loadEnemyTileData(romParser, def.speciesId) ?: return null
+        return kraidSprite.renderOamAnimation(romParser, def, tileData, paletteStage)
+    }
+    fun renderKraidHeadTilemap(romParser: RomParser, def: com.supermetroid.editor.rom.KraidSpritemap.HeadTilemapDef) = kraidSprite.renderHeadTilemap(romParser, def)
+    fun applyKraidHeadEdits(romParser: RomParser, sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyHeadEdits(romParser, sprite, editedPixels)
     fun getKraidPalette(romParser: RomParser) = kraidSprite.getPalette(romParser)
-    fun applyKraidComponentEdits(sprite: com.supermetroid.editor.rom.KraidSpritemap.AssembledSprite, editedPixels: IntArray) = kraidSprite.applyComponentEdits(sprite, editedPixels)
-    fun loadKraidTileSheet(romParser: RomParser) = kraidSprite.loadTileSheet(romParser)
-    fun getKraidSheetPalette() = kraidSprite.getSheetPalette()
-    fun applyKraidTileSheetEdits(pixels: IntArray, w: Int, h: Int) = kraidSprite.applyTileSheetEdits(pixels, w, h)
+    fun hasCustomKraidComponents() = kraidSprite.hasCustomComponents()
     fun hasCustomKraidTileSheet() = kraidSprite.hasCustomTileSheet()
     fun resetKraidTileSheet() = kraidSprite.resetTileSheet()
 
@@ -1033,7 +1578,18 @@ class EditorState(
                 }
             }
         }
+        val previous = patch.enabled
         patch.enabled = enabled
+        if (!enabled && previous) {
+            val dependency = RomValidator.checkProjectCustomItemDependencies(project)
+                .firstOrNull { it.severity == RomValidator.Severity.ERROR }
+            if (dependency != null) {
+                patch.enabled = true
+                val message = "Cannot disable '${patch.name}': ${dependency.message}"
+                editorLog("WARN: $message")
+                postStatus(message)
+            }
+        }
     }
 
     fun enabledCustomItems(): List<CustomItemDef> =
@@ -2604,6 +3160,13 @@ class EditorState(
 
         // Clear cached sprite editor state so it reloads from the new ROM/project
         phantoonSprite.invalidate()
+        draygonSprite.invalidate()
+        crocomireSprite.invalidate()
+        sporeSpawnSprite.invalidate()
+        botwoonSprite.invalidate()
+        torizoSprite.invalidate()
+        motherBrainSprite.invalidate()
+        ridleySprite.invalidate()
         kraidSprite.invalidate()
 
         _roomEditOrder.clear()

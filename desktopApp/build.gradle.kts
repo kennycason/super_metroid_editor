@@ -23,7 +23,7 @@ kotlin {
         jvmToolchain(17)
         withJava()
         testRuns["test"].executionTask.configure {
-            useJUnitPlatform()
+            useJUnitPlatform { excludeTags("community-samus-rom") }
             systemProperty("smedit.realItFixture", System.getProperty("smedit.realItFixture", ""))
         }
     }
@@ -53,12 +53,37 @@ kotlin {
             }
         }
         val jvmTest by getting {
+            kotlin.srcDir(rootProject.file("parity/test-support/src/main/kotlin"))
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.junit.jupiter:junit-jupiter:5.10.0")
             }
         }
     }
+}
+
+val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
+
+tasks.register<org.gradle.api.tasks.testing.Test>("communitySamusRomTest") {
+    group = "verification"
+    description = "Compare project Samus ROM export with pinned Map Randomizer IPS output"
+    dependsOn(
+        tasks.named("jvmTestClasses"),
+        rootProject.tasks.named("communitySamusFixtures"),
+    )
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("community-samus-rom") }
+    systemProperty("smedit.requireParityFixtures", "true")
+    systemProperty(
+        "smedit.communitySamusDir",
+        rootProject.file("parity/work/community/MapRandoSprites/samus_sprites").absolutePath,
+    )
+    systemProperty(
+        "smedit.communitySamusPatchDir",
+        rootProject.file("parity/work/community/MapRandomizerPatches").absolutePath,
+    )
+    outputs.upToDateWhen { false }
 }
 
 tasks.register<JavaExec>("benchmark") {

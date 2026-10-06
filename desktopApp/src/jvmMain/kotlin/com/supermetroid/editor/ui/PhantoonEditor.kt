@@ -226,9 +226,9 @@ fun PhantoonEditor(
 @Composable
 private fun PhantoonHeader() {
     val bodySprite = remember { PhantoonSprites.load("E4BF") }
-    val flameSmall = remember { PhantoonSprites.load("E4FF") }
-    val flameMed = remember { PhantoonSprites.load("E53F") }
-    val flameLrg = remember { PhantoonSprites.load("E57F") }
+    val eyeSprite = remember { PhantoonSprites.load("E4FF") }
+    val tentacleSprite = remember { PhantoonSprites.load("E53F") }
+    val mouthSprite = remember { PhantoonSprites.load("E57F") }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -255,9 +255,9 @@ private fun PhantoonHeader() {
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     for ((sprite, desc) in listOf(
-                        flameSmall to "Small flame",
-                        flameMed to "Medium flame",
-                        flameLrg to "Large flame"
+                        eyeSprite to "Eye",
+                        tentacleSprite to "Tentacles",
+                        mouthSprite to "Mouth"
                     )) {
                         if (sprite != null) {
                             Image(

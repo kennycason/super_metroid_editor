@@ -13,15 +13,16 @@ class PhantoonSpriteMapTest {
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
-    fun `Phantoon tile blocks decompress to expected tile counts`() {
+    fun `Phantoon body header resolves the exact raw tile range`() {
         val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val block = EnemySpriteGraphics.readGraphicsBlock(parser, 0xE4BF)
+        val raw = EnemySpriteGraphics.loadEnemyTileData(parser, 0xE4BF)
 
-        val totalTiles = gfx.getTileCount()
-        assertEquals(78, totalTiles, "Phantoon should have 78 tiles total (37 + 41)")
-        assertEquals(37, gfx.getTileCountInBlock(0), "Block A should have 37 tiles")
-        assertEquals(41, gfx.getTileCountInBlock(1), "Block B should have 41 tiles")
+        assertNotNull(block)
+        assertEquals(0xACAA00, block!!.snesAddress)
+        assertNotNull(raw)
+        assertEquals(0xC00, raw!!.size)
+        assertEquals(96, raw.size / EnemySpriteGraphics.BYTES_PER_TILE)
     }
 
     @Test
@@ -107,12 +108,7 @@ class PhantoonSpriteMapTest {
 
     @Test
     fun `dump Phantoon species header for spritemap analysis`() {
-        val parser = TestRomHelper.loadRomParser()
-            ?: run {
-                println("Test ROM not found, skipping")
-                assertTrue(true)
-                return
-            }
+        val parser = TestRomHelper.requireRomParser()
         val rom = parser.getRomData()
         val headerPc = parser.snesToPc(0xA0E4BF)
 

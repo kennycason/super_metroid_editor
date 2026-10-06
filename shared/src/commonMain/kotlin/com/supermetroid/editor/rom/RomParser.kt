@@ -27,6 +27,8 @@ class RomParser(
     internal val romData: ByteArray,
     private val roomCatalogOverride: RomRoomCatalog? = null,
 ) {
+    private val tileDecoder = TileDecoder()
+
     /** Isolated copy used to build a project-room workspace without mutating the input ROM. */
     fun copyRomData(): ByteArray = romData.copyOf()
     private val hasHeader: Boolean
@@ -204,17 +206,7 @@ class RomParser(
 
     // ─── LZ5 Decompression ──────────────────────────────────────────────
     //
-    // Ported from the verified working Python implementation:
-    //   https://github.com/aremath/sm_rando/blob/master/rom_tools/compress/decompress.py
-    // Algorithm spec: https://sneslab.net/wiki/LZ5
-    //
-    // Commands 0-6 are standard, command 7 is extended (2-byte header).
-    // 0xFF terminates decompression.
-    //
-    // CRITICAL differences from our old broken implementation:
-    //   1. 0xFF IS the end marker (not a no-op)
-    //   2. Command 6 (Negative Repeat) takes 1 byte (relative offset), not 2
-    //   3. Dictionary copies wrap around when referencing past current output end
+    // The shared strict codec follows Decompression_VariableDestination at $80:B119.
     
     fun decompressLZ2(snesAddress: Int): ByteArray {
         val startPc = snesToPc(snesAddress)
@@ -232,176 +224,16 @@ class RomParser(
     
     /** Decompress LZ5 and return (decompressed data, ROM bytes consumed). */
     fun decompressLZ5AtPcWithSize(startPc: Int): Pair<ByteArray, Int> {
-        val result = decompressLZ5AtPc(startPc)
-        // Re-scan to find end position (where 0xFF terminator is)
-        var pos = startPc
-        while (pos < romData.size) {
-            val cmd = romData[pos].toInt() and 0xFF
-            if (cmd == 0xFF) { pos++; break }
-            val topBits = (cmd shr 5) and 7
-            val length: Int
-            if (topBits == 7) {
-                val cmdCode = (cmd shr 2) and 7
-                length = ((cmd and 0x03) shl 8 or (romData[pos + 1].toInt() and 0xFF)) + 1
-                pos += 2
-            } else {
-                val cmdCode = topBits
-                length = (cmd and 0x1F) + 1
-                pos += 1
-            }
-            val cmdCode = if (topBits == 7) (cmd shr 2) and 7 else topBits
-            when (cmdCode) {
-                0 -> pos += length       // direct copy: skip length data bytes
-                1 -> pos += 1            // byte fill: 1 byte
-                2 -> pos += 2            // word fill: 2 bytes
-                3 -> pos += 1            // increasing fill: 1 byte
-                4, 5 -> pos += 2         // absolute copy: 2-byte address
-                6, 7 -> pos += 1         // relative copy: 1 byte offset
-            }
-        }
-        return Pair(result, pos - startPc)
+        val result = LZ5Codec.decompress(romData, startPc)
+        return result.data to result.consumed
     }
     
     /**
      * Decompress LZ5 data starting at the given PC offset.
-     * Ported directly from aremath/sm_rando decompress.py
+     * Malformed, unterminated, or bank-overflowing streams are rejected.
      */
-    fun decompressLZ5AtPc(startPc: Int): ByteArray {
-        val dst = ByteArray(0x20000) // 128KB max output (some rooms are very large)
-        var dstPos = 0
-        var pos = startPc
-        
-        while (pos < romData.size) {
-            val nextCmd = romData[pos].toInt() and 0xFF
-            
-            // 0xFF = end of compressed data
-            if (nextCmd == 0xFF) {
-                pos++
-                break
-            }
-            
-            val cmdCode: Int
-            val length: Int
-            
-            val topBits = (nextCmd shr 5) and 7
-            if (topBits == 7) {
-                // Extended command: 2-byte header
-                // Bits 5-3 of first byte = actual command
-                // Last 2 bits of first byte + all 8 bits of second byte = 10-bit length
-                cmdCode = (nextCmd shr 2) and 7
-                val highBits = nextCmd and 0x03
-                val lowBits = romData[pos + 1].toInt() and 0xFF
-                length = ((highBits shl 8) or lowBits) + 1
-                pos += 2
-            } else {
-                // Standard command: 1-byte header
-                cmdCode = topBits
-                length = (nextCmd and 0x1F) + 1
-                pos += 1
-            }
-            
-            when (cmdCode) {
-                0 -> {
-                    // Direct copy: copy next `length` bytes from source
-                    for (i in 0 until length) {
-                        if (pos >= romData.size) break
-                        dst[dstPos++] = romData[pos++]
-                    }
-                }
-                1 -> {
-                    // Byte fill: repeat one byte `length` times
-                    val fillByte = romData[pos++]
-                    for (i in 0 until length) {
-                        dst[dstPos++] = fillByte
-                    }
-                }
-                2 -> {
-                    // Word fill: alternate two bytes for `length` bytes
-                    val b1 = romData[pos++]
-                    val b2 = romData[pos++]
-                    for (i in 0 until length) {
-                        dst[dstPos++] = if (i % 2 == 0) b1 else b2
-                    }
-                }
-                3 -> {
-                    // Increasing fill: write byte, increment by 1, `length` times
-                    var b = romData[pos++].toInt() and 0xFF
-                    for (i in 0 until length) {
-                        dst[dstPos++] = (b and 0xFF).toByte()
-                        b++
-                    }
-                }
-                4 -> {
-                    // Repeat (absolute address copy): copy `length` bytes from
-                    // absolute position in output buffer. Wraps if past current end.
-                    val addr = (romData[pos].toInt() and 0xFF) or
-                        ((romData[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    copyFromOutput(dst, dstPos, addr, length) { it }
-                    dstPos += length
-                }
-                5 -> {
-                    // XOR Repeat: same as cmd 4 but XOR each byte with 0xFF
-                    val addr = (romData[pos].toInt() and 0xFF) or
-                        ((romData[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    copyFromOutput(dst, dstPos, addr, length) { (it.toInt() xor 0xFF).toByte() }
-                    dstPos += length
-                }
-                6 -> {
-                    // Negative Repeat (relative address copy): copy `length` bytes
-                    // from (current_position - offset) in output buffer.
-                    // Takes only 1 byte for the relative offset!
-                    val relOffset = romData[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    copyFromOutput(dst, dstPos, srcAddr, length) { it }
-                    dstPos += length
-                }
-                7 -> {
-                    // Extended cmd 7 = Negative XOR Repeat (relative + XOR 0xFF)
-                    val relOffset = romData[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    copyFromOutput(dst, dstPos, srcAddr, length) { (it.toInt() xor 0xFF).toByte() }
-                    dstPos += length
-                }
-            }
-            
-            if (dstPos >= dst.size) break // Safety
-        }
-        
-        return dst.copyOf(dstPos)
-    }
-    
-    /**
-     * Copy bytes from output buffer with wrap-around support.
-     * When the copy range extends past what has been written, bytes wrap
-     * (repeat from the start of the copied portion).
-     * Ported from aremath/sm_rando get_copy_bytes().
-     */
-    private fun copyFromOutput(
-        dst: ByteArray, dstPos: Int, srcAddr: Int, length: Int, 
-        transform: (Byte) -> Byte
-    ) {
-        // First pass: copy bytes that already exist in the output
-        var srcIdx = srcAddr
-        var written = 0
-        while (written < length && srcIdx < dstPos) {
-            if (srcIdx >= 0) {
-                dst[dstPos + written] = transform(dst[srcIdx])
-            } else {
-                dst[dstPos + written] = transform(0)
-            }
-            written++
-            srcIdx++
-        }
-        // Second pass: wrap-around — copy from what we just wrote
-        var wrapIdx = 0
-        while (written < length) {
-            dst[dstPos + written] = transform(dst[dstPos + wrapIdx])
-            written++
-            wrapIdx++
-        }
-    }
+    fun decompressLZ5AtPc(startPc: Int): ByteArray =
+        LZ5Codec.decompress(romData, startPc).data
     
     // ─── FX data parsing ──────────────────────────────────────────────
 
@@ -1167,8 +999,7 @@ class RomParser(
         val levelDataPtr = stateData["levelDataPtr"] ?: room.levelDataPtr
         val plmSetPtr = stateData["plmSetPtr"] ?: room.plmSetPtr
         val enemySetPtr = stateData["enemySetPtr"] ?: room.enemySetPtr
-        val (_, compSize) = decompressLZ2WithSize(levelDataPtr)
-        val decompData = decompressLZ2(levelDataPtr)
+        val (decompData, compSize) = decompressLZ2WithSize(levelDataPtr)
         val plms = parsePlmSet(plmSetPtr)
         val enemies = parseEnemyPopulation(enemySetPtr)
         val scrollSize = room.width * room.height
@@ -1613,24 +1444,6 @@ class RomParser(
     }
 
     /**
-     * Decode a single 2bpp tile from ROM. Returns 64 pixel values (0-3), row-major.
-     */
-    private fun decode2bppTile(pc: Int): IntArray {
-        val pixels = IntArray(64)
-        for (row in 0 until 8) {
-            val off = pc + row * 2
-            if (off + 1 >= romData.size) break
-            val bp0 = romData[off].toInt() and 0xFF
-            val bp1 = romData[off + 1].toInt() and 0xFF
-            for (col in 0 until 8) {
-                val bit = 7 - col
-                pixels[row * 8 + col] = ((bp0 shr bit) and 1) or (((bp1 shr bit) and 1) shl 1)
-            }
-        }
-        return pixels
-    }
-
-    /**
      * Render a Layer 3 image for a given fxType.
      * Returns an ARGB pixel array (width × height) where width=256, height=264
      * (32 tiles × 8px = 256, 33 tiles × 8px = 264).
@@ -1643,13 +1456,21 @@ class RomParser(
         val height = RomConstants.L3_TILEMAP_ROWS * 8  // 264
 
         // Load base 2bpp tiles (256 tiles at D3200)
-        val baseTiles = Array(256) { decode2bppTile(romStartOffset + RomConstants.L3_BASE_GFX_PC + it * 16) }
+        val baseTiles = Array(256) {
+            tileDecoder.decode2bppTileIndices(
+                romData,
+                romStartOffset + RomConstants.L3_BASE_GFX_PC + it * 16,
+            )
+        }
 
         // Apply fxType-specific replacement tiles (overwrite first 4)
         val replacementAddr = RomConstants.L3_REPLACEMENT_GFX[fxType]
         if (replacementAddr != null) {
             for (t in 0 until 4) {
-                baseTiles[t] = decode2bppTile(romStartOffset + replacementAddr + t * 16)
+                baseTiles[t] = tileDecoder.decode2bppTileIndices(
+                    romData,
+                    romStartOffset + replacementAddr + t * 16,
+                )
             }
         }
 
@@ -2161,32 +1982,24 @@ class RomParser(
             0xD6BF to "Fireflea",
             0xD6FF to "Skultera",
             0xD73F to "Elevator",
-            0xD75F to "Zoomer (grey)",
             0xD77F to "Sciser",
             0xD7BF to "Oum",
-            0xD7DF to "Ripper II",
             0xD7FF to "Tripper",
             0xD83F to "Suspensor Platform",
-            0xD87F to "Reo",
-            0xD89F to "Waver",
-            0xD8BF to "Reo (variant)",
-            0xD91F to "Geemer",
+            0xD87F to "Sbug (roach)",
+            0xD8BF to "Sbug (roach, alternate VRAM)",
             0xD93F to "Sidehopper",
             0xD8FF to "Metroid (modified)",
             0xD97F to "Dessgeega",
-            0xD99F to "Dessgeega (big)",
             0xD9BF to "Sidehopper (big)",
-            0xD9DF to "Sidehopper (big, variant)",
             0xD9FF to "Sidehopper (invincible)",
             // ── Flyers / Misc ──
             0xDA3F to "Dessgeega",
             0xDA7F to "Zoa",
             0xDABF to "Viola",
             0xDB3F to "Bang",
-            0xDB4F to "Ship",
             0xDB7F to "Skree (Norfair)",
             0xDBBF to "Yard",
-            0xDBCF to "Kago",
             0xDBFF to "Reflec",
             // ── Wall-crawlers ──
             0xDC3F to "Geemer (horizontal)",
@@ -2197,7 +2010,7 @@ class RomParser(
             0xDD7F to "Metroid",
             // ── Bosses ──
             0xDDBF to "Crocomire",
-            0xDE3F to "Draygon (body)",
+            0xDE3F to "Draygon",
             0xDE7F to "Draygon (eye)",
             0xDEBF to "Draygon (tail)",
             0xDEFF to "Draygon (arms)",
@@ -2205,41 +2018,41 @@ class RomParser(
             // ── Boulder / Kzan ──
             0xDFBF to "Boulder",
             0xDFFF to "Kzan",
-            0xE03F to "Kihunter",
+            0xE03F to "Kzan (bottom collision helper)",
             0xE07F to "Hibashi",
             0xE0BF to "Puromi",
-            0xE0FF to "Mini Kraid (belly spike)",
-            // ── Ridley / Puyo ──
+            0xE0FF to "Mini Kraid",
+            // ── Ridley ──
             0xE13F to "Ceres Ridley",
             0xE17F to "Ridley",
-            0xE1BF to "Puyo",
+            0xE1BF to "Ridley Explosion (internal helper)",
             0xE27F to "Zebetite",
             // ── Kraid (species verified from room $A1:9EB5) ──
             0xE2BF to "Kraid",
-            0xE2FF to "Kraid (upper body)",
-            0xE33F to "Kraid (belly spike 1)",
-            0xE37F to "Kraid (belly spike 2)",
-            0xE3BF to "Kraid (belly spike 3)",
-            0xE3FF to "Kraid (flying claw 1)",
-            0xE43F to "Kraid (flying claw 2)",
-            0xE47F to "Kraid (flying claw 3)",
+            0xE2FF to "Kraid Arm",
+            0xE33F to "Kraid Lint (top)",
+            0xE37F to "Kraid Lint (middle)",
+            0xE3BF to "Kraid Lint (bottom)",
+            0xE3FF to "Kraid Foot",
+            0xE43F to "Kraid Nail",
+            0xE47F to "Kraid Nail (bad trajectory)",
             // ── Phantoon ──
             0xE4BF to "Phantoon",
-            0xE4FF to "Phantoon (piece)",
-            0xE53F to "Phantoon (piece 2)",
-            0xE57F to "Phantoon (piece 3)",
+            0xE4FF to "Phantoon Eye",
+            0xE53F to "Phantoon Tentacles",
+            0xE57F to "Phantoon Mouth",
             // ── Friendly / Misc ──
             0xE5BF to "Etecoon",
             0xE5FF to "Dachora",
             0xE63F to "Evir",
-            0xE67F to "Zero",
+            0xE67F to "Evir Projectile (internal helper)",
             0xE6BF to "Eye",
             0xE6FF to "Fune",
             0xE73F to "Namihe",
             0xE7BF to "Yapping Maw",
             0xE7FF to "Kago",
             // ── Norfair / Maridia ──
-            0xE83F to "Lavaman",
+            0xE83F to "Lavaman (Magdollite)",
             0xE87F to "Beetom",
             0xE8BF to "Puu",
             0xE8FF to "Work Robot",
@@ -2257,11 +2070,11 @@ class RomParser(
             0xEBBF to "Kihunter (gold)",
             0xEBFF to "Kihunter (gold, wings)",
             // ── Mother Brain ──
-            0xEC3F to "Mother Brain (phase 1)",
+            0xEC3F to "Mother Brain",
             0xEC7F to "Mother Brain (phase 2)",
             // ── Special / Remains ──
             0xED3F to "Torizo Corpse",
-            0xED7F to "Hopper (remains)",
+            0xED7F to "Sidehopper Corpse",
             0xEEBF to "Big Metroid",
             0xEEFF to "Torizo",
             0xEF3F to "Torizo (orbs)",
@@ -2290,14 +2103,15 @@ class RomParser(
             0xF793 to "Space Pirate Mk.III (Tourian)",
 
             // ── Torizo sub-parts / Wrecked Ship / Misc ──
-            0xEDBF to "Torizo Corpse (helper)",
-            0xEDFF to "Torizo Corpse (ceiling)",
-            0xEE3F to "Wrecked Ship Robot",
-            0xEE7F to "Wrecked Ship Robot (piece)",
-            0xEFFF to "Golden Torizo (piece)",
-            0xF0FF to "Draygon (hand)",
-            0xF2D3 to "Tourian Escape Pirate",
-            0xF313 to "Tourian Escape Pirate (runner)",
+            0xEDBF to "Sidehopper Corpse (large graphics variant)",
+            0xEDFF to "Zoomer Corpse",
+            0xEE3F to "Ripper Corpse",
+            0xEE7F to "Skree Corpse",
+            0xEFFF to "Tourian Statue",
+            0xF03F to "Tourian Statue Soul (graphics helper)",
+            0xF0FF to "Chozo",
+            0xF2D3 to "Etecoon (escape)",
+            0xF313 to "Dachora (escape)",
 
             // Ceres-only species (shared IDs like E0BF/E0FF/E17F/E27F
             // are already mapped above as their main-game names)
@@ -2325,8 +2139,16 @@ class RomParser(
         fun isMapMetaEnemy(id: Int): Boolean = id in MAP_META_ENEMY_IDS
 
         val ENEMY_CATALOG: List<Pair<Int, String>> by lazy {
-            ENEMY_NAMES.entries.sortedBy { it.value }.map { it.key to it.value }
+            ENEMY_NAMES.entries
+                .filter { it.key !in NON_PLACEABLE_ENEMY_IDS }
+                .sortedBy { it.value }
+                .map { it.key to it.value }
         }
+
+        /** Headers that own runtime data but perform no useful room-enemy behavior. */
+        private val NON_PLACEABLE_ENEMY_IDS = setOf(
+            0xF03F, // Tourian statue soul GRAPHADR owner; visible object is an enemy projectile
+        )
 
         fun loadRom(filePath: String): RomParser {
             val file = java.io.File(filePath)

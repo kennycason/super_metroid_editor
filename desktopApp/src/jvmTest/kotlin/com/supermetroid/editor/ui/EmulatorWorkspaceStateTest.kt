@@ -280,13 +280,13 @@ class EmulatorWorkspaceStateTest {
     @Test
     fun `projectStateDir uses project file path when set`() {
         val state = EmulatorWorkspaceState()
-        state.updateProjectFilePath("/Users/kenny/roms/Super Metroid (JU) [!].smedit")
+        state.updateProjectFilePath("/Users/tester/roms/Super Metroid (JU) [!].smedit")
         val dir = state.projectStateDir()
         val normalizedPath = dir.path.replace('\\', '/')
         assertTrue(normalizedPath.endsWith("Super Metroid (JU) [!]_states")) {
             "Expected path to end with 'Super Metroid (JU) [!]_states' but was '$normalizedPath'"
         }
-        assertTrue(normalizedPath.contains("/Users/kenny/roms/")) {
+        assertTrue(normalizedPath.contains("/Users/tester/roms/")) {
             "Expected states dir to be alongside the project file but was '$normalizedPath'"
         }
     }
@@ -294,7 +294,7 @@ class EmulatorWorkspaceStateTest {
     @Test
     fun `projectStateDir falls back to ROM slug when no project file`() {
         val state = EmulatorWorkspaceState()
-        state.updateRomPath("/Users/kenny/roms/Super Metroid (JU) [!].smc")
+        state.updateRomPath("/Users/tester/roms/Super Metroid (JU) [!].smc")
         val dir = state.projectStateDir()
         val normalizedPath = dir.path.replace('\\', '/')
         val expectedSlug = "Super_Metroid__JU_____"

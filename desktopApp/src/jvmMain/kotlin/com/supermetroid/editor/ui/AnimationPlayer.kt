@@ -52,11 +52,16 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
 import kotlinx.coroutines.delay
 import java.awt.image.BufferedImage
+
+internal fun animationPlaybackStartFrame(frameCount: Int, loop: Boolean, currentFrame: Int): Int {
+    if (frameCount <= 0) return 0
+    val safeFrame = currentFrame.coerceIn(0, frameCount - 1)
+    return if (frameCount > 1 && !loop && safeFrame == frameCount - 1) 0 else safeFrame
+}
 
 /**
  * Compose widget for playing sprite animations with transport controls.
@@ -84,7 +89,11 @@ fun AnimationPlayer(
 ) {
     if (animation == null || animation.frames.isEmpty()) {
         Box(modifier.size(previewSize.dp), contentAlignment = Alignment.Center) {
-            Text("No animation data", fontSize = 10.sp, color = Color(0xFF6A6F88))
+            Text(
+                "No animation data",
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
+                color = Color(0xFF6A6F88),
+            )
         }
         return
     }
@@ -108,6 +117,13 @@ fun AnimationPlayer(
     val frames = animation.frames
     val safeFrame = activeFrame.coerceIn(0, frames.size - 1)
     val frame = frames[safeFrame]
+
+    fun startPlayback() {
+        if (frames.size <= 1) return
+        val startFrame = animationPlaybackStartFrame(frames.size, animation.loop, safeFrame)
+        if (startFrame != safeFrame) setFrame(startFrame)
+        setPlaying(true)
+    }
 
     // Auto-play timer
     LaunchedEffect(isPlaying, safeFrame, speedMultiplier, animation) {
@@ -138,7 +154,10 @@ fun AnimationPlayer(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (event.key) {
-                    Key.Spacebar -> { setPlaying(!isPlaying); true }
+                    Key.Spacebar -> {
+                        if (isPlaying) setPlaying(false) else startPlayback()
+                        true
+                    }
                     Key.DirectionLeft -> {
                         setPlaying(false)
                         setFrame(if (safeFrame > 0) safeFrame - 1 else frames.size - 1)
@@ -197,7 +216,9 @@ fun AnimationPlayer(
         } else "default timing"
         Text(
             "Frame ${safeFrame + 1}/${frames.size} — $timingText",
-            fontSize = 9.sp, color = Color(0xFFB0B8D1), fontFamily = FontFamily.Monospace
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
+            color = Color(0xFFB0B8D1),
+            fontFamily = FontFamily.Monospace,
         )
 
         Spacer(Modifier.height(4.dp))
@@ -235,7 +256,7 @@ fun AnimationPlayer(
             } else {
                 IconButton(
                     onClick = {
-                        if (frames.size > 1) setPlaying(true)
+                        startPlayback()
                     },
                     modifier = Modifier.size(36.dp)
                 ) {
@@ -281,7 +302,7 @@ fun AnimationPlayer(
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        label, fontSize = 8.sp,
+                        label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         color = if (speedMultiplier == speed) MaterialTheme.colorScheme.onPrimaryContainer
                         else Color(0xFFB0B8D1),
@@ -319,7 +340,7 @@ fun AnimationPlayer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Export:", fontSize = 9.sp, color = Color(0xFF6A6F88))
+                Text("Export:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF6A6F88))
 
                 if (onExportPng != null) {
                     ExportButton("Frame PNG") { onExportPng(frame, safeFrame) }
@@ -343,7 +364,7 @@ private fun ExportButton(label: String, onClick: () -> Unit) {
         shape = RoundedCornerShape(4.dp)
     ) {
         Text(
-            label, fontSize = 9.sp,
+            label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             color = Color(0xFF90D090)
         )

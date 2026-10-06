@@ -214,6 +214,63 @@ class ExtendedSpritemapTest {
     }
 
     @Test
+    fun `extended renderer can split low and high priority OAM around BG tilemaps`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = solidTileData(4)
+        val palette = testPalette()
+        fun child(x: Int, tile: Int, priority: Int) = EnemySpritemap.ExtendedChild.Oam(
+            xOffset = x,
+            yOffset = 0,
+            spritemap = EnemySpritemap.Spritemap(
+                entries = listOf(
+                    EnemySpritemap.OamEntry(
+                        xOffset = 0,
+                        yOffset = 0,
+                        tileNum = tile,
+                        palRow = 0,
+                        hFlip = false,
+                        vFlip = false,
+                        is16x16 = false,
+                        priority = priority,
+                    )
+                ),
+                snesAddress = 0,
+            ),
+            hitboxPtr = 0,
+        )
+        val ext = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                child(0, 1, priority = 2),
+                child(8, 1, priority = 3),
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 0,
+                    yOffset = 0,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(2, 2))),
+                        snesAddress = 0,
+                    ),
+                    hitboxPtr = 0,
+                ),
+            ),
+            snesAddress = 0,
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            ext,
+            tileData,
+            palette,
+            EnemySpritemap.RenderOptions(extendedTilemapOamPrioritySplit = 3),
+        )
+        assertNotNull(rendered)
+        val renderedData = rendered!!
+        assertEquals(palette[2] or (0xFF shl 24), renderedData.pixels[0],
+            "priority-2 rear OBJ should remain behind the BG tilemap")
+        assertEquals(palette[1] or (0xFF shl 24), renderedData.pixels[8],
+            "priority-3 front OBJ should render above the BG tilemap")
+    }
+
+    @Test
     fun `extended tilemaps replace cells and blank tile clears previous cell`() {
         val rp = loadTestRom() ?: return
         val smap = EnemySpritemap(rp)
@@ -282,6 +339,51 @@ class ExtendedSpritemapTest {
         assertEquals(8, rendered!!.width, "Custom blank filler should not expand render bounds")
         assertEquals(palette[2] or (0xFF shl 24), rendered.pixels.first(),
             "Only the non-filler tile should be drawn")
+    }
+
+    @Test
+    fun `extended tilemaps can ignore child offsets like the runtime copier`() {
+        val rp = loadTestRom() ?: return
+        val smap = EnemySpritemap(rp)
+        val tileData = solidTileData(3)
+        val palette = testPalette()
+        val ext = EnemySpritemap.ExtendedSpritemap(
+            children = listOf(
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = 13,
+                    yOffset = -7,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2000, listOf(1))),
+                        snesAddress = 0,
+                    ),
+                    hitboxPtr = 0,
+                ),
+                EnemySpritemap.ExtendedChild.Tilemap(
+                    xOffset = -9,
+                    yOffset = 18,
+                    tilemap = EnemySpritemap.ExtendedTilemap(
+                        runs = listOf(EnemySpritemap.ExtendedTilemapRun(0x2002, listOf(2))),
+                        snesAddress = 0,
+                    ),
+                    hitboxPtr = 0,
+                ),
+            ),
+            snesAddress = 0,
+        )
+
+        val rendered = smap.renderExtendedSpritemap(
+            ext,
+            tileData,
+            palette,
+            EnemySpritemap.RenderOptions(ignoreExtendedTilemapChildOffsets = true),
+        )
+        assertNotNull(rendered)
+        assertEquals(16, rendered!!.width,
+            "runtime placement should come from adjacent BG2 destinations, not child X fields")
+        assertEquals(8, rendered.height,
+            "runtime placement should come from the shared BG2 row, not child Y fields")
+        assertEquals(palette[1] or (0xFF shl 24), rendered.pixels.first())
+        assertEquals(palette[2] or (0xFF shl 24), rendered.pixels[8])
     }
 
     @Test

@@ -1,18 +1,21 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Test
+import org.opentest4j.TestAbortedException
 import java.io.File
 import com.supermetroid.editor.rom.RomParser.PlmEntry
 
 class ScrollSystemTest {
 
     private fun loadRom(name: String): RomParser? {
-        val paths = listOf(name, "/Users/kenny/code/super_metroid_dev/$name")
-        for (p in paths) {
-            val f = File(p)
-            if (f.exists()) return RomParser.loadRom(f.absolutePath)
+        if (name.contains("test-resources/Super Metroid (JU) [!].smc")) {
+            return TestRomHelper.loadRomParser()
         }
-        return TestRomHelper.loadRomParser()
+        val paths = listOf(File(name), TestRomHelper.repositoryFile(name))
+        for (p in paths) {
+            if (p.exists()) return RomParser.loadRom(p.absolutePath)
+        }
+        throw TestAbortedException("Optional diagnostic ROM is not available: $name")
     }
 
     private fun decodeScrollCommands(rp: RomParser, paramPtr: Int): List<Pair<Int, Int>> {

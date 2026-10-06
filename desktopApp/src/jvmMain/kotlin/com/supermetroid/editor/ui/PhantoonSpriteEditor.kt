@@ -2,8 +2,10 @@ package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,18 +40,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.PhantoonSpritemap
 import com.supermetroid.editor.rom.RomParser
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.image.BufferedImage
 
-private enum class SpriteEditorTab { COMPONENTS, TILE_SHEET }
+private enum class PhantoonEditorTab { ANIMATIONS, COMPOSITIONS, COMPONENTS, SOURCES }
+private fun defaultPhantoonEditorTab(): PhantoonEditorTab = when {
+    PhantoonSpritemap.ANIMATIONS.isNotEmpty() -> PhantoonEditorTab.ANIMATIONS
+    PhantoonSpritemap.EYEBALL_TILEMAPS.isNotEmpty() -> PhantoonEditorTab.COMPOSITIONS
+    else -> PhantoonEditorTab.COMPONENTS
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,7 +68,7 @@ fun PhantoonSpriteEditor(
     romParser: RomParser?,
     modifier: Modifier = Modifier
 ) {
-    var activeTab by remember { mutableStateOf(SpriteEditorTab.COMPONENTS) }
+    var activeTab by remember { mutableStateOf(defaultPhantoonEditorTab()) }
     var selectedDef by remember { mutableStateOf(PhantoonSpritemap.COMPONENT_TILEMAPS.first()) }
 
     // Pixel editor state
@@ -67,9 +77,7 @@ fun PhantoonSpriteEditor(
     var editingHeight by remember { mutableStateOf(0) }
     var editingPalette by remember { mutableStateOf<IntArray?>(null) }
     var editingLabel by remember { mutableStateOf("") }
-    var editingIsTileSheet by remember { mutableStateOf(false) }
     var editingAssembledSprite by remember { mutableStateOf<PhantoonSpritemap.AssembledSprite?>(null) }
-    var editingReference by remember { mutableStateOf<ImageBitmap?>(null) }
     var refreshKey by remember { mutableStateOf(0) }
 
     val ep = editingPixels
@@ -80,25 +88,19 @@ fun PhantoonSpriteEditor(
             imageWidth = editingWidth,
             imageHeight = editingHeight,
             fixedPalette = editingPalette,
-            referenceImage = editingReference,
+            referenceImage = null,
             onApply = { pixels ->
-                if (editingIsTileSheet) {
-                    editorState.applyPhantoonTileSheetEdits(pixels, editingWidth, editingHeight)
-                } else {
-                    val rp = romParser
-                    val sprite = editingAssembledSprite
-                    if (rp != null && sprite != null) {
-                        editorState.applyPhantoonComponentEdits(rp, sprite, pixels)
-                    }
+                val rp = romParser
+                val sprite = editingAssembledSprite
+                if (rp != null && sprite != null) {
+                    editorState.applyPhantoonComponentEdits(rp, sprite, pixels)
                 }
                 refreshKey++
             },
             onClose = {
                 editingPixels = null
                 editingPalette = null
-                editingIsTileSheet = false
                 editingAssembledSprite = null
-                editingReference = null
             },
             modifier = modifier
         )
@@ -110,6 +112,7 @@ fun PhantoonSpriteEditor(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -118,29 +121,29 @@ fun PhantoonSpriteEditor(
                     color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(12.dp))
                 FilterChip(
-                    selected = activeTab == SpriteEditorTab.COMPONENTS,
-                    onClick = { activeTab = SpriteEditorTab.COMPONENTS },
-                    label = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Components", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
-                        }
-                    },
+                    selected = activeTab == PhantoonEditorTab.ANIMATIONS,
+                    onClick = { activeTab = PhantoonEditorTab.ANIMATIONS },
+                    label = { Text("Animations", fontSize = 10.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
-                    selected = activeTab == SpriteEditorTab.TILE_SHEET,
-                    onClick = { activeTab = SpriteEditorTab.TILE_SHEET },
+                    selected = activeTab == PhantoonEditorTab.COMPOSITIONS,
+                    onClick = { activeTab = PhantoonEditorTab.COMPOSITIONS },
+                    label = { Text("Compositions", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == PhantoonEditorTab.COMPONENTS,
+                    onClick = { activeTab = PhantoonEditorTab.COMPONENTS },
+                    label = { Text("Components", fontSize = 10.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = activeTab == PhantoonEditorTab.SOURCES,
+                    onClick = { activeTab = PhantoonEditorTab.SOURCES },
                     label = {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Tile Sheet", fontSize = 10.sp)
-                            Surface(color = Color(0xFF336633), shape = RoundedCornerShape(3.dp)) {
-                                Text("ROM", fontSize = 7.sp, color = Color(0xFF88FF88),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
-                            }
+                            Text("Sources", fontSize = 10.sp)
                             if (editorState.hasCustomPhantoonTileSheet()) {
                                 Text("●", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary)
                             }
@@ -156,7 +159,7 @@ fun PhantoonSpriteEditor(
         }
 
         when (activeTab) {
-            SpriteEditorTab.COMPONENTS -> ComponentsTab(
+            PhantoonEditorTab.COMPONENTS -> ComponentsTab(
                 editorState = editorState,
                 romParser = romParser,
                 selectedDef = selectedDef,
@@ -170,34 +173,30 @@ fun PhantoonSpriteEditor(
                     editingHeight = sprite.height
                     editingPalette = editorState.getPhantoonPalette(rp)
                     editingLabel = "Phantoon ${def.name}"
-                    editingIsTileSheet = false
                     editingAssembledSprite = sprite
-                    editingReference = null
                 },
                 onRefresh = { refreshKey++ },
                 modifier = Modifier.weight(1f)
             )
 
-            SpriteEditorTab.TILE_SHEET -> TileSheetTab(
+            PhantoonEditorTab.COMPOSITIONS -> CompositionsTab(
                 editorState = editorState,
                 romParser = romParser,
                 refreshKey = refreshKey,
-                onEditTiles = {
-                    val rp = romParser ?: return@TileSheetTab
-                    val result = editorState.loadPhantoonTileSheet(rp)
-                    if (result != null) {
-                        val (pixels, w, h) = result
-                        editingPixels = pixels
-                        editingWidth = w
-                        editingHeight = h
-                        editingPalette = editorState.getSpriteSheetPalette()
-                        editingLabel = "Phantoon Tile Sheet"
-                        editingIsTileSheet = true
-                        editingAssembledSprite = null
-                        editingReference = buildReferenceImageBitmap(editorState, romParser)
-                    }
-                },
+                modifier = Modifier.weight(1f),
+            )
+
+            PhantoonEditorTab.ANIMATIONS -> AnimationsTab(
+                editorState = editorState,
+                romParser = romParser,
+                refreshKey = refreshKey,
+                modifier = Modifier.weight(1f),
+            )
+
+            PhantoonEditorTab.SOURCES -> PhantoonSourcesTab(
+                editorState = editorState,
                 onRefresh = { refreshKey++ },
+                onOpenComponents = { activeTab = PhantoonEditorTab.COMPONENTS },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -219,43 +218,48 @@ private fun ComponentsTab(
     Row(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .width(200.dp)
+                .width(230.dp)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                .verticalScroll(rememberScrollState())
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("Room: \$CD13 · Tileset: 5 · AI: \$A7", fontSize = 9.sp,
+            Text("Room: \$CD13 · Tileset: \$05 · AI: \$A7", fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 4.dp))
-            Text("BG2 tilemap components rendered from the room tileset. " +
-                "Editing a tile updates all instances of that tile.",
+            Text("All 22 active BG2 tilemaps. Editing a tile updates every component that shares it.",
                 fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
             Divider()
             Spacer(Modifier.height(4.dp))
 
-            PhantoonSpritemap.COMPONENT_TILEMAPS.forEach { def ->
-                val isSelected = selectedDef.tilemapSnes == def.tilemapSnes
-                Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { onSelectDef(def) },
-                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            PhantoonSpritemap.ComponentGroup.values().forEach { group ->
+                Text(group.displayName, fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp))
+                PhantoonSpritemap.COMPONENT_TILEMAPS.filter { it.group == group }.forEach { def ->
+                    val isSelected = selectedDef.tilemapSnes == def.tilemapSnes
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { onSelectDef(def) },
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        ComponentThumb(def, editorState, romParser, refreshKey, size = 32)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(def.name, fontSize = 10.sp, fontWeight = FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurface)
-                            Text("\$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 9.sp,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            ComponentThumb(def, editorState, romParser, refreshKey, size = 32)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(def.name.substringAfter("· "), fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface)
+                                Text("\$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 9.sp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -295,7 +299,7 @@ private fun ComponentDetailPanel(
                     color = MaterialTheme.colorScheme.onSurface)
                 Text("Tilemap: \$${def.tilemapSnes.toString(16).uppercase()}", fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Species: \$${def.speciesId}", fontSize = 10.sp,
+                Text("${def.sourceLabel} · Species \$${def.speciesId}", fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -368,9 +372,11 @@ private fun ComponentDetailPanel(
                         bitmap = bm,
                         contentDescription = "Phantoon ${def.name}",
                         modifier = Modifier
-                            .padding(16.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .size((bm.width * 4).dp, (bm.height * 4).dp)
+                            .fillMaxSize(0.86f)
+                            .padding(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        contentScale = ContentScale.Fit,
+                        filterQuality = FilterQuality.None,
                     )
                 } else {
                     CircularProgressIndicator(Modifier.size(24.dp))
@@ -426,138 +432,331 @@ private fun ComponentThumb(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TileSheetTab(
+private fun CompositionsTab(
     editorState: EditorState,
     romParser: RomParser?,
     refreshKey: Int,
-    onEditTiles: () -> Unit,
-    onRefresh: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val hasCustom = editorState.hasCustomPhantoonTileSheet()
-
-    var sheetBitmap by remember(refreshKey) { mutableStateOf<ImageBitmap?>(null) }
-    var loadError by remember(refreshKey) { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(refreshKey, romParser) {
-        val rp = romParser
-        if (rp == null) {
-            loadError = "Load a ROM to view tile sheet"
-            return@LaunchedEffect
+    var selectedEyeball by remember { mutableStateOf<PhantoonSpritemap.ComponentDef?>(null) }
+    var selectedPalette by remember { mutableStateOf(PhantoonSpritemap.PALETTE_STAGES.last()) }
+    val spriteBitmap by produceState<ImageBitmap?>(
+        initialValue = null,
+        selectedEyeball,
+        selectedPalette,
+        refreshKey,
+        romParser,
+    ) {
+        value = romParser?.let { parser ->
+            editorState.renderPhantoonFullBody(parser, selectedPalette, selectedEyeball)?.let { sprite ->
+                val image = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
+                image.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
+                image.toComposeImageBitmap()
+            }
         }
-        sheetBitmap = try {
-            val result = editorState.loadPhantoonTileSheet(rp)
-            if (result != null) {
-                val (pixels, w, h) = result
-                val img = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
-                img.setRGB(0, 0, w, h, pixels, 0, w)
-                img.toComposeImageBitmap()
-            } else null
-        } catch (e: Exception) { loadError = e.message; null }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Phantoon Sprite Tile Sheet", fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface)
-                Text("78 tiles total \u00b7 Bank \$B7: 0x170F (37 tiles) + 0x1808 (41 tiles) \u00b7 VRAM 0x0300/0x0380",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("These tiles are shared by all 4 Phantoon species. Edits here are written to the ROM on export.",
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (hasCustom) {
-                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(4.dp)) {
-                        Text("Custom tile data active \u2014 will patch ROM on export",
-                            fontSize = 9.sp, color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
-                Button(
-                    onClick = onEditTiles,
-                    enabled = romParser != null
-                ) { Text("Edit Tiles", fontSize = 11.sp) }
-
-                if (hasCustom) {
-                    OutlinedButton(
-                        onClick = { editorState.resetPhantoonTileSheet(); onRefresh() },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) { Text("Reset to ROM Default", fontSize = 11.sp) }
-                }
+    Column(
+        modifier = modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Runtime Palette", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PhantoonSpritemap.PALETTE_STAGES.forEach { stage ->
+                FilterChip(
+                    selected = selectedPalette == stage,
+                    onClick = { selectedPalette = stage },
+                    label = { Text(stage.name, fontSize = 9.sp) },
+                    modifier = Modifier.height(28.dp),
+                )
             }
         }
 
         Divider()
 
-        Box(
-            modifier = Modifier.weight(1f).fillMaxWidth()
-                .background(Color(0xFF111122), RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.TopStart
-        ) {
-            when {
-                loadError != null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(loadError ?: "Error", fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                sheetBitmap == null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(24.dp))
-                    }
-                }
-                else -> {
-                    Image(
-                        bitmap = sheetBitmap!!,
-                        contentDescription = "Phantoon tile sheet",
-                        modifier = Modifier
-                            .padding(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .let { m ->
-                                val bm = sheetBitmap!!
-                                m.size((bm.width * 4).dp, (bm.height * 4).dp)
-                            }
-                    )
-                }
-            }
-        }
-
-        val palette = editorState.getSpriteSheetPalette()
-        if (palette != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.width(230.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                    .padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("Palette:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                palette.forEachIndexed { _, argb ->
-                    val alpha = (argb ushr 24) and 0xFF
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(if (alpha == 0) Color(0xFF444444) else Color(argb))
-                            .border(0.5.dp, Color(0x40FFFFFF), RoundedCornerShape(2.dp))
-                    )
+                Text("Complete BG2 Poses", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                (listOf<PhantoonSpritemap.ComponentDef?>(null) + PhantoonSpritemap.EYEBALL_TILEMAPS)
+                    .forEach { eyeball ->
+                        val selected = selectedEyeball == eyeball
+                        val label = eyeball?.name?.substringAfter("· ") ?: "Eye closed"
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable { selectedEyeball = eyeball },
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            )
+                        }
+                    }
+            }
+
+            Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    selectedEyeball?.name?.let { "Full body · ${it.substringAfter("· ")}" }
+                        ?: "Full body · eye closed",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Complete 80×112 composition using the parts' shared runtime BG2 coordinates",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                        .background(Color(0xFF111122), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val bitmap = spriteBitmap
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = "Complete Phantoon composition",
+                            modifier = Modifier.fillMaxSize(0.9f).padding(8.dp),
+                            contentScale = ContentScale.Fit,
+                            filterQuality = FilterQuality.None,
+                        )
+                    } else if (romParser != null) {
+                        CircularProgressIndicator(Modifier.size(24.dp))
+                    } else {
+                        Text(
+                            "Load a ROM to view compositions",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/**
- * Build a reference image (the assembled Phantoon body from ROM) for
- * display alongside the raw tile sheet editor.
- */
-private fun buildReferenceImageBitmap(editorState: EditorState, romParser: RomParser?): ImageBitmap? {
-    val rp = romParser ?: return null
-    val sprite = editorState.renderPhantoonComponent(rp, PhantoonSpritemap.COMPONENT_TILEMAPS[0]) ?: return null
-    return try {
-        val bi = BufferedImage(sprite.width, sprite.height, BufferedImage.TYPE_INT_ARGB)
-        bi.setRGB(0, 0, sprite.width, sprite.height, sprite.pixels, 0, sprite.width)
-        bi.toComposeImageBitmap()
-    } catch (_: Exception) { null }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnimationsTab(
+    editorState: EditorState,
+    romParser: RomParser?,
+    refreshKey: Int,
+    modifier: Modifier = Modifier,
+) {
+    var selectedAnimation by remember { mutableStateOf(PhantoonSpritemap.ANIMATIONS.first()) }
+    var selectedPalette by remember { mutableStateOf(PhantoonSpritemap.PALETTE_STAGES.last()) }
+    val animation by produceState<com.supermetroid.editor.rom.SpriteAnimation?>(
+        initialValue = null,
+        selectedAnimation,
+        selectedPalette,
+        refreshKey,
+        romParser,
+    ) {
+        value = romParser?.let {
+            editorState.renderPhantoonAnimation(it, selectedAnimation, selectedPalette)
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Runtime Palette", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            PhantoonSpritemap.PALETTE_STAGES.forEach { stage ->
+                FilterChip(
+                    selected = selectedPalette == stage,
+                    onClick = { selectedPalette = stage },
+                    label = { Text(stage.name, fontSize = 9.sp) },
+                    modifier = Modifier.height(28.dp),
+                )
+            }
+        }
+
+        Divider()
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.width(230.dp).fillMaxHeight().padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Source Instruction Lists", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                PhantoonSpritemap.ANIMATIONS.forEach { definition ->
+                    val selected = definition == selectedAnimation
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { selectedAnimation = definition },
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)) {
+                            Text(definition.name, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                "\$${definition.snesAddr.toString(16).uppercase()}–\$${definition.endSnesAddrExclusive.toString(16).uppercase()}",
+                                fontSize = 8.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider(modifier = Modifier.fillMaxHeight().width(1.dp))
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(selectedAnimation.name, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Complete 80×112 BG2 composition · ${animation?.frames?.size ?: 0} source frame(s) · " +
+                        if (selectedAnimation.loop) "loops" else "one-shot",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Body, eye, tentacles, and mouth are independent enemy slots; this animates the selected " +
+                        "source list while holding the other slots in source-valid resting poses.",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                AnimationPlayer(
+                    animation = animation,
+                    previewSize = 420,
+                    showExportButtons = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhantoonSourcesTab(
+    editorState: EditorState,
+    onRefresh: () -> Unit,
+    onOpenComponents: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hasCustom = editorState.hasCustomPhantoonTileSheet()
+
+    Column(
+        modifier = modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "Pixel sources",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    "Components edits the active room-owned pixels. Other source data stays visible but read-only.",
+                    fontSize = 9.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (hasCustom) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(4.dp),
+                    ) {
+                        Text(
+                            "A legacy Phantoon tile-sheet edit is present and will block ROM export",
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+
+            if (hasCustom) {
+                OutlinedButton(
+                    onClick = { editorState.resetPhantoonTileSheet(); onRefresh() },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text("Reset Legacy Edit", fontSize = 11.sp) }
+            }
+        }
+
+        Divider()
+
+        PhantoonSourceCard(
+            title = "Room BG2 source · editable",
+            source = "Tileset \$05 · varGfx[\"5\"]",
+            detail = "Used by all 22 active BG2 component tilemaps. Select Components to paint these pixels.",
+        )
+        Button(onClick = onOpenComponents) {
+            Text("Choose Editable BG2 Component", fontSize = 10.sp)
+        }
+        PhantoonSourceCard(
+            title = "Enemy OBJ source · read-only",
+            source = "Tiles_Phantoon · \$AC:AA00..B5FF · \$C00 bytes",
+            detail = "Shared by body, eye, tentacle, and mouth headers; not used by the current BG2 component editor.",
+        )
+        PhantoonSourceCard(
+            title = "Placement and timing · read-only",
+            source = "AI bank \$A7 · extended tilemaps and instruction lists",
+            detail = "Compositions and Animations preserve the source-backed coordinates and timing.",
+        )
+
+        if (hasCustom) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    BossSpriteExportSafety.PHANTOON_LEGACY_TILE_SHEET_REASON,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    lineHeight = 14.sp,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PhantoonSourceCard(title: String, source: String, detail: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(source, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+            Text(detail, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

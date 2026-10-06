@@ -59,7 +59,9 @@ class SpriteRenderExportTest {
             }
 
             // Compare against reference PNG if available
-            val refFile = File("/Users/kenny/code/super_metroid_dev/desktopApp/src/jvmMain/resources/enemies/${hexId}.png")
+            val refFile = TestRomHelper.repositoryFile(
+                "desktopApp/src/jvmMain/resources/enemies/${hexId}.png"
+            )
             if (refFile.exists()) {
                 val refImg = ImageIO.read(refFile)
                 println("  Reference: ${refFile.name} (${refImg.width}x${refImg.height})")

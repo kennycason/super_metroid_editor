@@ -121,7 +121,10 @@ val buildNativeSpc = tasks.register("buildNativeSpc") {
 kotlin {
     jvm {
         testRuns["test"].executionTask.configure {
-            useJUnitPlatform()
+            // Source/ROM parity has its own fixture-generating parityTest task.
+            // Running those 25 heavyweight tests again in the ordinary suite can
+            // exhaust the test worker while building the all-species render atlas.
+            useJUnitPlatform { excludeTags("parity", "community-samus") }
             systemProperty("smedit.expandedRomFixture", System.getProperty("smedit.expandedRomFixture", ""))
             systemProperty("smedit.expandedRomRenderOut", System.getProperty("smedit.expandedRomRenderOut", ""))
         }
@@ -143,6 +146,7 @@ kotlin {
         }
         
         val jvmTest by getting {
+            kotlin.srcDir(rootProject.file("parity/test-support/src/main/kotlin"))
             dependencies {
                 implementation(kotlin("test"))
                 implementation("org.junit.jupiter:junit-jupiter:5.10.0")
@@ -153,4 +157,55 @@ kotlin {
 
 tasks.named("jvmProcessResources") {
     dependsOn(buildNativeSpc)
+}
+
+val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
+
+tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
+    group = "verification"
+    description = "Run strict source/ROM parity-tagged tests"
+    dependsOn(
+        tasks.named("jvmTestClasses"),
+        rootProject.tasks.named("parityTileFormats"),
+        rootProject.tasks.named("parityAnimatedTiles"),
+        rootProject.tasks.named("parityItemPlmGraphics"),
+        rootProject.tasks.named("parityEnemyHeaders"),
+        rootProject.tasks.named("parityEnemyOam"),
+        rootProject.tasks.named("parityEnemyInstructions"),
+        rootProject.tasks.named("parityEnemyVerticalSlices"),
+        rootProject.tasks.named("parityKraid"),
+        rootProject.tasks.named("parityPhantoon"),
+        rootProject.tasks.named("parityDraygon"),
+        rootProject.tasks.named("parityMotherBrain"),
+        rootProject.tasks.named("parityRidley"),
+        rootProject.tasks.named("parityCrocomire"),
+        rootProject.tasks.named("paritySporeSpawn"),
+        rootProject.tasks.named("parityBotwoon"),
+        rootProject.tasks.named("parityTorizo"),
+        rootProject.tasks.named("parityMetroid"),
+        rootProject.tasks.named("parityOrdinaryEnemyAnimations"),
+        rootProject.tasks.named("paritySamus"),
+    )
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("parity") }
+    systemProperty("smedit.requireParityFixtures", "true")
+    outputs.upToDateWhen { false }
+}
+
+tasks.register<org.gradle.api.tasks.testing.Test>("communitySamusTest") {
+    group = "verification"
+    description = "Validate the Kotlin decoder against pinned MapRandoSprites PNGs"
+    dependsOn(
+        tasks.named("jvmTestClasses"),
+        rootProject.tasks.named("communitySamusFixtures"),
+    )
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("community-samus") }
+    systemProperty(
+        "smedit.communitySamusDir",
+        rootProject.file("parity/work/community/MapRandoSprites/samus_sprites").absolutePath,
+    )
+    outputs.upToDateWhen { false }
 }

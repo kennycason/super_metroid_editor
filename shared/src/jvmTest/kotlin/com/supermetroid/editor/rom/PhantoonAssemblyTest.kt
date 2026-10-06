@@ -120,8 +120,8 @@ class PhantoonAssemblyTest {
         println("Loading tileset $tilesetIdx")
         assertTrue(tileGfx.loadTileset(tilesetIdx))
 
-        // Read SNES palette from $A7:CA21 (full-health Phantoon palette)
-        val palPc = parser.snesToPc(0xA7CA21)
+        // Read the active full-health Phantoon palette from $A7:CC21.
+        val palPc = parser.snesToPc(PhantoonSpritemap.PALETTE_SNES)
         val snesPalette = IntArray(16)
         snesPalette[0] = 0x00000000
         for (i in 1 until 16) {

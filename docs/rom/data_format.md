@@ -342,7 +342,8 @@ Gate patterns are 1×4 tiles (the gate extends downward from the PLM position).
 
 ## Item PLM Graphics System (bank $84)
 
-Item PLMs display their sprites using CRE tile table entries and VRAM tile data.
+Item PLMs display room-layer pickup images using CRE tile table entries and VRAM tile
+data. These are BG/metatile drawings, not OAM sprites.
 There are two distinct categories with different rendering mechanisms:
 
 ### Expansion Items (ETank, Missile, Super Missile, Power Bomb)
@@ -363,6 +364,11 @@ pointers in their instruction streams. **No slot limit.**
 
 Use instruction `$8764` to DMA custom 8×8 tile graphics from bank `$89` into
 the last 2 rows of CRE VRAM, and write tile table entries for metatiles 0x8E-0x95.
+
+Each payload is exactly `$100` uncompressed bytes: eight standard-interleaved 4bpp
+tiles. Tiles 0-3 form frame 0 in TL/TR/BL/BR order; tiles 4-7 form frame 1. For each
+tile, `$8764` writes `startingTile + quadrant | (paletteByte << 10)` into the runtime
+tile table.
 
 **Slot allocation** — `$84:8764` uses counter `$7E:1C2D`:
 ```
@@ -387,7 +393,7 @@ to slot 0 and overwrites the 1st item's graphics. The draw pointer tables at
 `$84:E05F` (frame 0) and `$84:E077` (frame 1) each contain exactly 4 entries.
 
 Items still **function correctly** when collected (PLM ID and param are unaffected) —
-only the visual sprite is wrong.
+only the visual pickup image is wrong.
 
 ### Graphics source (bank $89)
 
@@ -412,6 +418,20 @@ Each upgrade item's `$8764` argument points to its 8×8 tile data in bank `$89`:
 | Plasma Beam    | $8E00       | 00 01 00 00 00 01 00 00          |
 | Spazer         | $8F00       | 00 00 00 00 00 00 00 00          |
 | Reserve Tank   | $9000       | 00 00 00 00 00 00 00 00          |
+
+There are five unique palette-byte profiles: the all-zero default and the distinct
+X-Ray, Ice, Wave, and Plasma profiles shown above. Each asset is referenced by three
+instruction lists: visible, Chozo orb, and shot block.
+
+### Source-backed verification (2026-10-04)
+
+`./gradlew parityItemPlmGraphics` generates ignored
+`parity/reports/item-plm-graphics.json` and fails on any source/ROM/catalog drift.
+It verifies all 17 payloads (4,352 bytes, 136 tiles, 34 frames), all 51 PLM IDs and
+load records, all palette bytes, the four VRAM/TileTable/starting-tile table entries,
+the eight frame draw pointers, and the interpreter dispatch call. JVM parity tests
+also compare the 51 IDs with SMEDIT's `RomParser.ITEM_DEFS` and decode every payload
+through the production 4bpp decoder.
 
 ### CRE VRAM reservation (MapRandomizer context)
 
@@ -513,7 +533,13 @@ One byte per tile. Meaning depends on block type:
 - 0x0B: Super missile only, permanent
 - 0x0C-0x0F: Map to PLM `$B62F` (no-op) — **non-functional in vanilla SM**
 
-### Implementation: `RomParser.decompressLZ2WithSize()`, `LZ5Compressor.compress()`
+### Implementation: `LZ5Codec`, `RomParser.decompressLZ2WithSize()`, `LZ5Compressor.compress()`
+
+`LZ5Codec` is the single strict decoder used by parsing and export verification. It
+returns both decoded bytes and exact source consumption (including the terminator),
+rejects malformed streams, and enforces the engine's destination-bank capacity. The
+source-backed corpus and recompression proof are documented in
+[`internals.md`](internals.md#lz5-compression-compatibility-verified-2026-10-03).
 
 ---
 

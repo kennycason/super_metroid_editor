@@ -58,6 +58,29 @@ class RomFreeSpaceAllocatorTest {
         assertEquals(listOf(second), secondObserved)
     }
 
+    @Test
+    fun `supports a format-defined zero fill byte for expanded banks`() {
+        val rom = ByteArray(0x400000) { 0x7F }
+        val bank = 0xE0
+        val bankStart = snesToPc((bank shl 16) or 0x8000)
+        val bankEnd = snesToPc((bank shl 16) or 0xFFFF) + 1
+        rom.fill(0x00, bankStart, bankEnd)
+
+        val allocator = RomFreeSpaceAllocator(
+            rom,
+            ::snesToPc,
+            ::pcToSnes,
+            freeFillByteForBank = { candidate -> if (candidate >= 0xE0) 0x00 else 0xFF },
+        )
+        val allocation = allocator.allocate(ByteArray(32) { 0x5A }, listOf(bank), "expanded data")!!
+
+        assertEquals(bankStart + 1, allocation.pcOffset)
+        assertTrue(
+            (allocation.pcOffset until allocation.pcOffset + allocation.size)
+                .all { rom[it] == 0x5A.toByte() }
+        )
+    }
+
     private fun snesToPc(snesAddress: Int): Int {
         val bank = (snesAddress shr 16) and 0xFF
         val address = snesAddress and 0xFFFF

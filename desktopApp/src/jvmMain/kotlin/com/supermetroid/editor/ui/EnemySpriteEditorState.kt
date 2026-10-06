@@ -74,6 +74,10 @@ class EnemySpriteEditorState(
     // ── Enemy tile-sheet (raw 4bpp) ───────────────────────────────────────
 
     fun loadEnemyTileData(romParser: RomParser, speciesId: Int): ByteArray? {
+        // A project block cannot manufacture edit/export ownership for a
+        // species whose source header transfers zero graphics bytes.
+        val tileDataSize = EnemySpriteGraphics.readSpeciesStats(romParser, speciesId)?.first ?: return null
+        if (tileDataSize <= 0) return null
         val key = "enemy:${speciesId.toString(16).uppercase()}"
         val customB64 = customGfx().spriteTileBlocks[key]
         if (customB64 != null) {
@@ -90,8 +94,9 @@ class EnemySpriteEditorState(
         pixels: IntArray,
         w: Int,
         h: Int,
+        paletteOverride: IntArray? = null,
     ) {
-        val palette = loadEnemyPalette(romParser, speciesId) ?: return
+        val palette = paletteOverride ?: loadEnemyPalette(romParser, speciesId) ?: return
         val tileData = loadEnemyTileData(romParser, speciesId) ?: return
         val gfx = EnemySpriteGraphics(romParser)
         gfx.loadFromRaw(listOf(tileData))

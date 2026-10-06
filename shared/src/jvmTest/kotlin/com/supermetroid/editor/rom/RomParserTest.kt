@@ -2,6 +2,7 @@ package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 
 class RomParserTest {
@@ -154,15 +155,17 @@ class RomParserTest {
 
     @Test
     fun `test LZ5 compress roundtrip on Kaizo ROM`() {
-        val kaizoPaths = listOf(
-            "/Users/kenny/Dropbox/emulator/snes/Super Metroid/Super Metroid Kaizo Lite.smc"
+        val configuredPath = System.getProperty("smedit.kaizoTestRom")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: System.getenv("SMEDIT_KAIZO_TEST_ROM")?.trim()?.takeIf { it.isNotEmpty() }
+        assumeTrue(
+            configuredPath != null,
+            "Set SMEDIT_KAIZO_TEST_ROM or -Dsmedit.kaizoTestRom to run the Kaizo smoke test",
         )
-        var parser: RomParser? = null
-        for (p in kaizoPaths) {
-            val f = java.io.File(p)
-            if (f.exists()) { parser = RomParser.loadRom(f.absolutePath); break }
-        }
-        if (parser == null) { println("Kaizo ROM not found, skipping"); return }
+        val file = File(requireNotNull(configuredPath)).canonicalFile
+        assumeTrue(file.isFile, "Configured Kaizo ROM does not exist: $file")
+        val parser = requireNotNull(RomParser.loadRom(file.absolutePath))
 
         val testRooms = listOf(0x91F8, 0x975C, 0xA322, 0x96BA)
         for (roomId in testRooms) {

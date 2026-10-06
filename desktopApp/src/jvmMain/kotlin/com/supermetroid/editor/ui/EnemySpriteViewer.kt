@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,9 +48,11 @@ import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.EnemySpritemap
 import com.supermetroid.editor.rom.GifEncoder
 import com.supermetroid.editor.rom.BossPoseScanner
+import com.supermetroid.editor.rom.MiniKraidSpritemap
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
+import com.supermetroid.editor.rom.SourceEnemyAnimations
 import com.supermetroid.editor.rom.renderSpriteSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -137,8 +140,15 @@ fun EnemySpriteViewer(
     val stats = remember(entry.speciesId) {
         EnemySpriteGraphics.readSpeciesStats(rp, entry.speciesId)
     }
-    val palette = remember(entry.speciesId, paletteRefreshKey) {
-        editorState.loadEnemyPalette(rp, entry.speciesId)
+    val previewPaletteSource = remember(entry.speciesId, paletteRefreshKey) {
+        EnemySpriteGraphics.loadEnemyPreviewPaletteSource(rp, entry.speciesId)
+    }
+    val palette = remember(entry.speciesId, paletteRefreshKey, previewPaletteSource) {
+        if (previewPaletteSource?.editable == true) {
+            editorState.loadEnemyPalette(rp, entry.speciesId)
+        } else {
+            previewPaletteSource?.colors
+        }
     }
     val gfxBlock = remember(entry.speciesId) {
         EnemySpriteGraphics.readGraphicsBlock(rp, entry.speciesId)
@@ -150,13 +160,17 @@ fun EnemySpriteViewer(
     val tileData = remember(entry.speciesId, refreshKey) {
         editorState.loadEnemyTileData(rp, entry.speciesId)
     }
+    val previewTileSource = remember(entry.speciesId, refreshKey, tileData) {
+        EnemySpriteGraphics.loadEnemyPreviewTileSource(rp, entry.speciesId, tileData)
+    }
+    val previewTileData = previewTileSource?.bytes
     val tileValidation = remember(entry.speciesId, refreshKey, tileData) {
         tileData?.let { EnemySpriteGraphics.validateEnemyTileEdit(rp, entry.speciesId, it) }
     }
 
     val assembledSprite = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
         val pal = palette ?: return@remember null
-        val td = tileData ?: return@remember null
+        val td = previewTileData ?: return@remember null
         if (usesSpecialAssembledPreview) {
             val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
             val scanner = BossPoseScanner(rp)
@@ -235,12 +249,16 @@ fun EnemySpriteViewer(
                         "${(gfxBlock.snesAddress and 0xFFFF).toString(16).uppercase().padStart(4, '0')}"
                     InfoRow("GFX Address", snesHex)
                 }
+                if (previewTileSource?.editable == false) {
+                    InfoRow("Preview GFX", "${previewTileSource.label} (read-only)")
+                }
             }
         }
 
         // Palette display + editor
         if (palette != null) {
-            val hasCustomPal = editorState.hasCustomEnemyPalette(entry.speciesId)
+            val paletteEditable = previewPaletteSource?.editable == true
+            val hasCustomPal = paletteEditable && editorState.hasCustomEnemyPalette(entry.speciesId)
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp),
@@ -260,7 +278,11 @@ fun EnemySpriteViewer(
                                 shape = RoundedCornerShape(3.dp)
                             ) {
                                 Text(
-                                    if (hasCustomPal) "CUSTOM" else "ROM",
+                                    when {
+                                        !paletteEditable -> "READ-ONLY"
+                                        hasCustomPal -> "CUSTOM"
+                                        else -> "ROM"
+                                    },
                                     fontSize = 7.sp,
                                     color = if (hasCustomPal) Color(0xFF8888FF) else Color(0xFF88FF88),
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
@@ -288,7 +310,12 @@ fun EnemySpriteViewer(
                         }
                     }
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
-                    Text("Click a color to edit", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (paletteEditable) "Click a color to edit"
+                        else "${previewPaletteSource?.label ?: "Runtime palette"} is borrowed for preview",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         for (i in 0 until 16) {
                             val argb = palette[i]
@@ -301,7 +328,7 @@ fun EnemySpriteViewer(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(RoundedCornerShape(3.dp))
-                                    .clickable {
+                                    .clickable(enabled = paletteEditable) {
                                         editingColorIdx = if (editingColorIdx == i) -1 else i
                                     }
                                     .background(
@@ -318,7 +345,7 @@ fun EnemySpriteViewer(
                     }
 
                     // HSV color picker for selected color
-                    if (editingColorIdx in 1 until 16) {
+                    if (paletteEditable && editingColorIdx in 1 until 16) {
                         Divider(modifier = Modifier.padding(vertical = 2.dp))
                         Text("Edit Color #$editingColorIdx", fontSize = 11.sp, fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface)
@@ -341,11 +368,34 @@ fun EnemySpriteViewer(
 
         // Enemy animation (OAM instruction list frames)
         val scope = rememberCoroutineScope()
-        val enemyAnimation = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
+        val isMiniKraid = entry.speciesId == MiniKraidSpritemap.SPECIES_ID
+        val sourceAnimationDefs = remember(entry.speciesId) {
+            SourceEnemyAnimations.forSpecies(entry.speciesId)
+        }
+        var sourceAnimationIndex by remember(entry.speciesId) { mutableStateOf(0) }
+        var miniKraidSequenceIndex by remember(entry.speciesId) { mutableStateOf(0) }
+        val enemyAnimation = remember(
+            entry.speciesId,
+            refreshKey,
+            paletteRefreshKey,
+            sourceAnimationIndex,
+            miniKraidSequenceIndex,
+        ) {
             val pal = palette ?: return@remember null
-            val td = tileData ?: return@remember null
+            val td = previewTileData ?: return@remember null
             if (usesStaticAssembledPreviewOnly) {
                 null
+            } else if (sourceAnimationDefs.isNotEmpty()) {
+                val definition = sourceAnimationDefs[
+                    sourceAnimationIndex.coerceIn(0, sourceAnimationDefs.lastIndex)
+                ]
+                val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(
+                    rp, entry.speciesId, td,
+                ) ?: td
+                EnemySpritemap(rp).buildSourceAnimation(definition, renderTileData, pal)
+            } else if (isMiniKraid) {
+                val def = MiniKraidSpritemap.SEQUENCES[miniKraidSequenceIndex.coerceIn(0, MiniKraidSpritemap.SEQUENCES.lastIndex)]
+                MiniKraidSpritemap(rp).renderAnimation(def, td, pal)
             } else if (BossPoseScanner.hasKnownPoses(entry.speciesId)) {
                 val renderTileData = EnemySpriteGraphics.loadEnemyRenderTileData(rp, entry.speciesId, td) ?: td
                 val scanner = BossPoseScanner(rp)
@@ -373,16 +423,68 @@ fun EnemySpriteViewer(
             }
         }
 
-        if (enemyAnimation != null && enemyAnimation.frames.size > 1) {
+        if (enemyAnimation != null && (enemyAnimation.frames.size > 1 || sourceAnimationDefs.isNotEmpty())) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Animation Preview (${enemyAnimation.frames.size} frames)", fontSize = 14.sp,
+                    Text(
+                        if (isMiniKraid || sourceAnimationDefs.isNotEmpty())
+                            "Source Action Animation (${enemyAnimation.frames.size} frames)"
+                        else "Animation Preview (${enemyAnimation.frames.size} frames)",
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
+
+                    if (sourceAnimationDefs.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            sourceAnimationDefs.forEachIndexed { index, def ->
+                                val selected = index == sourceAnimationIndex
+                                Surface(
+                                    modifier = Modifier.clickable { sourceAnimationIndex = index },
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(5.dp),
+                                ) {
+                                    Text(
+                                        def.name,
+                                        fontSize = 8.sp,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                                    )
+                                }
+                            }
+                        }
+                    } else if (isMiniKraid) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            MiniKraidSpritemap.SEQUENCES.forEachIndexed { index, def ->
+                                val selected = index == miniKraidSequenceIndex
+                                Surface(
+                                    modifier = Modifier.clickable { miniKraidSequenceIndex = index },
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(5.dp),
+                                ) {
+                                    Text(
+                                        def.name,
+                                        fontSize = 8.sp,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     AnimationPlayer(
                         animation = enemyAnimation,
@@ -440,12 +542,13 @@ fun EnemySpriteViewer(
             }
         }
 
-        // Boss body poses (scan AI bank for large OAM spritemaps)
-        // Show for species with known instruction lists OR enough tiles to be a boss
+        // Boss body poses (scan AI bank for source-mapped OAM spritemaps).
+        // Tile-data size is not evidence that an enemy is a boss: ordinary enemies
+        // such as Kihunter and the drained corpses also own large sheets. Restrict
+        // this broad scanner to species whose pose tables are explicitly known.
         val isBoss = !usesStaticAssembledPreviewOnly &&
             !EnemySpritemap.hasSpecialEnemyPreview(entry.speciesId) &&
-            (BossPoseScanner.hasKnownPoses(entry.speciesId) ||
-                (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true))
+            BossPoseScanner.hasKnownPoses(entry.speciesId)
         if (isBoss) {
             val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
                 val pal = palette ?: return@remember emptyList()
@@ -469,7 +572,10 @@ fun EnemySpriteViewer(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Body Pose Preview (${bossPoses.size} found)", fontSize = 14.sp,
+                        Text(
+                            if (isMiniKraid) "Source Pose Preview (${bossPoses.size} exact)"
+                            else "Body Pose Preview (${bossPoses.size} found)",
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                         Divider(modifier = Modifier.padding(vertical = 2.dp))
 

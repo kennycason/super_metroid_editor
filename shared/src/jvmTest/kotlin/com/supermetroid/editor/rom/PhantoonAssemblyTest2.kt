@@ -18,7 +18,7 @@ class PhantoonAssemblyTest2 {
         (rom[offset].toInt() and 0xFF) or ((rom[offset + 1].toInt() and 0xFF) shl 8)
 
     @Test
-    fun `compare tileset palette row 7 with A7-CA21 Phantoon palette`() {
+    fun `compare tileset palette row 7 with active Phantoon palette`() {
         val parser = loadTestRom() ?: return
         val rom = parser.getRomData()
         val tileGfx = TileGraphics(parser)
@@ -33,8 +33,8 @@ class PhantoonAssemblyTest2 {
             println("  [$i] 0x${(palettes[7][i].toLong() and 0xFFFFFFFFL).toString(16).padStart(8, '0')}")
         }
 
-        val palPc = parser.snesToPc(0xA7CA21)
-        println("\nSNES palette at \$A7:CA21:")
+        val palPc = parser.snesToPc(PhantoonSpritemap.PALETTE_SNES)
+        println("\nActive SNES palette at \$A7:CC21:")
         for (i in 0 until 16) {
             val bgr555 = readWord(rom, palPc + i * 2)
             val argb = EnemySpriteGraphics.snesColorToArgb(bgr555)
@@ -90,13 +90,13 @@ class PhantoonAssemblyTest2 {
         img.setRGB(0, 0, imgW, imgH, assembled, 0, imgW)
         ImageIO.write(img, "png", File(outDir, "phantoon_body_tilesetpal.png"))
 
-        // Also render with $CA21 palette for comparison
-        val palPc = parser.snesToPc(0xA7CA21)
-        val ca21 = IntArray(16)
-        ca21[0] = 0x00000000
+        // Also render with the active $CC21 health palette for comparison.
+        val palPc = parser.snesToPc(PhantoonSpritemap.PALETTE_SNES)
+        val cc21 = IntArray(16)
+        cc21[0] = 0x00000000
         for (i in 1 until 16) {
             val bgr555 = readWord(rom, palPc + i * 2)
-            ca21[i] = EnemySpriteGraphics.snesColorToArgb(bgr555)
+            cc21[i] = EnemySpriteGraphics.snesColorToArgb(bgr555)
         }
 
         val assembled2 = IntArray(imgW * imgH)
@@ -107,7 +107,7 @@ class PhantoonAssemblyTest2 {
                 val sx = if (entry.hFlip) 7 - px else px
                 val sy = if (entry.vFlip) 7 - py else py
                 val ci = indices[sy * 8 + sx]
-                val argb = if (ci == 0) 0x00000000 else ca21[ci]
+                val argb = if (ci == 0) 0x00000000 else cc21[ci]
                 val dx = entry.gridX * 8 + px
                 val dy = entry.gridY * 8 + py
                 if (dx < imgW && dy < imgH) assembled2[dy * imgW + dx] = argb
@@ -116,7 +116,7 @@ class PhantoonAssemblyTest2 {
 
         val img2 = BufferedImage(imgW, imgH, BufferedImage.TYPE_INT_ARGB)
         img2.setRGB(0, 0, imgW, imgH, assembled2, 0, imgW)
-        ImageIO.write(img2, "png", File(outDir, "phantoon_body_ca21pal.png"))
+        ImageIO.write(img2, "png", File(outDir, "phantoon_body_cc21pal.png"))
 
         // Show tile usage stats
         val usedTiles = entries.filter { it.tileNum != 0x338 }.map { it.tileNum }.toSet()
@@ -134,7 +134,7 @@ class PhantoonAssemblyTest2 {
             println("Tile 0x${t.toString(16)}: $nonZero/64 non-zero pixels, unique indices: $uniqueIndices")
         }
 
-        // Compare assembled (CA21 palette) vs PNG with positional offset search
+        // Compare the active-palette assembly against the legacy PNG.
         val pngFile = File("../desktopApp/src/jvmMain/resources/enemies/E4BF.png")
         if (!pngFile.exists()) return
         val refImg = ImageIO.read(pngFile)

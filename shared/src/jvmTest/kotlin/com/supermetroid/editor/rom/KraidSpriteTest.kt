@@ -4,58 +4,139 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertEquals
-import java.io.File
 
 class KraidSpriteTest {
+
+    @Test
+    fun `complete body adds linked arm claw and foot without changing raw BG2 parity`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+        val kraid = KraidSpritemap(rp)
+        assertTrue(kraid.load())
+        val raw = kraid.renderFullBody()
+        val complete = kraid.renderCompleteBody()
+        assertNotNull(raw)
+        assertNotNull(complete)
+        val rawData = raw!!
+        val completeData = complete!!
+        assertEquals(rawData.width, completeData.width)
+        assertEquals(rawData.height, completeData.height)
+        assertTrue(!rawData.pixels.contentEquals(completeData.pixels))
+        assertTrue(
+            completeData.pixels.count { (it ushr 24) != 0 } > rawData.pixels.count { (it ushr 24) != 0 },
+            "linked OAM parts should add visible artwork to the BG2 body",
+        )
+        val armTouchesBody = (1 until rawData.height / 2).any { y ->
+            (1 until rawData.width - 1).any { x ->
+                val index = y * rawData.width + x
+                (completeData.pixels[index] ushr 24) != 0 &&
+                    (rawData.pixels[index] ushr 24) == 0 &&
+                    (-1..1).any { dy ->
+                        (-1..1).any { dx ->
+                            (dx != 0 || dy != 0) &&
+                                (rawData.pixels[(y + dy) * rawData.width + x + dx] ushr 24) != 0
+                        }
+                    }
+            }
+        }
+        assertTrue(armTouchesBody, "the live arm anchor should connect its forearm to the BG2 upper arm")
+    }
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
 
     @Test
-    fun `kraid loads successfully from tileset 27`() {
+    fun `kraid loads successfully from tileset 1A`() {
         val rp = loadTestRom() ?: return
         val kraid = KraidSpritemap(rp)
         assertTrue(kraid.load(), "Kraid should load successfully")
+        assertEquals(0x1A, TileGraphics.KRAID_TILESET, "Kraid's exact room tileset ID")
+        assertEquals(0x1A, kraid.getTilesetId(), "Kraid room state should select tileset \$1A")
         assertNotNull(kraid.getTileData(), "Tile data should be extracted from tileset")
         assertNotNull(kraid.getPalette(), "Palette should be loaded")
-        assertEquals(128 * 32, kraid.getTileData()!!.size, "Should have 128 tiles × 32 bytes")
+        assertEquals(1024 * 32, kraid.getTileData()!!.size, "Tileset \$1A owns all 1024 tiles")
     }
 
     @Test
-    fun `body initial renders with correct dimensions`() {
+    fun `head frame renders only the rows copied by the game`() {
         val rp = loadTestRom() ?: return
         val kraid = KraidSpritemap(rp)
         if (!kraid.load()) return
 
-        val body = kraid.renderBodyTilemap(KraidSpritemap.BODY_TILEMAPS[0])
-        assertNotNull(body, "Body initial should render")
-        assertEquals(32 * 8, body!!.width, "Width should be 32 tiles × 8px")
-        assertEquals(12 * 8, body.height, "Height should be 12 tiles × 8px")
-        assertTrue(body.pixels.any { it != 0 }, "Should have non-transparent pixels")
+        val head = kraid.renderHeadTilemap(KraidSpritemap.HEAD_TILEMAPS[0])
+        assertNotNull(head, "Closed-mouth head should render")
+        assertEquals(32 * 8, head!!.width, "Width should be 32 tiles × 8px")
+        assertEquals(11 * 8, head.height, "The interpreter copies 11 of 12 stored rows")
+        assertTrue(head.pixels.any { it != 0 }, "Should have non-transparent pixels")
     }
 
     @Test
-    fun `all body tilemaps render with non-transparent pixels`() {
+    fun `all four head tilemaps render with non-transparent pixels`() {
         val rp = loadTestRom() ?: return
         val kraid = KraidSpritemap(rp)
         if (!kraid.load()) return
 
-        for (def in KraidSpritemap.BODY_TILEMAPS) {
-            val body = kraid.renderBodyTilemap(def)
-            assertNotNull(body, "${def.name} should render")
-            val nonTransparent = body!!.pixels.count { it != 0 }
+        for (def in KraidSpritemap.HEAD_TILEMAPS) {
+            val head = kraid.renderHeadTilemap(def)
+            assertNotNull(head, "${def.name} should render")
+            val nonTransparent = head!!.pixels.count { it != 0 }
             assertTrue(nonTransparent > 100, "${def.name} should have >100 non-transparent pixels, got $nonTransparent")
         }
     }
 
     @Test
-    fun `kraid detail components do not include phantoon tilemaps`() {
-        val phantoonTilemaps = setOf(
-            0xA7E27E, 0xA7E292, 0xA7E2A6, 0xA7E2BA, 0xA7E2CE,
-            0xA7E2E2, 0xA7E2F6, 0xA7E30A, 0xA7E39A, 0xA7E3B6
-        )
+    fun `all head sequences render as complete stable full-body animations`() {
+        val rp = loadTestRom() ?: return
+        val kraid = KraidSpritemap(rp)
+        if (!kraid.load()) return
 
-        assertTrue(
-            KraidSpritemap.BIGSPRMAP_COMPONENTS.none { it.tilemapSnes in phantoonTilemaps },
-            "Kraid should not expose Phantoon eye/mouth tilemaps as belly or foot details"
+        KraidSpritemap.HEAD_SEQUENCES.forEach { def ->
+            val source = kraid.loadHeadAnimation(def)
+            val rendered = kraid.renderFullBodyAnimation(def)
+            assertNotNull(source, def.name)
+            assertNotNull(rendered, def.name)
+            val sourceData = source!!
+            val renderedData = rendered!!
+            assertEquals(sourceData.frames.size, renderedData.frames.size, def.name)
+            assertTrue(renderedData.frames.isNotEmpty(), def.name)
+            assertEquals(1, renderedData.frames.map { it.width to it.height }.distinct().size, def.name)
+            assertTrue(renderedData.frames.all { it.width >= 512 && it.height >= 512 }, def.name)
+            assertTrue(renderedData.frames.all { frame -> frame.pixels.count { it != 0 } > 1000 }, def.name)
+        }
+    }
+
+    @Test
+    fun `all health palettes and linked OAM lists render from exact source bounds`() {
+        val rp = loadTestRom() ?: return
+        val kraid = KraidSpritemap(rp)
+        if (!kraid.load()) return
+
+        val paletteHashes = KraidSpritemap.PALETTE_STAGES.map { stage ->
+            val palette = kraid.readBgPalette(stage)
+            assertNotNull(palette, stage.name)
+            palette!!.contentHashCode()
+        }
+        assertEquals(KraidSpritemap.PALETTE_STAGES.size, paletteHashes.distinct().size)
+
+        KraidSpritemap.OAM_SEQUENCES.forEach { def ->
+            val source = kraid.loadOamAnimation(def)
+            assertNotNull(source, def.name)
+            val sourceData = source!!
+            assertTrue(sourceData.frames.isNotEmpty(), def.name)
+            val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, def.speciesId)
+            assertNotNull(tileData, def.name)
+            val rendered = kraid.renderOamAnimation(def, tileData!!)
+            assertNotNull(rendered, def.name)
+            val renderedData = rendered!!
+            assertEquals(sourceData.frames.size, renderedData.frames.size, def.name)
+            assertTrue(renderedData.frames.all { it.width > 0 && it.height > 0 }, def.name)
+            assertEquals(1, renderedData.frames.map { it.width to it.height }.distinct().size, def.name)
+            assertTrue(renderedData.frames.all { frame -> frame.pixels.any { it != 0 } }, def.name)
+        }
+    }
+
+    @Test
+    fun `kraid exposes the four exact source head maps`() {
+        assertEquals(
+            listOf(0xA797C8, 0xA79AC8, 0xA79DC8, 0xA7A0C8),
+            KraidSpritemap.HEAD_TILEMAPS.map { it.snesAddr },
         )
     }
 
@@ -66,9 +147,9 @@ class KraidSpriteTest {
         if (!kraid.load()) return
 
         val tileData = kraid.getTileData()!!
-        // Tile 0x10 (belly detail) should NOT contain repeating 0x0338 pattern
+        // Tile 0x110 should NOT contain repeating 0x0338 pattern
         // (which would indicate tilemap data was injected instead of tile graphics)
-        val bellyTileOffset = 0x10 * 32
+        val bellyTileOffset = 0x110 * 32
         val firstWord = (tileData[bellyTileOffset].toInt() and 0xFF) or
                 ((tileData[bellyTileOffset + 1].toInt() and 0xFF) shl 8)
         assertTrue(firstWord != 0x0338, "Tile data should be graphics, not tilemap entries (got 0x${firstWord.toString(16)})")
@@ -80,13 +161,13 @@ class KraidSpriteTest {
         val enemySpritemap = EnemySpritemap(rp)
 
         val subEntities = mapOf(
-            "Upper body" to 0xE2FF,
-            "Belly Spike 1" to 0xE33F,
-            "Belly Spike 2" to 0xE37F,
-            "Belly Spike 3" to 0xE3BF,
-            "Flying Claw 1" to 0xE3FF,
-            "Flying Claw 2" to 0xE43F,
-            "Flying Claw 3" to 0xE47F,
+            "Arm" to 0xE2FF,
+            "Lint top" to 0xE33F,
+            "Lint middle" to 0xE37F,
+            "Lint bottom" to 0xE3BF,
+            "Foot" to 0xE3FF,
+            "Nail" to 0xE43F,
+            "Nail bad" to 0xE47F,
         )
 
         for ((name, speciesId) in subEntities) {

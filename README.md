@@ -86,6 +86,7 @@ Sound
 - **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
 - **Patch Manager** — Apply, create, and manage IPS patches. Built-in editors cover beam and environmental damage, Samus physics, escape timers, Short Charge, and more.
 - **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
+- **Community Samus Catalog** — Search and preview the attributed MapRandoSprites catalog, then browse downloaded sheets through SpriteSomething's 41 named animation groups or a visual 637-frame gallery. Keep a portable source in the project and export verified catalog selections as guarded 4 MiB ROM builds; local SpriteSomething PNGs can also be imported as source-only previews.
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
 - **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
 - **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
@@ -143,6 +144,142 @@ git submodule update --init --recursive
 ```
 
 The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
+
+### ROM/disassembly parity development
+
+The optional [parity harness](parity/README.md) provisions a pinned Super Metroid
+disassembly checkout and validates a user-supplied clean ROM for source-backed
+regression tests. It is developer tooling only; the editor and release builds have
+no dependency on the ROM or disassembly checkout.
+
+After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
+complete pinned asset-extraction and assembly build, including a byte-identity check.
+Use `./gradlew parityReport` to run the complete strict regression and generate an
+ignored JSON/Markdown evidence bundle. The suite independently checks all extracted
+asset ranges, LZ5 streams, tileset/CRE pointers, tile and metatile decoding, animated
+tiles, item-PLM graphics, and all 164 enemy species headers plus their raw `GRAPHADR`
+ownership and aliases, plus all 2,312 named standard and 811 extended enemy OAM
+structures. It also inventories all 1,139 named enemy instruction lists and reports
+every frame the current best-effort preview scanner misses. These checks are
+deliberately source-backed: plausible-looking renders are not counted as parity
+unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
+Samus now has the same source-backed foundation: all 253 pose IDs / 1,982 frame
+occurrences, 127 delay streams, 435 DMA payloads, 422 referenced spritemaps, and the
+three normal suit palettes are pinned. Every frame is checked through the production
+decoder for exact tilemap geometry and reconstructed VRAM; reviewed pose goldens,
+special palette programs, and community-sheet editing remain the next layer. The
+community path now has an exact non-mutating Kotlin decoder for SpriteSomething's
+876 x 2543 PNG contract: four pinned MapRandoSprites sheets, including Invisible
+Samus, match the upstream extractor across all 637 named regions. The Samus workspace
+now includes a searchable 126-entry on-demand catalog, attributed project-owned source
+round trips, and guarded ROM-ready catalog injection. Each compatible project embeds a
+pinned Map Randomizer IPS beside the original PNG, verifies the clean base-ROM hash,
+expands 3 MiB to 4 MiB, and participates in normal ROM-write conflict detection. Four
+catalog samples produce byte-exact pinned outputs; arbitrary local PNGs remain clearly
+source-only until the native image-to-ROM writer is implemented.
+Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
+header → graphics/palette → instruction path → OAM composition → rendered-animation
+vertical slices. Puyo, Owtch, Choot, both Sbug/roach headers, the two-header Evir
+family, Magdollite, Beetom, the three Kihunter color bodies, and both Sidehopper corpse
+headers also have explicit
+source routes for init AI that selects animations through helpers or state tables:
+59 compact editor actions cover 255 guided frames without pretending the generic
+scanner emulates their AI.
+A separate source-complete ledger probes all 164 species through the
+production renderer and distinguishes assembled, composite, tile-sheet-only,
+nonvisual, and failed support without counting a raw tile sheet as a successful sprite.
+It also models all eight visual species with zero-byte header transfers through exact
+read-only shared/global VRAM providers, bringing the pinned ledger to zero failed
+species without granting those headers false tile edit/export ownership. Palette
+ownership is tracked separately because five of those headers still load and own
+their palette row. Every formerly tile-sheet-only header now has an assembled,
+composite, or explicitly non-drawing engine-helper classification.
+Kraid additionally has a dedicated complete-composition proof: the no-CRE tileset
+`$1A` graphics, active and unreferenced compressed BG2 maps, four custom-interpreter
+head frames, mouth hitboxes, every health/hurt/death palette state, and the eight
+headers linked to `$AB:CC00`. The production editor renders all four live 64×64 BG2
+body states and their exact head sequences, ten selectable runtime palette stages,
+and a representative full assembly with the linked arm/claw and front foot. Twelve
+bounded linked-OAM animations cover 173 frame occurrences. Mini Kraid separately
+uses its six exact action lists (24 frame occurrences / 14 unique poses), avoiding the
+old shared-bank scan that mixed in Ridley data. Deterministic pixel hashes cover every
+one of those frames, while head pixel edits save through the ordinary complete-tileset
+relocation path. `./gradlew parityKraid` runs that focused slice.
+Phantoon has the same complete-composition treatment: all four independently animated
+enemy slots, 22 active BG2 tilemaps and extended-spritemap wrappers, 19 instruction
+lists, three hitbox sets, the room-tileset pixel owner, separate raw OBJ payload, and
+all eight health palettes are pinned. The editor renders every component, nine gaze
+poses, and five bounded part animations as complete 80×112 compositions, with
+deterministic hashes and safe `varGfx["5"]` pixel ownership. `./gradlew parityPhantoon`
+runs that focused slice.
+Draygon now has a dedicated split-owner renderer instead of a hand-picked boss-pose
+scan. It combines tileset `$1C` BG2 graphics with the shared `$B0:C800` OBJ payload,
+assembles body/eye/tail/arms at runtime coordinates, exposes ten poses, all eight
+health stages plus hurt flash, and renders all 39 frame-bearing source lists (250
+complete frame occurrences). Its exact `$2000` OBJ owner is editable in Sources via
+`spriteTileBlocks["enemy:DE3F"]`; every named composition updates live while painting.
+BG2/OBJ placement and flattened composite editing remain read-only.
+`./gradlew parityDraygon` runs the focused proof. Sprite navigation presents one
+Draygon entry and one Phantoon entry; their eye/tail/arms and eye/tentacle/mouth slots
+live inside those complete boss editors instead of appearing as duplicate top-level
+rows.
+Ridley now follows the same model. Ceres `$E13F` and Norfair `$E17F` remain distinct
+ROM encounters but share one top-level Ridley workspace because their five-part
+`$B0:9400..B3FF` source, palette, body, wings, tail, and ribs/claws machinery are the
+same. Its forward turn also resolves the enemy set's read-only `$B0:B400` auxiliary
+payload at physical OBJ tiles `$E0..FF`, instead of misreading local tail art.
+Ceres-only lunge and baby-Metroid retrieval actions are labeled inside the animation
+browser. `./gradlew parityRidley` pins both headers, the exact two-page VRAM layout,
+11 body maps, 12 wing maps, 19 tail maps, six runtime DMA assets, four palettes, and
+deterministic complete composition/animation pixels.
+Mother Brain now has the same focused treatment. The editor keeps phase 1's enemy
+head distinct from its room-owned glass/machinery, while phase 2 assembles the
+tileset-$0E torso, staged head/limb OBJ, body supplement, five neck segments, and
+independent head. Four health pairs and all ten rainbow palette records are selectable;
+the exact head source is editable with live phase-1/2 references, while the combined
+four-owner body sheet is read-only. `./gradlew parityMotherBrain` pins both headers,
+all head/body/BG2 maps, 49 body/head lists / 243 timed frames, and deterministic
+composition/animation pixels.
+Crocomire now follows the same source-owned model across its entire visual lifecycle.
+The editor combines tileset `$1B` BG2 art with the editable `$AD:8000` living OBJ
+payload, then swaps in the exact two melting overlays and six skeleton DMA chunks for
+death frames. `./gradlew parityCrocomire` pins both body/tongue headers, all 179 active
+OAM/extended/BG2 structures, six palette rows, and all 36 active instruction lists /
+233 timed frames. The guided workspace exposes 20 full animations grouped by Fight,
+Tongue, Melting, and Skeleton while keeping each runtime pixel owner explicit.
+Spore Spawn now has a complete cross-bank renderer as well. It combines the bank-`$A5`
+extended-OAM body with the four bank-`$86` stalk projectiles using the exact runtime
+segment interpolation, and consolidates the spawner/spore components, four health
+palettes, and eight body death palettes. `./gradlew paritySporeSpawn` pins the shared
+`$AC:9C00` pixel owner, all body/projectile maps, nine boss lists, and all 27 related
+sprite/room palette rows.
+Botwoon now has a dedicated position-history renderer instead of the earlier rigid
+composite approximation. It combines the bank-`$B3` head with twelve animated body
+projectiles and one tail from banks `$86/$8D`, selects each link's orientation from
+its own history vector, preserves the independent body loop during spits, and exposes
+all eight health palettes. `./gradlew parityBotwoon` pins the shared `$B7:E300` pixel
+owner, active and unused head/projectile structures, critical history routines, and
+17 guided animations / 87 rendered frames.
+Bomb and Golden Torizo now share one source-accurate Torizo workspace rather than
+appearing as duplicate encounter/orb headers. It keeps the editable `$AF:C200` body
+distinct from eye/damage/egg-release DMA overlays, Golden egg pixels, and Bomb statue
+fragments; all eight Golden health-palette pairs are selectable. `./gradlew parityTorizo`
+pins 106 active full-body maps, 91 body-child maps, 70 bank-`$8D` projectile/effect
+maps, 16 runtime transfers, and 236 guided body/projectile animation frames.
+The normal Metroid now has an exact three-owner renderer instead of the earlier
+hand-made shell approximation. It synchronizes bank-`$A3` insides with bank-`$B4`
+shell and electricity sprite objects, including two source-labelled unused lists
+that are reached by live fallthrough. `./gradlew parityMetroid` pins the shared
+`$AE:9000` pixel owner, 31 total OAM maps, four independent companion tracks / 270
+ticks, and deterministic complete animations. See
+[the Metroid ownership note](docs/graphics/metroid.md).
+Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, and Metroid workspaces open on Animations and
+follow the same top-level drill-down: Animations, Compositions, Components, and
+Sources. If a future complex workspace has no animations it falls back to
+Compositions. Component selection always renders the selected piece; edit buttons
+appear only where its pixels map unambiguously back to one source owner.
+Current coverage and the ordered expansion plan are tracked in
+[the parity validation matrix](docs/validation/README.md).
 
 ## CLI
 

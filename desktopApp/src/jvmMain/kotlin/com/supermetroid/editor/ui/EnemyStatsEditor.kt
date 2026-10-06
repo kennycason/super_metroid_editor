@@ -66,18 +66,20 @@ val ENEMY_DEFS = listOf(
 
     // ── Flyers ──
     EnemyDef("tripper", "Tripper", 0xD7FF, 20, 40, "Flyer"),
-    EnemyDef("reo", "Reo", 0xD87F, 20, 40, "Flyer"),
+    // Keep the long-standing "reo" key so existing patch settings remain compatible.
+    EnemyDef("reo", "Reo", 0xD27F, 45, 15, "Flyer"),
+    EnemyDef("sbug", "Sbug (roach)", 0xD87F, 20, 40, "Flyer"),
     EnemyDef("waver", "Waver", 0xD63F, 100, 16, "Flyer"),
     EnemyDef("ripper", "Ripper", 0xD47F, 200, 5, "Flyer"),
     EnemyDef("ripper2", "Ripper II", 0xD3FF, 400, 20, "Flyer"),
     EnemyDef("kihunter", "Kihunter", 0xDFBF, 20, 40, "Flyer"),
-    EnemyDef("kihunter_green", "Kihunter (green)", 0xE03F, 400, 30, "Flyer"),
+    EnemyDef("kihunter_green", "Kihunter (green)", 0xEABF, 60, 20, "Flyer"),
 
     // ── Wall & Ceiling ──
     EnemyDef("sciser", "Sciser", 0xD77F, 100, 12, "Crawler"),
     EnemyDef("zeela", "Zeela", 0xDC7F, 100, 16, "Crawler"),
     EnemyDef("sova", "Sova", 0xDD3F, 100, 16, "Crawler"),
-    EnemyDef("beetom", "Beetom", 0xDCBF, 50, 8, "Crawler"),
+    EnemyDef("beetom", "Beetom", 0xE87F, 60, 10, "Crawler"),
 
     // ── Spawners & Pipes ──
     EnemyDef("rinka", "Rinka", 0xD23F, 10, 40, "Spawner"),
@@ -102,7 +104,7 @@ val ENEMY_DEFS = listOf(
     EnemyDef("metroid", "Big Metroid", 0xEEBF, 1, 0, "Special"),
     EnemyDef("fireflea", "Fireflea", 0xD6BF, 1, 0, "Special"),
     EnemyDef("cacatac", "Cacatac", 0xCFFF, 200, 20, "Special"),
-    EnemyDef("magdollite", "Magdollite", 0xD4BF, 200, 30, "Special"),
+    EnemyDef("magdollite", "Magdollite", 0xE83F, 20, 40, "Special"),
     EnemyDef("boyon", "Boyon", 0xCEBF, 100, 16, "Special"),
 )
 

@@ -240,7 +240,15 @@ internal fun SpritesTabCanvas(
         val selected = entries.getOrNull(selectedSpriteIdx) ?: entries.first()
         when (selected.speciesId) {
             0xE4BF -> PhantoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
-            0xE2BF -> KraidSpriteEditor(editorState = editorState, romParser = romParser, showOamComponents = true, modifier = modifier)
+            0xE2BF -> KraidSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xDE3F -> DraygonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xDDBF -> CrocomireSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xDD7F -> MetroidSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xDF3F -> SporeSpawnSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xF293 -> BotwoonSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xEEFF -> TorizoSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xEC3F -> MotherBrainSpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
+            0xE17F -> RidleySpriteEditor(editorState = editorState, romParser = romParser, modifier = modifier)
             else -> EnemySpriteViewer(entry = selected, romParser = romParser, editorState = editorState, modifier = modifier)
         }
     }

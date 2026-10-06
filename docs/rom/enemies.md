@@ -2,9 +2,19 @@
 
 ## Enemy Species Header (Bank $A0, 64 bytes each)
 
-Each enemy species has a 64-byte header at `$A0:XXXX`. The species ID is the 16-bit
-address within bank $A0. The name pointer at offset `+0x3E` points to a ROM string
-in bank $B4 (Japanese dev names like RSTONE, SABOTEN, HOTARY).
+The vanilla NTSC source assembles 164 enemy species headers, each 64 bytes at
+`$A0:XXXX`. The species ID is the 16-bit address within bank $A0. The name pointer
+at offset `+0x3E` points to a ROM string in bank $B4 (Japanese dev names like
+RSTONE, SABOTEN, HOTARY).
+
+This inventory is source/ROM verified as of 2026-10-04. `parityEnemyHeaders`
+evaluates all 4,756 `EnemyHeader` macro fields, checks the complete records through
+SMEDIT's production parser, and maps the 155 nonempty raw `GRAPHADR` associations
+to named extracted assets. The mapping deliberately preserves shared starts,
+exact aliases, partial overlaps, and transfers spanning adjacent assets. See
+[`../graphics/sprites.md`](../graphics/sprites.md#source-backed-header-and-graphadr-verification-2026-10-04)
+for the byte layout and edit-safety implications; machine-readable evidence is in
+ignored `parity/reports/enemy-headers.json`.
 
 ## Enemy Population Set (Bank $A1)
 
@@ -43,13 +53,13 @@ the game if it's the wrong type.
 | Gamet | $F213 | 5, all required | B | |
 | Dachora | $E5FF | 5 (main + 4 shinespark echoes) | B | Pieces 2-5 not required if last enemy index |
 | Bang | $DB3F | 4 | D | Piece 1=possessed enemy (optional), 2=orange core, 3=respawn bubble (optional), 4=initial bubble |
-| Lavaman | $E83F | 3, all required | C | 1=floating head, 2=rising body, 3=body throwing lavaballs |
+| Lavaman / Magdollite | $E83F | 3, all required | C | 1=floating head, 2=rising pillar, 3=hand throwing lavaballs |
 | Evir | $E63F, $E67F | 3 | B | 1=falling body, 2=animated legs (optional), 3=spiny projectile (optional, separate type) |
 | Samus's Ship | $D07F, $D0BF | 3, all required | B | 1=main (enter/hover/top GFX/thrusters), 2=bottom GFX, 3=unknown but required |
 | Dragon | $D4BF | 2, both required | A | 1=main enemy, 2=animated wings |
 | Hibashi | $E07F | 2, both required | D | 1=graphics and sound, 2=hitbox movement |
 | Puu | $E8BF | 2, both required | A | 1=grapplable bottom, 2=main rising body |
-| Kzan | $DFFF, $E0BF | 2 | B | 1=fully functioning enemy, 2=separate type (unused?) |
+| Kzan | $DFFF, $E03F | 2 | B | 1=visible spike-platform top, 2=invisible lower collision follower |
 | Kihunter | $EABF/$EB3F/$EBBF + $EAFF/$EB7F/$EBFF | 2 | B/D | 1=main, 2=wings (separate type, not in room list). Wings can attach to non-Kihunter enemies. |
 
 ### Multi-Piece Enemies (Non-Possessor)
@@ -94,7 +104,7 @@ Key corrections from vanilla SM analysis (April 2026):
 | $D6FF | FISH | Skultera | Maridia fish |
 | $D77F | KANI | Sciser | Crab enemy |
 | $D7FF | KAMER | Tripper | Falling enemy |
-| $D87F | SBUG | Reo | Reo variant |
+| $D87F/$D8BF | SBUG | Sbug (roach) | Eight-direction animated roach; second header uses alternate VRAM layout |
 | $D93F | SSIDE | Sidehopper | Small green hopper |
 | $D97F | SDEATH | Dessgeega | Blue 4-legged hopper |
 | $D9BF | SIDE | Sidehopper (big) | Large green hopper |
@@ -103,7 +113,7 @@ Key corrections from vanilla SM analysis (April 2026):
 | $DCBF | NOVA | Sova | Orange Norfair wall crawler |
 | $DD3F | MZOOMER | Sova (grey) | Grey invincible wall crawler |
 | $DFBF | — | Boulder | Rolling stone in Blue Brinstar |
-| $E03F | — | Kihunter | Pink/purple winged insect |
+| $E03F | — | Kzan bottom | Invisible collision follower; `$DFFF` owns the visible spike platform |
 | $E5FF | — | Dachora | Ostrich-like friendly creature |
 | $E63F | EBI | Evir | Falling body enemy, 3 pieces |
 | $E6BF | EYE | Eye | Eye enemy attached to wall |

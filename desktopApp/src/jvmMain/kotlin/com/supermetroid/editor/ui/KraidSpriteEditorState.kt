@@ -1,113 +1,100 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.TilesetGfxData
-import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.BossSpriteExportSafety
 import com.supermetroid.editor.rom.KraidSpritemap
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.TileGraphics
 
 /**
- * Manages Kraid assembled-sprite and tile-sheet state for the editor.
+ * Manages Kraid's source-backed BG2 previews, tileset edits, and legacy-data cleanup.
  *
  * All reads and writes go through the [customGfx] accessor so that calls always
  * reflect the current project without holding a stale reference across project loads.
  */
 class KraidSpriteEditorState(
     private val customGfx: () -> TilesetGfxData,
+    private val loadEnemyTileData: (RomParser, Int) -> ByteArray? = { parser, speciesId ->
+        com.supermetroid.editor.rom.EnemySpriteGraphics.loadEnemyTileData(parser, speciesId)
+    },
+    private val applyCustomGfx: (TileGraphics, Int) -> Unit,
     private val onDirty: () -> Unit,
 ) {
     private var spritemap: KraidSpritemap? = null
-    private var sheetGfx: EnemySpriteGraphics? = null
-    private var sheetPalette: IntArray? = null
 
     fun getSpritemap(romParser: RomParser): KraidSpritemap? {
         spritemap?.let { return it }
         val sm = KraidSpritemap(romParser)
-        val b64 = customGfx().spriteTileBlocks["kraid:0"]
-        val loaded = if (b64 != null) {
-            try {
-                val custom = java.util.Base64.getDecoder().decode(b64)
-                sm.loadWithCustomTiles(custom)
-            } catch (_: Exception) { sm.load() }
-        } else {
-            sm.load()
-        }
+        val loaded = sm.load()
         if (!loaded) return null
+        val tileGraphics = sm.getTileGraphics() ?: return null
+        applyCustomGfx(tileGraphics, sm.getTilesetId())
         spritemap = sm
         return sm
     }
 
-    fun renderFullBody(romParser: RomParser): KraidSpritemap.AssembledSprite? =
-        getSpritemap(romParser)?.renderFullBody()
-
-    fun renderBodyTilemap(
+    fun renderFullBody(
         romParser: RomParser,
-        def: KraidSpritemap.BodyTilemapDef,
-    ): KraidSpritemap.AssembledSprite? = getSpritemap(romParser)?.renderBodyTilemap(def)
+        head: KraidSpritemap.HeadTilemapDef = KraidSpritemap.HEAD_TILEMAPS.first(),
+        paletteStage: KraidSpritemap.PaletteStageDef =
+            KraidSpritemap.PALETTE_STAGES.first { it.key == "health-8" },
+    ): KraidSpritemap.AssembledSprite? =
+        getSpritemap(romParser)?.renderCompleteBody(
+            head,
+            paletteStage,
+            loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+        )
 
-    fun renderBigSprmap(
+    fun renderFullBodyAnimation(
         romParser: RomParser,
-        def: KraidSpritemap.ComponentDef,
-    ): KraidSpritemap.AssembledSprite? = getSpritemap(romParser)?.renderBigSprmap(def)
+        def: KraidSpritemap.HeadSequenceDef,
+        paletteStage: KraidSpritemap.PaletteStageDef,
+    ) = getSpritemap(romParser)?.renderFullBodyAnimation(
+        def,
+        paletteStage,
+        loadEnemyTileData(romParser, KraidSpritemap.OAM_SEQUENCES.first().speciesId),
+    )
 
-    fun getPalette(romParser: RomParser): IntArray? = getSpritemap(romParser)?.getPalette()
+    fun renderOamAnimation(
+        romParser: RomParser,
+        def: KraidSpritemap.OamSequenceDef,
+        tileData: ByteArray,
+        paletteStage: KraidSpritemap.PaletteStageDef,
+    ) = getSpritemap(romParser)?.renderOamAnimation(def, tileData, paletteStage)
 
-    fun applyComponentEdits(
+    fun renderHeadTilemap(
+        romParser: RomParser,
+        def: KraidSpritemap.HeadTilemapDef,
+    ): KraidSpritemap.AssembledSprite? = getSpritemap(romParser)?.renderHeadTilemap(def)
+
+    fun applyHeadEdits(
+        romParser: RomParser,
         sprite: KraidSpritemap.AssembledSprite,
         editedPixels: IntArray,
     ) {
-        val sm = spritemap ?: return
-        sm.applyEdits(sprite, editedPixels)
-        val tiles = sm.getTileData() ?: return
-        customGfx().spriteTileBlocks["kraid:0"] =
-            java.util.Base64.getEncoder().encodeToString(tiles)
+        val sm = getSpritemap(romParser) ?: return
+        if (sm.applyEdits(sprite, editedPixels).isEmpty()) return
+        val rawVarGfx = sm.getTileGraphics()?.getRawVarGfx() ?: return
+        customGfx().varGfx[sm.getTilesetId().toString()] =
+            java.util.Base64.getEncoder().encodeToString(rawVarGfx)
         onDirty()
         spritemap = null
     }
 
-    fun loadTileSheet(romParser: RomParser): Triple<IntArray, Int, Int>? {
-        val gfx = EnemySpriteGraphics(romParser)
-        val b64 = customGfx().spriteTileBlocks["kraid:0"]
-        val loaded = if (b64 != null) {
-            try {
-                val custom = java.util.Base64.getDecoder().decode(b64)
-                gfx.loadFromRaw(listOf(custom))
-                true
-            } catch (_: Exception) { false }
-        } else {
-            false
-        }
-        if (!loaded) {
-            if (!gfx.load(EnemySpriteGraphics.KRAID_BLOCKS)) return null
-        }
-        val sm = getSpritemap(romParser) ?: return null
-        val palette = sm.getPalette() ?: return null
-        sheetGfx = gfx
-        sheetPalette = palette
-        return gfx.renderSheet(palette, cols = 16)
-    }
+    fun getPalette(romParser: RomParser): IntArray? = getSpritemap(romParser)?.getPalette()
 
-    fun getSheetPalette(): IntArray? = sheetPalette
-
-    fun applyTileSheetEdits(pixels: IntArray, w: Int, h: Int) {
-        val gfx = sheetGfx ?: return
-        val palette = sheetPalette ?: return
-        gfx.importFromArgb(pixels, w, h, palette, cols = 16)
-        val rawBlocks = gfx.getRawBlocks() ?: return
-        for ((i, raw) in rawBlocks.withIndex()) {
-            customGfx().spriteTileBlocks["kraid:$i"] =
-                java.util.Base64.getEncoder().encodeToString(raw)
-        }
-        onDirty()
-        spritemap = null
-    }
+    fun hasCustomComponents(): Boolean =
+        customGfx().varGfx.containsKey(KraidSpritemap.KRAID_TILESET_ID.toString())
 
     fun hasCustomTileSheet(): Boolean =
-        customGfx().spriteTileBlocks.containsKey("kraid:0")
+        customGfx().spriteTileBlocks.keys.any {
+            it.startsWith(BossSpriteExportSafety.KRAID_KEY_PREFIX)
+        }
 
     fun resetTileSheet() {
-        customGfx().spriteTileBlocks.remove("kraid:0")
-        sheetGfx = null
-        sheetPalette = null
+        customGfx().spriteTileBlocks.keys
+            .filter { it.startsWith(BossSpriteExportSafety.KRAID_KEY_PREFIX) }
+            .forEach { customGfx().spriteTileBlocks.remove(it) }
         spritemap = null
         onDirty()
     }
@@ -115,7 +102,5 @@ class KraidSpriteEditorState(
     /** Invalidate cached ROM-derived data when a new ROM is loaded. */
     fun invalidate() {
         spritemap = null
-        sheetGfx = null
-        sheetPalette = null
     }
 }

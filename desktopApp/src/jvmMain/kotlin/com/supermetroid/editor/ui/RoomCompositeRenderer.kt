@@ -96,8 +96,8 @@ internal val ENEMY_IDS_FLIP_BY_INIT_PARAM = setOf(
     0xE73F, // Namihe
     0xD47F, // Ripper
     0xD2FF, // Geruta
-    0xD33F, 0xE67F, // Holtz
-    0xD63F, 0xD89F, // Waver
+    0xD33F, // Holtz
+    0xD63F, // Waver
     0xDD3F, // Sova
 )
 

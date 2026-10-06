@@ -10,6 +10,7 @@ import java.io.File
  * achieves 100% match via direct BG2 tilemap parsing.
  */
 @Disabled("Superseded by PhantoonSpritemapRoundtripTest")
+@Suppress("DEPRECATION")
 class SpritemapDerivationTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()

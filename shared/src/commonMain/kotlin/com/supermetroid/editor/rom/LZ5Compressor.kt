@@ -18,6 +18,10 @@ object LZ5Compressor {
     private const val MAX_CHAIN = 512
 
     fun compress(data: ByteArray): ByteArray {
+        require(data.size <= LZ5Codec.MAX_ENGINE_OUTPUT) {
+            "LZ5 input is ${data.size} bytes; the engine destination is limited to " +
+                "${LZ5Codec.MAX_ENGINE_OUTPUT} bytes"
+        }
         val out = mutableListOf<Byte>()
         val rawBuf = mutableListOf<Byte>()
         var pos = 0
@@ -186,91 +190,7 @@ object LZ5Compressor {
      * Standalone LZ5 decompression from a raw compressed byte array.
      * Used for round-trip verification during export.
      */
-    fun decompress(compressed: ByteArray): ByteArray {
-        val dst = ByteArray(0x20000)
-        var dstPos = 0
-        var pos = 0
-
-        while (pos < compressed.size) {
-            val nextCmd = compressed[pos].toInt() and 0xFF
-            if (nextCmd == 0xFF) break
-
-            val cmdCode: Int
-            val length: Int
-            val topBits = (nextCmd shr 5) and 7
-            if (topBits == 7) {
-                if (pos + 1 >= compressed.size) break
-                cmdCode = (nextCmd shr 2) and 7
-                val highBits = nextCmd and 0x03
-                val lowBits = compressed[pos + 1].toInt() and 0xFF
-                length = ((highBits shl 8) or lowBits) + 1
-                pos += 2
-            } else {
-                cmdCode = topBits
-                length = (nextCmd and 0x1F) + 1
-                pos += 1
-            }
-
-            when (cmdCode) {
-                0 -> for (i in 0 until length) {
-                    if (pos >= compressed.size) break
-                    dst[dstPos++] = compressed[pos++]
-                }
-                1 -> {
-                    val b = compressed[pos++]
-                    for (i in 0 until length) dst[dstPos++] = b
-                }
-                2 -> {
-                    val b1 = compressed[pos++]; val b2 = compressed[pos++]
-                    for (i in 0 until length) dst[dstPos++] = if (i % 2 == 0) b1 else b2
-                }
-                3 -> {
-                    var b = compressed[pos++].toInt() and 0xFF
-                    for (i in 0 until length) { dst[dstPos++] = (b and 0xFF).toByte(); b++ }
-                }
-                4 -> {
-                    val addr = (compressed[pos].toInt() and 0xFF) or
-                            ((compressed[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    for (i in 0 until length) {
-                        val si = addr + i
-                        dst[dstPos + i] = if (si < dstPos + i) dst[si] else 0
-                    }
-                    dstPos += length
-                }
-                5 -> {
-                    val addr = (compressed[pos].toInt() and 0xFF) or
-                            ((compressed[pos + 1].toInt() and 0xFF) shl 8)
-                    pos += 2
-                    for (i in 0 until length) {
-                        val si = addr + i
-                        dst[dstPos + i] = if (si < dstPos + i) (dst[si].toInt() xor 0xFF).toByte() else 0xFF.toByte()
-                    }
-                    dstPos += length
-                }
-                6 -> {
-                    val relOffset = compressed[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    for (i in 0 until length) {
-                        val si = srcAddr + i
-                        dst[dstPos + i] = if (si >= 0 && si < dstPos + i) dst[si] else 0
-                    }
-                    dstPos += length
-                }
-                7 -> {
-                    val relOffset = compressed[pos++].toInt() and 0xFF
-                    val srcAddr = dstPos - relOffset
-                    for (i in 0 until length) {
-                        val si = srcAddr + i
-                        dst[dstPos + i] = if (si >= 0 && si < dstPos + i) (dst[si].toInt() xor 0xFF).toByte() else 0xFF.toByte()
-                    }
-                    dstPos += length
-                }
-            }
-            if (dstPos >= dst.size) break
-        }
-        return dst.copyOf(dstPos)
-    }
+    fun decompress(compressed: ByteArray): ByteArray = LZ5Codec.decompress(compressed).data
 
     private fun emitCmd(out: MutableList<Byte>, cmd: Int, length: Int) {
         if (length <= 32) {

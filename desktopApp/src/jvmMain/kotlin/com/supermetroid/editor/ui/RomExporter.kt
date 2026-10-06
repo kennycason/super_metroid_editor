@@ -2,11 +2,14 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PatchWrite
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.declaresSharedRomWrite
 import com.supermetroid.editor.data.enabledPatchVariantConflicts
 import com.supermetroid.editor.data.withVanillaHexPatchPreconditions
+import com.supermetroid.editor.rom.BossSpriteExportSafety
+import com.supermetroid.editor.rom.CommunitySamusSourceCodec
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.ProjectRoomExportException
@@ -69,16 +72,72 @@ private fun ByteArray.hexAt(offset: Int, count: Int): String {
     return (offset until end).joinToString(" ") { (this[it].toInt() and 0xFF).toString(16).padStart(2, '0') }
 }
 
+/**
+ * Spider Ball's optional active-state tint installs vanilla-derived morph-ball
+ * DMA definitions and graphics in Samus-owned banks. A catalog injection owns
+ * those same banks and already supplies its character's morph-ball art, so the
+ * safe combined behavior is to retain that art while applying Spider Ball's
+ * movement, item, menu, and persistence records.
+ */
+private val SPIDER_BALL_COMMUNITY_OMITTED_WRITE_OFFSETS = setOf(
+    0x080647L, // Draw hook 1.
+    0x0809F9L, // Draw hook 2.
+    0x080A45L, // Draw hook 3.
+    0x096DF4L, // Active-state DMA wrapper.
+    0x097100L, // Vanilla-derived morph-ball DMA definitions.
+    0x0FF740L, // Vanilla-derived morph-ball tile graphics.
+    0x08801CL, // Vanilla pose-handler dispatch hook 1.
+    0x088024L, // Vanilla pose-handler dispatch hook 2.
+    0x088036L, // Vanilla pose-handler dispatch hook 3.
+    0x088038L, // Vanilla pose-handler dispatch hook 4.
+    0x08803AL, // Vanilla pose-handler dispatch hook 5.
+    0x0880BEL, // Vanilla-only pose guard.
+)
+
+private const val COMMUNITY_SPIDER_POSE_TRAMPOLINE_PC = 0x087680L
+private const val COMMUNITY_SPIDER_POSE_HOOK_PC = 0x0881A9L
+
+private fun communitySpiderPoseCompatibilityWrites(): List<PatchWrite> {
+    // The catalog injector's shared pose routine starts with:
+    //   LDA $8B / BEQ $81DB
+    // Redirect it through bank $90 while Spider Ball is active, then jump back
+    // to the exact original branch destinations when it is not.
+    val trampoline = listOf(
+        0xAD, 0x1C, 0x0A,       // LDA $0A1C (Spider Ball active word)
+        0xC9, 0x5A, 0x5A,       // CMP #$5A5A
+        0xF0, 0x0C,             // BEQ SpiderActive
+        0xA5, 0x8B,             // Original LDA $8B
+        0xF0, 0x04,             // BEQ OriginalZeroBranch
+        0x5C, 0xAD, 0x81, 0x91, // JML $91:81AD
+        0x5C, 0xDB, 0x81, 0x91, // JML $91:81DB
+        0x5C, 0x86, 0x80, 0x91, // JML $91:8086 (RTS back to pose wrapper)
+    )
+    return listOf(
+        PatchWrite(
+            offset = COMMUNITY_SPIDER_POSE_TRAMPOLINE_PC,
+            bytes = trampoline,
+            expectedBytes = List(trampoline.size) { 0xFF },
+        ),
+        PatchWrite(
+            offset = COMMUNITY_SPIDER_POSE_HOOK_PC,
+            bytes = listOf(0x5C, 0x80, 0xF6, 0x90), // JML $90:F680
+            expectedBytes = listOf(0xA5, 0x8B, 0xF0, 0x2E),
+        ),
+    )
+}
+
 internal fun buildIpsPatch(original: ByteArray, patched: ByteArray): ByteArray {
     val out = java.io.ByteArrayOutputStream()
     out.write("PATCH".toByteArray(Charsets.US_ASCII))
 
     var i = 0
-    val len = minOf(original.size, patched.size)
+    val len = maxOf(original.size, patched.size)
+    fun originalByte(index: Int): Byte = if (index < original.size) original[index] else 0
+    fun patchedByte(index: Int): Byte = if (index < patched.size) patched[index] else 0
     while (i < len) {
-        if (original[i] != patched[i]) {
+        if (originalByte(i) != patchedByte(i)) {
             val start = i
-            while (i < len && original[i] != patched[i] && (i - start) < 0xFFFF) i++
+            while (i < len && originalByte(i) != patchedByte(i) && (i - start) < 0xFFFF) i++
             val size = i - start
 
             // IPS record: 3-byte offset, 2-byte size, data
@@ -87,13 +146,19 @@ internal fun buildIpsPatch(original: ByteArray, patched: ByteArray): ByteArray {
             out.write(start and 0xFF)
             out.write((size shr 8) and 0xFF)
             out.write(size and 0xFF)
-            out.write(patched, start, size)
+            for (offset in start until start + size) out.write(patchedByte(offset).toInt() and 0xFF)
         } else {
             i++
         }
     }
 
     out.write("EOF".toByteArray(Charsets.US_ASCII))
+    if (original.size != patched.size) {
+        require(patched.size <= 0xFFFFFF) { "IPS target is larger than the 24-bit format limit" }
+        out.write((patched.size shr 16) and 0xFF)
+        out.write((patched.size shr 8) and 0xFF)
+        out.write(patched.size and 0xFF)
+    }
     return out.toByteArray()
 }
 
@@ -129,7 +194,28 @@ internal class RomExporter(
         } else {
             0
         }
-        val writePlan = RomWritePlan(originalRom, headerSize)
+        val inputRomHash = bytesSha256(originalRom.copyOfRange(headerSize, originalRom.size))
+        val communitySamusArtifact = try {
+            project.customGfx.samusCommunitySource
+                ?.let(CommunitySamusSourceCodec::load)
+                ?.injectionArtifact
+        } catch (problem: Exception) {
+            val message = "Export failed safely: ${problem.message ?: problem::class.simpleName}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
+        val exportBase = try {
+            communitySamusArtifact?.let {
+                CommunitySamusRomInjector.expandedBase(originalRom, headerSize, inputRomHash, it)
+            } ?: originalRom
+        } catch (problem: RomWritePlanException) {
+            val message = "Export failed safely: ${problem.message}"
+            onLog("ERROR: $message")
+            onStatus(message)
+            return null
+        }
+        val writePlan = RomWritePlan(exportBase, headerSize)
         val romData = writePlan.romData
         val allocationParser = RomParser(romData)
         val freeSpaceAllocator = RomFreeSpaceAllocator(
@@ -137,8 +223,10 @@ internal class RomExporter(
             snesToPc = allocationParser::snesToPc,
             pcToSnes = allocationParser::pcToSnes,
             guardBytes = 2,
+            freeFillByteForBank = { bank ->
+                if (communitySamusArtifact != null && bank in 0xE0..0xFF) 0x00 else 0xFF
+            },
         )
-        val inputRomHash = bytesSha256(originalRom.copyOfRange(headerSize, originalRom.size))
         val roomsPatched = mutableSetOf<String>()
 
         val validationRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
@@ -172,13 +260,29 @@ internal class RomExporter(
         val patchesApplied: Int
         val musicPatched: Int
         val gfxPatched: Int
+        val samusPatched: Int
         val minimapPatched: Int
         val textPatched: Int
         val asmPatched: Int
         try {
+            samusPatched = if (communitySamusArtifact != null) {
+                val recordCount = CommunitySamusRomInjector.apply(writePlan, communitySamusArtifact)
+                onLog(
+                    "[EXPORT] Applied project Samus '${project.customGfx.samusCommunitySource?.displayName}' " +
+                        "($recordCount IPS records, ${communitySamusArtifact.metadata.providerRevision.take(12)})"
+                )
+                1
+            } else {
+                0
+            }
             // Apply patches FIRST so free-space scanners see code/data already
             // claimed by fixed patches before generated allocators run.
-            patchesApplied = applyPatches(writePlan, inputRomHash, freeSpaceAllocator) ?: return null
+            patchesApplied = applyPatches(
+                writePlan,
+                inputRomHash,
+                freeSpaceAllocator,
+                communitySamusActive = communitySamusArtifact != null,
+            ) ?: return null
 
             val musicOwner = "music:project"
             val musicAllocations = mutableListOf<RomAllocation>()
@@ -247,7 +351,11 @@ internal class RomExporter(
                 return null
             }
 
-            gfxPatched = applyCustomGfxPatches(writePlan, freeSpaceAllocator)
+            gfxPatched = applyCustomGfxPatches(
+                writePlan,
+                freeSpaceAllocator,
+                expandedZeroFilledBanksAvailable = communitySamusArtifact != null,
+            )
             minimapPatched = applyMinimapEdits(writePlan)
             textPatched = applyTextEdits(writePlan)
             asmPatched = applyCustomAsm(writePlan, freeSpaceAllocator)
@@ -265,7 +373,7 @@ internal class RomExporter(
 
         for (line in writePlan.report().logLines()) onLog(line)
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
+        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && samusPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
             val orig = File(romPath)
             val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
             try {
@@ -323,7 +431,7 @@ internal class RomExporter(
             onStatus(message)
             return null
         }
-        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx)"
+        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx, $samusPatched Samus)"
         onLog(msg)
         onStatus(msg)
         return out.absolutePath
@@ -341,6 +449,9 @@ internal class RomExporter(
             }
             if (target.resources.isEmpty()) {
                 target.resources.addAll(source.resources.map { it.copy() })
+            }
+            if (target.customItems.isEmpty()) {
+                target.customItems.addAll(source.customItems.map { it.copy() })
             }
             if (target.exclusiveGroup == null) {
                 target.exclusiveGroup = source.exclusiveGroup
@@ -364,6 +475,7 @@ internal class RomExporter(
         writePlan: RomWritePlan,
         inputRomHash: String,
         freeSpaceAllocator: RomFreeSpaceAllocator,
+        communitySamusActive: Boolean,
     ): Int? {
         val romData = writePlan.romData
         var patchesApplied = 0
@@ -417,8 +529,24 @@ internal class RomExporter(
                             "supported hashes: ${patch.compatibleRomHashes.joinToString()}"
                     )
                 }
-                val totalBytes = patch.writes.sumOf { it.bytes.size }
-                for ((index, write) in patch.writes.withIndex()) {
+                val writesToApply = if (
+                    communitySamusActive && patch.id.startsWith("bundled_spider_ball")
+                ) {
+                    patch.writes
+                        .filterNot { it.offset in SPIDER_BALL_COMMUNITY_OMITTED_WRITE_OFFSETS }
+                        .plus(communitySpiderPoseCompatibilityWrites())
+                        .also { compatibleWrites ->
+                            val omitted = patch.writes.size + 2 - compatibleWrites.size
+                            onLog(
+                                "[EXPORT]   Community Samus compatibility: retained catalog morph-ball art; " +
+                                    "replaced $omitted vanilla-specific Spider Ball records with an adaptive pose hook"
+                            )
+                        }
+                } else {
+                    patch.writes
+                }
+                val totalBytes = writesToApply.sumOf { it.bytes.size }
+                for ((index, write) in writesToApply.withIndex()) {
                     writePlan.add(
                         owner = "patch:${patch.id}",
                         label = "${patch.name} record ${index + 1}",
@@ -434,9 +562,9 @@ internal class RomExporter(
                         },
                     )
                 }
-                onLog("[EXPORT]   Hex writes: ${patch.writes.size} records, $totalBytes bytes")
+                onLog("[EXPORT]   Hex writes: ${writesToApply.size} records, $totalBytes bytes")
                 if (patch.id.startsWith("bundled_spider_ball")) {
-                    val flatHash = bytesSha256(patch.writes.flatMap { it.bytes })
+                    val flatHash = bytesSha256(writesToApply.flatMap { it.bytes })
                     val header = writePlan.headerSize
                     val movementCode = patch.writes.firstOrNull {
                         it.offset in 0x87700L..0x87FFFL && it.bytes.size > 1_000
@@ -446,7 +574,7 @@ internal class RomExporter(
                             romData.hexAt(header + it.offset.toInt(), 12)
                     } ?: "code=missing"
                     onLog(
-                        "[EXPORT]   Spider Ball proof: records=${patch.writes.size}, bytes=$totalBytes, sha256=$flatHash, " +
+                        "[EXPORT]   Spider Ball proof: records=${writesToApply.size}, bytes=$totalBytes, sha256=$flatHash, " +
                             "movePtr@0x82353=${romData.hexAt(header + 0x82353, 2)}, " +
                             "posePtr@0x8801C=${romData.hexAt(header + 0x8801C, 2)}, " +
                             "$movementCodeProof, " +
@@ -913,10 +1041,15 @@ internal class RomExporter(
     private fun applyCustomGfxPatches(
         writePlan: RomWritePlan,
         freeSpaceAllocator: RomFreeSpaceAllocator,
+        expandedZeroFilledBanksAvailable: Boolean,
     ): Int {
         val romData = writePlan.romData
         var gfxPatched = 0
         val gfxData = project.customGfx
+        for (key in gfxData.spriteTileBlocks.keys) {
+            val blockedReason = BossSpriteExportSafety.blockedReason(key) ?: continue
+            throw RomWritePlanException("Sprite tile edit '$key' cannot export. $blockedReason")
+        }
         if (gfxData.enemyGfx.isNotEmpty()) {
             throw RomWritePlanException(
                 "Legacy PNG enemy graphics cannot be exported safely. Reopen each affected enemy in the sprite " +
@@ -927,7 +1060,8 @@ internal class RomExporter(
 
         fun validAllocationBanks(originalSnesAddress: Int): List<Int> {
             val originalBank = (originalSnesAddress shr 16) and 0xFF
-            return (listOf(originalBank) + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
+            val expandedBanks = if (expandedZeroFilledBanksAvailable) 0xFF downTo 0xE0 else emptyList()
+            return (listOf(originalBank) + expandedBanks + (0xCE downTo 0xC0) + (0xBF downTo 0xB0))
                 .distinct()
                 .filter { bank ->
                     val bankStart = runCatching { romParser.snesToPc((bank shl 16) or 0x8000) }.getOrNull()
@@ -1138,49 +1272,8 @@ internal class RomExporter(
             onLog("Patched sprite palette '${region.name}' (${region.byteSize} bytes at 0x${region.offset.toString(16)})")
         }
 
-        // Apply Phantoon sprite tile patches (raw 4bpp → LZ5 compress → write to $B7)
-        onLog("[EXPORT] Phantoon sprite blocks: spriteTileBlocks.keys=${gfxData.spriteTileBlocks.keys}, size=${gfxData.spriteTileBlocks.size}")
-        for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.withIndex()) {
-            val b64 = gfxData.spriteTileBlocks["phantoon:$i"]
-            if (b64 == null) continue
-            val rawBytes = decode(b64, "Phantoon sprite block $i")
-            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
-                "Phantoon sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
-                    RomConstants.BYTES_PER_4BPP_TILE
-            }
-            writeLZ5(
-                rawBytes,
-                block.snesAddress,
-                "Phantoon sprite block $i",
-                limitToOriginalRawSize = true,
-            )
-            gfxPatched++
-        }
-
-        // Apply Kraid sprite tile patches (raw 4bpp → LZ5 compress → write to $B9)
-        for ((i, block) in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.withIndex()) {
-            val b64 = gfxData.spriteTileBlocks["kraid:$i"]
-            if (b64 == null) continue
-            val rawBytes = decode(b64, "Kraid sprite block $i")
-            require(rawBytes.isNotEmpty() && rawBytes.size % RomConstants.BYTES_PER_4BPP_TILE == 0) {
-                "Kraid sprite block $i has ${rawBytes.size} bytes; expected a non-empty multiple of " +
-                    RomConstants.BYTES_PER_4BPP_TILE
-            }
-            writeLZ5(
-                rawBytes,
-                block.snesAddress,
-                "Kraid sprite block $i",
-                limitToOriginalRawSize = true,
-            )
-            gfxPatched++
-        }
-
         for (key in gfxData.spriteTileBlocks.keys) {
             val valid = when {
-                key.startsWith("phantoon:") -> key.removePrefix("phantoon:").toIntOrNull()
-                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.PHANTOON_BLOCKS.indices } == true
-                key.startsWith("kraid:") -> key.removePrefix("kraid:").toIntOrNull()
-                    ?.let { it in com.supermetroid.editor.rom.EnemySpriteGraphics.KRAID_BLOCKS.indices } == true
                 key.startsWith("enemy:") -> key.removePrefix("enemy:").toIntOrNull(16) != null
                 else -> false
             }
@@ -1694,11 +1787,6 @@ internal class RomExporter(
         val original = romParser.getRomData()
         val smcPath = export() ?: return null
         val patched = File(smcPath).readBytes()
-
-        if (original.size != patched.size) {
-            onLog("[IPS] ROM size mismatch: ${original.size} vs ${patched.size}")
-            return null
-        }
 
         val ipsData = buildIpsPatch(original, patched)
         val orig = File(romPath)

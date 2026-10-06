@@ -2,13 +2,13 @@ package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
-import java.io.File
 
 /**
  * Tests for EnemySpriteGraphics — covers loading, rendering, round-trip encoding,
  * pixel read/write correctness, and color conversion fidelity.
  *
- * Tests that need the ROM are skipped gracefully when the ROM is not present.
+ * Source-address checks use the configured ROM; pixel-format tests use deterministic
+ * synthetic 4bpp blocks and remain fixture-independent.
  */
 class EnemySpriteGraphicsTest {
 
@@ -17,29 +17,50 @@ class EnemySpriteGraphicsTest {
     // ─── ROM-dependent tests ──────────────────────────────────────────────────
 
     @Test
-    fun `Phantoon blocks load from ROM with expected tile counts`() {
+    fun `Phantoon GRAPHADR loads exact raw source tiles`() {
         val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
+        val block = EnemySpriteGraphics.readGraphicsBlock(parser, 0xE4BF)
+        val raw = EnemySpriteGraphics.loadEnemyTileData(parser, 0xE4BF)
 
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS), "Should successfully load Phantoon blocks")
+        assertNotNull(block)
+        assertEquals(0xACAA00, block!!.snesAddress)
+        assertNotNull(raw)
+        assertEquals(0xC00, raw!!.size)
+        assertEquals(96, raw.size / EnemySpriteGraphics.BYTES_PER_TILE)
+    }
 
-        val totalTiles = gfx.getTileCount()
-        val blockACount = gfx.getTileCountInBlock(0)
-        val blockBCount = gfx.getTileCountInBlock(1)
-
-        println("Phantoon Block A: $blockACount tiles, Block B: $blockBCount tiles, total: $totalTiles")
-
-        assertTrue(blockACount > 0, "Block A (Tiles A \$B7:170F) should contain at least one tile")
-        assertTrue(blockBCount > 0, "Block B (Tiles B \$B7:1808) should contain at least one tile")
-        assertEquals(totalTiles, blockACount + blockBCount, "Total tiles should equal sum of block counts")
-        assertTrue(totalTiles % 1 == 0, "Tile count should be a whole number")
+    @Test
+    fun `composite bosses have one sprite navigation entry`() {
+        val entries = EnemySpriteGraphics.EDITOR_ENEMIES
+        assertEquals("Draygon", entries.single { it.speciesId == 0xDE3F }.name)
+        assertEquals(1, entries.count { it.speciesId in setOf(0xDE3F, 0xDE7F, 0xDEBF, 0xDEFF) })
+        assertEquals(1, entries.count { it.speciesId in setOf(0xE4BF, 0xE4FF, 0xE53F, 0xE57F) })
+        assertEquals("Mother Brain", entries.single { it.speciesId == 0xEC3F }.name)
+        assertEquals(1, entries.count { it.speciesId in setOf(0xEC3F, 0xEC7F) })
+        assertEquals("Ridley", entries.single { it.speciesId == 0xE17F }.name)
+        assertEquals(1, entries.count { it.speciesId in setOf(0xE13F, 0xE17F) })
+        assertEquals("Puyo", entries.single { it.speciesId == 0xCFBF }.name)
+        assertEquals("Ridley Explosion (internal helper)", RomParser.enemyName(0xE1BF))
+        assertEquals(0, entries.count { it.speciesId == 0xE1BF })
+        assertEquals("Evir", entries.single { it.speciesId == 0xE63F }.name)
+        assertEquals("Evir Projectile (internal helper)", RomParser.enemyName(0xE67F))
+        assertEquals(0, entries.count { it.speciesId == 0xE67F })
+        assertEquals("Kihunter (green)", entries.single { it.speciesId == 0xEABF }.name)
+        assertEquals("Kihunter (red)", entries.single { it.speciesId == 0xEB3F }.name)
+        assertEquals("Kihunter (gold)", entries.single { it.speciesId == 0xEBBF }.name)
+        assertEquals(0, entries.count { it.speciesId in setOf(0xEAFF, 0xEB7F, 0xEBFF) })
+        assertEquals("Kzan (bottom collision helper)", RomParser.enemyName(0xE03F))
+        assertEquals(0, entries.count { it.speciesId == 0xE03F })
+        assertEquals("Sidehopper Corpse", entries.single { it.speciesId == 0xED7F }.name)
+        assertEquals("Sidehopper Corpse (large graphics variant)", RomParser.enemyName(0xEDBF))
+        assertEquals(0, entries.count { it.speciesId == 0xEDBF })
+        assertEquals("Tourian Statue Soul (graphics helper)", RomParser.enemyName(0xF03F))
+        assertEquals(0, RomParser.ENEMY_CATALOG.count { it.first == 0xF03F })
     }
 
     @Test
     fun `renderSheet produces correctly sized pixel buffer`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val gfx = syntheticGraphics()
 
         val palette = buildTestPalette()
         val result = gfx.renderSheet(palette, cols = 8)
@@ -55,16 +76,14 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `renderSheet with transparent background — index-0 pixels are fully transparent`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val gfx = syntheticGraphics()
 
         val palette = buildTestPalette()
         val (pixels, _, _) = gfx.renderSheet(palette)!!
 
         // Palette index 0 must render as 0x00000000 (fully transparent), never as a solid color
         val solidZeroCount = pixels.count { it != 0 && ((it ushr 24) and 0xFF) == 0xFF }
-        // Verify at least one pixel is transparent (Phantoon has transparent background)
+        // The first synthetic tile is blank, so the sheet must include transparent pixels.
         val transparentCount = pixels.count { ((it ushr 24) and 0xFF) < 128 }
         assertTrue(transparentCount > 0, "Tile sheet should have transparent (index-0) pixels for background")
         println("$transparentCount transparent pixels, $solidZeroCount opaque pixels in tile sheet")
@@ -72,9 +91,7 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `round-trip renderSheet then importFromArgb reproduces identical raw bytes`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val gfx = syntheticGraphics()
 
         val rawBefore = gfx.getRawBlocks()!!
 
@@ -83,7 +100,7 @@ class EnemySpriteGraphicsTest {
         val (pixels, w, h) = gfx.renderSheet(palette)!!
 
         // Load the same raw bytes into a fresh instance and import the rendered pixels
-        val gfx2 = EnemySpriteGraphics(parser)
+        val gfx2 = EnemySpriteGraphics(stubParser())
         gfx2.loadFromRaw(rawBefore)
         gfx2.importFromArgb(pixels, w, h, palette)
 
@@ -100,24 +117,30 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `loadWithOverrides applies custom block data over ROM defaults`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
-
-        val originalBlock0 = gfx.getRawBlocks()!![0].copyOf()
+        val originalBlock0 = syntheticBlock(3)
+        val originalBlock1 = syntheticBlock(2, seed = 71)
+        val compressed0 = LZ5Compressor.compress(originalBlock0)
+        val compressed1 = LZ5Compressor.compress(originalBlock1)
+        val secondOffset = compressed0.size + 16
+        val rom = ByteArray(secondOffset + compressed1.size)
+        compressed0.copyInto(rom)
+        compressed1.copyInto(rom, secondOffset)
+        val parser = RomParser(rom)
+        val blocks = listOf(
+            EnemySpriteGraphics.Companion.SpriteBlock(0, 0, 0, "Synthetic A"),
+            EnemySpriteGraphics.Companion.SpriteBlock(secondOffset, 0, 0, "Synthetic B"),
+        )
         val blockSize = originalBlock0.size
 
         // Create a custom block filled with 0x42
         val customBlock = ByteArray(blockSize) { 0x42.toByte() }
         val gfx2 = EnemySpriteGraphics(parser)
-        assertTrue(gfx2.loadWithOverrides(EnemySpriteGraphics.PHANTOON_BLOCKS, mapOf(0 to customBlock)))
+        assertTrue(gfx2.loadWithOverrides(blocks, mapOf(0 to customBlock)))
 
         val overriddenBlocks = gfx2.getRawBlocks()!!
         assertArrayEquals(customBlock, overriddenBlocks[0], "Block 0 should be replaced with custom data")
         // Block 1 should remain the original ROM data
-        val gfx3 = EnemySpriteGraphics(parser)
-        gfx3.load(EnemySpriteGraphics.PHANTOON_BLOCKS)
-        assertArrayEquals(gfx3.getRawBlocks()!![1], overriddenBlocks[1], "Block 1 should remain unchanged ROM data")
+        assertArrayEquals(originalBlock1, overriddenBlocks[1], "Block 1 should remain unchanged ROM data")
     }
 
     @Test
@@ -154,9 +177,7 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `pixel writePixelIndex and readPixelIndex are consistent for all 16 palette indices`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val gfx = syntheticGraphics()
 
         val tileCount = gfx.getTileCount()
         assertTrue(tileCount > 0)
@@ -175,10 +196,8 @@ class EnemySpriteGraphicsTest {
     }
 
     @Test
-    fun `all 16 pixel values in a row encode and decode correctly`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+    fun `all eight pixel values in a row encode and decode correctly`() {
+        val gfx = syntheticGraphics()
 
         // Write the full color ramp 0..15 across an 8-pixel row, then read back
         val tileIdx = 0
@@ -193,35 +212,10 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `getTileCountInBlock returns 0 for out-of-range block index`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
+        val gfx = syntheticGraphics()
 
         assertEquals(0, gfx.getTileCountInBlock(99), "Out-of-range block index should return 0")
         assertEquals(0, gfx.getTileCountInBlock(-1), "Negative block index should return 0")
-    }
-
-    @Test
-    fun `original compressed sizes are nonzero and raw data fits in allotted space`() {
-        val parser = loadTestRom() ?: return
-        val gfx = EnemySpriteGraphics(parser)
-        assertTrue(gfx.load(EnemySpriteGraphics.PHANTOON_BLOCKS))
-
-        val rawBlocks = gfx.getRawBlocks()!!
-        for ((i, block) in rawBlocks.withIndex()) {
-            val spriteBlock = EnemySpriteGraphics.PHANTOON_BLOCKS[i]
-            val (_, origSize) = parser.decompressLZ2WithSize(spriteBlock.snesAddress)
-            val tileCount = block.size / EnemySpriteGraphics.BYTES_PER_TILE
-            val trailingBytes = block.size % EnemySpriteGraphics.BYTES_PER_TILE
-            println("Block $i (${spriteBlock.label}): raw=${block.size}B ($tileCount tiles + ${trailingBytes}B trailing), orig compressed=${origSize}B at SNES=\$${spriteBlock.snesAddress.toString(16).uppercase()}")
-            assertTrue(block.size > 0, "Block $i should have decompressed data")
-            assertTrue(origSize > 0, "Block $i original compressed slot should be non-zero")
-            assertTrue(tileCount > 0, "Block $i should contain at least one full 32-byte tile")
-            // Note: LZ5 decompression may produce trailing bytes that are not full tiles.
-            // getTileCount() uses integer division so these are harmlessly ignored.
-            assertTrue(trailingBytes < EnemySpriteGraphics.BYTES_PER_TILE,
-                "Block $i trailing bytes ($trailingBytes) should be less than one tile (${EnemySpriteGraphics.BYTES_PER_TILE})")
-        }
     }
 
     // ─── Pure unit tests (no ROM needed) ─────────────────────────────────────
@@ -299,11 +293,7 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `getTileCount returns 0 when not loaded`() {
-        val parser = loadTestRom() ?: run {
-            // Even without a ROM, we can create a stub via a dummy byte array
-            return
-        }
-        val gfx = EnemySpriteGraphics(parser)
+        val gfx = EnemySpriteGraphics(stubParser())
         // Before calling load(), tile count should be 0
         assertEquals(0, gfx.getTileCount(), "Unloaded EnemySpriteGraphics should report 0 tiles")
         assertNull(gfx.renderSheet(IntArray(16)), "renderSheet should return null when not loaded")
@@ -312,11 +302,10 @@ class EnemySpriteGraphicsTest {
 
     @Test
     fun `loadFromRaw stores exactly the provided bytes`() {
-        val parser = loadTestRom() ?: return
         val block0 = ByteArray(64) { it.toByte() }  // 2 tiles
         val block1 = ByteArray(32) { (it + 128).toByte() }  // 1 tile
 
-        val gfx = EnemySpriteGraphics(parser)
+        val gfx = EnemySpriteGraphics(stubParser())
         gfx.loadFromRaw(listOf(block0, block1))
 
         val raw = gfx.getRawBlocks()
@@ -328,6 +317,18 @@ class EnemySpriteGraphicsTest {
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    private fun stubParser(): RomParser = RomParser(ByteArray(1))
+
+    private fun syntheticGraphics(): EnemySpriteGraphics =
+        EnemySpriteGraphics(stubParser()).apply {
+            loadFromRaw(listOf(syntheticBlock(8), syntheticBlock(5, seed = 71)))
+        }
+
+    private fun syntheticBlock(tileCount: Int, seed: Int = 13): ByteArray =
+        ByteArray(tileCount * EnemySpriteGraphics.BYTES_PER_TILE) { index ->
+            if (index < EnemySpriteGraphics.BYTES_PER_TILE) 0 else (index * 37 + seed).toByte()
+        }
 
     /**
      * Build a 16-entry test palette with maximally distinct, fully opaque colors.

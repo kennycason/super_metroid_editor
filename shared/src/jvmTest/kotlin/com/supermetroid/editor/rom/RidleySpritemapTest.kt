@@ -1,6 +1,8 @@
 package com.supermetroid.editor.rom
 
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -81,5 +83,81 @@ class RidleySpritemapTest {
         // Same AI bank means same poses
         assertTrue(ceresPoses.size == ridleyPoses.size,
             "Ceres Ridley should have same pose count as Ridley")
+    }
+
+    @Test
+    fun `complete Ridley compositions include independently drawn wings and tail`() {
+        val rp = loadTestRom() ?: return
+        val ridley = RidleySpritemap(rp)
+        assertTrue(ridley.load())
+
+        val idle = RidleySpritemap.COMPOSITIONS.first { it.key == "left-idle" }
+        val rendered = requireNotNull(ridley.renderComposition(idle))
+        val body = requireNotNull(ridley.renderBody(RidleySpritemap.BODY_COMPONENTS.first()))
+
+        assertTrue(rendered.width > body.width, "Full composition should extend beyond the four-part body")
+        assertTrue(rendered.height > body.height, "Articulated tail/wings should extend the complete silhouette")
+        assertTrue(rendered.spritemap.entries.size > body.spritemap.entries.size)
+    }
+
+    @Test
+    fun `facing-forward body uses the auxiliary low OBJ page instead of local tail tiles`() {
+        val rp = loadTestRom() ?: return
+        val ridley = RidleySpritemap(rp)
+        assertTrue(ridley.load(ByteArray(RidleySpritemap.RAW_TILES_SIZE)))
+
+        val forward = requireNotNull(
+            ridley.renderBody(RidleySpritemap.BODY_COMPONENTS.single { it.key == "forward" })
+        )
+        val side = requireNotNull(
+            ridley.renderBody(RidleySpritemap.BODY_COMPONENTS.single { it.key == "left-neutral" })
+        )
+        val sharedSource = RidleySpritemap.SHARED_VRAM_SOURCES.single()
+
+        assertEquals(RidleySpritemap.FORWARD_TILES_SNES, sharedSource.snesAddress)
+        assertEquals(RidleySpritemap.FORWARD_TILES_SIZE, requireNotNull(ridley.readRuntimeSource(sharedSource)).size)
+        assertEquals(48, forward.width)
+        assertEquals(88, forward.height)
+        assertTrue(forward.pixels.count { (it ushr 24) != 0 } > 2_000,
+            "Auxiliary tiles should assemble the dense forward-facing body")
+        assertTrue(side.pixels.none { (it ushr 24) != 0 },
+            "Blanking the species sheet should blank side poses but not the auxiliary forward pose")
+    }
+
+    @Test
+    fun `Ridley runtime animations and palettes are source-bounded`() {
+        val rp = loadTestRom() ?: return
+        val ridley = RidleySpritemap(rp)
+        assertTrue(ridley.load())
+
+        assertEquals(12, RidleySpritemap.WING_COMPONENTS.size)
+        assertEquals(11, RidleySpritemap.BODY_COMPONENTS.size)
+        assertEquals(11, RidleySpritemap.ANIMATIONS.size)
+        RidleySpritemap.ANIMATIONS.forEach { definition ->
+            val animation = requireNotNull(ridley.renderAnimation(definition)) { definition.name }
+            assertEquals(definition.frames.size, animation.frames.size)
+            assertTrue(animation.frames.all { frame -> frame.pixels.any { (it ushr 24) != 0 } })
+        }
+
+        val paletteHashes = RidleySpritemap.PALETTE_STAGES.map { stage ->
+            requireNotNull(ridley.readPalette(stage)).contentHashCode()
+        }
+        assertEquals(paletteHashes.size, paletteHashes.distinct().size)
+    }
+
+    @Test
+    fun `ribs and claws DMA variants alter the composed pixels`() {
+        val rp = loadTestRom() ?: return
+        val ridley = RidleySpritemap(rp)
+        assertTrue(ridley.load())
+
+        val idle = requireNotNull(ridley.renderComposition(RidleySpritemap.COMPOSITIONS.first()))
+        val clenched = requireNotNull(
+            ridley.renderComposition(RidleySpritemap.COMPOSITIONS.first { it.key == "left-clenched" })
+        )
+        assertNotEquals(idle.pixels.contentHashCode(), clenched.pixels.contentHashCode())
+        RidleySpritemap.RUNTIME_SOURCES.forEach { source ->
+            assertEquals(source.byteCount, requireNotNull(ridley.readRuntimeSource(source)).size)
+        }
     }
 }

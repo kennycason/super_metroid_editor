@@ -315,8 +315,19 @@ Both use the same command byte structure. SM's `DecompressToMem` ($80:B119) hand
 **Extended format**: byte starts with 0xE0+, cmd in bits 4-2, length = ((byte & 3) << 8 | next) + 1 (max 1024).
 **Terminator**: 0xFF.
 
-Our compressor (`LZ5Compressor.kt`) uses cmds 0-4,6. Round-trip verified against
-our decompressor. Game's decompressor at `~/code/sm/src/sm_80.c:2488`.
+Commands 0–6 have short and extended forms. Command 7 exists only in extended form:
+`$FC..$FE` encode lengths 1..768, while `$FF` is consumed as the terminator before
+command decoding. A command-7 length above 768 is therefore not representable.
+
+SMEDIT's compressor uses commands 0–4 and 6. The shared strict decoder is modeled on
+`Decompression_VariableDestination` at `$80:B119` in the pinned disassembly. Both
+`RomParser` and export round-trip validation use that one implementation.
+
+The decoder rejects missing terminators, truncated operands, references to unwritten
+output, and output beyond the supplied destination capacity. The engine advances a
+16-bit destination index without changing the destination bank, so the absolute
+maximum is 64 KiB; a caller decompressing at a non-zero bank offset must supply the
+smaller remaining capacity. The `$FF` terminator counts as a consumed source byte.
 
 ---
 
@@ -348,13 +359,217 @@ Previous approach (PLM propagation) was ineffective because:
 - Only propagated from other states; couldn't help rooms with 1 state or doors with no
   cap in ANY state
 
-### LZ5 Compression Compatibility (VERIFIED)
+### LZ5 Compression Compatibility (VERIFIED 2026-10-03)
 
-Our `LZ5Compressor` produces valid compressed data that SM's `DecompressToMem` handles
-correctly. Verified by:
-1. Round-trip: compress → decompress → compare with original
-2. Command-by-command comparison with game's decompressor (`sm_80.c:2488`)
-3. All 8 command types match the game's format
+The source-backed parity harness now provides independent evidence rather than testing
+SMEDIT only against itself:
+
+1. A Python model derived directly from `$80:B119` strictly decodes every extracted
+   asset that is exactly one complete LZ5 stream.
+2. The pinned NTSC corpus contains 421 such streams: 417 active and 4 unused. They
+   include 250 level-data, 70 background, 38 tile, 25 palette, 23 tilemap, and 15
+   tile-table payloads. The largest expands to 62,722 bytes.
+3. SMEDIT's Kotlin codec matches the independent decoded size and SHA-256 for every
+   stream.
+4. Every decoded payload survives SMEDIT compress → strict decompress with identical
+   bytes.
+5. Vanilla exercises commands 0–6. It never uses command 7, so inverted sliding copy
+   is covered by a dedicated synthetic format test instead of being attributed to the
+   corpus.
+6. Focused tests cover all eight commands, extended lengths, exact source consumption,
+   malformed/truncated streams, invalid backreferences, and destination overflow.
+
+Run `./gradlew parityReport` with `SMEDIT_TEST_ROM` configured to regenerate the live
+evidence in ignored `parity/reports/lz5.json` and the aggregate report. See
+[`../../parity/README.md`](../../parity/README.md).
+
+### Tileset and CRE Ownership (VERIFIED 2026-10-03)
+
+`parityTilesets` parses the exact `$8F:E6A2` source table and proves all 29
+tile-table/graphics/palette triples against the clean ROM and SMEDIT's detected
+catalog. The 87 fields resolve to 55 source assets: 14 metatile tables, 16 graphics
+sets, and 25 palettes. Twenty intentional alias groups are recorded and pinned.
+
+The two CRE source ranges in bank `$B9` are adjacent: 8,349 compressed graphics
+bytes at `$B9:8000..A09C`, then the 1,431-byte compressed table at `$B9:A09D`.
+They decode to exactly 384 4bpp tiles (12,288 bytes) and 256 metatiles (2,048
+bytes). Standard runtime ownership is:
+
+- CRE graphics: tiles 640–1023, VRAM bytes `$5000..7FFF`; the door-transition
+  staging path uses WRAM `$7E:7000..9FFF`.
+- CRE metatiles: IDs `$000..0FF`, WRAM `$7E:A000..A7FF`.
+- Tileset-specific metatiles: IDs `$100..3FF`, WRAM beginning `$7E:A800`.
+
+All 1,024 words in the CRE metatile table reference tiles 640–1023. The complete
+direct consumer set is two graphics routines (`$82:E3C0`, `$82:E78C`) and two
+table-loading routines (`$82:E7D3`, `$82:EA73`). Ceres skips the separate CRE table
+and loads its full tileset table at `$7E:A000`; door transitions may retain existing
+CRE data unless the destination room's CRE bitset requests a refresh. The full
+per-instruction inventory and decoded hashes live in ignored
+`parity/reports/tilesets.json`; see
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md) for the named 29-row
+asset map.
+
+### Tile Formats and Metatile Semantics (VERIFIED 2026-10-03)
+
+`parityTileFormats` independently decodes the named source assets, then tagged JVM
+tests compare every result with SMEDIT's production paths. The verified corpus is
+10,944 4bpp tiles across 16 unique tileset graphics payloads plus CRE, 256 standard
+Layer-3 2bpp tiles, and 45,056 words across 14 unique tileset metatile tables plus
+CRE. All 65,536 possible metatile words also round-trip their 10-bit tile index,
+3-bit palette, priority, horizontal-flip, and vertical-flip fields.
+
+Two exceptional Ceres graphics resources store 1,024 tiles as global plane halves:
+all bp0/bp2 data, then all bp1/bp3 data. Kraid instead stores 1,024 conventional
+interleaved tiles. The thirteen normal graphics resources each define 576 tiles in
+the 640-slot variable runtime region, leaving tiles 576–639 blank before CRE begins
+at 640. This distinction is asserted so an unowned reserved gap cannot be mistaken
+for source art.
+
+Kraid demonstrates that graphics and metatile ownership are separate: it suppresses
+the CRE graphics overlay, but still combines the 256-entry CRE metatile table with
+its 768-entry variable table. Details and exact layouts are in
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md); machine-readable
+hashes live in ignored `parity/reports/tile-formats.json`.
+
+### Animated-Tile Objects and DMA (VERIFIED 2026-10-03)
+
+Bank `$87` contains 68 raw animated-tile payloads totaling 9,376 bytes. Twenty
+six-byte object headers pair an instruction-list pointer with a byte count and VRAM
+word destination. The source/ROM control-flow manifest reaches 94 unique timed frame
+instructions (98 object-frame associations), and every frame's payload size matches
+the owning object's transfer size. Sixty-five payloads are referenced; the three
+explicit unused `X` ranges at `$87:9064/$92E4/$9F04` are preserved as orphans.
+
+The FX byte at entry offset `+14` is an eight-bit animated-tile activation mask.
+All eight area lists and their 64 bit-to-object mappings at `$83:AC56` are asserted.
+The full direct consumer inventory is eleven spawn calls, three handler calls, and
+the NMI DMA call to `$80:9416`, which transfers from fixed source bank `$87` to the
+object's VRAM word destination. See
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md) for formats and the
+destination table; machine-readable evidence is in ignored
+`parity/reports/animated-tiles.json`.
+
+This subsystem includes the Tourian entrance's animated boss **statues**. It does
+not describe the live bosses' multi-part OAM, BG layers, staged DMA, or AI-driven
+animation; those remain the `B-01..B-07` composition cases in the validation matrix.
+
+### Item PLM Graphics and Runtime Slots (VERIFIED 2026-10-04)
+
+The 17 upgrade pickups use 17 contiguous, uncompressed `$100`-byte standard-4bpp
+payloads at `$89:8000..90FF`. Each payload contains eight tiles: four quadrants for
+each of two animation frames. The three forms of every upgrade item—visible, Chozo
+orb, and shot block—produce 51 source instruction lists and 51 PLM IDs. All match
+SMEDIT's `RomParser.ITEM_DEFS` catalog.
+
+`Instruction_PLM_LoadItemPLMGFX` at `$84:8764` queues a `$100`-byte bank-`$89` DMA
+and writes eight metatile words using embedded palette indices. Its counter at
+`$7E:1C2D` cycles `0→2→4→6→0`, selecting four slots: VRAM word destinations
+`$3E00/$3E80/$3F00/$3F80`, tile IDs `$3E0..3FF`, and metatiles `$8E..95`. Thus a
+fifth concurrent upgrade item wraps and visually replaces slot 0 without changing
+collection semantics. Five palette profiles exist, and the two four-entry frame
+draw tables are at `$84:E05F` and `$84:E077`.
+
+`parityItemPlmGraphics` verifies the source declarations, rebuilt ROM bytes,
+independent pixel hashes, all load arguments and palette bytes, runtime tables, draw
+pointers, and interpreter call. Machine-readable evidence lives in ignored
+`parity/reports/item-plm-graphics.json`; the detailed format is in
+[`../graphics/tile_pipeline.md`](../graphics/tile_pipeline.md).
+
+### Enemy Species Headers and GRAPHADR Ownership (VERIFIED 2026-10-04)
+
+Bank `$A0` contains 164 assembled, 64-byte `EnemyHeader` records. The source-backed
+manifest evaluates every expression in all 29 macro arguments per record—4,756 fields
+total—and checks the resulting words/bytes, both four-byte zero-padding regions, and
+the complete header against the rebuilt ROM. SMEDIT now exposes the same complete
+record through `EnemySpriteGraphics.readSpeciesHeader`; both user-facing enemy catalogs
+are constrained to actual source header starts rather than plausible bank offsets.
+
+The header's 24-bit `tileData` / `GRAPHADR` value at `+$36` points to raw standard-4bpp
+bytes, while `tileDataSize & $7FFF` gives the transfer length and bit 15 selects the
+alternate runtime VRAM layout. Of 164 headers, 155 have nonempty graphics ranges, nine
+have a zero transfer size, and six set the layout flag. The nonempty associations reduce
+to 100 unique ranges over 93 unique starts and map contiguously through 168 segments to
+99 named extracted assets.
+
+Aliasing is part of the format, not manifest noise: 25 start-address groups and 24
+exact-range groups are shared. Nine distinct range pairs overlap, including two
+cross-start cases where Lava Rocks/Rinka extend into `Tiles_Squeept` and Geruta extends
+into `Tiles_Holtz`. Six species ranges span more than one asset declaration; the two
+Ridley headers each cover all five adjacent `Tiles_Ridley_*` chunks.
+
+One Ridley render dependency crosses that ordinary owner boundary. The same enemy set
+includes Ridley Explosion `$E1BF`, whose `$8400` size field selects a `$0400` transfer
+and alternate layout; enemy-set word `$E001` places its `$B0:B400` bytes at buffer
+offset `$0400`, which transfers to VRAM `$6E00` / physical OBJ tiles `$E0..FF`.
+Ridley's facing-forward map reads that low page, while its normal body/wings/tail read
+the main species page at `$100..1FF`. The focused `parityRidley` manifest pins the
+cross-species placement; the generic header manifest continues to pin each byte owner.
+
+`parityEnemyHeaders` verifies source expressions, symbol offsets, rebuilt-ROM bytes,
+independent 4bpp pixel hashes, production parsing, catalog membership, and the complete
+segment/alias/overlap inventory. Evidence lives in ignored
+`parity/reports/enemy-headers.json`. Palette overrides, instruction control flow,
+render classification, and edit UX remain separate E-03/E-06..E-10 work in the
+validation matrix. See [`../graphics/sprites.md`](../graphics/sprites.md) for the
+header layout.
+
+### Enemy OAM and Extended Spritemaps (VERIFIED 2026-10-04)
+
+The named source corpus in banks `$A0`, `$A2..AA`, and `$B2..B3` contains 2,312
+standard spritemaps with 14,400 five-byte OAM entries, 811 extended/multibox
+spritemaps with 1,984 child associations, and 99 extended tilemaps with 441 runs /
+2,763 words. `parityEnemyOam` independently decodes these structures from the
+byte-identical reference ROM and tests every field and pointer through
+`EnemySpritemap`'s production parsers.
+
+Standard counts may be zero for shared “nothing” structures. Extended counts use
+only the low byte of the count word; the high byte is ignored by the engine, and
+Ceres steam intentionally uses `$1001` to mean one child. Extended children contain
+signed 16-bit X/Y offsets, a same-bank standard-OAM or `$FFFE` extended-tilemap
+pointer, and a hitbox pointer. Instruction lists remain variable-width programs:
+timed frames are `[duration, spritemap]`, while words at or above `$8000` dispatch
+handlers with handler-specific operands and branches. `parityEnemyInstructions`
+now pins all 1,139 named lists / 7,820 records and measures the present scanner:
+2,543 of 4,395 renderable source frames recovered, 1,852 missed across 465 lists,
+and no semantic execution of 502 unique handler addresses in the generic fallback.
+A bounded interpreter now proves complete visual paths for Zoomer, Sidehopper, and
+the grey walking Space Pirate (17 frame occurrences / 15 unique spritemaps), including
+fallthrough, backward loops, sleep, repeated frames, and extended OAM. Broad
+interpretation remains later E-06 work. Exact source routes additionally cover Puyo,
+Owtch, Choot, both Sbug headers, Evir plus its projectile, Magdollite, Beetom, and both
+Sidehopper corpse headers when helpers, direction tables, multi-slot ownership, or state
+logic hide their selected lists from init-pattern scanning; these 46 actions preserve
+AI-stepped poses, setup-list fallthrough, split runtime VRAM ownership, and exact
+component boundaries rather than emulating arbitrary AI. See [`../graphics/sprites.md`](../graphics/sprites.md);
+machine-readable evidence is in ignored `parity/reports/enemy-oam.json` and
+`parity/reports/enemy-instructions.json`, with the three integrated slices in
+`parity/reports/enemy-vertical-slices.json` and helper-selected routes in
+`parity/reports/ordinary-enemy-animations.json`.
+
+### Enemy Species Rendering Status (MEASURED 2026-10-04)
+
+The source-complete E-08 ledger executes SMEDIT's production preview paths for every
+one of the 164 bank-`$A0` headers. It classifies 145 as assembled, 15 as known
+composites, zero as tile-sheet-only, four as nonvisual, and zero as failed; 159 species
+produce at least one assembled frame. A tile sheet is explicitly not an assembled
+render.
+
+Eight active visual headers legitimately transfer zero graphics bytes. Their E-07
+preview contract follows runtime ownership instead: Elevator and Ceres Steam borrow
+the global standard sprite bank, Zebetite and Mother Brain tubes borrow Mother Brain
+head graphics, cutscene Baby Metroid borrows the normal Baby Metroid payload, and the
+three small corpse species borrow the Sidehopper-owned common corpse payload. Global
+palette rows 5 and 2 are selected for Elevator/Steam and Zebetite respectively. These
+providers are preview-only; a zero-byte species never gains a writable tile range.
+`ProcessEnemyTilesets` copies palettes independently of the graphics byte count, so
+the cutscene Baby Metroid, falling tubes, and three corpse palette rows remain
+header-owned and editable even though their borrowed graphics do not.
+
+The ledger is generated as ignored `parity/reports/enemy-species-status.json` and
+`.md`, while totals and a deterministic row hash are pinned. The run also proved that
+Botwoon's existing composite scanner was unreachable from the editor's known-pose
+gate; that gate now routes Botwoon to its head-plus-13-segment renderer.
 
 ### PLM Set Handling Across States (VERIFIED)
 

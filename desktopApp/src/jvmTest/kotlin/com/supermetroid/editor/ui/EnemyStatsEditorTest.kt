@@ -3,6 +3,7 @@ import com.supermetroid.editor.rom.TestRomHelper
 
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -23,6 +24,22 @@ import java.io.File
 class EnemyStatsEditorTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
+
+    @Test
+    fun `named stat entries use their source species headers`() {
+        assertEquals(0xD27F, ENEMY_DEFS.single { it.key == "reo" }.speciesId)
+        assertEquals(0xD87F, ENEMY_DEFS.single { it.key == "sbug" }.speciesId)
+        assertEquals(Triple(0xEABF, 60, 20), ENEMY_DEFS.single { it.key == "kihunter_green" }.let {
+            Triple(it.speciesId, it.defaultHp, it.defaultDamage)
+        })
+        assertEquals(Triple(0xE87F, 60, 10), ENEMY_DEFS.single { it.key == "beetom" }.let {
+            Triple(it.speciesId, it.defaultHp, it.defaultDamage)
+        })
+        assertEquals(Triple(0xE83F, 20, 40), ENEMY_DEFS.single { it.key == "magdollite" }.let {
+            Triple(it.speciesId, it.defaultHp, it.defaultDamage)
+        })
+        assertEquals(ENEMY_DEFS.size, ENEMY_DEFS.map { it.key }.distinct().size)
+    }
 
     // ── All ENEMY_DEFS entries read valid HP (> 0) ───────────────────────────
 

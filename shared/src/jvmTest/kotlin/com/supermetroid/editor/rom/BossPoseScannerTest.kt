@@ -79,13 +79,15 @@ class BossPoseScannerTest {
 
     @Test
     fun `Mini Kraid poses are not contaminated by Ridley data`() {
-        // Mini Kraid ($E0FF) shares AI bank $A6 with Ridley ($E17F)
-        // Scanner must filter out Ridley's spritemaps
+        // Mini Kraid ($E0FF) shares AI bank $A6 with Ridley ($E17F), so generic
+        // whole-bank scanning is not safe. Discovery must use the exact source list.
         val rp = loadTestRom() ?: return
         val scanner = BossPoseScanner(rp)
 
         val poses = scanner.scanPoses(0xE0FF, minEntries = 3)
-        // Mini Kraid has 128 tiles — no tile should exceed that
+        assertEquals(MiniKraidSpritemap.POSES.size, poses.size)
+        assertEquals(MiniKraidSpritemap.POSES.map { it.snesAddr }, poses.map { it.frame.snesAddress })
+        assertEquals(MiniKraidSpritemap.POSES.map { it.name }, poses.map { it.name })
         for (pose in poses) {
             for (entry in pose.spritemap.entries) {
                 val localTile = entry.tileNum and 0xFF
@@ -131,16 +133,18 @@ class BossPoseScannerTest {
             "Mother Brain P2 torso tilemaps should render from the room BG tileset")
         assertEquals(EnemySpritemap.OamTileNumberMode.LOW_9, standing.renderOptions.oamTileNumberMode,
             "Mother Brain P2 limbs use physical low-9-bit OBJ tile IDs")
-        assertEquals(0x10, standing.renderOptions.extendedTilemapOriginX,
-            "Mother Brain P2 BG torso should be shifted forward relative to the legs")
-        assertEquals(-0x10, standing.renderOptions.extendedTilemapOriginY,
-            "Mother Brain P2 BG torso should be raised relative to the legs")
-        assertEquals(0x31, standing.renderOptions.extendedOamOriginX,
-            "Mother Brain P2 extended OAM limbs should align with the BG torso")
-        assertEquals(0x15, standing.renderOptions.extendedOamOriginY,
-            "Mother Brain P2 extended OAM limbs should attach at the lower torso")
-        assertTrue(standing.renderOptions.preserveExtendedChildDrawOrder,
-            "Mother Brain P2 should draw rear limbs, BG torso, then front limbs")
+        assertEquals(-0x20, standing.renderOptions.extendedTilemapOriginX,
+            "Mother Brain P2 standing BG torso should use its exact scroll-relative X origin")
+        assertEquals(-0x3E, standing.renderOptions.extendedTilemapOriginY,
+            "Mother Brain P2 BG torso should use its exact scroll-relative Y origin")
+        assertEquals(0, standing.renderOptions.extendedOamOriginX,
+            "Mother Brain P2 OAM limbs are already body-origin-relative")
+        assertEquals(0, standing.renderOptions.extendedOamOriginY,
+            "Mother Brain P2 OAM limbs are already body-origin-relative")
+        assertTrue(standing.renderOptions.ignoreExtendedTilemapChildOffsets,
+            "Mother Brain P2 BG2 placement should use tilemap destinations, not unused child offsets")
+        assertEquals(3, standing.renderOptions.extendedTilemapOamPrioritySplit,
+            "Mother Brain P2 should draw priority-2 rear limbs behind BG and priority-3 front limbs above it")
         assertEquals(9, standing.childCount,
             "Mother Brain P2 standing frame should preserve all multibox children")
         assertEquals(2, standing.tilemapCount,
@@ -260,6 +264,8 @@ class BossPoseScannerTest {
     @Test
     fun `Botwoon body poses include projectile body and tail segments`() {
         val rp = loadTestRom() ?: return
+        assertTrue(BossPoseScanner.hasKnownPoses(0xF293),
+            "The editor must route Botwoon through its composite body renderer")
         val scanner = BossPoseScanner(rp)
         val palette = EnemySpriteGraphics.readEnemyPalette(rp, 0xF293) ?: return
         val tileData = EnemySpriteGraphics.loadEnemyTileData(rp, 0xF293) ?: return
