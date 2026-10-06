@@ -1,5 +1,7 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.CommunitySamusSpriteSource
+import com.supermetroid.editor.data.CommunitySamusInjectionArtifact
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -56,5 +58,43 @@ class ProjectFileServiceTest {
             ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {},
         )
         assertEquals("do not overwrite", backup.readText())
+    }
+
+    @Test
+    fun `project file preserves portable community Samus source metadata and bytes`() {
+        val projectFile = File(tempDir, "community-samus.smedit")
+        val source = CommunitySamusSpriteSource(
+            formatId = "spritesomething-f3428d26",
+            pngBase64 = "iVBORw0KGgo=",
+            sha256 = "ab".repeat(32),
+            sourceName = "samus_test.png",
+            displayName = "Test Samus",
+            authors = listOf("Sprite Artist"),
+            category = "Custom",
+            catalogName = "samus_test",
+            catalogVersion = 3,
+            catalogRevision = "12".repeat(20),
+            sourceUrl = "https://example.invalid/samus_test.png",
+            injectionArtifact = CommunitySamusInjectionArtifact(
+                formatId = CommunitySamusInjectionArtifact.MAP_RANDOMIZER_IPS_V1,
+                ipsBase64 = "UEFUQ0hFT0Y=",
+                sha256 = "cd".repeat(32),
+                baseRomSha256 = "ef".repeat(32),
+                baseRomSize = 0x300000,
+                outputRomSize = 0x400000,
+                providerRevision = "34".repeat(20),
+                sourceSheetSha256 = "ab".repeat(32),
+                sourceUrl = "https://example.invalid/samus_test.ips",
+            ),
+        )
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.customGfx.samusCommunitySource = source
+        }
+
+        assertTrue(ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {})
+        val reopened = ProjectFileService.loadProject(projectFile)
+
+        assertEquals(source, reopened.customGfx.samusCommunitySource)
+        assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
     }
 }

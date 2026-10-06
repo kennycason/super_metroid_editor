@@ -10,6 +10,16 @@ SMEDIT at export time. The current top-level model includes room edits, room-sta
 tileset defaults, patches, custom graphics, patterns, minimap and map-station edits, text and room
 name overrides, custom ASM, music edits, project UI settings, and ROM build-label fields.
 
+`customGfx.samusCommunitySource` is an optional project-owned SpriteSomething/MapRando
+Samus source. It embeds the original PNG with its layout ID, SHA-256, attribution, and
+catalog provenance so the project does not depend on a machine-local download cache.
+A compatible catalog selection also embeds a versioned injection artifact containing
+the pinned Map Randomizer IPS, both source and artifact hashes, provider revision,
+exact base-ROM identity, and 3 MiB → 4 MiB size contract. Local/private PNGs have no
+artifact and are explicitly source-only; ROM validation blocks those rather than
+silently omitting them. Removing `samusCommunitySource` is the complete "Restore Base
+ROM Samus" operation: export always rebuilds from the immutable ROM at `romPath`.
+
 `generalSettings` contains project-local editor preferences that should follow the project rather
 than the machine. Its `patchBrowser` section stores alphabetical sort direction and whether
 favorites are grouped first. Patch favorite IDs are application-wide and are written immediately
@@ -55,9 +65,11 @@ Project format, ROM layout, and room-state predicate bytecode are independent co
 - SMEDIT's tagged room-state predicate formats are generated ROM code/data ABIs. Their version
   bytes do not describe the `.smedit` schema.
 
-The editable path currently targets the standard 3 MiB Super Metroid ROM layout. Expanded or
-relocated ROMs can be inspected read-only when discovery succeeds; their discovered catalogs are
-derived from ROM bytes in memory and are not copied into the project as SMART or SMILE metadata.
+The ordinary editable path targets the standard 3 MiB Super Metroid ROM layout. A verified
+community Samus artifact is the narrow exception: it requires the exact clean base and produces a
+known 4 MiB output inside the normal transactional exporter. Other expanded or relocated ROMs can
+be inspected read-only when discovery succeeds; their discovered catalogs are derived from ROM
+bytes in memory and are not copied into the project as SMART or SMILE metadata.
 
 ## Foreign-Format Imports
 

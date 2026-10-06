@@ -11,6 +11,8 @@ class RomFreeSpaceAllocator(
     private val snesToPc: (Int) -> Int,
     private val pcToSnes: (Int) -> Int,
     private val guardBytes: Int = 1,
+    /** Vanilla banks use $FF; expanded formats may define a different erased byte. */
+    private val freeFillByteForBank: (Int) -> Int = { 0xFF },
     private val onReserve: (RomAllocation) -> Unit = {},
 ) {
     private class SessionState {
@@ -24,9 +26,10 @@ class RomFreeSpaceAllocator(
         snesToPc: (Int) -> Int,
         pcToSnes: (Int) -> Int,
         guardBytes: Int,
+        freeFillByteForBank: (Int) -> Int,
         onReserve: (RomAllocation) -> Unit,
         sessionState: SessionState,
-    ) : this(romData, snesToPc, pcToSnes, guardBytes, onReserve) {
+    ) : this(romData, snesToPc, pcToSnes, guardBytes, freeFillByteForBank, onReserve) {
         this.sessionState = sessionState
     }
 
@@ -42,6 +45,7 @@ class RomFreeSpaceAllocator(
             snesToPc = snesToPc,
             pcToSnes = pcToSnes,
             guardBytes = guardBytes,
+            freeFillByteForBank = freeFillByteForBank,
             onReserve = { allocation ->
                 onReserve(allocation)
                 observer(allocation)
@@ -83,9 +87,12 @@ class RomFreeSpaceAllocator(
         require(allocation.pcOffset >= 0 && allocation.pcOffset + bytes.size <= romData.size) {
             "allocation ${allocation.label} is outside ROM bounds"
         }
+        val freeFillByte = freeFillByteForBank(allocation.bank).also {
+            require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
+        }
         for (i in bytes.indices) {
             val existing = romData[allocation.pcOffset + i].toInt() and 0xFF
-            require(existing == 0xFF) {
+            require(existing == freeFillByte) {
                 "allocation ${allocation.label} overlaps used ROM byte at PC ${allocation.pcOffset + i}"
             }
         }
@@ -104,13 +111,16 @@ class RomFreeSpaceAllocator(
             return null
         }
 
+        val freeFillByte = freeFillByteForBank(bank).also {
+            require(it in 0..0xFF) { "free-space fill byte for bank must be 0..255, got $it" }
+        }
         val rawCursor = sessionState.nextFreeByBank.getOrPut(bank) {
-            scanTrailingFreeStart(bankStart, bankEndExclusive)
+            scanTrailingFreeStart(bankStart, bankEndExclusive, freeFillByte)
         }
         val cursor = alignUp(rawCursor, alignment)
         if (cursor + size > bankEndExclusive) return null
         for (pc in cursor until cursor + size) {
-            if ((romData[pc].toInt() and 0xFF) != 0xFF) return null
+            if ((romData[pc].toInt() and 0xFF) != freeFillByte) return null
         }
 
         sessionState.nextFreeByBank[bank] = cursor + size
@@ -123,9 +133,12 @@ class RomFreeSpaceAllocator(
         ).also(onReserve)
     }
 
-    private fun scanTrailingFreeStart(bankStart: Int, bankEndExclusive: Int): Int {
+    private fun scanTrailingFreeStart(bankStart: Int, bankEndExclusive: Int, freeFillByte: Int): Int {
         var firstTrailingFree = bankEndExclusive
-        while (firstTrailingFree > bankStart && (romData[firstTrailingFree - 1].toInt() and 0xFF) == 0xFF) {
+        while (
+            firstTrailingFree > bankStart &&
+            (romData[firstTrailingFree - 1].toInt() and 0xFF) == freeFillByte
+        ) {
             firstTrailingFree--
         }
         return (firstTrailingFree + guardBytes).coerceAtMost(bankEndExclusive)

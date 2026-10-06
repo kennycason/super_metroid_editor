@@ -90,12 +90,14 @@ enum class FontSize(
     val body: TextUnit,
     val detail: TextUnit,
     val heading: TextUnit,
+    /** Prominent page/card title that still follows the global font-size preset. */
+    val display: TextUnit,
     val statusBar: TextUnit,
 ) {
-    SMALL("Small", tabLabel = 10.sp, body = 11.sp, detail = 9.sp, heading = 13.sp, statusBar = 8.sp),
-    MEDIUM("Medium", tabLabel = 11.sp, body = 12.sp, detail = 10.sp, heading = 14.sp, statusBar = 9.sp),
-    LARGE("Large", tabLabel = 13.sp, body = 14.sp, detail = 12.sp, heading = 16.sp, statusBar = 11.sp),
-    LARGER("Larger", tabLabel = 15.sp, body = 16.sp, detail = 14.sp, heading = 19.sp, statusBar = 13.sp);
+    SMALL("Small", tabLabel = 10.sp, body = 11.sp, detail = 9.sp, heading = 13.sp, display = 17.sp, statusBar = 8.sp),
+    MEDIUM("Medium", tabLabel = 11.sp, body = 12.sp, detail = 10.sp, heading = 14.sp, display = 20.sp, statusBar = 9.sp),
+    LARGE("Large", tabLabel = 13.sp, body = 14.sp, detail = 12.sp, heading = 16.sp, display = 24.sp, statusBar = 11.sp),
+    LARGER("Larger", tabLabel = 15.sp, body = 16.sp, detail = 14.sp, heading = 19.sp, display = 28.sp, statusBar = 13.sp);
 }
 
 /** Holds the current theme + font size; observed by Compose. */

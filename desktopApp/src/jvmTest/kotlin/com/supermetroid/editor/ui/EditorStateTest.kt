@@ -1,7 +1,9 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.data.CustomItemDef
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
+import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.data.TileEdit
@@ -89,6 +91,35 @@ class EditorStateTest {
             assertEquals(0, state.workingBlocksWide)
             assertEquals(0, state.workingBlocksTall)
             assertEquals(0, state.currentRoomId)
+        }
+    }
+
+    @Nested
+    inner class PatchDependencies {
+        @Test
+        fun `cannot disable the last patch that owns a placed custom item`() {
+            val patch = SmPatch(
+                id = "spider",
+                name = "Spider Ball — Hold Aim Down",
+                enabled = true,
+                customItems = mutableListOf(
+                    CustomItemDef(
+                        id = "spider_ball",
+                        name = "Spider Ball",
+                        shortLabel = "SP",
+                        visiblePlmId = 0xF200,
+                    )
+                ),
+            )
+            state.project.patches += patch
+            state.project.getOrCreateRoom(0x91F8).plmChanges +=
+                PlmChange("add", 0xF200, 71, 55, 0x53)
+
+            state.togglePatch(patch.id)
+
+            assertTrue(patch.enabled)
+            assertTrue(state.statusMessage.contains("Cannot disable"))
+            assertTrue(state.statusMessage.contains("PLM \$F200"))
         }
     }
 

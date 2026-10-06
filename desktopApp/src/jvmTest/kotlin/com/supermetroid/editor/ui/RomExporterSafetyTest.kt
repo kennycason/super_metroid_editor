@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.LZ5Compressor
 import com.supermetroid.editor.rom.RomParser
@@ -209,6 +210,30 @@ class RomExporterSafetyTest {
             byteArrayOf(0x36, 0x84.toByte(), 0x89.toByte(), 0x82.toByte(), 0x40, 0x9D.toByte()),
             exported.copyOfRange(0x29CB4, 0x29CBA),
         )
+    }
+
+    @Test
+    fun `desktop export blocks a placed bundled item when its patch is disabled`() {
+        val original = TestRomHelper.loadRomBytes()
+        assumeTrue(original != null, "Test ROM not found")
+        val input = File(tempDir, "orphan-custom-item.smc")
+        input.writeBytes(original!!)
+        val spider = PatchRepository.loadBundledPatches()
+            .first { it.id == "bundled_spider_ball_hold_aim_down" }
+            .copy(enabled = false, customItems = mutableListOf())
+        val statuses = mutableListOf<String>()
+        val project = SmEditProject(romPath = input.absolutePath).also {
+            it.patches += spider
+            it.getOrCreateRoom(0x91F8).plmChanges +=
+                PlmChange("add", 0xF200, 71, 55, 0x53)
+        }
+
+        val outputPath = RomExporter(project, RomParser(original), onStatus = statuses::add).export()
+
+        assertNull(outputPath)
+        assertTrue(statuses.lastOrNull().orEmpty().contains("code patch is disabled"))
+        assertTrue(statuses.lastOrNull().orEmpty().contains("Spider Ball — Hold Aim Down"))
+        assertTrue(tempDir.listFiles().orEmpty().map { it.name }.none { it != input.name })
     }
 
     @Test

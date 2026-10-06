@@ -406,6 +406,7 @@ class SmeditBuildService(
             if (project.customGfx.creTileTable != null) unsupportedRomEdits.add("CRE metatile table")
             if (project.customGfx.enemyGfx.isNotEmpty()) unsupportedRomEdits.add("enemy graphics")
             if (project.customGfx.spriteTileBlocks.isNotEmpty()) unsupportedRomEdits.add("sprite tile blocks")
+            if (project.customGfx.samusCommunitySource != null) unsupportedRomEdits.add("community Samus source")
             if (project.textEdits.isNotEmpty()) unsupportedRomEdits.add("text edits")
             if (!roomNameOverridesHandled && project.roomNameOverrides.isNotEmpty()) {
                 unsupportedRomEdits.add("room name overrides")
@@ -2248,6 +2249,7 @@ private fun TilesetGfxData.unsupportedDescriptions(hasRom: Boolean): List<String
     if (creTileTable != null) ignored.add("CRE metatile table")
     if (enemyGfx.isNotEmpty()) ignored.add("enemy graphics: ${enemyGfx.size}")
     if (spriteTileBlocks.isNotEmpty()) ignored.add("sprite tile blocks: ${spriteTileBlocks.size}")
+    if (samusCommunitySource != null) ignored.add("community Samus source")
     if (paletteEffects.isNotEmpty()) ignored.add("palette effect metadata: ${paletteEffects.size}")
     if (!hasRom && palettes.isNotEmpty()) ignored.add("tileset palettes require --rom: ${palettes.size}")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision pinned, ignored MapRandoSprites sheets for decoder conformance tests."""
+"""Provision pinned community Samus sheets and generated IPS oracle fixtures."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +23,14 @@ SAMPLES = {
     "samus_invisible.png": "d077592dd67b545bccc78bfdf9c1b5ade1814c20676519657e6f00528806403e",
     "samus_outline.png": "2eac2c496ab4f499c30c17d930feed37d4ad16f0e53b6b70cb495b72dfcf397b",
     "samus_zero-mission.png": "fa836504718fb607ecd24c9c49bb48c02df11317706e0f3c7af908adb47601a3",
+}
+PATCH_PROVIDER_COMMIT = "b243223ba3bafdb3223fe482aafbf4ca554b46c0"
+PATCH_DIR = PARITY_DIR / "work" / "community" / "MapRandomizerPatches"
+PATCH_SAMPLES = {
+    "samus_vanilla.ips": "21038337f6f07e0ad0684e7b55d4fcb9e0e2a9cfa1b5c8c66744d548fcd7938f",
+    "samus_invisible.ips": "6534916881d0841ffa0f63e73e5eeec49620109b5f5e1a704e14d9e1d281fa4c",
+    "samus_outline.ips": "7f9b53bf3a0482ad60c4240be54f3993f4080af8b72c4fb192a34a3047dde178",
+    "samus_zero-mission.ips": "aceac1969636fe4560b877f2346e6ec0fb49fdcdba90ba3ae41695e1769ddfca",
 }
 
 
@@ -110,8 +119,34 @@ def main() -> int:
             )
             return 2
 
+    PATCH_DIR.mkdir(parents=True, exist_ok=True)
+    for name, expected_hash in PATCH_SAMPLES.items():
+        path = PATCH_DIR / name
+        if not path.is_file() or sha256(path) != expected_hash:
+            url = (
+                "https://raw.githubusercontent.com/blkerby/MapRandomizer/"
+                f"{PATCH_PROVIDER_COMMIT}/patches/samus_sprites/{name}"
+            )
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            print(f"Downloading pinned injector oracle {name}")
+            try:
+                with urllib.request.urlopen(url, timeout=30) as source, temporary.open("wb") as output:
+                    output.write(source.read())
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        actual_hash = sha256(path)
+        if actual_hash != expected_hash:
+            print(
+                f"ERROR: {name} SHA-256 is {actual_hash}; expected {expected_hash}",
+                file=sys.stderr,
+            )
+            return 2
+
     print(f"Community Samus fixtures ready: {sprites}")
     print(f"Pinned MapRandoSprites commit: {actual}")
+    print(f"Pinned MapRandomizer patch commit: {PATCH_PROVIDER_COMMIT}")
+    print(f"Injector oracle patches: {PATCH_DIR}")
     print("Samples: Vanilla, Invisible Samus, Outline Samus, Zero Mission Samus")
     return 0
 

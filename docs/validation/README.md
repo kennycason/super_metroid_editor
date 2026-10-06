@@ -295,8 +295,8 @@ timing, palette state, hitboxes, and edit/export ownership.
 | S-05 | 435 extracted Samus tile assets | **Verified** | All 435 DMA entries and 435 named payloads form a byte-exact one-to-one ownership graph. |
 | S-06 | Power/Varia/Gravity palettes | **Partial** | The three normal suit rows are exact; heat, charge, speed, hurt, death, and other runtime programs remain. |
 | S-07 | All-pose render atlas | **Partial** | Tilemap and reconstructed-VRAM hashes cover all 1,982 frame occurrences; independently reviewed pixel goldens remain. |
-| S-08 | Samus edit/export | **Queued** | Define safe source ownership before enabling source- or ROM-backed pixel edits. |
-| S-09 | Community sheet import | **Partial** | The pinned decoder matches all 637 named regions for four real sheets, and the Samus workspace provides guided read-only validation, metadata, search, region/palette previews, and transparent-region signals. Project storage, round trip, and ROM injection remain. |
+| S-08 | Samus edit/export | **Partial** | Project-owned source identity, hashing, exact PNG export, base restore, and guarded 3 MiB → 4 MiB catalog injection are verified. Native pixel editing / arbitrary local-sheet injection remain. |
+| S-09 | Community sheet import | **Verified catalog path** | The decoder matches all 637 named regions for four real sheets. The 126-entry catalog, exact-revision cache, attribution, portable source/artifact storage, and four byte-exact Map Randomizer ROM exports are pinned. Local sheets remain source-only. |
 
 ### Audio and remaining banks
 
@@ -382,10 +382,15 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
   PNG validation/preview with clear per-region errors. The Samus workspace now adds
   catalog metadata, compact validation, named-region search/groups, palette inspection,
   transparent-region signals, and a clean return to ROM animations.
-- [ ] **P3.7** Store imported logical images as project-owned Samus source and prove a
-  SpriteSomething-compatible PNG semantic round trip.
-- [ ] **P3.8** Add guarded expanded-ROM injection with expected-before checks, exact
-  diff allowlists, and emulator validation.
+- [x] **P3.7** Store a validated, hash-pinned PNG and layout ID as the project-owned
+  Samus source; derive all 637 logical images on demand and prove byte-lossless PNG /
+  semantic round trips before enabling edits. Add the attributed, on-demand upstream
+  catalog and retain local-file import.
+- [x] **P3.8a** Add guarded catalog injection: embed a revision-pinned Map Randomizer
+  IPS with source/artifact/base hashes, expand 3 MiB → 4 MiB, own all changed ROM
+  regions through `RomWritePlan`, and byte-match four independent pinned outputs.
+- [ ] **P3.8b** Add a native writer for arbitrary local/community PNGs and future pixel
+  edits, then retain representative automated emulator smoke captures.
 
 ### P4 — Prove rooms and exporters exhaustively
 
@@ -415,6 +420,9 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-10-06 | Guarded custom-item patch dependencies and reproduced Community Samus startup | An emulator-backed A/B trace isolated a new-game freeze at game state `$1F` to Landing Site's placed Spider Ball PLM `$F200` while both owning Spider Ball variants were disabled—not to the community Samus injector. Removing only the orphan PLM or enabling Hold Aim Down advances normally into gameplay; Community Samus + Spider Ball also boots together through the adaptive compatibility path. Patch toggles now retain the final required owner, export preflight blocks already-invalid projects with a precise repair message, and validator/export regressions cover disabled, enabled, and removed placements. |
+| 2026-10-06 | Completed guarded ROM-ready catalog injection | Each compatible catalog project embeds its original PNG plus a revision-pinned Map Randomizer IPS, hashes, exact clean-base identity, and 4 MiB target. Export stages only bytes that differ from the clean base through `RomWritePlan`; untouched gaps and unchanged IPS padding remain available to compatible hacks, while wrong bases, corruption, and real conflicts still fail. The project exporter understands SpriteSomething's zero-filled `$E0–$FF` expansion banks, and its adaptive Spider Ball path keeps catalog morph art while preserving Spider movement/input behavior. `:desktopApp:communitySamusRomTest` proves Vanilla, Invisible, Outline, and Zero Mission outputs byte-for-byte against independent pinned application and hard-coded output hashes. Local PNGs remain clearly source-only. |
+| 2026-10-06 | Completed project-owned community Samus sources and the downloadable catalog | The catalog resolves MapRandoSprites to an exact revision, searches all 126 manifest entries by name/artist/category, downloads only selected sheets, validates before atomic caching, and falls back offline. **Use in Project** embeds the original PNG, format ID, SHA-256, attribution, and catalog provenance; source export is byte-identical and **Restore Base ROM Samus** removes only that layer. This source milestone preceded the guarded catalog injector recorded above. |
 | 2026-10-05 | Completed read-only community Samus validation and preview | The bundled SpriteSomething schema defines 52 rows / 637 named regions / 570 DMA entries. `:shared:communitySamusTest` provisions four hash-pinned MapRandoSprites sheets—including TarThoron's Invisible Samus—and compares every decoded region with the independent upstream extractor. The Samus workspace adds guided file validation, catalog metadata, searchable groups, region/palette previews, and transparent-region signals without mutating project or ROM data. |
 | 2026-10-05 | Proved the vanilla Samus pose/DMA/spritemap graph | `paritySamus` pins 253 poses / 1,982 frame occurrences, 127 delay streams, all 435 DMA assets, 422 spritemaps, and three normal suit palettes. The production decoder matches every frame's geometry and reconstructed VRAM; the old 418-asset count and inferred frame-boundary scan were corrected. |
 | 2026-10-02 | Established exact source oracle | Asar build produced a byte-identical ROM with the hashes above. |

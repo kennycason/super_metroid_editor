@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
+import com.supermetroid.editor.rom.MapRandoSamusSprite
 import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
 import java.nio.file.Path
@@ -82,5 +83,22 @@ class CommunitySamusSheetPreviewTest {
         assertTrue(communitySamusRegionMatches(image, "select head", CommunitySamusRegionCategory.ALL))
         assertTrue(communitySamusRegionMatches(image, "head2", CommunitySamusRegionCategory.FILE_SELECT))
         assertTrue(!communitySamusRegionMatches(image, "head", CommunitySamusRegionCategory.GAMEPLAY))
+    }
+
+    @Test
+    fun catalogFiltersMatchNamesArtistsAndCategories() {
+        val sprite = MapRandoSamusSprite(
+            name = "samus_invisible",
+            version = 1,
+            displayName = "Invisible Samus",
+            authors = listOf("TarThoron"),
+            creditsName = "Invisible",
+            category = "Transformed Samus",
+        )
+
+        assertTrue(communitySamusCatalogMatches(sprite, "invisible tar", null))
+        assertTrue(communitySamusCatalogMatches(sprite, "samus", "Transformed Samus"))
+        assertTrue(!communitySamusCatalogMatches(sprite, "samus", "Practice Sprites"))
+        assertTrue(!communitySamusCatalogMatches(sprite, "zero mission", null))
     }
 }

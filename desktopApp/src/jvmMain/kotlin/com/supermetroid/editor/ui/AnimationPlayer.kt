@@ -52,7 +52,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
 import kotlinx.coroutines.delay
@@ -90,7 +89,11 @@ fun AnimationPlayer(
 ) {
     if (animation == null || animation.frames.isEmpty()) {
         Box(modifier.size(previewSize.dp), contentAlignment = Alignment.Center) {
-            Text("No animation data", fontSize = 10.sp, color = Color(0xFF6A6F88))
+            Text(
+                "No animation data",
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
+                color = Color(0xFF6A6F88),
+            )
         }
         return
     }
@@ -213,7 +216,9 @@ fun AnimationPlayer(
         } else "default timing"
         Text(
             "Frame ${safeFrame + 1}/${frames.size} — $timingText",
-            fontSize = 9.sp, color = Color(0xFFB0B8D1), fontFamily = FontFamily.Monospace
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
+            color = Color(0xFFB0B8D1),
+            fontFamily = FontFamily.Monospace,
         )
 
         Spacer(Modifier.height(4.dp))
@@ -297,7 +302,7 @@ fun AnimationPlayer(
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        label, fontSize = 8.sp,
+                        label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         color = if (speedMultiplier == speed) MaterialTheme.colorScheme.onPrimaryContainer
                         else Color(0xFFB0B8D1),
@@ -335,7 +340,7 @@ fun AnimationPlayer(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Export:", fontSize = 9.sp, color = Color(0xFF6A6F88))
+                Text("Export:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF6A6F88))
 
                 if (onExportPng != null) {
                     ExportButton("Frame PNG") { onExportPng(frame, safeFrame) }
@@ -359,7 +364,7 @@ private fun ExportButton(label: String, onClick: () -> Unit) {
         shape = RoundedCornerShape(4.dp)
     ) {
         Text(
-            label, fontSize = 9.sp,
+            label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             color = Color(0xFF90D090)
         )

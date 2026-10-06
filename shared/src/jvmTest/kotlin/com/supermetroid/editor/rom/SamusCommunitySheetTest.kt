@@ -1,16 +1,26 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.data.CommunitySamusInjectionArtifact
 import org.junit.jupiter.api.Tag
+import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.Base64
+import javax.imageio.ImageIO
+import kotlin.test.assertContentEquals
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SamusCommunitySheetTest {
+    @TempDir
+    lateinit var temporaryDirectory: File
+
     @Test
     fun bundledLayoutMatchesPinnedFormatContract() {
         val layout = SamusCommunityLayout.loadBundled()
@@ -54,6 +64,77 @@ class SamusCommunitySheetTest {
         assertEquals(null, result.sheet)
         assertTrue(result.issues.any { it.code == "WRONG_DIMENSIONS" })
     }
+
+    @Test
+    fun projectSourcePreservesTheOriginalPngByteForByte() {
+        val image = BufferedImage(
+            SamusCommunitySheetDecoder.FORMAT_WIDTH,
+            SamusCommunitySheetDecoder.FORMAT_HEIGHT,
+            BufferedImage.TYPE_INT_ARGB,
+        )
+        val pngBytes = ByteArrayOutputStream().use { output ->
+            ImageIO.write(image, "png", output)
+            output.toByteArray()
+        }
+
+        val source = CommunitySamusSourceCodec.create(
+            pngBytes = pngBytes,
+            sourceName = "transparent.png",
+            displayName = "Transparent Test",
+            authors = listOf("SMEDIT"),
+            catalogName = "transparent_test",
+            catalogVersion = 1,
+            catalogRevision = "1".repeat(40),
+        )
+        val loaded = CommunitySamusSourceCodec.load(source)
+        val exported = File(temporaryDirectory, "exported.png")
+        CommunitySamusSourceCodec.export(source, exported)
+
+        assertContentEquals(pngBytes, loaded.pngBytes)
+        assertContentEquals(pngBytes, exported.readBytes())
+        assertTrue(loaded.result.isValid)
+        assertEquals(CommunitySamusSourceCodec.sha256(pngBytes), source.sha256)
+    }
+
+    @Test
+    fun projectSourceValidatesItsPortableIpsArtifact() {
+        val image = BufferedImage(
+            SamusCommunitySheetDecoder.FORMAT_WIDTH,
+            SamusCommunitySheetDecoder.FORMAT_HEIGHT,
+            BufferedImage.TYPE_INT_ARGB,
+        )
+        val pngBytes = ByteArrayOutputStream().use { output ->
+            ImageIO.write(image, "png", output)
+            output.toByteArray()
+        }
+        val ips = "PATCH".toByteArray() + byteArrayOf(0, 0, 1, 0, 1, 0x7F) + "EOF".toByteArray()
+        val artifact = CommunitySamusInjectionArtifact(
+            formatId = CommunitySamusInjectionArtifact.MAP_RANDOMIZER_IPS_V1,
+            ipsBase64 = Base64.getEncoder().encodeToString(ips),
+            sha256 = CommunitySamusSourceCodec.sha256(ips),
+            baseRomSha256 = "12".repeat(32),
+            baseRomSize = 0x300000,
+            outputRomSize = 0x400000,
+            providerRevision = "34".repeat(20),
+            sourceSheetSha256 = CommunitySamusSourceCodec.sha256(pngBytes),
+            sourceUrl = "https://example.test/samus.ips",
+        )
+        val source = CommunitySamusSourceCodec.create(
+            pngBytes = pngBytes,
+            sourceName = "transparent.png",
+            displayName = "Transparent Test",
+            injectionArtifact = artifact,
+        )
+
+        val loaded = CommunitySamusSourceCodec.load(source)
+        assertContentEquals(ips, assertNotNull(loaded.injectionArtifact).ipsBytes)
+        assertEquals(1, loaded.injectionArtifact!!.writes.size)
+
+        val damaged = source.copy(
+            injectionArtifact = artifact.copy(sha256 = "00".repeat(32)),
+        )
+        assertFailsWith<IllegalArgumentException> { CommunitySamusSourceCodec.load(damaged) }
+    }
 }
 
 @Tag("community-samus")
@@ -94,6 +175,29 @@ class SamusCommunitySheetFixtureTest {
                 assertEquals(expectedHash, sha256(assertNotNull(image.paletteIndices)), "$fileName/$imageName")
             }
         }
+    }
+
+    @Test
+    fun pinnedVanillaSheetBuildsEverySheetOwnedAnimation() {
+        val sheet = assertNotNull(
+            SamusCommunitySheetDecoder().decode(File(fixtureDir, "samus_vanilla.png")).sheet,
+        )
+        val catalog = SamusCommunityAnimationCatalog.loadBundled()
+        val blankVariants = buildList {
+            catalog.groups.forEach { group ->
+                group.variants.forEach { variant ->
+                    val animation = catalog.buildAnimation(sheet, group, variant)
+                    if (animation.frames.none { frame -> frame.pixels.any { (it ushr 24) != 0 } }) {
+                        add("${group.name}/${variant.name}")
+                    }
+                }
+            }
+        }
+
+        assertTrue(
+            blankVariants.all { it.startsWith("Ship Preview (WIP)/") },
+            "Unexpected blank composed animations: ${blankVariants.joinToString()}",
+        )
     }
 
     private fun rgbaSha256(pixels: IntArray): String {

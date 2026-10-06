@@ -3,6 +3,7 @@ package com.supermetroid.editor.rom
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.data.PlmChange
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -96,6 +97,7 @@ object RomValidator {
         issues.addAll(checkPlmSets(parser, rooms))
         if (project != null) {
             issues.addAll(checkProjectOwnerIdentities(project))
+            issues.addAll(checkProjectCustomItemDependencies(project))
             issues.addAll(checkProjectRoomHeaders(parser, project, rooms))
             issues.addAll(checkProjectRoomStates(parser, project, rooms))
             issues.addAll(checkProjectMinimapEdits(project))
@@ -114,6 +116,91 @@ object RomValidator {
      */
     fun checkProjectOwnerIdentities(project: SmEditProject): List<Issue> {
         return checkProjectPatchOwnerIdentities(project) + checkProjectRoomOwnerIdentities(project)
+    }
+
+    /**
+     * A patch-defined item PLM is executable code, not portable room data. If
+     * its owning patch is disabled, entering the room can jump through an
+     * undefined PLM instruction list and lock the game during room setup.
+     */
+    fun checkProjectCustomItemDependencies(project: SmEditProject): List<Issue> {
+        data class Owner(
+            val patchName: String,
+            val patchEnabled: Boolean,
+            val itemName: String,
+            val variant: String,
+        )
+
+        val ownersByPlmId = mutableMapOf<Int, MutableList<Owner>>()
+        for (patch in project.patches) {
+            for (item in patch.customItems) {
+                val variants = listOf(
+                    "Visible" to item.visiblePlmId,
+                    "Chozo" to item.chozoPlmId,
+                    "Hidden" to item.hiddenPlmId,
+                )
+                for ((variant, plmId) in variants) {
+                    if (plmId == null) continue
+                    ownersByPlmId.getOrPut(plmId) { mutableListOf() }.add(
+                        Owner(patch.name, patch.enabled, item.name, variant)
+                    )
+                }
+            }
+        }
+        if (ownersByPlmId.isEmpty()) return emptyList()
+
+        val issues = mutableListOf<Issue>()
+        val reported = mutableSetOf<String>()
+        fun inspect(plmId: Int, x: Int, y: Int, roomId: Int?, roomName: String, scope: String) {
+            val owners = ownersByPlmId[plmId].orEmpty()
+            if (owners.isEmpty() || owners.any { it.patchEnabled }) return
+            val item = owners.first()
+            val patchChoices = owners.map { it.patchName }.distinct().joinToString(" or ")
+            val plmHex = plmId.toString(16).uppercase().padStart(4, '0')
+            val reportKey = "$roomName:$scope:$plmHex:$x:$y"
+            if (!reported.add(reportKey)) return
+            issues += Issue(
+                Severity.ERROR,
+                "Custom Items",
+                roomId,
+                roomName,
+                "$scope places ${item.itemName} (${item.variant}) PLM \$$plmHex at ($x,$y), " +
+                    "but its code patch is disabled. Enable $patchChoices or remove this item before export."
+            )
+        }
+
+        fun effectiveAdds(changes: List<PlmChange>): Collection<PlmChange> {
+            val active = linkedMapOf<Triple<Int, Int, Int>, PlmChange>()
+            for (change in changes) {
+                val key = Triple(change.plmId, change.x, change.y)
+                when (change.action) {
+                    "add" -> active[key] = change
+                    "remove" -> active.remove(key)
+                }
+            }
+            return active.values
+        }
+
+        for ((roomKey, edits) in project.rooms) {
+            val roomId = roomKey.toIntOrNull(16)
+            val roomName = roomId?.let {
+                "Room 0x${it.toString(16).uppercase().padStart(4, '0')}"
+            } ?: "Room '$roomKey'"
+            for (plm in effectiveAdds(edits.plmChanges)) {
+                inspect(plm.plmId, plm.x, plm.y, roomId, roomName, roomName)
+            }
+            for (state in edits.states) {
+                for (plm in effectiveAdds(state.plmChanges)) {
+                    inspect(plm.plmId, plm.x, plm.y, roomId, roomName, "$roomName state '${state.id}'")
+                }
+            }
+        }
+        for (room in project.newRooms) {
+            for (plm in room.initialState.plms) {
+                inspect(plm.id, plm.x, plm.y, null, room.name, "New room '${room.name}'")
+            }
+        }
+        return issues
     }
 
     fun checkProjectPatchOwnerIdentities(project: SmEditProject): List<Issue> {
@@ -728,6 +815,17 @@ object RomValidator {
     fun checkProjectGraphicsExportFit(parser: RomParser, project: SmEditProject): List<Issue> {
         val issues = mutableListOf<Issue>()
         val gfx = project.customGfx
+        val samusSource = gfx.samusCommunitySource
+        if (samusSource != null && samusSource.injectionArtifact == null) {
+            issues.add(Issue(
+                Severity.ERROR,
+                "Samus Export",
+                null,
+                "Project",
+                "${samusSource.displayName} is saved as a source-only community sheet and has no verified ROM injector. " +
+                    "Choose it from the compatible catalog to attach its ROM-ready payload, or restore base-ROM Samus before exporting.",
+            ))
+        }
         validateCompressedPayload(
             issues = issues,
             parser = parser,

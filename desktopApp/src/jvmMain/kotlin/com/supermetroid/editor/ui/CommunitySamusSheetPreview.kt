@@ -48,7 +48,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.data.CommunitySamusSpriteSource
+import com.supermetroid.editor.rom.CommunitySamusSourceCodec
 import com.supermetroid.editor.rom.MapRandoSamusCatalog
 import com.supermetroid.editor.rom.MapRandoSamusSprite
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
@@ -58,27 +59,121 @@ import java.text.NumberFormat
 
 /** One non-mutating community-sheet inspection session. */
 internal data class CommunitySamusPreviewSession(
-    val file: File,
+    val sourceName: String,
+    val sourceKey: String,
+    val pngBytes: ByteArray,
     val result: SamusCommunitySheetDecoder.Result,
-    val metadata: MapRandoSamusSprite?,
+    val metadata: CommunitySamusPreviewMetadata?,
+    val catalogRevision: String? = null,
+    val sourceUrl: String? = null,
     val catalogMessage: String? = null,
 )
+
+internal data class CommunitySamusPreviewMetadata(
+    val name: String,
+    val version: Int?,
+    val displayName: String,
+    val authors: List<String>,
+    val creditsName: String?,
+    val category: String?,
+) {
+    companion object {
+        fun from(sprite: MapRandoSamusSprite): CommunitySamusPreviewMetadata =
+            CommunitySamusPreviewMetadata(
+                name = sprite.name,
+                version = sprite.version,
+                displayName = sprite.displayName,
+                authors = sprite.authors,
+                creditsName = sprite.creditsName,
+                category = sprite.category,
+            )
+    }
+}
 
 /** File/catalog boundary kept outside Compose so validation behavior is unit-testable. */
 internal class CommunitySamusPreviewLoader(
     private val decoder: SamusCommunitySheetDecoder = SamusCommunitySheetDecoder(),
 ) {
     fun load(file: File): CommunitySamusPreviewSession {
-        val result = decoder.decode(file)
+        val bytes = runCatching(file::readBytes).getOrElse { ByteArray(0) }
+        val result = decoder.decode(bytes, file.name)
         val manifest = File(file.parentFile, "manifest.json")
-        if (!manifest.isFile) return CommunitySamusPreviewSession(file, result, null)
+        if (!manifest.isFile) {
+            return CommunitySamusPreviewSession(file.name, file.absolutePath, bytes, result, null)
+        }
 
         val catalog = runCatching { MapRandoSamusCatalog.parse(manifest) }
-        val metadata = catalog.getOrNull()?.firstOrNull { it.name == file.nameWithoutExtension }
+        val metadata = catalog.getOrNull()
+            ?.firstOrNull { it.name == file.nameWithoutExtension }
+            ?.let(CommunitySamusPreviewMetadata::from)
         val catalogMessage = catalog.exceptionOrNull()?.let { problem ->
             "Catalog metadata could not be read: ${problem.message ?: problem::class.simpleName}"
         }
-        return CommunitySamusPreviewSession(file, result, metadata, catalogMessage)
+        return CommunitySamusPreviewSession(
+            file.name,
+            file.absolutePath,
+            bytes,
+            result,
+            metadata,
+            catalogMessage = catalogMessage,
+        )
+    }
+
+    fun load(
+        file: File,
+        metadata: MapRandoSamusSprite,
+        catalogRevision: String,
+        sourceUrl: String,
+    ): CommunitySamusPreviewSession {
+        val bytes = file.readBytes()
+        return CommunitySamusPreviewSession(
+            sourceName = file.name,
+            sourceKey = "$catalogRevision:${metadata.name}",
+            pngBytes = bytes,
+            result = decoder.decode(bytes, file.name),
+            metadata = CommunitySamusPreviewMetadata.from(metadata),
+            catalogRevision = catalogRevision,
+            sourceUrl = sourceUrl,
+        )
+    }
+
+    fun load(source: CommunitySamusSpriteSource): CommunitySamusPreviewSession {
+        return try {
+            val loaded = CommunitySamusSourceCodec.load(source, decoder)
+            CommunitySamusPreviewSession(
+                sourceName = source.sourceName,
+                sourceKey = "project:${source.sha256}",
+                pngBytes = loaded.pngBytes,
+                result = loaded.result,
+                metadata = CommunitySamusPreviewMetadata(
+                    name = source.catalogName ?: source.sha256,
+                    version = source.catalogVersion,
+                    displayName = source.displayName,
+                    authors = source.authors,
+                    creditsName = null,
+                    category = source.category,
+                ),
+                catalogRevision = source.catalogRevision,
+                sourceUrl = source.sourceUrl,
+            )
+        } catch (problem: Exception) {
+            CommunitySamusPreviewSession(
+                sourceName = source.sourceName,
+                sourceKey = "project:${source.sha256}",
+                pngBytes = ByteArray(0),
+                result = SamusCommunitySheetDecoder.Result(
+                    sheet = null,
+                    issues = listOf(
+                        SamusCommunitySheetDecoder.Issue(
+                            SamusCommunitySheetDecoder.Severity.ERROR,
+                            "PROJECT_SOURCE_INVALID",
+                            problem.message ?: "The stored project source is invalid",
+                        ),
+                    ),
+                ),
+                metadata = null,
+            )
+        }
     }
 }
 
@@ -121,18 +216,32 @@ internal fun communitySamusRegionMatches(
 internal fun CommunitySamusSheetPreview(
     session: CommunitySamusPreviewSession,
     onChooseAnother: () -> Unit,
+    onUseInProject: (() -> Unit)? = null,
+    onExportSource: (() -> Unit)? = null,
+    onStatus: (String) -> Unit = {},
+    isProjectSource: Boolean = false,
+    projectSource: CommunitySamusSpriteSource? = null,
+    onPreviewProjectSource: (() -> Unit)? = null,
+    onRestoreBase: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val sheet = session.result.sheet
     Column(modifier.fillMaxSize().background(Color(0xFF171A2A))) {
-        CommunitySheetHeader(session)
+        CommunitySheetHeader(
+            session = session,
+            onUseInProject = onUseInProject,
+            onExportSource = onExportSource,
+            isProjectSource = isProjectSource,
+            projectSource = projectSource,
+            onPreviewProjectSource = onPreviewProjectSource,
+            onRestoreBase = onRestoreBase,
+        )
         CommunityIssueSummary(session)
 
         if (sheet == null) {
             InvalidCommunitySheet(session, onChooseAnother, Modifier.weight(1f))
         } else {
-            CommunitySheetMetrics(sheet)
-            CommunityRegionBrowser(sheet, session.file.absolutePath, Modifier.weight(1f))
+            CommunitySamusWorkspace(sheet, session.sourceKey, onStatus, Modifier.weight(1f))
         }
     }
 }
@@ -140,6 +249,12 @@ internal fun CommunitySamusSheetPreview(
 @Composable
 private fun CommunitySheetHeader(
     session: CommunitySamusPreviewSession,
+    onUseInProject: (() -> Unit)?,
+    onExportSource: (() -> Unit)?,
+    isProjectSource: Boolean,
+    projectSource: CommunitySamusSpriteSource?,
+    onPreviewProjectSource: (() -> Unit)?,
+    onRestoreBase: (() -> Unit)?,
 ) {
     Surface(color = Color(0xFF20243A), modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -150,12 +265,23 @@ private fun CommunitySheetHeader(
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text(
-                        session.metadata?.displayName ?: session.file.nameWithoutExtension,
+                        session.metadata?.displayName ?: session.sourceName.substringBeforeLast('.'),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         color = Color(0xFFF1F3FF),
                     )
-                    CompactBadge("READ-ONLY", Color(0xFF93C5FD), Color(0xFF172B45))
+                    CompactBadge(
+                        if (isProjectSource) "PROJECT SOURCE" else "PREVIEW",
+                        if (isProjectSource) Color(0xFF86EFAC) else Color(0xFF93C5FD),
+                        if (isProjectSource) Color(0xFF173322) else Color(0xFF172B45),
+                    )
+                    if (isProjectSource && projectSource != null) {
+                        CompactBadge(
+                            if (projectSource.injectionArtifact != null) "ROM READY" else "SOURCE ONLY",
+                            if (projectSource.injectionArtifact != null) Color(0xFF86EFAC) else Color(0xFFFDE68A),
+                            if (projectSource.injectionArtifact != null) Color(0xFF28503B) else Color(0xFF4A3E20),
+                        )
+                    }
                     if (session.result.isValid) {
                         CompactBadge("VALID", Color(0xFF86EFAC), Color(0xFF173322))
                     } else {
@@ -163,9 +289,53 @@ private fun CommunitySheetHeader(
                     }
                 }
                 val details = session.metadata?.let { metadata ->
-                    "${metadata.category}  •  by ${metadata.authors.joinToString()}  •  catalog v${metadata.version}"
-                } ?: "Uncataloged PNG  •  ${session.file.name}"
-                Text(details, fontSize = 10.sp, color = Color(0xFF9AA4C1), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    buildString {
+                        metadata.category?.let { append(it).append("  •  ") }
+                        if (metadata.authors.isNotEmpty()) append("by ${metadata.authors.joinToString()}  •  ")
+                        if (metadata.version != null) append("catalog v${metadata.version}") else append(session.sourceName)
+                    }
+                } ?: "Uncataloged PNG  •  ${session.sourceName}"
+                Text(details, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF9AA4C1), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (!isProjectSource && projectSource != null && onPreviewProjectSource != null) {
+                Surface(color = Color(0xFF173322), shape = RoundedCornerShape(5.dp)) {
+                    Row(
+                        Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Column {
+                            Text(
+                                "Current project",
+                                fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                                color = Color(0xFF78AA8A),
+                            )
+                            Text(
+                                projectSource.displayName,
+                                fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFB7F7CA),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        CompactBadge(
+                            if (projectSource.injectionArtifact != null) "ROM READY" else "SOURCE ONLY",
+                            if (projectSource.injectionArtifact != null) Color(0xFF86EFAC) else Color(0xFFFDE68A),
+                            if (projectSource.injectionArtifact != null) Color(0xFF28503B) else Color(0xFF4A3E20),
+                        )
+                        CompactAction("View", onPreviewProjectSource)
+                    }
+                }
+            }
+            if (onExportSource != null && session.result.isValid) {
+                CompactAction("Export Source PNG…", onExportSource)
+            }
+            if (onUseInProject != null && session.result.isValid && !isProjectSource) {
+                CompactAction(if (projectSource == null) "Use in Project" else "Replace Project Samus", onUseInProject)
+            }
+            if (isProjectSource && onRestoreBase != null) {
+                CompactAction("Restore Base ROM Samus", onRestoreBase)
             }
         }
     }
@@ -186,10 +356,10 @@ private fun CommunityIssueSummary(session: CommunitySamusPreviewSession) {
     Surface(color = background, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             messages.take(3).forEach { message ->
-                Text("• $message", fontSize = 9.sp, color = foreground)
+                Text("• $message", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = foreground)
             }
             if (messages.size > 3) {
-                Text("${messages.size - 3} more validation messages", fontSize = 9.sp, color = foreground.copy(alpha = 0.72f))
+                Text("${messages.size - 3} more validation messages", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = foreground.copy(alpha = 0.72f))
             }
         }
     }
@@ -208,15 +378,20 @@ private fun InvalidCommunitySheet(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("This PNG is not a supported community Samus sheet", color = Color(0xFFF1F3FF), fontWeight = FontWeight.Bold)
+                Text(
+                    "This PNG is not a supported community Samus sheet",
+                    color = Color(0xFFF1F3FF),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
+                )
                 Text(
                     "Expected ${SamusCommunitySheetDecoder.FORMAT_WIDTH} × ${SamusCommunitySheetDecoder.FORMAT_HEIGHT} using the pinned SpriteSomething layout.",
                     color = Color(0xFFAAB2CA),
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                 )
                 session.result.issues.filter { it.severity == SamusCommunitySheetDecoder.Severity.ERROR }
                     .take(4)
-                    .forEach { issue -> Text(issue.message, color = Color(0xFFFCA5A5), fontSize = 10.sp) }
+                    .forEach { issue -> Text(issue.message, color = Color(0xFFFCA5A5), fontSize = LocalEditorTheme.current.fontSize.value.detail) }
                 CompactAction("Choose a different PNG", onChooseAnother)
             }
         }
@@ -224,7 +399,7 @@ private fun InvalidCommunitySheet(
 }
 
 @Composable
-private fun CommunitySheetMetrics(sheet: SamusCommunitySheetDecoder.DecodedSheet) {
+internal fun CommunitySheetMetrics(sheet: SamusCommunitySheetDecoder.DecodedSheet) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -249,15 +424,15 @@ private fun CommunitySheetMetrics(sheet: SamusCommunitySheetDecoder.DecodedSheet
 private fun MetricCard(label: String, value: String, modifier: Modifier) {
     Surface(modifier, color = Color(0xFF22263B), shape = RoundedCornerShape(6.dp)) {
         Column(Modifier.padding(horizontal = 9.dp, vertical = 6.dp)) {
-            Text(label, fontSize = 8.sp, color = Color(0xFF79839F))
-            Text(value, fontSize = 11.sp, color = Color(0xFFDCE2F8), fontWeight = FontWeight.SemiBold)
+            Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF79839F))
+            Text(value, fontSize = LocalEditorTheme.current.fontSize.value.body, color = Color(0xFFDCE2F8), fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-private fun CommunityRegionBrowser(
+internal fun CommunityRegionBrowser(
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     sessionKey: String,
     modifier: Modifier,
@@ -286,10 +461,10 @@ private fun CommunityRegionBrowser(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("Find named region", fontSize = 9.sp) },
-                placeholder = { Text("run, morph, file select…", fontSize = 9.sp) },
+                label = { Text("Find named region", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
+                placeholder = { Text("run, morph, file select…", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontSize = LocalEditorTheme.current.fontSize.value.body),
                 modifier = Modifier.fillMaxWidth(),
             )
             Row(
@@ -307,12 +482,12 @@ private fun CommunityRegionBrowser(
                                 }?.let { image -> selectedName = image.name }
                             }
                         },
-                        label = { Text(choice.label, fontSize = 8.sp) },
+                        label = { Text(choice.label, fontSize = LocalEditorTheme.current.fontSize.value.detail) },
                         modifier = Modifier.height(27.dp),
                     )
                 }
             }
-            Text("${filtered.size} regions", fontSize = 8.sp, color = Color(0xFF79839F))
+            Text("${filtered.size} regions", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF79839F))
             LazyColumn(
                 Modifier.fillMaxSize(),
                 state = listState,
@@ -332,14 +507,14 @@ private fun CommunityRegionBrowser(
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     humanizeCommunityName(image.name),
-                                    fontSize = 9.sp,
+                                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                     color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFFC6CCE0),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Text(image.name, fontSize = 7.sp, color = Color(0xFF69738E), fontFamily = FontFamily.Monospace)
+                                Text(image.name, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = Color(0xFF69738E), fontFamily = FontFamily.Monospace)
                             }
-                            Text("${image.width}×${image.height}", fontSize = 7.sp, color = Color(0xFF7E88A4))
+                            Text("${image.width}×${image.height}", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = Color(0xFF7E88A4))
                         }
                     }
                 }
@@ -352,7 +527,7 @@ private fun CommunityRegionBrowser(
 }
 
 @Composable
-private fun CommunityRegionDetails(
+internal fun CommunityRegionDetails(
     image: SamusCommunitySheetDecoder.DecodedImage,
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     modifier: Modifier,
@@ -363,8 +538,8 @@ private fun CommunityRegionDetails(
         modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(humanizeCommunityName(image.name), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF0F2FC))
-        Text(image.name, fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF8993B0))
+        Text(humanizeCommunityName(image.name), fontSize = LocalEditorTheme.current.fontSize.value.display, fontWeight = FontWeight.Bold, color = Color(0xFFF0F2FC))
+        Text(image.name, fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace, color = Color(0xFF8993B0))
         Spacer(Modifier.height(10.dp))
 
         Box(
@@ -383,7 +558,7 @@ private fun CommunityRegionDetails(
             )
             if (opaquePixels == 0) {
                 Surface(color = Color(0xDD272B40), shape = RoundedCornerShape(5.dp)) {
-                    Text("Transparent region", fontSize = 10.sp, color = Color(0xFFFDE68A), modifier = Modifier.padding(8.dp))
+                    Text("Transparent region", fontSize = LocalEditorTheme.current.fontSize.value.body, color = Color(0xFFFDE68A), modifier = Modifier.padding(8.dp))
                 }
             }
         }
@@ -397,8 +572,8 @@ private fun CommunityRegionDetails(
 
         Spacer(Modifier.height(12.dp))
         if (image.name == "palette_block") {
-            Text("Master palettes", fontSize = 10.sp, color = Color(0xFFB8C0D8), fontWeight = FontWeight.SemiBold)
-            Text("7 rows × 15 colors", fontSize = 8.sp, color = Color(0xFF76809D))
+            Text("Master palettes", fontSize = LocalEditorTheme.current.fontSize.value.body, color = Color(0xFFB8C0D8), fontWeight = FontWeight.SemiBold)
+            Text("7 rows × 15 colors", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF76809D))
             Spacer(Modifier.height(5.dp))
             sheet.masterPaletteRgb.toList().chunked(15).forEach { row ->
                 PaletteRow(row)
@@ -409,7 +584,7 @@ private fun CommunityRegionDetails(
             if (interval != null) {
                 Text(
                     "Imported palette interval ${interval.first}–${interval.last}  •  decoded index 0 stays transparent",
-                    fontSize = 9.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = Color(0xFF8D97B3),
                 )
                 Spacer(Modifier.height(5.dp))
@@ -462,7 +637,7 @@ private fun Checkerboard(modifier: Modifier) {
 @Composable
 private fun CompactBadge(text: String, foreground: Color, background: Color) {
     Surface(color = background, shape = RoundedCornerShape(4.dp)) {
-        Text(text, fontSize = 7.sp, fontWeight = FontWeight.Bold, color = foreground, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+        Text(text, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, fontWeight = FontWeight.Bold, color = foreground, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
     }
 }
 
@@ -473,17 +648,17 @@ private fun CompactAction(text: String, onClick: () -> Unit) {
         color = Color(0xFF303650),
         shape = RoundedCornerShape(5.dp),
     ) {
-        Text(text, fontSize = 9.sp, color = Color(0xFFD8DEF2), modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp))
+        Text(text, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFFD8DEF2), modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp))
     }
 }
 
-private fun SamusCommunitySheetDecoder.DecodedImage.toImageBitmap(): ImageBitmap {
+internal fun SamusCommunitySheetDecoder.DecodedImage.toImageBitmap(): ImageBitmap {
     val buffered = BufferedImage(width.coerceAtLeast(1), height.coerceAtLeast(1), BufferedImage.TYPE_INT_ARGB)
     if (width > 0 && height > 0) buffered.setRGB(0, 0, width, height, pixels, 0, width)
     return buffered.toComposeImageBitmap()
 }
 
-private fun humanizeCommunityName(name: String): String =
+internal fun humanizeCommunityName(name: String): String =
     name.replace('_', ' ')
         .replace(Regex("(?<=\\D)(\\d+)$"), " $1")
         .split(' ')

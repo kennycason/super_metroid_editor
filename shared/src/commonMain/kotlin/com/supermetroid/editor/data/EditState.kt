@@ -601,6 +601,50 @@ fun Iterable<SmPatch>.enabledPatchVariantConflicts(): Map<String, List<SmPatch>>
  * Enemy/boss sprite overrides are stored as base64-encoded PNG bytes keyed by species ID hex string (e.g. "E4BF").
  */
 @Serializable
+data class CommunitySamusInjectionArtifact(
+    /** Versioned injector output understood by the desktop ROM exporter. */
+    val formatId: String,
+    /** Original IPS bytes from the pinned provider revision. */
+    val ipsBase64: String,
+    /** SHA-256 of the decoded IPS bytes. */
+    val sha256: String,
+    /** Exact clean, unheadered ROM body this IPS was generated against. */
+    val baseRomSha256: String,
+    val baseRomSize: Int,
+    /** Required ROM body size before IPS records are applied. */
+    val outputRomSize: Int,
+    /** Git commit that owns the generated IPS file. */
+    val providerRevision: String,
+    /** Binds the injection payload to the PNG source saved beside it. */
+    val sourceSheetSha256: String,
+    val sourceUrl: String,
+) {
+    companion object {
+        const val MAP_RANDOMIZER_IPS_V1 = "map-randomizer-samus-ips-v1"
+    }
+}
+
+@Serializable
+data class CommunitySamusSpriteSource(
+    /** Versioned SpriteSomething sheet layout understood by SMEDIT. */
+    val formatId: String,
+    /** Original PNG bytes. Keeping the source intact makes projects portable and round trips lossless. */
+    val pngBase64: String,
+    /** SHA-256 of the decoded base64 bytes, used to reject damaged or hand-edited project payloads. */
+    val sha256: String,
+    val sourceName: String,
+    val displayName: String,
+    val authors: List<String> = emptyList(),
+    val category: String? = null,
+    val catalogName: String? = null,
+    val catalogVersion: Int? = null,
+    val catalogRevision: String? = null,
+    val sourceUrl: String? = null,
+    /** Optional, portable ROM-ready build payload. Local PNG imports remain source-only. */
+    val injectionArtifact: CommunitySamusInjectionArtifact? = null,
+)
+
+@Serializable
 data class TilesetGfxData(
     val varGfx: MutableMap<String, String> = mutableMapOf(),         // key = tilesetId, value = base64 raw 4bpp
     var creGfx: String? = null,                                       // base64 raw 4bpp, shared
@@ -611,7 +655,9 @@ data class TilesetGfxData(
     val spriteTileBlocks: MutableMap<String, String> = mutableMapOf(), // value = base64 raw 4bpp
     val palettes: MutableMap<String, String> = mutableMapOf(),        // key = tilesetId, value = base64 BGR555 (256 bytes raw)
     val spritePalettes: MutableMap<String, String> = mutableMapOf(),  // key = regionId (e.g. "samus_power"), value = base64 BGR555
-    val paletteEffects: MutableMap<String, String> = mutableMapOf()  // key = regionId or "tileset:N", value = effectId
+    val paletteEffects: MutableMap<String, String> = mutableMapOf(),  // key = regionId or "tileset:N", value = effectId
+    /** Project-owned community source; ROM injection is a separate guarded export layer. */
+    var samusCommunitySource: CommunitySamusSpriteSource? = null,
 )
 
 /**
@@ -825,7 +871,7 @@ data class SmEditProject(
     var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
 ) {
     companion object {
-        const val CURRENT_PROJECT_FORMAT_VERSION = 5
+        const val CURRENT_PROJECT_FORMAT_VERSION = 6
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 

@@ -2,6 +2,8 @@ package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.MapStationTileEdit
 import com.supermetroid.editor.data.MinimapTileEdit
+import com.supermetroid.editor.data.CustomItemDef
+import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SaveStationSpawnChange
 import com.supermetroid.editor.data.RoomHeaderChange
 import com.supermetroid.editor.data.RoomEdits
@@ -309,6 +311,62 @@ class RomValidatorTest {
 
             assertTrue(issues.any { it.message.contains("enabled patches use ID 'duplicate'") })
             assertTrue(issues.any { it.message.contains("multiple edited keys") })
+        }
+
+        @Test
+        fun `project custom item validation requires an enabled owning patch`() {
+            val project = SmEditProject(romPath = "test.smc")
+            val spiderPatch = SmPatch(
+                id = "spider",
+                name = "Spider Ball — Hold Aim Down",
+                enabled = false,
+                customItems = mutableListOf(
+                    CustomItemDef(
+                        id = "spider_ball",
+                        name = "Spider Ball",
+                        shortLabel = "SP",
+                        visiblePlmId = 0xF200,
+                        chozoPlmId = 0xF204,
+                        hiddenPlmId = 0xF208,
+                    )
+                ),
+            )
+            project.patches += spiderPatch
+            project.getOrCreateRoom(0x91F8).plmChanges +=
+                PlmChange("add", 0xF200, 71, 55, 0x53)
+
+            val disabledIssues = RomValidator.checkProjectCustomItemDependencies(project)
+
+            assertEquals(1, disabledIssues.size)
+            assertTrue(disabledIssues.single().message.contains("PLM \$F200"))
+            assertTrue(disabledIssues.single().message.contains("code patch is disabled"))
+            assertTrue(disabledIssues.single().message.contains("Enable Spider Ball — Hold Aim Down"))
+
+            spiderPatch.enabled = true
+            assertTrue(RomValidator.checkProjectCustomItemDependencies(project).isEmpty())
+        }
+
+        @Test
+        fun `removed custom item does not retain a disabled patch dependency`() {
+            val project = SmEditProject(romPath = "test.smc")
+            project.patches += SmPatch(
+                id = "custom-item",
+                name = "Custom Item Patch",
+                customItems = mutableListOf(
+                    CustomItemDef(
+                        id = "custom_item",
+                        name = "Custom Item",
+                        shortLabel = "CI",
+                        visiblePlmId = 0xF400,
+                    )
+                ),
+            )
+            project.getOrCreateRoom(0x91F8).plmChanges += listOf(
+                PlmChange("add", 0xF400, 10, 20, 1),
+                PlmChange("remove", 0xF400, 10, 20, 1),
+            )
+
+            assertTrue(RomValidator.checkProjectCustomItemDependencies(project).isEmpty())
         }
 
         @Test

@@ -32,7 +32,7 @@ val parityPython = providers.environmentVariable("PYTHON").orElse("python3")
 
 tasks.register<Exec>("communitySamusFixtures") {
     group = "verification"
-    description = "Clone/fetch pinned, ignored MapRandoSprites sheets for decoder tests"
+    description = "Provision pinned MapRandoSprites sheets and Map Randomizer IPS oracle files"
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/community_samus_bootstrap.py")
 }
@@ -415,6 +415,8 @@ tasks.register<Exec>("parityReport") {
         "parityOrdinaryEnemyAnimations",
         "paritySamus",
         ":shared:parityTest",
+        ":shared:communitySamusTest",
+        ":desktopApp:communitySamusRomTest",
     )
     workingDir = rootProject.projectDir
     commandLine(parityPython.get(), "parity/report.py")

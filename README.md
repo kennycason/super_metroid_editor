@@ -86,6 +86,7 @@ Sound
 - **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
 - **Patch Manager** — Apply, create, and manage IPS patches. Built-in editors cover beam and environmental damage, Samus physics, escape timers, Short Charge, and more.
 - **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
+- **Community Samus Catalog** — Search and preview the attributed MapRandoSprites catalog, then browse downloaded sheets through SpriteSomething's 41 named animation groups or a visual 637-frame gallery. Keep a portable source in the project and export verified catalog selections as guarded 4 MiB ROM builds; local SpriteSomething PNGs can also be imported as source-only previews.
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
 - **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
 - **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
@@ -170,8 +171,12 @@ special palette programs, and community-sheet editing remain the next layer. The
 community path now has an exact non-mutating Kotlin decoder for SpriteSomething's
 876 x 2543 PNG contract: four pinned MapRandoSprites sheets, including Invisible
 Samus, match the upstream extractor across all 637 named regions. The Samus workspace
-provides guided read-only metadata, validation, search, region, and palette previews;
-project-owned round trips and guarded ROM injection remain staged follow-ups.
+now includes a searchable 126-entry on-demand catalog, attributed project-owned source
+round trips, and guarded ROM-ready catalog injection. Each compatible project embeds a
+pinned Map Randomizer IPS beside the original PNG, verifies the clean base-ROM hash,
+expands 3 MiB to 4 MiB, and participates in normal ROM-write conflict detection. Four
+catalog samples produce byte-exact pinned outputs; arbitrary local PNGs remain clearly
+source-only until the native image-to-ROM writer is implemented.
 Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
 header → graphics/palette → instruction path → OAM composition → rendered-animation
 vertical slices. Puyo, Owtch, Choot, both Sbug/roach headers, the two-header Evir

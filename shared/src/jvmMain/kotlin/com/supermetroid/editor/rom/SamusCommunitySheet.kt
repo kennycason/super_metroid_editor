@@ -1,5 +1,9 @@
 package com.supermetroid.editor.rom
 
+import com.supermetroid.editor.data.CommunitySamusSpriteSource
+import com.supermetroid.editor.data.CommunitySamusInjectionArtifact
+import com.supermetroid.editor.data.PatchRepository
+import com.supermetroid.editor.data.PatchWrite
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -8,7 +12,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.security.MessageDigest
+import java.util.Base64
 import javax.imageio.ImageIO
 import kotlin.math.max
 import kotlin.math.min
@@ -72,6 +79,18 @@ class SamusCommunitySheetDecoder(
             return failure("PNG_READ_FAILED", "Could not read ${file.name}: ${error.message}")
         } ?: return failure("PNG_READ_FAILED", "${file.name} is not a supported image")
         return decode(image, file.name)
+    }
+
+    fun decode(pngBytes: ByteArray, sourceName: String = "community-samus.png"): Result {
+        if (pngBytes.isEmpty()) {
+            return failure("PNG_READ_FAILED", "$sourceName is empty")
+        }
+        val image = try {
+            ByteArrayInputStream(pngBytes).use(ImageIO::read)
+        } catch (error: Exception) {
+            return failure("PNG_READ_FAILED", "Could not read $sourceName: ${error.message}")
+        } ?: return failure("PNG_READ_FAILED", "$sourceName is not a supported image")
+        return decode(image, sourceName)
     }
 
     fun decode(image: BufferedImage, sourceName: String = "community-samus.png"): Result {
@@ -426,6 +445,153 @@ class SamusCommunitySheetDecoder(
         private const val PRECISION = 1 shl PRECISION_BITS
         private const val ROUNDING = 1L shl (PRECISION_BITS - 1)
     }
+}
+
+/**
+ * Lossless project boundary for a validated community Samus PNG.
+ *
+ * The original PNG remains the source of truth. Decoded logical images are derived on demand,
+ * so exporting the source is byte-for-byte stable even before an in-app pixel editor exists.
+ */
+object CommunitySamusSourceCodec {
+    data class LoadedInjectionArtifact(
+        val ipsBytes: ByteArray,
+        val writes: List<PatchWrite>,
+        val metadata: CommunitySamusInjectionArtifact,
+    )
+
+    data class Loaded(
+        val pngBytes: ByteArray,
+        val result: SamusCommunitySheetDecoder.Result,
+        val injectionArtifact: LoadedInjectionArtifact? = null,
+    )
+
+    fun create(
+        pngBytes: ByteArray,
+        sourceName: String,
+        displayName: String,
+        authors: List<String> = emptyList(),
+        category: String? = null,
+        catalogName: String? = null,
+        catalogVersion: Int? = null,
+        catalogRevision: String? = null,
+        sourceUrl: String? = null,
+        injectionArtifact: CommunitySamusInjectionArtifact? = null,
+        decoder: SamusCommunitySheetDecoder = SamusCommunitySheetDecoder(),
+    ): CommunitySamusSpriteSource {
+        val result = decoder.decode(pngBytes, sourceName)
+        require(result.isValid) {
+            "Invalid community Samus source: " + result.issues
+                .filter { it.severity == SamusCommunitySheetDecoder.Severity.ERROR }
+                .joinToString { it.message }
+        }
+        val sourceHash = sha256(pngBytes)
+        val source = CommunitySamusSpriteSource(
+            formatId = SamusCommunitySheetDecoder.FORMAT_ID,
+            pngBase64 = Base64.getEncoder().encodeToString(pngBytes),
+            sha256 = sourceHash,
+            sourceName = sourceName,
+            displayName = displayName.ifBlank { sourceName.substringBeforeLast('.') },
+            authors = authors,
+            category = category,
+            catalogName = catalogName,
+            catalogVersion = catalogVersion,
+            catalogRevision = catalogRevision,
+            sourceUrl = sourceUrl,
+            injectionArtifact = injectionArtifact,
+        )
+        injectionArtifact?.let { loadInjectionArtifact(source) }
+        return source
+    }
+
+    fun load(
+        source: CommunitySamusSpriteSource,
+        decoder: SamusCommunitySheetDecoder = SamusCommunitySheetDecoder(),
+    ): Loaded {
+        require(source.formatId == SamusCommunitySheetDecoder.FORMAT_ID) {
+            "Unsupported community Samus format '${source.formatId}'"
+        }
+        val bytes = try {
+            Base64.getDecoder().decode(source.pngBase64)
+        } catch (problem: IllegalArgumentException) {
+            throw IllegalArgumentException("Community Samus PNG contains invalid base64", problem)
+        }
+        val actualHash = sha256(bytes)
+        require(actualHash.equals(source.sha256, ignoreCase = true)) {
+            "Community Samus PNG hash mismatch: expected ${source.sha256}, found $actualHash"
+        }
+        val result = decoder.decode(bytes, source.sourceName)
+        require(result.isValid) {
+            "Stored community Samus PNG is invalid: " + result.issues
+                .filter { it.severity == SamusCommunitySheetDecoder.Severity.ERROR }
+                .joinToString { it.message }
+        }
+        return Loaded(bytes, result, source.injectionArtifact?.let { loadInjectionArtifact(source) })
+    }
+
+    fun loadInjectionArtifact(source: CommunitySamusSpriteSource): LoadedInjectionArtifact {
+        val artifact = requireNotNull(source.injectionArtifact) {
+            "Community Samus source has no ROM injection artifact"
+        }
+        require(artifact.formatId == CommunitySamusInjectionArtifact.MAP_RANDOMIZER_IPS_V1) {
+            "Unsupported community Samus injection format '${artifact.formatId}'"
+        }
+        require(artifact.sourceSheetSha256.equals(source.sha256, ignoreCase = true)) {
+            "Community Samus injection artifact belongs to a different source sheet"
+        }
+        require(SHA256_REGEX.matches(artifact.sha256)) { "Invalid community Samus IPS SHA-256" }
+        require(SHA256_REGEX.matches(artifact.baseRomSha256)) { "Invalid community Samus base-ROM SHA-256" }
+        require(REVISION_REGEX.matches(artifact.providerRevision)) {
+            "Invalid community Samus injector revision '${artifact.providerRevision}'"
+        }
+        require(artifact.baseRomSize > 0 && artifact.outputRomSize >= artifact.baseRomSize) {
+            "Invalid community Samus ROM size contract ${artifact.baseRomSize} -> ${artifact.outputRomSize}"
+        }
+        require(artifact.outputRomSize <= MAX_ROM_SIZE) {
+            "Community Samus output ROM is unexpectedly large (${artifact.outputRomSize} bytes)"
+        }
+        val bytes = try {
+            Base64.getDecoder().decode(artifact.ipsBase64)
+        } catch (problem: IllegalArgumentException) {
+            throw IllegalArgumentException("Community Samus IPS contains invalid base64", problem)
+        }
+        require(bytes.size <= MAX_IPS_SIZE) {
+            "Community Samus IPS is unexpectedly large (${bytes.size} bytes)"
+        }
+        val actualHash = sha256(bytes)
+        require(actualHash.equals(artifact.sha256, ignoreCase = true)) {
+            "Community Samus IPS hash mismatch: expected ${artifact.sha256}, found $actualHash"
+        }
+        val writes = PatchRepository.parseIps(bytes)
+        require(writes.isNotEmpty()) { "Community Samus IPS contains no writes" }
+        val ordered = writes.sortedBy { it.offset }
+        var priorEnd = 0L
+        for ((index, write) in ordered.withIndex()) {
+            require(write.offset >= 0 && write.offset + write.bytes.size <= artifact.outputRomSize.toLong()) {
+                "Community Samus IPS write at 0x${write.offset.toString(16)} exceeds the target ROM"
+            }
+            require(index == 0 || write.offset >= priorEnd) {
+                "Community Samus IPS contains overlapping records"
+            }
+            priorEnd = write.offset + write.bytes.size
+        }
+        return LoadedInjectionArtifact(bytes, ordered, artifact)
+    }
+
+    fun export(source: CommunitySamusSpriteSource, file: File) {
+        val loaded = load(source)
+        file.parentFile?.mkdirs()
+        file.writeBytes(loaded.pngBytes)
+    }
+
+    fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes)
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xFF) }
+
+    private val SHA256_REGEX = Regex("[0-9a-fA-F]{64}")
+    private val REVISION_REGEX = Regex("[0-9a-fA-F]{40}")
+    private const val MAX_IPS_SIZE = 2 * 1024 * 1024
+    private const val MAX_ROM_SIZE = 16 * 1024 * 1024
 }
 
 class SamusCommunityLayout private constructor(

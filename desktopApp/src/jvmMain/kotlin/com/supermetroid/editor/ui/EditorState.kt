@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.supermetroid.editor.data.CustomItemDef
+import com.supermetroid.editor.data.CommunitySamusSpriteSource
 import com.supermetroid.editor.data.DoorChange
 import com.supermetroid.editor.data.EditOperation
 import com.supermetroid.editor.data.PatchRepository
@@ -65,6 +66,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomRoomCatalog
+import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.ProjectNewRoomMaterializer
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 import com.supermetroid.editor.rom.ensureStateManifest
@@ -226,6 +228,10 @@ class EditorState(
     /** Incremented when palette colors change — triggers reactive re-read in pixel editor and tileset grid. */
     var paletteVersion by mutableStateOf(0)
 
+    /** Incremented when the project-owned community Samus source changes. */
+    var samusSourceVersion by mutableStateOf(0)
+        private set
+
     val undoStack = mutableListOf<EditOperation>()
     val redoStack = mutableListOf<EditOperation>()
     var undoVersion by mutableStateOf(0)
@@ -287,6 +293,24 @@ class EditorState(
     fun markDirty() {
         dirty = true
         _roomEditOrder[currentRoomId] = ++_editCounter
+    }
+
+    fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
+        if (project.customGfx.samusCommunitySource == source) return false
+        project.customGfx.samusCommunitySource = source
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        samusSourceVersion++
+        return true
+    }
+
+    fun restoreBaseRomSamus(): Boolean {
+        if (project.customGfx.samusCommunitySource == null) return false
+        project.customGfx.samusCommunitySource = null
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        samusSourceVersion++
+        return true
     }
 
     internal fun notifyProjectMutation(romParser: RomParser? = null) {
@@ -1554,7 +1578,18 @@ class EditorState(
                 }
             }
         }
+        val previous = patch.enabled
         patch.enabled = enabled
+        if (!enabled && previous) {
+            val dependency = RomValidator.checkProjectCustomItemDependencies(project)
+                .firstOrNull { it.severity == RomValidator.Severity.ERROR }
+            if (dependency != null) {
+                patch.enabled = true
+                val message = "Cannot disable '${patch.name}': ${dependency.message}"
+                editorLog("WARN: $message")
+                postStatus(message)
+            }
+        }
     }
 
     fun enabledCustomItems(): List<CustomItemDef> =
