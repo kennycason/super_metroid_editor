@@ -218,7 +218,11 @@ preview, add, duplicate, delete, reorder, simulate, and export branches with sta
 typed or compound conditions. Layouts are whole resources: the first change to an unacknowledged
 shared layout asks whether to edit every linked state or make the active state's complete layout
 unique. The compact shared/unique indicator, resource-owned operations, make-unique/copy/share/revert
-commands, and selection-to-state copying use that same rule. Relinking for non-layout resources,
+commands, and selection-to-state copying use that same rule. Collectible item placement separately
+offers **This state** and **All states**. All-state items are stored as room-wide PLM deltas, retain
+one collection-bit parameter, appear in conditions added later, and reject a different item already
+occupying those coordinates in any branch. `ELSE Default` is a fallback condition, not inherited
+base content. Relinking for other non-layout resources,
 persistent-state action authoring, and separate-background/custom-code
 authoring remain separate future features. Core project-owned room
 creation is implemented; deletion, automatic minimap tiles, templates, and generator output remain

@@ -2,6 +2,7 @@ package com.supermetroid.editor.rom
 
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.EditOperation
+import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.data.EnemyChange
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind
@@ -61,6 +62,11 @@ class ProjectRoomStatesTest {
         state.stateDataChange = StateDataChange(tileset = 7, musicData = 3, musicTrack = 5)
         state.fxChange = FxChange(fxType = 0x0C, tileAnimBitflags = 4)
         state.doorFxChanges["A18C"] = FxChange(fxType = 0x0A, paletteBlend = 3)
+        state.operations += EditOperation(
+            description = "all-state item brush",
+            plmAdds = listOf(PlmChange("add", 0xEEDB, 4, 5, 0x1F0)),
+            itemScope = ItemStateScope.ALL_STATES,
+        )
         roomEdits.levelResourceOperations[state.resources.level] = mutableListOf(
             EditOperation("shared layout", listOf(TileEdit(2, 3, 0x8123, 0x8456, 1, 2)))
         )
@@ -98,6 +104,7 @@ class ProjectRoomStatesTest {
         assertEquals(0x0C, actual.fxChange?.fxType)
         assertEquals(0x0A, actual.doorFxChanges["A18C"]?.fxType)
         assertEquals(3, actual.doorFxChanges["A18C"]?.paletteBlend)
+        assertEquals(ItemStateScope.ALL_STATES, actual.operations.single().itemScope)
         assertEquals(
             roomEdits.levelResourceOperations,
             decoded.rooms.getValue("CD13").levelResourceOperations,
@@ -670,6 +677,47 @@ class ProjectRoomStatesTest {
             RomParser(rom).decompressLZ2(after[1].levelDataPtr),
             RomParser(rom).decompressLZ2(after[0].levelDataPtr),
         )
+    }
+
+    @Test
+    fun `room wide item export reaches existing states and a newly authored condition`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x91F8
+        val project = SmEditProject("base.smc")
+        val roomEdits = project.getOrCreateRoom(roomId)
+        roomEdits.ensureStateManifest(parser)
+        val template = roomEdits.states.last()
+        val x = 3
+        val y = 3
+        val itemId = RomParser.ITEM_DEFS.first().visibleId
+        val itemParam = 0x1F0
+        roomEdits.plmChanges += PlmChange("remove", itemId, x, y, itemParam)
+        roomEdits.plmChanges += PlmChange("add", itemId, x, y, itemParam)
+        roomEdits.states.add(
+            roomEdits.states.lastIndex,
+            RoomStateEdits(
+                id = "state-added-after-global-item",
+                templateSourceStateIndex = template.sourceStateIndex,
+                condition = projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x3F),
+                resources = template.resources.copy(),
+                conditionChanged = true,
+            ),
+        )
+        roomEdits.stateGraphChanged = true
+
+        ProjectRoomExporter(project, parser, rom).exportRooms()
+
+        val exported = RomParser(rom)
+        val states = exported.parseRoomStatesWithData(roomId)
+        assertEquals(5, states.size)
+        for (state in states) {
+            val matches = exported.parsePlmSet(state.plmSetPtr).filter {
+                it.id == itemId && it.x == x && it.y == y
+            }
+            assertEquals(1, matches.size)
+            assertEquals(itemParam, matches.single().param)
+        }
     }
 
     @Test

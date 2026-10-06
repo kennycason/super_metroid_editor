@@ -128,6 +128,46 @@ class RoomStatePreviewTest {
     }
 
     @Test
+    fun `state added later inherits the edited shared layout from its template`() {
+        val parser = TestRomHelper.loadRomParser() ?: return
+        val candidate = RoomRepository().getAllRooms().asSequence().mapNotNull { info ->
+            val roomId = info.getRoomIdAsInt()
+            val room = parser.readRoomHeader(roomId) ?: return@mapNotNull null
+            val states = parser.parseRoomStatesWithData(roomId)
+            Triple(roomId, room, states).takeIf {
+                states.size > 1 && states[0].levelDataPtr == states[1].levelDataPtr
+            }
+        }.firstOrNull() ?: return
+        val (roomId, room, _) = candidate
+        val editor = EditorState()
+        editor.loadRoom(roomId, parser, room)
+        editor.switchRoomState(0, parser)
+        val context = checkNotNull(editor.currentLayoutEditingContext())
+        editor.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
+        val oldWord = editor.readBlockWord(0, 0)
+        val newWord = oldWord xor 1
+        editor.setBrushForTest(
+            TileBrush.single(newWord and 0x3FF, (newWord ushr 12) and 0xF, editor.readBts(0, 0)).copy(
+                hFlip = newWord and 0x0400 != 0,
+                vFlip = newWord and 0x0800 != 0,
+            )
+        )
+        editor.beginStroke()
+        assertTrue(editor.paintAt(0, 0))
+        editor.endStroke()
+
+        val newStateId = editor.addRoomState(
+            context.stateId,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x3F),
+            parser,
+        )
+        editor.switchRoomState(newStateId, parser)
+
+        assertEquals(context.resourceId, editor.currentLayoutEditingContext()?.resourceId)
+        assertEquals(newWord, editor.readBlockWord(0, 0))
+    }
+
+    @Test
     fun `shared pattern paint keeps its PLM state-owned through undo and redo`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val candidate = RoomRepository().getAllRooms().asSequence().mapNotNull { info ->

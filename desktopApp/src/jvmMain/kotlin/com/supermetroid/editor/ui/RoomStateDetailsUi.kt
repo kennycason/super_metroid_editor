@@ -495,6 +495,10 @@ internal fun RoomStatesHelpDialog(onDismiss: () -> Unit) {
                     "The game checks IF and ELSE IF conditions from top to bottom. The first match " +
                         "wins; ELSE is the default when nothing above it matches.",
                 )
+                Text(
+                    "ELSE Default is a fallback branch, not a base layer inherited by the other states. " +
+                        "Use an explicit All states item scope or a shared layout when content must appear everywhere.",
+                )
                 Text("Select a state to inspect the complete room version used by that branch.")
             }
         },
@@ -531,6 +535,10 @@ internal fun StateDataHelpDialog(
                 Text(
                     "Placed Objects are PLMs: doors, items, gates, stations, scroll triggers, " +
                         "and similar interactive objects.",
+                )
+                Text(
+                    "Collectible items can be authored for only the selected branch or for All states. " +
+                        "All states is room-wide and automatically includes conditions added later.",
                 )
                 Text(
                     "Enemy actors include enemies, bosses, hazards, and some animated room effects. " +

@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.FxChange
+import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.data.ProjectRoomStateCondition
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import com.supermetroid.editor.data.RoomHeaderChange
@@ -669,6 +670,32 @@ fun RoomPropertiesPanel(
             isDefault = selectedStateItem?.condition?.kind == ProjectRoomStateConditionKind.DEFAULT,
             differenceCount = stateDifferences.size,
             onShowDifferences = { helpTopic = RoomInfoHelpTopic.COMPARISON },
+        )
+
+        val layoutEditingContext = editorState.currentLayoutEditingContext()
+        val tileEditScope = when {
+            layoutEditingContext == null -> "Selected state only"
+            !layoutEditingContext.isShared -> "${layoutEditingContext.stateName} only"
+            layoutEditingContext.scope == LayoutEditScope.ALL_SHARING_STATES ||
+                layoutEditingContext.hasResourceEdits ->
+                "All ${layoutEditingContext.sharingStateCount} states sharing this layout"
+            else -> "Shared by ${layoutEditingContext.sharingStateCount} states · choose on first tile edit"
+        }
+        Text(
+            "Current edit scope",
+            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+        PropertyRow("Tiles / BTS", tileEditScope)
+        PropertyRow(
+            "New items",
+            if (editorState.itemEditScope == ItemStateScope.ALL_STATES) {
+                "All states, including conditions added later"
+            } else {
+                "${stateNames.getOrNull(selectedStateIdx) ?: "Selected state"} only"
+            },
         )
 
         if (editableCondition != null && editableCondition.kind != ProjectRoomStateConditionKind.DEFAULT) {

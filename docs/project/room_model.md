@@ -77,6 +77,15 @@ shared layout or make the active state's complete layout unique first. PLM, enem
 scroll, and FX resources continue
 to use copy-on-write so editing one state does not silently mutate a linked sibling.
 
+Collectible items have an additional explicit authoring scope. **This state** writes the item PLM
+delta to the selected `RoomStateEdits`; **All states** writes a canonical remove/add pair to the
+top-level `RoomEdits.plmChanges` stream and clears same-item overrides that would mask it in an
+existing branch. Because this is room-wide data rather than a snapshot of state IDs, it also applies
+to conditions created later. Every copy keeps one collection-bit parameter, so the game still treats
+the item as one pickup. A conflicting different item at the same coordinates in any state blocks the
+operation instead of being silently replaced. Stations, gates, doors, and scroll triggers remain
+state-scoped; the item scope control cannot globalize unrelated room logic.
+
 Existing-room selector graphs are now authorable. The UI can add/duplicate/delete/reorder conditional
 branches, edit every vanilla condition plus generated equipment/beam, capacity, current health/ammo,
 exact item/door/Chozo-block, escape, and cross-area boss conditions, and keeps the one mandatory
@@ -185,6 +194,12 @@ The editable state UI includes:
 - A typed condition builder.
 - Compare the selected state with Default and highlight differing fields/resources.
 - A compact shared/unique layout indicator and menu for make-unique, copy, share, and revert.
+- Separate live scope summaries for tiles/BTS and collectible items.
+- `This state` / `All states` item placement and removal, plus `Apply to all` for an existing item.
+
+`ELSE Default` is only the final fallback condition. It is not a base layer inherited by earlier
+branches. The inspector and help text state this directly; always-present tiles use a shared layout,
+while always-present collectible items use the room-wide `All states` scope.
 
 Deferred extensions:
 
@@ -300,6 +315,8 @@ This is a resource-ownership distinction in one model, not old-versus-new storag
 - Copy-on-write export is implemented for level, enemy, enemy-GFX, PLM, scrolling, and FX data.
 - Whole-layout ownership, shared/unique resource operations, copy/share/revert, and selection-to-state
   workflows are implemented without sharing state-owned PLMs, enemies, effects, or scroll changes.
+- Collectible items can be promoted to a room-wide scope that covers current and future states while
+  preserving one pickup bit; cross-state coordinate conflicts fail closed.
 - State-targeted level, enemy, PLM, scrolling, default/door-specific FX, music, tileset, and Layer 2 motion export is implemented.
 - All known typed condition changes are implemented, including encoded-size changes through graph relocation.
 - Link/unlink controls for non-layout resources and separate-background authoring are deferred extensions.

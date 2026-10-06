@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.CustomItemDef
+import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SmPatch
@@ -13,6 +14,9 @@ import com.supermetroid.editor.procgen.LearnedRoomProposalSource
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
+import com.supermetroid.editor.rom.ensureStateManifest
+import com.supermetroid.editor.rom.projectRoomStateCondition
+import com.supermetroid.editor.data.ProjectRoomStateConditionKind
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
@@ -120,6 +124,154 @@ class EditorStateTest {
             assertTrue(patch.enabled)
             assertTrue(state.statusMessage.contains("Cannot disable"))
             assertTrue(state.statusMessage.contains("PLM \$F200"))
+        }
+    }
+
+    @Nested
+    inner class ItemStateScopes {
+        private fun loadLandingSite(): Pair<RomParser, com.supermetroid.editor.data.Room>? {
+            val parser = TestRomHelper.loadRomParser() ?: return null
+            val room = parser.readRoomHeader(0x91F8) ?: return null
+            state.loadRoom(0x91F8, parser, room)
+            return parser to room
+        }
+
+        private fun emptyItemCoordinate(parser: RomParser): Pair<Int, Int> {
+            val occupied = parser.parseRoomStatesWithData(0x91F8)
+                .flatMap { parser.parsePlmSet(it.plmSetPtr) }
+                .filter { RomParser.isItemPlm(it.id) }
+                .map { it.x to it.y }
+                .toSet()
+            return (1 until 32).asSequence()
+                .flatMap { y -> (1 until 64).asSequence().map { x -> x to y } }
+                .first { it !in occupied }
+        }
+
+        @Test
+        fun `all states item is room wide undoable and inherited by a later condition`() {
+            val (parser) = loadLandingSite() ?: return
+            val (x, y) = emptyItemCoordinate(parser)
+            val item = RomParser.ITEM_DEFS.first()
+            state.selectItemEditScope(ItemStateScope.ALL_STATES)
+
+            state.addPlm(item.visibleId, x, y, 0)
+
+            val roomEdits = state.project.getOrCreateRoom(0x91F8)
+            val added = roomEdits.plmChanges.last { it.action == "add" && it.x == x && it.y == y }
+            assertEquals(item.visibleId, added.plmId)
+            assertTrue(roomEdits.states.all { branch ->
+                branch.plmChanges.none { it.action == "add" && it.x == x && it.y == y }
+            })
+            assertEquals(ItemStateScope.ALL_STATES, state.configuredItemScope(
+                state.workingPlms.single { it.id == item.visibleId && it.x == x && it.y == y },
+            ))
+
+            assertTrue(state.undo())
+            assertFalse(state.workingPlms.any { it.id == item.visibleId && it.x == x && it.y == y })
+            assertTrue(state.redo())
+            assertTrue(state.workingPlms.any { it.id == item.visibleId && it.x == x && it.y == y })
+
+            val template = roomEdits.states.last()
+            val newStateId = state.addRoomState(
+                template.id,
+                projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 0x3F),
+                parser,
+            )
+            assertTrue(roomEdits.states.first { it.id == newStateId }.plmChanges.none {
+                it.action == "add" && it.x == x && it.y == y
+            })
+            state.switchRoomState(newStateId, parser)
+            assertTrue(state.workingPlms.any {
+                it.id == item.visibleId && it.x == x && it.y == y && it.param == added.param
+            })
+        }
+
+        @Test
+        fun `this state item remains on selected branch`() {
+            val (parser) = loadLandingSite() ?: return
+            val (x, y) = emptyItemCoordinate(parser)
+            val item = RomParser.ITEM_DEFS.first()
+            state.selectItemEditScope(ItemStateScope.THIS_STATE)
+
+            state.addPlm(item.visibleId, x, y, 0)
+
+            val roomEdits = state.project.getOrCreateRoom(0x91F8)
+            val selected = roomEdits.states.first { it.sourceStateIndex == state.currentStateIndex }
+            assertTrue(roomEdits.plmChanges.none { it.action == "add" && it.x == x && it.y == y })
+            assertTrue(selected.plmChanges.any {
+                it.action == "add" && it.plmId == item.visibleId && it.x == x && it.y == y
+            })
+        }
+
+        @Test
+        fun `existing state item can be promoted without changing its collection bit`() {
+            val (parser) = loadLandingSite() ?: return
+            val (x, y) = emptyItemCoordinate(parser)
+            val item = RomParser.ITEM_DEFS.first()
+            state.selectItemEditScope(ItemStateScope.THIS_STATE)
+            state.addPlm(item.visibleId, x, y, 0)
+            val placed = state.workingPlms.single { it.id == item.visibleId && it.x == x && it.y == y }
+
+            state.applyItemToAllStates(placed)
+
+            val roomEdits = state.project.getOrCreateRoom(0x91F8)
+            assertTrue(roomEdits.states.all { branch ->
+                branch.plmChanges.none { it.x == x && it.y == y }
+            })
+            assertTrue(roomEdits.plmChanges.any {
+                it.action == "add" && it.plmId == item.visibleId &&
+                    it.x == x && it.y == y && it.param == placed.param
+            })
+            for (branch in roomEdits.states) {
+                state.switchRoomState(branch.id, parser)
+                assertTrue(state.workingPlms.any {
+                    it.id == item.visibleId && it.x == x && it.y == y && it.param == placed.param
+                })
+            }
+        }
+
+        @Test
+        fun `all states removal is durable and undoable`() {
+            val (parser) = loadLandingSite() ?: return
+            val (x, y) = emptyItemCoordinate(parser)
+            val item = RomParser.ITEM_DEFS.first()
+            state.selectItemEditScope(ItemStateScope.ALL_STATES)
+            state.addPlm(item.visibleId, x, y, 0)
+            val placed = state.workingPlms.single { it.id == item.visibleId && it.x == x && it.y == y }
+
+            state.removePlm(x, y, item.visibleId)
+
+            assertFalse(state.workingPlms.any { it.id == item.visibleId && it.x == x && it.y == y })
+            assertTrue(state.project.getOrCreateRoom(0x91F8).plmChanges.any {
+                it.action == "remove" && it.plmId == item.visibleId && it.x == x && it.y == y
+            })
+            assertTrue(state.undo())
+            assertTrue(state.workingPlms.any {
+                it.id == item.visibleId && it.x == x && it.y == y && it.param == placed.param
+            })
+            assertTrue(state.redo())
+            assertFalse(state.workingPlms.any { it.id == item.visibleId && it.x == x && it.y == y })
+        }
+
+        @Test
+        fun `all states placement rejects a different item occupying one branch`() {
+            val (parser) = loadLandingSite() ?: return
+            val states = parser.parseRoomStatesWithData(0x91F8)
+            val existing = states.asSequence()
+                .flatMap { parser.parsePlmSet(it.plmSetPtr).asSequence() }
+                .firstOrNull { RomParser.isItemPlm(it.id) } ?: return
+            val replacement = RomParser.ITEM_DEFS.firstOrNull {
+                it.name != RomParser.itemNameForPlm(existing.id)
+            } ?: return
+            state.selectItemEditScope(ItemStateScope.ALL_STATES)
+
+            state.addPlm(replacement.visibleId, existing.x, existing.y, 0)
+
+            val roomEdits = state.project.getOrCreateRoom(0x91F8)
+            assertTrue(roomEdits.plmChanges.none {
+                it.action == "add" && it.x == existing.x && it.y == existing.y
+            })
+            assertTrue(state.statusMessage.contains("already occupies that item position"))
         }
     }
 

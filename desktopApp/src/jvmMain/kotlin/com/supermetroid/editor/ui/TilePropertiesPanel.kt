@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomInfo
+import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.rom.RomParser
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -851,6 +852,35 @@ internal fun TilePropertiesPanel(
             Spacer(modifier = Modifier.height(4.dp))
             Text("Items / PLMs", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+            Text("Item add/remove scope", fontSize = 8.sp, color = MaterialTheme.colorScheme.outline)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(
+                    selected = editorState.itemEditScope == ItemStateScope.THIS_STATE,
+                    onClick = { editorState.selectItemEditScope(ItemStateScope.THIS_STATE) },
+                    label = { Text("This state", fontSize = 9.sp) },
+                    modifier = Modifier.height(26.dp),
+                )
+                FilterChip(
+                    selected = editorState.itemEditScope == ItemStateScope.ALL_STATES,
+                    onClick = { editorState.selectItemEditScope(ItemStateScope.ALL_STATES) },
+                    label = { Text("All states", fontSize = 9.sp) },
+                    modifier = Modifier.height(26.dp),
+                )
+            }
+            Text(
+                if (editorState.itemEditScope == ItemStateScope.ALL_STATES) {
+                    "Includes room conditions added later"
+                } else {
+                    "Only the selected room-state branch"
+                },
+                fontSize = 8.sp,
+                color = if (editorState.itemEditScope == ItemStateScope.ALL_STATES) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+
             val plmsHere = editorState.getPlmsAt(blockX, blockY)
             val itemPlms = plmsHere.filter { editorState.isEditorItemPlm(it.id) }
             val otherPlms = plmsHere.filter { !editorState.isEditorItemPlm(it.id) }
@@ -862,27 +892,48 @@ internal fun TilePropertiesPanel(
                 val iName = editorState.customItemNameForPlm(plm.id)
                     ?: RomParser.itemNameForPlm(plm.id)
                     ?: "PLM 0x${plm.id.toString(16)}"
+                val configuredScope = editorState.configuredItemScope(plm)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(iName, fontSize = 10.sp)
                         Text(
-                            "bit: 0x${plm.param.toString(16).uppercase().padStart(2, '0')}",
+                            "bit: 0x${plm.param.toString(16).uppercase().padStart(2, '0')} · " +
+                                when (configuredScope) {
+                                    ItemStateScope.ALL_STATES -> "All states"
+                                    ItemStateScope.THIS_STATE -> "This state"
+                                    null -> "Original state data"
+                                },
                             fontSize = 8.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (configuredScope == ItemStateScope.ALL_STATES) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                     }
-                    Text(
-                        "✕",
-                        modifier = Modifier
-                            .clickable { editorState.removePlm(plm.x, plm.y, plm.id) }
-                            .padding(horizontal = 4.dp),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (configuredScope != ItemStateScope.ALL_STATES) {
+                            TextButton(
+                                onClick = { editorState.applyItemToAllStates(plm) },
+                                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
+                                modifier = Modifier.height(24.dp),
+                            ) {
+                                Text("Apply to all", fontSize = 8.sp)
+                            }
+                        }
+                        Text(
+                            "✕",
+                            modifier = Modifier
+                                .clickable { editorState.removePlm(plm.x, plm.y, plm.id) }
+                                .padding(horizontal = 4.dp),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
             for (plm in otherPlms) {
