@@ -79,10 +79,12 @@ class SamusCommunityAnimationCatalog private constructor(
         sheet: SamusCommunitySheetDecoder.DecodedSheet,
         group: Group,
         variant: Variant,
+        suit: SamusSpriteDecoder.SuitType = SamusSpriteDecoder.SuitType.POWER,
     ): SpriteAnimation {
         val bounds = variantBounds(sheet, variant)
         val width = max(1, bounds.right - bounds.left + CANVAS_PADDING * 2)
         val height = max(1, bounds.bottom - bounds.top + CANVAS_PADDING * 2)
+        val suitPixels = mutableMapOf<String, IntArray>()
         val renderedFrames = variant.frames.mapIndexed { frameIndex, frame ->
             val pixels = IntArray(width * height)
 
@@ -90,11 +92,13 @@ class SamusCommunityAnimationCatalog private constructor(
             // body art down first and overlays (notably cannon ports) on top.
             for (tile in frame.tiles.asReversed()) {
                 val image = resolveImage(sheet, tile.imageName) ?: continue
+                val sourcePixels = suitPixels.getOrPut(image.name) { sheet.pixelsForSuit(image, suit) }
                 drawTile(
                     target = pixels,
                     targetWidth = width,
                     targetHeight = height,
                     image = image,
+                    sourcePixels = sourcePixels,
                     tile = tile,
                     targetX = tile.x + frame.displacementX - bounds.left + CANVAS_PADDING,
                     targetY = tile.y + frame.displacementY - bounds.top + CANVAS_PADDING,
@@ -161,6 +165,7 @@ class SamusCommunityAnimationCatalog private constructor(
         targetWidth: Int,
         targetHeight: Int,
         image: SamusCommunitySheetDecoder.DecodedImage,
+        sourcePixels: IntArray,
         tile: Tile,
         targetX: Int,
         targetY: Int,
@@ -180,7 +185,7 @@ class SamusCommunityAnimationCatalog private constructor(
                 val sourceX = if (tile.horizontalFlip) cropRight - 1 - drawX else cropLeft + drawX
                 val destinationX = targetX + drawX
                 if (sourceX !in 0 until image.width || destinationX !in 0 until targetWidth) continue
-                val source = image.pixels[sourceY * image.width + sourceX]
+                val source = sourcePixels[sourceY * image.width + sourceX]
                 if ((source ushr 24) != 0) target[destinationY * targetWidth + destinationX] = source
             }
         }

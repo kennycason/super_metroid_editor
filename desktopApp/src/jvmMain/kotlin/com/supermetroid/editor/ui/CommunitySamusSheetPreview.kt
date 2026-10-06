@@ -53,6 +53,7 @@ import com.supermetroid.editor.rom.CommunitySamusSourceCodec
 import com.supermetroid.editor.rom.MapRandoSamusCatalog
 import com.supermetroid.editor.rom.MapRandoSamusSprite
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
+import com.supermetroid.editor.rom.SamusSpriteDecoder
 import java.awt.image.BufferedImage
 import java.io.File
 import java.text.NumberFormat
@@ -223,6 +224,7 @@ internal fun CommunitySamusSheetPreview(
     projectSource: CommunitySamusSpriteSource? = null,
     onPreviewProjectSource: (() -> Unit)? = null,
     onRestoreBase: (() -> Unit)? = null,
+    selectedSuit: SamusSpriteDecoder.SuitType = SamusSpriteDecoder.SuitType.POWER,
     modifier: Modifier = Modifier,
 ) {
     val sheet = session.result.sheet
@@ -241,7 +243,13 @@ internal fun CommunitySamusSheetPreview(
         if (sheet == null) {
             InvalidCommunitySheet(session, onChooseAnother, Modifier.weight(1f))
         } else {
-            CommunitySamusWorkspace(sheet, session.sourceKey, onStatus, Modifier.weight(1f))
+            CommunitySamusWorkspace(
+                sheet = sheet,
+                sessionKey = session.sourceKey,
+                selectedSuit = selectedSuit,
+                onStatus = onStatus,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -435,6 +443,7 @@ private fun MetricCard(label: String, value: String, modifier: Modifier) {
 internal fun CommunityRegionBrowser(
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     sessionKey: String,
+    selectedSuit: SamusSpriteDecoder.SuitType = SamusSpriteDecoder.SuitType.POWER,
     modifier: Modifier,
 ) {
     var query by remember(sessionKey) { mutableStateOf("") }
@@ -522,7 +531,7 @@ internal fun CommunityRegionBrowser(
         }
 
         Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFF30354E)))
-        CommunityRegionDetails(selected, sheet, Modifier.weight(1f))
+        CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.weight(1f))
     }
 }
 
@@ -530,9 +539,10 @@ internal fun CommunityRegionBrowser(
 internal fun CommunityRegionDetails(
     image: SamusCommunitySheetDecoder.DecodedImage,
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
+    selectedSuit: SamusSpriteDecoder.SuitType = SamusSpriteDecoder.SuitType.POWER,
     modifier: Modifier,
 ) {
-    val bitmap = remember(image) { image.toImageBitmap() }
+    val bitmap = remember(image, sheet, selectedSuit) { image.toImageBitmap(sheet, selectedSuit) }
     val opaquePixels = remember(image) { image.pixels.count { (it ushr 24) != 0 } }
     Column(
         modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(14.dp),
@@ -580,10 +590,11 @@ internal fun CommunityRegionDetails(
                 Spacer(Modifier.height(2.dp))
             }
         } else {
-            val interval = image.paletteInterval
+            val interval = sheet.paletteIntervalForSuit(image, selectedSuit)
             if (interval != null) {
                 Text(
-                    "Imported palette interval ${interval.first}–${interval.last}  •  decoded index 0 stays transparent",
+                    "${selectedSuit.name.lowercase().replaceFirstChar { it.uppercase() }} preview palette " +
+                        "${interval.first}–${interval.last}  •  decoded index 0 stays transparent",
                     fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = Color(0xFF8D97B3),
                 )
@@ -653,8 +664,19 @@ private fun CompactAction(text: String, onClick: () -> Unit) {
 }
 
 internal fun SamusCommunitySheetDecoder.DecodedImage.toImageBitmap(): ImageBitmap {
+    return pixels.toImageBitmap(width, height)
+}
+
+internal fun SamusCommunitySheetDecoder.DecodedImage.toImageBitmap(
+    sheet: SamusCommunitySheetDecoder.DecodedSheet,
+    suit: SamusSpriteDecoder.SuitType,
+): ImageBitmap {
+    return sheet.pixelsForSuit(this, suit).toImageBitmap(width, height)
+}
+
+private fun IntArray.toImageBitmap(width: Int, height: Int): ImageBitmap {
     val buffered = BufferedImage(width.coerceAtLeast(1), height.coerceAtLeast(1), BufferedImage.TYPE_INT_ARGB)
-    if (width > 0 && height > 0) buffered.setRGB(0, 0, width, height, pixels, 0, width)
+    if (width > 0 && height > 0) buffered.setRGB(0, 0, width, height, this, 0, width)
     return buffered.toComposeImageBitmap()
 }
 

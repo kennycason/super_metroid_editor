@@ -59,7 +59,50 @@ class SamusCommunitySheetDecoder(
         val masterPaletteRgb: IntArray,
         val opaqueIndexedPixelCount: Int,
         val quantizedPixelCount: Int,
-    )
+    ) {
+        /**
+         * SpriteSomething stores standard gameplay art against the first
+         * 15-color row, followed immediately by the Varia and Gravity rows.
+         * Preserve the decoded indices so the viewer can switch suits without
+         * altering or re-decoding the source PNG.
+         */
+        fun paletteIntervalForSuit(image: DecodedImage, suit: SamusSpriteDecoder.SuitType): IntRange? {
+            val source = image.paletteInterval ?: return null
+            if (source != POWER_SUIT_INTERVAL) return source
+            val start = when (suit) {
+                SamusSpriteDecoder.SuitType.POWER -> 0
+                SamusSpriteDecoder.SuitType.VARIA -> SUIT_PALETTE_SIZE
+                SamusSpriteDecoder.SuitType.GRAVITY -> SUIT_PALETTE_SIZE * 2
+            }
+            return start until start + SUIT_PALETTE_SIZE
+        }
+
+        fun pixelsForSuit(image: DecodedImage, suit: SamusSpriteDecoder.SuitType): IntArray {
+            val indices = image.paletteIndices ?: return image.pixels
+            val target = paletteIntervalForSuit(image, suit) ?: return image.pixels
+            if (image.paletteInterval != POWER_SUIT_INTERVAL || target == POWER_SUIT_INTERVAL) {
+                return image.pixels
+            }
+            return IntArray(indices.size) { pixelIndex ->
+                val paletteIndex = indices[pixelIndex].toInt() and 0xFF
+                if (paletteIndex == 0) {
+                    0
+                } else {
+                    val masterIndex = target.first + paletteIndex - 1
+                    if (masterIndex in masterPaletteRgb.indices && masterIndex in target) {
+                        0xFF000000.toInt() or masterPaletteRgb[masterIndex]
+                    } else {
+                        image.pixels[pixelIndex]
+                    }
+                }
+            }
+        }
+
+        private companion object {
+            const val SUIT_PALETTE_SIZE = 15
+            val POWER_SUIT_INTERVAL = 0 until SUIT_PALETTE_SIZE
+        }
+    }
 
     data class Result(
         val sheet: DecodedSheet?,

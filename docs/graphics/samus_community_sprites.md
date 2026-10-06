@@ -62,6 +62,14 @@ union canvas so pose movement stays stable while playing. The only four unresolv
 manifest images are `optional_ship_*` pieces supplied by SpriteSomething outside the
 community PNG; the UI marks that WIP ship preview explicitly.
 
+The Samus workspace's Power/Varia/Gravity selector also applies to community sources.
+SpriteSomething stores those three standard 15-color rows at the start of every sheet's
+master palette, while decoded gameplay pixels retain their palette indices. Switching
+suits therefore recolors the composed animations, frame gallery, detailed previews, and
+preview exports from the selected character's own authored palette rows without
+changing the source PNG. Death, file-select, crystal-flash, visor, and ship art retain
+their dedicated non-suit palette intervals.
+
 Four real conformance sheets are provisioned into the ignored workspace:
 
 | Fixture | Why it is useful |

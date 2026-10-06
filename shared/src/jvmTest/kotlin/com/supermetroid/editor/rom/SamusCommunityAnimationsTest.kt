@@ -77,6 +77,59 @@ class SamusCommunityAnimationsTest {
         assertTrue(frame.width >= 5 && frame.height >= 5)
     }
 
+    @Test
+    fun standardGameplayArtUsesTheSelectedCommunitySuitPalette() {
+        val catalog = SamusCommunityAnimationCatalog.parse(
+            """
+            {
+              "Stand": {
+                "right": [
+                  {"frames": 1, "tiles": [{"image": "body", "pos": [0, 0]}]}
+                ]
+              }
+            }
+            """.trimIndent(),
+        )
+        val power = 0xFFCC3300.toInt()
+        val varia = 0xFF33CC00.toInt()
+        val gravity = 0xFF6633CC.toInt()
+        val palettes = IntArray(105).also {
+            it[0] = power and 0x00FFFFFF
+            it[15] = varia and 0x00FFFFFF
+            it[30] = gravity and 0x00FFFFFF
+        }
+        val body = SamusCommunitySheetDecoder.DecodedImage(
+            name = "body",
+            width = 2,
+            height = 1,
+            pixels = intArrayOf(power, 0),
+            paletteIndices = byteArrayOf(1, 0),
+            paletteInterval = 0 until 15,
+        )
+        val sheet = SamusCommunitySheetDecoder.DecodedSheet(
+            sourceName = "fixture",
+            width = 2,
+            height = 1,
+            images = mapOf("body" to body),
+            masterPaletteRgb = palettes,
+            opaqueIndexedPixelCount = 1,
+            quantizedPixelCount = 0,
+        )
+        val group = catalog.groups.single()
+        val variant = group.variants.single()
+
+        fun renderedColor(suit: SamusSpriteDecoder.SuitType): Int =
+            catalog.buildAnimation(sheet, group, variant, suit).frames.single().pixels
+                .first { (it ushr 24) != 0 }
+
+        assertEquals(power, renderedColor(SamusSpriteDecoder.SuitType.POWER))
+        assertEquals(varia, renderedColor(SamusSpriteDecoder.SuitType.VARIA))
+        assertEquals(gravity, renderedColor(SamusSpriteDecoder.SuitType.GRAVITY))
+        assertEquals(15 until 30, sheet.paletteIntervalForSuit(body, SamusSpriteDecoder.SuitType.VARIA))
+        assertEquals(30 until 45, sheet.paletteIntervalForSuit(body, SamusSpriteDecoder.SuitType.GRAVITY))
+        assertEquals(0, sheet.pixelsForSuit(body, SamusSpriteDecoder.SuitType.GRAVITY)[1])
+    }
+
     private fun decodedImage(name: String, color: Int) = SamusCommunitySheetDecoder.DecodedImage(
         name = name,
         width = 1,

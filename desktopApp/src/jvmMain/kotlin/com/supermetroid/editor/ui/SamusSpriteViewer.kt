@@ -398,25 +398,15 @@ fun SamusSpriteViewer(
 
                 Spacer(Modifier.width(16.dp))
 
-                if (communitySession == null) {
-                    // Suit selector
-                    for (suit in SamusSpriteDecoder.SuitType.entries) {
-                        FilterChip(
-                            selected = selectedSuit == suit,
-                            onClick = { selectedSuit = suit },
-                            label = { Text(suit.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = LocalEditorTheme.current.fontSize.value.body) },
-                            modifier = Modifier.height(28.dp)
-                        )
-                    }
-                } else {
-                    Surface(color = Color(0xFF1B3148), shape = RoundedCornerShape(4.dp)) {
-                        Text(
-                            if (displayedProjectSource) "Community Samus · Project Source" else "Community Samus · Preview",
-                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                            color = Color(0xFF93C5FD),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        )
-                    }
+                // The same suit palette switch applies to ROM and community
+                // Samus sources. Community sheets carry all three standard rows.
+                for (suit in SamusSpriteDecoder.SuitType.entries) {
+                    FilterChip(
+                        selected = selectedSuit == suit,
+                        onClick = { selectedSuit = suit },
+                        label = { Text(suit.name.lowercase().replaceFirstChar { it.uppercase() }, fontSize = LocalEditorTheme.current.fontSize.value.body) },
+                        modifier = Modifier.height(28.dp)
+                    )
                 }
 
                 Spacer(Modifier.weight(1f))
@@ -573,6 +563,7 @@ fun SamusSpriteViewer(
                 } else {
                     null
                 },
+                selectedSuit = selectedSuit,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {

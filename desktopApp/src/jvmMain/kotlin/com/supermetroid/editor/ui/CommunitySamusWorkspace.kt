@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.rom.SamusCommunityAnimationCatalog
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
+import com.supermetroid.editor.rom.SamusSpriteDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -59,6 +60,7 @@ private enum class CommunitySamusView(val label: String) {
 internal fun CommunitySamusWorkspace(
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     sessionKey: String,
+    selectedSuit: SamusSpriteDecoder.SuitType,
     onStatus: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -100,13 +102,13 @@ internal fun CommunitySamusWorkspace(
                         )
                     }
                 } else {
-                    CommunitySamusAnimationBrowser(catalog, sheet, sessionKey, onStatus, Modifier.fillMaxSize())
+                    CommunitySamusAnimationBrowser(catalog, sheet, sessionKey, selectedSuit, onStatus, Modifier.fillMaxSize())
                 }
             }
-            CommunitySamusView.ALL_FRAMES -> CommunitySamusFrameGallery(sheet, sessionKey, Modifier.fillMaxSize())
+            CommunitySamusView.ALL_FRAMES -> CommunitySamusFrameGallery(sheet, sessionKey, selectedSuit, Modifier.fillMaxSize())
             CommunitySamusView.SOURCE_DETAILS -> Column(Modifier.fillMaxSize()) {
                 CommunitySheetMetrics(sheet)
-                CommunityRegionBrowser(sheet, sessionKey, Modifier.weight(1f))
+                CommunityRegionBrowser(sheet, sessionKey, selectedSuit, Modifier.weight(1f))
             }
         }
     }
@@ -117,6 +119,7 @@ private fun CommunitySamusAnimationBrowser(
     catalog: SamusCommunityAnimationCatalog,
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     sessionKey: String,
+    selectedSuit: SamusSpriteDecoder.SuitType,
     onStatus: (String) -> Unit,
     modifier: Modifier,
 ) {
@@ -128,9 +131,9 @@ private fun CommunitySamusAnimationBrowser(
     val scope = rememberCoroutineScope()
     val group = catalog.groups.getOrElse(selectedGroupIndex) { catalog.groups.first() }
     val variant = group.variants.getOrElse(selectedVariantIndex) { group.variants.first() }
-    val animation = remember(sheet, group, variant) {
+    val animation = remember(sheet, group, variant, selectedSuit) {
         currentFrame = 0
-        catalog.buildAnimation(sheet, group, variant)
+        catalog.buildAnimation(sheet, group, variant, selectedSuit)
     }
     val unresolved = remember(sheet, group) {
         group.variants.asSequence()
@@ -193,7 +196,7 @@ private fun CommunitySamusAnimationBrowser(
         ) {
             Text(group.name, fontSize = font.heading, color = Color(0xFFF0F2FC), fontWeight = FontWeight.Bold)
             Text(
-                "Community sheet animation · SpriteSomething timing and composition",
+                "Community sheet animation · ${selectedSuit.name.lowercase().replaceFirstChar { it.uppercase() }} palette · SpriteSomething timing and composition",
                 fontSize = font.detail,
                 color = Color(0xFF8993AE),
             )
@@ -302,6 +305,7 @@ private fun CommunitySamusAnimationBrowser(
 private fun CommunitySamusFrameGallery(
     sheet: SamusCommunitySheetDecoder.DecodedSheet,
     sessionKey: String,
+    selectedSuit: SamusSpriteDecoder.SuitType,
     modifier: Modifier,
 ) {
     val font = LocalEditorTheme.current.fontSize.value
@@ -356,7 +360,7 @@ private fun CommunitySamusFrameGallery(
             ) {
                 items(images, key = { it.name }) { image ->
                     val active = image.name == selected.name
-                    val bitmap = remember(image) { image.toImageBitmap() }
+                    val bitmap = remember(image, sheet, selectedSuit) { image.toImageBitmap(sheet, selectedSuit) }
                     Box(
                         modifier = Modifier.fillMaxWidth().height(142.dp),
                         contentAlignment = Alignment.Center,
@@ -407,7 +411,7 @@ private fun CommunitySamusFrameGallery(
             }
 
             Box(Modifier.width(1.dp).fillMaxHeight().background(Color(0xFF30354E)))
-            CommunityRegionDetails(selected, sheet, Modifier.width(330.dp))
+            CommunityRegionDetails(selected, sheet, selectedSuit, Modifier.width(330.dp))
         }
     }
 }
