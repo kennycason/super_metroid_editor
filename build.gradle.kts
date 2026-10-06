@@ -351,6 +351,23 @@ tasks.register<Exec>("parityMetroid") {
     }
 }
 
+tasks.register<Exec>("parityOrdinaryEnemyAnimations") {
+    group = "verification"
+    description = "Generate exact helper-selected ordinary-enemy animation routes"
+    dependsOn(
+        "paritySymbols",
+        "parityAssets",
+        "parityEnemyHeaders",
+        "parityEnemyOam",
+        "parityEnemyInstructions",
+    )
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/ordinary_enemy_animation_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -377,6 +394,7 @@ tasks.register<Exec>("parityReport") {
         "parityBotwoon",
         "parityTorizo",
         "parityMetroid",
+        "parityOrdinaryEnemyAnimations",
         ":shared:parityTest",
     )
     workingDir = rootProject.projectDir

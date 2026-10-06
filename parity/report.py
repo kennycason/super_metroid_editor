@@ -475,6 +475,30 @@ def enemy_species_status_checks(
     ]
 
 
+def ordinary_enemy_animation_checks(
+    test_results: Dict[str, object], ordinary_enemy_animations: Dict[str, object]
+) -> List[Dict[str, object]]:
+    status = named_test_status(
+        test_results,
+        "com.supermetroid.editor.rom.OrdinaryEnemyAnimationSourceParityTest",
+        "helper selected ordinary enemy routes timing and renders match source",
+    )
+    totals = ordinary_enemy_animations["totals"]
+    return [
+        {
+            "id": "E-11",
+            "name": "Helper-selected ordinary-enemy animations",
+            "status": status,
+            "evidence": (
+                f"{totals['speciesCount']} species that evade the conservative init scanner now have "
+                f"{totals['animationCount']} explicit source routes / {totals['animationFrameCount']} guided frames. "
+                f"All {totals['spritemapCount']} OAM maps, {totals['instructionListCount']} lists, palettes, "
+                "durations, default previews, component pixels, and animated pixels are source-pinned."
+            ),
+        }
+    ]
+
+
 def kraid_checks(
     test_results: Dict[str, object], kraid: Dict[str, object]
 ) -> List[Dict[str, object]]:
@@ -793,6 +817,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     botwoon = report["botwoon"]
     torizo = report["torizo"]
     metroid = report["metroid"]
+    ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
     lines = [
@@ -945,6 +970,9 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{metroid['electricitySpritemapCount']}** electricity maps are source-pinned across "
             f"**{metroid['spriteObjectFrameOccurrenceCount']}** independently timed companion frames; "
             f"**{metroid['fallthroughContinuationCount']}** source-labelled unused lists are proven runtime-active continuations.",
+            f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
+            f"**{ordinary_enemy_animations['animationCount']}** actions / "
+            f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
             f"- Enemy species status: **{enemy_species_status['assembledCount']}** assembled, "
             f"**{enemy_species_status['compositeCount']}** composite, "
             f"**{enemy_species_status['tileSheetOnlyCount']}** tile-sheet-only, "
@@ -958,7 +986,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -994,6 +1022,7 @@ def main() -> int:
     botwoon_path = report_dir / "botwoon.json"
     torizo_path = report_dir / "torizo.json"
     metroid_path = report_dir / "metroid.json"
+    ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
         not symbols_path.is_file()
@@ -1017,10 +1046,11 @@ def main() -> int:
         or not botwoon_path.is_file()
         or not torizo_path.is_file()
         or not metroid_path.is_file()
+        or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1048,6 +1078,7 @@ def main() -> int:
     botwoon = json.loads(botwoon_path.read_text(encoding="utf-8"))
     torizo = json.loads(torizo_path.read_text(encoding="utf-8"))
     metroid = json.loads(metroid_path.read_text(encoding="utf-8"))
+    ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
     if symbols["symbolCount"] != int(reference["symbols.count"]):
@@ -1541,6 +1572,33 @@ def main() -> int:
         if crocomire["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"Crocomire aggregate {field} does not match the pinned reference")
 
+    pinned_ordinary_enemy_totals = {
+        "speciesCount": "ordinaryEnemyAnimations.species.count",
+        "assetCount": "ordinaryEnemyAnimations.asset.count",
+        "assetByteCount": "ordinaryEnemyAnimations.asset.byte.count",
+        "spritemapCount": "ordinaryEnemyAnimations.spritemap.count",
+        "oamEntryCount": "ordinaryEnemyAnimations.oamEntry.count",
+        "instructionListCount": "ordinaryEnemyAnimations.instructionList.count",
+        "sourceFrameOccurrenceCount": "ordinaryEnemyAnimations.sourceFrameOccurrence.count",
+        "animationCount": "ordinaryEnemyAnimations.animation.count",
+        "animationFrameCount": "ordinaryEnemyAnimations.animationFrame.count",
+        "paletteCount": "ordinaryEnemyAnimations.palette.count",
+    }
+    for field, property_name in pinned_ordinary_enemy_totals.items():
+        if int(ordinary_enemy_animations["totals"][field]) != int(reference[property_name]):
+            raise ValueError(f"ordinary-enemy animation total {field} does not match the pinned reference")
+    pinned_ordinary_enemy_hashes = {
+        "ownership": "ordinaryEnemyAnimations.ownership.aggregate.sha256",
+        "species": "ordinaryEnemyAnimations.species.aggregate.sha256",
+        "spritemaps": "ordinaryEnemyAnimations.spritemap.aggregate.sha256",
+        "instructionLists": "ordinaryEnemyAnimations.instructionList.aggregate.sha256",
+        "animations": "ordinaryEnemyAnimations.animation.aggregate.sha256",
+        "palettes": "ordinaryEnemyAnimations.palette.aggregate.sha256",
+    }
+    for field, property_name in pinned_ordinary_enemy_hashes.items():
+        if ordinary_enemy_animations["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"ordinary-enemy animation aggregate {field} does not match the pinned reference")
+
     pinned_enemy_species_status_totals = {
         "speciesCount": "enemySpeciesStatus.species.count",
         "assembledCount": "enemySpeciesStatus.assembled.count",
@@ -1574,6 +1632,7 @@ def main() -> int:
         + enemy_header_checks(tests, enemy_headers)
         + enemy_oam_checks(tests, enemy_oam)
         + enemy_instruction_checks(tests, enemy_instructions, enemy_vertical_slices)
+        + ordinary_enemy_animation_checks(tests, ordinary_enemy_animations)
         + enemy_species_status_checks(tests, enemy_species_status)
         + kraid_checks(tests, kraid)
         + phantoon_checks(tests, phantoon)
@@ -1593,9 +1652,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 21,
+        "schemaVersion": 22,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-and-species-status",
+        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -1874,6 +1933,15 @@ def main() -> int:
             "fallthroughContinuationCount": metroid["totals"]["fallthroughContinuationCount"],
             "paletteCount": metroid["totals"]["paletteCount"],
             "aggregateHashes": metroid["aggregateHashes"],
+        },
+        "ordinaryEnemyAnimations": {
+            "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],
+            "assetByteCount": ordinary_enemy_animations["totals"]["assetByteCount"],
+            "spritemapCount": ordinary_enemy_animations["totals"]["spritemapCount"],
+            "instructionListCount": ordinary_enemy_animations["totals"]["instructionListCount"],
+            "animationCount": ordinary_enemy_animations["totals"]["animationCount"],
+            "animationFrameCount": ordinary_enemy_animations["totals"]["animationFrameCount"],
+            "aggregateHashes": ordinary_enemy_animations["aggregateHashes"],
         },
         "enemySpeciesStatus": {
             "speciesCount": enemy_species_status["totals"]["speciesCount"],

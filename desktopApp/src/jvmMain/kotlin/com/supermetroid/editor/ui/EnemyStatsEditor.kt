@@ -66,7 +66,9 @@ val ENEMY_DEFS = listOf(
 
     // ── Flyers ──
     EnemyDef("tripper", "Tripper", 0xD7FF, 20, 40, "Flyer"),
-    EnemyDef("reo", "Reo", 0xD87F, 20, 40, "Flyer"),
+    // Keep the long-standing "reo" key so existing patch settings remain compatible.
+    EnemyDef("reo", "Reo", 0xD27F, 45, 15, "Flyer"),
+    EnemyDef("sbug", "Sbug (roach)", 0xD87F, 20, 40, "Flyer"),
     EnemyDef("waver", "Waver", 0xD63F, 100, 16, "Flyer"),
     EnemyDef("ripper", "Ripper", 0xD47F, 200, 5, "Flyer"),
     EnemyDef("ripper2", "Ripper II", 0xD3FF, 400, 20, "Flyer"),

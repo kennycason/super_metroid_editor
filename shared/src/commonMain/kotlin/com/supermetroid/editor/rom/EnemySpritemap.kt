@@ -983,7 +983,12 @@ class EnemySpritemap(private val romParser: RomParser) {
          * are deliberately narrow until additional init-AI paths are modeled.
          */
         private val SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS = mapOf(
+            0xCFBF to 0xA299AD, // Puyo: init calls SetPuyoInstList with grounded/fast
+            0xD03F to 0xA2A3AD, // Owtch: left setup list falls through here
+            0xD3BF to 0xA2D82C, // Choot: init calls SetChootInstList with idle
             0xD73F to 0xA394D6, // Elevator: global standard sprite tiles
+            0xD87F to 0xA3A071, // Sbug/roach: direction is selected through a runtime table
+            0xD8BF to 0xA3A071, // Sbug/roach alternate VRAM layout, same visual lists
             0xD93F to 0xA3AA82, // Sidehopper, landed upside-up (init0 = 0)
             0xDCFF to 0xA3E25C, // Zoomer, upside-right (init orientation = 0)
             0xE1FF to 0xA6F061, // Ceres steam, visible up animation
@@ -1388,6 +1393,59 @@ class EnemySpritemap(private val romParser: RomParser) {
             frames = animFrames,
             loop = true
         )
+    }
+
+    /** Render an explicitly source-routed ordinary-enemy action. */
+    fun buildSourceAnimation(
+        definition: SourceEnemyAnimations.Definition,
+        tileData: ByteArray,
+        palette: IntArray,
+    ): SpriteAnimation? {
+        data class Pending(
+            val sprite: AssembledSprite,
+            val duration: Int,
+            val label: String,
+        )
+
+        val pending = mutableListOf<Pending>()
+        definition.instructionLists.zip(definition.expectedFramesPerList)
+            .forEachIndexed { listIndex, (address, expectedFrames) ->
+                val trace = traceInstructionList(address, maxFrames = expectedFrames + 1)
+                if (trace.termination == InstructionTraceTermination.UNSUPPORTED_HANDLER ||
+                    trace.termination == InstructionTraceTermination.INVALID_DATA ||
+                    trace.frames.size != expectedFrames) return null
+                trace.frames.forEachIndexed { frameIndex, frame ->
+                    val sprite = renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+                    pending += Pending(
+                        sprite,
+                        frame.duration,
+                        "${definition.name} ${listIndex + 1}.${frameIndex + 1}",
+                    )
+                }
+            }
+        if (pending.isEmpty()) return null
+
+        val minX = pending.minOf { -it.sprite.originX }
+        val minY = pending.minOf { -it.sprite.originY }
+        val maxX = pending.maxOf { it.sprite.width - it.sprite.originX }
+        val maxY = pending.maxOf { it.sprite.height - it.sprite.originY }
+        val width = maxX - minX
+        val height = maxY - minY
+        if (width <= 0 || height <= 0) return null
+
+        val frames = pending.map { frame ->
+            val pixels = IntArray(width * height)
+            val sprite = frame.sprite
+            for (y in 0 until sprite.height) for (x in 0 until sprite.width) {
+                val color = sprite.pixels[y * sprite.width + x]
+                if (color ushr 24 == 0) continue
+                val dx = x - sprite.originX - minX
+                val dy = y - sprite.originY - minY
+                if (dx in 0 until width && dy in 0 until height) pixels[dy * width + dx] = color
+            }
+            SpriteAnimationFrame(pixels, width, height, frame.duration, frame.label)
+        }
+        return SpriteAnimation(definition.name, frames, definition.loop)
     }
 
     private fun buildSuspensorPlatformAnimation(

@@ -164,7 +164,11 @@ deliberately source-backed: plausible-looking renders are not counted as parity
 unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
 Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
 header → graphics/palette → instruction path → OAM composition → rendered-animation
-vertical slices. A separate source-complete ledger probes all 164 species through the
+vertical slices. Puyo, Owtch, Choot, and both Sbug/roach headers also have explicit
+source routes for init AI that selects animations through helpers or state tables:
+18 compact editor actions cover 65 guided frames without pretending the generic
+scanner emulates their AI.
+A separate source-complete ledger probes all 164 species through the
 production renderer and distinguishes assembled, composite, tile-sheet-only,
 nonvisual, and failed support without counting a raw tile sheet as a successful sprite.
 It also models all eight visual species with zero-byte header transfers through exact

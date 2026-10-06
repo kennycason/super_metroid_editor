@@ -86,8 +86,8 @@ KNOWN_ENEMIES = {
     0xD7BF: "Oum",
     0xD7FF: "Tripper",
     0xD83F: "Skree (variant)",
-    0xD87F: "Reo",
-    0xD8BF: "Reo (variant)",
+    0xD87F: "Sbug (roach)",
+    0xD8BF: "Sbug (roach, alternate VRAM)",
     0xD8FF: "Metroid (modified)",
     0xD93F: "Sidehopper",
     0xD97F: "Dessgeega",
@@ -125,10 +125,10 @@ KNOWN_ENEMIES = {
     0xE07F: "Hibashi",
     0xE0BF: "Puromi",
     0xE0FF: "Mini Kraid",
-    # ── Ridley / Puyo ──
+    # ── Ridley ──
     0xE13F: "Ceres Ridley",
     0xE17F: "Ridley",
-    0xE1BF: "Puyo",
+    0xE1BF: "Ridley Explosion (internal helper)",
     0xE27F: "Zebetite",
     # ── Kraid (verified from room enemy set $A1:9EB5) ──
     0xE2BF: "Kraid",

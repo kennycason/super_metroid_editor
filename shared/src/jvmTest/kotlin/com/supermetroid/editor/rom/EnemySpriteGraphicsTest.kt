@@ -39,6 +39,9 @@ class EnemySpriteGraphicsTest {
         assertEquals(1, entries.count { it.speciesId in setOf(0xEC3F, 0xEC7F) })
         assertEquals("Ridley", entries.single { it.speciesId == 0xE17F }.name)
         assertEquals(1, entries.count { it.speciesId in setOf(0xE13F, 0xE17F) })
+        assertEquals("Puyo", entries.single { it.speciesId == 0xCFBF }.name)
+        assertEquals("Ridley Explosion (internal helper)", RomParser.enemyName(0xE1BF))
+        assertEquals(0, entries.count { it.speciesId == 0xE1BF })
     }
 
     @Test

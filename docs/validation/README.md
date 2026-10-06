@@ -1,6 +1,6 @@
 # Disassembly Parity Program
 
-Last updated: 2026-10-03
+Last updated: 2026-10-05
 
 This is the working ledger for validating SMEDIT against the exact Super Metroid
 assembly and extracted assets. The immediate goal is not to make SMEDIT depend on
@@ -212,7 +212,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve standalone boss/Samus constants and all 87 tileset pointer fields are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/species-status chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/helper-routed-animation/species-status chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -258,9 +258,10 @@ This matrix tracks source-backed proof, not feature existence.
 | E-05 | Extended/multibox spritemaps | **Verified** | All 811 named extended structures / 1,984 child links and 99 extended tilemaps / 2,763 words match source offsets, child types, hitbox pointers, runs, and production parsing. |
 | E-06 | Instruction-list interpreter | **Partial** | All 1,139 named lists / 7,820 records are source- and ROM-pinned. The generic fixed-chunk fallback recovers 2,543 of 4,395 renderable source frames (57.9%), misses 1,852 frames across 465 lists, and crosses named-list boundaries for 4,718 candidates. A fail-closed bounded interpreter now proves the Zoomer, Sidehopper, and walking Space Pirate visual paths, but broad handler/state semantics remain incomplete. |
 | E-07 | VRAM destination/name-table mapping | **Partial** | The eight active zero-transfer species now have exact read-only graphics providers: standard global sprite tiles for Elevator/Steam, shared Mother Brain head tiles for Zebetite/tubes, normal Baby Metroid tiles for the cutscene entity, and the Sidehopper-owned common corpse payload for three corpse species. Their independently resolved palette ownership remains editable or read-only as appropriate. Full `ProcessEnemyTilesets`, arbitrary room VRAM, and dynamic DMA modeling remain. |
-| E-08 | All-species render inventory | **Partial** | All 164 source headers are pinned as 134 assembled, 14 tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed. Production paths render 148 species. The inventory is complete; the 14 tile-sheet-only assembly gaps remain implementation work. |
+| E-08 | All-species render inventory | **Partial** | All 164 source headers are pinned as 139 assembled, nine tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed. Production paths render 153 species. The inventory is complete; the nine tile-sheet-only assembly gaps remain implementation work. |
 | E-09 | Sprite tile edit/export | **Partial** | Parse/edit/export/reparse, assert exact owned ranges and aliases. |
 | E-10 | Pre-rendered PNG fallbacks | **Partial** | Make fallback visible; never count it as a successful ROM-derived render. |
+| E-11 | Helper-selected ordinary-enemy animations | **Verified** | Puyo, Owtch, Choot, and both Sbug/roach headers now have 18 exact source-routed actions / 65 guided frames with pinned headers, pixels, palettes, OAM, lists, timing, default previews, and render hashes. |
 
 ### Composite enemies and bosses
 
@@ -332,6 +333,9 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 - [x] **P1.7** Resolve every active zero-transfer visual species through source-pinned
   runtime graphics and palette owners; keep borrowed graphics/global palettes read-only
   without suppressing independently loaded header palettes.
+- [x] **P1.8** Add exact source routes for helper/state-selected ordinary enemies,
+  beginning with Puyo, Owtch, Choot, and Sbug; retain AI-stepped, direction-table,
+  shared-header, and fallthrough semantics rather than inventing generic loops.
 
 ### P2 — Prove special composition
 
@@ -435,6 +439,8 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 | 2026-10-05 | Proved Botwoon's position-history body renderer | The dedicated manifest pins header `$F293`, the shared `$B7:E300` / `$1800`-byte head/body/tail/spit owner, 30 active plus ten unused head maps, 46 active plus 52 unused projectile maps, 26 active plus five unused head lists, 18 active projectile lists, nine runtime tables/routines, and nine palette rows. Production assembles the head with twelve independently oriented body projectiles and one tail from the source's circular-history cadence, preserves the independent four-phase body loop through spits, exposes 17 guided animations / 87 frames, and corrects the former 16-pixel static preview spacing to the source-derived 12 pixels. |
 | 2026-10-05 | Proved and consolidated the Bomb/Golden Torizo renderer | One Torizo workspace now represents the real `$EEFF/$EF7F` encounters while keeping `$EF3F/$EFBF` as their actual projectile drop records. The manifest pins four pixel owners / 12,288 bytes, 106 active full-body maps, 91 body-child maps, 70 active plus four unused bank-`$8D` projectile/effect maps, 112 active body lists / 564 timed frames, 50 bank-`$86` projectile instruction symbols, 16 runtime tile transfers, and 26 palette rows. Production preserves both physical OBJ pages, applies eye/damage/egg overlays per state, exposes all eight Golden health pairs, and hashes 206 body plus 30 projectile guided frames while allowing edits only to the shared `$AF:C200` base. |
 | 2026-10-05 | Proved the normal Metroid's three-owner renderer | The dedicated manifest pins `$DD7F`, its shared `$AE:9000` / `$1000`-byte pixel owner, four enemy-inside maps, three shell maps, 24 electricity maps, two enemy lists, and four independent bank-`$B4` companion tracks / 124 frame occurrences / 270 ticks. Production synchronizes all three layers, preserves transparent draw intervals, and proves that the lists labelled unused objects `$33/$35` are runtime-active fallthrough continuations of live objects `$32/$34`; the `$35` continuation supplies the previously omitted third shell map. |
+| 2026-10-05 | Added exact Puyo, Owtch, and Choot source routes | These three ordinary enemies were tile-sheet-only because init AI selects their lists through helpers/state logic outside the conservative scanner. The new manifest pins three owners / 2,560 bytes, 15 OAM maps / 32 entries, 15 lists / 28 source frames, three palettes, and ten compact actions / 33 guided frames. Production preserves Puyo's AI-stepped sleeping hop poses, Owtch's setup-list fallthrough, and Choot's separate idle/jump/fall states; strict component and animation hashes move the ledger to 137 assembled / 11 tile-sheet-only and 151 previewable species. |
+| 2026-10-05 | Corrected false Puyo and added Sbug/roach directions | `$E1BF` was a stale name-table error: it is Ridley's internal explosion/forward-turn payload and is now consolidated under Ridley rather than shown as a second Puyo. Actual Puyo remains `$CFBF`. The `$D87F/$D8BF` headers are source Sbug/roach variants, not Reo; they now share all eight exact four-frame direction loops. The helper-routed manifest grows to five headers, four unique owners / 3,072 bytes, 39 OAM maps / 56 entries, 23 lists / 60 source frames, and 18 actions / 65 guided frames, moving the ledger to 139 assembled / nine tile-sheet-only and 153 previewable species. |
 
 ## Deliberately deferred
 

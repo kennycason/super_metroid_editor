@@ -536,16 +536,20 @@ and no semantic execution of 502 unique handler addresses in the generic fallbac
 A bounded interpreter now proves complete visual paths for Zoomer, Sidehopper, and
 the grey walking Space Pirate (17 frame occurrences / 15 unique spritemaps), including
 fallthrough, backward loops, sleep, repeated frames, and extended OAM. Broad
-interpretation remains later E-06 work. See [`../graphics/sprites.md`](../graphics/sprites.md);
+interpretation remains later E-06 work. Exact source routes additionally cover Puyo,
+Owtch, and Choot when helpers or state logic hide their selected lists from init-pattern
+scanning; these ten actions preserve AI-stepped poses and setup-list fallthrough rather
+than emulating arbitrary AI. See [`../graphics/sprites.md`](../graphics/sprites.md);
 machine-readable evidence is in ignored `parity/reports/enemy-oam.json` and
 `parity/reports/enemy-instructions.json`, with the three integrated slices in
-`parity/reports/enemy-vertical-slices.json`.
+`parity/reports/enemy-vertical-slices.json` and helper-selected routes in
+`parity/reports/ordinary-enemy-animations.json`.
 
 ### Enemy Species Rendering Status (MEASURED 2026-10-04)
 
 The source-complete E-08 ledger executes SMEDIT's production preview paths for every
-one of the 164 bank-`$A0` headers. It classifies 134 as assembled, 14 as known
-composites, 14 as tile-sheet-only, two as nonvisual, and zero as failed; 148 species
+one of the 164 bank-`$A0` headers. It classifies 139 as assembled, 14 as known
+composites, nine as tile-sheet-only, two as nonvisual, and zero as failed; 153 species
 produce at least one assembled frame. A tile sheet is explicitly not an assembled
 render.
 

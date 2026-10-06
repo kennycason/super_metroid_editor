@@ -1986,8 +1986,8 @@ class RomParser(
             0xD7BF to "Oum",
             0xD7FF to "Tripper",
             0xD83F to "Suspensor Platform",
-            0xD87F to "Reo",
-            0xD8BF to "Reo (variant)",
+            0xD87F to "Sbug (roach)",
+            0xD8BF to "Sbug (roach, alternate VRAM)",
             0xD93F to "Sidehopper",
             0xD8FF to "Metroid (modified)",
             0xD97F to "Dessgeega",
@@ -2022,10 +2022,10 @@ class RomParser(
             0xE07F to "Hibashi",
             0xE0BF to "Puromi",
             0xE0FF to "Mini Kraid",
-            // ── Ridley / Puyo ──
+            // ── Ridley ──
             0xE13F to "Ceres Ridley",
             0xE17F to "Ridley",
-            0xE1BF to "Puyo",
+            0xE1BF to "Ridley Explosion (internal helper)",
             0xE27F to "Zebetite",
             // ── Kraid (species verified from room $A1:9EB5) ──
             0xE2BF to "Kraid",

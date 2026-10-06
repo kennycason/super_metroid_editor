@@ -104,7 +104,7 @@ Key corrections from vanilla SM analysis (April 2026):
 | $D6FF | FISH | Skultera | Maridia fish |
 | $D77F | KANI | Sciser | Crab enemy |
 | $D7FF | KAMER | Tripper | Falling enemy |
-| $D87F | SBUG | Reo | Reo variant |
+| $D87F/$D8BF | SBUG | Sbug (roach) | Eight-direction animated roach; second header uses alternate VRAM layout |
 | $D93F | SSIDE | Sidehopper | Small green hopper |
 | $D97F | SDEATH | Dessgeega | Blue 4-legged hopper |
 | $D9BF | SIDE | Sidehopper (big) | Large green hopper |

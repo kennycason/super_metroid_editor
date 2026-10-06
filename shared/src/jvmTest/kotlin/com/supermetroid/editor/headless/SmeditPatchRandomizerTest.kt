@@ -8,6 +8,13 @@ import kotlin.math.roundToInt
 
 class SmeditPatchRandomizerTest {
     @Test
+    fun `Reo and Sbug patch fields use their source species headers`() {
+        assertEquals(0xD27F, HEADLESS_ENEMY_DEFS.single { it.key == "reo" }.speciesId)
+        assertEquals(0xD87F, HEADLESS_ENEMY_DEFS.single { it.key == "sbug" }.speciesId)
+        assertEquals(HEADLESS_ENEMY_DEFS.size, HEADLESS_ENEMY_DEFS.map { it.key }.distinct().size)
+    }
+
+    @Test
     fun `headless boss flags match the per-area room state bits`() {
         assertEquals(
             listOf(

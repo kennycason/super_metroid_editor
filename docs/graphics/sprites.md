@@ -283,6 +283,25 @@ scanner. It also corrected a test that called stone Zoomer `$DD3F` “Sidehopper
 the actual Sidehopper species is `$D93F`. Machine-readable evidence is in ignored
 `parity/reports/enemy-vertical-slices.json`.
 
+### Explicit Helper-Selected Animation Routes (2026-10-05)
+
+Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, and the two Sbug/roach headers
+`$D87F/$D8BF` cannot be routed reliably by scanning their init routines for a direct
+instruction-list store. Their source uses helpers, direction/state selection, or
+setup-list fallthrough. E-11 therefore records exact named routes instead of teaching
+the generic scanner to guess through arbitrary AI.
+
+The editor exposes 18 compact source actions / 65 guided frames. Puyo has three exact
+grounded loops and two ordered hop-pose sequences; each source hop list draws once and
+sleeps while gameplay AI advances it. Owtch begins at the left/right visual loops after
+retaining the separate direction-setup fallthrough lists in the manifest. Choot exposes
+its idle, jumping, and falling state lists separately. Sbug exposes all eight directional
+loops shared by its normal and alternate-VRAM headers. Thirty-nine OAM maps, 23 lists,
+four palettes, default previews, timing, and deterministic component/action pixels are pinned
+by `parityOrdinaryEnemyAnimations` and `OrdinaryEnemyAnimationSourceParityTest`.
+See [`ordinary_enemy_source_routes.md`](ordinary_enemy_source_routes.md) for addresses
+and edit boundaries.
+
 ---
 
 ## Enemy GFX Set (bank $B4) — 4-Entry Hardware Limit
@@ -577,15 +596,17 @@ counts as an assembled sprite.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| Assembled | 134 | At least one ordinary or special OAM frame renders. This measures current production capability; it is not a claim that every animation/state is source-proven. |
+| Assembled | 139 | At least one ordinary or special OAM frame renders. This measures current production capability; it is not a claim that every animation/state is source-proven. |
 | Composite | 14 | A known multi-part/BG2/room-tile recipe has a dedicated renderer. |
-| Tile-sheet-only | 14 | `GRAPHADR` tiles and a palette load, but no assembled frame is available. |
+| Tile-sheet-only | 9 | `GRAPHADR` tiles and a palette load, but no assembled frame is available. |
 | Nonvisual | 2 | The respawn sentinel and one source-declared unused header have no standalone visual contract. |
 | Failed | 0 | Every active visual species now has at least an assembled, composite, or tile-sheet path. |
 
-The current tile-sheet-only set is Puyo (`$CFBF` and `$E1BF`), Owtch, Choot, both Reo
-headers, Kihunter, Evir, Zero, Lavaman, Beetom, Hopper remains, the Torizo corpse
-helper, and unnamed species `$F03F`.
+The current tile-sheet-only set is Kzan bottom `$E03F`, Ridley's explosion helper
+`$E1BF`, Evir and its projectile `$E63F/$E67F`,
+Magdollite `$E83F`, Beetom `$E87F`, Hopper remains `$ED7F`, the Torizo corpse helper
+`$EDBF`, and the Tourian statue ghost `$F03F`. Some legacy display names for these
+internal records are misleading; source labels are authoritative here.
 
 The former eight failures have zero-size header transfers, but are not empty. Elevator
 and Ceres Steam use the always-loaded standard sprite tiles and common sprite palette
@@ -666,6 +687,7 @@ Enemy GFX Set ($B4)
 | `EnemyOamSourceParityTest.kt` | All 2,312 standard OAM structures, 811 extended structures, 99 tilemaps, and every decoded field/link through the production parser |
 | `EnemyInstructionSourceParityTest.kt` | All 1,139 named enemy lists, their 7,820 source records and raw ranges, frame structures, handler widths, and the exact measured production-preview result |
 | `EnemyVerticalSliceSourceParityTest.kt` | Complete source-backed header/asset/instruction/OAM/render paths for Zoomer, Sidehopper, and the grey walking Space Pirate |
+| `OrdinaryEnemyAnimationSourceParityTest.kt` | Exact helper-selected Puyo/Owtch/Choot/Sbug routes, timing, OAM/component bytes, default previews, and deterministic action pixels |
 | `EnemySharedVramSourceParityTest.kt` | Exact graphics/palette owners, editability, and visible instruction-list frames for all eight zero-transfer visual species |
 | `EnemySpeciesStatusSourceParityTest.kt` | All 164 source species classified through production paths as assembled, composite, tile-sheet-only, nonvisual, or failed |
 | `EnemySpriteRenderTest.kt` | Palette detection, raw tile decoding, render, stats verification |

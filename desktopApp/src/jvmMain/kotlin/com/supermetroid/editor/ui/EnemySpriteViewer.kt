@@ -52,6 +52,7 @@ import com.supermetroid.editor.rom.MiniKraidSpritemap
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpriteAnimation
 import com.supermetroid.editor.rom.SpriteAnimationFrame
+import com.supermetroid.editor.rom.SourceEnemyAnimations
 import com.supermetroid.editor.rom.renderSpriteSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -368,17 +369,30 @@ fun EnemySpriteViewer(
         // Enemy animation (OAM instruction list frames)
         val scope = rememberCoroutineScope()
         val isMiniKraid = entry.speciesId == MiniKraidSpritemap.SPECIES_ID
+        val sourceAnimationDefs = remember(entry.speciesId) {
+            SourceEnemyAnimations.forSpecies(entry.speciesId)
+        }
+        var sourceAnimationIndex by remember(entry.speciesId) { mutableStateOf(0) }
         var miniKraidSequenceIndex by remember(entry.speciesId) { mutableStateOf(0) }
         val enemyAnimation = remember(
             entry.speciesId,
             refreshKey,
             paletteRefreshKey,
+            sourceAnimationIndex,
             miniKraidSequenceIndex,
         ) {
             val pal = palette ?: return@remember null
             val td = previewTileData ?: return@remember null
             if (usesStaticAssembledPreviewOnly) {
                 null
+            } else if (sourceAnimationDefs.isNotEmpty()) {
+                val definition = sourceAnimationDefs[
+                    sourceAnimationIndex.coerceIn(0, sourceAnimationDefs.lastIndex)
+                ]
+                val renderTileData = EnemySpriteGraphics.loadStandardOamRenderTileData(
+                    rp, entry.speciesId, td,
+                ) ?: td
+                EnemySpritemap(rp).buildSourceAnimation(definition, renderTileData, pal)
             } else if (isMiniKraid) {
                 val def = MiniKraidSpritemap.SEQUENCES[miniKraidSequenceIndex.coerceIn(0, MiniKraidSpritemap.SEQUENCES.lastIndex)]
                 MiniKraidSpritemap(rp).renderAnimation(def, td, pal)
@@ -409,7 +423,7 @@ fun EnemySpriteViewer(
             }
         }
 
-        if (enemyAnimation != null && enemyAnimation.frames.size > 1) {
+        if (enemyAnimation != null && (enemyAnimation.frames.size > 1 || sourceAnimationDefs.isNotEmpty())) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(8.dp),
@@ -417,13 +431,37 @@ fun EnemySpriteViewer(
             ) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        if (isMiniKraid) "Source Action Animation (${enemyAnimation.frames.size} frames)"
+                        if (isMiniKraid || sourceAnimationDefs.isNotEmpty())
+                            "Source Action Animation (${enemyAnimation.frames.size} frames)"
                         else "Animation Preview (${enemyAnimation.frames.size} frames)",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                     Divider(modifier = Modifier.padding(vertical = 2.dp))
 
-                    if (isMiniKraid) {
+                    if (sourceAnimationDefs.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            sourceAnimationDefs.forEachIndexed { index, def ->
+                                val selected = index == sourceAnimationIndex
+                                Surface(
+                                    modifier = Modifier.clickable { sourceAnimationIndex = index },
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(5.dp),
+                                ) {
+                                    Text(
+                                        def.name,
+                                        fontSize = 8.sp,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                                    )
+                                }
+                            }
+                        }
+                    } else if (isMiniKraid) {
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(5.dp),

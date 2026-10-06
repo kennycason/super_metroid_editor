@@ -35,6 +35,9 @@ packaged application, project format, or ROM exporter.
   block and measures the current preview scanner against exact records and boundaries.
 - `enemy_vertical_slice_manifest.py` joins exact headers, graphics/palettes,
   instruction paths, and OAM geometry for Zoomer, Sidehopper, and a walking Space Pirate.
+- `ordinary_enemy_animation_manifest.py` pins helper-selected Puyo, Owtch, Choot, and
+  Sbug/roach action routes, including AI-stepped poses, direction tables, shared header
+  variants, and setup-list fallthrough boundaries.
 - `kraid_manifest.py` proves Kraid's complete tileset/BG2/head-interpreter/palette/linked-OAM
   recipe, all 12 active linked-OAM lists, Mini Kraid's six bounded action lists, and the
   boundary between editable pixels and read-only placement data.
@@ -87,7 +90,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityBuildReference`, `paritySymbols`, `parityAssets`, `parityLz5Oracle`, and
 `parityTilesets`, `parityTileFormats`, `parityAnimatedTiles`,
 `parityItemPlmGraphics`, `parityEnemyHeaders`, `parityEnemyOam`,
-`parityEnemyInstructions`, `parityEnemyVerticalSlices`, `parityKraid`,
+`parityEnemyInstructions`, `parityEnemyVerticalSlices`,
+`parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`, and
 `parityMetroid` tasks remain
@@ -228,12 +232,24 @@ animations. The bounded interpreter follows exact fallthrough and `GotoY` loops,
 stops at sleep, preserves repeated frames, and reports unknown handlers instead of
 guessing their width. Nonvisual handler side effects remain outside this visual slice.
 
+`parityOrdinaryEnemyAnimations` writes ignored
+`parity/reports/ordinary-enemy-animations.json`. It adds exact production routes for
+Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, and Sbug/roach `$D87F/$D8BF`, whose init
+AI assigns visual lists through helpers, direction tables, or state logic that the
+generic scanner deliberately does not emulate. The manifest pins four unique raw owners /
+3,072 bytes, 39 OAM maps / 56 entries, 23 lists / 60 source frame occurrences, four
+palettes, and 18 editor actions / 65 guided frames.
+Puyo's sleeping hop-pose lists remain identified as AI-stepped poses; Owtch's setup
+lists remain distinct from their fallthrough visual loops; Sbug's two headers share one
+eight-direction source action set. Tagged parity checks compare
+the exact routes, durations, default previews, component pixels, and action pixels.
+
 The tagged all-species status test writes ignored
 `parity/reports/enemy-species-status.json` and `.md`. Unlike the legacy diagnostic,
 it begins with all 164 source headers, never treats a raw tile sheet as assembled,
 and runs the production ordinary OAM, special OAM, known boss, Kraid BG2, and Phantoon
-BG2 paths (including Draygon's known boss path). The pinned result is 134 assembled, 14 tile-sheet-only, 14 composite, two
-nonvisual, and zero failed, with real assembled previews for 148 species. Every row
+BG2 paths (including Draygon's known boss path). The pinned result is 139 assembled, nine tile-sheet-only, 14 composite, two
+nonvisual, and zero failed, with real assembled previews for 153 species. Every row
 includes catalog membership and a reason. A dedicated source test also proves all
 eight zero-transfer visual species against their exact shared/global graphics,
 runtime palette, source entry list, and visible rendered frames; these providers are
@@ -311,7 +327,7 @@ all 13 selectable palette stages, and 206 body plus 30 projectile animation fram
 
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo,
+enemy-OAM, enemy-instruction, enemy-slice, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,
@@ -352,7 +368,7 @@ difference. The report currently covers the foundation, LZ5 compression, tileset
 pointers, CRE ownership, tile pixel layouts, metatile semantics, animated-tile DMA
 ownership, item-PLM graphics/slot ownership, enemy-header/`GRAPHADR` ownership, and
 named standard/extended enemy OAM ownership and decoding, plus enemy instruction-list
-structure, preview misses, three end-to-end ordinary-enemy slices, and the complete
+structure, preview misses, three end-to-end ordinary-enemy slices, explicit Puyo/Owtch/Choot/Sbug routes, and the complete
 164-species production render-status ledger. Subsystem
 coverage expands through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

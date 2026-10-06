@@ -3,6 +3,7 @@ import com.supermetroid.editor.rom.TestRomHelper
 
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -23,6 +24,13 @@ import java.io.File
 class EnemyStatsEditorTest {
 
     private fun loadTestRom(): RomParser? = TestRomHelper.loadRomParser()
+
+    @Test
+    fun `Reo and Sbug stat entries use their source species headers`() {
+        assertEquals(0xD27F, ENEMY_DEFS.single { it.key == "reo" }.speciesId)
+        assertEquals(0xD87F, ENEMY_DEFS.single { it.key == "sbug" }.speciesId)
+        assertEquals(ENEMY_DEFS.size, ENEMY_DEFS.map { it.key }.distinct().size)
+    }
 
     // ── All ENEMY_DEFS entries read valid HP (> 0) ───────────────────────────
 

@@ -76,7 +76,8 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File                                                     | Contents                                                                                                                                                                                                                                                                         | When to read                                               |
 |----------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
 | [`graphics/tile_pipeline.md`](graphics/tile_pipeline.md) | **Complete tile rendering pipeline.** Tileset pointer table ($8F:E6A2), 2bpp/4bpp tile decompression, metatile definitions, CRE tiles, animated-tile DMA, item-PLM graphics/slots, palette loading, VRAM layout.                                                                                          | Before modifying TileGraphics, TileDecoder, room tile animation, or item graphics |
-| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 species headers, raw `GRAPHADR` ownership/aliases, all named standard/extended OAM structures and tilemaps, measured coverage for all 1,139 named enemy instruction lists, complete Zoomer/Sidehopper/walking-Pirate visual slices, all-species production render status, BG2 rendering, enemy GFX set 4-entry hardware limit, and remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
+| [`graphics/sprites.md`](graphics/sprites.md)             | **Enemy sprite system deep dive.** Source-verified inventory of all 164 species headers, raw `GRAPHADR` ownership/aliases, all named standard/extended OAM structures and tilemaps, measured coverage for all 1,139 named enemy instruction lists, complete ordinary-enemy visual slices and explicit helper-selected routes, all-species production render status, BG2 rendering, enemy GFX set 4-entry hardware limit, and remaining boss-composition caveats. | Before modifying EnemySpriteGraphics or adding new enemies |
+| [`graphics/ordinary_enemy_source_routes.md`](graphics/ordinary_enemy_source_routes.md) | Exact Puyo/Owtch/Choot/Sbug helper-selected action routes, AI-stepped pose caveats, source addresses, and edit/read-only boundaries. | When adding an ordinary enemy that the generic init scanner cannot route |
 
 ### Reference Data (`docs/reference/`)
 
@@ -105,7 +106,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, all-species enemy-header/`GRAPHADR`, named enemy-OAM proof, exhaustive enemy instruction-list measurement, three integrated ordinary-enemy slices, and the complete species render-status ledger; strict fixture contract; and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, all-species enemy-header/`GRAPHADR`, named enemy-OAM proof, exhaustive enemy instruction-list measurement, integrated ordinary-enemy slices and explicit helper-selected routes, and the complete species render-status ledger; strict fixture contract; and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 
@@ -238,8 +239,8 @@ Format: 5-byte "PATCH" header, records of `[3-byte offset, 2-byte size, data]`, 
 
 ## Enemy Sprite Parity Status
 
-The source-complete ledger covers all 164 bank-`$A0` species headers: 134 assembled,
-14 tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed; 148
+The source-complete ledger covers all 164 bank-`$A0` species headers: 139 assembled,
+nine tile-sheet-only, 14 source-known composites, two nonvisual, and zero failed; 153
 species produce a ROM-derived assembled preview. Eight visual species intentionally
 declare a zero-byte graphics transfer. Their previews borrow exact shared/global VRAM
 providers (standard sprite tiles, Mother Brain head tiles, Baby Metroid tiles, or the
@@ -248,6 +249,14 @@ species' own tile edit/export range. Palette ownership is separate: five of thos
 headers still load and own their palette row, while three select global runtime rows.
 See `docs/graphics/sprites.md` and
 `docs/validation/README.md` for the ownership table and remaining work.
+
+Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, and Sbug/roach `$D87F/$D8BF` now use
+explicit source routes because their init AI selects instruction lists through helpers
+or state logic. Eighteen compact actions expose 65 guided frames while preserving
+Puyo's AI-stepped sleeping pose lists, Owtch's setup-to-visual fallthrough, Choot's
+separate state lists, and Sbug's eight-direction table. The exact
+ownership, timing, OAM, and pixel hashes are pinned by `parityOrdinaryEnemyAnimations`.
+See `docs/graphics/ordinary_enemy_source_routes.md`.
 
 Kraid's P2.1 source slice is complete. Its large body is a 64×64 BG2 composition,
 not an OAM body: active compressed maps at `$B9:FA38/$B9:FE3E` use the complete

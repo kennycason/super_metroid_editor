@@ -100,7 +100,9 @@ internal val HEADLESS_ENEMY_DEFS = listOf(
     HeadlessEnemyDef("sidehopper_large", "Sidehopper (large)", 0xD97F, 120, 80, "Hopper"),
     HeadlessEnemyDef("dessgeega", "Dessgeega", 0xD9BF, 320, 80, "Hopper"),
     HeadlessEnemyDef("tripper", "Tripper", 0xD7FF, 20, 40, "Flyer"),
-    HeadlessEnemyDef("reo", "Reo", 0xD87F, 20, 40, "Flyer"),
+    // Keep the long-standing "reo" key so existing patch settings remain compatible.
+    HeadlessEnemyDef("reo", "Reo", 0xD27F, 45, 15, "Flyer"),
+    HeadlessEnemyDef("sbug", "Sbug (roach)", 0xD87F, 20, 40, "Flyer"),
     HeadlessEnemyDef("waver", "Waver", 0xD63F, 100, 16, "Flyer"),
     HeadlessEnemyDef("ripper", "Ripper", 0xD47F, 200, 5, "Flyer"),
     HeadlessEnemyDef("ripper2", "Ripper II", 0xD3FF, 400, 20, "Flyer"),
