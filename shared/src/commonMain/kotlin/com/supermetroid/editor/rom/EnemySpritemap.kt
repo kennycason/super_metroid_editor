@@ -374,7 +374,11 @@ class EnemySpritemap(private val romParser: RomParser) {
 
         val verifiedList = SOURCE_VERIFIED_DEFAULT_INSTRUCTION_LISTS[speciesId and 0xFFFF]
         if (verifiedList != null && (verifiedList ushr 16) == aiBank) {
-            val trace = traceInstructionList(verifiedList, maxFrames)
+            val verifiedFrameLimit = SOURCE_VERIFIED_DEFAULT_FRAME_COUNTS[speciesId and 0xFFFF]
+            val trace = traceInstructionList(
+                verifiedList,
+                verifiedFrameLimit?.let { minOf(maxFrames, it) } ?: maxFrames,
+            )
             if (
                 trace.frames.isNotEmpty() &&
                 trace.termination != InstructionTraceTermination.UNSUPPORTED_HANDLER &&
@@ -991,14 +995,40 @@ class EnemySpritemap(private val romParser: RomParser) {
             0xD8BF to 0xA3A071, // Sbug/roach alternate VRAM layout, same visual lists
             0xD93F to 0xA3AA82, // Sidehopper, landed upside-up (init0 = 0)
             0xDCFF to 0xA3E25C, // Zoomer, upside-right (init orientation = 0)
+            0xE63F to 0xA886A7, // Evir body: facing is selected relative to Samus
+            0xE67F to 0xA8876F, // Evir projectile: normal/attached pose
+            0xE83F to 0xA8AC9C, // Magdollite/Lavaman: primary head, idle facing left
+            0xE87F to 0xA8B698, // Beetom: crawling facing left visual list
+            0xEABF to 0xA8E9FA, // Kihunter green body: idling facing left
+            0xEAFF to 0xA8EA4E, // Kihunter green wings: flapping facing left
+            0xEB3F to 0xA8E9FA, // Kihunter red body: shared body animation data
+            0xEB7F to 0xA8EA4E, // Kihunter red wings: shared wing animation data
+            0xEBBF to 0xA8E9FA, // Kihunter gold body: shared body animation data
+            0xEBFF to 0xA8EA4E, // Kihunter gold wings: shared wing animation data
             0xE1FF to 0xA6F061, // Ceres steam, visible up animation
             0xE27F to 0xA6FDCC, // Big zebetite, HP >= 800
             0xECBF to 0xA9CFA2, // Baby Metroid cutscene, initial animation
             0xECFF to 0xA98C69, // Mother Brain falling tubes, bottom-left
+            0xED7F to 0xA9ECE3, // Sidehopper corpse: initially alive, idle (parameter 1 = 0)
+            0xEDBF to 0xA9ECE3, // Sidehopper corpse alternate graphics, same behavior
             0xEDFF to 0xA9ECF5, // Zoomer corpse, parameter 1 = 0
             0xEE3F to 0xA9ED07, // Ripper corpse, parameter 1 = 0
             0xEE7F to 0xA9ED13, // Skree corpse, parameter 1 = 0
             0xF653 to 0xB2FB64, // Grey walking Space Pirate, facing left (init0 bit 0 = 0)
+        )
+
+        /**
+         * Exact source-label boundaries for defaults that end in a state handler
+         * rather than an instruction-language loop. Without this bound the generic
+         * tracer can fall through into the adjacent labeled action.
+         */
+        private val SOURCE_VERIFIED_DEFAULT_FRAME_COUNTS = mapOf(
+            0xEABF to 3,
+            0xEAFF to 3,
+            0xEB3F to 3,
+            0xEB7F to 3,
+            0xEBBF to 3,
+            0xEBFF to 3,
         )
 
         /** Handlers whose exact operand widths and linear behavior source parity proves. */
@@ -1008,6 +1038,23 @@ class EnemySpritemap(private val romParser: RomParser) {
             0xA3E660 to 2, // Crawler/Zoomer: function = [[Y]]
             0xA6F11D to 0, // Ceres steam: intangible and invisible
             0xA6F135 to 0, // Ceres steam: tangible and visible
+            0xA88173 to 0, // Beetom: enable off-screen processing
+            0xA8AE12 to 2, // Magdollite: queue sound [[Y]]
+            0xA8AE26 to 0, // Magdollite: move down 2 pixels
+            0xA8AE3A to 0, // Magdollite: set waiting flag
+            0xA8AE45 to 0, // Magdollite: move pillar down 1 pixel
+            0xA8AE50 to 0, // Magdollite: move pillar up 1 pixel
+            0xA8AE64 to 0, // Magdollite: move down and reveal slaves
+            0xA8AEBA to 0, // Magdollite: set cooldown timer
+            0xA8AECA to 0, // Magdollite: shift right hand
+            0xA8AEE4 to 0, // Magdollite: shift left hand
+            0xA8AEFE to 0, // Magdollite: spawn lava projectile
+            0xA8AF18 to 0, // Magdollite: restore right hand position
+            0xA8AF44 to 0, // Magdollite: restore left hand position
+            0xA8F5E4 to 0, // Kihunter: begin hop movement
+            0xA8F67F to 0, // Kihunter: finish landing / acid animation
+            0xA8F6D2 to 0, // Kihunter: fire acid facing left
+            0xA8F6D8 to 0, // Kihunter: fire acid facing right
             0xB2FCB8 to 2, // Walking pirate: function = [[Y]]
         )
 
@@ -1402,46 +1449,72 @@ class EnemySpritemap(private val romParser: RomParser) {
         palette: IntArray,
     ): SpriteAnimation? {
         data class Pending(
-            val sprite: AssembledSprite,
+            val layers: List<AssembledSprite>,
             val duration: Int,
             val label: String,
         )
 
+        val contextSprites = definition.contextInstructionList?.let { address ->
+            val trace = traceInstructionList(address, maxFrames = definition.contextExpectedFrames)
+            if (trace.termination == InstructionTraceTermination.UNSUPPORTED_HANDLER ||
+                trace.termination == InstructionTraceTermination.INVALID_DATA ||
+                trace.frames.size != definition.contextExpectedFrames) return null
+            trace.frames.map { frame ->
+                renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+            }
+        }.orEmpty()
+
         val pending = mutableListOf<Pending>()
+        var actionFrameIndex = 0
         definition.instructionLists.zip(definition.expectedFramesPerList)
             .forEachIndexed { listIndex, (address, expectedFrames) ->
-                val trace = traceInstructionList(address, maxFrames = expectedFrames + 1)
+                // The parity manifest pins the exact frame count belonging to each
+                // source label. Stop on that boundary: several vanilla lists then
+                // execute a state handler or intentionally fall through into the
+                // next labeled list.
+                val trace = traceInstructionList(address, maxFrames = expectedFrames)
                 if (trace.termination == InstructionTraceTermination.UNSUPPORTED_HANDLER ||
                     trace.termination == InstructionTraceTermination.INVALID_DATA ||
                     trace.frames.size != expectedFrames) return null
                 trace.frames.forEachIndexed { frameIndex, frame ->
                     val sprite = renderRenderableFrame(frame.renderableFrame, tileData, palette) ?: return null
+                    val context = contextSprites.getOrNull(actionFrameIndex % contextSprites.size.coerceAtLeast(1))
+                    val layers = if (context == null) {
+                        listOf(sprite)
+                    } else if (definition.contextOnTop) {
+                        listOf(sprite, context)
+                    } else {
+                        listOf(context, sprite)
+                    }
                     pending += Pending(
-                        sprite,
+                        layers,
                         frame.duration,
                         "${definition.name} ${listIndex + 1}.${frameIndex + 1}",
                     )
+                    actionFrameIndex++
                 }
             }
         if (pending.isEmpty()) return null
 
-        val minX = pending.minOf { -it.sprite.originX }
-        val minY = pending.minOf { -it.sprite.originY }
-        val maxX = pending.maxOf { it.sprite.width - it.sprite.originX }
-        val maxY = pending.maxOf { it.sprite.height - it.sprite.originY }
+        val sprites = pending.flatMap { it.layers }
+        val minX = sprites.minOf { -it.originX }
+        val minY = sprites.minOf { -it.originY }
+        val maxX = sprites.maxOf { it.width - it.originX }
+        val maxY = sprites.maxOf { it.height - it.originY }
         val width = maxX - minX
         val height = maxY - minY
         if (width <= 0 || height <= 0) return null
 
         val frames = pending.map { frame ->
             val pixels = IntArray(width * height)
-            val sprite = frame.sprite
-            for (y in 0 until sprite.height) for (x in 0 until sprite.width) {
-                val color = sprite.pixels[y * sprite.width + x]
-                if (color ushr 24 == 0) continue
-                val dx = x - sprite.originX - minX
-                val dy = y - sprite.originY - minY
-                if (dx in 0 until width && dy in 0 until height) pixels[dy * width + dx] = color
+            frame.layers.forEach { sprite ->
+                for (y in 0 until sprite.height) for (x in 0 until sprite.width) {
+                    val color = sprite.pixels[y * sprite.width + x]
+                    if (color ushr 24 == 0) continue
+                    val dx = x - sprite.originX - minX
+                    val dy = y - sprite.originY - minY
+                    if (dx in 0 until width && dy in 0 until height) pixels[dy * width + dx] = color
+                }
             }
             SpriteAnimationFrame(pixels, width, height, frame.duration, frame.label)
         }

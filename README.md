@@ -164,9 +164,11 @@ deliberately source-backed: plausible-looking renders are not counted as parity
 unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
 Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
 header → graphics/palette → instruction path → OAM composition → rendered-animation
-vertical slices. Puyo, Owtch, Choot, and both Sbug/roach headers also have explicit
+vertical slices. Puyo, Owtch, Choot, both Sbug/roach headers, the two-header Evir
+family, Magdollite, Beetom, the three Kihunter color bodies, and both Sidehopper corpse
+headers also have explicit
 source routes for init AI that selects animations through helpers or state tables:
-18 compact editor actions cover 65 guided frames without pretending the generic
+59 compact editor actions cover 255 guided frames without pretending the generic
 scanner emulates their AI.
 A separate source-complete ledger probes all 164 species through the
 production renderer and distinguishes assembled, composite, tile-sheet-only,
@@ -175,7 +177,8 @@ It also models all eight visual species with zero-byte header transfers through 
 read-only shared/global VRAM providers, bringing the pinned ledger to zero failed
 species without granting those headers false tile edit/export ownership. Palette
 ownership is tracked separately because five of those headers still load and own
-their palette row.
+their palette row. Every formerly tile-sheet-only header now has an assembled,
+composite, or explicitly non-drawing engine-helper classification.
 Kraid additionally has a dedicated complete-composition proof: the no-CRE tileset
 `$1A` graphics, active and unreferenced compressed BG2 maps, four custom-interpreter
 head frames, mouth hitboxes, every health/hurt/death palette state, and the eight

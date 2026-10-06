@@ -79,6 +79,144 @@ SPECIES = (
             ("sbug-up-right", "Facing up-right", ("InstList_Sbug_FacingUpRight",), (4,), True),
         ),
     },
+    {
+        "key": "evir", "name": "Evir", "speciesId": 0xE63F,
+        "header": "EnemyHeaders_Evir", "asset": "Tiles_Evir", "palette": "Palette_Evir",
+        "headerAliases": (
+            (0xE67F, "EnemyHeaders_EvirProjectile", "Evir Projectile (internal helper)"),
+        ),
+        "animationSpeciesIds": (0xE63F,),
+        "defaultInstructionLists": {
+            0xE63F: "InstList_Evir_Body_FacingLeft",
+            0xE67F: "InstList_Evir_Projectile_Normal",
+        },
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Evir_", "mapCount": 24, "listPrefix": "InstList_Evir_",
+        "animations": (
+            ("evir-body-left", "Body · facing left", ("InstList_Evir_Body_FacingLeft",), (6,), True),
+            ("evir-body-right", "Body · facing right", ("InstList_Evir_Body_FacingRight",), (6,), True),
+            ("evir-arms-left", "Arms · facing left", ("InstList_Evir_Arms_FacingLeft",), (17,), True),
+            ("evir-arms-right", "Arms · facing right", ("InstList_Evir_Arms_FacingRight",), (17,), True),
+            ("evir-projectile-ready", "Projectile · ready", ("InstList_Evir_Projectile_Normal",), (1,), False),
+        ),
+    },
+    {
+        "key": "magdollite", "name": "Magdollite (Lavaman)", "speciesId": 0xE83F,
+        "header": "EnemyHeaders_Magdollite", "asset": "Tiles_Magdollite", "palette": "Palette_Magdollite",
+        "defaultInstructionLists": {0xE83F: "InstList_Magdollite_Idling_FacingLeft"},
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Magdollite_", "mapCount": 29, "listPrefix": "InstList_Magdollite_",
+        "animations": (
+            ("magdollite-idle-left", "Head · idle left", ("InstList_Magdollite_Idling_FacingLeft",), (4,), True),
+            ("magdollite-idle-right", "Head · idle right", ("InstList_Magdollite_Idling_FacingRight",), (4,), True),
+            ("magdollite-throw-left", "Hand · throw left", ("InstList_Magdollite_Slave2_ThrowFireballs_FacingLeft",), (6,), False),
+            ("magdollite-throw-right", "Hand · throw right", ("InstList_Magdollite_ThrowFireballs_FacingRight",), (6,), False),
+            ("magdollite-submerge-left", "Head · submerge left", ("InstList_Magdollite_SplashIntoLavaAndFormBasePillar_Left_0",), (5,), False),
+            ("magdollite-submerge-right", "Head · submerge right", ("InstList_Magdollite_SplashIntoLavaAndFormBasePillar_Right_0",), (5,), False),
+            ("magdollite-pillar-rise-left", "Base pillar · left", ("InstList_Magdollite_SplashIntoLavaAndFormBasePillar_Left_1",), (1,), True),
+            ("magdollite-pillar-rise-right", "Base pillar · right", ("InstList_Magdollite_SplashIntoLavaAndFormBasePillar_Right_1",), (1,), True),
+            ("magdollite-pillar-growth", "Pillar · growth poses", (
+                "InstList_Magdollite_Slave1_3xPillarStack",
+                "InstList_Magdollite_Slave1_4xPillarStack",
+                "InstList_Magdollite_Slave1_5xPillarStack",
+                "InstList_Magdollite_Slave1_6xPillarStack",
+                "InstList_Magdollite_Slave1_7xPillarStack",
+                "InstList_Magdollite_Slave1_8xPillarStack",
+            ), (1, 1, 1, 1, 1, 1), False),
+            ("magdollite-narrow-pillar", "Narrow pillar · left / right", (
+                "InstList_Magdollite_Slave1_NarrowPillar_FacingLeft",
+                "InstList_Magdollite_Slave1_NarrowPillar_FacingRight",
+            ), (1, 1), False),
+            ("magdollite-pillar-cap", "Hand · pillar cap", ("InstList_Magdollite_Slave2_PillarCap",), (1,), False),
+        ),
+    },
+    {
+        "key": "beetom", "name": "Beetom", "speciesId": 0xE87F,
+        "header": "EnemyHeaders_Beetom", "asset": "Tiles_Beetom", "palette": "Palette_Beetom",
+        "defaultInstructionLists": {0xE87F: "InstList_Beetom_Crawling_FacingLeft_1"},
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Beetom_", "mapCount": 22, "listPrefix": "InstList_Beetom_",
+        "animations": (
+            ("beetom-crawl-left", "Crawling · left", ("InstList_Beetom_Crawling_FacingLeft_1",), (4,), True),
+            ("beetom-crawl-right", "Crawling · right", ("InstList_Beetom_Crawling_FacingRight_1",), (4,), True),
+            ("beetom-hop-left", "Hopping · left", ("InstList_Beetom_Hop_FacingLeft",), (4,), False),
+            ("beetom-hop-right", "Hopping · right", ("InstList_Beetom_Hop_FacingRight",), (4,), False),
+            ("beetom-latch-left", "Latching onto Samus · left", ("InstList_Beetom_DrainingSamus_FacingLeft_0",), (4,), False),
+            ("beetom-drain-left", "Draining Samus · left", ("InstList_Beetom_DrainingSamus_FacingLeft_1",), (4,), True),
+            ("beetom-latch-right", "Latching onto Samus · right", ("InstList_Beetom_DrainingSamus_FacingRight_0",), (4,), False),
+            ("beetom-drain-right", "Draining Samus · right", ("InstList_Beetom_DrainingSamus_FacingRight_1",), (4,), True),
+        ),
+    },
+    {
+        "key": "kihunter", "name": "Kihunter (green)", "speciesId": 0xEABF,
+        "header": "EnemyHeaders_KihunterGreen",
+        "asset": "Tiles_Kihunter", "palette": "Palette_KihunterGreen",
+        # The paired wing headers are runtime slot-2 helpers with a deliberately
+        # shorter 0x200-byte transfer from this same source asset. They stay in
+        # the all-header manifest, while this editor-facing family validates the
+        # three full-sheet body/color owners and exposes the wing lists as actions.
+        "headerAliases": (
+            (0xEB3F, "EnemyHeaders_KihunterYellow", "Kihunter (red)"),
+            (0xEBBF, "EnemyHeaders_KihunterRed", "Kihunter (gold)"),
+        ),
+        "headerPaletteOverrides": {
+            0xEB3F: "Palette_KihunterYellow",
+            0xEBBF: "Palette_KihunterRed",
+        },
+        "defaultInstructionLists": {
+            0xEABF: "InstList_Kihunter_Idling_FacingLeft",
+            0xEB3F: "InstList_Kihunter_Idling_FacingLeft",
+            0xEBBF: "InstList_Kihunter_Idling_FacingLeft",
+        },
+        "animationContexts": {
+            "kihunter-wings-left": ("InstList_Kihunter_Idling_FacingLeft", 3, True),
+            "kihunter-wings-right": ("InstList_Kihunter_Idling_FacingRight", 3, True),
+            # Falling wings acquire independent AI coordinates after detaching;
+            # the first right-idle body pose is a stable editor reference only.
+            "kihunter-wings-falling": ("InstList_Kihunter_Idling_FacingRight", 1, True),
+        },
+        "aiBank": 0xA8,
+        "mapPrefix": "Spritemap_Kihunter", "mapCount": 41,
+        "listPrefix": "InstList_Kihunter",
+        "animations": (
+            ("kihunter-idle-left", "Body · idle left", ("InstList_Kihunter_Idling_FacingLeft",), (3,), True),
+            ("kihunter-idle-right", "Body · idle right", ("InstList_Kihunter_Idling_FacingRight",), (3,), True),
+            ("kihunter-swipe-left", "Body · swipe left", ("InstList_Kihunter_Swiping_FacingLeft",), (6,), False),
+            ("kihunter-swipe-right", "Body · swipe right", ("InstList_Kihunter_Swiping_FacingRight",), (6,), False),
+            ("kihunter-hop-left", "Body · hop left", ("InstList_Kihunter_Hop_FacingLeft",), (6,), False),
+            ("kihunter-hop-right", "Body · hop right", ("InstList_Kihunter_Hop_FacingRight",), (6,), False),
+            ("kihunter-land-left", "Body · land left", ("InstList_Kihunter_LandedFromHop_FacingLeft",), (5,), False),
+            ("kihunter-land-right", "Body · land right", ("InstList_Kihunter_LandedFromHop_FacingRight",), (5,), False),
+            ("kihunter-acid-left", "Body · fire acid left", ("InstList_Kihunter_AcidSpitAttack_FacingLeft",), (6,), False),
+            ("kihunter-acid-right", "Body · fire acid right", ("InstList_Kihunter_AcidSpitAttack_FacingRight",), (6,), False),
+            ("kihunter-wings-left", "Wings · flapping left", ("InstList_KihunterWings_FacingLeft",), (3,), True),
+            ("kihunter-wings-right", "Wings · flapping right", ("InstList_KihunterWings_FacingRight",), (3,), True),
+            ("kihunter-wings-falling", "Wings · falling", ("InstList_KihunterWings_Falling",), (1,), False),
+        ),
+    },
+    {
+        "key": "corpse-sidehopper", "name": "Sidehopper Corpse", "speciesId": 0xED7F,
+        "header": "EnemyHeaders_CorpseSidehopper",
+        "asset": "Tiles_Corpse_Sidehopper_Zoomer_Ripper_Skree", "palette": "Palette_CorpseCommon",
+        "headerAliases": (
+            (0xEDBF, "EnemyHeaders_CorpseSidehopper2", "Sidehopper Corpse (large graphics variant)"),
+        ),
+        "headerAssetOverrides": {0xEDBF: "Tiles_SidehopperLarge"},
+        "headerPaletteOverrides": {0xEDBF: "Palette_CorpseSidehopper2"},
+        "defaultInstructionLists": {
+            0xED7F: "InstList_CorpseSidehopper_Alive_Idle",
+            0xEDBF: "InstList_CorpseSidehopper_Alive_Idle",
+        },
+        "aiBank": 0xA9,
+        "mapPrefix": "Spritemap_CorpseSidehopper_", "mapCount": 5,
+        "listPrefix": "InstList_CorpseSidehopper_",
+        "animations": (
+            ("corpse-sidehopper-hop", "Alive · hopping", ("InstList_CorpseSidehopper_Alive_Hopping",), (8,), False),
+            ("corpse-sidehopper-idle", "Alive · idle", ("InstList_CorpseSidehopper_Alive_Idle",), (1,), False),
+            ("corpse-sidehopper-drained", "Drained corpse", ("InstList_CorpseSidehopper_Alive_Corpse",), (1,), False),
+            ("corpse-sidehopper-dead", "Dead", ("InstList_CorpseSidehopper_Alive_Dead",), (1,), False),
+        ),
+    },
 )
 
 
@@ -161,7 +299,7 @@ def main() -> int:
     all_maps = []
     all_lists = []
     animations = []
-    palettes = []
+    palettes_by_label = {}
     for spec in SPECIES:
         header_specs = [
             (spec["speciesId"], spec["header"], spec["name"]),
@@ -176,17 +314,30 @@ def main() -> int:
             ai_bank = int(spec.get("aiBank", 0xA2))
             if int(fields["bank"]["value"]) != ai_bank:
                 fail(f"{display_name} no longer uses AI bank ${ai_bank:02X}")
-            if fields["tileData"]["targetLabel"] != spec["asset"]:
+            asset_label = spec.get("headerAssetOverrides", {}).get(species_id, spec["asset"])
+            palette_label = spec.get("headerPaletteOverrides", {}).get(species_id, spec["palette"])
+            if fields["tileData"]["targetLabel"] != asset_label:
                 fail(f"{display_name} tile ownership changed")
-            if fields["palette"]["targetLabel"] != spec["palette"]:
+            if fields["palette"]["targetLabel"] != palette_label:
                 fail(f"{display_name} palette ownership changed")
-            validated_headers.append((species_id, header_label, display_name, header))
+            asset = assets_by_name.get(asset_label)
+            if asset is None or int(asset["snesAddress"]) != int(fields["tileData"]["value"]):
+                fail(f"missing {asset_label} asset")
+            palette_address = address(palette_label)
+            if (palette_address & 0xFFFF) != int(fields["palette"]["value"]):
+                fail(f"{display_name} palette address changed")
+            validated_headers.append((
+                species_id, header_label, display_name, header,
+                asset_label, palette_label, asset, palette_address,
+            ))
 
         fields = validated_headers[0][3]["fields"]
-        asset = assets_by_name.get(spec["asset"])
-        if asset is None or int(asset["snesAddress"]) != int(fields["tileData"]["value"]):
-            fail(f"missing {spec['asset']} asset")
-
+        animation_species_ids = list(spec.get(
+            "animationSpeciesIds",
+            [record[0] for record in validated_headers],
+        ))
+        if any(species_id not in {record[0] for record in validated_headers} for species_id in animation_species_ids):
+            fail(f"{spec['name']} animation species are not declared headers")
         species_maps = [
             record for label, record in maps_by_label.items()
             if str(label).startswith(spec["mapPrefix"])
@@ -227,28 +378,52 @@ def main() -> int:
                 actual = sum(item["kind"] == "frame" for item in record["records"])
                 if actual != expected:
                     fail(f"{label} frame count changed: {actual}")
-            animations.append({
+            animation = {
                 "key": key,
                 "name": name,
                 "speciesKey": spec["key"],
                 "speciesId": spec["speciesId"],
-                "speciesIds": [record[0] for record in validated_headers],
+                "speciesIds": animation_species_ids,
                 "instructionLists": list_addresses,
                 "expectedFramesPerList": list(expected_frames),
                 "loop": loop,
                 "renderFrameCount": sum(expected_frames),
-            })
+            }
+            context = spec.get("animationContexts", {}).get(key)
+            if context is not None:
+                context_label, context_frames, context_on_top = context
+                context_record = lists_by_label.get(context_label)
+                if context_record is None:
+                    fail(f"missing context list {context_label}")
+                actual_context_frames = sum(
+                    item["kind"] == "frame" for item in context_record["records"]
+                )
+                if actual_context_frames < context_frames:
+                    fail(f"{context_label} has too few context frames: {actual_context_frames}")
+                animation.update(
+                    contextInstructionList=address(context_label),
+                    contextExpectedFrames=context_frames,
+                    contextOnTop=context_on_top,
+                )
+            animations.append(animation)
 
-        palette_address = address(spec["palette"])
-        palette_raw = rom[snes_to_pc(palette_address):snes_to_pc(palette_address) + 32]
-        palettes.append({
-            "speciesKey": spec["key"],
-            "sourceLabel": spec["palette"],
-            "snesAddress": palette_address,
-            "size": 32,
-            "sha256": sha256(palette_raw),
-        })
-        for index, (species_id, header_label, display_name, header) in enumerate(validated_headers):
+        for index, (
+            species_id, header_label, display_name, header,
+            asset_label, palette_label, asset, palette_address,
+        ) in enumerate(validated_headers):
+            if palette_label not in palettes_by_label:
+                palette_raw = rom[snes_to_pc(palette_address):snes_to_pc(palette_address) + 32]
+                palettes_by_label[palette_label] = {
+                    "speciesKey": spec["key"],
+                    "sourceLabel": palette_label,
+                    "snesAddress": palette_address,
+                    "size": 32,
+                    "sha256": sha256(palette_raw),
+                }
+            default_list_label = spec.get("defaultInstructionLists", {}).get(
+                species_id,
+                spec["animations"][0][2][0],
+            )
             species_records.append({
                 "key": spec["key"] if index == 0 else f"{spec['key']}-{species_id:04x}",
                 "familyKey": spec["key"],
@@ -256,18 +431,19 @@ def main() -> int:
                 "speciesId": species_id,
                 "headerLabel": header_label,
                 "headerSnesAddress": int(header["snesAddress"]),
-                "tileDataLabel": spec["asset"],
+                "tileDataLabel": asset_label,
                 "tileDataSnesAddress": int(asset["snesAddress"]),
                 "tileDataSize": int(asset["size"]),
                 "tileDataSha256": asset["sha256"],
-                "paletteLabel": spec["palette"],
+                "paletteLabel": palette_label,
                 "paletteSnesAddress": palette_address,
-                "defaultInstructionList": address(spec["animations"][0][2][0]),
+                "defaultInstructionList": address(default_list_label),
                 "spritemapCount": len(compact_maps),
                 "instructionListCount": len(compact_lists),
-                "animationCount": len(spec["animations"]),
+                "animationCount": len(spec["animations"]) if species_id in animation_species_ids else 0,
             })
 
+    palettes = list(palettes_by_label.values())
     ownership = [{
         "speciesKey": record["key"],
         "pixelOwner": record["tileDataLabel"],

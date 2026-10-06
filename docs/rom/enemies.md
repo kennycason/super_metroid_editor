@@ -53,13 +53,13 @@ the game if it's the wrong type.
 | Gamet | $F213 | 5, all required | B | |
 | Dachora | $E5FF | 5 (main + 4 shinespark echoes) | B | Pieces 2-5 not required if last enemy index |
 | Bang | $DB3F | 4 | D | Piece 1=possessed enemy (optional), 2=orange core, 3=respawn bubble (optional), 4=initial bubble |
-| Lavaman | $E83F | 3, all required | C | 1=floating head, 2=rising body, 3=body throwing lavaballs |
+| Lavaman / Magdollite | $E83F | 3, all required | C | 1=floating head, 2=rising pillar, 3=hand throwing lavaballs |
 | Evir | $E63F, $E67F | 3 | B | 1=falling body, 2=animated legs (optional), 3=spiny projectile (optional, separate type) |
 | Samus's Ship | $D07F, $D0BF | 3, all required | B | 1=main (enter/hover/top GFX/thrusters), 2=bottom GFX, 3=unknown but required |
 | Dragon | $D4BF | 2, both required | A | 1=main enemy, 2=animated wings |
 | Hibashi | $E07F | 2, both required | D | 1=graphics and sound, 2=hitbox movement |
 | Puu | $E8BF | 2, both required | A | 1=grapplable bottom, 2=main rising body |
-| Kzan | $DFFF, $E0BF | 2 | B | 1=fully functioning enemy, 2=separate type (unused?) |
+| Kzan | $DFFF, $E03F | 2 | B | 1=visible spike-platform top, 2=invisible lower collision follower |
 | Kihunter | $EABF/$EB3F/$EBBF + $EAFF/$EB7F/$EBFF | 2 | B/D | 1=main, 2=wings (separate type, not in room list). Wings can attach to non-Kihunter enemies. |
 
 ### Multi-Piece Enemies (Non-Possessor)
@@ -113,7 +113,7 @@ Key corrections from vanilla SM analysis (April 2026):
 | $DCBF | NOVA | Sova | Orange Norfair wall crawler |
 | $DD3F | MZOOMER | Sova (grey) | Grey invincible wall crawler |
 | $DFBF | — | Boulder | Rolling stone in Blue Brinstar |
-| $E03F | — | Kihunter | Pink/purple winged insect |
+| $E03F | — | Kzan bottom | Invisible collision follower; `$DFFF` owns the visible spike platform |
 | $E5FF | — | Dachora | Ostrich-like friendly creature |
 | $E63F | EBI | Evir | Falling body enemy, 3 pieces |
 | $E6BF | EYE | Eye | Eye enemy attached to wall |

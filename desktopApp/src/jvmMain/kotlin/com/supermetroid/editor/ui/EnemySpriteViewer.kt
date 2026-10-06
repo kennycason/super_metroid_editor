@@ -542,12 +542,13 @@ fun EnemySpriteViewer(
             }
         }
 
-        // Boss body poses (scan AI bank for large OAM spritemaps)
-        // Show for species with known instruction lists OR enough tiles to be a boss
+        // Boss body poses (scan AI bank for source-mapped OAM spritemaps).
+        // Tile-data size is not evidence that an enemy is a boss: ordinary enemies
+        // such as Kihunter and the drained corpses also own large sheets. Restrict
+        // this broad scanner to species whose pose tables are explicitly known.
         val isBoss = !usesStaticAssembledPreviewOnly &&
             !EnemySpritemap.hasSpecialEnemyPreview(entry.speciesId) &&
-            (BossPoseScanner.hasKnownPoses(entry.speciesId) ||
-                (stats?.let { (tileSize, _, _) -> (tileSize and 0x7FFF) > 2048 } == true))
+            BossPoseScanner.hasKnownPoses(entry.speciesId)
         if (isBoss) {
             val bossPoses = remember(entry.speciesId, refreshKey, paletteRefreshKey) {
                 val pal = palette ?: return@remember emptyList()

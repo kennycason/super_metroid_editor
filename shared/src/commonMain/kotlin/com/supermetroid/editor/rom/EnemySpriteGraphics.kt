@@ -139,6 +139,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
         private const val BABY_METROID_CUTSCENE_SPECIES_ID = 0xECBF
         private const val MOTHER_BRAIN_TUBES_SPECIES_ID = 0xECFF
         private const val CORPSE_SIDEHOPPER_SPECIES_ID = 0xED7F
+        private const val CORPSE_SIDEHOPPER_LARGE_SPECIES_ID = 0xEDBF
         private const val CORPSE_ZOOMER_SPECIES_ID = 0xEDFF
         private const val CORPSE_RIPPER_SPECIES_ID = 0xEE3F
         private const val CORPSE_SKREE_SPECIES_ID = 0xEE7F
@@ -274,7 +275,7 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             0xD7FF, 0xD83F, 0xDB7F, 0xD87F, 0xD8BF, 0xD63F, 0xDA7F, 0xDB3F,
             0xD6BF, 0xE9FF, 0xE8FF, 0xD0FF,
             // Kihunters / Boulder
-            0xDFBF, 0xDFFF, 0xE03F,
+            0xDFBF, 0xDFFF,
             // Rippers
             0xD3FF, 0xD43F, 0xD47F,
             // Stationary / Plants
@@ -292,10 +293,11 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             // Space Pirates
             0xF353, 0xF413, 0xF453, 0xF493, 0xF593, 0xF613,
             0xF653, 0xF693, 0xF6D3, 0xF713, 0xF753, 0xF793,
-            // Hachi (Kihunter bees)
-            0xEABF, 0xEAFF, 0xEB3F, 0xEB7F, 0xEBBF, 0xEBFF,
+            // Hachi (Kihunter bees). The separate wing enemy headers are runtime
+            // companions and are exposed as source actions inside each body entry.
+            0xEABF, 0xEB3F, 0xEBBF,
             // Friendly / Misc
-            0xE5BF, 0xD07F, 0xD0BF, 0xD13F, 0xD17F, 0xD1BF,
+            0xE5BF, 0xD07F, 0xD0BF, 0xD13F, 0xD17F, 0xD1BF, 0xED7F,
             // Mechanisms
             0xD4FF, 0xD53F, 0xD57F, 0xD5BF, 0xD5FF, 0xF0BF,
         )
@@ -714,6 +716,24 @@ class EnemySpriteGraphics(private val romParser: RomParser) {
             speciesId: Int,
             enemyTileData: ByteArray? = null
         ): ByteArray? {
+            val id = speciesId and 0xFFFF
+            if (id == CORPSE_SIDEHOPPER_SPECIES_ID || id == CORPSE_SIDEHOPPER_LARGE_SPECIES_ID) {
+                // Tourian loads the common corpse block at OBJ tile $100 and the
+                // large Sidehopper block immediately after it at tile $170.
+                // The shared live Sidehopper maps straddle that boundary, while
+                // the dead poses use the earlier common tiles.
+                val common = if (id == CORPSE_SIDEHOPPER_SPECIES_ID && enemyTileData != null) {
+                    enemyTileData
+                } else {
+                    loadEnemyTileData(romParser, CORPSE_SIDEHOPPER_SPECIES_ID)
+                } ?: return null
+                val large = if (id == CORPSE_SIDEHOPPER_LARGE_SPECIES_ID && enemyTileData != null) {
+                    enemyTileData
+                } else {
+                    loadEnemyTileData(romParser, CORPSE_SIDEHOPPER_LARGE_SPECIES_ID)
+                } ?: return null
+                return common + large
+            }
             return loadEnemyPreviewTileSource(romParser, speciesId, enemyTileData)?.bytes
         }
 

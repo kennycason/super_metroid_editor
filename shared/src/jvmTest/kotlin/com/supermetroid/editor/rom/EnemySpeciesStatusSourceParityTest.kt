@@ -389,6 +389,7 @@ class EnemySpeciesStatusSourceParityTest {
             0xDF3F to "Spore Spawn's body frames are extended spritemaps combining shell and mouth children.",
             0xE13F to "Ceres Ridley uses extended spritemaps composed from legs, hand, torso, and head/neck OAM.",
             0xE17F to "Ridley uses extended spritemaps composed from legs, hand, torso, and head/neck OAM.",
+            0xE1BF to "Ridley's low-page forward-facing and explosion tiles are consumed by the consolidated Ridley composite renderer.",
             0xE2BF to "Kraid's visible body is a BG2 nametable/tilemap composition using room tileset graphics.",
             0xE4BF to "Phantoon's visible body and face components are BG2 extended tilemaps using room tiles.",
             0xEC3F to "Mother Brain's brain/head uses custom drawing and shares the phase-two composite graphics system.",
@@ -398,6 +399,8 @@ class EnemySpeciesStatusSourceParityTest {
 
         private val NONVISUAL_SPECIES = mapOf(
             0xDAFF to "The respawn placeholder header is an engine sentinel with no AI, graphics transfer, or standalone sprite.",
+            0xE03F to "Kzan's bottom record is an invisible collision follower; the preceding Kzan top owns the only instruction list and visible spritemap.",
+            0xF03F to "This no-op header transfers Tourian statue soul graphics; the visible soul is animated by the enemy-projectile engine, not as a standalone enemy.",
         )
     }
 }

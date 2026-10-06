@@ -2018,7 +2018,7 @@ class RomParser(
             // ── Boulder / Kzan ──
             0xDFBF to "Boulder",
             0xDFFF to "Kzan",
-            0xE03F to "Kihunter",
+            0xE03F to "Kzan (bottom collision helper)",
             0xE07F to "Hibashi",
             0xE0BF to "Puromi",
             0xE0FF to "Mini Kraid",
@@ -2045,14 +2045,14 @@ class RomParser(
             0xE5BF to "Etecoon",
             0xE5FF to "Dachora",
             0xE63F to "Evir",
-            0xE67F to "Zero",
+            0xE67F to "Evir Projectile (internal helper)",
             0xE6BF to "Eye",
             0xE6FF to "Fune",
             0xE73F to "Namihe",
             0xE7BF to "Yapping Maw",
             0xE7FF to "Kago",
             // ── Norfair / Maridia ──
-            0xE83F to "Lavaman",
+            0xE83F to "Lavaman (Magdollite)",
             0xE87F to "Beetom",
             0xE8BF to "Puu",
             0xE8FF to "Work Robot",
@@ -2074,7 +2074,7 @@ class RomParser(
             0xEC7F to "Mother Brain (phase 2)",
             // ── Special / Remains ──
             0xED3F to "Torizo Corpse",
-            0xED7F to "Hopper (remains)",
+            0xED7F to "Sidehopper Corpse",
             0xEEBF to "Big Metroid",
             0xEEFF to "Torizo",
             0xEF3F to "Torizo (orbs)",
@@ -2103,14 +2103,15 @@ class RomParser(
             0xF793 to "Space Pirate Mk.III (Tourian)",
 
             // ── Torizo sub-parts / Wrecked Ship / Misc ──
-            0xEDBF to "Torizo Corpse (helper)",
-            0xEDFF to "Torizo Corpse (ceiling)",
-            0xEE3F to "Wrecked Ship Robot",
-            0xEE7F to "Wrecked Ship Robot (piece)",
-            0xEFFF to "Golden Torizo (piece)",
-            0xF0FF to "Draygon (hand)",
-            0xF2D3 to "Tourian Escape Pirate",
-            0xF313 to "Tourian Escape Pirate (runner)",
+            0xEDBF to "Sidehopper Corpse (large graphics variant)",
+            0xEDFF to "Zoomer Corpse",
+            0xEE3F to "Ripper Corpse",
+            0xEE7F to "Skree Corpse",
+            0xEFFF to "Tourian Statue",
+            0xF03F to "Tourian Statue Soul (graphics helper)",
+            0xF0FF to "Chozo",
+            0xF2D3 to "Etecoon (escape)",
+            0xF313 to "Dachora (escape)",
 
             // Ceres-only species (shared IDs like E0BF/E0FF/E17F/E27F
             // are already mapped above as their main-game names)
@@ -2138,8 +2139,16 @@ class RomParser(
         fun isMapMetaEnemy(id: Int): Boolean = id in MAP_META_ENEMY_IDS
 
         val ENEMY_CATALOG: List<Pair<Int, String>> by lazy {
-            ENEMY_NAMES.entries.sortedBy { it.value }.map { it.key to it.value }
+            ENEMY_NAMES.entries
+                .filter { it.key !in NON_PLACEABLE_ENEMY_IDS }
+                .sortedBy { it.value }
+                .map { it.key to it.value }
         }
+
+        /** Headers that own runtime data but perform no useful room-enemy behavior. */
+        private val NON_PLACEABLE_ENEMY_IDS = setOf(
+            0xF03F, // Tourian statue soul GRAPHADR owner; visible object is an enemy projectile
+        )
 
         fun loadRom(filePath: String): RomParser {
             val file = java.io.File(filePath)

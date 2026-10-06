@@ -107,11 +107,11 @@ internal val HEADLESS_ENEMY_DEFS = listOf(
     HeadlessEnemyDef("ripper", "Ripper", 0xD47F, 200, 5, "Flyer"),
     HeadlessEnemyDef("ripper2", "Ripper II", 0xD3FF, 400, 20, "Flyer"),
     HeadlessEnemyDef("kihunter", "Kihunter", 0xDFBF, 20, 40, "Flyer"),
-    HeadlessEnemyDef("kihunter_green", "Kihunter (green)", 0xE03F, 400, 30, "Flyer"),
+    HeadlessEnemyDef("kihunter_green", "Kihunter (green)", 0xEABF, 60, 20, "Flyer"),
     HeadlessEnemyDef("sciser", "Sciser", 0xD77F, 100, 12, "Crawler"),
     HeadlessEnemyDef("zeela", "Zeela", 0xDC7F, 100, 16, "Crawler"),
     HeadlessEnemyDef("sova", "Sova", 0xDD3F, 100, 16, "Crawler"),
-    HeadlessEnemyDef("beetom", "Beetom", 0xDCBF, 50, 8, "Crawler"),
+    HeadlessEnemyDef("beetom", "Beetom", 0xE87F, 60, 10, "Crawler"),
     HeadlessEnemyDef("rinka", "Rinka", 0xD23F, 10, 40, "Spawner"),
     HeadlessEnemyDef("zeb", "Zeb", 0xF193, 20, 8, "Spawner"),
     HeadlessEnemyDef("zebbo", "Zebbo", 0xF1D3, 20, 8, "Spawner"),
@@ -128,7 +128,7 @@ internal val HEADLESS_ENEMY_DEFS = listOf(
     HeadlessEnemyDef("metroid", "Big Metroid", 0xEEBF, 1, 0, "Special"),
     HeadlessEnemyDef("fireflea", "Fireflea", 0xD6BF, 1, 0, "Special"),
     HeadlessEnemyDef("cacatac", "Cacatac", 0xCFFF, 200, 20, "Special"),
-    HeadlessEnemyDef("magdollite", "Magdollite", 0xD4BF, 200, 30, "Special"),
+    HeadlessEnemyDef("magdollite", "Magdollite", 0xE83F, 20, 40, "Special"),
     HeadlessEnemyDef("boyon", "Boyon", 0xCEBF, 100, 16, "Special"),
 )
 

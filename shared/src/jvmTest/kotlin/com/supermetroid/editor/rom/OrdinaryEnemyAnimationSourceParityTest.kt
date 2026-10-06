@@ -45,12 +45,27 @@ class OrdinaryEnemyAnimationSourceParityTest {
             assertEquals(source.intList("instructionLists"), definition.instructionLists, definition.key)
             assertEquals(source.intList("expectedFramesPerList"), definition.expectedFramesPerList, definition.key)
             assertEquals(source.boolean("loop"), definition.loop, definition.key)
+            assertEquals(
+                source.optionalInt("contextInstructionList"),
+                definition.contextInstructionList,
+                definition.key,
+            )
+            assertEquals(
+                source.optionalInt("contextExpectedFrames") ?: 0,
+                definition.contextExpectedFrames,
+                definition.key,
+            )
+            assertEquals(
+                source.optionalBoolean("contextOnTop") ?: false,
+                definition.contextOnTop,
+                definition.key,
+            )
 
             definition.instructionLists.zip(definition.expectedFramesPerList).forEach { (address, expectedCount) ->
                 val expectedFrames = sourceLists.getValue(address).getValue("records").jsonArray
                     .map { it.jsonObject }
                     .filter { it.string("kind") == "frame" }
-                val trace = renderer.traceInstructionListAt(address, expectedCount + 1)
+                val trace = renderer.traceInstructionListAt(address, expectedCount)
                 assertEquals(expectedCount, trace.frames.size, sourceLists.getValue(address).string("sourceLabel"))
                 expectedFrames.zip(trace.frames).forEachIndexed { index, (expected, actual) ->
                     val context = "${definition.key} frame $index"
@@ -190,7 +205,11 @@ class OrdinaryEnemyAnimationSourceParityTest {
 
     private fun JsonObject.int(name: String): Int = getValue(name).jsonPrimitive.int
 
+    private fun JsonObject.optionalInt(name: String): Int? = get(name)?.jsonPrimitive?.int
+
     private fun JsonObject.boolean(name: String): Boolean = getValue(name).jsonPrimitive.boolean
+
+    private fun JsonObject.optionalBoolean(name: String): Boolean? = get(name)?.jsonPrimitive?.boolean
 
     private fun JsonObject.intList(name: String): List<Int> =
         getValue(name).jsonArray.map { it.jsonPrimitive.int }

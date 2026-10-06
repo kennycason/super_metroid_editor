@@ -42,6 +42,20 @@ class EnemySpriteGraphicsTest {
         assertEquals("Puyo", entries.single { it.speciesId == 0xCFBF }.name)
         assertEquals("Ridley Explosion (internal helper)", RomParser.enemyName(0xE1BF))
         assertEquals(0, entries.count { it.speciesId == 0xE1BF })
+        assertEquals("Evir", entries.single { it.speciesId == 0xE63F }.name)
+        assertEquals("Evir Projectile (internal helper)", RomParser.enemyName(0xE67F))
+        assertEquals(0, entries.count { it.speciesId == 0xE67F })
+        assertEquals("Kihunter (green)", entries.single { it.speciesId == 0xEABF }.name)
+        assertEquals("Kihunter (red)", entries.single { it.speciesId == 0xEB3F }.name)
+        assertEquals("Kihunter (gold)", entries.single { it.speciesId == 0xEBBF }.name)
+        assertEquals(0, entries.count { it.speciesId in setOf(0xEAFF, 0xEB7F, 0xEBFF) })
+        assertEquals("Kzan (bottom collision helper)", RomParser.enemyName(0xE03F))
+        assertEquals(0, entries.count { it.speciesId == 0xE03F })
+        assertEquals("Sidehopper Corpse", entries.single { it.speciesId == 0xED7F }.name)
+        assertEquals("Sidehopper Corpse (large graphics variant)", RomParser.enemyName(0xEDBF))
+        assertEquals(0, entries.count { it.speciesId == 0xEDBF })
+        assertEquals("Tourian Statue Soul (graphics helper)", RomParser.enemyName(0xF03F))
+        assertEquals(0, RomParser.ENEMY_CATALOG.count { it.first == 0xF03F })
     }
 
     @Test

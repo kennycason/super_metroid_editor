@@ -71,7 +71,11 @@ class Layer3DiagnosticTest {
         assertEquals("Menu", RomParser.enemyName(0xD17F), "0xD17F ROM:MEMU flying purple")
         assertEquals("Reo", RomParser.enemyName(0xD27F), "0xD27F ROM:RIO")
         assertEquals("Dessgeega", RomParser.enemyName(0xD97F), "0xD97F ROM:SDEATH large dessgeega")
-        assertEquals("Zero", RomParser.enemyName(0xE67F), "0xE67F small green eye")
+        assertEquals(
+            "Evir Projectile (internal helper)",
+            RomParser.enemyName(0xE67F),
+            "0xE67F source header is Evir's separately typed projectile",
+        )
         assertEquals("Alcoon", RomParser.enemyName(0xE9BF), "0xE9BF ROM:NDRA green dragon")
         assertEquals("Puu", RomParser.enemyName(0xE8BF), "0xE8BF ROM:PUU grapple puffball")
         assertEquals("Work Robot", RomParser.enemyName(0xE8FF), "0xE8FF ROM:ROBO green pillar")

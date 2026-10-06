@@ -285,19 +285,29 @@ the actual Sidehopper species is `$D93F`. Machine-readable evidence is in ignore
 
 ### Explicit Helper-Selected Animation Routes (2026-10-05)
 
-Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, and the two Sbug/roach headers
-`$D87F/$D8BF` cannot be routed reliably by scanning their init routines for a direct
-instruction-list store. Their source uses helpers, direction/state selection, or
+Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, the two Sbug/roach headers
+`$D87F/$D8BF`, Evir plus its internal projectile `$E63F/$E67F`, Magdollite `$E83F`,
+Beetom `$E87F`, and the Sidehopper corpses `$ED7F/$EDBF` cannot be routed
+reliably by scanning their init routines for a direct
+instruction-list store. Kihunter's three body/color headers `$EABF/$EB3F/$EBBF`
+also select body and companion-wing states through custom handlers. Their source uses
+helpers, direction/state selection, companion slots, or
 setup-list fallthrough. E-11 therefore records exact named routes instead of teaching
 the generic scanner to guess through arbitrary AI.
 
-The editor exposes 18 compact source actions / 65 guided frames. Puyo has three exact
+The editor exposes 59 compact source actions / 255 guided frames. Puyo has three exact
 grounded loops and two ordered hop-pose sequences; each source hop list draws once and
 sleeps while gameplay AI advances it. Owtch begins at the left/right visual loops after
 retaining the separate direction-setup fallthrough lists in the manifest. Choot exposes
 its idle, jumping, and falling state lists separately. Sbug exposes all eight directional
-loops shared by its normal and alternate-VRAM headers. Thirty-nine OAM maps, 23 lists,
-four palettes, default previews, timing, and deterministic component/action pixels are pinned
+loops shared by its normal and alternate-VRAM headers. Evir exposes its left/right body
+and arms loops plus its attached projectile pose under one navigation entry while the
+projectile retains its distinct default route. Magdollite adds head, hand, and pillar
+states; Beetom adds crawl, hop, latch, and drain routes; and the corpse pair shares OAM
+over two adjacent runtime tile owners. Kihunter keeps three color entries while folding
+the three short-transfer wing companion headers into their matching workspaces; wing
+actions composite the matching body reference instead of displaying a detached component. One
+hundred sixty OAM maps, 78 lists, 12 palettes, default previews, timing, and deterministic component/action pixels are pinned
 by `parityOrdinaryEnemyAnimations` and `OrdinaryEnemyAnimationSourceParityTest`.
 See [`ordinary_enemy_source_routes.md`](ordinary_enemy_source_routes.md) for addresses
 and edit boundaries.
@@ -560,7 +570,7 @@ bank `$A6`, which would incorrectly admit neighboring Ridley structures.
 
 ## Editor-Supported Enemies
 
-The sprite editor currently catalogs **121 source-valid species IDs** through
+The sprite editor currently catalogs **113 source-valid species IDs** through
 `EnemySpriteGraphics.EDITOR_ENEMIES`. The broader name catalog contains 150 of the
 164 source headers. Catalog membership does not itself prove successful OAM assembly;
 the source-complete status ledger below measures the actual production preview path.
@@ -573,12 +583,12 @@ These are current UI groupings, not engine types or render guarantees:
 
 | UI category | Catalog entries |
 |---|---:|
-| Boss | 9 |
-| Mini-Boss | 8 |
+| Boss | 8 |
+| Mini-Boss | 5 |
 | Space Pirate | 12 |
 | Mechanism | 6 |
-| Enemy (default) | 86 |
-| **Total** | **121** |
+| Enemy (default) | 82 |
+| **Total** | **113** |
 
 The source's 164 headers include internal pieces, projectiles, cutscene entities,
 unused data, and other records the sprite editor does not currently catalog. These
@@ -586,7 +596,7 @@ coarse UI buckets are therefore navigation aids, not rendering-support claims.
 
 ### All-species rendering status
 
-The strict E-08 ledger starts with every source header rather than the 121-entry
+The strict E-08 ledger starts with every source header rather than the 113-entry
 sprite picker or bundled PNG filenames. It calls the same tile, palette, ordinary
 OAM, special OAM, boss-pose, Kraid BG2, and Phantoon BG2 production paths used by the
 editor, including Draygon's split BG2/OBJ, Mother Brain's split room-BG/OBJ, and
@@ -596,17 +606,18 @@ counts as an assembled sprite.
 
 | Status | Count | Meaning |
 |---|---:|---|
-| Assembled | 139 | At least one ordinary or special OAM frame renders. This measures current production capability; it is not a claim that every animation/state is source-proven. |
-| Composite | 14 | A known multi-part/BG2/room-tile recipe has a dedicated renderer. |
-| Tile-sheet-only | 9 | `GRAPHADR` tiles and a palette load, but no assembled frame is available. |
-| Nonvisual | 2 | The respawn sentinel and one source-declared unused header have no standalone visual contract. |
-| Failed | 0 | Every active visual species now has at least an assembled, composite, or tile-sheet path. |
+| Assembled | 145 | At least one ordinary or special OAM frame renders. This measures current production capability; it is not a claim that every animation/state is source-proven. |
+| Composite | 15 | A known multi-part/BG2/room-tile recipe has a dedicated renderer or belongs to one. |
+| Tile-sheet-only | 0 | No active visual header is left with only raw `GRAPHADR` tiles. |
+| Nonvisual | 4 | The respawn sentinel, one source-declared unused header, Kzan's collision follower, and the Tourian soul graphics-transfer helper have no standalone enemy sprite. |
+| Failed | 0 | Every active visual species now has an assembled or source-known composite path. |
 
-The current tile-sheet-only set is Kzan bottom `$E03F`, Ridley's explosion helper
-`$E1BF`, Evir and its projectile `$E63F/$E67F`,
-Magdollite `$E83F`, Beetom `$E87F`, Hopper remains `$ED7F`, the Torizo corpse helper
-`$EDBF`, and the Tourian statue ghost `$F03F`. Some legacy display names for these
-internal records are misleading; source labels are authoritative here.
+The former seven tile-sheet-only records are now resolved according to their actual
+runtime roles. Magdollite and Beetom have exact source actions. Both Sidehopper corpse
+headers share source OAM over a combined common-corpse/large-Sidehopper runtime VRAM
+layout. Ridley's explosion header supplies low-page tiles to the consolidated Ridley
+renderer. Kzan bottom is an invisible collision follower, and the Tourian statue soul
+header is a no-op graphics-transfer owner whose visible consumer is an enemy projectile.
 
 The former eight failures have zero-size header transfers, but are not empty. Elevator
 and Ceres Steam use the always-loaded standard sprite tiles and common sprite palette
@@ -687,7 +698,7 @@ Enemy GFX Set ($B4)
 | `EnemyOamSourceParityTest.kt` | All 2,312 standard OAM structures, 811 extended structures, 99 tilemaps, and every decoded field/link through the production parser |
 | `EnemyInstructionSourceParityTest.kt` | All 1,139 named enemy lists, their 7,820 source records and raw ranges, frame structures, handler widths, and the exact measured production-preview result |
 | `EnemyVerticalSliceSourceParityTest.kt` | Complete source-backed header/asset/instruction/OAM/render paths for Zoomer, Sidehopper, and the grey walking Space Pirate |
-| `OrdinaryEnemyAnimationSourceParityTest.kt` | Exact helper-selected Puyo/Owtch/Choot/Sbug routes, timing, OAM/component bytes, default previews, and deterministic action pixels |
+| `OrdinaryEnemyAnimationSourceParityTest.kt` | Exact helper-selected Puyo/Owtch/Choot/Sbug/Evir/Magdollite/Beetom/Sidehopper-corpse routes, timing, OAM/component bytes, default previews, and deterministic action pixels |
 | `EnemySharedVramSourceParityTest.kt` | Exact graphics/palette owners, editability, and visible instruction-list frames for all eight zero-transfer visual species |
 | `EnemySpeciesStatusSourceParityTest.kt` | All 164 source species classified through production paths as assembled, composite, tile-sheet-only, nonvisual, or failed |
 | `EnemySpriteRenderTest.kt` | Palette detection, raw tile decoding, render, stats verification |

@@ -35,9 +35,9 @@ packaged application, project format, or ROM exporter.
   block and measures the current preview scanner against exact records and boundaries.
 - `enemy_vertical_slice_manifest.py` joins exact headers, graphics/palettes,
   instruction paths, and OAM geometry for Zoomer, Sidehopper, and a walking Space Pirate.
-- `ordinary_enemy_animation_manifest.py` pins helper-selected Puyo, Owtch, Choot, and
-  Sbug/roach action routes, including AI-stepped poses, direction tables, shared header
-  variants, and setup-list fallthrough boundaries.
+- `ordinary_enemy_animation_manifest.py` pins helper-selected Puyo, Owtch, Choot,
+  Sbug/roach, Evir, Magdollite, Beetom, Kihunter, and corpse action routes, including AI-stepped poses, direction tables,
+  shared/multi-slot header variants, and setup-list fallthrough boundaries.
 - `kraid_manifest.py` proves Kraid's complete tileset/BG2/head-interpreter/palette/linked-OAM
   recipe, all 12 active linked-OAM lists, Mini Kraid's six bounded action lists, and the
   boundary between editable pixels and read-only placement data.
@@ -234,22 +234,28 @@ guessing their width. Nonvisual handler side effects remain outside this visual 
 
 `parityOrdinaryEnemyAnimations` writes ignored
 `parity/reports/ordinary-enemy-animations.json`. It adds exact production routes for
-Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, and Sbug/roach `$D87F/$D8BF`, whose init
+Puyo `$CFBF`, Owtch `$D03F`, Choot `$D3BF`, Sbug/roach `$D87F/$D8BF`, Evir plus
+its internal projectile `$E63F/$E67F`, Magdollite `$E83F`, Beetom `$E87F`, the
+Kihunter color bodies `$EABF/$EB3F/$EBBF`, and both Sidehopper corpse headers
+`$ED7F/$EDBF`, whose init
 AI assigns visual lists through helpers, direction tables, or state logic that the
-generic scanner deliberately does not emulate. The manifest pins four unique raw owners /
-3,072 bytes, 39 OAM maps / 56 entries, 23 lists / 60 source frame occurrences, four
-palettes, and 18 editor actions / 65 guided frames.
+generic scanner deliberately does not emulate. The manifest pins ten unique raw owners /
+16,896 bytes, 160 OAM maps / 764 entries, 78 lists / 264 source frame occurrences, 12
+palettes, and 59 editor actions / 255 guided frames.
 Puyo's sleeping hop-pose lists remain identified as AI-stepped poses; Owtch's setup
 lists remain distinct from their fallthrough visual loops; Sbug's two headers share one
-eight-direction source action set. Tagged parity checks compare
+eight-direction source action set; Evir keeps body, arms, and projectile ownership in one
+family while retaining the projectile's distinct source header; Kihunter keeps one entry
+per color and exposes its short-transfer wing companions as component actions; and the two corpse headers
+prove their split common/large-Sidehopper runtime tile layout. Tagged parity checks compare
 the exact routes, durations, default previews, component pixels, and action pixels.
 
 The tagged all-species status test writes ignored
 `parity/reports/enemy-species-status.json` and `.md`. Unlike the legacy diagnostic,
 it begins with all 164 source headers, never treats a raw tile sheet as assembled,
 and runs the production ordinary OAM, special OAM, known boss, Kraid BG2, and Phantoon
-BG2 paths (including Draygon's known boss path). The pinned result is 139 assembled, nine tile-sheet-only, 14 composite, two
-nonvisual, and zero failed, with real assembled previews for 153 species. Every row
+BG2 paths (including Draygon's known boss path). The pinned result is 145 assembled, zero tile-sheet-only, 15 composite, four
+nonvisual, and zero failed, with real assembled previews for 159 species. Every row
 includes catalog membership and a reason. A dedicated source test also proves all
 eight zero-transfer visual species against their exact shared/global graphics,
 runtime palette, source entry list, and visible rendered frames; these providers are
@@ -368,7 +374,7 @@ difference. The report currently covers the foundation, LZ5 compression, tileset
 pointers, CRE ownership, tile pixel layouts, metatile semantics, animated-tile DMA
 ownership, item-PLM graphics/slot ownership, enemy-header/`GRAPHADR` ownership, and
 named standard/extended enemy OAM ownership and decoding, plus enemy instruction-list
-structure, preview misses, three end-to-end ordinary-enemy slices, explicit Puyo/Owtch/Choot/Sbug routes, and the complete
+structure, preview misses, three end-to-end ordinary-enemy slices, explicit Puyo/Owtch/Choot/Sbug/Evir/Magdollite/Beetom/Kihunter/corpse routes, and the complete
 164-species production render-status ledger. Subsystem
 coverage expands through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

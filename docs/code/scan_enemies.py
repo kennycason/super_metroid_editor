@@ -121,7 +121,7 @@ KNOWN_ENEMIES = {
     # ── Boulder / Kzan ──
     0xDFBF: "Boulder",
     0xDFFF: "Kzan",
-    0xE03F: "Kihunter",
+    0xE03F: "Kzan (bottom collision helper)",
     0xE07F: "Hibashi",
     0xE0BF: "Puromi",
     0xE0FF: "Mini Kraid",
@@ -148,7 +148,7 @@ KNOWN_ENEMIES = {
     0xE5BF: "Etecoon",
     0xE5FF: "Dachora",
     0xE63F: "Evir",
-    0xE67F: "Zero",
+    0xE67F: "Evir Projectile (internal helper)",
     0xE6BF: "Eye",
     0xE6FF: "Fune",
     0xE73F: "Namihe",
@@ -156,7 +156,7 @@ KNOWN_ENEMIES = {
     0xE7BF: "Yapping Maw",
     0xE7FF: "Kago",
     # ── Norfair / Maridia ──
-    0xE83F: "Lavaman",
+    0xE83F: "Lavaman (Magdollite)",
     0xE87F: "Beetom",
     0xE8BF: "Puu",
     0xE8FF: "Work Robot",
@@ -180,8 +180,8 @@ KNOWN_ENEMIES = {
     0xECFF: "Mother Brain tubes",
     # ── Special / Remains ──
     0xED3F: "Torizo Corpse",
-    0xED7F: "Hopper (remains)",
-    0xEDBF: "Sidehopper corpse 2",
+    0xED7F: "Sidehopper Corpse",
+    0xEDBF: "Sidehopper Corpse (large graphics variant)",
     0xEDFF: "Zoomer corpse",
     0xEE3F: "Ripper corpse",
     0xEE7F: "Skree corpse",
@@ -192,7 +192,7 @@ KNOWN_ENEMIES = {
     0xEFBF: "Torizo (gold orbs)",
     0xEFFF: "Tourian statue",
     # ── Spawners / Misc ──
-    0xF03F: "Tourian statue ghost",
+    0xF03F: "Tourian Statue Soul (graphics helper)",
     0xF07F: "Shaktool",
     0xF0BF: "Shattered Glass",
     0xF0FF: "Chozo",
