@@ -604,11 +604,16 @@ internal fun RoomScrollsHelpDialog(editingAvailable: Boolean, onDismiss: () -> U
                 )
                 ScrollHelpStep(
                     number = "2",
+                    title = "Incoming Door ASM",
+                    detail = "The entrance used can initialize cyan-marked screens after the static table.",
+                )
+                ScrollHelpStep(
+                    number = "3",
                     title = "Scroll triggers",
                     detail = "Crossing an orange trigger changes the marked screens.",
                 )
                 ScrollHelpStep(
-                    number = "3",
+                    number = "4",
                     title = "Runtime result",
                     detail = "The last trigger crossed wins until another trigger or room reload.",
                 )

@@ -397,6 +397,17 @@ tasks.register<Exec>("parityRooms") {
     }
 }
 
+tasks.register<Exec>("parityScrollRuntime") {
+    group = "verification"
+    description = "Generate source-backed scroll PLMs, door overrides, load order, and writer inventory"
+    dependsOn("paritySymbols", "parityRooms")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/scroll_runtime_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -426,6 +437,7 @@ tasks.register<Exec>("parityReport") {
         "parityOrdinaryEnemyAnimations",
         "paritySamus",
         "parityRooms",
+        "parityScrollRuntime",
         ":shared:parityTest",
         ":shared:communitySamusTest",
         ":desktopApp:communitySamusRomTest",

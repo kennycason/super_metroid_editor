@@ -806,8 +806,9 @@ class ProjectRoomExporter(
 
             var finalEntryCode = change.entryCode
             if (shouldClearEnemyBg2TransferOnDoor(roomId, change.destRoomPtr)) {
-                val scrollWrites = parseDoorScrollWrites(romParser, change.entryCode)
-                if (change.entryCode == 0 || scrollWrites.isNotEmpty()) {
+                val doorAsm = analyzeDoorScrollAsm(romParser, change.entryCode)
+                val scrollWrites = doorAsm.writes
+                if (change.entryCode == 0 || doorAsm.isPureScrollRoutine) {
                     val asm = buildDoorAsmClearingEnemyBg2Transfer(scrollWrites)
                     val allocation = roomDataAllocator.allocate(
                         bytes = asm,
@@ -1334,46 +1335,21 @@ class ProjectRoomExporter(
         effectiveWidth: Int,
         effectiveHeight: Int,
     ) {
-        data class ScrollWrite(val scrollValue: Int, val screenIndex: Int)
-
         val incomingDoors = romParser.findDoorsLeadingTo(roomId)
         val generatedAsmPtrs = mutableMapOf<Int, Int>()
         for (door in incomingDoors) {
             if (door.entryCode == 0 || door.entryCode == 0xFFFF) continue
             if (door.entryCode in generatedAsmPtrs) continue
 
-            val originalPc = romParser.snesToPc(0x8F0000 or door.entryCode)
-            val writes = mutableListOf<ScrollWrite>()
-            var i = 0
-            while (i < 60) {
-                val byte = romParser.readByteAt(originalPc + i)
-                if (byte == 0x6B) break
-                if (byte == 0xA9 && i + 5 < 60) {
-                    val immediate = romParser.readByteAt(originalPc + i + 1)
-                    val next = romParser.readByteAt(originalPc + i + 2)
-                    if (next == 0x8F) {
-                        val lo = romParser.readByteAt(originalPc + i + 3)
-                        val hi = romParser.readByteAt(originalPc + i + 4)
-                        val bank = romParser.readByteAt(originalPc + i + 5)
-                        if (hi == 0xCD && bank == 0x7E && lo in 0x20..0x7F) {
-                            writes.add(ScrollWrite(immediate, lo - 0x20))
-                        }
-                        i += 6
-                        continue
-                    }
-                }
-                if ((byte == 0xE2 || byte == 0xC2) && i + 1 < 60) {
-                    i += 2
-                    continue
-                }
-                i++
-            }
+            val analysis = analyzeDoorScrollAsm(romParser, door.entryCode)
+            val writes = analysis.writes
             if (writes.isEmpty()) continue
+            if (!analysis.isPureScrollRoutine) failExport(
+                "Room 0x$roomKey incoming door ASM \$8F:${door.entryCode.toString(16).uppercase()} " +
+                    "writes scroll state but also contains behavior SMEDIT cannot safely remap"
+            )
 
-            val asm = mutableListOf<Int>()
-            asm.add(0xE2)
-            asm.add(0x20)
-            for (write in writes) {
+            val remappedWrites = writes.map { write ->
                 val col = write.screenIndex % room.width
                 val row = write.screenIndex / room.width
                 val newIndex = if (row < effectiveHeight && col < effectiveWidth) {
@@ -1381,15 +1357,9 @@ class ProjectRoomExporter(
                 } else {
                     write.screenIndex
                 }
-                asm.add(0xA9)
-                asm.add(write.scrollValue)
-                asm.add(0x8F)
-                asm.add(0x20 + newIndex)
-                asm.add(0xCD)
-                asm.add(0x7E)
+                DoorScrollWrite(write.scrollValue, 0x20 + newIndex)
             }
-            asm.add(0x6B)
-            val asmBytes = asm.map { it.toByte() }.toByteArray()
+            val asmBytes = buildDoorScrollAsm(remappedWrites)
             val allocation = roomDataAllocator.allocate(
                 bytes = asmBytes,
                 banks = listOf(0x8F),

@@ -74,6 +74,9 @@ packaged application, project format, or ROM exporter.
   state records, 250 source level-data streams, and every referenced PLM, enemy,
   enemy-GFX, FX, static-scroll, door-list, and DoorDef structure. It also records
   intentional aliases and the two source-owned over-allocated level payloads.
+- `scroll_runtime_manifest.py` proves the static → PLM setup → incoming door ASM →
+  room setup ASM load order, every generic scroll-trigger command stream and extension
+  chain, every active door scroll writer, and all direct engine stores to `Scrolls`.
 - `community_samus_bootstrap.py` provisions hash-pinned MapRandoSprites PNGs in the
   ignored workspace for Kotlin/SpriteSomething decoder conformance; it never downloads
   a ROM or commits community artwork.
@@ -104,7 +107,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
-`parityMetroid`, `paritySamus`, and `parityRooms` tasks remain
+`parityMetroid`, `paritySamus`, `parityRooms`, and `parityScrollRuntime` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -363,9 +366,17 @@ compares every frame's combined tilemap geometry and fully reconstructed VRAM ha
 runtime timing control semantics, special palette programs, and independent visual
 goldens remain explicitly partial.
 
+`parityScrollRuntime` writes ignored `parity/reports/scroll-runtime.json`. It pins
+231 generic scroll PLMs, 173 command streams / 285 writes, 371 extension records,
+75 active door scroll writers / 87 door associations, and the full 103-routine /
+191-store engine inventory. Production tests prove repeated and 16-bit door stores,
+distinguish the mixed elevatube routine from 74 replaceable scroll-only routines,
+and preserve East Pants' one source-owned orphan extension as an explicit vanilla
+fact rather than reporting 23 false positives from turning chains.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
+enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

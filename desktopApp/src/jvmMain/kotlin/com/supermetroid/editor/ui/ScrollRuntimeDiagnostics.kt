@@ -1,7 +1,10 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.ScrollCommand
+import com.supermetroid.editor.rom.DoorAsmScrollAnalysis
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.SCROLL_EXTENSION_DIRECTIONS
+import com.supermetroid.editor.rom.scrollExtensionConnectsToTrigger
 
 /**
  * Compact, editor-facing summary of the room scroll state that scroll-trigger PLMs can
@@ -16,17 +19,24 @@ internal data class ScrollRuntimeDiagnostics(
     val emptyCommandCount: Int,
     val unreadableCommandCount: Int,
     val orphanExtensionCount: Int,
+    val doorRoutineCount: Int,
+    val doorValuesByScreen: Map<Int, Set<Int>>,
+    val invalidDoorTargetCount: Int,
+    val mixedDoorRoutineCount: Int,
 ) {
     val affectedScreenCount: Int get() = valuesByScreen.size
+    val doorAffectedScreenCount: Int get() = doorValuesByScreen.size
     val competingScreenCount: Int get() = valuesByScreen.count { (_, values) -> values.size > 1 }
     val issueCount: Int get() =
-        invalidTargetCount + invalidValueCount + emptyCommandCount + unreadableCommandCount + orphanExtensionCount
+        invalidTargetCount + invalidValueCount + emptyCommandCount + unreadableCommandCount +
+            orphanExtensionCount + invalidDoorTargetCount
 }
 
 internal fun buildScrollRuntimeDiagnostics(
     plms: List<RomParser.PlmEntry>,
     roomWidth: Int,
     roomHeight: Int,
+    doorAnalyses: List<DoorAsmScrollAnalysis> = emptyList(),
     commandsFor: (RomParser.PlmEntry) -> List<ScrollCommand>?,
 ): ScrollRuntimeDiagnostics {
     val triggers = plms.filter { it.id == 0xB703 }
@@ -37,6 +47,8 @@ internal fun buildScrollRuntimeDiagnostics(
     var invalidValues = 0
     var emptyCommands = 0
     var unreadableCommands = 0
+    val doorValuesByScreen = linkedMapOf<Int, MutableSet<Int>>()
+    var invalidDoorTargets = 0
 
     for (trigger in triggers) {
         val commands = commandsFor(trigger)
@@ -62,7 +74,16 @@ internal fun buildScrollRuntimeDiagnostics(
     }
 
     val orphanExtensions = extensions.count { extension ->
-        !extensionConnectsToTrigger(extension, plms)
+        !scrollExtensionConnectsToTrigger(extension, plms)
+    }
+    for (analysis in doorAnalyses) {
+        for (write in analysis.writes) {
+            if (write.screenIndex !in 0 until roomScreenCount) {
+                invalidDoorTargets++
+            } else {
+                doorValuesByScreen.getOrPut(write.screenIndex) { linkedSetOf() }.add(write.scrollValue)
+            }
+        }
     }
 
     return ScrollRuntimeDiagnostics(
@@ -74,15 +95,12 @@ internal fun buildScrollRuntimeDiagnostics(
         emptyCommandCount = emptyCommands,
         unreadableCommandCount = unreadableCommands,
         orphanExtensionCount = orphanExtensions,
+        doorRoutineCount = doorAnalyses.size,
+        doorValuesByScreen = doorValuesByScreen.mapValues { (_, values) -> values.toSet() },
+        invalidDoorTargetCount = invalidDoorTargets,
+        mixedDoorRoutineCount = doorAnalyses.count { it.writes.isNotEmpty() && !it.isPureScrollRoutine },
     )
 }
-
-private val SCROLL_EXTENSION_DIRECTIONS = mapOf(
-    0xB63B to Pair(1, 0),   // Extends right from a trigger or another right extension.
-    0xB63F to Pair(-1, 0),  // Extends left.
-    0xB647 to Pair(0, -1),  // Extends up.
-    0xB643 to Pair(0, 1),   // Extends down.
-)
 
 internal fun canPlaceScrollExtension(
     extensionId: Int,
@@ -92,24 +110,5 @@ internal fun canPlaceScrollExtension(
 ): Boolean {
     if (extensionId !in SCROLL_EXTENSION_DIRECTIONS) return false
     val candidate = RomParser.PlmEntry(extensionId, x, y, 0x8000)
-    return extensionConnectsToTrigger(candidate, plms + candidate)
-}
-
-private fun extensionConnectsToTrigger(
-    extension: RomParser.PlmEntry,
-    plms: List<RomParser.PlmEntry>,
-): Boolean {
-    val direction = SCROLL_EXTENSION_DIRECTIONS[extension.id] ?: return true
-    val byPosition = plms.groupBy { Pair(it.x, it.y) }
-    var x = extension.x - direction.first
-    var y = extension.y - direction.second
-    var remaining = plms.size + 1
-    while (remaining-- > 0) {
-        val entries = byPosition[Pair(x, y)].orEmpty()
-        if (entries.any { it.id == 0xB703 }) return true
-        if (entries.none { it.id == extension.id }) return false
-        x -= direction.first
-        y -= direction.second
-    }
-    return false
+    return scrollExtensionConnectsToTrigger(candidate, plms + candidate)
 }

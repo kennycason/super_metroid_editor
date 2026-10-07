@@ -1,6 +1,8 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.ScrollCommand
+import com.supermetroid.editor.rom.DoorAsmScrollAnalysis
+import com.supermetroid.editor.rom.DoorScrollWrite
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TestRomHelper
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -90,5 +92,44 @@ class ScrollRuntimeDiagnosticsTest {
         assertEquals(true, canPlaceScrollExtension(0xB63B, 12, 8, plms))
         assertEquals(false, canPlaceScrollExtension(0xB63B, 12, 9, plms))
         assertEquals(false, canPlaceScrollExtension(0xB63F, 12, 8, plms))
+    }
+
+    @Test
+    fun `extension chain may turn through another extension direction`() {
+        val trigger = RomParser.PlmEntry(0xB703, 10, 8, 0x9000)
+        val right = RomParser.PlmEntry(0xB63B, 11, 8, 0x8000)
+        val down = RomParser.PlmEntry(0xB643, 11, 9, 0x8000)
+
+        val diagnostics = buildScrollRuntimeDiagnostics(
+            plms = listOf(trigger, right, down),
+            roomWidth = 2,
+            roomHeight = 2,
+        ) { listOf(ScrollCommand(0, 1)) }
+
+        assertEquals(0, diagnostics.orphanExtensionCount)
+    }
+
+    @Test
+    fun `incoming door ASM outcomes remain distinct from touch triggers`() {
+        val trigger = RomParser.PlmEntry(0xB703, 4, 4, 0x9000)
+        val door = DoorAsmScrollAnalysis(
+            writes = listOf(DoorScrollWrite(scrollValue = 2, addressLowByte = 0x21)),
+            terminatedWithRts = true,
+            decodedCompletely = true,
+            hasOtherEffects = false,
+        )
+
+        val diagnostics = buildScrollRuntimeDiagnostics(
+            plms = listOf(trigger),
+            roomWidth = 2,
+            roomHeight = 2,
+            doorAnalyses = listOf(door),
+        ) { listOf(ScrollCommand(1, 0)) }
+
+        assertEquals(setOf(0), diagnostics.valuesByScreen[1])
+        assertEquals(setOf(2), diagnostics.doorValuesByScreen[1])
+        assertEquals(1, diagnostics.doorRoutineCount)
+        assertEquals(1, diagnostics.doorAffectedScreenCount)
+        assertEquals(0, diagnostics.issueCount)
     }
 }

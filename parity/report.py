@@ -884,7 +884,7 @@ def samus_checks(
 
 
 def room_checks(
-    test_results: Dict[str, object], rooms: Dict[str, object]
+    test_results: Dict[str, object], rooms: Dict[str, object], scroll_runtime: Dict[str, object]
 ) -> List[Dict[str, object]]:
     class_name = "com.supermetroid.editor.rom.RoomSourceParityTest"
     source_header_status = named_test_status(
@@ -915,7 +915,29 @@ def room_checks(
     header_status = "pass" if source_header_status == export_status == noop_status == "pass" else "mismatch"
     level_status = "pass" if source_level_status == noop_status == "pass" else "mismatch"
     resource_status = "pass" if source_resource_status == noop_status == "pass" else "mismatch"
+    runtime_class = "com.supermetroid.editor.rom.ScrollRuntimeSourceParityTest"
+    runtime_test_statuses = [
+        named_test_status(
+            test_results,
+            runtime_class,
+            "all generic scroll PLM commands and extension chains match source",
+        ),
+        named_test_status(
+            test_results,
+            runtime_class,
+            "all active door ASM scroll writes match source and mixed routines fail closed",
+        ),
+        named_test_status(
+            test_results,
+            runtime_class,
+            "complete direct writer inventory and load precedence match source",
+        ),
+    ]
+    runtime_status = "pass" if all(status == "pass" for status in runtime_test_statuses) else "mismatch"
     resources = rooms["resourceCounts"]
+    runtime_plms = scroll_runtime["genericPlms"]
+    runtime_doors = scroll_runtime["doors"]
+    runtime_writers = scroll_runtime["writerInventory"]
     return [
         {
             "id": "R-01",
@@ -995,8 +1017,15 @@ def room_checks(
         {
             "id": "R-10",
             "name": "Scroll PLMs and door-ASM overrides",
-            "status": "partial" if resource_status == "pass" else resource_status,
-            "evidence": "Static ownership is complete; runtime mutation order and every scroll-PLM/door-ASM target remain to be traced.",
+            "status": runtime_status if resource_status == "pass" else resource_status,
+            "evidence": (
+                f"Load precedence is source-proven as static table → PLM setup → incoming door ASM → room setup ASM. "
+                f"All {runtime_plms['triggerCount']} generic triggers / {runtime_plms['uniqueCommandStreamCount']} command streams / "
+                f"{runtime_plms['commandCount']} writes and {runtime_plms['extensionCount']} extensions match production; "
+                f"the one source-owned East Pants orphan is explicit. All {runtime_doors['scrollWriterRoutineCount']} active door scroll writers / "
+                f"{runtime_doors['scrollWriterAssociationCount']} door associations match source, including the mixed elevatube routine; "
+                f"the complete engine inventory covers {runtime_writers['routineCount']} routines / {runtime_writers['storeSiteCount']} direct stores."
+            ),
         },
         {
             "id": "R-11",
@@ -1045,6 +1074,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     metroid = report["metroid"]
     samus = report["samus"]
     rooms = report["rooms"]
+    scroll_runtime = report["scrollRuntime"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -1204,6 +1234,11 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"- Rooms: **{rooms['roomCount']}** headers / **{rooms['stateCount']}** states, "
             f"**{rooms['levelStreamCount']}** level streams, and **{rooms['doorAssociationCount']}** door associations "
             "are source-pinned through production parsers and an exact exporter mutation allowlist.",
+            f"- Runtime scrolls: **{scroll_runtime['triggerCount']}** generic triggers / "
+            f"**{scroll_runtime['commandStreamCount']}** command streams / **{scroll_runtime['commandCount']}** writes, "
+            f"**{scroll_runtime['extensionCount']}** extensions, **{scroll_runtime['doorWriterRoutineCount']}** active "
+            f"door writer routines, and **{scroll_runtime['directWriterRoutineCount']}** total direct engine writers are source-pinned; "
+            f"**{scroll_runtime['orphanExtensionCount']}** vanilla orphan is explicit.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -1217,10 +1252,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, enemy-species-status, alias, and CRE records "
+            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, runtime-scroll, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1258,6 +1293,7 @@ def main() -> int:
     metroid_path = report_dir / "metroid.json"
     samus_path = report_dir / "samus.json"
     rooms_path = report_dir / "rooms.json"
+    scroll_runtime_path = report_dir / "scroll-runtime.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1284,11 +1320,12 @@ def main() -> int:
         or not metroid_path.is_file()
         or not samus_path.is_file()
         or not rooms_path.is_file()
+        or not scroll_runtime_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1318,6 +1355,7 @@ def main() -> int:
     metroid = json.loads(metroid_path.read_text(encoding="utf-8"))
     samus = json.loads(samus_path.read_text(encoding="utf-8"))
     rooms = json.loads(rooms_path.read_text(encoding="utf-8"))
+    scroll_runtime = json.loads(scroll_runtime_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -1926,6 +1964,37 @@ def main() -> int:
         if rooms["aggregateHashes"][field] != reference[property_name]:
             raise ValueError(f"room aggregate {field} does not match the pinned reference")
 
+    pinned_scroll_runtime_fields = {
+        ("genericPlms", "triggerCount"): "scrollRuntime.plm.trigger.count",
+        ("genericPlms", "solidTriggerCount"): "scrollRuntime.plm.solidTrigger.count",
+        ("genericPlms", "populationCount"): "scrollRuntime.plm.population.count",
+        ("genericPlms", "stateAssociationCount"): "scrollRuntime.plm.stateAssociation.count",
+        ("genericPlms", "uniqueCommandStreamCount"): "scrollRuntime.commandStream.count",
+        ("genericPlms", "commandCount"): "scrollRuntime.command.count",
+        ("genericPlms", "extensionCount"): "scrollRuntime.extension.count",
+        ("genericPlms", "orphanExtensionCount"): "scrollRuntime.extension.orphan.count",
+        ("doors", "nonzeroValidAssociationCount"): "scrollRuntime.door.nonzeroAssociation.count",
+        ("doors", "nonzeroValidRoutineCount"): "scrollRuntime.door.nonzeroRoutine.count",
+        ("doors", "scrollWriterAssociationCount"): "scrollRuntime.door.writerAssociation.count",
+        ("doors", "scrollWriterRoutineCount"): "scrollRuntime.door.writerRoutine.count",
+        ("doors", "pureScrollRoutineCount"): "scrollRuntime.door.pureWriter.count",
+        ("doors", "mixedScrollRoutineCount"): "scrollRuntime.door.mixedWriter.count",
+        ("doors", "sourceDeclaredUnusedWriterCount"): "scrollRuntime.door.unusedWriter.count",
+        ("writerInventory", "routineCount"): "scrollRuntime.writer.routine.count",
+        ("writerInventory", "storeSiteCount"): "scrollRuntime.writer.storeSite.count",
+    }
+    for (section, field), property_name in pinned_scroll_runtime_fields.items():
+        if int(scroll_runtime[section][field]) != int(reference[property_name]):
+            raise ValueError(f"scroll-runtime {section}.{field} does not match the pinned reference")
+    for category, count in scroll_runtime["writerInventory"]["categoryCounts"].items():
+        if int(count) != int(reference[f"scrollRuntime.writer.{category}.count"]):
+            raise ValueError(f"scroll-runtime writer category {category} does not match the pinned reference")
+    for field in ("commandStreams", "extensions", "doorRoutines", "writerInventory"):
+        if scroll_runtime["aggregateHashes"][field] != reference[
+            f"scrollRuntime.{field}.aggregate.sha256"
+        ]:
+            raise ValueError(f"scroll-runtime aggregate {field} does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -1953,7 +2022,7 @@ def main() -> int:
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
         + samus_checks(tests, samus)
-        + room_checks(tests, rooms)
+        + room_checks(tests, rooms, scroll_runtime)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1962,9 +2031,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 24,
+        "schemaVersion": 25,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-rooms-states-resources-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
+        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -2278,6 +2347,19 @@ def main() -> int:
             "doorAssociationCount": rooms["resourceCounts"]["doorAssociation"],
             "uniqueDoorDefCount": rooms["resourceCounts"]["uniqueDoorDef"],
             "aggregateHashes": rooms["aggregateHashes"],
+        },
+        "scrollRuntime": {
+            "triggerCount": scroll_runtime["genericPlms"]["triggerCount"],
+            "commandStreamCount": scroll_runtime["genericPlms"]["uniqueCommandStreamCount"],
+            "commandCount": scroll_runtime["genericPlms"]["commandCount"],
+            "extensionCount": scroll_runtime["genericPlms"]["extensionCount"],
+            "orphanExtensionCount": scroll_runtime["genericPlms"]["orphanExtensionCount"],
+            "doorWriterRoutineCount": scroll_runtime["doors"]["scrollWriterRoutineCount"],
+            "doorWriterAssociationCount": scroll_runtime["doors"]["scrollWriterAssociationCount"],
+            "directWriterRoutineCount": scroll_runtime["writerInventory"]["routineCount"],
+            "directStoreSiteCount": scroll_runtime["writerInventory"]["storeSiteCount"],
+            "writerCategoryCounts": scroll_runtime["writerInventory"]["categoryCounts"],
+            "aggregateHashes": scroll_runtime["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],

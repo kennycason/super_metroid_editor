@@ -186,6 +186,7 @@ tasks.register<org.gradle.api.tasks.testing.Test>("parityTest") {
         rootProject.tasks.named("parityOrdinaryEnemyAnimations"),
         rootProject.tasks.named("paritySamus"),
         rootProject.tasks.named("parityRooms"),
+        rootProject.tasks.named("parityScrollRuntime"),
     )
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath

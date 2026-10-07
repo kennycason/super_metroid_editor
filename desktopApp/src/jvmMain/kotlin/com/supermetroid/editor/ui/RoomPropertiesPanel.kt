@@ -52,6 +52,7 @@ import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.analyzeDoorScrollAsm
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.rom.isSmEditGeneratedPredicate
@@ -1053,7 +1054,13 @@ fun RoomPropertiesPanel(
                 scrollW,
                 scrollH,
             ) {
-                buildScrollRuntimeDiagnostics(visiblePlms, scrollW, scrollH) { trigger ->
+                val doorAnalyses = romParser.findDoorsLeadingTo(room.roomId)
+                    .map { it.entryCode }
+                    .filter { it != 0 && it != 0xFFFF }
+                    .distinct()
+                    .map { analyzeDoorScrollAsm(romParser, it) }
+                    .filter { it.writes.isNotEmpty() }
+                buildScrollRuntimeDiagnostics(visiblePlms, scrollW, scrollH, doorAnalyses) { trigger ->
                     if ((trigger.param and 0xFF00) == 0xCC00) {
                         editorState.getScrollCommand("cmd_${trigger.param and 0xFF}")
                     } else {
@@ -1407,6 +1414,14 @@ private fun EditableScrollGrid(
                                     .background(Color(0xFFFFA040), MaterialTheme.shapes.extraSmall)
                             )
                         }
+                        if (runtimeDiagnostics.doorValuesByScreen[idx].orEmpty().isNotEmpty()) {
+                            Box(
+                                Modifier.align(Alignment.BottomEnd)
+                                    .padding(2.dp)
+                                    .size(5.dp)
+                                    .background(Color(0xFF55C8E8), MaterialTheme.shapes.extraSmall)
+                            )
+                        }
                     }
                 }
             }
@@ -1470,6 +1485,61 @@ private fun EditableScrollGrid(
                 }
             }
         }
+        if (runtimeDiagnostics.doorRoutineCount > 0) {
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(6.dp).background(Color(0xFF55C8E8), MaterialTheme.shapes.extraSmall))
+                Text(
+                    "${runtimeDiagnostics.doorRoutineCount} incoming Door ASM " +
+                        "${if (runtimeDiagnostics.doorRoutineCount == 1) "routine initializes" else "routines initialize"} " +
+                        "${runtimeDiagnostics.doorAffectedScreenCount} screen${if (runtimeDiagnostics.doorAffectedScreenCount == 1) "" else "s"}",
+                    fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            FlowRow(
+                modifier = Modifier.padding(top = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                val doorScreens = runtimeDiagnostics.doorValuesByScreen.entries.sortedBy { it.key }
+                for ((screenIndex, values) in doorScreens.take(8)) {
+                    val x = screenIndex % width
+                    val y = screenIndex / width
+                    val valueLabels = values.sorted().joinToString("/") { value -> SCROLL_LABELS[value] ?: "?" }
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = Color(0xFF55C8E8).copy(alpha = 0.14f),
+                    ) {
+                        Text(
+                            "${oneBasedRoomCoordinate(x, y)} $valueLabels",
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (doorScreens.size > 8) {
+                    Text(
+                        "+${doorScreens.size - 8} more",
+                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 1.dp),
+                        fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (runtimeDiagnostics.mixedDoorRoutineCount > 0) {
+                Text(
+                    "↳ ${runtimeDiagnostics.mixedDoorRoutineCount} also performs non-scroll setup",
+                    modifier = Modifier.padding(top = 2.dp),
+                    fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         if (runtimeDiagnostics.competingScreenCount > 0) {
             Text(
                 "↕ ${runtimeDiagnostics.competingScreenCount} screen${if (runtimeDiagnostics.competingScreenCount == 1) " has" else "s have"} multiple outcomes · last trigger crossed wins",
@@ -1485,6 +1555,7 @@ private fun EditableScrollGrid(
                 if (runtimeDiagnostics.emptyCommandCount > 0) add("${runtimeDiagnostics.emptyCommandCount} empty scroll behavior")
                 if (runtimeDiagnostics.unreadableCommandCount > 0) add("${runtimeDiagnostics.unreadableCommandCount} unreadable scroll behavior")
                 if (runtimeDiagnostics.orphanExtensionCount > 0) add("${runtimeDiagnostics.orphanExtensionCount} detached extension")
+                if (runtimeDiagnostics.invalidDoorTargetCount > 0) add("${runtimeDiagnostics.invalidDoorTargetCount} outside-room door target")
             }
             Text(
                 "⚠ ${issueParts.joinToString()}",

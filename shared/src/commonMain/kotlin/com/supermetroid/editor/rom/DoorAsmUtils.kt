@@ -3,11 +3,27 @@ package com.supermetroid.editor.rom
 data class DoorScrollWrite(
     val scrollValue: Int,
     val addressLowByte: Int,
-)
+) {
+    val screenIndex: Int get() = addressLowByte - SCROLLS_LOW_BYTE
+}
+
+data class DoorAsmScrollAnalysis(
+    val writes: List<DoorScrollWrite>,
+    val terminatedWithRts: Boolean,
+    val decodedCompletely: Boolean,
+    val hasOtherEffects: Boolean,
+) {
+    /** Safe to replace with a generated scroll-only routine without dropping behavior. */
+    val isPureScrollRoutine: Boolean
+        get() = writes.isNotEmpty() && terminatedWithRts && decodedCompletely && !hasOtherEffects
+}
 
 private const val MOTHER_BRAIN_ROOM_ID = 0xDD58
 private const val NMI_FLAG_BG2_ENEMY_VRAM_TRANSFER_ADDR = 0x0E1E
 private const val ENEMY_BG2_TILEMAP_SIZE_ADDR = 0x179A
+private const val SCROLLS_ADDRESS = 0x7ECD20
+private const val SCROLLS_LOW_BYTE = 0x20
+private const val LAST_SUPPORTED_SCROLL_LOW_BYTE = 0x7F
 
 fun shouldClearEnemyBg2TransferOnDoor(sourceRoomId: Int, destRoomId: Int): Boolean =
     sourceRoomId == MOTHER_BRAIN_ROOM_ID && destRoomId != MOTHER_BRAIN_ROOM_ID
@@ -16,39 +32,142 @@ fun parseDoorScrollWrites(
     romParser: RomParser,
     entryCode: Int,
     maxBytes: Int = 80,
-): List<DoorScrollWrite> {
-    if (entryCode == 0 || entryCode == 0xFFFF) return emptyList()
-    val pc = runCatching { romParser.snesToPc(0x8F0000 or entryCode) }.getOrNull() ?: return emptyList()
+): List<DoorScrollWrite> = analyzeDoorScrollAsm(romParser, entryCode, maxBytes).writes
+
+/**
+ * Decode the deliberately small door-ASM subset used by vanilla scroll routines.
+ *
+ * Door ASM begins with 16-bit A/X. The decoder tracks REP/SEP, retains an immediate
+ * accumulator value across repeated stores, expands 16-bit stores into two scroll
+ * bytes, and fails closed on control flow or opcodes whose effects it cannot prove.
+ */
+fun analyzeDoorScrollAsm(
+    romParser: RomParser,
+    entryCode: Int,
+    maxBytes: Int = 80,
+): DoorAsmScrollAnalysis {
+    if (entryCode == 0 || entryCode == 0xFFFF) {
+        return DoorAsmScrollAnalysis(emptyList(), false, true, false)
+    }
+    val pc = runCatching { romParser.snesToPc(0x8F0000 or entryCode) }.getOrNull()
+        ?: return DoorAsmScrollAnalysis(emptyList(), false, false, false)
     val writes = mutableListOf<DoorScrollWrite>()
+    val accumulatorWidths = mutableListOf<Boolean>()
+    var accumulator8Bit = false
+    var accumulatorValue: Int? = null
+    var accumulatorUsedForScroll = false
+    var hasOtherEffects = false
+    var decodedCompletely = false
+    var terminatedWithRts = false
     var i = 0
+
+    fun finishAccumulator() {
+        if (accumulatorValue != null && !accumulatorUsedForScroll) hasOtherEffects = true
+    }
+
     while (i < maxBytes) {
         val b = romParser.readByteAt(pc + i)
-        if (b == 0x60 || b == 0x6B) break
-        if (b == 0xA9 && i + 5 < maxBytes) {
-            val value = romParser.readByteAt(pc + i + 1)
-            val next = romParser.readByteAt(pc + i + 2)
-            if (next == 0x8F) {
-                val lo = romParser.readByteAt(pc + i + 3)
-                val hi = romParser.readByteAt(pc + i + 4)
-                val bank = romParser.readByteAt(pc + i + 5)
-                if (hi == 0xCD && bank == 0x7E && lo in 0x20..0x7F) {
-                    writes.add(DoorScrollWrite(value, lo))
+        when (b) {
+            0x08 -> { // PHP
+                accumulatorWidths.add(accumulator8Bit)
+                i++
+            }
+            0x28 -> { // PLP
+                accumulator8Bit = accumulatorWidths.removeLastOrNull() ?: run {
+                    hasOtherEffects = true
+                    accumulator8Bit
                 }
-                i += 6
-                continue
+                i++
+            }
+            0xC2, 0xE2 -> { // REP/SEP #imm8
+                if (i + 1 >= maxBytes) break
+                val mask = romParser.readByteAt(pc + i + 1)
+                if ((mask and 0x20) != 0) accumulator8Bit = b == 0xE2
+                i += 2
+            }
+            0xA9 -> { // LDA #immM
+                finishAccumulator()
+                val operandBytes = if (accumulator8Bit) 1 else 2
+                if (i + operandBytes >= maxBytes) break
+                accumulatorValue = romParser.readByteAt(pc + i + 1) or
+                    (if (operandBytes == 2) romParser.readByteAt(pc + i + 2) shl 8 else 0)
+                accumulatorUsedForScroll = false
+                i += 1 + operandBytes
+            }
+            0x8F -> { // STA long
+                if (i + 3 >= maxBytes) break
+                val address = romParser.readByteAt(pc + i + 1) or
+                    (romParser.readByteAt(pc + i + 2) shl 8) or
+                    (romParser.readByteAt(pc + i + 3) shl 16)
+                val value = accumulatorValue
+                if (value != null && address in SCROLLS_ADDRESS..(SCROLLS_ADDRESS + 0x5F)) {
+                    val lowByte = address and 0xFF
+                    if (lowByte in SCROLLS_LOW_BYTE..LAST_SUPPORTED_SCROLL_LOW_BYTE) {
+                        writes.add(DoorScrollWrite(value and 0xFF, lowByte))
+                        if (!accumulator8Bit && lowByte < LAST_SUPPORTED_SCROLL_LOW_BYTE) {
+                            writes.add(DoorScrollWrite((value shr 8) and 0xFF, lowByte + 1))
+                        }
+                        accumulatorUsedForScroll = true
+                    } else {
+                        hasOtherEffects = true
+                    }
+                } else {
+                    hasOtherEffects = true
+                }
+                i += 4
+            }
+            0x60 -> { // RTS: the engine enters door ASM with a synthetic JSR return.
+                finishAccumulator()
+                terminatedWithRts = true
+                decodedCompletely = true
+                break
+            }
+            0x6B -> { // RTL is not a valid return for Execute_Door_ASM.
+                finishAccumulator()
+                hasOtherEffects = true
+                decodedCompletely = true
+                break
+            }
+            0x20, 0x4C -> { // JSR/JMP absolute: control flow is outside this straight-line proof.
+                hasOtherEffects = true
+                i += 3
+                break
+            }
+            0x22, 0x5C -> { // JSL/JML absolute long.
+                hasOtherEffects = true
+                i += 4
+                break
+            }
+            else -> {
+                // Never byte-scan through an unknown instruction's operands. That was the
+                // old parser's source of false stores and unsafe routine replacement.
+                hasOtherEffects = true
+                break
             }
         }
-        if ((b == 0x08 || b == 0x28) && i + 1 <= maxBytes) {
-            i++
-            continue
-        }
-        if ((b == 0xE2 || b == 0xC2) && i + 1 < maxBytes) {
-            i += 2
-            continue
-        }
-        i++
     }
-    return writes
+    if (accumulatorWidths.isNotEmpty()) hasOtherEffects = true
+    return DoorAsmScrollAnalysis(
+        writes = writes,
+        terminatedWithRts = terminatedWithRts,
+        decodedCompletely = decodedCompletely,
+        hasOtherEffects = hasOtherEffects,
+    )
+}
+
+fun buildDoorScrollAsm(scrollWrites: List<DoorScrollWrite>): ByteArray {
+    val bytes = mutableListOf(0x08, 0xE2, 0x20) // PHP; SEP #$20
+    for (write in scrollWrites) {
+        bytes.add(0xA9) // LDA #imm8
+        bytes.add(write.scrollValue and 0xFF)
+        bytes.add(0x8F) // STA long
+        bytes.add(write.addressLowByte and 0xFF)
+        bytes.add(0xCD)
+        bytes.add(0x7E)
+    }
+    bytes.add(0x28) // PLP
+    bytes.add(0x60) // RTS; Execute_Door_ASM uses a synthetic JSR-style return.
+    return bytes.map { it.toByte() }.toByteArray()
 }
 
 fun buildDoorAsmClearingEnemyBg2Transfer(scrollWrites: List<DoorScrollWrite>): ByteArray {

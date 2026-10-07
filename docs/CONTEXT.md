@@ -108,7 +108,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | File | Contents |
 |------|----------|
 | [`validation/README.md`](validation/README.md) | Assembly/disassembly parity program, confirmed mismatches, subsystem validation matrix, ordered milestones, and progress log. |
-| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, all-species enemy-header/`GRAPHADR`, named enemy-OAM proof, exhaustive enemy instruction-list measurement, integrated ordinary-enemy slices and explicit helper-selected routes, and the complete species render-status ledger; strict fixture contract; and unified parity report. |
+| [`../parity/README.md`](../parity/README.md) | Portable pinned reference build; source-symbol/asset/LZ5/tileset catalogs; CRE, tile/metatile, animated-tile DMA, item-PLM, complete room/state/resource and runtime-scroll graphs, all-species enemy-header/`GRAPHADR`, named enemy-OAM proof, exhaustive enemy instruction-list measurement, integrated ordinary-enemy slices and explicit helper-selected routes, and the complete species render-status ledger; strict fixture contract; and unified parity report. |
 
 ### Analysis Scripts (`docs/code/`)
 
@@ -165,15 +165,25 @@ Screenshots and reference images for SMILE editors (BTS, enemy, FX, PLM).
 
 ## Room Scroll System
 
-Three layers that interact at runtime:
+Five layers that interact at runtime:
 
 1. **Static scroll data** — 1 byte per screen at `roomScrollsPtr` (state data +14). Values: $00=Red (camera blocked), $01=Blue (normal), $02=Green (open with a 31-pixel lower vertical clamp offset).
-2. **Door ASM** — Runs AFTER static scrolls load, can override specific screens.
-3. **Scroll PLMs** — PLM $B703 triggers at runtime when Samus walks over treadmill blocks.
+2. **PLM setup** — Room PLMs are created after the static table; special scripted PLMs may write scroll state during setup.
+3. **Incoming Door ASM** — Belongs to the door used to enter this room and runs after PLM creation, so it can override destination-room screens.
+4. **Room Setup ASM** — Runs after incoming Door ASM and may apply a final load-time override.
+5. **Scroll PLMs** — PLM $B703 command streams write individual screens later when Samus touches their trigger blocks. FX and boss/enemy routines can also mutate scrolls during gameplay.
 
-**Load order**: Static → PLMs created → Door ASM executes → Gameplay begins.
+**Load order**: Static → PLMs created/setup → incoming Door ASM → room Setup ASM → gameplay.
 
 **Common pitfall**: The static table contains only the initial room scrolls. Scroll PLMs overwrite individual values when crossed; the last trigger that writes a screen wins until another trigger or room reload. Changing static scrolls without updating obsolete vanilla scroll PLMs can therefore produce runtime behavior that disagrees with the initial scrolls.
+
+`parityScrollRuntime` pins 231 generic triggers, 173 streams / 285 writes, 371
+extensions, 75 active door writers, and every direct engine store. Extension chains
+may turn through another extension type; vanilla has one genuine disconnected record
+in East Pants. Door ASM is entered with a synthetic JSR-style return and must end in
+`RTS`; mixed scroll-plus-gameplay routines must not be replaced by scroll-only code.
+In the room scroll grid, orange corner markers/chips are touch-trigger outcomes and
+cyan corner markers/chips are possible incoming Door ASM initialization outcomes.
 
 ---
 
