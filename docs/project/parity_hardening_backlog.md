@@ -1,6 +1,6 @@
 # SMEDIT Parity And Hardening Backlog
 
-Last updated: 2026-09-21
+Last updated: 2026-10-07
 
 This file captures the current SMILE/local-reference audit so the next work can resume without redoing the full review.
 
@@ -20,8 +20,8 @@ This file captures the current SMILE/local-reference audit so the next work can 
      CRE engine pointers remains open and oversized CRE exports fail closed.
 3. AreaSave/save-station hardening.
    - Auto-derived spawn overrides and manual X/Y/scroll editing now exist.
-   - Existing empty runtime slots now support save-station editing and safe cross-area migration. The engine masks save PLM indices to 0-7; the editor now rejects a ninth station without partial state instead of treating elevator/debug entries as capacity.
-   - Remaining work is duplicate-slot conflict UI, special start/elevator migration, emulator-validated resume paths, and—only if truly needed—a deliberate engine/SRAM patch to raise the eight-slot limit.
+   - All eight source lists / 151 mixed load-station entries, runtime fields, PLM ownership, and save/elevator/Ceres/debug/gunship partitions are now source-pinned. Existing empty runtime slots support save-station editing and safe cross-area migration. Allocation, validation, and export protect occupied records such as Crateria's PLM-less gunship slot.
+   - Remaining work is richer duplicate-slot conflict UI, special start/elevator authoring, emulator-validated resume paths, and—only if truly needed—a deliberate engine/SRAM patch to raise the eight-slot limit.
 4. Enemy sprite correctness and export hardening.
    - Close the remaining assembled-sprite/spritemap mismatch risks documented in `docs/OPENAI_REVIEW.md`.
    - Prefer raw 4bpp tile-sheet import/export over legacy PNG sprite replacement for ROM-critical paths.

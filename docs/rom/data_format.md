@@ -233,7 +233,7 @@ Total set size = `(N × 6) + 2` bytes, where N = number of PLMs.
 | Scroll PLMs    | Pointer to scroll modification command (bank $8F) |
 | Gate top (C836)| Color/direction selector (see gate param table) |
 | Items          | Item index for pickup tracking |
-| Save station   | Save station index |
+| Save station   | Load-station index; runtime masks to `0..7` |
 | Grey doors     | High byte 0x90 = door bit tracking |
 
 ### Implementation: `EditorState.exportToRom()` — PLM set writing
@@ -337,6 +337,18 @@ Gate patterns are 1×4 tiles (the gate extends downward from the PLM position).
 | `B6EB` | Missile refill station | Param = station index |
 | `B6D3` | Map station | |
 | `B70B` | Elevator platform | |
+
+---
+
+## Load-Station / AreaSave Entry (bank `$80`)
+
+`LoadStationListPointers` at `$80:C4B5` selects one list per area. Each entry is
+14 bytes: room pointer, incoming door pointer, Door BTS, camera X, camera Y,
+Samus Y relative to screen top, and Samus X relative to screen center. The save
+PLM masks its index with `AND #$0007`; indices `8+` are not spare save slots.
+The lists also contain elevators, Ceres sequences, debug destinations, and the
+gunship landing sequence. See [`load_stations.md`](load_stations.md) for exact
+addresses, counts, and ownership rules.
 
 ---
 

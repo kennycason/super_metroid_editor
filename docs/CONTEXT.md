@@ -57,6 +57,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`rom/environmental_damage.md`](rom/environmental_damage.md) | Heated-room, lava, and acid damage rates; fixed-point ROM locations; native suit mitigation; desktop and headless configuration. | When changing environmental damage |
 | [`rom/limits.md`](rom/limits.md)           | Per-room limits (PLMs, enemies, FX, scrolls, dimensions), bank free space sizes, scroll values, layer 2/BG scrolling, FX type codes.                                                                                                                                                                                   | When adding validation or hitting export errors |
 | [`rom/minimap.md`](rom/minimap.md) | Source-verified two-page pause-map tilemaps, `MapData` reveal masks, hidden-row coordinate transform, 4bpp graphics, map-station PLMs, and runtime consumers. | Before changing map parsing, rendering, room positions, map stations, or export |
+| [`rom/load_stations.md`](rom/load_stations.md) | Source-verified mixed load-station/AreaSave table, 14-byte spawn records, save-slot mask, elevators, Ceres/debug entries, and gunship ownership. | Before changing save stations, resume spawns, elevators, or AreaSave export |
 | [`rom/internals.md`](rom/internals.md)     | Deep engine reference. Door transition state machine, PLM lifecycle, block collision dispatch, strict source-backed LZ5 behavior, free-space patterns, and reference codebase paths.                                                                                                                                    | When implementing new engine features           |
 | [`rom/hex_edits.txt`](rom/hex_edits.txt)   | Extensive recipe list for raw hex edits: physics, beams, missiles, morph ball, suits, doors, HUD, FX, sounds.                                                                                                                                                                                                          | When creating new patches                       |
 | [`rom/sound.md`](rom/sound.md)             | SPC-700 sound system: ARAM layout, transfer block format, song set pointer table (`$8F:E7E1`), BRR sample format, sample directory, music triggering, SFX libraries, CPU-SPC transfer protocol, SMEDIT sample replacement strategy.                                                                                    | When working on audio features                  |
@@ -214,6 +215,17 @@ masks plus the debug Tourian alias, 911 set cells, five vanilla map-station PLMs
 reads both runtime pointer tables and exact no-op writes cover every tile and bit.
 See [`rom/minimap.md`](rom/minimap.md) before changing map parsing, rendering,
 room-coordinate validation, map-station behavior, or export.
+
+## Load Stations and AreaSave
+
+The bank-`$80` “AreaSave” data is the engine's mixed load-station table, not a
+save-only pool. `parityLoadStations` pins all eight lists / 151 entries / 2,114
+bytes and every 14-byte runtime field. Save PLM `$B76F` masks its parameter with
+`AND #$0007`, leaving exactly eight addressable save slots in each normal area;
+indices `8+` are elevators, debug loads, Ceres sequences, or the gunship landing
+sequence. Crateria slot `0` is already owned by Landing Site/the gunship despite
+having no normal save PLM, so allocation and export must preserve occupied ROM
+records as well as PLM-used indices. See [`rom/load_stations.md`](rom/load_stations.md).
 
 ---
 

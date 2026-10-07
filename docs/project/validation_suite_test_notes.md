@@ -29,7 +29,8 @@ Implemented on 2026-07-16.
 ## Test-Covered Guardrails
 
 - Duplicate AreaSave slot overrides are validation errors.
-- Save-station overrides that point past the area's existing AreaSave table are validation errors.
+- Save-station overrides outside indices `0..7`, beyond the area's existing
+  load-station table, or over an occupied record owned by another room are errors.
 - Malformed custom graphics/metatile project payloads are validation errors.
 - Wrong-sized raw enemy tile-sheet edits are validation errors.
 - Wrong-sized fixed sprite palette and enemy sprite palette edits are validation errors.

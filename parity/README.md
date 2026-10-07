@@ -114,7 +114,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
 `parityMetroid`, `paritySamus`, `parityRooms`, `parityScrollRuntime`,
-`parityBackgrounds`, and `parityMinimap` tasks remain
+`parityBackgrounds`, `parityMinimap`, and `parityLoadStations` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -398,9 +398,15 @@ compare every logical cell and require exact no-op tilemap/mask write round trip
 Room-coordinate validation is intentionally 64×31 because stored row 0 is padding;
 the full 64×32 storage remains preserved and editable.
 
+`parityLoadStations` writes ignored `parity/reports/load-stations.json`. It pins
+all eight bank-`$80` lists / 151 fixed 14-byte entries, 19 normal save PLMs,
+save/elevator/Ceres/debug/gunship classification, and nine direct consumers. The
+tagged production tests compare every pointer and runtime spawn field and prove
+that only indices `0..7` in normal areas are addressable by save PLM `$B76F`.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll/background/minimap, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
+enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll/background/minimap/load-station, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

@@ -187,6 +187,10 @@ PLMs, 256 pause-map graphics tiles, and both two-page coordinate transforms are
 pinned. This pass corrected the reveal-bit order, hidden-row mapping, palette width,
 and graphics format/address; room moves and creation now stay within the engine's
 64×31 usable coordinate area while preserving the full 64×32 stored map.
+Load stations are source-backed too: all eight bank-`$80` lists / 151 entries
+and every 14-byte resume field are pinned, with the save/elevator/Ceres/debug/
+gunship partitions kept distinct. The editor now recognizes Crateria's PLM-less
+gunship slot as occupied and refuses cross-room overwrite or clear operations.
 Room/header/state export is also guarded by byte-exact empty/no-op checks and a
 whole-catalog header/state mutation allowlist. Dynamic resource mutation/relocation,
 and emulator traversal remain explicit follow-up work. The

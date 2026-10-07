@@ -87,9 +87,10 @@ data class ScrollCommand(
 )
 
 /**
- * Override for one AreaSave table entry. Save station PLMs reference these by
- * area + saveIndex. Coordinates are stored as raw 16-bit values, matching ROM
- * encoding; Samus X may intentionally be negative in two's-complement form.
+ * Override for one load-station table entry (historically called AreaSave by
+ * tools). Save station PLMs reference area + indices 0..7. Coordinates are
+ * stored as raw 16-bit values, matching ROM encoding; Samus X may intentionally
+ * be negative in two's-complement form.
  */
 @Serializable
 data class SaveStationSpawnChange(
@@ -102,7 +103,7 @@ data class SaveStationSpawnChange(
     val samusY: Int,
     val samusX: Int,
     val autoDerived: Boolean = false,
-    /** True when this override intentionally releases an old AreaSave slot. */
+    /** True when this override intentionally releases an old load-station slot. */
     val clearSlot: Boolean = false,
 )
 

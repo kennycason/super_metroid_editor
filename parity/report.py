@@ -885,7 +885,7 @@ def samus_checks(
 
 def room_checks(
     test_results: Dict[str, object], rooms: Dict[str, object], scroll_runtime: Dict[str, object],
-    backgrounds: Dict[str, object], minimap: Dict[str, object],
+    backgrounds: Dict[str, object], minimap: Dict[str, object], load_stations: Dict[str, object],
 ) -> List[Dict[str, object]]:
     class_name = "com.supermetroid.editor.rom.RoomSourceParityTest"
     source_header_status = named_test_status(
@@ -973,6 +973,25 @@ def room_checks(
         ),
     ]
     minimap_status = "pass" if all(status == "pass" for status in minimap_test_statuses) else "mismatch"
+    load_station_class = "com.supermetroid.editor.rom.LoadStationSourceParityTest"
+    load_station_test_statuses = [
+        named_test_status(
+            test_results,
+            load_station_class,
+            "all load station lists and runtime spawn fields match source",
+        ),
+        named_test_status(
+            test_results,
+            load_station_class,
+            "save PLMs own exactly the addressable save entries",
+        ),
+        named_test_status(
+            test_results,
+            load_station_class,
+            "special elevator debug Ceres and gunship entries stay distinct",
+        ),
+    ]
+    load_station_status = "pass" if all(status == "pass" for status in load_station_test_statuses) else "mismatch"
     resources = rooms["resourceCounts"]
     runtime_plms = scroll_runtime["genericPlms"]
     runtime_doors = scroll_runtime["doors"]
@@ -1098,8 +1117,19 @@ def room_checks(
         {
             "id": "R-13",
             "name": "Save/elevator/debug stations",
-            "status": "uncovered",
-            "evidence": "Station tables, area ownership, slot limits, and runtime spawn fields remain queued.",
+            "status": load_station_status,
+            "evidence": (
+                f"All {load_stations['areaCount']} bank-$80 load-station lists / "
+                f"{load_stations['entryCount']} entries / {load_stations['entryByteCount']} bytes and every "
+                "14-byte runtime spawn field match source and production parsing. The engine-addressable "
+                f"save partition contains {load_stations['occupiedSaveSlotCount']} occupied + "
+                f"{load_stations['emptySaveSlotCount']} empty slots and "
+                f"{load_stations['savePlmPlacementCount']} normal save PLMs; "
+                f"{load_stations['occupiedElevatorEntryCount']} occupied elevator entries, "
+                f"{load_stations['debugEntryCount']} debug entries, "
+                f"{load_stations['ceresSequenceEntryCount']} Ceres sequence entries, and the gunship-owned "
+                "Crateria slot remain explicitly distinct."
+            ),
         },
     ]
 
@@ -1133,6 +1163,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     scroll_runtime = report["scrollRuntime"]
     backgrounds = report["backgrounds"]
     minimap = report["minimap"]
+    load_stations = report["loadStations"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -1305,6 +1336,13 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{minimap['mapDataByteCount']:,}** map-data bytes, **{minimap['mapStationPlacementCount']}** "
             f"map-station placements, an engine-safe **64×{minimap['roomCoordinateHeight']}** room area, and both "
             "page/padding transforms are source-pinned with exact write round trips.",
+            f"- Load stations: **{load_stations['entryCount']}** entries / "
+            f"**{load_stations['entryByteCount']:,} bytes** across **{load_stations['areaCount']}** lists; "
+            f"**{load_stations['occupiedSaveSlotCount']}** occupied + "
+            f"**{load_stations['emptySaveSlotCount']}** empty save slots, "
+            f"**{load_stations['occupiedElevatorEntryCount']}** occupied elevator entries, "
+            f"**{load_stations['debugEntryCount']}** debug entries, and "
+            f"**{load_stations['ceresSequenceEntryCount']}** Ceres entries are source-pinned.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -1321,7 +1359,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, runtime-scroll, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `backgrounds.json`, `minimap.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `backgrounds.json`, `minimap.json`, `load-stations.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1362,6 +1400,7 @@ def main() -> int:
     scroll_runtime_path = report_dir / "scroll-runtime.json"
     backgrounds_path = report_dir / "backgrounds.json"
     minimap_path = report_dir / "minimap.json"
+    load_stations_path = report_dir / "load-stations.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1391,11 +1430,12 @@ def main() -> int:
         or not scroll_runtime_path.is_file()
         or not backgrounds_path.is_file()
         or not minimap_path.is_file()
+        or not load_stations_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/background/minimap/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/background/minimap/load-station/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1428,6 +1468,7 @@ def main() -> int:
     scroll_runtime = json.loads(scroll_runtime_path.read_text(encoding="utf-8"))
     backgrounds = json.loads(backgrounds_path.read_text(encoding="utf-8"))
     minimap = json.loads(minimap_path.read_text(encoding="utf-8"))
+    load_stations = json.loads(load_stations_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -2128,6 +2169,32 @@ def main() -> int:
     ]:
         raise ValueError("minimap decoded graphics do not match the pinned reference")
 
+    pinned_load_station_fields = {
+        "areaCount": "loadStations.area.count",
+        "entryCount": "loadStations.entry.count",
+        "entryByteCount": "loadStations.entry.byte.count",
+        "saveSlotCount": "loadStations.saveSlot.count",
+        "occupiedSaveSlotCount": "loadStations.saveSlot.occupied.count",
+        "emptySaveSlotCount": "loadStations.saveSlot.empty.count",
+        "savePlmPlacementCount": "loadStations.savePlm.count",
+        "elevatorEntryCount": "loadStations.elevator.count",
+        "occupiedElevatorEntryCount": "loadStations.elevator.occupied.count",
+        "debugEntryCount": "loadStations.debug.count",
+        "occupiedDebugEntryCount": "loadStations.debug.occupied.count",
+        "ceresSequenceEntryCount": "loadStations.ceresSequence.count",
+        "gunshipLandingEntryCount": "loadStations.gunshipLanding.count",
+        "doorBtsNonzeroCount": "loadStations.doorBts.nonzero.count",
+        "engineConsumerCount": "loadStations.engineConsumer.count",
+    }
+    for field, property_name in pinned_load_station_fields.items():
+        if int(load_stations[field]) != int(reference[property_name]):
+            raise ValueError(f"load-station report field {field} does not match the pinned reference")
+    for field in ("pointers", "entries", "savePlms", "consumers"):
+        if load_stations["aggregateHashes"][field] != reference[
+            f"loadStations.{field}.aggregate.sha256"
+        ]:
+            raise ValueError(f"load-station aggregate {field} does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -2155,7 +2222,7 @@ def main() -> int:
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
         + samus_checks(tests, samus)
-        + room_checks(tests, rooms, scroll_runtime, backgrounds, minimap)
+        + room_checks(tests, rooms, scroll_runtime, backgrounds, minimap, load_stations)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -2164,9 +2231,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 27,
+        "schemaVersion": 28,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-backgrounds-minimap-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
+        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-backgrounds-minimap-load-stations-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -2522,6 +2589,22 @@ def main() -> int:
             "graphicsTileCount": minimap["graphics"]["tileCount"],
             "coordinateTransform": minimap["coordinateTransform"],
             "aggregateHashes": minimap["aggregateHashes"],
+        },
+        "loadStations": {
+            "areaCount": load_stations["areaCount"],
+            "entryCount": load_stations["entryCount"],
+            "entryByteCount": load_stations["entryByteCount"],
+            "saveSlotCount": load_stations["saveSlotCount"],
+            "occupiedSaveSlotCount": load_stations["occupiedSaveSlotCount"],
+            "emptySaveSlotCount": load_stations["emptySaveSlotCount"],
+            "savePlmPlacementCount": load_stations["savePlmPlacementCount"],
+            "elevatorEntryCount": load_stations["elevatorEntryCount"],
+            "occupiedElevatorEntryCount": load_stations["occupiedElevatorEntryCount"],
+            "debugEntryCount": load_stations["debugEntryCount"],
+            "ceresSequenceEntryCount": load_stations["ceresSequenceEntryCount"],
+            "gunshipLandingEntryCount": load_stations["gunshipLandingEntryCount"],
+            "engineConsumerCount": load_stations["engineConsumerCount"],
+            "aggregateHashes": load_stations["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],

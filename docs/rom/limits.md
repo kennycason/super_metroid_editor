@@ -17,6 +17,7 @@ logic (`EditorState.exportToRom()`).
 | **Room dimensions** | 0x0F × 0x0F (16 × 16 screens) | **50 screens** max area | — | `width × height ≤ 50` |
 | **Room map rectangle** | 64 × 31 coordinate cells | `x + width ≤ 64`, `y + height ≤ 31` | — | Pause-map storage is 64×32, but its first stored row is engine padding |
 | **Door-out entries** | No terminator; count derived from next pointer | ~20 | 2 bytes (ptr) | DDB is 12 bytes in bank `$83` |
+| **Save stations per normal area** | PLM parameter is masked with `AND #$0007` | **8 slots** | 14-byte load-station record | Occupied ROM records count even without a `$B76F` PLM; Crateria slot 0 belongs to the gunship |
 
 ## Scroll Values
 

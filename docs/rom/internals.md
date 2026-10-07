@@ -430,6 +430,21 @@ five placements, pointer tables, transforms, graphics, room bounds, seven direct
 engine consumers, and exact production no-op writes. See
 [`minimap.md`](minimap.md) for addresses and formulas.
 
+### Load Stations / AreaSave (VERIFIED 2026-10-07)
+
+`LoadStationListPointers` at `$80:C4B5` selects eight bank-`$80` lists totaling
+151 fixed 14-byte records. `LoadFromLoadStation` consumes room, door, Door BTS,
+camera X/Y, and Samus-relative X/Y fields. Save PLM `$B76F` masks its argument
+to three bits, so only entries `0..7` in areas 0–5 are save capacity; entries
+`8..15`, later records, Ceres, and Debug have distinct elevator/script/debug
+ownership. Crateria save slot `0` is occupied by Landing Site/the gunship even
+though no normal save PLM points to it.
+
+`parityLoadStations` proves all pointers, entries, fields, save PLM associations,
+special classifications, and nine direct consumers. Production allocation,
+validation, and export now preserve occupied records owned by another room.
+See [`load_stations.md`](load_stations.md) for the exact list map and edit rules.
+
 ### Tileset and CRE Ownership (VERIFIED 2026-10-03)
 
 `parityTilesets` parses the exact `$8F:E6A2` source table and proves all 29

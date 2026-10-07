@@ -2435,6 +2435,20 @@ class ProjectRoomExporter(
                         "load-station entry"
                 )
             }
+            val sourceRoomId = roomKey.toIntOrNull(16)
+                ?: failExport("Room key '$roomKey' is not a hexadecimal room ID")
+            if (spawn.clearSlot && romEntry.roomId != 0 && romEntry.roomId != sourceRoomId) {
+                failExport(
+                    "Room 0x$roomKey cannot clear load-station ${spawn.area}:${spawn.saveIndex}; " +
+                        "it is owned by room 0x${romEntry.roomId.toString(16).uppercase()}"
+                )
+            }
+            if (!spawn.clearSlot && romEntry.roomId != 0 && romEntry.roomId != spawn.roomId) {
+                failExport(
+                    "Room 0x$roomKey cannot overwrite occupied load-station ${spawn.area}:${spawn.saveIndex}; " +
+                        "it is owned by room 0x${romEntry.roomId.toString(16).uppercase()}"
+                )
+            }
             val offset = romEntry.pcOffset
             writeU16(romData, offset, spawn.roomId)
             writeU16(romData, offset + 2, spawn.doorPtr)

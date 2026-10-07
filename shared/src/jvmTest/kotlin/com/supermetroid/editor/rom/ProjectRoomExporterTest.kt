@@ -121,6 +121,55 @@ class ProjectRoomExporterTest {
     }
 
     @Test
+    fun `save station export cannot overwrite the occupied gunship slot`() {
+        val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
+        val parser = RomParser(rom)
+        val roomId = 0x93D5
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).saveStationSpawns.add(
+                SaveStationSpawnChange(
+                    area = 0,
+                    saveIndex = 0,
+                    roomId = roomId,
+                    doorPtr = 0,
+                    scrollX = 0,
+                    scrollY = 0,
+                    samusY = 0,
+                    samusX = 0,
+                )
+            )
+        }
+
+        val failure = assertFailsWith<ProjectRoomExportException> {
+            ProjectRoomExporter(project, parser, rom).exportRooms()
+        }
+
+        assertTrue(failure.message.orEmpty().contains("cannot overwrite occupied load-station 0:0"))
+        assertTrue(failure.message.orEmpty().contains("0x91F8"))
+
+        val clearProject = SmEditProject(romPath = "base.smc").also {
+            it.getOrCreateRoom(roomId).saveStationSpawns.add(
+                SaveStationSpawnChange(
+                    area = 0,
+                    saveIndex = 0,
+                    roomId = 0,
+                    doorPtr = 0,
+                    scrollX = 0,
+                    scrollY = 0,
+                    samusY = 0,
+                    samusX = 0,
+                    clearSlot = true,
+                )
+            )
+        }
+        val clearFailure = assertFailsWith<ProjectRoomExportException> {
+            ProjectRoomExporter(clearProject, parser, rom.copyOf()).exportRooms()
+        }
+        assertTrue(clearFailure.message.orEmpty().contains("cannot clear load-station 0:0"))
+        assertTrue(clearFailure.message.orEmpty().contains("0x91F8"))
+    }
+
+    @Test
     fun `shared scroll pointer uses copy on write and preserves the other room`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
         val parser = RomParser(rom)

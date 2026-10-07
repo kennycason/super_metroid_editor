@@ -5029,6 +5029,12 @@ class EditorState(
         plmId == 0xB76F && param == 0x8000 -> {
             val usedSaveIndices = mutableSetOf<Int>()
             usedSaveIndices.addAll(vanillaSaveIndicesByArea[currentArea].orEmpty())
+            // Not every occupied runtime save slot has a normal save-station PLM.
+            // Crateria slot 0 is the gunship/landing-site load record, and Ceres
+            // uses all eight addressable indices for its scripted sequence.
+            currentAreaRomSaveEntries.forEach { (index, entry) ->
+                if (entry.roomId != 0) usedSaveIndices.add(index)
+            }
             for (roomEdits in project.rooms.values) {
                 for (spawn in roomEdits.saveStationSpawns) {
                     if (spawn.area == currentArea) usedSaveIndices.add(spawn.saveIndex)

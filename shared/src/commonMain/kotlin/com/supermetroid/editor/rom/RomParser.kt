@@ -1038,15 +1038,19 @@ class RomParser(
         return (romData[ptrOff].toInt() and 0xFF) or ((romData[ptrOff + 1].toInt() and 0xFF) shl 8)
     }
 
+    /** Resolve one of the engine's eight bank-$80 load-station lists. */
+    fun readLoadStationListAddress(area: Int): Int? =
+        areaSavePointer(area)?.let { 0x80_0000 or it }
+
     fun saveEntryCount(area: Int): Int {
         val areaPtr = areaSavePointer(area) ?: return 0
-        val nextPtr = (0..7)
+        val nextPtr = ((0..7)
             .mapNotNull { areaSavePointer(it) }
+            + LOAD_STATION_DATA_END)
             .filter { it > areaPtr }
-            .minOrNull()
-            ?: return 16
+            .minOrNull() ?: return 0
         val bytes = nextPtr - areaPtr
-        return if (bytes > 0) bytes / SAVE_ENTRY_SIZE else 0
+        return if (bytes > 0 && bytes % SAVE_ENTRY_SIZE == 0) bytes / SAVE_ENTRY_SIZE else 0
     }
 
     /**
@@ -1067,6 +1071,7 @@ class RomParser(
         return SaveEntry(
             roomId = readU16(romData, entryOff),
             doorPtr = readU16(romData, entryOff + 2),
+            doorBts = readU16(romData, entryOff + 4),
             scrollX = readU16(romData, entryOff + 6),
             scrollY = readU16(romData, entryOff + 8),
             samusY = readU16(romData, entryOff + 10),
@@ -1859,17 +1864,19 @@ class RomParser(
         )
 
         // ─── Save station spawn data ──────────────────────────────────
-        // AreaSave table: pointer table at PC $44B5, 8 area pointers (one per area).
-        // Each area has N save entries, each 14 bytes:
-        //   +$00: Room ID (2B)     +$02: Door Ptr (2B)     +$04: Unknown (2B, always 0)
+        // Load-station table (often called AreaSave by tools): pointer table at PC $44B5,
+        // 8 area pointers. Each area has N 14-byte entries:
+        //   +$00: Room ID (2B)     +$02: Door Ptr (2B)     +$04: Door BTS (2B)
         //   +$06: Scroll X (2B)   +$08: Scroll Y (2B)
         //   +$0A: Samus Y (2B)   +$0C: Samus X (2B)
         const val SAVE_TABLE_PTR_PC = 0x0044B5
         const val SAVE_ENTRY_SIZE = 14
         const val SAVE_STATION_SLOT_COUNT = 8
+        /** Bank-$80 address immediately after the final retail debug load-station entry. */
+        const val LOAD_STATION_DATA_END = 0xCD07
 
         data class SaveEntry(
-            val roomId: Int, val doorPtr: Int,
+            val roomId: Int, val doorPtr: Int, val doorBts: Int,
             val scrollX: Int, val scrollY: Int,
             val samusY: Int, val samusX: Int,
             val pcOffset: Int,

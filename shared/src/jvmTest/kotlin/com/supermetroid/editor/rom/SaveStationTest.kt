@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assumptions.assumeTrue
 
 /**
- * Tests for reading save station spawn data from the AreaSave table.
- * The table has 8 area pointers at PC $44B5, each pointing to N save entries (14 bytes each).
+ * Tests for reading runtime load-station data (often called AreaSave by tools).
+ * The table has 8 area pointers at PC $44B5, each pointing to N 14-byte entries.
  */
 class SaveStationTest {
 
@@ -46,6 +46,24 @@ class SaveStationTest {
             assertNotNull(rp.readSaveEntry(area, count - 1), "Area $area last save entry should be readable")
             assertNull(rp.readSaveEntry(area, count), "Area $area should not read into the next area table")
         }
+    }
+
+    @Test
+    fun `all retail load station list sizes include the final debug entry`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+
+        assertEquals(listOf(19, 19, 23, 18, 20, 18, 17, 17), (0..7).map(rp::saveEntryCount))
+        assertEquals(0x80CC19, rp.readLoadStationListAddress(7))
+        assertNotNull(rp.readSaveEntry(7, 16), "The seventeenth debug entry must not be truncated")
+        assertNull(rp.readSaveEntry(7, 17))
+    }
+
+    @Test
+    fun `load station parser preserves the demo recorder door BTS field`() {
+        val rp = TestRomHelper.loadRomParser() ?: return
+
+        assertEquals(1, rp.readSaveEntry(1, 8)?.doorBts)
+        assertEquals(0, rp.readSaveEntry(1, 0)?.doorBts)
     }
 
     @Test

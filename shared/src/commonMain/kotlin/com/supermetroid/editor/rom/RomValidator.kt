@@ -716,7 +716,7 @@ object RomValidator {
     }
 
     /**
-     * Project overrides for save stations patch AreaSave table entries directly.
+     * Project overrides for save stations patch mixed load-station table entries directly.
      * Duplicate area/index pairs or missing table slots make export ambiguous.
      */
     fun checkProjectSaveStationSpawns(
@@ -763,7 +763,22 @@ object RomValidator {
                             "Cleared AreaSave slot area=${spawn.area} index=${spawn.saveIndex} must use room ID 0."
                         ))
                     }
+                    if (romEntry != null && romEntry.roomId != 0 && sourceRoomId != null && romEntry.roomId != sourceRoomId) {
+                        issues.add(Issue(
+                            Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
+                            "Clearing load-station slot area=${spawn.area} index=${spawn.saveIndex} would erase " +
+                                "room 0x${romEntry.roomId.toString(16).uppercase()}, which is not owned by this room."
+                        ))
+                    }
                     continue
+                }
+
+                if (romEntry != null && romEntry.roomId != 0 && romEntry.roomId != spawn.roomId) {
+                    issues.add(Issue(
+                        Severity.ERROR, "AreaSave", sourceRoomId, sourceRoomName,
+                        "Save station override area=${spawn.area} index=${spawn.saveIndex} would overwrite " +
+                            "occupied load-station room 0x${romEntry.roomId.toString(16).uppercase()}."
+                    ))
                 }
 
                 val targetRoom = rooms[spawn.roomId] ?: parser.readRoomHeader(spawn.roomId)

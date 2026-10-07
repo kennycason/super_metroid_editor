@@ -274,6 +274,55 @@ class RomValidatorTest {
         }
 
         @Test
+        fun `project save station validation protects the occupied gunship slot`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val targetRoom = parser.readRoomHeader(0x93D5) ?: error("Missing vanilla Crateria Save Room")
+            val project = SmEditProject(romPath = "test.smc").also {
+                it.getOrCreateRoom(targetRoom.roomId).saveStationSpawns.add(
+                    SaveStationSpawnChange(
+                        area = 0,
+                        saveIndex = 0,
+                        roomId = targetRoom.roomId,
+                        doorPtr = 0,
+                        scrollX = 0,
+                        scrollY = 0,
+                        samusY = 0,
+                        samusX = 0,
+                    )
+                )
+            }
+
+            val issues = RomValidator.checkProjectSaveStationSpawns(parser, project, rooms)
+
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR &&
+                    it.message.contains("would overwrite occupied load-station room 0x91F8")
+            })
+
+            val clearProject = SmEditProject(romPath = "test.smc").also {
+                it.getOrCreateRoom(targetRoom.roomId).saveStationSpawns.add(
+                    SaveStationSpawnChange(
+                        area = 0,
+                        saveIndex = 0,
+                        roomId = 0,
+                        doorPtr = 0,
+                        scrollX = 0,
+                        scrollY = 0,
+                        samusY = 0,
+                        samusX = 0,
+                        clearSlot = true,
+                    )
+                )
+            }
+            val clearIssues = RomValidator.checkProjectSaveStationSpawns(parser, clearProject, rooms)
+            assertTrue(clearIssues.any {
+                it.severity == RomValidator.Severity.ERROR &&
+                    it.message.contains("would erase room 0x91F8")
+            })
+        }
+
+        @Test
         fun `project graphics validation catches malformed metatile override`() {
             val parser = romParser ?: return
             val project = SmEditProject(romPath = "test.smc")

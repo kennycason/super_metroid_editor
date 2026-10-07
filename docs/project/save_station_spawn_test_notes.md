@@ -1,10 +1,10 @@
 # Save Station Spawn Editing Test Notes
 
-Implemented on 2026-07-13; runtime-slot safety hardened on 2026-09-09.
+Implemented on 2026-07-13; source-backed runtime ownership hardened on 2026-10-07.
 
 ## What changed
 
-- Save station PLMs (`$B76F`) now auto-create an AreaSave spawn override when placed.
+- Save station PLMs (`$B76F`) now auto-create a load-station/AreaSave spawn override when placed.
 - Auto-derived spawn data is stored in the project file under the room's `saveStationSpawns`.
 - Removing a save station removes the associated spawn override when nothing else in the room uses that save index.
 - The item overlay now draws a spawn marker for each save station:
@@ -19,6 +19,8 @@ Implemented on 2026-07-13; runtime-slot safety hardened on 2026-09-09.
 1. Open a room and enable the item overlay.
 2. Place a save station.
 3. Confirm the save station chooses an unused save index for the current area.
+   In Crateria, confirm it never chooses gunship-owned slot `0`; Landing Site
+   occupies that ROM record even though no normal save PLM references it.
 4. Confirm a green spawn marker appears near the placed station.
 5. Right-click the save station and verify the detail row says `Auto`.
 6. Change Samus X/Y or Scroll X/Y, press `Apply Spawn`, and confirm the marker moves and the detail row says `Override`.
@@ -37,8 +39,12 @@ Implemented on 2026-07-13; runtime-slot safety hardened on 2026-09-09.
   save-station capacity.
 - If all eight runtime slots are occupied, placement and area migration are
   rejected without changing project state. SMEDIT never reuses an occupied slot.
+- Validator and exporter reject writes or clears that would replace a nonzero
+  load-station record owned by another room.
 - Relocating or lengthening the AreaSave table alone would create false capacity.
   More than eight save stations in one area requires an engine patch covering
   the PLM mask, save/load logic, SRAM/file-select assumptions, and emulator
   regression tests. Until that exists, eight is an intentional hard limit.
 - Door pointer derivation prefers an existing save entry for the same room, then an incoming door to the room, then the first room door. If a custom room has unusual entrances, verify the exported resume path in-game.
+- The exact mixed-table format, source addresses, elevator/Ceres/debug ownership,
+  and parity command are documented in [`../rom/load_stations.md`](../rom/load_stations.md).

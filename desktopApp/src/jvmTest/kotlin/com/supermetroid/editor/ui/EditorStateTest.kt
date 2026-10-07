@@ -1637,6 +1637,22 @@ class EditorStateTest {
         }
 
         @Test
+        fun `adding a Crateria save station does not overwrite the gunship load slot`() {
+            val romParser = TestRomHelper.loadRomParser() ?: return
+            val room = romParser.readRoomHeader(0x93D5) ?: return
+            state.loadRoom(room.roomId, romParser, room)
+
+            state.addPlm(0xB76F, 1, 1, 0x8000)
+
+            val added = state.workingPlms.single { it.id == 0xB76F && it.x == 1 && it.y == 1 }
+            assertEquals(2, added.param and 0xFF)
+            val spawn = state.project.rooms.getValue(state.project.roomKey(room.roomId))
+                .saveStationSpawns.single { it.saveIndex == 2 }
+            assertEquals(room.roomId, spawn.roomId)
+            assertEquals(0x91F8, romParser.readSaveEntry(0, 0)?.roomId)
+        }
+
+        @Test
         fun `adding a ninth save station is rejected without partial editor state`() {
             state.setRoomIdForTest(0x93D5)
             for (index in 0 until RomParser.SAVE_STATION_SLOT_COUNT) {
