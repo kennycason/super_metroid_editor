@@ -43,17 +43,19 @@ This file captures the current SMILE/local-reference audit so the next work can 
 - Layer 2 / BG hardening: embedded L2 editing exists; richer BG data pointer workflows, scrolling/link behavior, and door-dependent background transfers still need a fuller authoring surface.
 - AreaSave conflict UI: save station spawn editing exists for the engine's eight runtime slots. More capacity is an engine-patch project, not a table-only relocation task.
 - Room JSON import: export exists, import still needs conflict handling and validation.
-- New room creation core is complete: blank/clone-current-state creation, native bank-constrained
-  allocation, state authoring, semantic project-room doors, and parser round trips. Remaining work
-  is automatic minimap-tile drawing, whole-room deletion, templates/generator output, and broader
-  world-route validation.
+- New room creation and lifecycle are complete for hand-authored rooms: blank/clone-current-state
+  creation, automatic pause-map footprints, native bank-constrained allocation, state authoring,
+  semantic project-room doors, guarded project-room-only deletion, and parser round trips.
+  Generator output and cross-project/JSON room import remain; a separate template library is
+  deferred because Clone current state already covers the immediate template workflow.
 - SMART XML import: useful for interoperability and migration from older tools.
 - Managed layout/ROM expansion: variable graphics, music, and level data can
   already relocate when free space exists. Expansion is still needed for large
   projects, but must extend the shared allocator and mapper/header/checksum
   rules rather than bypassing them.
 - Auto item/door ID assignment: reduce hand-maintained ID collisions.
-- Room graph discovery: should feed validation, minimap, and randomizer-style workflows.
+- Optional room-graph discovery: useful for navigation, minimap, and randomizer-style workflows,
+  but one-way or disconnected hack content must remain valid and at most advisory.
 
 ## Notes From Local References
 
@@ -73,8 +75,8 @@ Next quality-first slices:
    engine reference, or retain the current clear blocker if proof is incomplete.
 3. Continue enemy sprite correctness for special compressed/DMA/boss cases;
    Phantoon and Kraid must not use the generic raw-tile assumptions.
-4. Extend the completed new-room core with automatic minimap tiles, deletion/reference cleanup,
-   and template/generator entry points; then add managed ROM growth when real projects exhaust
+4. Add a Room Runtime Inspector and unified Problems surface, then connect generator/import output
+   to the completed project-room lifecycle and add managed ROM growth when real projects exhaust
    verified free space.
 
 ## Recent Progress
@@ -83,6 +85,13 @@ Next quality-first slices:
   SMEDIT emits a complete native room graph, keeps addresses as build output, supports named
   project-to-project door links (including cycles), and reuses the full state editor and room-delta
   exporter. Save/reopen, edit/export, door-resolution, and multi-state parser round trips are tested.
+- New project rooms now receive vanilla-tile pause-map outlines automatically; clones preserve the
+  source footprint when one exists, and moving an older tileless room creates an outline. Creation
+  rejects occupied room/map-station footprints instead of overwriting them. Only project-created
+  rooms expose deletion: its preview lists removed content and blocks while external doors, saves,
+  door conditions, or door-specific FX still reference the room. Core ROM rooms remain editable.
+- Material control typography, Patch configuration, and the dedicated Enemy/Boss tuning surfaces
+  now consume the global semantic font-size tokens instead of disconnected fixed point sizes.
 
 - Existing-door authoring now uses room names/areas and bounded one-based entrance coordinates in
   its normal workflow; raw cap/ASM fields are under Advanced. Project-aware connection diagnostics

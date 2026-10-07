@@ -35,7 +35,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 
@@ -135,12 +134,12 @@ fun SamusPhysicsEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("Samus Physics Editor", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Samus Physics Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit Samus movement physics — jump heights, gravity, run speed, air control, and more. " +
             "Values are 16-bit. Changes apply when patch is enabled.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
@@ -159,7 +158,7 @@ fun SamusPhysicsEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -177,20 +176,20 @@ private fun PhysicsCategoryCard(
         border = BorderStroke(1.dp, category.color.copy(alpha = 0.2f))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(category.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = category.color)
+            Text(category.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = category.color)
             Spacer(Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Property", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Property", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f))
-                Text("Value", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Value", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(80.dp), textAlign = TextAlign.Center)
-                Text("Hex", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Hex", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(60.dp), textAlign = TextAlign.Center)
             }
@@ -220,7 +219,7 @@ private fun PhysicsRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 field.label,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
                 color = if (isModified) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurface
@@ -228,7 +227,7 @@ private fun PhysicsRow(
             if (field.description.isNotEmpty()) {
                 Text(
                     field.description,
-                    fontSize = 9.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -237,7 +236,7 @@ private fun PhysicsRow(
         Spacer(Modifier.width(4.dp))
         Text(
             String.format("%04X", value),
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(60.dp),
@@ -263,7 +262,7 @@ private fun PhysicsInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,

@@ -36,7 +36,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 
@@ -249,7 +248,7 @@ fun KraidEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -265,23 +264,23 @@ private fun KraidHeader() {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 "KRAID",
-                fontSize = 20.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.display,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFFC5E1A5),
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 "Advanced Behavior Editor",
-                fontSize = 13.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.heading,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFFAED581),
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 "Edit Kraid's ROM data constants and selected immediate operands. HP and contact damage are in the Boss Stats patch.",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = Color(0xFFB0B0B0),
-                lineHeight = 16.sp,
+                lineHeight = LocalEditorTheme.current.fontSize.value.heading,
             )
         }
     }
@@ -310,21 +309,21 @@ private fun KraidSectionCard(
             ) {
                 Text(
                     if (expanded) "\u25BC " else "\u25B6 ",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = section.color,
                     modifier = Modifier.width(16.dp),
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         section.title,
-                        fontSize = 13.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     if (!expanded) {
                         Text(
                             "${section.fields.size} fields",
-                            fontSize = 10.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -335,9 +334,9 @@ private fun KraidSectionCard(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     section.description,
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 15.sp,
+                    lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                 )
                 Spacer(Modifier.height(8.dp))
 
@@ -347,14 +346,14 @@ private fun KraidSectionCard(
                 ) {
                     Text(
                         "Field",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
                         "Value",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(80.dp),
@@ -396,13 +395,13 @@ private fun KraidFieldRow(
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Text(
                 field.label,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
                 color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 field.metadataText(),
-                fontSize = 9.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -429,7 +428,7 @@ private fun KraidFieldRow(
         }
         Text(
             annotation,
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(72.dp).padding(start = 8.dp),
             textAlign = TextAlign.Start,
@@ -456,7 +455,7 @@ private fun KraidIntInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -497,7 +496,7 @@ private fun KraidSignedInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -529,7 +528,7 @@ private fun KraidHexInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -546,7 +545,7 @@ private fun KraidHexInput(
             ) {
                 Text(
                     "$",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )

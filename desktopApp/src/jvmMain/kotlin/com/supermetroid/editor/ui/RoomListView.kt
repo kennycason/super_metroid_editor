@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Divider
 import androidx.compose.material3.AlertDialog
@@ -84,6 +85,7 @@ fun RoomListView(
     romParser: RomParser?,
     editorState: EditorState?,
     onCreateRoom: ((NewRoomCreationRequest) -> String?)? = null,
+    onDeleteRoom: ((Int) -> String?)? = null,
     onRoomSelected: (RoomInfo) -> Unit,
     modifier: Modifier = Modifier,
     onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
@@ -92,6 +94,7 @@ fun RoomListView(
     var sortMode by remember { mutableStateOf(RoomSortMode.AREA) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var createRoomOpen by remember { mutableStateOf(false) }
+    var deletePreview by remember { mutableStateOf<ProjectRoomDeletionPreview?>(null) }
     val listState = rememberLazyListState()
     val editVersion = editorState?.editVersion ?: 0
 
@@ -245,6 +248,22 @@ fun RoomListView(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = "Create room", modifier = Modifier.size(18.dp))
                 }
+                val deletableRoomId = selectedRoomId?.takeIf { roomId ->
+                    editorState?.project?.newRoomForPreviewId(roomId) != null
+                }
+                if (deletableRoomId != null) {
+                    IconButton(
+                        onClick = {
+                            deletePreview = if (romParser != null && editorState != null) {
+                                editorState.previewProjectRoomDeletion(deletableRoomId, romParser)
+                            } else null
+                        },
+                        enabled = romParser != null && editorState != null && onDeleteRoom != null,
+                        modifier = Modifier.size(30.dp),
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete project room", modifier = Modifier.size(17.dp))
+                    }
+                }
                 // Sort dropdown with toggle: clicking the active sort's group swaps direction
                 val menuEntries = listOf(
                     RoomSortMode.AREA,
@@ -391,6 +410,76 @@ fun RoomListView(
             onDismiss = { createRoomOpen = false },
         )
     }
+    deletePreview?.let { preview ->
+        if (onDeleteRoom != null) {
+            DeleteProjectRoomDialog(
+                preview = preview,
+                onDelete = onDeleteRoom,
+                onDismiss = { deletePreview = null },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeleteProjectRoomDialog(
+    preview: ProjectRoomDeletionPreview,
+    onDelete: (Int) -> String?,
+    onDismiss: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var error by remember(preview.roomId) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete ${preview.roomName}?", fontSize = fs.heading) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Only project-created rooms can be deleted. This removes:",
+                    fontSize = fs.body,
+                )
+                preview.removalSummary.forEach { summary ->
+                    Text("• $summary", fontSize = fs.detail)
+                }
+                if (preview.blockers.isNotEmpty()) {
+                    Divider()
+                    Text(
+                        "Deletion is blocked until these references are changed:",
+                        fontSize = fs.body,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    preview.blockers.forEach { reference ->
+                        Text(
+                            "${reference.kind}: ${reference.description}",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else {
+                    Text(
+                        "No external doors, saves, room-state conditions, or door-specific FX point at this room.",
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = preview.canDelete,
+                onClick = {
+                    error = onDelete(preview.roomId)
+                    if (error == null) onDismiss()
+                },
+            ) { Text("Delete room", fontSize = fs.body) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", fontSize = fs.body) } },
+    )
 }
 
 @Composable
@@ -407,12 +496,29 @@ private fun NewRoomDialog(
             romParser.readRoomHeader(info.getRoomIdAsInt())?.let(editorState::applyHeaderChanges)
         }
     }
+    val initialArea = selectedHeader?.area ?: 0
+    val initialWidth = selectedHeader?.width ?: 1
+    val initialHeight = selectedHeader?.height ?: 1
+    val suggestedPosition = remember(selectedHeader, romParser, editorState.editVersion) {
+        val areaRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
+            romParser.readRoomHeader(info.getRoomIdAsInt())?.let(editorState::applyHeaderChanges)
+        }.filter { it.area == initialArea }
+        findAvailableRoomMapPosition(
+            effectiveMinimapData(romParser, editorState.project, initialArea),
+            effectiveMapStationData(romParser, editorState.project, initialArea),
+            areaRooms,
+            initialWidth,
+            initialHeight,
+            selectedHeader?.mapX ?: 0,
+            selectedHeader?.mapY ?: 0,
+        )
+    }
     var cloneCurrent by remember { mutableStateOf(selectedHeader != null) }
     var copyDoors by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf(selectedRoom?.name?.let { "$it Copy" } ?: "New Room") }
-    var area by remember { mutableStateOf(selectedHeader?.area ?: 0) }
-    var mapX by remember { mutableStateOf((selectedHeader?.mapX ?: 0).toString()) }
-    var mapY by remember { mutableStateOf((selectedHeader?.mapY ?: 0).toString()) }
+    var area by remember { mutableStateOf(initialArea) }
+    var mapX by remember { mutableStateOf((suggestedPosition?.first ?: selectedHeader?.mapX ?: 0).toString()) }
+    var mapY by remember { mutableStateOf((suggestedPosition?.second ?: selectedHeader?.mapY ?: 0).toString()) }
     var width by remember { mutableStateOf((selectedHeader?.width ?: 1).toString()) }
     var height by remember { mutableStateOf((selectedHeader?.height ?: 1).toString()) }
     var tileset by remember { mutableStateOf((selectedHeader?.tileset ?: 0).toString()) }
@@ -470,6 +576,11 @@ private fun NewRoomDialog(
                     CompactNumberField("Map X", mapX, { mapX = it }, Modifier.weight(1f))
                     CompactNumberField("Map Y", mapY, { mapY = it }, Modifier.weight(1f))
                 }
+                Text(
+                    "SMEDIT adds pause-map tiles automatically. Map Chunk Coords must describe an empty footprint.",
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     CompactNumberField("Width", width, { width = it }, Modifier.weight(1f), enabled = !cloneCurrent)
                     CompactNumberField("Height", height, { height = it }, Modifier.weight(1f), enabled = !cloneCurrent)

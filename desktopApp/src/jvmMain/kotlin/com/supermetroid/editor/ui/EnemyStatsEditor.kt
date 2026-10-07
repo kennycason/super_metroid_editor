@@ -36,7 +36,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
@@ -152,7 +151,7 @@ fun EnemyStatsEditor(
     ) {
         Text(
             "Edit HP, damage, AI routines, and graphics. Click an enemy name to expand details.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
@@ -174,7 +173,7 @@ fun EnemyStatsEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -206,25 +205,25 @@ private fun EnemyCategorySection(
         border = BorderStroke(1.dp, catColor.copy(alpha = 0.2f))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(category, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = catColor)
+            Text(category, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = catColor)
             Spacer(Modifier.height(6.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Enemy", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Enemy", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f))
-                Text("HP", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("HP", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(72.dp), textAlign = TextAlign.Center)
-                Text("DMG", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("DMG", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(72.dp), textAlign = TextAlign.Center)
             }
             Text("Click enemy name to expand AI pointers and graphics info",
-                fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 modifier = Modifier.padding(horizontal = 4.dp))
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -253,7 +252,7 @@ private fun EnemyRow(
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 enemy.name,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 modifier = Modifier.weight(1f).clickable { expanded = !expanded },
                 fontWeight = if (hpModified || dmgModified) FontWeight.Medium else FontWeight.Normal,
                 color = if (hpModified || dmgModified) MaterialTheme.colorScheme.primary
@@ -304,19 +303,19 @@ private fun EnemyDetailSection(
             // Species ID + AI bank
             val aiBank = readEnemyStat(romParser, enemy.speciesId, 0x10)
             Row {
-                Text("Species", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(72.dp))
-                Text("\$${enemy.speciesId.toString(16).uppercase()}", fontSize = 10.sp,
+                Text("Species", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor, modifier = Modifier.width(72.dp))
+                Text("\$${enemy.speciesId.toString(16).uppercase()}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.width(12.dp))
-                Text("AI Bank", fontSize = 9.sp, color = detailColor)
+                Text("AI Bank", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
                 Spacer(Modifier.width(4.dp))
-                Text("\$${(aiBank ?: 0).toString(16).uppercase().padStart(4, '0')}", fontSize = 10.sp,
+                Text("\$${(aiBank ?: 0).toString(16).uppercase().padStart(4, '0')}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
             }
             Spacer(Modifier.height(4.dp))
 
             // AI pointers (2-column layout)
-            Text("AI Routines", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+            Text("AI Routines", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.SemiBold, color = detailColor)
             Spacer(Modifier.height(2.dp))
             for (row in aiFields.chunked(2)) {
                 Row(modifier = Modifier.fillMaxWidth()) {
@@ -326,23 +325,23 @@ private fun EnemyDetailSection(
                         val isModified = values.containsKey(field.key) && curVal != romVal
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(field.label, fontSize = 10.sp,
+                                Text(field.label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                     color = if (isModified) Color(0xFFFFCC00) else detailColor,
                                     fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier.width(68.dp))
                                 EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
                                 val routineDesc = aiRoutineLabel(curVal)
                                 if (routineDesc.isNotEmpty()) {
-                                    Text(routineDesc, fontSize = 9.sp, color = Color(0xFF80C0FF),
+                                    Text(routineDesc, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF80C0FF),
                                         modifier = Modifier.padding(start = 4.dp))
                                 }
                                 if (isModified) {
-                                    Text("↩", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                                    Text("↩", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
                                 }
                             }
                             if (field.tooltip.isNotEmpty()) {
-                                Text(field.tooltip, fontSize = 9.sp, color = detailColor.copy(alpha = 0.6f),
+                                Text(field.tooltip, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor.copy(alpha = 0.6f),
                                     modifier = Modifier.padding(start = 2.dp, bottom = 2.dp))
                             }
                         }
@@ -352,7 +351,7 @@ private fun EnemyDetailSection(
             Spacer(Modifier.height(4.dp))
 
             // GFX fields
-            Text("Graphics", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+            Text("Graphics", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.SemiBold, color = detailColor)
             Spacer(Modifier.height(2.dp))
 
             // Tile data pointer (3 bytes)
@@ -361,16 +360,16 @@ private fun EnemyDetailSection(
             val tilePtrBank = readEnemyStatByte(romParser, enemy.speciesId, 0x38)
             val layerCtrl = readEnemyStatByte(romParser, enemy.speciesId, 0x39)
             Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Tile Size", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
-                Text("${tileSize ?: 0} bytes", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text("Tile Size", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor, modifier = Modifier.width(64.dp))
+                Text("${tileSize ?: 0} bytes", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.width(12.dp))
-                Text("Tile Ptr", fontSize = 9.sp, color = detailColor)
+                Text("Tile Ptr", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
                 Spacer(Modifier.width(4.dp))
                 Text("\$${(tilePtrBank ?: 0).toString(16).uppercase().padStart(2, '0')}:${(tilePtrLo ?: 0).toString(16).uppercase().padStart(4, '0')}",
-                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace)
             }
             Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Layer", fontSize = 9.sp, color = detailColor, modifier = Modifier.width(64.dp))
+                Text("Layer", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor, modifier = Modifier.width(64.dp))
                 val layerStr = when ((layerCtrl ?: 0) and 0x03) {
                     0 -> "BG3 (behind BG)"
                     1 -> "BG2 (behind enemies)"
@@ -379,7 +378,7 @@ private fun EnemyDetailSection(
                     else -> "Unknown"
                 }
                 Text("\$${(layerCtrl ?: 0).toString(16).uppercase().padStart(2, '0')} — $layerStr",
-                    fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace)
             }
 
             // Extra GFX + PB vulnerability
@@ -389,13 +388,13 @@ private fun EnemyDetailSection(
                     val curVal = values[field.key] ?: romVal
                     val isModified = values.containsKey(field.key) && curVal != romVal
                     Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text(field.label, fontSize = 10.sp,
+                        Text(field.label, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = if (isModified) Color(0xFFFFCC00) else detailColor,
                             fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                             modifier = Modifier.width(64.dp))
                         EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
                         if (isModified) {
-                            Text("↩", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                            Text("↩", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
                         }
                     }
@@ -405,9 +404,9 @@ private fun EnemyDetailSection(
             // Custom ASM embedding
             if (editorState != null) {
                 Spacer(Modifier.height(6.dp))
-                Text("Custom Code", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = detailColor)
+                Text("Custom Code", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.SemiBold, color = detailColor)
                 Text("Paste assembled hex bytes. On export, code is written to free space and the pointer is auto-linked.",
-                    fontSize = 8.sp, color = detailColor.copy(alpha = 0.5f))
+                    fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = detailColor.copy(alpha = 0.5f))
                 Spacer(Modifier.height(2.dp))
 
                 val speciesHex = enemy.speciesId.toString(16).uppercase()
@@ -419,7 +418,7 @@ private fun EnemyDetailSection(
                     var showEditor by remember(asmKey) { mutableStateOf(existing != null) }
 
                     if (!showEditor) {
-                        Text("+ $label", fontSize = 9.sp, color = Color(0xFF80C0FF),
+                        Text("+ $label", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF80C0FF),
                             modifier = Modifier.clickable { showEditor = true }.padding(vertical = 1.dp))
                     } else {
                         var hexText by remember(asmKey) { mutableStateOf(existing?.hexBytes ?: "") }
@@ -430,9 +429,9 @@ private fun EnemyDetailSection(
                         ) {
                             Column(Modifier.padding(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF80C0FF))
+                                    Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Bold, color = Color(0xFF80C0FF))
                                     Spacer(Modifier.weight(1f))
-                                    Text("✕", fontSize = 11.sp, color = MaterialTheme.colorScheme.error,
+                                    Text("✕", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.clickable {
                                             editorState.project.customAsm.remove(asmKey)
                                             editorState.markDirty()
@@ -443,13 +442,13 @@ private fun EnemyDetailSection(
                                     value = labelText,
                                     onValueChange = { labelText = it },
                                     singleLine = true,
-                                    textStyle = TextStyle(fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface),
+                                    textStyle = TextStyle(fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurface),
                                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
                                         .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(3.dp))
                                         .padding(4.dp),
                                     decorationBox = { inner ->
-                                        if (labelText.isEmpty()) Text("Description (optional)", fontSize = 9.sp, color = detailColor.copy(alpha = 0.4f))
+                                        if (labelText.isEmpty()) Text("Description (optional)", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor.copy(alpha = 0.4f))
                                         inner()
                                     }
                                 )
@@ -460,7 +459,7 @@ private fun EnemyDetailSection(
                                     },
                                     singleLine = false,
                                     maxLines = 8,
-                                    textStyle = TextStyle(fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                                    textStyle = TextStyle(fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurface),
                                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
@@ -469,15 +468,15 @@ private fun EnemyDetailSection(
                                         .padding(4.dp),
                                     decorationBox = { inner ->
                                         if (hexText.isEmpty()) Text("Paste assembled hex bytes, e.g.:\n22 77 A4 A0 6B\n22 97 A4 A0 6B 60",
-                                            fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = detailColor.copy(alpha = 0.3f))
+                                            fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace, color = detailColor.copy(alpha = 0.3f))
                                         inner()
                                     }
                                 )
                                 val byteCount = hexText.trim().split("\\s+".toRegex()).count { it.length == 2 && it.all { c -> c in '0'..'9' || c in 'A'..'F' } }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("$byteCount bytes", fontSize = 8.sp, color = detailColor)
+                                    Text("$byteCount bytes", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = detailColor)
                                     Spacer(Modifier.weight(1f))
-                                    Text("Save", fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                    Text("Save", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Bold,
                                         color = if (hexText.isNotBlank()) Color(0xFF00CC66) else detailColor,
                                         modifier = Modifier.clickable {
                                             if (hexText.isNotBlank()) {
@@ -539,7 +538,7 @@ private fun EnemyStatInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -580,7 +579,7 @@ private fun EnemyHexInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center
         ),

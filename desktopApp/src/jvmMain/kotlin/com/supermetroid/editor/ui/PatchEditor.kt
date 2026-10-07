@@ -55,7 +55,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.PatchWrite
@@ -160,7 +159,7 @@ fun PatchListPanel(
             verticalAlignment = Alignment.CenterVertically
         ) {
             val countText = if (filtered.size == patches.size) "${patches.size}" else "${filtered.size}/${patches.size}"
-            Text("Patches ($countText)", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Text("Patches ($countText)", fontWeight = FontWeight.Bold, fontSize = LocalEditorTheme.current.fontSize.value.heading, modifier = Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Box {
                     TextButton(
@@ -170,7 +169,7 @@ fun PatchListPanel(
                     ) {
                         Text(
                             if (settings.sortOrder == PatchSortOrder.NAME_ASCENDING) "A–Z" else "Z–A",
-                            fontSize = 11.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.body,
                         )
                     }
                     DropdownMenu(
@@ -182,7 +181,7 @@ fun PatchListPanel(
                                 text = {
                                     Text(
                                         if (order == PatchSortOrder.NAME_ASCENDING) "Name A–Z" else "Name Z–A",
-                                        fontSize = 12.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                                     )
                                 },
                                 trailingIcon = {
@@ -197,7 +196,7 @@ fun PatchListPanel(
                         }
                         Divider()
                         DropdownMenuItem(
-                            text = { Text("Favorites first", fontSize = 12.sp) },
+                            text = { Text("Favorites first", fontSize = LocalEditorTheme.current.fontSize.value.body) },
                             leadingIcon = {
                                 Icon(
                                     Icons.Filled.Favorite,
@@ -241,7 +240,7 @@ fun PatchListPanel(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 ) {
-                    Text("+IPS", fontSize = 11.sp)
+                    Text("+IPS", fontSize = LocalEditorTheme.current.fontSize.value.body)
                 }
             }
         }
@@ -266,7 +265,7 @@ fun PatchListPanel(
                 if (searchQuery.isEmpty()) {
                     Text(
                         "Search patches...",
-                        fontSize = 12.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     )
@@ -275,7 +274,7 @@ fun PatchListPanel(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     singleLine = true,
-                    textStyle = TextStyle(fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface),
+                    textStyle = TextStyle(fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                 )
@@ -298,7 +297,7 @@ fun PatchListPanel(
                 Text(
                     if (searchQuery.isNotBlank()) "No patches match \"$searchQuery\"."
                     else "No patches yet.\nClick +IPS to import an external patch.",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
                 )
@@ -371,9 +370,9 @@ private fun PatchListItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     patch.name,
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     fontWeight = FontWeight.Medium,
-                    lineHeight = 14.sp,
+                    lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = if (patch.enabled) MaterialTheme.colorScheme.onSurface
@@ -400,7 +399,7 @@ private fun PatchListItem(
             if (onDelete != null) {
                 Text(
                     "✕",
-                    fontSize = 10.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = MaterialTheme.colorScheme.error.copy(alpha = 0.6f),
                     modifier = Modifier
                         .clickable { onDelete() }
@@ -425,9 +424,9 @@ fun PatchEditorCanvas(
     if (patch == null) {
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Select a patch from the left panel", fontSize = 14.sp,
+                Text("Select a patch from the left panel", fontSize = LocalEditorTheme.current.fontSize.value.heading,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("or click +IPS to import an external patch.", fontSize = 12.sp,
+                Text("or click +IPS to import an external patch.", fontSize = LocalEditorTheme.current.fontSize.value.body,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -493,7 +492,7 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     onValueChange = { nameText = it },
                     singleLine = true,
                     textStyle = TextStyle(
-                        fontSize = 16.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     ),
@@ -510,11 +509,11 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
                     modifier = Modifier.height(28.dp)
-                ) { Text("Save", fontSize = 11.sp) }
+                ) { Text("Save", fontSize = LocalEditorTheme.current.fontSize.value.body) }
             } else {
                 Text(
                     patch.name,
-                    fontSize = 16.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f).clickable { editingName = true }
                 )
@@ -525,7 +524,7 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 ) {
                     Text(
                         if (patch.enabled) "ENABLED" else "DISABLED",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -539,14 +538,14 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                         containerColor = if (patch.enabled) Color(0xFF888888) else Color(0xFF4CAF50)
                     )
                 ) {
-                    Text(if (patch.enabled) "Disable" else "Enable", fontSize = 11.sp)
+                    Text(if (patch.enabled) "Disable" else "Enable", fontSize = LocalEditorTheme.current.fontSize.value.body)
                 }
             }
         }
         if (!patch.exclusiveGroup.isNullOrBlank()) {
             Text(
                 "Variant choice: enabling this patch automatically disables other variants in its group.",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
             )
@@ -560,7 +559,7 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 value = descText,
                 onValueChange = { descText = it },
                 textStyle = TextStyle(
-                    fontSize = 12.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -572,7 +571,7 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
         } else if (patch.description.isNotEmpty()) {
             Text(
                 patch.description,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.clickable { editingName = true }
             )
@@ -613,25 +612,25 @@ private fun RoomNamePauseMapConfig(
     Column(modifier = modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
         Text(
             "Draws the current room name on the pause map. Edits below are saved as project overrides; base room names stay unchanged.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
                 "Rooms: ${rooms.size}",
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 "Overrides: $overrideCount",
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 if (patch.enabled) "Enabled" else "Disabled",
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = if (patch.enabled) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -639,7 +638,7 @@ private fun RoomNamePauseMapConfig(
         Spacer(Modifier.height(12.dp))
         Text(
             "Alignment",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -655,7 +654,7 @@ private fun RoomNamePauseMapConfig(
                             option.configValue,
                         )
                     },
-                    label = { Text(option.label, fontSize = 11.sp) },
+                    label = { Text(option.label, fontSize = LocalEditorTheme.current.fontSize.value.body) },
                 )
             }
         }
@@ -682,7 +681,7 @@ private fun RoomNamePauseMapConfig(
             Spacer(Modifier.height(16.dp))
             Text(
                 "Custom room IDs",
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -702,7 +701,7 @@ private fun RoomNamePauseMapConfig(
         Spacer(Modifier.height(18.dp))
         Text(
             "Add custom room ID",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -746,12 +745,12 @@ private fun RoomNamePauseMapConfig(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp)
             ) {
-                Text("Add", fontSize = 11.sp)
+                Text("Add", fontSize = LocalEditorTheme.current.fontSize.value.body)
             }
         }
         customError?.let {
             Spacer(Modifier.height(4.dp))
-            Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+            Text(it, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -763,8 +762,8 @@ private fun RoomNameHeaderRow() {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)
     ) {
-        Text("Room ID", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(76.dp))
-        Text("Room name", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text("Room ID", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(76.dp))
+        Text("Room name", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(64.dp))
     }
 }
@@ -787,7 +786,7 @@ private fun RoomNameOverrideRow(
     ) {
         Text(
             roomIdText,
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(76.dp)
@@ -807,7 +806,7 @@ private fun RoomNameOverrideRow(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                     modifier = Modifier.height(26.dp)
                 ) {
-                    Text(resetLabel, fontSize = 10.sp)
+                    Text(resetLabel, fontSize = LocalEditorTheme.current.fontSize.value.detail)
                 }
             }
         }
@@ -824,7 +823,7 @@ private fun RoomNameTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
-        textStyle = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = TextStyle(fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         modifier = modifier
             .height(26.dp)
@@ -845,7 +844,7 @@ private fun RoomNameSmallField(
         onValueChange = onValueChange,
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurface,
             fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
         ),
@@ -899,13 +898,13 @@ private fun CeresEscapeTimeConfig(
     Column(modifier = modifier.padding(16.dp)) {
         Text(
             "Set Ceres station escape timer (seconds). Override applies when patch is enabled.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
         Text(
             "ROM default: ${romValue}s",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
@@ -925,7 +924,7 @@ private fun CeresEscapeTimeConfig(
                 },
                 textStyle = TextStyle(
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     fontFamily = FontFamily.Monospace
                 ),
                 singleLine = true,
@@ -945,7 +944,7 @@ private fun CeresEscapeTimeConfig(
                 }
             )
             Spacer(Modifier.width(8.dp))
-            Text("seconds (1–600)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("seconds (1–600)", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         // Contextual info/warnings
@@ -955,29 +954,29 @@ private fun CeresEscapeTimeConfig(
             when {
                 parsed < 15 -> Text(
                     "Warning: this timer may be impossible to escape in time",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.error
                 )
                 parsed == 15 -> Text(
                     "Kaizo Super Metroid timer (original)",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 parsed == 16 -> Text(
                     "Kaizo-possible — tightest feasible escape",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 parsed == 60 -> Text(
                     "Vanilla Super Metroid default",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             if (parsed > 600) {
                 Text(
                     "Maximum is 600 seconds",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.error
                 )
             }
@@ -1014,13 +1013,13 @@ private fun ZebesEscapeTimeConfig(
     Column(modifier = modifier.padding(16.dp)) {
         Text(
             "Set the Zebes escape countdown that starts after Mother Brain. Override applies when enabled.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
         Text(
             "ROM default: ${formatEscapeTime(romValue)} ($romValue seconds)",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
@@ -1040,7 +1039,7 @@ private fun ZebesEscapeTimeConfig(
                 },
                 textStyle = TextStyle(
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     fontFamily = FontFamily.Monospace
                 ),
                 singleLine = true,
@@ -1059,7 +1058,7 @@ private fun ZebesEscapeTimeConfig(
             Spacer(Modifier.width(8.dp))
             Text(
                 "seconds (1–5999)",
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -1074,13 +1073,13 @@ private fun ZebesEscapeTimeConfig(
                     } else {
                         "Countdown: ${formatEscapeTime(parsed)}"
                     },
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 Text(
                     "Enter 1–5999 seconds (up to 99:59)",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.error
                 )
             }
@@ -1118,13 +1117,13 @@ private fun ShortChargeConfig(
     Column(modifier = modifier.padding(16.dp)) {
         Text(
             "Choose how many Speed Booster charge stages must complete before Samus gains blue speed.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(6.dp))
         Text(
             "ROM default: $romStages stages. Vanilla uses 4; 0 activates blue speed as soon as Dash running begins.",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
@@ -1134,7 +1133,7 @@ private fun ShortChargeConfig(
                 FilterChip(
                     selected = stages == value,
                     onClick = { editorState.setPatchConfigValue(patch.id, value) },
-                    label = { Text(value.toString(), fontSize = 12.sp) },
+                    label = { Text(value.toString(), fontSize = LocalEditorTheme.current.fontSize.value.body) },
                 )
             }
         }
@@ -1146,13 +1145,13 @@ private fun ShortChargeConfig(
                 4 -> "Vanilla charge length (four stages)."
                 else -> "$stages charge stages before blue speed."
             },
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(6.dp))
         Text(
             "This changes the engine's charge-stage requirement; it does not automate the advanced tap timing technique.",
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
         )
     }
@@ -1170,13 +1169,13 @@ private fun ControllerConfigEditor(
     Column(modifier = modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
         Text(
             "Remap the default controller buttons. Changes apply to new saves and the options menu default.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(4.dp))
         Text(
             "ROM table: \$82:F575 (PC 0x017575) — 7 slots × 2 bytes",
-            fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail, fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
         )
         Spacer(Modifier.height(16.dp))
@@ -1192,7 +1191,7 @@ private fun ControllerConfigEditor(
             ) {
                 Text(
                     slot.name,
-                    fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Medium,
                     modifier = Modifier.width(100.dp)
                 )
                 Box {
@@ -1209,8 +1208,8 @@ private fun ControllerConfigEditor(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             val btnName = SNES_BUTTONS.find { it.bitmask == current }?.name ?: "0x${current.toString(16)}"
-                            Text(btnName, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("▼", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(btnName, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
+                            Text("▼", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -1218,9 +1217,9 @@ private fun ControllerConfigEditor(
                             DropdownMenuItem(
                                 text = {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(btn.name, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text(btn.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
                                         if (btn.bitmask == slot.defaultButton) {
-                                            Text("(default)", fontSize = 10.sp,
+                                            Text("(default)", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
@@ -1237,7 +1236,7 @@ private fun ControllerConfigEditor(
                 Spacer(Modifier.width(12.dp))
                 Text(
                     "default: $defaultName",
-                    fontSize = 10.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                 )
             }
@@ -1251,7 +1250,7 @@ private fun ControllerConfigEditor(
                 }
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-        ) { Text("Reset to Defaults", fontSize = 11.sp) }
+        ) { Text("Reset to Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body) }
     }
 }
 
@@ -1285,24 +1284,24 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
         if (viewMode == PatchWriteViewMode.HEX) {
             Text(
                 "Format: one record per line — OFFSET: BB BB BB ...  (hex values, offset is PC file address)",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 "Example: 8F625: 22    or    15962: 04    or    8267F: EA EA EA",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
             Text(
                 "Read-only 65816 disassembly generated from the current hex text. Addresses use headerless LoROM mapping.",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 "M/X immediate widths default to 16-bit and track REP/SEP inside each write record.",
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1317,13 +1316,13 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
             FilterChip(
                 selected = viewMode == PatchWriteViewMode.ASM,
                 onClick = { viewMode = PatchWriteViewMode.ASM },
-                label = { Text("ASM", fontSize = 11.sp) },
+                label = { Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.body) },
                 modifier = Modifier.height(32.dp)
             )
             FilterChip(
                 selected = viewMode == PatchWriteViewMode.HEX,
                 onClick = { viewMode = PatchWriteViewMode.HEX },
-                label = { Text("Hex", fontSize = 11.sp) },
+                label = { Text("Hex", fontSize = LocalEditorTheme.current.fontSize.value.body) },
                 modifier = Modifier.height(32.dp)
             )
 
@@ -1342,7 +1341,7 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
                     },
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                     modifier = Modifier.height(32.dp)
-                ) { Text("Apply Changes", fontSize = 12.sp) }
+                ) { Text("Apply Changes", fontSize = LocalEditorTheme.current.fontSize.value.body) }
 
                 Button(
                     onClick = { rawText = writesToText(patch.writes) },
@@ -1352,13 +1351,13 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
-                ) { Text("Revert", fontSize = 12.sp) }
+                ) { Text("Revert", fontSize = LocalEditorTheme.current.fontSize.value.body) }
             }
 
             if (parseError != null) {
                 Text(
                     parseError!!,
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.align(Alignment.CenterVertically)
                 )
@@ -1386,10 +1385,10 @@ private fun PatchHexEditor(patch: SmPatch, editorState: EditorState, modifier: M
                 },
                 readOnly = viewMode == PatchWriteViewMode.ASM,
                 textStyle = TextStyle(
-                    fontSize = 13.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     fontFamily = FontFamily.Monospace,
                     color = Color(0xFFCDD6F4),
-                    lineHeight = 20.sp
+                    lineHeight = LocalEditorTheme.current.fontSize.value.display,
                 ),
                 cursorBrush = SolidColor(Color(0xFFF5C2E7)),
                 modifier = Modifier

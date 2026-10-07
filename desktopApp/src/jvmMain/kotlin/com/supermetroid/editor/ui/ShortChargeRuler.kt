@@ -31,7 +31,6 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 /**
@@ -140,6 +139,9 @@ fun ShortChargeRuler(
     var offsetY by remember { mutableStateOf(0f) }
 
     val textMeasurer = rememberTextMeasurer()
+    val rulerFontSizes = LocalEditorTheme.current.fontSize.value
+    val rulerLabelFontSize = rulerFontSizes.statusBar
+    val selectedRulerLabelFontSize = rulerFontSizes.detail
 
     Canvas(
         modifier = modifier
@@ -175,7 +177,7 @@ fun ShortChargeRuler(
         val stutterSuffix = if (stutters > 0) "  ${stutters}s" else ""
         val titleResult = textMeasurer.measure(
             "Short Charge$stutterSuffix",
-            TextStyle(fontSize = 8.sp, color = Color(0xFFBBBBCC.toInt()))
+            TextStyle(fontSize = rulerLabelFontSize, color = Color(0xFFBBBBCC.toInt()))
         )
         drawText(titleResult, topLeft = Offset(3f, 2f))
 
@@ -197,7 +199,7 @@ fun ShortChargeRuler(
                 val label = tile.toString()
                 val textResult = textMeasurer.measure(
                     label,
-                    TextStyle(fontSize = 8.sp, color = Color(0xFF888899.toInt()))
+                    TextStyle(fontSize = rulerLabelFontSize, color = Color(0xFF888899.toInt()))
                 )
                 drawText(
                     textResult,
@@ -273,7 +275,7 @@ fun ShortChargeRuler(
             val textResult = textMeasurer.measure(
                 label,
                 TextStyle(
-                    fontSize = if (isSelected) 9.sp else 8.sp,
+                    fontSize = if (isSelected) selectedRulerLabelFontSize else rulerLabelFontSize,
                     color = color.copy(alpha = if (isSelected) 1f else 0.5f)
                 )
             )
@@ -297,7 +299,7 @@ fun StutterSelector(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Stutters:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Stutters:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (stutters in 0..3) {
             val color = ShortChargeData.colorForStutters[stutters] ?: Color.White
             val isSelected = stutters == selectedStutters
@@ -319,7 +321,7 @@ fun StutterSelector(
             ) {
                 Text(
                     "$stutters",
-                    fontSize = 9.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = if (isSelected) color else color.copy(alpha = 0.5f)
                 )
             }
@@ -341,7 +343,7 @@ fun TapSelector(
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text("Taps:", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Taps:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (taps in 0..4) {
             val color = ShortChargeData.colorForTaps[taps] ?: Color.White
             val isSelected = taps == selectedTaps
@@ -363,7 +365,7 @@ fun TapSelector(
             ) {
                 Text(
                     "$taps",
-                    fontSize = 9.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     color = if (isSelected) color else color.copy(alpha = 0.5f)
                 )
             }

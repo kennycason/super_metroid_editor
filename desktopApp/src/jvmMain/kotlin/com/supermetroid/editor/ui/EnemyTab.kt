@@ -19,7 +19,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.RomParser
 
 // Shared sub-tab state (survives recomposition across sidebar/canvas)
@@ -37,7 +36,7 @@ fun EnemyTabSidebar(
     Column(modifier = modifier.fillMaxSize().padding(8.dp)) {
         subTabs.forEachIndexed { idx, name ->
             Text(
-                name, fontSize = 12.sp,
+                name, fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = if (subTab == idx) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = if (subTab == idx) FontWeight.Bold else FontWeight.Normal,

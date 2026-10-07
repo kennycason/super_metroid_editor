@@ -51,6 +51,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 24 | **Enemy/Boss Top-Level Tabs** | ✅ Done | Promoted from Patches to dedicated tabs |
 | 25 | **TestRomHelper Migration** | ✅ Done | 73 test files, eliminated hardcoded ROM paths |
 | 26 | **New Room Creation Core** | ✅ Done | Blank/clone-current-state, stable project identity, native room/resource allocation, semantic project-room doors, state editing, and parser round trips |
+| 27 | **Project Room Lifecycle** | ✅ Done | Automatic vanilla-tile minimap footprints, collision-safe placement/moves, and guarded deletion of project-created rooms with dependency preview |
 
 ---
 
@@ -60,10 +61,10 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 1 | **New Room Creation Follow-ups** | Small-Medium | Core creation is done; add deletion/reference cleanup, automatic minimap tiles, templates, and generator output. |
+| 1 | **Room Runtime Inspector + Unified Problems** | Medium | Explain effective state/resources and consolidate actionable PLM/ASM/FX/scroll/door/save diagnostics without rejecting intentional topology. |
 | 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles. Per sub-tile palette/flip/BTS. Enables truly custom tilesets. |
 | 3 | **ROM Expansion** | Medium | Extend beyond the current safe allocation space without invalid mapper or pointer assumptions. |
-| 4 | **Room JSON Import** | Small | Export done; import should target native semantic rooms. |
+| 4 | **Room JSON Import / Generator Output** | Small-Medium | Import/export and generation should target native semantic project rooms; Clone current state remains the template workflow. |
 
 ### MEDIUM IMPACT
 

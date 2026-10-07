@@ -35,7 +35,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
@@ -163,11 +162,11 @@ fun BossStatsEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("Boss Stats Editor", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Boss Stats Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit HP and damage values for all major and mini-bosses. Changes apply on ROM export.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
@@ -187,7 +186,7 @@ fun BossStatsEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -213,13 +212,13 @@ private fun BossCard(
                 ) {
                     Text(
                         boss.abbrev,
-                        fontSize = 11.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
-                Text(boss.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(boss.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.height(8.dp))
 
@@ -227,10 +226,10 @@ private fun BossCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Stat", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Stat", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f))
-                Text("Value", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                Text("Value", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(72.dp), textAlign = TextAlign.Center)
             }
@@ -263,12 +262,12 @@ private fun StatRow(
     ) {
         Text(
             if (isHp) "\u2764 " else "\u2694 ",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             modifier = Modifier.width(20.dp)
         )
         Text(
             field.label,
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             modifier = Modifier.weight(1f),
             fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
             color = if (isModified) MaterialTheme.colorScheme.primary
@@ -295,7 +294,7 @@ private fun StatInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,

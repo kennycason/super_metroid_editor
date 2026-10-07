@@ -1,6 +1,9 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
+import com.supermetroid.editor.data.ProjectDoorDefinition
+import com.supermetroid.editor.rom.MinimapData
+import com.supermetroid.editor.rom.MinimapTiles
 import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
@@ -15,6 +18,102 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class NewRoomCreationTest {
+    @Test
+    fun `automatic minimap footprint uses vanilla outline tiles`() {
+        val tiles = automaticRoomMinimapTiles(width = 3, height = 2)
+
+        assertEquals(MinimapTiles.WALLS_TL, MinimapData.tileIndex(tiles[0][0]))
+        assertEquals(MinimapTiles.WALL_TOP, MinimapData.tileIndex(tiles[0][1]))
+        assertTrue(MinimapData.tileHFlip(tiles[0][2]))
+        assertEquals(MinimapTiles.WALLS_TL, MinimapData.tileIndex(tiles[1][0]))
+        assertTrue(MinimapData.tileVFlip(tiles[1][0]))
+        assertTrue(MinimapData.tileHFlip(tiles[1][2]))
+        assertTrue(MinimapData.tileVFlip(tiles[1][2]))
+        assertTrue(tiles.hasVisibleMinimapTile())
+    }
+
+    @Test
+    fun `project room map placement and guarded deletion are atomic`() {
+        val source = TestRomHelper.loadRomParser() ?: return
+        val editor = EditorState().also { it.testMode = true }
+        val area = 0
+        val areaRooms = source.roomCatalog.rooms.mapNotNull { info ->
+            source.readRoomHeader(info.getRoomIdAsInt())
+        }.filter { it.area == area }
+        val (mapX, mapY) = requireNotNull(
+            findAvailableRoomMapPosition(
+                effectiveMinimapData(source, editor.project, area),
+                effectiveMapStationData(source, editor.project, area),
+                areaRooms,
+                width = 2,
+                height = 2,
+                preferredX = 0,
+                preferredY = 0,
+            ),
+        )
+        val target = editor.createNewRoom(
+            NewRoomCreationRequest("Delete Me", false, area = area, mapX = mapX, mapY = mapY, width = 2, height = 2, tileset = 0),
+            source,
+        )
+        var workspace = editor.prepareWorkspaceParser(source)
+        val targetId = target.previewRoomId
+        val stampedMap = effectiveMinimapData(workspace, editor.project, area)
+        assertTrue(!isEmptyMinimapTile(stampedMap.getTile(mapX, mapY)))
+        assertFailsWith<IllegalArgumentException> {
+            editor.createNewRoom(
+                NewRoomCreationRequest("Overlap", false, area = area, mapX = mapX, mapY = mapY, width = 1, height = 1, tileset = 0),
+                workspace,
+            )
+        }
+
+        val sourcePosition = requireNotNull(
+            findAvailableRoomMapPosition(
+                effectiveMinimapData(workspace, editor.project, area),
+                effectiveMapStationData(workspace, editor.project, area),
+                workspace.roomCatalog.rooms.mapNotNull { workspace.readRoomHeader(it.getRoomIdAsInt()) }
+                    .filter { it.area == area },
+                width = 1,
+                height = 1,
+                preferredX = mapX + 3,
+                preferredY = mapY,
+            ),
+        )
+        val referring = editor.createNewRoom(
+            NewRoomCreationRequest(
+                "Referring Room", false, area = area,
+                mapX = sourcePosition.first, mapY = sourcePosition.second,
+                width = 1, height = 1, tileset = 0,
+            ),
+            workspace,
+        )
+        workspace = editor.prepareWorkspaceParser()
+        referring.doors += ProjectDoorDefinition(
+            destination = editor.project.newRoomDestination(target.id),
+            bitflag = 1 shl 8,
+            doorCapCode = 0,
+            screenX = 0,
+            screenY = 0,
+            distFromDoor = 0x8000,
+            entryCode = 0,
+        )
+        val blocked = requireNotNull(editor.previewProjectRoomDeletion(targetId, workspace))
+        assertFalse(blocked.canDelete)
+        assertTrue(blocked.blockers.any { it.kind == "Door" })
+        assertFailsWith<IllegalArgumentException> { editor.deleteProjectRoom(targetId, workspace) }
+
+        referring.doors.clear()
+        val safe = requireNotNull(editor.previewProjectRoomDeletion(targetId, workspace))
+        assertTrue(safe.canDelete)
+        editor.deleteProjectRoom(targetId, workspace)
+
+        assertTrue(editor.project.newRooms.none { it.id == target.id })
+        val clearedMap = effectiveMinimapData(workspace, editor.project, area)
+        for (y in mapY until mapY + 2) for (x in mapX until mapX + 2) {
+            assertTrue(isEmptyMinimapTile(clearedMap.getTile(x, y)))
+        }
+        assertEquals(null, editor.previewProjectRoomDeletion(0x91F8, workspace))
+    }
+
     @Test
     fun `incoming-door state conditions resolve workspace DoorDefs at build time`() {
         val source = TestRomHelper.loadRomParser() ?: return
@@ -86,13 +185,26 @@ class NewRoomCreationTest {
     fun `blank room becomes immediately editable in the isolated workspace`() {
         val source = TestRomHelper.loadRomParser() ?: return
         val editor = EditorState().also { it.testMode = true }
+        val area = 1
+        val (mapX, mapY) = requireNotNull(
+            findAvailableRoomMapPosition(
+                effectiveMinimapData(source, editor.project, area),
+                effectiveMapStationData(source, editor.project, area),
+                source.roomCatalog.rooms.mapNotNull { source.readRoomHeader(it.getRoomIdAsInt()) }
+                    .filter { it.area == area },
+                width = 2,
+                height = 1,
+                preferredX = 10,
+                preferredY = 6,
+            ),
+        )
         val definition = editor.createNewRoom(
             NewRoomCreationRequest(
                 name = "Test Chamber",
                 cloneCurrentRoom = false,
-                area = 1,
-                mapX = 10,
-                mapY = 6,
+                area = area,
+                mapX = mapX,
+                mapY = mapY,
                 width = 2,
                 height = 1,
                 tileset = 5,

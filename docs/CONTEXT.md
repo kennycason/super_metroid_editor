@@ -277,8 +277,9 @@ occupying those coordinates in any branch. `ELSE Default` is a fallback conditio
 base content. Relinking for other non-layout resources,
 persistent-state action authoring, and separate-background/custom-code
 authoring remain separate future features. Core project-owned room
-creation is implemented; deletion, automatic minimap tiles, templates, and generator output remain
-follow-ups documented in `docs/project/room_model.md`.
+creation, automatic pause-map footprints, and guarded project-room deletion are implemented.
+Generator output and semantic room import remain follow-ups documented in
+`docs/project/room_model.md`; a separate template library is deferred in favor of Clone current state.
 
 ---
 

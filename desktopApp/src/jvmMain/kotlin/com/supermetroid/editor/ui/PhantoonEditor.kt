@@ -216,7 +216,7 @@ fun PhantoonEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -273,7 +273,7 @@ private fun PhantoonHeader() {
             Column {
                 Text(
                     "PHANTOON",
-                    fontSize = 20.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.display,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFFCE93D8),
                     letterSpacing = 2.sp
@@ -281,7 +281,7 @@ private fun PhantoonHeader() {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Advanced Behavior Editor",
-                    fontSize = 13.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFFB39DDB)
                 )
@@ -290,9 +290,9 @@ private fun PhantoonHeader() {
                     "Edit AI timers, movement parameters, and flame rain behavior. " +
                     "All values are data-table writes — no ASM patches required. " +
                     "HP and damage are in the Boss Stats patch.",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = Color(0xFF9E9E9E),
-                    lineHeight = 16.sp
+                    lineHeight = LocalEditorTheme.current.fontSize.value.heading
                 )
             }
         }
@@ -324,21 +324,21 @@ private fun PhantoonSectionCard(
             ) {
                 Text(
                     if (expanded) "\u25BC " else "\u25B6 ",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = section.color,
                     modifier = Modifier.width(16.dp)
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         section.title,
-                        fontSize = 13.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     if (!expanded) {
                         Text(
                             "${section.fields.size} fields",
-                            fontSize = 10.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -349,9 +349,9 @@ private fun PhantoonSectionCard(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     section.description,
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 15.sp
+                    lineHeight = LocalEditorTheme.current.fontSize.value.heading
                 )
                 Spacer(Modifier.height(8.dp))
 
@@ -360,10 +360,10 @@ private fun PhantoonSectionCard(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Field", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                    Text("Field", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f))
-                    Text("Value", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+                    Text("Value", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(80.dp), textAlign = TextAlign.Center)
                     Text("", modifier = Modifier.width(72.dp))
@@ -404,14 +404,14 @@ private fun PhantoonFieldRow(
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Text(
                 field.label,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
                 color = if (isModified) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurface
             )
             Text(
                 field.metadataText(),
-                fontSize = 9.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -440,7 +440,7 @@ private fun PhantoonFieldRow(
         }
         Text(
             annotation,
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(72.dp).padding(start = 8.dp),
             textAlign = TextAlign.Start
@@ -469,7 +469,7 @@ private fun PhantoonIntInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading, fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center
         ),
@@ -508,7 +508,7 @@ private fun PhantoonSignedInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading, fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center
         ),
@@ -538,7 +538,7 @@ private fun PhantoonHexInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading, fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center
         ),
@@ -551,7 +551,7 @@ private fun PhantoonHexInput(
                     .padding(horizontal = 6.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("$", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Text("$", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace)
                 inner()
             }

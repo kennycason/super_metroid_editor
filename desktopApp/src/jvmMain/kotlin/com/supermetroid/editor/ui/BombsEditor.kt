@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 import kotlin.math.max
@@ -174,11 +173,11 @@ fun BombsEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
     ) {
-        Text("Bombs", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Bombs", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Controls normal bomb count and timing. Super Metroid has five bomb projectile slots; the stock three-bomb feel comes from fuse length plus bomb cooldown.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
@@ -190,7 +189,7 @@ fun BombsEditor(
             border = BorderStroke(1.dp, Color(0xFF00BCD4).copy(alpha = 0.2f)),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text("Normal Bombs", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF00838F))
+                Text("Normal Bombs", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = Color(0xFF00838F))
                 Spacer(Modifier.height(8.dp))
 
                 BombChoiceRow(
@@ -244,7 +243,7 @@ fun BombsEditor(
         Text(
             "ROM defaults: ${romDefaults.maxActiveBombs} active, ${romDefaults.fuseFrames} fuse frames, " +
                 "${romDefaults.cooldownFrames} cooldown frames, ${romDefaults.explosionFrameDelay} explosion frame delay.",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(4.dp))
@@ -254,7 +253,7 @@ fun BombsEditor(
             } else {
                 "Current timing reaches about $reachableBombs bombs before the oldest one explodes. Lower lay cooldown or raise fuse to reach $maxActive."
             },
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
@@ -267,7 +266,7 @@ fun BombsEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text("Reset to ROM Defaults", fontSize = 12.sp)
+            Text("Reset to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -285,8 +284,8 @@ private fun BombChoiceRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Text(description, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Medium)
+            Text(description, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row {
             for (option in options) {
@@ -313,7 +312,7 @@ private fun BombChoiceRow(
                         Spacer(Modifier.height(5.dp))
                         Text(
                             option.toString(),
-                            fontSize = 11.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.body,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                             color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center,
@@ -339,14 +338,14 @@ private fun BombConfigRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Text(description, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Medium)
+            Text(description, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         BombNumberInput(value, range, onChange, Modifier.width(88.dp))
         Spacer(Modifier.width(8.dp))
         Text(
             suffix,
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(44.dp),
             textAlign = TextAlign.Left,
@@ -372,7 +371,7 @@ private fun BombNumberInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,

@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-09-26
+**Last updated:** 2026-10-07
 
 ---
 
@@ -33,6 +33,7 @@
 - Space Utilization Monitor — Per-section byte counts in Room Info
 - Auto-Repointing Engine — Level data, PLMs, scroll data, door ASM auto-relocate
 - Save Station Spawn Editing — Auto-derived AreaSave overrides, manual X/Y/scroll editing, export to existing slots
+- Project Room Lifecycle — New rooms receive visible pause-map tiles; moving a tileless room creates them; deletion is limited to project-created rooms and previews/blocks external door, save, state-condition, and FX references
 
 ### Text & Data
 - In-Game Text Editor — Intro story (6 parts), area names (7), escape messages (2), UI messages (9), item pickup names (19)
@@ -47,6 +48,7 @@
 - Minimap Room Move — Buffer-based with Apply/Cancel
 - Minimap Area/Transform Hardening — Shared safe area reassignment, context actions, station-reveal migration, exact flip/rotation UX, and coherent undo/redo
 - Transactional ROM write planner — desktop/headless byte ownership, overlap and bounds failures, base-ROM hashes, expected-hook bytes, full allocation claims, runtime-resource declarations, and ownership reports
+- Scalable editor typography — Material control defaults plus Patch, Enemy, and Boss tuning surfaces use the global semantic font-size presets
 
 ---
 
@@ -56,9 +58,9 @@
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 1 | **New Room Creation follow-ups** | Small-Medium | Core blank/clone allocation and semantic project-room doors are done. Add deletion, automatic minimap tiles, templates, and generator output. |
+| 1 | **Room Runtime Inspector + Unified Problems** | Medium | Explain the effective state, resources, PLMs, ASM, FX, scrolls, doors, and saves for the selected room in one inspectable runtime view; aggregate actionable warnings without treating intentional one-way/orphan topology as an error. |
 | 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
-| 3 | **Room JSON Import** | Small | Export done; import should create semantic rooms rather than address-keyed legacy deltas. |
+| 3 | **Room JSON Import** | Small | Export done; import should create semantic project-owned rooms rather than address-keyed legacy deltas. This is also the foundation for importing rooms from other hacks into expanded ROM space. |
 | 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
 | 5 | **SMART XML Interop** | Medium | Translate supported SMART project data into the native stateful model without making SMART XML an internal save format. |
 
@@ -69,9 +71,9 @@
 | 6 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
 | 7 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
 | 8 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
-| 9 | **Validation Suite** | Medium | PLM index scanner, door validator, item bitflag checker, GFX limit warnings. |
+| 9 | **Generated Room Output** | Medium | Send biome/generator results into the same project-owned-room lifecycle. Dedicated static templates are deferred because Clone current state already covers the immediate workflow. |
 | 10 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
-| 11 | **Room Graph Discovery** | Small | Trace door connections from save stations, find orphaned/disconnected rooms. |
+| 11 | **Optional World Graph Viewer** | Small | Visualize and navigate door/save topology without requiring reciprocity or treating intentional disconnected hack content as invalid. |
 
 ### Tier 3: Backlog
 

@@ -79,7 +79,7 @@ Sound
 
 - **Room Editor** — Paint, fill, erase, and sample tiles with multi-tile brush support. Right-click any block to edit block type and BTS properties. Undo/redo with full history.
 - **Stateful Room Editor** — Inspect and author ordered `IF` / `ELSE IF` / `ELSE` room versions; edit state-scoped layouts, objects, enemies, scrolls, music, tilesets, and FX; build compound conditions; simulate first-match selection; and safely relocate/export changed state graphs.
-- **New Room Creation** — Create a blank room or clone the currently visible room state, edit it immediately, add named door connections without entering ROM pointers, and export a complete native room graph.
+- **Project-Owned Rooms** — Create a blank room or clone the currently visible room state, receive pause-map tiles automatically, edit it immediately, add named door connections without entering ROM pointers, preview safe deletion, and export a complete native room graph.
 - **PLM Placement** — Place and remove doors, gates, items, save stations, refill stations, and other PLMs with correct IDs and parameters.
 - **Enemy Editor** — View, place, and edit enemy positions and properties per room.
 - **Tileset Browser** — Browse all 29 tilesets with palette visualization and per-tile defaults.
@@ -345,7 +345,8 @@ See [docs/project/plan.md](docs/project/plan.md) for the full roadmap, including
 See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
 
 Planned:
-- New-room deletion, minimap automation, reusable templates, and broader world-graph tooling
+- Room Runtime Inspector and a unified Problems panel for state, PLM, ASM, FX, scroll, door, and save diagnostics
+- Semantic room import and generator output into project-owned rooms
 - Tileset/metatile composition and richer custom tileset workflows
 - Room JSON import and one-way SMART XML → native SMEDIT translation
 - Managed ROM expansion and a shared ownership-aware allocator

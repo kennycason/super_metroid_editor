@@ -153,7 +153,15 @@ class MinimapEditorState {
 
     private fun liftRoom(room: Room, targetX: Int = room.mapX, targetY: Int = room.mapY) {
         val ownershipMask = roomMapOwnershipMask(room, areaRooms)
-        val saved = extractRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height, ownershipMask)
+        val extracted = extractRoomTiles(mapData, room.mapX, room.mapY, room.width, room.height, ownershipMask)
+        // Old hacks and newly imported rooms can have a header rectangle but no
+        // pause-map art. Moving one should make it visible instead of carrying
+        // an invisible footprint to the new location.
+        val saved = if (extracted.hasVisibleMinimapTile()) {
+            extracted
+        } else {
+            automaticRoomMinimapTiles(room.width, room.height)
+        }
         val savedReveal = extractMapStationRect(
             stationData,
             room.mapX,

@@ -34,7 +34,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 
@@ -117,11 +116,11 @@ fun FanfareEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp),
     ) {
-        Text("Fanfares", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Fanfares", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Controls item fanfare lockout timing. Export writes the same frame count to the item message-box wait and the room-music resume delay.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
@@ -133,17 +132,17 @@ fun FanfareEditor(
             border = BorderStroke(1.dp, Color(0xFF7CB342).copy(alpha = 0.22f)),
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text("Item Fanfares", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF558B2F))
+                Text("Item Fanfares", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = Color(0xFF558B2F))
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp, horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Fanfare Frames", fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("Fanfare Frames", fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Medium)
                         Text(
                             "Frames before the item box can close and room music resumes. Vanilla is 360.",
-                            fontSize = 9.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -151,7 +150,7 @@ fun FanfareEditor(
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "frames",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(44.dp),
                         textAlign = TextAlign.Left,
@@ -173,13 +172,13 @@ fun FanfareEditor(
         Text(
             "ROM defaults: ${romDefaults.itemFanfareFrames} item-box frames, " +
                 "${romDefaults.roomMusicResumeFrames} room-music resume frames.",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(4.dp))
         Text(
             "MapRandomizer uses 240 for Trimmed and 16 for its item-sound mode. This patch keeps vanilla fanfare behavior and changes the timing.",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
@@ -187,7 +186,7 @@ fun FanfareEditor(
             onClick = { apply(romDefaults.itemFanfareFrames) },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text("Reset to ROM Default", fontSize = 12.sp)
+            Text("Reset to ROM Default", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -205,7 +204,7 @@ private fun FanfarePresetButton(
     ) {
         Text(
             "$label $value",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontWeight = if (value == currentValue) FontWeight.Bold else FontWeight.Normal,
         )
     }
@@ -228,7 +227,7 @@ private fun FanfareNumberInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,

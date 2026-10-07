@@ -36,7 +36,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 @Composable
@@ -90,7 +89,7 @@ fun BossBehaviorEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -106,23 +105,23 @@ private fun BossBehaviorHeader(definition: BossBehaviorDefinition) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 definition.title,
-                fontSize = 20.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.display,
                 fontWeight = FontWeight.Bold,
                 color = definition.headerColor.copy(red = (definition.headerColor.red + 0.35f).coerceAtMost(1f)),
             )
             Spacer(Modifier.height(4.dp))
             Text(
                 definition.subtitle,
-                fontSize = 13.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.heading,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 definition.description,
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 16.sp,
+                lineHeight = LocalEditorTheme.current.fontSize.value.heading,
             )
         }
     }
@@ -151,21 +150,21 @@ private fun BossBehaviorSectionCard(
             ) {
                 Text(
                     if (expanded) "\u25BC " else "\u25B6 ",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = section.color,
                     modifier = Modifier.width(16.dp),
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         section.title,
-                        fontSize = 13.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.heading,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     if (!expanded) {
                         Text(
                             "${section.fields.size} fields",
-                            fontSize = 10.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -176,9 +175,9 @@ private fun BossBehaviorSectionCard(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     section.description,
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 15.sp,
+                    lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                 )
                 Spacer(Modifier.height(8.dp))
 
@@ -188,14 +187,14 @@ private fun BossBehaviorSectionCard(
                 ) {
                     Text(
                         "Field",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
                     Text(
                         "Value",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.width(80.dp),
@@ -237,13 +236,13 @@ private fun BossBehaviorFieldRow(
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Text(
                 field.label,
-                fontSize = 12.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
                 color = if (isModified) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 field.metadataText(),
-                fontSize = 9.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -270,7 +269,7 @@ private fun BossBehaviorFieldRow(
         }
         Text(
             annotation,
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(72.dp).padding(start = 8.dp),
             textAlign = TextAlign.Start,
@@ -297,7 +296,7 @@ private fun BossBehaviorIntInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -338,7 +337,7 @@ private fun BossBehaviorSignedInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -370,7 +369,7 @@ private fun BossBehaviorHexInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -387,7 +386,7 @@ private fun BossBehaviorHexInput(
             ) {
                 Text(
                     "$",
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )

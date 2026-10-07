@@ -23,8 +23,8 @@ transactional export, validation, and semantic reopening.
 The following are intentionally separate future features rather than incomplete parts of this
 milestone: explicit relinking controls for non-layout resources, actions that mutate persistent
 state during gameplay, separate-background authoring, opaque/custom room-code authoring,
-whole-room deletion, template libraries, and generator-to-new-room output. Core project-owned room
-creation is implemented as the next layer on this same model.
+generator-to-new-room output, and cross-project room import. Core project-owned room creation,
+automatic pause-map ownership, and guarded deletion are implemented as the next layer on this model.
 
 ## Verified Runtime Model
 
@@ -256,9 +256,24 @@ and the room header/default state, PLMs, scrolls, and door list in `$8F`. The ma
 reopened through `RomParser` in tests. Normal room deltas and relocatable multi-state authoring are
 then applied to the allocated room through the same exporter used for existing rooms.
 
-Current follow-ups are whole-room deletion/reference cleanup, automatic minimap-tile drawing,
-rebuildable template libraries, generator output into a new room, existing-ROM-room door-list
-growth/removal, and managed ROM expansion when verified free space is exhausted.
+Creation also owns the room's pause-map footprint. Blank rooms receive an enclosed rectangle made
+from vanilla minimap tiles; clones copy the source footprint when it exists and otherwise receive
+the same generated outline. A requested footprint must be clear of room rectangles, map art, and
+Map Station reveal data. Moving an older room with no visible map tiles generates an outline at its
+new location rather than preserving an invisible map entry.
+
+Whole-room deletion is intentionally narrower than room-state deletion. Only project-created rooms
+can be deleted; core ROM rooms remain editable in place. Before deletion, SMEDIT previews the room,
+map footprint, outgoing doors, authored states, placed objects/enemies, and save overrides that will
+be removed. It refuses the operation while another room door, AreaSave override, incoming-door
+condition, or door-specific FX entry references the room or one of its DoorDefs. SMEDIT never
+cascades those changes silently. Intentional one-way doors and unrelated orphan rooms remain valid
+warning-level topology rather than deletion blockers.
+
+Current follow-ups are generator output into a new room, semantic room import, existing-ROM-room
+door-list growth/removal, and managed ROM expansion when verified free space is exhausted. A
+separate static template library is deferred because Clone current state already supplies the
+practical template workflow.
 
 ## Project Schema During Beta
 
@@ -332,15 +347,16 @@ This is a resource-ownership distinction in one model, not old-versus-new storag
 - Canonical expression decoding, semantic evaluation, real-ROM graph round trips, and an
   instruction-level 65816 interpreter matrix are unit tested.
 
-### 4. New rooms — core creation complete
+### 4. New rooms — lifecycle complete
 
-- Blank and clone-current-state entry points are implemented; templates and generator output remain.
+- Blank and clone-current-state entry points, automatic minimap tiles, occupied-footprint checks,
+  and guarded project-room deletion are implemented; generator/import output remains.
 - Stable project identity, isolated workspace materialization, schema round trip, and physical
   room/door/state/resource allocation are implemented.
 - Project-room door-list add/remove, semantic destinations, forward/cyclic resolution, BTS-safe
   removal, and existing reciprocal diagnostics are implemented.
-- Header map coordinates are authored at creation. Automatic minimap-tile drawing and whole-world
-  route/orphan validation remain separate follow-ups.
+- Header map coordinates and pause-map ownership are authored together. World-route/orphan
+  discovery remains optional tooling; intentional one-way and disconnected hack content is not an error.
 
 The prerequisite existing-door UX is now implemented: semantic room/entrance selection, bounded
 screen coordinates, project-aware connection diagnostics, and non-destructive reciprocal/facing

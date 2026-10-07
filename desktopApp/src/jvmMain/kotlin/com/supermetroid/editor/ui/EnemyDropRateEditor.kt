@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
@@ -127,11 +126,11 @@ fun EnemyDropRateEditor(
             .widthIn(min = 540.dp)
             .padding(20.dp)
     ) {
-        Text("Enemy Drop Rate Editor", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Enemy Drop Rate Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit item drop probabilities for each enemy. Values are weights (0-255) that should sum to ~255.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
@@ -155,7 +154,7 @@ fun EnemyDropRateEditor(
             },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
         ) {
-            Text("Reset All to ROM Defaults", fontSize = 12.sp)
+            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -186,7 +185,7 @@ private fun DropCategorySection(
         border = BorderStroke(1.dp, catColor.copy(alpha = 0.2f))
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(category, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = catColor)
+            Text(category, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = catColor)
             Spacer(Modifier.height(6.dp))
 
             // Header row
@@ -194,15 +193,15 @@ private fun DropCategorySection(
                 modifier = Modifier.padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Enemy", fontSize = 9.sp, fontWeight = FontWeight.Medium,
+                Text("Enemy", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(220.dp))
                 for (slot in DROP_SLOTS) {
-                    Text(slot.shortLabel, fontSize = 8.sp, fontWeight = FontWeight.Medium,
+                    Text(slot.shortLabel, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, fontWeight = FontWeight.Medium,
                         color = slot.color,
                         modifier = Modifier.width(42.dp), textAlign = TextAlign.Center)
                 }
-                Text("Sum", fontSize = 8.sp, fontWeight = FontWeight.Medium,
+                Text("Sum", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.width(36.dp), textAlign = TextAlign.Center)
             }
@@ -232,7 +231,7 @@ private fun DropRow(
     ) {
         Text(
             enemy.name,
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             modifier = Modifier.width(220.dp),
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -242,7 +241,7 @@ private fun DropRow(
         }
         Text(
             sum.toString(),
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = if (sumOk) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFFF5722),
@@ -268,7 +267,7 @@ private fun DropInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,

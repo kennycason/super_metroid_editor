@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 
@@ -125,11 +124,11 @@ fun BeamDamageEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("Beam Damage Override", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Beam Damage Override", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit base and combined beam damages. Charged shots deal 3\u00D7 damage. Changes apply when patch is enabled.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(20.dp))
@@ -178,7 +177,7 @@ fun BeamDamageEditor(
                 },
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
             ) {
-                Text("Reset to Vanilla", fontSize = 12.sp)
+                Text("Reset to Vanilla", fontSize = LocalEditorTheme.current.fontSize.value.body)
             }
         }
     }
@@ -190,7 +189,7 @@ fun BeamDamageEditor(
 private fun SectionLabel(text: String) {
     Text(
         text,
-        fontSize = 13.sp,
+        fontSize = LocalEditorTheme.current.fontSize.value.heading,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.primary
     )
@@ -205,13 +204,13 @@ private fun HeaderRow() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(Modifier.width(30.dp))
-        Text("Beam", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Beam", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f))
-        Text("Dmg", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Dmg", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(60.dp), textAlign = TextAlign.Center)
-        Text("Charged", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Charged", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(56.dp), textAlign = TextAlign.Center)
     }
@@ -224,13 +223,13 @@ private fun ComboHeaderRow() {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Spacer(Modifier.width(56.dp))
-        Text("Combination", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Combination", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f))
-        Text("Dmg", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Dmg", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(60.dp), textAlign = TextAlign.Center)
-        Text("Charged", fontSize = 10.sp, fontWeight = FontWeight.Medium,
+        Text("Charged", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(56.dp), textAlign = TextAlign.Center)
     }
@@ -256,7 +255,7 @@ private fun BaseBeamRow(
         ) {
             BeamIcon(beam.color, beam.abbrev)
             Spacer(Modifier.width(8.dp))
-            Text(beam.name, fontSize = 12.sp, modifier = Modifier.weight(1f),
+            Text(beam.name, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f),
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal)
             DamageInput(damage, onDamageChange, Modifier.width(60.dp))
             Spacer(Modifier.width(4.dp))
@@ -285,7 +284,7 @@ private fun ComboBeamRow(
         ) {
             ComboPips(combo.components)
             Spacer(Modifier.width(8.dp))
-            Text(combo.name, fontSize = 12.sp, modifier = Modifier.weight(1f),
+            Text(combo.name, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f),
                 fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal)
             DamageInput(damage, onDamageChange, Modifier.width(60.dp))
             Spacer(Modifier.width(4.dp))
@@ -307,7 +306,7 @@ private fun BeamIcon(color: Color, letter: String) {
     ) {
         Text(
             letter,
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1A1A2E),
             textAlign = TextAlign.Center
@@ -353,7 +352,7 @@ private fun DamageInput(
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface,
@@ -373,7 +372,7 @@ private fun DamageInput(
 private fun ChargedLabel(chargedDamage: Int) {
     Text(
         chargedDamage.toString(),
-        fontSize = 12.sp,
+        fontSize = LocalEditorTheme.current.fontSize.value.body,
         fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,

@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, completed state authoring, core project-owned room creation, and visual scroll-trigger editing. Important remaining architecture work includes new-room deletion/templates/minimap automation, tileset composition, and managed ROM expansion. Layout sharing/relinking is implemented; equivalent controls for non-layout state resources and typed state-triggered actions are optional future extensions, not blockers for state editing.
+SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embedding, an auto-repointing engine, completed state authoring, project-owned room creation/deletion with automatic minimap ownership, and visual scroll-trigger editing. Important remaining architecture work includes semantic room import/generator output, tileset composition, and managed ROM expansion. Layout sharing/relinking is implemented; equivalent controls for non-layout state resources and typed state-triggered actions are optional future extensions, not blockers for state editing.
 
 ---
 

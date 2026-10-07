@@ -36,7 +36,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
@@ -102,11 +101,11 @@ fun EnvironmentalDamageEditor(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Environmental Damage", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Environmental Damage", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "Base energy drained each second. Set a rate to 0 to keep the effect but remove its damage.",
-                    fontSize = 12.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -120,7 +119,7 @@ fun EnvironmentalDamageEditor(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp),
             ) {
-                Text("Vanilla", fontSize = 11.sp)
+                Text("Vanilla", fontSize = LocalEditorTheme.current.fontSize.value.body)
             }
         }
 
@@ -151,7 +150,7 @@ fun EnvironmentalDamageEditor(
         Spacer(Modifier.height(10.dp))
         Text(
             "Rates are accumulated every frame, so low values still drain smoothly.",
-            fontSize = 11.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
         )
     }
@@ -172,12 +171,12 @@ private fun EnvironmentalDamageRateRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(label, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold)
                 if (value == vanillaValue) {
                     Spacer(Modifier.width(7.dp))
                     Text(
                         "VANILLA",
-                        fontSize = 8.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -185,7 +184,7 @@ private fun EnvironmentalDamageRateRow(
             }
             Text(
                 suitBehavior,
-                fontSize = 11.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -199,7 +198,7 @@ private fun EnvironmentalDamageRateRow(
         }
         Text(
             "energy/sec",
-            fontSize = 10.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(60.dp),
         )
@@ -218,7 +217,7 @@ private fun DamageRateInput(value: Int, onChange: (Int) -> Unit) {
         },
         singleLine = true,
         textStyle = TextStyle(
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         ),
@@ -250,6 +249,6 @@ private fun DamageStepButton(label: String, enabled: Boolean, onClick: () -> Uni
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
     ) {
-        Text(label, fontSize = 14.sp)
+        Text(label, fontSize = LocalEditorTheme.current.fontSize.value.heading)
     }
 }

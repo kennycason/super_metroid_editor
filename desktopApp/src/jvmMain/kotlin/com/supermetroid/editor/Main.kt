@@ -105,6 +105,7 @@ import com.supermetroid.editor.ui.TilesetEditorState
 import com.supermetroid.editor.ui.TilesTabSidebar
 import com.supermetroid.editor.ui.ValidationPopup
 import com.supermetroid.editor.ui.blockTypeName
+import com.supermetroid.editor.ui.materialTypography
 import com.supermetroid.editor.ui.oneBasedRoomCoordinate
 import com.supermetroid.editor.ui.roomScreenCoordinateForBlock
 import com.supermetroid.editor.ui.requestVerticalSelectionFocus
@@ -272,7 +273,10 @@ fun main() = application {
             LocalSwingWindow provides window,
             LocalEditorTheme provides editorThemeState
         ) {
-        MaterialTheme(colorScheme = editorThemeState.theme.value.colorScheme) {
+        MaterialTheme(
+            colorScheme = editorThemeState.theme.value.colorScheme,
+            typography = editorThemeState.fontSize.value.materialTypography(),
+        ) {
             var emulatorEnabled by remember { mutableStateOf(false) }
             val emulatorWorkspaceState = remember { EmulatorWorkspaceState() }
             var settingsOpen by remember { mutableStateOf(false) }
@@ -722,6 +726,18 @@ fun main() = application {
                                                     romParser = workspace
                                                     rooms = workspace.roomCatalog.rooms
                                                     selectedRoom = editorState.projectRoomInfos().first { it.handle == created.handle }
+                                                }.exceptionOrNull()?.message
+                                            },
+                                            onDeleteRoom = { roomId ->
+                                                runCatching {
+                                                    val parser = checkNotNull(romParser) { "Open a ROM first" }
+                                                    val oldIndex = rooms.indexOfFirst { it.getRoomIdAsInt() == roomId }
+                                                    editorState.deleteProjectRoom(roomId, parser)
+                                                    val workspace = editorState.prepareWorkspaceParser()
+                                                    romParser = workspace
+                                                    rooms = workspace.roomCatalog.rooms
+                                                    selectedRoom = rooms.getOrNull(oldIndex.coerceAtMost(rooms.lastIndex))
+                                                        ?: rooms.firstOrNull()
                                                 }.exceptionOrNull()?.message
                                             },
                                             onWorkspaceChanged = {

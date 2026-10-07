@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.SmPatch
 
 @Composable
@@ -40,12 +39,12 @@ fun BossDefeatedEditor(
     Column(
         modifier = modifier.fillMaxSize().padding(20.dp)
     ) {
-        Text("Boss Defeated Flags", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Boss Defeated Flags", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
             "Mark bosses as already defeated. Rooms load in their post-boss state. " +
             "All four main bosses (Kraid, Phantoon, Ridley, Draygon) must be defeated to unlock Tourian.",
-            fontSize = 12.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
@@ -56,7 +55,7 @@ fun BossDefeatedEditor(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Main Bosses (required for Tourian)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                Text("Main Bosses (required for Tourian)", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFFF5722))
                 Spacer(Modifier.height(8.dp))
 
@@ -65,7 +64,7 @@ fun BossDefeatedEditor(
                 }
 
                 Spacer(Modifier.height(16.dp))
-                Text("Mini-Bosses", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                Text("Mini-Bosses", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF4CAF50))
                 Spacer(Modifier.height(8.dp))
 
@@ -83,7 +82,7 @@ fun BossDefeatedEditor(
                             }
                         },
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                    ) { Text("Defeat All", fontSize = 12.sp) }
+                    ) { Text("Defeat All", fontSize = LocalEditorTheme.current.fontSize.value.body) }
 
                     OutlinedButton(
                         onClick = {
@@ -92,7 +91,7 @@ fun BossDefeatedEditor(
                             }
                         },
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                    ) { Text("Clear All", fontSize = 12.sp) }
+                    ) { Text("Clear All", fontSize = LocalEditorTheme.current.fontSize.value.body) }
                 }
             }
         }
@@ -126,7 +125,7 @@ private fun BossCheckRow(
         Spacer(Modifier.width(8.dp))
         Text(
             flag.name,
-            fontSize = 13.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontWeight = if (checked) FontWeight.Medium else FontWeight.Normal,
             color = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
         )

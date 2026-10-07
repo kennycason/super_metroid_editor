@@ -1,11 +1,13 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 
@@ -98,6 +100,31 @@ enum class FontSize(
     MEDIUM("Medium", tabLabel = 11.sp, body = 12.sp, detail = 10.sp, heading = 14.sp, display = 20.sp, statusBar = 9.sp),
     LARGE("Large", tabLabel = 13.sp, body = 14.sp, detail = 12.sp, heading = 16.sp, display = 24.sp, statusBar = 11.sp),
     LARGER("Larger", tabLabel = 15.sp, body = 16.sp, detail = 14.sp, heading = 19.sp, display = 28.sp, statusBar = 13.sp);
+}
+
+/** Material defaults for controls that do not specify one of SMEDIT's semantic sizes explicitly. */
+fun FontSize.materialTypography(): Typography {
+    val base = Typography()
+    fun TextStyle.at(size: TextUnit, lineHeightScale: Float = 1.3f): TextStyle =
+        copy(fontSize = size, lineHeight = size * lineHeightScale)
+
+    return base.copy(
+        displayLarge = base.displayLarge.at(display, 1.2f),
+        displayMedium = base.displayMedium.at(display, 1.2f),
+        displaySmall = base.displaySmall.at(display, 1.2f),
+        headlineLarge = base.headlineLarge.at(display, 1.2f),
+        headlineMedium = base.headlineMedium.at(heading),
+        headlineSmall = base.headlineSmall.at(heading),
+        titleLarge = base.titleLarge.at(display, 1.2f),
+        titleMedium = base.titleMedium.at(heading),
+        titleSmall = base.titleSmall.at(body),
+        bodyLarge = base.bodyLarge.at(body),
+        bodyMedium = base.bodyMedium.at(body),
+        bodySmall = base.bodySmall.at(detail),
+        labelLarge = base.labelLarge.at(body),
+        labelMedium = base.labelMedium.at(detail),
+        labelSmall = base.labelSmall.at(statusBar),
+    )
 }
 
 /** Holds the current theme + font size; observed by Compose. */

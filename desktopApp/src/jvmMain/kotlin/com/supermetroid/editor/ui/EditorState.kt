@@ -144,6 +144,20 @@ data class NewRoomCreationRequest(
     val tileset: Int,
 )
 
+data class ProjectRoomDeletionReference(
+    val kind: String,
+    val description: String,
+)
+
+data class ProjectRoomDeletionPreview(
+    val roomId: Int,
+    val roomName: String,
+    val removalSummary: List<String>,
+    val blockers: List<ProjectRoomDeletionReference>,
+) {
+    val canDelete: Boolean get() = blockers.isEmpty()
+}
+
 private data class AreaSaveMigrationPlan(
     val plmReplacements: List<Pair<RomParser.PlmEntry, Int>> = emptyList(),
     val spawnOverrides: List<SaveStationSpawnChange> = emptyList(),
@@ -2940,6 +2954,68 @@ class EditorState(
             "The ${width}x$height room does not fit at map position (${request.mapX}, ${request.mapY})"
         }
 
+        val catalogRoomIds = romParser.roomCatalog.rooms.mapTo(mutableSetOf()) { it.getRoomIdAsInt() }
+        val existingAreaRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
+            val roomId = info.getRoomIdAsInt()
+            romParser.readRoomHeader(roomId)?.let(::applyHeaderChanges)
+        }.filter { it.area == request.area }
+        val overlappingRomRoom = existingAreaRooms.firstOrNull { room ->
+            rectanglesOverlap(
+                request.mapX, request.mapY, width, height,
+                room.mapX, room.mapY, room.width, room.height,
+            )
+        }
+        val overlappingProjectRoom = project.newRooms.firstOrNull { other ->
+            if (other.previewRoomId in catalogRoomIds) return@firstOrNull false
+            val changes = other.previewRoomId.takeIf { it != 0 }
+                ?.let { project.rooms[project.roomKey(it)]?.roomHeaderChange }
+            val otherArea = changes?.area ?: other.header.area
+            val otherX = changes?.mapX ?: other.header.mapX
+            val otherY = changes?.mapY ?: other.header.mapY
+            val otherWidth = changes?.width ?: other.header.width
+            val otherHeight = changes?.height ?: other.header.height
+            otherArea == request.area && rectanglesOverlap(
+                request.mapX, request.mapY, width, height,
+                otherX, otherY, otherWidth, otherHeight,
+            )
+        }
+        require(overlappingRomRoom == null && overlappingProjectRoom == null) {
+            val occupiedBy = overlappingProjectRoom?.name ?: overlappingRomRoom?.name ?: "another room"
+            "Map Chunk Coords (${request.mapX}, ${request.mapY}) overlap $occupiedBy. Choose an empty footprint for this room."
+        }
+        val destinationMap = effectiveMinimapData(romParser, project, request.area)
+        val destinationStation = effectiveMapStationData(romParser, project, request.area)
+        val occupiedCell = (0 until height).firstNotNullOfOrNull { ry ->
+            (0 until width).firstNotNullOfOrNull { rx ->
+                val x = request.mapX + rx
+                val y = request.mapY + ry
+                (x to y).takeIf {
+                    !isEmptyMinimapTile(destinationMap.getTile(x, y)) || destinationStation.isRevealed(x, y)
+                }
+            }
+        }
+        require(occupiedCell == null) {
+            "Map Chunk Coords ${occupiedCell!!.first}, ${occupiedCell.second} already contain map or Map Station data. Choose an empty footprint."
+        }
+
+        val automaticMapTiles = if (sourceRoom != null) {
+            val sourceAreaRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
+                romParser.readRoomHeader(info.getRoomIdAsInt())?.let(::applyHeaderChanges)
+            }.filter { it.area == sourceRoom.area }
+            val sourceTiles = extractRoomTiles(
+                effectiveMinimapData(romParser, project, sourceRoom.area),
+                sourceRoom.mapX,
+                sourceRoom.mapY,
+                sourceRoom.width,
+                sourceRoom.height,
+                roomMapOwnershipMask(sourceRoom, sourceAreaRooms),
+            )
+            sourceTiles.takeIf { it.hasVisibleMinimapTile() }
+                ?: automaticRoomMinimapTiles(width, height)
+        } else {
+            automaticRoomMinimapTiles(width, height)
+        }
+
         var ordinal = 1
         var stableId: String
         do {
@@ -3077,11 +3153,165 @@ class EditorState(
             doors = doors.toMutableList(),
         )
         project.newRooms += room
+        persistMinimapData(
+            romParser,
+            project,
+            placeRoomTilesNonEmpty(
+                destinationMap,
+                request.mapX,
+                request.mapY,
+                width,
+                height,
+                automaticMapTiles,
+            ),
+        )
         project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
-        postStatus("Created ${if (sourceRoom == null) "blank" else "cloned"} room '$name'")
+        postStatus("Created ${if (sourceRoom == null) "blank" else "cloned"} room '$name' with pause-map tiles")
         return room
+    }
+
+    /**
+     * Describe everything that would be removed or invalidated before deleting
+     * a project-owned room. Vanilla/core rooms deliberately return null: they
+     * can be edited, but this workflow never deletes them.
+     */
+    fun previewProjectRoomDeletion(roomId: Int, romParser: RomParser): ProjectRoomDeletionPreview? {
+        if (roomId == 0) return null
+        val target = project.newRoomForPreviewId(roomId) ?: return null
+        val effectiveTarget = romParser.readRoomHeader(roomId)?.let(::applyHeaderChanges)
+        val targetKey = project.roomKey(roomId)
+        val targetDoorPointers = target.previewDoorDefPtrs.toSet()
+        val targetDestination = project.newRoomDestination(target.id)
+        val blockers = linkedMapOf<String, ProjectRoomDeletionReference>()
+
+        fun sourceName(sourceRoomId: Int): String =
+            project.newRoomForPreviewId(sourceRoomId)?.name
+                ?: romParser.roomCatalog.rooms.firstOrNull { it.getRoomIdAsInt() == sourceRoomId }?.name
+                ?: "Room 0x${sourceRoomId.toString(16).uppercase().padStart(4, '0')}"
+
+        fun addBlocker(kind: String, description: String) {
+            blockers.putIfAbsent("$kind:$description", ProjectRoomDeletionReference(kind, description))
+        }
+
+        // Stable project-room destinations are authoritative even before the
+        // next workspace materialization assigns fresh preview pointers.
+        project.newRooms.filter { it.id != target.id }.forEach { source ->
+            source.doors.forEachIndexed { index, door ->
+                if (door.destination == targetDestination) {
+                    addBlocker("Door", "${source.name}, door ${index + 1}, leads to ${target.name}.")
+                }
+            }
+        }
+
+        // The workspace catches incoming doors from existing ROM rooms and any
+        // already-materialized project edits.
+        romParser.roomCatalog.rooms.forEach { info ->
+            val sourceId = info.getRoomIdAsInt()
+            if (sourceId == roomId) return@forEach
+            val source = romParser.readRoomHeader(sourceId) ?: return@forEach
+            romParser.parseDoorList(source.doorOut).forEachIndexed { index, door ->
+                if (door.destRoomPtr == roomId) {
+                    addBlocker("Door", "${sourceName(sourceId)}, door ${index + 1}, leads to ${target.name}.")
+                }
+            }
+        }
+        project.rooms.forEach { (roomKey, edits) ->
+            if (roomKey == targetKey) return@forEach
+            edits.doorChanges.forEach { door ->
+                if (door.destRoomPtr == roomId) {
+                    addBlocker("Door", "${sourceName(edits.roomId)}, door ${door.doorIndex + 1}, leads to ${target.name}.")
+                }
+            }
+            edits.saveStationSpawns.filterNot { it.clearSlot }.forEach { spawn ->
+                if (spawn.roomId == roomId) {
+                    addBlocker("Save", "Area ${spawn.area} save slot ${spawn.saveIndex} loads ${target.name}.")
+                }
+                if (spawn.doorPtr in targetDoorPointers) {
+                    addBlocker("Save", "Area ${spawn.area} save slot ${spawn.saveIndex} uses a door owned by ${target.name}.")
+                }
+            }
+
+            fun conditionUsesTargetDoor(condition: ProjectRoomStateCondition): Boolean =
+                (condition.argumentKind == com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER &&
+                    condition.argument?.let { it in targetDoorPointers } == true) ||
+                    condition.children.any(::conditionUsesTargetDoor)
+
+            edits.states.forEach { state ->
+                if (conditionUsesTargetDoor(state.condition)) {
+                    addBlocker("Room state", "${sourceName(edits.roomId)} state '${state.id}' tests a door owned by ${target.name}.")
+                }
+                state.doorFxChanges.keys.forEach { key ->
+                    if (key.toIntOrNull(16)?.let { it in targetDoorPointers } == true) {
+                        addBlocker("FX", "${sourceName(edits.roomId)} state '${state.id}' has door-specific FX for ${target.name}.")
+                    }
+                }
+            }
+        }
+        project.newRooms.filter { it.id != target.id }.forEach { source ->
+            source.initialState.fxEntries.forEachIndexed { index, fx ->
+                if (fx.doorSelect in targetDoorPointers) {
+                    addBlocker("FX", "${source.name} FX entry ${index + 1} selects a door owned by ${target.name}.")
+                }
+            }
+        }
+
+        val ownEdits = project.rooms[targetKey]
+        val itemCount = target.initialState.plms.size + ownEdits?.plmChanges.orEmpty().count { it.action == "add" }
+        val enemyCount = target.initialState.enemies.size + ownEdits?.enemyChanges.orEmpty().count { it.action == "add" }
+        val saveCount = ownEdits?.saveStationSpawns.orEmpty().count { !it.clearSlot }
+        val removalSummary = buildList {
+            add("${effectiveTarget?.width ?: target.header.width}×${effectiveTarget?.height ?: target.header.height} room and its pause-map footprint")
+            if (target.doors.isNotEmpty()) add("${target.doors.size} outgoing door${if (target.doors.size == 1) "" else "s"}")
+            if (ownEdits?.states?.isNotEmpty() == true) add("${ownEdits.states.size} authored room state${if (ownEdits.states.size == 1) "" else "s"}")
+            if (itemCount > 0) add("$itemCount placed object${if (itemCount == 1) "" else "s"}")
+            if (enemyCount > 0) add("$enemyCount enem${if (enemyCount == 1) "y" else "ies"}")
+            if (saveCount > 0) add("$saveCount save-station override${if (saveCount == 1) "" else "s"}")
+        }
+        return ProjectRoomDeletionPreview(roomId, target.name, removalSummary, blockers.values.toList())
+    }
+
+    /** Delete a project-owned room only after its live references have been proven safe. */
+    fun deleteProjectRoom(roomId: Int, romParser: RomParser): ProjectRoomDeletionPreview {
+        val preview = previewProjectRoomDeletion(roomId, romParser)
+            ?: throw IllegalArgumentException("Only project-created rooms can be deleted. Core ROM rooms remain editable.")
+        require(preview.canDelete) {
+            "${preview.roomName} still has ${preview.blockers.size} external reference${if (preview.blockers.size == 1) "" else "s"}."
+        }
+        val target = requireNotNull(project.newRoomForPreviewId(roomId))
+        val room = romParser.readRoomHeader(roomId)?.let(::applyHeaderChanges)
+        if (room != null) {
+            val areaRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
+                romParser.readRoomHeader(info.getRoomIdAsInt())?.let(::applyHeaderChanges)
+            }.filter { it.area == room.area }
+            val ownership = roomMapOwnershipMask(room, areaRooms)
+            persistMinimapData(
+                romParser,
+                project,
+                clearRoomTiles(
+                    effectiveMinimapData(romParser, project, room.area),
+                    room.mapX, room.mapY, room.width, room.height, ownership,
+                ),
+            )
+            persistMapStationData(
+                romParser,
+                project,
+                clearMapStationRect(
+                    effectiveMapStationData(romParser, project, room.area),
+                    room.mapX, room.mapY, room.width, room.height, ownership,
+                ),
+            )
+        }
+        project.rooms.remove(project.roomKey(roomId))
+        project.roomNameOverrides.remove(project.roomKey(roomId))
+        project.newRooms.removeAll { it.id == target.id }
+        _roomEditOrder.remove(roomId)
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        dirty = true
+        editVersion++
+        postStatus("Deleted project room '${preview.roomName}'.")
+        return preview
     }
 
     /** Create and workspace-materialize atomically from the UI's perspective. */
@@ -3090,12 +3320,18 @@ class EditorState(
         romParser: RomParser,
     ): Pair<ProjectNewRoom, RomParser> {
         val wasDirty = dirty
+        val previousMinimapEdits = project.minimapEdits.mapValues { (_, edits) -> edits.map { it.copy() }.toMutableList() }
+        val previousMapStationEdits = project.mapStationEdits.mapValues { (_, edits) -> edits.map { it.copy() }.toMutableList() }
         val room = createNewRoom(request, romParser)
         return try {
             room to prepareWorkspaceParser()
         } catch (failure: Throwable) {
             project.newRooms.removeAll { it.id == room.id }
             if (room.previewRoomId != 0) project.rooms.remove(project.roomKey(room.previewRoomId))
+            project.minimapEdits.clear()
+            project.minimapEdits.putAll(previousMinimapEdits)
+            project.mapStationEdits.clear()
+            project.mapStationEdits.putAll(previousMapStationEdits)
             dirty = wasDirty
             editVersion++
             throw failure

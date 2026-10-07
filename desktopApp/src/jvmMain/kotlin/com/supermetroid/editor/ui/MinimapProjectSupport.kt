@@ -76,6 +76,43 @@ internal fun isEmptyMinimapTile(word: Int): Boolean {
     return word == 0 || index == MinimapTiles.EMPTY
 }
 
+/**
+ * Build a readable, enclosed pause-map footprint for a room that does not yet
+ * own any map art. The generated outline uses only vanilla minimap tiles, so a
+ * freshly created room is visible immediately and remains editable normally.
+ */
+internal fun automaticRoomMinimapTiles(width: Int, height: Int): Array<IntArray> {
+    require(width > 0 && height > 0)
+    fun tile(index: Int, hFlip: Boolean = false, vFlip: Boolean = false): Int =
+        MinimapData.makeTileWord(index, hFlip = hFlip, vFlip = vFlip)
+
+    return Array(height) { y ->
+        IntArray(width) { x ->
+            when {
+                width == 1 && height == 1 -> tile(MinimapTiles.WALLS_TBLR)
+                height == 1 && x == 0 -> tile(MinimapTiles.WALLS_TBL)
+                height == 1 && x == width - 1 -> tile(MinimapTiles.WALLS_TBL, hFlip = true)
+                height == 1 -> tile(MinimapTiles.WALLS_TB)
+                width == 1 && y == 0 -> tile(MinimapTiles.WALLS_TLR)
+                width == 1 && y == height - 1 -> tile(MinimapTiles.WALLS_TLR, vFlip = true)
+                width == 1 -> tile(MinimapTiles.WALLS_LR)
+                x == 0 && y == 0 -> tile(MinimapTiles.WALLS_TL)
+                x == width - 1 && y == 0 -> tile(MinimapTiles.WALLS_TL, hFlip = true)
+                x == 0 && y == height - 1 -> tile(MinimapTiles.WALLS_TL, vFlip = true)
+                x == width - 1 && y == height - 1 -> tile(MinimapTiles.WALLS_TL, hFlip = true, vFlip = true)
+                y == 0 -> tile(MinimapTiles.WALL_TOP)
+                y == height - 1 -> tile(MinimapTiles.WALL_BOTTOM)
+                x == 0 -> tile(MinimapTiles.WALL_RIGHT, hFlip = true)
+                x == width - 1 -> tile(MinimapTiles.WALL_RIGHT)
+                else -> tile(MinimapTiles.ROOM_OPEN)
+            }
+        }
+    }
+}
+
+internal fun Array<IntArray>.hasVisibleMinimapTile(): Boolean =
+    any { row -> row.any { tile -> !isEmptyMinimapTile(tile) } }
+
 internal fun rectanglesOverlap(
     ax: Int,
     ay: Int,
