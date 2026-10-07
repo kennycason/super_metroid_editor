@@ -883,6 +883,142 @@ def samus_checks(
     ]
 
 
+def room_checks(
+    test_results: Dict[str, object], rooms: Dict[str, object]
+) -> List[Dict[str, object]]:
+    class_name = "com.supermetroid.editor.rom.RoomSourceParityTest"
+    source_header_status = named_test_status(
+        test_results,
+        class_name,
+        "all room headers selectors and state records match named source macros",
+    )
+    source_level_status = named_test_status(
+        test_results,
+        class_name,
+        "all extracted room level streams match source and production decoding",
+    )
+    source_resource_status = named_test_status(
+        test_results,
+        class_name,
+        "all state PLM enemy GFX FX scroll and door resources match production parsers",
+    )
+    export_status = named_test_status(
+        test_results,
+        class_name,
+        "no-edit room export is byte exact and every header and state field mutation stays allowlisted",
+    )
+    noop_status = named_test_status(
+        test_results,
+        class_name,
+        "explicit no-op edits never rewrite or relocate room resources",
+    )
+    header_status = "pass" if source_header_status == export_status == noop_status == "pass" else "mismatch"
+    level_status = "pass" if source_level_status == noop_status == "pass" else "mismatch"
+    resource_status = "pass" if source_resource_status == noop_status == "pass" else "mismatch"
+    resources = rooms["resourceCounts"]
+    return [
+        {
+            "id": "R-01",
+            "name": "Room catalog and 11-byte headers",
+            "status": header_status,
+            "evidence": (
+                f"All {rooms['roomCount']} source room macros, including the explicitly unused/debug records, "
+                f"match rebuilt-ROM bytes and production parsing; byte-exact no-edit, explicit no-op, and "
+                f"whole-catalog mutation exporter proofs are {header_status}."
+            ),
+        },
+        {
+            "id": "R-02",
+            "name": "State selectors and 26-byte state data",
+            "status": header_status,
+            "evidence": (
+                f"All {rooms['stateCount']} states and {rooms['conditionalSelectorCount']} conditional selectors "
+                f"match source order, condition operands, pointers, fields, and production inspection; "
+                f"byte-exact no-edit, explicit no-op, and whole-catalog mutation exporter proofs are {header_status}."
+            ),
+        },
+        {
+            "id": "R-03",
+            "name": "Room level-data streams",
+            "status": level_status,
+            "evidence": (
+                f"All {rooms['levelStreamCount']} source streams "
+                f"({rooms['activeLevelStreamCount']} active + {rooms['unusedLevelStreamCount']} explicitly unused) "
+                f"match compressed/decoded bytes and semantic Layer 1/BTS/Layer 2 boundaries; "
+                f"{rooms['levelStreamWithLayer2Count']} carry Layer 2. Bowling Alley and Double Chamber's "
+                f"source-owned over-allocation is explicit; the explicit no-op export proof is {noop_status}."
+            ),
+        },
+        {
+            "id": "R-04",
+            "name": "PLM populations",
+            "status": resource_status,
+            "evidence": f"All {resources['plm']} distinct PLM sets match IDs, coordinates, parameters, terminators, aliases, production serialization, and explicit no-op export.",
+        },
+        {
+            "id": "R-05",
+            "name": "Enemy populations",
+            "status": resource_status,
+            "evidence": f"All {resources['enemyPopulation']} distinct populations match every 16-byte enemy record, production parsing, and explicit no-op export.",
+        },
+        {
+            "id": "R-06",
+            "name": "Enemy GFX sets",
+            "status": resource_status,
+            "evidence": f"All {resources['enemyGfx']} distinct sets match species/palette words, terminators, the four-slot engine limit, and no-op population export.",
+        },
+        {
+            "id": "R-07",
+            "name": "FX entries",
+            "status": resource_status,
+            "evidence": f"All {resources['fx']} distinct lists match every field, sentinel, and explicit no-op export; production now correctly treats the two-byte $FFFF no-FX record as a terminator.",
+        },
+        {
+            "id": "R-08",
+            "name": "Door lists and DDBs",
+            "status": resource_status,
+            "evidence": (
+                f"All {resources['doorList']} room lists / {resources['doorAssociation']} associations "
+                f"resolve to {resources['uniqueDoorDef']} source door records and match production fields, including special null records and explicit no-op export."
+            ),
+        },
+        {
+            "id": "R-09",
+            "name": "Static scrolls and sentinels",
+            "status": resource_status,
+            "evidence": (
+                f"All {resources['scrollTable']} named tables and {resources['scrollAssociation']} state associations match source/ROM bytes, "
+                f"including {resources['scrollSentinelAssociation']} sentinel associations and 38 alias groups. Double Chamber's intentional "
+                "overread is recorded raw and normalized to the engine's green semantics in production; explicit no-op export is byte exact."
+            ),
+        },
+        {
+            "id": "R-10",
+            "name": "Scroll PLMs and door-ASM overrides",
+            "status": "partial" if resource_status == "pass" else resource_status,
+            "evidence": "Static ownership is complete; runtime mutation order and every scroll-PLM/door-ASM target remain to be traced.",
+        },
+        {
+            "id": "R-11",
+            "name": "BG data and embedded Layer 2",
+            "status": "partial" if level_status == "pass" else level_status,
+            "evidence": f"All {rooms['levelStreamWithLayer2Count']} embedded Layer-2 payloads are proven; BG command lists and transfers remain to be inventoried.",
+        },
+        {
+            "id": "R-12",
+            "name": "Minimap and map stations",
+            "status": "uncovered",
+            "evidence": "Bank-$B5 maps, reveal masks, area transforms, and round trips remain queued.",
+        },
+        {
+            "id": "R-13",
+            "name": "Save/elevator/debug stations",
+            "status": "uncovered",
+            "evidence": "Station tables, area ownership, slot limits, and runtime spawn fields remain queued.",
+        },
+    ]
+
+
 def markdown_report(report: Dict[str, object]) -> str:
     identity = report["identity"]
     summary = report["summary"]
@@ -908,6 +1044,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     torizo = report["torizo"]
     metroid = report["metroid"]
     samus = report["samus"]
+    rooms = report["rooms"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -1064,6 +1201,9 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"- Samus: **{samus['poseCount']}** poses / **{samus['frameOccurrenceCount']:,}** frame occurrences, "
             f"**{samus['dmaEntryCount']}** exact DMA payloads, and **{samus['spritemapCount']}** spritemaps are "
             "source-pinned through production decoding.",
+            f"- Rooms: **{rooms['roomCount']}** headers / **{rooms['stateCount']}** states, "
+            f"**{rooms['levelStreamCount']}** level streams, and **{rooms['doorAssociationCount']}** door associations "
+            "are source-pinned through production parsers and an exact exporter mutation allowlist.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -1077,10 +1217,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{tests['errors']}** errors, **{tests['skipped']}** skipped in {tests['timeSeconds']:.3f}s.",
             "- Address drift: **12** standalone SMEDIT constants plus all **87** tileset fields currently mapped.",
             "",
-            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, enemy-species-status, alias, and CRE records "
+            "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1117,6 +1257,7 @@ def main() -> int:
     torizo_path = report_dir / "torizo.json"
     metroid_path = report_dir / "metroid.json"
     samus_path = report_dir / "samus.json"
+    rooms_path = report_dir / "rooms.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1142,11 +1283,12 @@ def main() -> int:
         or not torizo_path.is_file()
         or not metroid_path.is_file()
         or not samus_path.is_file()
+        or not rooms_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1175,6 +1317,7 @@ def main() -> int:
     torizo = json.loads(torizo_path.read_text(encoding="utf-8"))
     metroid = json.loads(metroid_path.read_text(encoding="utf-8"))
     samus = json.loads(samus_path.read_text(encoding="utf-8"))
+    rooms = json.loads(rooms_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -1744,6 +1887,45 @@ def main() -> int:
     ]:
         raise ValueError("enemy-species status aggregate does not match the pinned reference")
 
+    pinned_room_totals = {
+        "roomCount": "rooms.room.count",
+        "stateCount": "rooms.state.count",
+        "conditionalSelectorCount": "rooms.selector.conditional.count",
+        "levelStreamCount": "rooms.level.total.count",
+        "activeLevelStreamCount": "rooms.level.active.count",
+        "unusedLevelStreamCount": "rooms.level.unused.count",
+        "levelStreamWithLayer2Count": "rooms.level.layer2.count",
+    }
+    for field, property_name in pinned_room_totals.items():
+        if int(rooms[field]) != int(reference[property_name]):
+            raise ValueError(f"room report field {field} does not match the pinned reference")
+    pinned_room_resources = {
+        "plm": "rooms.resource.plm.count",
+        "enemyPopulation": "rooms.resource.enemyPopulation.count",
+        "enemyGfx": "rooms.resource.enemyGfx.count",
+        "fx": "rooms.resource.fx.count",
+        "scrollAssociation": "rooms.resource.scrollAssociation.count",
+        "scrollTable": "rooms.resource.scrollTable.count",
+        "scrollSentinelAssociation": "rooms.resource.scrollSentinelAssociation.count",
+        "doorList": "rooms.resource.doorList.count",
+        "doorAssociation": "rooms.resource.doorAssociation.count",
+        "uniqueDoorDef": "rooms.resource.uniqueDoorDef.count",
+    }
+    for field, property_name in pinned_room_resources.items():
+        if int(rooms["resourceCounts"][field]) != int(reference[property_name]):
+            raise ValueError(f"room resource count {field} does not match the pinned reference")
+    pinned_room_hashes = {
+        "roomHeaders": "rooms.roomHeaders.aggregate.sha256",
+        "selectors": "rooms.selectors.aggregate.sha256",
+        "states": "rooms.states.aggregate.sha256",
+        "levels": "rooms.levels.aggregate.sha256",
+        "resources": "rooms.resources.aggregate.sha256",
+        "doors": "rooms.doors.aggregate.sha256",
+    }
+    for field, property_name in pinned_room_hashes.items():
+        if rooms["aggregateHashes"][field] != reference[property_name]:
+            raise ValueError(f"room aggregate {field} does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -1771,6 +1953,7 @@ def main() -> int:
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
         + samus_checks(tests, samus)
+        + room_checks(tests, rooms)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -1779,9 +1962,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 23,
+        "schemaVersion": 24,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
+        "scope": "foundation-compression-shared-graphics-rooms-states-resources-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -2075,6 +2258,26 @@ def main() -> int:
             "nullSpritemapLookupCount": samus["totals"]["nullSpritemapLookupCount"],
             "paletteCount": samus["totals"]["paletteCount"],
             "aggregateHashes": samus["aggregateHashes"],
+        },
+        "rooms": {
+            "roomCount": rooms["roomCount"],
+            "stateCount": rooms["stateCount"],
+            "conditionalSelectorCount": rooms["conditionalSelectorCount"],
+            "levelStreamCount": rooms["levelStreamCount"],
+            "activeLevelStreamCount": rooms["activeLevelStreamCount"],
+            "unusedLevelStreamCount": rooms["unusedLevelStreamCount"],
+            "levelStreamWithLayer2Count": rooms["levelStreamWithLayer2Count"],
+            "plmSetCount": rooms["resourceCounts"]["plm"],
+            "enemyPopulationCount": rooms["resourceCounts"]["enemyPopulation"],
+            "enemyGfxSetCount": rooms["resourceCounts"]["enemyGfx"],
+            "fxListCount": rooms["resourceCounts"]["fx"],
+            "scrollAssociationCount": rooms["resourceCounts"]["scrollAssociation"],
+            "scrollTableCount": rooms["resourceCounts"]["scrollTable"],
+            "scrollSentinelAssociationCount": rooms["resourceCounts"]["scrollSentinelAssociation"],
+            "doorListCount": rooms["resourceCounts"]["doorList"],
+            "doorAssociationCount": rooms["resourceCounts"]["doorAssociation"],
+            "uniqueDoorDefCount": rooms["resourceCounts"]["uniqueDoorDef"],
+            "aggregateHashes": rooms["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],

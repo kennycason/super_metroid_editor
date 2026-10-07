@@ -187,4 +187,31 @@ class RomParserTest {
         }
     }
 
+    @Test
+    fun `FFFF FX sentinel means no FX entries`() {
+        val rom = ByteArray(0x300000)
+        val parser = RomParser(rom)
+        val pc = parser.snesToPc(0x838000)
+        rom[pc] = 0xFF.toByte()
+        rom[pc + 1] = 0xFF.toByte()
+        // Neighboring bytes deliberately resemble a normal entry. The parser
+        // must not consume them after the two-byte vanilla sentinel.
+        rom[pc + 2] = 0
+        rom[pc + 3] = 0
+
+        assertTrue(parser.parseFxEntries(0x8000).isEmpty())
+    }
+
+    @Test
+    fun `scroll parser normalizes every engine green value`() {
+        val rom = ByteArray(0x300000)
+        val parser = RomParser(rom)
+        val pc = parser.snesToPc(0x8F8000)
+        listOf(0, 1, 2, 0x1F).forEachIndexed { index, value ->
+            rom[pc + index] = value.toByte()
+        }
+
+        assertArrayEquals(intArrayOf(0, 1, 2, 2), parser.parseScrollData(0x8000, 4, 1))
+    }
+
 }

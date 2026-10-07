@@ -70,6 +70,10 @@ packaged application, project format, or ROM exporter.
 - `samus_manifest.py` proves all 253 pose IDs, definitions and delay streams, the
   complete top/bottom DMA graph, every referenced spritemap, normal suit palettes,
   and the one-to-one ownership of all 435 extracted Samus tile payloads.
+- `room_manifest.py` proves all 263 room headers, 61 conditional selectors, 324
+  state records, 250 source level-data streams, and every referenced PLM, enemy,
+  enemy-GFX, FX, static-scroll, door-list, and DoorDef structure. It also records
+  intentional aliases and the two source-owned over-allocated level payloads.
 - `community_samus_bootstrap.py` provisions hash-pinned MapRandoSprites PNGs in the
   ignored workspace for Kotlin/SpriteSomething decoder conformance; it never downloads
   a ROM or commits community artwork.
@@ -100,7 +104,7 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
-`parityMetroid`, and `paritySamus` tasks remain
+`parityMetroid`, `paritySamus`, and `parityRooms` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -403,6 +407,9 @@ pointers, CRE ownership, tile pixel layouts, metatile semantics, animated-tile D
 ownership, item-PLM graphics/slot ownership, enemy-header/`GRAPHADR` ownership, and
 named standard/extended enemy OAM ownership and decoding, plus enemy instruction-list
 structure, preview misses, three end-to-end ordinary-enemy slices, explicit Puyo/Owtch/Choot/Sbug/Evir/Magdollite/Beetom/Kihunter/corpse routes, and the complete
-164-species production render-status ledger. Subsystem
+164-species production render-status ledger. It also covers the full 263-room /
+324-state graph, all 250 source level streams, and every state-linked PLM, enemy,
+GFX, FX, static-scroll, and door resource through production parsers and exporter
+allowlists. Subsystem
 coverage expands through the matrix in
 [`docs/validation/README.md`](../docs/validation/README.md).

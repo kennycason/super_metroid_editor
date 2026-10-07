@@ -304,6 +304,10 @@ class RomParser(
         val entries = mutableListOf<FxEntry>()
         var safety = 0
         while (pc + 15 < romData.size && safety < 16) {
+            // Vanilla uses a two-byte $FFFF record for rooms with no FX data.
+            // It is a terminator, not the door selector of a 16-byte entry.
+            // Treating it as an entry walks into the next bank-$83 structure.
+            if (readUInt16At(pc) == 0xFFFF) break
             val entry = FxEntry(
                 doorSelect = readUInt16At(pc),
                 liquidSurfaceStart = readUInt16At(pc + 2),
@@ -346,7 +350,17 @@ class RomParser(
         val pc = snesToPc(snesAddr)
         if (pc + totalScreens > romData.size) return IntArray(totalScreens) { 0x01 }
 
-        return IntArray(totalScreens) { i -> romData[pc + i].toInt() and 0xFF }
+        return IntArray(totalScreens) { i ->
+            // The camera code distinguishes red (0), blue (1), and every other
+            // byte as green. Vanilla Double Chamber deliberately reads past its
+            // four declared bytes, so exposing the adjacent header bytes here
+            // creates bogus UI values even though the engine treats them as green.
+            when (romData[pc + i].toInt() and 0xFF) {
+                0 -> 0
+                1 -> 1
+                else -> 2
+            }
+        }
     }
 
     // ─── Room state info ──────────────────────────────────────────────

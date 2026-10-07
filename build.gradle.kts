@@ -386,6 +386,17 @@ tasks.register<Exec>("paritySamus") {
     }
 }
 
+tasks.register<Exec>("parityRooms") {
+    group = "verification"
+    description = "Generate complete room, state, level-data, and state-resource parity"
+    dependsOn("paritySymbols", "parityAssets", "parityLz5Oracle")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/room_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -414,6 +425,7 @@ tasks.register<Exec>("parityReport") {
         "parityMetroid",
         "parityOrdinaryEnemyAnimations",
         "paritySamus",
+        "parityRooms",
         ":shared:parityTest",
         ":shared:communitySamusTest",
         ":desktopApp:communitySamusRomTest",

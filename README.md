@@ -168,6 +168,12 @@ occurrences, 127 delay streams, 435 DMA payloads, 422 referenced spritemaps, and
 three normal suit palettes are pinned. Every frame is checked through the production
 decoder for exact tilemap geometry and reconstructed VRAM; reviewed pose goldens,
 special palette programs, and community-sheet editing remain the next layer. The
+room/world graph is source-backed too: all 263 room headers, 324 state records, 250
+source level-data streams, and every referenced PLM, enemy, enemy-GFX, FX, static
+scroll, door-list, and DoorDef structure are checked through production parsers.
+Room/header/state export is also guarded by byte-exact empty/no-op checks and a
+whole-catalog header/state mutation allowlist. Dynamic resource mutation/relocation,
+scroll overrides, and emulator traversal remain explicit follow-up work. The
 community path now has an exact non-mutating Kotlin decoder for SpriteSomething's
 876 x 2543 PNG contract: four pinned MapRandoSprites sheets, including Invisible
 Samus, match the upstream extractor across all 637 named regions. The Samus workspace

@@ -447,6 +447,8 @@ class ProjectRoomExporter(
                 }
             }
 
+            if (!isResized && editedData.contentEquals(originalData)) continue
+
             val compressed = LZ5Compressor.compress(editedData)
             val roundTripped = runCatching { LZ5Compressor.decompress(compressed) }.getOrNull()
             if (roundTripped == null || !roundTripped.contentEquals(editedData)) {
@@ -528,11 +530,13 @@ class ProjectRoomExporter(
                     }
                 }
             }
+            val finalPlms = dedupeItemPlmsByPosition(modifiedPlms)
+            if (finalPlms == originalPlms) continue
             plmSets.add(
                 PlmSetData(
                     plmSetPtr = plmSetPtr,
                     originalSize = originalPlms.size * 6 + 2,
-                    plms = dedupeItemPlmsByPosition(modifiedPlms),
+                    plms = finalPlms,
                 )
             )
         }
@@ -726,6 +730,15 @@ class ProjectRoomExporter(
             if (entryPc + 11 >= romData.size) {
                 failExport("Room 0x$roomKey door $doorIndex data extends outside ROM bounds")
             }
+            if (
+                readU16(romData, entryPc) == change.destRoomPtr &&
+                readU16(romData, entryPc + 2) == change.bitflag &&
+                readU16(romData, entryPc + 4) == change.doorCapCode &&
+                (romData[entryPc + 6].toInt() and 0xFF) == change.screenX &&
+                (romData[entryPc + 7].toInt() and 0xFF) == change.screenY &&
+                readU16(romData, entryPc + 8) == change.distFromDoor &&
+                readU16(romData, entryPc + 10) == change.entryCode
+            ) continue
 
             val orientation = (change.bitflag shr 8) and 0xFF
             val dirName = arrayOf("Right", "Left", "Down", "Up")[orientation and 3]
@@ -967,6 +980,7 @@ class ProjectRoomExporter(
                 }
             }
         }
+        if (modified == originalEnemies) return false
 
         val enemyPc = romParser.snesToPc(RomConstants.BANK_ENEMY_SET or enemySetPtr)
         val killCountPc = enemyPc + originalEnemies.size * 16 + 2
@@ -1219,6 +1233,7 @@ class ProjectRoomExporter(
             }
             modifiedScrolls[index] = change.newValue
         }
+        if (!isResized && modifiedScrolls.contentEquals(originalScrolls)) return false
 
         // $0000/$0001 are engine sentinels for uniform blue/green screens, not ROM
         // addresses. Materialize a real table when either sentinel is edited.
@@ -1408,6 +1423,22 @@ class ProjectRoomExporter(
         }
     }
 
+    private fun fxChangeIsNoOp(
+        entry: RomParser.FxEntry,
+        change: com.supermetroid.editor.data.FxChange,
+    ): Boolean =
+        (change.liquidSurfaceStart == null || change.liquidSurfaceStart == entry.liquidSurfaceStart) &&
+            (change.liquidSurfaceNew == null || change.liquidSurfaceNew == entry.liquidSurfaceNew) &&
+            (change.liquidSpeed == null || change.liquidSpeed == entry.liquidSpeed) &&
+            (change.liquidDelay == null || change.liquidDelay == entry.liquidDelay) &&
+            (change.fxType == null || change.fxType == entry.fxType) &&
+            (change.fxBitA == null || change.fxBitA == entry.fxBitA) &&
+            (change.fxBitB == null || change.fxBitB == entry.fxBitB) &&
+            (change.fxBitC == null || change.fxBitC == entry.fxBitC) &&
+            (change.paletteFxBitflags == null || change.paletteFxBitflags == entry.paletteFxBitflags) &&
+            (change.tileAnimBitflags == null || change.tileAnimBitflags == entry.tileAnimBitflags) &&
+            (change.paletteBlend == null || change.paletteBlend == entry.paletteBlend)
+
     private fun applyFxChange(
         roomKey: String,
         roomId: Int,
@@ -1445,9 +1476,13 @@ class ProjectRoomExporter(
             }
         }
         val patchedFxPtrs = mutableSetOf<Int>()
+        var writableDefaultFound = false
         for ((stateFxPtr, stateOffsets) in statesByFxPtr) {
             val fxEntries = romParser.parseFxEntries(stateFxPtr)
             if (fxEntries.isEmpty()) continue
+            val defaultEntry = fxEntries.firstOrNull { it.doorSelect == 0 } ?: continue
+            writableDefaultFound = true
+            if (fxChangeIsNoOp(defaultEntry, fx)) continue
             val sharedOutsideRoom = hasExternalRoomStateReference(
                 roomId,
                 stateFieldOffset = 6,
@@ -1497,6 +1532,7 @@ class ProjectRoomExporter(
             }
         }
         if (patchedFxPtrs.isEmpty()) {
+            if (writableDefaultFound) return false
             failExport("Room 0x$roomKey has an FX edit but no writable default FX entry")
         }
         onLog("Room 0x$roomKey: patched FX for ${patchedFxPtrs.size} distinct FX table(s)")
@@ -2318,6 +2354,8 @@ class ProjectRoomExporter(
                         "\$${doorSelect.toString(16).uppercase().padStart(4, '0')}"
                 )
             }
+            val emptyEntry = RomParser.FxEntry(0, 0xFFFF, 0xFFFF, 0, 0, 0, 2, 2, 0, 0, 0, 0)
+            if (fxChangeIsNoOp(emptyEntry, change)) return
             val emptyDefault = ByteArray(16).also { bytes ->
                 writeU16(bytes, 2, 0xFFFF)
                 writeU16(bytes, 4, 0xFFFF)
@@ -2334,9 +2372,7 @@ class ProjectRoomExporter(
             )
             writeU16(romData, stateOffset + 6, allocation.snesAddress and 0xFFFF)
             fxPc = allocation.pcOffset
-            entries = listOf(
-                RomParser.FxEntry(0, 0xFFFF, 0xFFFF, 0, 0, 0, 2, 2, 0, 0, 0, 0)
-            )
+            entries = listOf(emptyEntry)
             entryIndex = 0
             onLog("Room 0x$roomKey: created FX table for state '$stateId'")
         } else {
@@ -2352,6 +2388,8 @@ class ProjectRoomExporter(
             }
             fxPc = romParser.snesToPc(RomConstants.BANK_FX or fxPtr)
         }
+
+        if (fxChangeIsNoOp(entries[entryIndex], change)) return
 
         val sharedInRoom = fxPtr !in setOf(0, 0xFFFF) && romParser.findAllStateDataOffsets(roomId).any { otherOffset ->
             otherOffset != stateOffset && readU16(romData, otherOffset + 6) == fxPtr

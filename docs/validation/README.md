@@ -212,7 +212,7 @@ This matrix tracks source-backed proof, not feature existence.
 | F-03 | `symbols.sym` reader | **Verified** | Strict WLA parser, searchable JSON catalog, name/address lookups, and seed drift assertions. |
 | F-04 | Extracted-asset manifest | **Verified** | All 1,130 active NTSC assets map to named source ranges and exactly match rebuilt ROM bytes; 17 PAL-only declarations are explicit. |
 | F-05 | Address drift test | **Partial** | Twelve standalone boss/Samus constants and all 87 tileset pointer fields are source-linked; inventory and map the remainder. |
-| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/helper-routed-animation/species-status chain and writes ignored JSON/Markdown evidence with status counts. |
+| F-06 | One parity report command | **Verified** | `parityReport` runs the strict foundation/LZ5/tileset/CRE/tile-format/animated-tile/item-PLM/room/state/resource/export/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/helper-routed-animation/species-status chain and writes ignored JSON/Markdown evidence with status counts. |
 | F-07 | Golden-image policy | **Queued** | Separate human-approved/emulator goldens from diagnostic output. |
 
 ### Shared graphics and compression
@@ -233,15 +233,15 @@ This matrix tracks source-backed proof, not feature existence.
 
 | ID | Unit | Current status | Source-backed target |
 |---|---|---|---|
-| R-01 | Room catalog and 11-byte headers | **Partial** | Match every named room header in bank `$8F`. |
-| R-02 | State selectors and 26-byte state data | **Partial** | Match branch order, condition routines, and state pointers for all rooms. |
-| R-03 | 246 extracted level-data streams | **Queued** | Decompress, parse dimensions/layers/BTS, then compare raw and semantic hashes. |
-| R-04 | PLM populations | **Partial** | Match every bank `$8F` set, terminator, parameter, and room-state pointer. |
-| R-05 | Enemy populations | **Partial** | Match every bank `$A1` set, pieces, properties, terminator, and kill count. |
-| R-06 | Enemy GFX sets | **Partial** | Match every bank `$B4` set, palette/VRAM field, terminator, and four-slot limit. |
-| R-07 | FX entries | **Partial** | Match bank `$83` lists, sentinels, liquids, palettes, and door dependencies. |
-| R-08 | Door lists and DDBs | **Partial** | Match all sources/destinations, directions, caps, distances, and door ASM. |
-| R-09 | Static scrolls and sentinels | **Partial** | Match every table, `$0000/$0001` semantics, dimensions, and aliases. |
+| R-01 | Room catalog and 11-byte headers | **Verified** | All 263 source macros—including explicitly unused/debug records—match rebuilt-ROM bytes, mapping identity, production parsing, and exporter offsets. |
+| R-02 | State selectors and 26-byte state data | **Verified** | All 324 state records and 61 conditional selectors match exact branch order, routines, operands, pointers, and every production field. |
+| R-03 | 250 source level-data streams | **Verified** | All 246 active plus four source-declared unused streams match compressed/decoded bytes and Layer 1/BTS/optional Layer 2 boundaries; Bowling Alley and Double Chamber's intentional over-allocation is explicit. |
+| R-04 | PLM populations | **Verified** | All 285 distinct sets match IDs, coordinates, parameters, terminators, aliases, production parsing, and serialization. |
+| R-05 | Enemy populations | **Verified** | All 303 distinct sets / 1,658 entries match every source field, terminator, kill count, and production parse. |
+| R-06 | Enemy GFX sets | **Verified** | All 303 distinct sets / 425 entries match species/palette words, terminators, and the four-slot limit. |
+| R-07 | FX entries | **Verified** | All 285 distinct lists / 243 entries match every field and terminator; all 50 two-byte `$FFFF` no-FX records now parse correctly instead of bleeding into adjacent bank-$83 data. |
+| R-08 | Door lists and DDBs | **Verified** | All 263 lists / 610 associations / 598 unique records match sources, destinations, directions, caps, distances, door ASM pointers, and special null records. |
+| R-09 | Static scrolls and sentinels | **Verified** | All 159 named tables / 324 state associations match source and ROM bytes, including 124 sentinel associations and 38 alias groups. Double Chamber's intentional four-byte-table overread is recorded raw and normalized to the engine's green semantics instead of leaking bogus `$1F/$1D/$04` UI values. |
 | R-10 | Scroll PLMs and door-ASM overrides | **Partial** | Prove load/write order and every vanilla mutation target. |
 | R-11 | BG data and embedded layer 2 | **Partial** | Match library/custom BG commands, transfers, and shared resources. |
 | R-12 | Minimap and map stations | **Partial** | Match bank `$B5` maps, reveal masks, area transforms, and write round trips. |
@@ -394,11 +394,16 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 ### P4 — Prove rooms and exporters exhaustively
 
-- [ ] **P4.1** Validate all room headers and state selectors.
-- [ ] **P4.2** Validate all 246 extracted level-data streams and layer layouts.
-- [ ] **P4.3** Validate every PLM, enemy, GFX, FX, door, and scroll resource.
-- [ ] **P4.4** Run no-edit parse/export/reparse checks per subsystem.
+- [x] **P4.1** Validate all room headers and state selectors.
+- [x] **P4.2** Validate all 246 active plus four source-declared unused level-data streams and layer layouts.
+- [x] **P4.3** Validate every PLM, enemy, GFX, FX, door, and static-scroll resource.
+- [x] **P4.4** Run no-edit parse/export/reparse checks per subsystem. The complete
+  room exporter is byte-exact with no edits, and explicit unchanged header/state,
+  level/BTS, PLM, enemy/GFX, FX, scroll, and door edits produce an identical ROM
+  without unnecessary resource relocation.
 - [ ] **P4.5** Run one-field mutation tests and assert the complete ROM diff allowlist.
+  All 263 headers plus 324 states currently pass one simultaneous 587-byte allowlist;
+  level/resource relocation and mutation allowlists remain.
 - [ ] **P4.6** Add representative emulator traversal/state-switch smoke tests.
 
 ### P5 — Prepare, but do not yet ship, assembly-project mode
@@ -420,6 +425,7 @@ Work one checked slice at a time. Do not mark parent rows verified from a spot c
 
 | Date | Change | Evidence |
 |---|---|---|
+| 2026-10-06 | Proved the complete vanilla room/state/resource graph | `parityRooms` now pins all 263 room headers, 61 conditional selectors, 324 states, and 250 source level streams (246 active + four unused) through exact source expressions, rebuilt-ROM bytes, independent LZ5/layout semantics, and production parsers. It also proves all distinct PLM/enemy/GFX/FX/static-scroll/door resources, exposes Bowling Alley and Double Chamber's intentional payload over-allocation, and guards export with byte-exact empty/no-op checks plus a 587-byte whole-catalog header/state mutation allowlist. No-op guards now prevent unnecessary level, PLM, enemy, FX, scroll, and door rewrites/relocations. The audit fixed a real `$FFFF` no-FX parser overread and normalizes Double Chamber's intentional scroll-table overread to the engine's green semantics; dynamic scroll mutations remain the emulator-backed follow-up. |
 | 2026-10-06 | Guarded custom-item patch dependencies and reproduced Community Samus startup | An emulator-backed A/B trace isolated a new-game freeze at game state `$1F` to Landing Site's placed Spider Ball PLM `$F200` while both owning Spider Ball variants were disabled—not to the community Samus injector. Removing only the orphan PLM or enabling Hold Aim Down advances normally into gameplay; Community Samus + Spider Ball also boots together through the adaptive compatibility path. Patch toggles now retain the final required owner, export preflight blocks already-invalid projects with a precise repair message, and validator/export regressions cover disabled, enabled, and removed placements. |
 | 2026-10-06 | Completed guarded ROM-ready catalog injection | Each compatible catalog project embeds its original PNG plus a revision-pinned Map Randomizer IPS, hashes, exact clean-base identity, and 4 MiB target. Export stages only bytes that differ from the clean base through `RomWritePlan`; untouched gaps and unchanged IPS padding remain available to compatible hacks, while wrong bases, corruption, and real conflicts still fail. The project exporter understands SpriteSomething's zero-filled `$E0–$FF` expansion banks, and its adaptive Spider Ball path keeps catalog morph art while preserving Spider movement/input behavior. `:desktopApp:communitySamusRomTest` proves Vanilla, Invisible, Outline, and Zero Mission outputs byte-for-byte against independent pinned application and hard-coded output hashes. Local PNGs remain clearly source-only. |
 | 2026-10-06 | Completed project-owned community Samus sources and the downloadable catalog | The catalog resolves MapRandoSprites to an exact revision, searches all 126 manifest entries by name/artist/category, downloads only selected sheets, validates before atomic caching, and falls back offline. **Use in Project** embeds the original PNG, format ID, SHA-256, attribution, and catalog provenance; source export is byte-identical and **Restore Base ROM Samus** removes only that layer. This source milestone preceded the guarded catalog injector recorded above. |
