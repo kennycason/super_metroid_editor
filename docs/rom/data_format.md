@@ -30,8 +30,8 @@ Examples:
 Offset  Size  Field
   0      1    Room index
   1      1    Room area (00=Crateria, 01=Brinstar, 02=Norfair, 03=WS, 04=Maridia, 05=Tourian, 06=Ceres, 07=debug/unused; area 07 has no normal pause map)
-  2      1    X position on minimap
-  3      1    Y position on minimap
+  2      1    X position on minimap (engine-safe range 0-63)
+  3      1    Y position on minimap (engine-safe range 0-30; stored row 0 is padding)
   4      1    Width (in screens, 0-indexed: 00 = 1 screen)
   5      1    Height (in screens, 0-indexed)
   6      1    Up scroller

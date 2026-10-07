@@ -181,10 +181,12 @@ class ProjectNewRoomMaterializer(
         if (room.name.isBlank()) fail("Project room '${room.id}' has an empty name")
         if (h.index !in 0..0xFF) fail("Project room '${room.name}' index ${h.index} is outside 0-255")
         if (h.area !in 0..7) fail("Project room '${room.name}' area ${h.area} is outside 0-7")
-        if (h.mapX !in 0..63 || h.mapY !in 0..31) fail("Project room '${room.name}' map position is outside 64x32")
+        if (h.mapX !in 0 until MinimapData.MAP_WIDTH || h.mapY !in 0 until MinimapData.ROOM_MAP_HEIGHT) {
+            fail("Project room '${room.name}' map position is outside the 64x31 room-coordinate area")
+        }
         if (h.width !in 1..16 || h.height !in 1..16) fail("Project room '${room.name}' dimensions must be 1-16 screens")
-        if (h.mapX + h.width > 64 || h.mapY + h.height > 32) {
-            fail("Project room '${room.name}' map rectangle exceeds the 64x32 area map")
+        if (h.mapX + h.width > MinimapData.MAP_WIDTH || h.mapY + h.height > MinimapData.ROOM_MAP_HEIGHT) {
+            fail("Project room '${room.name}' map rectangle exceeds the 64x31 room-coordinate area")
         }
         if (listOf(h.upScroller, h.downScroller, h.creBitflag).any { it !in 0..0xFF }) {
             fail("Project room '${room.name}' header contains a value outside its byte range")

@@ -125,9 +125,9 @@ internal fun findAvailableRoomMapPosition(
     preferredX: Int,
     preferredY: Int,
 ): Pair<Int, Int>? {
-    if (width !in 1..MinimapData.MAP_WIDTH || height !in 1..MinimapData.MAP_HEIGHT) return null
+    if (width !in 1..MinimapData.MAP_WIDTH || height !in 1..MinimapData.ROOM_MAP_HEIGHT) return null
     val maxX = MinimapData.MAP_WIDTH - width
-    val maxY = MinimapData.MAP_HEIGHT - height
+    val maxY = MinimapData.ROOM_MAP_HEIGHT - height
     val candidates = buildList {
         for (y in 0..maxY) for (x in 0..maxX) add(x to y)
     }.sortedWith(

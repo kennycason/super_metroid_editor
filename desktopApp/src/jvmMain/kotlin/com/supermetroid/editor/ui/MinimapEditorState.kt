@@ -180,7 +180,7 @@ class MinimapEditorState {
             tiles = saved,
             revealed = savedReveal,
             currentX = targetX.coerceIn(0, MinimapData.MAP_WIDTH - room.width),
-            currentY = targetY.coerceIn(0, MinimapData.MAP_HEIGHT - room.height),
+            currentY = targetY.coerceIn(0, MinimapData.ROOM_MAP_HEIGHT - room.height),
         )
     }
 
@@ -206,7 +206,7 @@ class MinimapEditorState {
         } else {
             // Subsequent move: just reposition buffer
             val newX = (buf.currentX + dx).coerceIn(0, MinimapData.MAP_WIDTH - buf.width)
-            val newY = (buf.currentY + dy).coerceIn(0, MinimapData.MAP_HEIGHT - buf.height)
+            val newY = (buf.currentY + dy).coerceIn(0, MinimapData.ROOM_MAP_HEIGHT - buf.height)
             moveBuffer = buf.copy(currentX = newX, currentY = newY)
         }
     }
@@ -347,7 +347,7 @@ class MinimapEditorState {
             return
         }
         val newX = (x - pointerGrabOffsetX).coerceIn(0, MinimapData.MAP_WIDTH - buffer.width)
-        val newY = (y - pointerGrabOffsetY).coerceIn(0, MinimapData.MAP_HEIGHT - buffer.height)
+        val newY = (y - pointerGrabOffsetY).coerceIn(0, MinimapData.ROOM_MAP_HEIGHT - buffer.height)
         if (newX != buffer.currentX || newY != buffer.currentY) {
             moveBuffer = buffer.copy(currentX = newX, currentY = newY)
         }

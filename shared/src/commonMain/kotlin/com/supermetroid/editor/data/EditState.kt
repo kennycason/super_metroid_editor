@@ -456,7 +456,7 @@ data class RoomHeaderChange(
     val index: Int? = null,          // Byte 0: room index (0-255)
     val area: Int? = null,           // Byte 1: 0-6 (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres)
     val mapX: Int? = null,           // Byte 2: 0-63 minimap X position
-    val mapY: Int? = null,           // Byte 3: 0-31 minimap Y position
+    val mapY: Int? = null,           // Byte 3: engine-safe minimap Y position 0-30 (row 31 is padding)
     val width: Int? = null,          // Byte 4: room width in screens (1-15)
     val height: Int? = null,         // Byte 5: room height in screens (1-15)
     val upScroller: Int? = null,     // Byte 6: screen-edge up scroller threshold (0x70 default, 0x90 grapple)

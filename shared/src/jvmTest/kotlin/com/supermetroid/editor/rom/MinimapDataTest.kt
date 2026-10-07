@@ -22,11 +22,18 @@ class MinimapDataTest {
         }
 
         @Test
-        fun `tilePalette extracts bits 10-11`() {
+        fun `tilePalette extracts all three SNES palette bits`() {
             assertEquals(0, MinimapData.tilePalette(0x001B))
             assertEquals(1, MinimapData.tilePalette(0x041B))
             assertEquals(2, MinimapData.tilePalette(0x081B))
             assertEquals(3, MinimapData.tilePalette(0x0C1B))
+            assertEquals(7, MinimapData.tilePalette(0x1C1B))
+        }
+
+        @Test
+        fun `tilePriority checks bit 13 independently of palette`() {
+            assertFalse(MinimapData.tilePriority(0x1C1B))
+            assertTrue(MinimapData.tilePriority(0x3C1B))
         }
 
         @Test
@@ -114,7 +121,31 @@ class MinimapDataTest {
         fun `dimensions are correct`() {
             assertEquals(64, MinimapData.MAP_WIDTH)
             assertEquals(32, MinimapData.MAP_HEIGHT)
+            assertEquals(31, MinimapData.ROOM_MAP_HEIGHT)
             assertEquals(2048, MinimapData.TILE_COUNT)
+        }
+
+        @Test
+        fun `logical grid maps bijectively over two pages with a padding row`() {
+            val words = buildSet {
+                for (y in 0 until MinimapData.MAP_HEIGHT) {
+                    for (x in 0 until MinimapData.MAP_WIDTH) add(MinimapData.storageWordIndex(x, y))
+                }
+            }
+            assertEquals(MinimapData.TILE_COUNT, words.size)
+            assertEquals(32, MinimapData.storageWordIndex(0, 0))
+            assertEquals(0, MinimapData.storageWordIndex(0, 31))
+            assertEquals(1056, MinimapData.storageWordIndex(32, 0))
+            assertEquals(1024, MinimapData.storageWordIndex(32, 31))
+        }
+
+        @Test
+        fun `map data uses two pages and MSB first bits`() {
+            assertEquals(4 to 0x80, MinimapData.mapDataByteAndMask(0, 0))
+            assertEquals(4 to 0x01, MinimapData.mapDataByteAndMask(7, 0))
+            assertEquals(5 to 0x80, MinimapData.mapDataByteAndMask(8, 0))
+            assertEquals(0x84 to 0x80, MinimapData.mapDataByteAndMask(32, 0))
+            assertEquals(0 to 0x80, MinimapData.mapDataByteAndMask(0, 31))
         }
     }
 

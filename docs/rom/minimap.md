@@ -1,18 +1,32 @@
 # Minimap (Pause Screen Map) System
 
 ## Overview
-The pause screen map shows a 64×32 grid of 8×8 tiles per area. Each tile is a 16-bit word stored in bank $B5.
+
+The pause screen map stores a 64×32 grid of 8×8 tiles per area in bank `$B5`.
+It is physically two 32×32 SNES BG pages. The first stored row of each page is
+the engine's fake/padding row: room map coordinate `(0,0)` begins on stored row 1.
+Consequently, room rectangles have 64×31 usable coordinates (`x=0..63`,
+`y=0..30`), while SMEDIT preserves all 64×32 stored cells so the ROM can round-trip
+without losing the padding row.
 
 ## Tile Word Format (16-bit LE)
 | Bits   | Meaning                              |
 |--------|--------------------------------------|
 | 0-9    | Tile index (0-1023, typically 0-255) |
-| 10-11  | Palette (0=black, 1=blue, 2=white, 3=red) |
-| 12-13  | Unused                               |
+| 10-12  | SNES palette index (0-7)             |
+| 13     | BG priority                          |
 | 14     | Horizontal flip                      |
 | 15     | Vertical flip                        |
 
 ## ROM Addresses
+
+### Pointer Tables
+
+- `AreaMapPointers` at `$82:964A` contains seven 24-bit tilemap pointers.
+- `MapData.pointers` at `$82:9717` contains eight bank-`$82` reveal-mask
+  pointers. Areas 0-6 are unique; debug area 7 intentionally aliases Tourian.
+
+Production parsing follows these runtime tables. The vanilla targets are:
 
 ### Tilemap Data (SNES → PC)
 | Area         | SNES     | PC       |
@@ -28,21 +42,36 @@ The pause screen map shows a 64×32 grid of 8×8 tiles per area. Each tile is a 
 Note: Crateria and Brinstar indices are swapped vs area numbering.
 
 ### Tile Graphics
-- **PC offset**: `$D3200`
-- **Format**: 2bpp interleaved (Game Boy / SNES format), 16 bytes per 8×8 tile
-- **Total**: 256 tiles × 16 bytes = 4096 bytes
+
+- **Source asset**: `Tiles_PauseScreen_BG1_BG2`
+- **SNES / PC start**: `$B6:8000` / `$1B0000`
+- **Format**: standard SNES 4bpp, 32 bytes per 8×8 tile
+- **Map portion**: first `$2000` bytes = 256 tiles
+- **Whole shared asset**: `$4000` bytes; the remaining half is other pause-screen art
 - **Layout**: 16×16 grid of tiles. Tile index → `column = idx % 16`, `row = idx / 16`
-- **Source**: SMILE reads via `MakeOne8x8_GB &HD3200 + (TileI * &H10)`
 
 ## Grid Storage
-Each area stores two 32×32 halves:
+Each area stores two 32×32 pages:
 - Left half: base address, 2048 bytes (32×32 × 2 bytes)
 - Right half: base + $0800
 
-Row-major order: `tiles[y * 64 + x]`
+SMEDIT's logical row-major array uses `tiles[y * 64 + x]`. Conversion to the ROM
+is exact:
+
+```text
+page      = x / 32
+localX    = x % 32
+storageY  = (y + 1) % 32
+wordIndex = page * 1024 + storageY * 32 + localX
+```
+
+Logical row 31 represents the preserved padding row. A room must never extend into
+it: the exploration routine adds one to room Y without wrapping, so a room screen
+at Y=31 would write into the next page or beyond the 256-byte explored-map buffer.
 
 ## Tile Index Reference
-**Verified from actual 2bpp pixel data at ROM $D3200.** Pixel value 2 = border/wall, value 1 = room fill, value 3 = background pattern.
+**Verified from the source-owned standard 4bpp pixels at `$B6:8000`.** Pixel
+indices are interpreted through the pause-screen palette selected by the tile word.
 
 ### Basic Tiles
 | Index | Walls | Uses | Pixel pattern |
@@ -131,7 +160,8 @@ The vanilla game uses H-flip and V-flip to create additional orientations:
 
 **Rendering rule**: H-flip swaps left↔right walls, V-flip swaps top↔bottom walls.
 
-## Map Station Reveal Data
+## Map Data / Map Station Reveal Masks
+
 Each area has 256 bytes of bitpacked reveal flags at bank $82:
 | Area         | SNES     | PC      |
 |-------------|----------|---------|
@@ -143,9 +173,42 @@ Each area has 256 bytes of bitpacked reveal flags at bank $82:
 | Tourian     | $82:9C27 | $11C27  |
 | Ceres       | $82:9D27 | $11D27  |
 
-One bit per tile (2048 tiles = 256 bytes). When the player visits a map station, tiles with their reveal bit set become visible on the pause screen.
+The mask has the same two-page, 32-row layout as the tilemap: `$80` bytes per
+page, four bytes per row, and the most-significant bit is the leftmost tile. For a
+logical coordinate:
+
+```text
+page       = x / 32
+localX     = x % 32
+storageY   = (y + 1) % 32
+byteOffset = page * $80 + storageY * 4 + localX / 8
+mask       = $80 >> (localX & 7)
+```
+
+When the area's map-station flag is set, the pause-map loader combines this static
+mask with the player's explored-map bits. The map-station PLM `$B6D3` activates the
+flag; it does not carry a private reveal rectangle. Vanilla has exactly five such
+placements: one each in Crateria, Brinstar, Norfair, Wrecked Ship, and Maridia.
+Tourian and Ceres have mask data but no vanilla map-station placement.
+
+## Source-Verified Runtime Consumers
+
+- `$80:858C` `LoadMirrorOfCurrentAreasMapExplored`
+- `$80:85C6` `MirrorCurrentAreasMapExplored`
+- `$82:943D` `LoadPauseMenuMapTilemap`
+- `$82:9517` `DrawRoomSelectMap`
+- `$84:8C8F` `Instruction_PLM_Activate_MapStation`
+- `$84:B18B` `Setup_MapStation`
+- `$90:A8A6` `MarkMapTilesExplored`
+
+`parityMinimap` inventories these consumers, all seven area tilemaps, all seven
+unique reveal masks plus the debug alias, the five PLM placements, the graphics,
+and the coordinate transforms. Tagged production tests compare every tile/mask
+cell and perform exact no-op write round trips.
 
 ## Source Files
 - `shared/.../rom/MinimapData.kt` — Data model, tile word encoding, ROM addresses
+- `shared/.../rom/RomParser.kt` — Pointer-driven tilemap/mask parsing and writing
 - `desktopApp/.../ui/MinimapEditor.kt` — Canvas rendering, tile palette, wall drawing
 - `desktopApp/.../ui/MinimapEditorState.kt` — Paint/sample/fill tools, undo/redo
+- `parity/minimap_manifest.py` — Independent source/ROM oracle

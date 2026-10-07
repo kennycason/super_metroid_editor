@@ -274,11 +274,12 @@ object RomValidator {
                 ))
             }
             if (mapX !in 0..(MinimapData.MAP_WIDTH - width).coerceAtLeast(0) ||
-                mapY !in 0..(MinimapData.MAP_HEIGHT - height).coerceAtLeast(0)
+                mapY !in 0..(MinimapData.ROOM_MAP_HEIGHT - height).coerceAtLeast(0)
             ) {
                 issues.add(Issue(
                     Severity.ERROR, "Room Header", roomId, room.name,
-                    "Map rectangle ($mapX,$mapY ${width}x$height) exceeds the 64x32 area map."
+                    "Map rectangle ($mapX,$mapY ${width}x$height) exceeds the 64x31 room-coordinate area; " +
+                        "the 32nd stored map row is engine padding."
                 ))
             }
             if (area != room.area) {
@@ -653,10 +654,11 @@ object RomValidator {
                     "Room extends past minimap right edge: mapX=${room.mapX} + width=${room.width} = ${room.mapX + room.width} > ${MinimapData.MAP_WIDTH}"
                 ))
             }
-            if (room.mapY + room.height > MinimapData.MAP_HEIGHT) {
+            if (room.mapY + room.height > MinimapData.ROOM_MAP_HEIGHT) {
                 issues.add(Issue(
                     Severity.WARNING, "Room Header", room.roomId, room.name,
-                    "Room extends past minimap bottom edge: mapY=${room.mapY} + height=${room.height} = ${room.mapY + room.height} > ${MinimapData.MAP_HEIGHT}"
+                    "Room extends into the minimap padding row: mapY=${room.mapY} + height=${room.height} = " +
+                        "${room.mapY + room.height} > ${MinimapData.ROOM_MAP_HEIGHT} usable rows"
                 ))
             }
         }

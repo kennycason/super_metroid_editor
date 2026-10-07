@@ -88,7 +88,7 @@ Sound
 - **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
 - **Community Samus Catalog** — Search and preview the attributed MapRandoSprites catalog, then browse downloaded sheets through SpriteSomething's 41 named animation groups or a visual 637-frame gallery. Keep a portable source in the project and export verified catalog selections as guarded 4 MiB ROM builds; local SpriteSomething PNGs can also be imported as source-only previews.
 - **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
-- **Minimap Editor** — Edit pause-screen map tiles with pixel-perfect 2bpp rendering. Paint, fill, and eyedropper tools. Room position editing with D-pad controls and buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
+- **Minimap Editor** — Edit source-accurate pause-screen map tiles with pixel-perfect 4bpp rendering. Paint, fill, and eyedropper tools. Room position editing respects the engine's hidden padding row, with buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
 - **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
 - **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
@@ -181,6 +181,12 @@ commands, 200 state associations, 70 compressed assets, and 14 door-dependent
 transfers are pinned. Production reconstructs normal 32×32/64×32 and Kraid
 64×64 screen-block layouts, while all 124 embedded-Layer-2 states are detected from
 their real level payload rather than inferred from parallax motion factors.
+Pause maps are source-backed as well: all seven bank-`$B5` area tilemaps (14,336
+words), seven 256-byte reveal masks plus the debug alias, five vanilla map-station
+PLMs, 256 pause-map graphics tiles, and both two-page coordinate transforms are
+pinned. This pass corrected the reveal-bit order, hidden-row mapping, palette width,
+and graphics format/address; room moves and creation now stay within the engine's
+64×31 usable coordinate area while preserving the full 64×32 stored map.
 Room/header/state export is also guarded by byte-exact empty/no-op checks and a
 whole-catalog header/state mutation allowlist. Dynamic resource mutation/relocation,
 and emulator traversal remain explicit follow-up work. The

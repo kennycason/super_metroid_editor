@@ -1304,15 +1304,12 @@ class RomParser(
             return MinimapData(area, tiles)
         }
 
-        val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[area])
+        val basePc = snesToPc(readMinimapTilemapAddress(area))
         val tiles = IntArray(MinimapData.TILE_COUNT)
 
         for (y in 0 until MinimapData.MAP_HEIGHT) {
             for (x in 0 until MinimapData.MAP_WIDTH) {
-                val halfBase = if (x < 32) basePc else basePc + 0x800
-                val localX = x % 32
-                // Row 0 in the ROM is a header row; room mapY=0 maps to ROM row 1
-                val offset = halfBase + ((y + 1) * 32 + localX) * 2
+                val offset = basePc + MinimapData.storageWordIndex(x, y) * 2
                 if (offset + 1 < romData.size) {
                     tiles[y * MinimapData.MAP_WIDTH + x] = readU16(romData, offset)
                 }
@@ -1612,25 +1609,38 @@ class RomParser(
 
     /**
      * Read the map station reveal data for a given area.
-     * 256 bytes, each byte = 8 tiles' reveal flags (LSB first).
+     * 256 bytes arranged as two 32×32 pages, four bytes per row, MSB first.
      */
     fun readMapStationData(area: Int): MapStationData {
         require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
-        val basePc = snesToPc(MinimapData.MAP_STATION_ADDRESSES[area])
+        val basePc = snesToPc(readMapStationDataAddress(area))
         val revealed = BooleanArray(MinimapData.TILE_COUNT)
 
-        for (i in 0 until MinimapData.MAP_STATION_DATA_SIZE) {
-            val offset = basePc + i
-            if (offset >= romData.size) break
-            val byte = romData[offset].toInt() and 0xFF
-            for (bit in 0 until 8) {
-                val tileIdx = i * 8 + bit
-                if (tileIdx < MinimapData.TILE_COUNT) {
-                    revealed[tileIdx] = (byte and (1 shl bit)) != 0
+        for (y in 0 until MinimapData.MAP_HEIGHT) {
+            for (x in 0 until MinimapData.MAP_WIDTH) {
+                val (byteOffset, mask) = MinimapData.mapDataByteAndMask(x, y)
+                val offset = basePc + byteOffset
+                if (offset < romData.size) {
+                    revealed[y * MinimapData.MAP_WIDTH + x] =
+                        (romData[offset].toInt() and mask) != 0
                 }
             }
         }
         return MapStationData(area, revealed)
+    }
+
+    /** Resolve the bank-$B5 tilemap through the engine's 24-bit area pointer table. */
+    fun readMinimapTilemapAddress(area: Int): Int {
+        require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        val tablePc = snesToPc(MinimapData.AREA_MAP_POINTER_TABLE)
+        return readUInt24At(tablePc + area * 3)
+    }
+
+    /** Resolve the bank-$82 map-station reveal mask through MapData.pointers. */
+    fun readMapStationDataAddress(area: Int): Int {
+        require(area in 0 until MinimapData.NUM_AREAS) { "Invalid area: $area" }
+        val tablePc = snesToPc(MinimapData.MAP_DATA_POINTER_TABLE)
+        return 0x82_0000 or readUInt16At(tablePc + area * 2)
     }
 
     /**
@@ -1642,14 +1652,16 @@ class RomParser(
             "Minimap writes require SMEDIT's supported standard ROM layout"
         }
 
-        val basePc = snesToPc(MinimapData.AREA_MAP_ADDRESSES[data.area])
+        require(data.area in 0 until MinimapData.NUM_AREAS) { "Invalid area: ${data.area}" }
+        require(data.tiles.size == MinimapData.TILE_COUNT) {
+            "Minimap area ${data.area} must contain ${MinimapData.TILE_COUNT} tiles"
+        }
+        val basePc = snesToPc(readMinimapTilemapAddress(data.area))
         val patches = mutableListOf<Pair<Int, Byte>>()
 
         for (y in 0 until MinimapData.MAP_HEIGHT) {
             for (x in 0 until MinimapData.MAP_WIDTH) {
-                val halfBase = if (x < 32) basePc else basePc + 0x800
-                val localX = x % 32
-                val offset = halfBase + ((y + 1) * 32 + localX) * 2
+                val offset = basePc + MinimapData.storageWordIndex(x, y) * 2
                 val word = data.getTile(x, y)
                 patches.add(offset to (word and 0xFF).toByte())
                 patches.add((offset + 1) to ((word shr 8) and 0xFF).toByte())
@@ -1701,19 +1713,26 @@ class RomParser(
      * Write map station reveal data back into ROM bytes.
      */
     fun writeMapStationData(data: MapStationData): List<Pair<Int, Byte>> {
-        val basePc = snesToPc(MinimapData.MAP_STATION_ADDRESSES[data.area])
+        require(compatibilityReport.supportedForEditing) {
+            "Map-station writes require SMEDIT's supported standard ROM layout"
+        }
+        require(data.area in 0 until MinimapData.NUM_AREAS) { "Invalid area: ${data.area}" }
+        require(data.revealed.size == MinimapData.TILE_COUNT) {
+            "Map-station area ${data.area} must contain ${MinimapData.TILE_COUNT} flags"
+        }
+        val basePc = snesToPc(readMapStationDataAddress(data.area))
         val patches = mutableListOf<Pair<Int, Byte>>()
 
-        for (i in 0 until MinimapData.MAP_STATION_DATA_SIZE) {
-            var byte = 0
-            for (bit in 0 until 8) {
-                val tileIdx = i * 8 + bit
-                if (tileIdx < MinimapData.TILE_COUNT && data.revealed[tileIdx]) {
-                    byte = byte or (1 shl bit)
+        val packed = ByteArray(MinimapData.MAP_STATION_DATA_SIZE)
+        for (y in 0 until MinimapData.MAP_HEIGHT) {
+            for (x in 0 until MinimapData.MAP_WIDTH) {
+                if (data.isRevealed(x, y)) {
+                    val (byteOffset, mask) = MinimapData.mapDataByteAndMask(x, y)
+                    packed[byteOffset] = (packed[byteOffset].toInt() or mask).toByte()
                 }
             }
-            patches.add((basePc + i) to byte.toByte())
         }
+        packed.forEachIndexed { index, byte -> patches.add((basePc + index) to byte) }
         return patches
     }
 

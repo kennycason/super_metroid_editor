@@ -419,6 +419,17 @@ tasks.register<Exec>("parityBackgrounds") {
     }
 }
 
+tasks.register<Exec>("parityMinimap") {
+    group = "verification"
+    description = "Generate source-backed pause-map tilemaps, reveal masks, transforms, and map stations"
+    dependsOn("paritySymbols", "parityAssets", "parityRooms")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/minimap_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -450,6 +461,7 @@ tasks.register<Exec>("parityReport") {
         "parityRooms",
         "parityScrollRuntime",
         "parityBackgrounds",
+        "parityMinimap",
         ":shared:parityTest",
         ":shared:communitySamusTest",
         ":desktopApp:communitySamusRomTest",

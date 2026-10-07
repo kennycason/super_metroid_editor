@@ -3,9 +3,14 @@ package com.supermetroid.editor.rom
 /**
  * Pause screen minimap tile data for one area.
  *
- * Each area has a 64×32 grid of map tiles. Each tile is a 16-bit word:
+ * Each area has a 64×32 storage-preserving editor grid backed by two 32×32 SNES
+ * tilemap pages. Room coordinates use only logical rows 0..30.
+ * Storage row 0 is the pause screen's fake/padding row, so logical row 0 is
+ * storage row 1 and logical row 31 wraps to storage row 0. Each tile is a
+ * 16-bit SNES BG word:
  *   Bits 0-9:   Tile index (0-1023, though only 0-255 are typical)
- *   Bits 10-11: Palette (0=black/unexplored, 1=blue-pink, 2=white, 3=red)
+ *   Bits 10-12: Palette
+ *   Bit 13:     Priority
  *   Bit 14:     Horizontal flip
  *   Bit 15:     Vertical flip
  *
@@ -59,7 +64,19 @@ data class MinimapData(
     companion object {
         const val MAP_WIDTH = 64
         const val MAP_HEIGHT = 32
+        /** Room map Y coordinates may use rows 0..30; raw storage row 0 is padding. */
+        const val ROOM_MAP_HEIGHT = MAP_HEIGHT - 1
         const val TILE_COUNT = MAP_WIDTH * MAP_HEIGHT  // 2048
+        const val PAGE_WIDTH = 32
+        const val PAGE_HEIGHT = 32
+        const val PAGE_TILE_COUNT = PAGE_WIDTH * PAGE_HEIGHT
+        const val MAP_DATA_PAGE_BYTES = 0x80
+        const val MAP_DATA_ROW_BYTES = 4
+        const val STORAGE_ROW_OFFSET = 1
+
+        // Runtime pointer tables used by the pause map loader.
+        const val AREA_MAP_POINTER_TABLE = 0x82_964A
+        const val MAP_DATA_POINTER_TABLE = 0x82_9717
 
         // SNES addresses for each area's map tile data (bank $B5)
         // Crateria and Brinstar are swapped in the ROM.
@@ -73,8 +90,8 @@ data class MinimapData(
             0xB5_E000,  // 6 = Ceres     (PC $1AE000)
         )
 
-        // Map station reveal data SNES addresses (bank $82)
-        // SMILE uses PC 0x11727 + area*0x100; PC→SNES for bank $82
+        // Vanilla map-data masks selected after a map station has been activated.
+        // Production follows MAP_DATA_POINTER_TABLE; these remain pinned reference facts.
         val MAP_STATION_ADDRESSES = intArrayOf(
             0x82_9727,  // 0 = Crateria  (PC $11727)
             0x82_9827,  // 1 = Brinstar  (PC $11827)
@@ -94,22 +111,52 @@ data class MinimapData(
 
         // Tile word bit masks
         const val TILE_INDEX_MASK = 0x03FF
-        const val PALETTE_MASK = 0x0C00
+        const val PALETTE_MASK = 0x1C00
         const val PALETTE_SHIFT = 10
+        const val PRIORITY_BIT = 0x2000
         const val HFLIP_BIT = 0x4000
         const val VFLIP_BIT = 0x8000
 
         fun tileIndex(word: Int): Int = word and TILE_INDEX_MASK
         fun tilePalette(word: Int): Int = (word and PALETTE_MASK) shr PALETTE_SHIFT
+        fun tilePriority(word: Int): Boolean = (word and PRIORITY_BIT) != 0
         fun tileHFlip(word: Int): Boolean = (word and HFLIP_BIT) != 0
         fun tileVFlip(word: Int): Boolean = (word and VFLIP_BIT) != 0
 
         /** Build a tile word from components. */
-        fun makeTileWord(index: Int, palette: Int = 0, hFlip: Boolean = false, vFlip: Boolean = false): Int {
+        fun makeTileWord(
+            index: Int,
+            palette: Int = 0,
+            hFlip: Boolean = false,
+            vFlip: Boolean = false,
+            priority: Boolean = false,
+        ): Int {
             return (index and TILE_INDEX_MASK) or
-                ((palette and 0x3) shl PALETTE_SHIFT) or
+                ((palette and 0x7) shl PALETTE_SHIFT) or
+                (if (priority) PRIORITY_BIT else 0) or
                 (if (hFlip) HFLIP_BIT else 0) or
                 (if (vFlip) VFLIP_BIT else 0)
+        }
+
+        /** Convert editor coordinates to the raw two-page SNES tilemap word index. */
+        fun storageWordIndex(x: Int, y: Int): Int {
+            require(x in 0 until MAP_WIDTH && y in 0 until MAP_HEIGHT)
+            val page = x / PAGE_WIDTH
+            val localX = x % PAGE_WIDTH
+            val storageY = (y + STORAGE_ROW_OFFSET) % PAGE_HEIGHT
+            return page * PAGE_TILE_COUNT + storageY * PAGE_WIDTH + localX
+        }
+
+        /** Raw byte and MSB-first mask used by MapData_* and MapTilesExplored. */
+        fun mapDataByteAndMask(x: Int, y: Int): Pair<Int, Int> {
+            require(x in 0 until MAP_WIDTH && y in 0 until MAP_HEIGHT)
+            val page = x / PAGE_WIDTH
+            val localX = x % PAGE_WIDTH
+            val storageY = (y + STORAGE_ROW_OFFSET) % PAGE_HEIGHT
+            val byteOffset = page * MAP_DATA_PAGE_BYTES +
+                storageY * MAP_DATA_ROW_BYTES + localX / 8
+            val mask = 0x80 ushr (localX and 7)
+            return byteOffset to mask
         }
 
         /** Create an empty map for an area. */

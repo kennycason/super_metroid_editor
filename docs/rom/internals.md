@@ -404,6 +404,32 @@ room's BG-scrolling word. Those bytes are horizontal/vertical motion factors; 65
 Layer-2-bearing state associations use nonzero motion. All 124 active embedded-L2
 state associations remain available to the editor.
 
+### Pause Maps and Map Stations (VERIFIED 2026-10-07)
+
+`AreaMapPointers` at `$82:964A` selects seven 4 KiB bank-`$B5` tilemaps.
+`MapData.pointers` at `$82:9717` selects seven unique 256-byte bank-`$82` reveal
+masks; its eighth debug entry intentionally aliases Tourian. Both formats are two
+32×32 pages. Reveal bytes are MSB-first, four bytes per row per page.
+
+Stored row 0 is a fake/padding row. The engine maps room `(x,y)` to stored row
+`y+1`, so room coordinates have 31 safe rows (`0..30`) even though the tilemap and
+mask each contain 32 stored rows. A screen at room Y=31 would spill exploration data
+into the next page or beyond the 256-byte buffer. SMEDIT therefore preserves all
+64×32 stored cells for byte-exact round trips but prevents room creation and movement
+from entering the padding row.
+
+The pause-map graphics are the first `$2000` bytes / 256 standard-4bpp tiles of
+`Tiles_PauseScreen_BG1_BG2` at `$B6:8000`, not the Layer-3 2bpp graphics at PC
+`$D3200`. Tilemap words use the normal 10-bit tile, 3-bit palette, priority, H-flip,
+and V-flip fields. The map-station PLM `$B6D3` sets an area flag; the area's static
+`MapData` mask controls what becomes visible. Vanilla places one station in each of
+areas 0-4 and none in Tourian or Ceres.
+
+`parityMinimap` proves all 14,336 tilemap words, 1,792 mask bytes / 911 set cells,
+five placements, pointer tables, transforms, graphics, room bounds, seven direct
+engine consumers, and exact production no-op writes. See
+[`minimap.md`](minimap.md) for addresses and formulas.
+
 ### Tileset and CRE Ownership (VERIFIED 2026-10-03)
 
 `parityTilesets` parses the exact `$8F:E6A2` source table and proves all 29

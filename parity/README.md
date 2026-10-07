@@ -77,6 +77,12 @@ packaged application, project format, or ROM exporter.
 - `scroll_runtime_manifest.py` proves the static → PLM setup → incoming door ASM →
   room setup ASM load order, every generic scroll-trigger command stream and extension
   chain, every active door scroll writer, and all direct engine stores to `Scrolls`.
+- `background_manifest.py` proves every named bank-`$8F` background command program,
+  compressed source asset, state association, embedded-Layer-2 payload, and direct
+  engine consumer.
+- `minimap_manifest.py` proves all seven bank-`$B5` tilemaps, bank-`$82` map-data
+  masks and pointer tables, both two-page/padding-row transforms, pause-map graphics,
+  five map-station PLMs, room-coordinate bounds, and direct engine consumers.
 - `community_samus_bootstrap.py` provisions hash-pinned MapRandoSprites PNGs in the
   ignored workspace for Kotlin/SpriteSomething decoder conformance; it never downloads
   a ROM or commits community artwork.
@@ -107,8 +113,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
-`parityMetroid`, `paritySamus`, `parityRooms`, `parityScrollRuntime`, and
-`parityBackgrounds` tasks remain
+`parityMetroid`, `paritySamus`, `parityRooms`, `parityScrollRuntime`,
+`parityBackgrounds`, and `parityMinimap` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -383,9 +389,18 @@ Production tests compare every command and compressed asset, then reconstruct no
 32×32/64×32, Kraid 64×64, door-dependent, and runtime-WRAM cases through the
 same parser used by the editor.
 
+`parityMinimap` writes ignored `parity/reports/minimap.json`. It pins all seven
+bank-`$B5` area tilemaps / 14,336 words, seven unique 256-byte `MapData` masks plus
+the debug-area Tourian alias, five vanilla map-station PLMs, 256 source-owned 4bpp
+map tiles, and seven direct engine consumers. The manifest independently models the
+two 32×32 pages, MSB-first mask bits, and fake top row. Tagged production tests
+compare every logical cell and require exact no-op tilemap/mask write round trips.
+Room-coordinate validation is intentionally 64×31 because stored row 0 is padding;
+the full 64×32 storage remains preserved and editable.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll/background, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
+enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll/background/minimap, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

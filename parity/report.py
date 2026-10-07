@@ -885,7 +885,7 @@ def samus_checks(
 
 def room_checks(
     test_results: Dict[str, object], rooms: Dict[str, object], scroll_runtime: Dict[str, object],
-    backgrounds: Dict[str, object],
+    backgrounds: Dict[str, object], minimap: Dict[str, object],
 ) -> List[Dict[str, object]]:
     class_name = "com.supermetroid.editor.rom.RoomSourceParityTest"
     source_header_status = named_test_status(
@@ -954,6 +954,25 @@ def room_checks(
         ),
     ]
     background_status = "pass" if all(status == "pass" for status in background_test_statuses) else "mismatch"
+    minimap_class = "com.supermetroid.editor.rom.MinimapSourceParityTest"
+    minimap_test_statuses = [
+        named_test_status(
+            test_results,
+            minimap_class,
+            "all area tilemaps and map data masks match source and round trip exactly",
+        ),
+        named_test_status(
+            test_results,
+            minimap_class,
+            "coordinate transforms preserve both pages MSB bit order and padding row",
+        ),
+        named_test_status(
+            test_results,
+            minimap_class,
+            "pause map graphics and all vanilla station placements match source",
+        ),
+    ]
+    minimap_status = "pass" if all(status == "pass" for status in minimap_test_statuses) else "mismatch"
     resources = rooms["resourceCounts"]
     runtime_plms = scroll_runtime["genericPlms"]
     runtime_doors = scroll_runtime["doors"]
@@ -1064,8 +1083,17 @@ def room_checks(
         {
             "id": "R-12",
             "name": "Minimap and map stations",
-            "status": "uncovered",
-            "evidence": "Bank-$B5 maps, reveal masks, area transforms, and round trips remain queued.",
+            "status": minimap_status,
+            "evidence": (
+                f"All {minimap['areaCount']} bank-$B5 area tilemaps / {minimap['tilemapWordCount']} words, "
+                f"{minimap['mapDataByteCount']} map-data bytes / {minimap['revealedTileCount']} set cells, "
+                f"{minimap['mapStationPlacementCount']} map-station placements across "
+                f"{minimap['mapStationAreaCount']} areas, {minimap['roomCount']} room rectangles / "
+                f"{minimap['roomScreenCount']} screens inside the engine-safe 64x"
+                f"{minimap['roomCoordinateHeight']} room-coordinate area, both two-page coordinate transforms, "
+                f"{minimap['graphics']['tileCount']} pause-map graphics tiles, and exact production "
+                "read/write round trips match source."
+            ),
         },
         {
             "id": "R-13",
@@ -1104,6 +1132,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     rooms = report["rooms"]
     scroll_runtime = report["scrollRuntime"]
     backgrounds = report["backgrounds"]
+    minimap = report["minimap"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -1272,6 +1301,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{backgrounds['commandCount']}** commands / **{backgrounds['stateAssociationCount']}** state associations, "
             f"**{backgrounds['embeddedLayer2StateCount']}** embedded-Layer-2 states, and "
             f"**{backgrounds['doorDependentTransferCount']}** door-dependent transfers are source-pinned.",
+            f"- Minimap: **{minimap['areaCount']}** area tilemaps / **{minimap['tilemapWordCount']:,}** words, "
+            f"**{minimap['mapDataByteCount']:,}** map-data bytes, **{minimap['mapStationPlacementCount']}** "
+            f"map-station placements, an engine-safe **64×{minimap['roomCoordinateHeight']}** room area, and both "
+            "page/padding transforms are source-pinned with exact write round trips.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -1288,7 +1321,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, runtime-scroll, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `backgrounds.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `backgrounds.json`, `minimap.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1328,6 +1361,7 @@ def main() -> int:
     rooms_path = report_dir / "rooms.json"
     scroll_runtime_path = report_dir / "scroll-runtime.json"
     backgrounds_path = report_dir / "backgrounds.json"
+    minimap_path = report_dir / "minimap.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1356,11 +1390,12 @@ def main() -> int:
         or not rooms_path.is_file()
         or not scroll_runtime_path.is_file()
         or not backgrounds_path.is_file()
+        or not minimap_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/background/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/background/minimap/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1392,6 +1427,7 @@ def main() -> int:
     rooms = json.loads(rooms_path.read_text(encoding="utf-8"))
     scroll_runtime = json.loads(scroll_runtime_path.read_text(encoding="utf-8"))
     backgrounds = json.loads(backgrounds_path.read_text(encoding="utf-8"))
+    minimap = json.loads(minimap_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -2050,6 +2086,48 @@ def main() -> int:
         if backgrounds["aggregateHashes"][field] != reference[f"background.{field}.aggregate.sha256"]:
             raise ValueError(f"background aggregate {field} does not match the pinned reference")
 
+    pinned_minimap_fields = {
+        "areaCount": "minimap.area.count",
+        "areaMapPointerCount": "minimap.areaMapPointer.count",
+        "mapDataPointerCount": "minimap.mapDataPointer.count",
+        "mapDataUniquePointerCount": "minimap.mapDataUniquePointer.count",
+        "tilemapWordCount": "minimap.tilemapWord.count",
+        "mapDataByteCount": "minimap.mapDataByte.count",
+        "revealedTileCount": "minimap.revealedTile.count",
+        "mapStationPlacementCount": "minimap.mapStationPlacement.count",
+        "mapStationAreaCount": "minimap.mapStationArea.count",
+        "roomCount": "minimap.room.count",
+        "roomScreenCount": "minimap.roomScreen.count",
+        "roomCoordinateHeight": "minimap.roomCoordinate.height",
+        "maxRoomRight": "minimap.room.maxRight",
+        "maxRoomBottom": "minimap.room.maxBottom",
+        "engineConsumerCount": "minimap.engineConsumer.count",
+    }
+    for field, property_name in pinned_minimap_fields.items():
+        if int(minimap[field]) != int(reference[property_name]):
+            raise ValueError(f"minimap report field {field} does not match the pinned reference")
+    if int(minimap["graphics"]["tileCount"]) != int(reference["minimap.graphics.tile.count"]):
+        raise ValueError("minimap graphics tile count does not match the pinned reference")
+    if int(minimap["graphics"]["usedByteCount"]) != int(reference["minimap.graphics.usedByte.count"]):
+        raise ValueError("minimap graphics byte count does not match the pinned reference")
+    for field in ("tilemaps", "mapData", "mapStations", "consumers"):
+        if minimap["aggregateHashes"][field] != reference[f"minimap.{field}.aggregate.sha256"]:
+            raise ValueError(f"minimap aggregate {field} does not match the pinned reference")
+    if minimap["coordinateTransform"]["tilemapTransformSha256"] != reference[
+        "minimap.tilemapTransform.sha256"
+    ]:
+        raise ValueError("minimap tilemap transform does not match the pinned reference")
+    if minimap["coordinateTransform"]["mapDataTransformSha256"] != reference[
+        "minimap.mapDataTransform.sha256"
+    ]:
+        raise ValueError("minimap map-data transform does not match the pinned reference")
+    if minimap["graphics"]["rawSha256"] != reference["minimap.graphics.raw.sha256"]:
+        raise ValueError("minimap graphics bytes do not match the pinned reference")
+    if minimap["graphics"]["decodedPixelSha256"] != reference[
+        "minimap.graphics.decoded.sha256"
+    ]:
+        raise ValueError("minimap decoded graphics do not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -2077,7 +2155,7 @@ def main() -> int:
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
         + samus_checks(tests, samus)
-        + room_checks(tests, rooms, scroll_runtime, backgrounds)
+        + room_checks(tests, rooms, scroll_runtime, backgrounds, minimap)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -2086,9 +2164,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 26,
+        "schemaVersion": 27,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-backgrounds-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
+        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-backgrounds-minimap-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -2428,6 +2506,22 @@ def main() -> int:
             "referencedCompressedBackgroundCount": backgrounds["referencedCompressedBackgroundCount"],
             "doorDependentTransferCount": backgrounds["doorDependentTransferCount"],
             "aggregateHashes": backgrounds["aggregateHashes"],
+        },
+        "minimap": {
+            "areaCount": minimap["areaCount"],
+            "tilemapWordCount": minimap["tilemapWordCount"],
+            "mapDataByteCount": minimap["mapDataByteCount"],
+            "revealedTileCount": minimap["revealedTileCount"],
+            "mapStationPlacementCount": minimap["mapStationPlacementCount"],
+            "mapStationAreaCount": minimap["mapStationAreaCount"],
+            "roomCount": minimap["roomCount"],
+            "roomScreenCount": minimap["roomScreenCount"],
+            "roomCoordinateHeight": minimap["roomCoordinateHeight"],
+            "maxRoomRight": minimap["maxRoomRight"],
+            "maxRoomBottom": minimap["maxRoomBottom"],
+            "graphicsTileCount": minimap["graphics"]["tileCount"],
+            "coordinateTransform": minimap["coordinateTransform"],
+            "aggregateHashes": minimap["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],

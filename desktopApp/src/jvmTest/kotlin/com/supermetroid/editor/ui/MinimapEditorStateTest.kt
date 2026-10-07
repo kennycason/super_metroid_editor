@@ -48,7 +48,7 @@ class MinimapEditorStateTest {
                 val newX = room.mapX + dx
                 val newY = room.mapY + dy
                 if (newX !in 0..(MinimapData.MAP_WIDTH - room.width) ||
-                    newY !in 0..(MinimapData.MAP_HEIGHT - room.height)
+                    newY !in 0..(MinimapData.ROOM_MAP_HEIGHT - room.height)
                 ) return@direction null
                 if (areaRooms.any { other ->
                         other.roomId != room.roomId && rectanglesOverlap(
@@ -915,7 +915,7 @@ class MinimapEditorStateTest {
                     areaRooms.firstOrNull { target ->
                         target.roomId != source.roomId &&
                             target.mapX <= MinimapData.MAP_WIDTH - source.width &&
-                            target.mapY <= MinimapData.MAP_HEIGHT - source.height &&
+                            target.mapY <= MinimapData.ROOM_MAP_HEIGHT - source.height &&
                             !rectanglesOverlap(
                                 source.mapX, source.mapY, source.width, source.height,
                                 target.mapX, target.mapY, target.width, target.height,
@@ -993,7 +993,7 @@ class MinimapEditorStateTest {
                     val newX = room.mapX + dx
                     val newY = room.mapY + dy
                     if (newX !in 0..(MinimapData.MAP_WIDTH - room.width) ||
-                        newY !in 0..(MinimapData.MAP_HEIGHT - room.height)
+                        newY !in 0..(MinimapData.ROOM_MAP_HEIGHT - room.height)
                     ) return@direction null
                     val overlapsRoom = rooms.any { other ->
                         other.roomId != room.roomId && other.area == room.area && rectanglesOverlap(

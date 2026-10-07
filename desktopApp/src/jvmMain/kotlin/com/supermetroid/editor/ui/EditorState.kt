@@ -2918,7 +2918,10 @@ class EditorState(
         val name = request.name.trim()
         require(name.isNotEmpty()) { "Room name cannot be empty" }
         require(request.area in 0..6) { "Room area must be Crateria through Ceres" }
-        require(request.mapX in 0..63 && request.mapY in 0..31) { "Map position is outside the 64x32 area map" }
+        require(
+            request.mapX in 0 until MinimapData.MAP_WIDTH &&
+                request.mapY in 0 until MinimapData.ROOM_MAP_HEIGHT
+        ) { "Map position is outside the 64x31 room-coordinate area" }
         require(request.width in 1..16 && request.height in 1..16) { "Room dimensions must be 1-16 screens" }
         require(request.tileset in 0 until TileGraphics.NUM_TILESETS) { "Tileset ${request.tileset} is invalid" }
 
@@ -2930,7 +2933,10 @@ class EditorState(
         val width = sourceRoom?.width ?: request.width
         val height = sourceRoom?.height ?: request.height
         val tileset = sourceRoom?.tileset ?: request.tileset
-        require(request.mapX + width <= 64 && request.mapY + height <= 32) {
+        require(
+            request.mapX + width <= MinimapData.MAP_WIDTH &&
+                request.mapY + height <= MinimapData.ROOM_MAP_HEIGHT
+        ) {
             "The ${width}x$height room does not fit at map position (${request.mapX}, ${request.mapY})"
         }
 

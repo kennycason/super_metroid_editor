@@ -56,6 +56,7 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`rom/write_safety.md`](rom/write_safety.md) | Transactional export invariants, byte/resource ownership, patch hashes and preconditions, allocation claims, IPS validation, reports, and the Spike Olympics safety result. | Before adding any patch, allocator, hook, or ROM writer |
 | [`rom/environmental_damage.md`](rom/environmental_damage.md) | Heated-room, lava, and acid damage rates; fixed-point ROM locations; native suit mitigation; desktop and headless configuration. | When changing environmental damage |
 | [`rom/limits.md`](rom/limits.md)           | Per-room limits (PLMs, enemies, FX, scrolls, dimensions), bank free space sizes, scroll values, layer 2/BG scrolling, FX type codes.                                                                                                                                                                                   | When adding validation or hitting export errors |
+| [`rom/minimap.md`](rom/minimap.md) | Source-verified two-page pause-map tilemaps, `MapData` reveal masks, hidden-row coordinate transform, 4bpp graphics, map-station PLMs, and runtime consumers. | Before changing map parsing, rendering, room positions, map stations, or export |
 | [`rom/internals.md`](rom/internals.md)     | Deep engine reference. Door transition state machine, PLM lifecycle, block collision dispatch, strict source-backed LZ5 behavior, free-space patterns, and reference codebase paths.                                                                                                                                    | When implementing new engine features           |
 | [`rom/hex_edits.txt`](rom/hex_edits.txt)   | Extensive recipe list for raw hex edits: physics, beams, missiles, morph ball, suits, doors, HUD, FX, sounds.                                                                                                                                                                                                          | When creating new patches                       |
 | [`rom/sound.md`](rom/sound.md)             | SPC-700 sound system: ARAM layout, transfer block format, song set pointer table (`$8F:E7E1`), BRR sample format, sample directory, music triggering, SFX libraries, CPU-SPC transfer protocol, SMEDIT sample replacement strategy.                                                                                    | When working on audio features                  |
@@ -198,6 +199,21 @@ active embedded-L2 state associations. Production parses all eight commands and
 reconstructs normal 32×32/64×32 plus Kraid 64×64 VRAM screen blocks. Dynamic
 WRAM-generated backgrounds fail closed; door-dependent rendering currently uses a
 deterministic variant until the map UI supplies an incoming-door context.
+
+## Pause Maps and Map Stations
+
+The area map is not a flat 64×32 array. Each bank-`$B5` tilemap and bank-`$82`
+`MapData` mask is two 32×32 pages; map-data bits are MSB-first and stored row 0 is
+the pause screen's fake top row. Room coordinate `(0,0)` therefore maps to stored
+row 1. The editor preserves all 64×32 stored cells, but room rectangles are limited
+to the engine-safe 64×31 coordinates (`y=0..30`).
+
+`parityMinimap` pins all seven tilemaps / 14,336 words, seven unique 256-byte reveal
+masks plus the debug Tourian alias, 911 set cells, five vanilla map-station PLMs,
+256 4bpp pause-map tiles at `$B6:8000`, and seven direct consumers. Production
+reads both runtime pointer tables and exact no-op writes cover every tile and bit.
+See [`rom/minimap.md`](rom/minimap.md) before changing map parsing, rendering,
+room-coordinate validation, map-station behavior, or export.
 
 ---
 

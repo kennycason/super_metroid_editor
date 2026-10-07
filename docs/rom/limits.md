@@ -15,6 +15,7 @@ logic (`EditorState.exportToRom()`).
 | **FX entries** | Terminated by `doorSelect == 0` | **16** (parser safety cap) | 16 bytes | Bank `$83` |
 | **Room scrolls** | 1 byte per screen | **50 bytes** (max 50 screens) | 1 byte | Bank `$8F` |
 | **Room dimensions** | 0x0F × 0x0F (16 × 16 screens) | **50 screens** max area | — | `width × height ≤ 50` |
+| **Room map rectangle** | 64 × 31 coordinate cells | `x + width ≤ 64`, `y + height ≤ 31` | — | Pause-map storage is 64×32, but its first stored row is engine padding |
 | **Door-out entries** | No terminator; count derived from next pointer | ~20 | 2 bytes (ptr) | DDB is 12 bytes in bank `$83` |
 
 ## Scroll Values

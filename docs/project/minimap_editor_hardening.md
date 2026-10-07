@@ -1,11 +1,16 @@
 # Minimap Editor Hardening
 
-Last updated: 2026-08-29
+Last updated: 2026-10-07
 
 ## Safe area model
 
 Super Metroid room headers always contain a real area ID. Valid room areas are
 `0..6`; area `0` is Crateria, not an unassigned/null value.
+
+The pause map has 64×32 stored cells, but only 64×31 room-coordinate cells. Stored
+row 0 is a fake top row and the engine addresses rooms at `mapY + 1`. SMEDIT keeps
+the padding row for exact read/write round trips, while room creation, movement,
+area migration, and validation prevent rectangles from extending past Y=30.
 
 The editor therefore exposes two separate operations:
 
@@ -116,6 +121,12 @@ Automated coverage includes:
   unsupported start/elevator references or destinations requiring expansion;
 - desktop and headless exported minimap/map-station bytes;
 - project validation for invalid/null-sentinel areas and AreaSave mismatches.
+
+The source-backed `parityMinimap` suite additionally covers all seven bank-`$B5`
+tilemaps / 14,336 words, seven unique bank-`$82` reveal masks plus the debug alias,
+the two-page MSB-first bit transform, hidden-row transform, five vanilla map-station
+PLMs, 256 standard-4bpp graphics tiles, seven runtime consumers, and exact no-op
+write round trips. See [`../rom/minimap.md`](../rom/minimap.md).
 
 ## Remaining follow-ups
 

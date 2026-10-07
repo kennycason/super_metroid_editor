@@ -157,6 +157,22 @@ class RomValidatorTest {
         }
 
         @Test
+        fun `project room header validation rejects the engine padding row`() {
+            val parser = romParser ?: return
+            val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
+            val room = rooms.values.first()
+            val project = SmEditProject(romPath = "test.smc")
+            project.getOrCreateRoom(room.roomId).roomHeaderChange =
+                RoomHeaderChange(mapY = MinimapData.ROOM_MAP_HEIGHT)
+
+            val issues = RomValidator.checkProjectRoomHeaders(parser, project, rooms)
+
+            assertTrue(issues.any {
+                it.severity == RomValidator.Severity.ERROR && it.message.contains("32nd stored map row is engine padding")
+            })
+        }
+
+        @Test
         fun `project room header validation blocks moving an AreaSave room`() {
             val parser = romParser ?: return
             val rooms = allRoomIds.mapNotNull { parser.readRoomHeader(it) }.associateBy { it.roomId }
