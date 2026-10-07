@@ -389,21 +389,25 @@ class TileGraphics(private val romParser: RomParser) {
 
     /**
      * Render a SNES BG nametable (array of 16-bit tilemap words) to an ARGB pixel image.
-     * Standard layout: 32 columns × 32 rows of 8×8 tiles = 256×256 pixels.
+     * Words must be row-major; [columns] preserves 32×32, 64×32, and 64×64
+     * library-background layouts.
      * Each word: bits 0-9 = tile number, bits 10-12 = palette, bit 13 = priority,
      * bit 14 = H-flip, bit 15 = V-flip.
-     * Returns (pixels, width=256, height=256) or null if tileset not loaded.
+     * Returns (pixels, width, height) or null if tileset is not loaded.
      */
-    fun renderBgTilemap(tilemapWords: IntArray): Triple<IntArray, Int, Int>? {
+    fun renderBgTilemap(
+        tilemapWords: IntArray,
+        columns: Int = if (tilemapWords.size > 1024) 64 else 32,
+    ): Triple<IntArray, Int, Int>? {
         val pal = cachedPalette ?: return null
         if (rawTileData == null) return null
-        val cols = 32
-        val rows = 32
+        if (columns <= 0 || tilemapWords.isEmpty() || tilemapWords.size % columns != 0) return null
+        val cols = columns
+        val rows = tilemapWords.size / columns
         val w = cols * 8  // 256
         val h = rows * 8  // 256
         val pixels = IntArray(w * h)
         for (i in tilemapWords.indices) {
-            if (i >= cols * rows) break
             val word = tilemapWords[i]
             val tileNum = word and 0x03FF
             val paletteIdx = (word shr 10) and 7

@@ -185,6 +185,20 @@ in East Pants. Door ASM is entered with a synthetic JSR-style return and must en
 In the room scroll grid, orange corner markers/chips are touch-trigger outcomes and
 cyan corner markers/chips are possible incoming Door ASM initialization outcomes.
 
+## Background Programs and Embedded Layer 2
+
+Room-state `bgDataPtr` addresses a bank-`$8F` library-background command program;
+it is separate from the two BG-scrolling bytes, which are horizontal/vertical motion
+factors. Embedded Layer 2 is present when the decompressed level payload contains the
+optional `[L1][BTS][L2]` tail, even when those motion factors are nonzero.
+
+`parityBackgrounds` pins all 79 named programs (68 active + 11 unused), 305 commands,
+200 state associations, 70 compressed assets, 14 door-dependent transfers, and 124
+active embedded-L2 state associations. Production parses all eight commands and
+reconstructs normal 32×32/64×32 plus Kraid 64×64 VRAM screen blocks. Dynamic
+WRAM-generated backgrounds fail closed; door-dependent rendering currently uses a
+deterministic variant until the map UI supplies an incoming-door context.
+
 ---
 
 ## Enemy Population Export

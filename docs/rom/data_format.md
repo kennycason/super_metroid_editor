@@ -492,13 +492,19 @@ Offset              Size              Content
 0-1                 2 bytes           Layer 1 size in bytes (= totalBlocks × 2)
 2                   layer1Size bytes  Layer 1 metatile words (16-bit, little-endian)
 2 + layer1Size      totalBlocks bytes BTS data (1 byte per block)
-2 + layer1Size      totalBlocks × 2   Layer 2 metatile words (optional, only if
-  + totalBlocks     bytes             bgScrolling == 0 in room state — embedded L2)
+2 + layer1Size      totalBlocks × 2   Layer 2 metatile words (optional; presence
+  + totalBlocks     bytes             is determined by the decompressed payload size)
 ```
 
 **Important**: The order is `[L1][BTS][L2]`, NOT `[L1][L2][BTS]`.
-Layer 2 is only present when `bgScrolling == 0` (embedded L2). When `bgScrolling != 0`,
-the background uses a separate scrolling tilemap pointed to by `bgDataPtr`.
+The room state's two BG-scrolling bytes are Layer 2 horizontal/vertical movement
+factors; nonzero values do **not** mean embedded Layer 2 is absent. For example,
+Dachora Room (`$9CB3`) has embedded Layer 2 while using nonzero parallax motion.
+
+A nonzero `bgDataPtr` separately points to a bank-`$8F` library-background command
+program. That program initializes BG2 VRAM from compressed assets and direct
+ROM/WRAM transfers; it may coexist with the room's custom Layer 2 payload, which the
+engine loads into its runtime background buffer for scrolling updates.
 
 ### 16-bit Tile Word Format
 

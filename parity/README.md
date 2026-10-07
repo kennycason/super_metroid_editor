@@ -107,7 +107,8 @@ tagged tests. The individual `parityBootstrap`, `parityCheck`,
 `parityOrdinaryEnemyAnimations`, `parityKraid`,
 `parityPhantoon`, `parityDraygon`, `parityRidley`, `parityMotherBrain`,
 `parityCrocomire`, `paritySporeSpawn`, `parityBotwoon`, `parityTorizo`,
-`parityMetroid`, `paritySamus`, `parityRooms`, and `parityScrollRuntime` tasks remain
+`parityMetroid`, `paritySamus`, `parityRooms`, `parityScrollRuntime`, and
+`parityBackgrounds` tasks remain
 available for focused investigation.
 
 `parityBootstrap` clones/fetches
@@ -374,9 +375,17 @@ distinguish the mixed elevatube routine from 74 replaceable scroll-only routines
 and preserve East Pants' one source-owned orphan extension as an explicit vanilla
 fact rather than reporting 23 false positives from turning chains.
 
+`parityBackgrounds` writes ignored `parity/reports/backgrounds.json`. It pins all
+79 named bank-`$8F` programs (68 active + 11 unused), 305 commands across all eight
+command forms, 200 state associations, 70 compressed background assets, 14
+door-dependent transfers, and 124 active embedded-Layer-2 state associations.
+Production tests compare every command and compressed asset, then reconstruct normal
+32×32/64×32, Kraid 64×64, door-dependent, and runtime-WRAM cases through the
+same parser used by the editor.
+
 `parityReport` is the normal strict entry point after setup. It performs the complete
 foundation, LZ5, tileset, CRE, tile-format, animated-tile, item-PLM, enemy-header,
-enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
+enemy-OAM, enemy-instruction, enemy-slice, room/runtime-scroll/background, ordinary-enemy route, Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, Metroid, Samus,
 and enemy-species-status chain and writes ignored
 `parity-report.json` and `parity-report.md` beside the detailed catalogs. The report
 records exact commits and hashes, pass/partial/mismatch/uncovered counts, warnings,

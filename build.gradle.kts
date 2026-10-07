@@ -408,6 +408,17 @@ tasks.register<Exec>("parityScrollRuntime") {
     }
 }
 
+tasks.register<Exec>("parityBackgrounds") {
+    group = "verification"
+    description = "Generate source-backed library-background commands, transfers, and consumers"
+    dependsOn("paritySymbols", "parityRooms", "parityLz5Oracle")
+    workingDir = rootProject.projectDir
+    commandLine(parityPython.get(), "parity/background_manifest.py")
+    providers.systemProperty("smedit.disassemblyDir").orNull?.let { value ->
+        environment("SMEDIT_DISASSEMBLY_DIR", value)
+    }
+}
+
 tasks.register<Exec>("parityReport") {
     group = "verification"
     description = "Run strict source/ROM parity and write JSON/Markdown reports"
@@ -438,6 +449,7 @@ tasks.register<Exec>("parityReport") {
         "paritySamus",
         "parityRooms",
         "parityScrollRuntime",
+        "parityBackgrounds",
         ":shared:parityTest",
         ":shared:communitySamusTest",
         ":desktopApp:communitySamusRomTest",

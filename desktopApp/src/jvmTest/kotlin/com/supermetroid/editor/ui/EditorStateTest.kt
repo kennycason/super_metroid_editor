@@ -5,6 +5,7 @@ import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.data.PatternCell
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.data.TILE_EDIT_LAYER_2
 import com.supermetroid.editor.data.TilePattern
 import com.supermetroid.editor.data.TileEdit
@@ -277,6 +278,20 @@ class EditorStateTest {
 
     @Nested
     inner class Layer2Editing {
+        @Test
+        fun `nonzero parallax motion does not hide embedded layer 2`() {
+            state.initTestLevel(blocksWide = 4, blocksTall = 4, includeLayer2 = true)
+            state.setStateDataChange(StateDataChange(bgScrolling = 0x00C0))
+
+            assertTrue(state.canEditEmbeddedLayer2())
+            state.activeRoomLayer = RoomEditLayer.LAYER2
+            state.setBrushForTest(TileBrush.single(0x155))
+            state.beginStroke()
+            assertTrue(state.paintAt(0, 0))
+            state.endStroke()
+            assertEquals(0x0155, state.readLayer2BlockWord(0, 0))
+        }
+
         @Test
         fun `paint edits embedded layer 2 without changing layer 1`() {
             state.initTestLevel(blocksWide = 4, blocksTall = 4, includeLayer2 = true)

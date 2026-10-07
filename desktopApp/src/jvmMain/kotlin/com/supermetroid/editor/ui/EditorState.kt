@@ -3264,7 +3264,6 @@ class EditorState(
         currentAreaRomSaveEntries = (0 until currentAreaSaveEntryCount.coerceAtMost(RomParser.SAVE_STATION_SLOT_COUNT))
             .mapNotNull { idx -> romParser.readSaveEntry(currentArea, idx)?.let { idx to it } }
             .toMap()
-        if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
         mapSelStart = null
         mapSelEnd = null
         floatingSelection = null
@@ -3534,9 +3533,8 @@ class EditorState(
         includeStateOperations: Boolean = true,
     ): ByteArray? {
         val room = romParser.readRoomHeader(currentRoomId) ?: return null
-        val targetSourceIndex = state.baseSourceStateIndex() ?: return null
         val runtimeStates = romParser.parseRoomStatesWithData(currentRoomId)
-        val targetRuntimeState = runtimeStates.getOrNull(targetSourceIndex) ?: return null
+        if (runtimeStates.getOrNull(state.baseSourceStateIndex() ?: return null) == null) return null
         val levelOwner = if (followLinkedResource) levelResourceOwner(roomEdits, state) else state
         val sourceIndex = levelOwner.baseSourceStateIndex() ?: return null
         val levelRuntimeState = runtimeStates.getOrNull(sourceIndex) ?: return null
@@ -3549,9 +3547,6 @@ class EditorState(
         } else {
             data = data.copyOf()
         }
-        val bgScrolling = state.stateDataChange?.bgScrolling
-            ?: roomEdits.stateDataChange?.bgScrolling
-            ?: targetRuntimeState.bgScrolling
         fun applyOperations(operations: List<EditOperation>) {
             val blocksWide = effectiveWidth * 16
             val blocksTall = effectiveHeight * 16
@@ -3559,7 +3554,7 @@ class EditorState(
             if (data.size < 2) return
             val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
             val layer2Start = 2 + layer1Size + totalBlocks
-            val hasLayer2 = bgScrolling == 0 && layer2Start + totalBlocks * 2 <= data.size
+            val hasLayer2 = layer2Start + totalBlocks * 2 <= data.size
             for (operation in operations) for (edit in operation.edits) {
                 if (edit.blockX !in 0 until blocksWide || edit.blockY !in 0 until blocksTall) continue
                 val index = edit.blockY * blocksWide + edit.blockX
@@ -4262,7 +4257,6 @@ class EditorState(
 
         currentTilesetId = stateDataChange?.tileset ?: commonStateDataChange?.tileset ?: state.tileset
         currentBgScrolling = stateDataChange?.bgScrolling ?: commonStateDataChange?.bgScrolling ?: state.bgScrolling
-        if (currentBgScrolling != 0) activeRoomLayer = RoomEditLayer.LAYER1
         val tg = TileGraphics(romParser)
         if (tg.loadTileset(currentTilesetId)) {
             applyCustomGfxToTileGraphics(tg, currentTilesetId)
@@ -4372,7 +4366,7 @@ class EditorState(
     }
 
     private fun embeddedLayer2StartOffset(data: ByteArray): Int? {
-        if (currentBgScrolling != 0 || workingBlocksWide <= 0 || workingBlocksTall <= 0 || data.size < 2) return null
+        if (workingBlocksWide <= 0 || workingBlocksTall <= 0 || data.size < 2) return null
         val layer1Size = (data[0].toInt() and 0xFF) or ((data[1].toInt() and 0xFF) shl 8)
         val totalBlocks = workingBlocksWide * workingBlocksTall
         val start = 2 + layer1Size + totalBlocks

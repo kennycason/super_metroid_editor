@@ -383,6 +383,27 @@ Run `./gradlew parityReport` with `SMEDIT_TEST_ROM` configured to regenerate the
 evidence in ignored `parity/reports/lz5.json` and the aggregate report. See
 [`../../parity/README.md`](../../parity/README.md).
 
+### Background Programs and Embedded Layer 2 (VERIFIED 2026-10-06)
+
+Room-state `bgDataPtr` is a 16-bit pointer into bank `$8F`'s library-background
+interpreter at `$82:E5C7`. The pinned source contains 79 named programs (68 active +
+11 unused), 305 commands, 200 state associations, 70 compressed background assets,
+and 14 door-dependent transfers. All eight command forms are covered: terminate,
+decompress, transfer, transfer-and-set-BG3-base, clear BG2, clear Kraid Layer 2,
+door-dependent transfer, and reserved/no-op.
+
+The production parser executes the static portions into simulated WRAM/VRAM and
+reconstructs SNES screen blocks as row-major 32×32, 64×32, or Kraid 64×64 maps.
+This fixes six 4 KiB backgrounds whose right half was previously truncated/repeated.
+Runtime-generated WRAM inputs fail closed rather than drawing fabricated data, and a
+door-dependent list uses a deterministic first variant until an incoming door is
+provided by the map UI.
+
+Embedded Layer 2 is identified by the optional `[L1][BTS][L2]` payload, not by the
+room's BG-scrolling word. Those bytes are horizontal/vertical motion factors; 65
+Layer-2-bearing state associations use nonzero motion. All 124 active embedded-L2
+state associations remain available to the editor.
+
 ### Tileset and CRE Ownership (VERIFIED 2026-10-03)
 
 `parityTilesets` parses the exact `$8F:E6A2` source table and proves all 29

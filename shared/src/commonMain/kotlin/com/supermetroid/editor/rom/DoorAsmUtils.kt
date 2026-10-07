@@ -211,15 +211,6 @@ data class DoorDependentBgTransfer(
     val size: Int,
 )
 
-private fun bgDataCommandSize(command: Int): Int? = when (command) {
-    0x0000 -> 2
-    0x0002, 0x0008 -> 9
-    0x0004 -> 7
-    0x0006, 0x000A, 0x000C -> 2
-    0x000E -> 11
-    else -> null
-}
-
 fun readDoorEntryAtDoorDefPtr(
     romParser: RomParser,
     doorDefPtr: Int,
@@ -245,31 +236,16 @@ fun parseDoorDependentBgTransfers(
     bgDataPtr: Int,
     maxCommands: Int = 64,
 ): List<DoorDependentBgTransfer> {
-    if (bgDataPtr == 0 || bgDataPtr == 0xFFFF) return emptyList()
-    val pc = runCatching { romParser.snesToPc(RomConstants.BANK_ROOM_DATA or bgDataPtr) }.getOrNull()
-        ?: return emptyList()
-    val transfers = mutableListOf<DoorDependentBgTransfer>()
-    var offset = pc
-    repeat(maxCommands) {
-        val command = romParser.readUInt16At(offset)
-        if (command == 0x0000) return transfers
-        val size = bgDataCommandSize(command) ?: return transfers
-        if (command == 0x000E) {
-            val srcAddr = romParser.readByteAt(offset + 4) or
-                (romParser.readByteAt(offset + 5) shl 8) or
-                (romParser.readByteAt(offset + 6) shl 16)
-            transfers.add(
-                DoorDependentBgTransfer(
-                    doorDefPtr = romParser.readUInt16At(offset + 2),
-                    srcAddr = srcAddr,
-                    vramDst = romParser.readUInt16At(offset + 7),
-                    size = romParser.readUInt16At(offset + 9),
-                )
-            )
-        }
-        offset += size
+    val program = romParser.parseLibraryBackground(bgDataPtr, maxCommands) ?: return emptyList()
+    return program.commands.mapNotNull { command ->
+        if (command.type != LibraryBackgroundCommandType.DOOR_DEPENDENT_TRANSFER) return@mapNotNull null
+        DoorDependentBgTransfer(
+            doorDefPtr = command.doorDefPtr ?: return@mapNotNull null,
+            srcAddr = command.sourceAddress ?: return@mapNotNull null,
+            vramDst = command.vramDestination ?: return@mapNotNull null,
+            size = command.size ?: return@mapNotNull null,
+        )
     }
-    return transfers
 }
 
 private fun sameDoorDependentBgEntrance(a: RomParser.DoorEntry, b: RomParser.DoorEntry): Boolean =
@@ -299,14 +275,12 @@ fun buildBgDataWithClonedDoorDependentTransfer(
     template: DoorDependentBgTransfer,
     maxCommands: Int = 64,
 ): ByteArray? {
-    if (bgDataPtr == 0 || bgDataPtr == 0xFFFF) return null
+    val program = romParser.parseLibraryBackground(bgDataPtr, maxCommands) ?: return null
     val pc = runCatching { romParser.snesToPc(RomConstants.BANK_ROOM_DATA or bgDataPtr) }.getOrNull()
         ?: return null
-    var offset = pc
-    repeat(maxCommands) {
-        val command = romParser.readUInt16At(offset)
-        val size = bgDataCommandSize(command) ?: return null
-        if (command == 0x0000) {
+    for (command in program.commands) {
+        if (command.type == LibraryBackgroundCommandType.TERMINATE) {
+            val offset = pc + command.offset
             val bytes = mutableListOf<Int>()
             for (i in pc until offset) bytes.add(romParser.readByteAt(i))
             bytes.addAll(
@@ -321,7 +295,6 @@ fun buildBgDataWithClonedDoorDependentTransfer(
             )
             return bytes.map { it.toByte() }.toByteArray()
         }
-        offset += size
     }
     return null
 }

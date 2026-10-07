@@ -176,6 +176,11 @@ streams, 371 extension records, 75 active door scroll writers, and all 103 direc
 engine writer routines are inventoried with exact load precedence and production
 decoder checks. Mixed door routines now fail closed during resize instead of silently
 discarding unrelated ASM behavior.
+Background loading is source-backed too: all 79 named bank-`$8F` programs, 305
+commands, 200 state associations, 70 compressed assets, and 14 door-dependent
+transfers are pinned. Production reconstructs normal 32×32/64×32 and Kraid
+64×64 screen-block layouts, while all 124 embedded-Layer-2 states are detected from
+their real level payload rather than inferred from parallax motion factors.
 Room/header/state export is also guarded by byte-exact empty/no-op checks and a
 whole-catalog header/state mutation allowlist. Dynamic resource mutation/relocation,
 and emulator traversal remain explicit follow-up work. The

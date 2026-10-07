@@ -1351,54 +1351,147 @@ class RomParser(
     // ─── Layer 2 / BG Data ─────────────────────────────────────────────
 
     /**
-     * Read BG data (Layer 2 background tilemap) for a room.
+     * Execute the room's library-background commands far enough to reconstruct
+     * its static BG2 nametable.
      *
-     * BG data pointer (in bank $8F) points to a structure with a 2-byte header:
-     *   0x0004 = real data — next 3 bytes are pointer to compressed nametable
-     *   Other  = unsupported format
-     *
-     * The decompressed nametable is 32×32 SNES BG tilemap words (1024 words).
-     * Each word: bits 0-9 = 8x8 tile number, bits 10-12 = palette,
-     * bit 13 = priority, bit 14 = H-flip, bit 15 = V-flip.
-     *
-     * For rooms with bgScrolling == 0x0000 (embedded Layer 2), the level data
-     * itself contains a second layer after Layer 1, in the same metatile format.
-     *
-     * Returns an IntArray of tilemap words (1024 entries for scrolling BG),
-     * or null if the format is unrecognized or the pointer is invalid.
+     * The engine stores 32×32 screen blocks consecutively in VRAM. Normal rooms
+     * use two blocks (64×32); Kraid uses four (64×64). Door-dependent programs
+     * select one transfer by incoming DDB. When no DDB is supplied, the first
+     * variant is used as a deterministic editor preview. Runtime-generated boss
+     * tilemaps whose source WRAM was not populated by the program fail closed.
      */
-    fun readBgTilemap(bgDataPtr: Int): IntArray? {
-        if (bgDataPtr == 0) return null
-        val headerPc = snesToPc(BANK_ROOM_DATA or bgDataPtr)
-        if (headerPc < 0 || headerPc + 4 >= romData.size) return null
-
-        val header = readUInt16At(headerPc)
-        // Header 0x0004 = real data: next 3 bytes are SNES pointer to compressed tilemap
-        val dataAddr: Int = when (header) {
-            0x0004 -> readUInt24At(headerPc + 2)
-            else -> return null // unsupported format (boss BG, RAM-loaded, etc.)
+    fun readBgTilemapLayout(
+        bgDataPtr: Int,
+        incomingDoorDefPtr: Int? = null,
+    ): BackgroundTilemap? {
+        val program = parseLibraryBackground(bgDataPtr) ?: return null
+        val wram = ByteArray(0x10000)
+        val wramKnown = BooleanArray(0x10000)
+        // Four 32×32 screen blocks, spanning VRAM word addresses $4000..$4FFF.
+        val vram = ByteArray(0x2000)
+        val vramKnown = BooleanArray(0x2000)
+        val selectedDoor = incomingDoorDefPtr ?: program.commands.firstNotNullOfOrNull { command ->
+            command.doorDefPtr.takeIf { command.type == LibraryBackgroundCommandType.DOOR_DEPENDENT_TRANSFER }
         }
-        if (dataAddr == 0) return null
 
-        val decompressed = try { decompressLZ2(dataAddr) } catch (_: Exception) { return null }
-        // Expect at least 1024 words = 2048 bytes (32×32 nametable)
-        val wordCount = minOf(decompressed.size / 2, 1024)
-        if (wordCount == 0) return null
-
-        val words = IntArray(wordCount)
-        for (i in 0 until wordCount) {
-            val lo = decompressed[i * 2].toInt() and 0xFF
-            val hi = decompressed[i * 2 + 1].toInt() and 0xFF
-            words[i] = (hi shl 8) or lo
+        fun sourceBytes(address: Int, size: Int): ByteArray? {
+            if (size <= 0) return null
+            val bank = (address ushr 16) and 0xFF
+            val offset = address and 0xFFFF
+            if (bank == 0x7E || bank == 0x7F) {
+                if (bank != 0x7E || offset + size > wram.size) return null
+                if ((offset until offset + size).any { !wramKnown[it] }) return null
+                return wram.copyOfRange(offset, offset + size)
+            }
+            if (bank < 0x80 || offset < 0x8000) return null
+            val pc = runCatching { snesToPc(address) }.getOrNull() ?: return null
+            if (pc < 0 || pc + size > romData.size) return null
+            return romData.copyOfRange(pc, pc + size)
         }
-        return words
+
+        fun transfer(sourceAddress: Int, destination: Int, size: Int) {
+            val source = sourceBytes(sourceAddress, size) ?: return
+            val transferStart = destination
+            val transferEnd = destination + (size / 2)
+            val overlapStart = maxOf(transferStart, 0x4000)
+            val overlapEnd = minOf(transferEnd, 0x5000)
+            if (overlapStart >= overlapEnd) return
+            val sourceStart = (overlapStart - transferStart) * 2
+            val destinationStart = (overlapStart - 0x4000) * 2
+            val byteCount = (overlapEnd - overlapStart) * 2
+            source.copyInto(vram, destinationStart, sourceStart, sourceStart + byteCount)
+            for (index in destinationStart until destinationStart + byteCount) vramKnown[index] = true
+        }
+
+        fun clearBlocks(firstBlock: Int, blockCount: Int) {
+            val start = firstBlock * 0x800
+            val end = start + blockCount * 0x800
+            for (offset in start until end step 2) {
+                vram[offset] = 0x38
+                vram[offset + 1] = 0x03
+                vramKnown[offset] = true
+                vramKnown[offset + 1] = true
+            }
+        }
+
+        for (command in program.commands) {
+            when (command.type) {
+                LibraryBackgroundCommandType.DECOMPRESS -> {
+                    val source = command.sourceAddress ?: continue
+                    val destination = command.wramDestination ?: continue
+                    val decoded = runCatching { decompressLZ2(source) }.getOrNull() ?: continue
+                    if (destination + decoded.size > wram.size) continue
+                    decoded.copyInto(wram, destination)
+                    for (index in destination until destination + decoded.size) wramKnown[index] = true
+                }
+
+                LibraryBackgroundCommandType.TRANSFER,
+                LibraryBackgroundCommandType.TRANSFER_AND_SET_BG3_BASE,
+                -> transfer(
+                    command.sourceAddress ?: continue,
+                    command.vramDestination ?: continue,
+                    command.size ?: continue,
+                )
+
+                LibraryBackgroundCommandType.DOOR_DEPENDENT_TRANSFER -> {
+                    if (command.doorDefPtr == selectedDoor) {
+                        transfer(
+                            command.sourceAddress ?: continue,
+                            command.vramDestination ?: continue,
+                            command.size ?: continue,
+                        )
+                    }
+                }
+
+                LibraryBackgroundCommandType.CLEAR_BG2_TILEMAP -> clearBlocks(firstBlock = 2, blockCount = 2)
+                LibraryBackgroundCommandType.CLEAR_KRAID_LAYER2 -> clearBlocks(firstBlock = 0, blockCount = 4)
+                else -> Unit
+            }
+        }
+
+        val knownBlocks = (0 until 4).filter { block ->
+            val start = block * 0x800
+            (start until start + 0x800).all { vramKnown[it] }
+        }
+        if (knownBlocks.isEmpty()) return null
+        val fourScreen = knownBlocks.any { it < 2 }
+        val widthTiles = if (knownBlocks.size == 1) 32 else 64
+        val heightTiles = if (fourScreen) 64 else 32
+        val baseBlock = when {
+            fourScreen -> 0
+            widthTiles == 32 -> knownBlocks.first()
+            else -> 2
+        }
+        val words = IntArray(widthTiles * heightTiles)
+        val horizontalBlocks = widthTiles / 32
+        val verticalBlocks = heightTiles / 32
+        for (blockY in 0 until verticalBlocks) {
+            for (blockX in 0 until horizontalBlocks) {
+                val block = baseBlock + blockY * 2 + blockX
+                val sourceStart = block * 0x800
+                for (localY in 0 until 32) {
+                    for (localX in 0 until 32) {
+                        val sourceOffset = sourceStart + (localY * 32 + localX) * 2
+                        if (!vramKnown[sourceOffset] || !vramKnown[sourceOffset + 1]) continue
+                        val destinationIndex = (blockY * 32 + localY) * widthTiles + blockX * 32 + localX
+                        words[destinationIndex] =
+                            (vram[sourceOffset].toInt() and 0xFF) or
+                                ((vram[sourceOffset + 1].toInt() and 0xFF) shl 8)
+                    }
+                }
+            }
+        }
+        return BackgroundTilemap(words, widthTiles, heightTiles)
     }
+
+    /** Backwards-compatible word-only view; prefer [readBgTilemapLayout] for dimensions. */
+    fun readBgTilemap(bgDataPtr: Int): IntArray? = readBgTilemapLayout(bgDataPtr)?.words
 
     /**
      * Read embedded Layer 2 tile data from decompressed level data.
-     * For rooms with bgScrolling == 0x0000, Layer 2 data is stored after Layer 1
-     * in the same metatile word format. Returns an IntArray of tile words covering
-     * the full room, or null if no embedded Layer 2 data is present.
+     * Embedded Layer 2 data, when present, is stored after Layer 1 and BTS in the
+     * same metatile word format. The state scroll-factor bytes control motion; they
+     * do not determine whether this payload exists.
      */
     fun readEmbeddedLayer2(levelData: ByteArray, blocksWide: Int, blocksTall: Int): IntArray? {
         if (levelData.size < 2) return null

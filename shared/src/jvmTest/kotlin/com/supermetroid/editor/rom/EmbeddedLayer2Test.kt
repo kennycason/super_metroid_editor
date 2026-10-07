@@ -48,7 +48,6 @@ class EmbeddedLayer2Test {
 
         for ((addr, name) in testRooms) {
             val room = parser.readRoomHeader(addr) ?: continue
-            if (room.bgScrolling != 0) continue
 
             val levelData = parser.decompressLZ2(room.levelDataPtr)
             val blocksWide = room.width * 16
@@ -60,6 +59,19 @@ class EmbeddedLayer2Test {
             val row0HasContent = (0 until blocksWide).any { l2Words!![it] != 0 }
             assertTrue(row0HasContent, "$name: L2 row 0 should have content")
         }
+    }
+
+    @Test
+    fun `embedded L2 presence is independent of nonzero motion factors`() {
+        val parser = loadTestRom() ?: return
+        val dachora = parser.readRoomHeader(0x9CB3) ?: error("Dachora room missing")
+        assertEquals(0, dachora.bgDataPtr)
+        assertEquals(0x00C0, dachora.bgScrolling)
+        val decoded = parser.decompressLZ2(dachora.levelDataPtr)
+        assertNotNull(
+            parser.readEmbeddedLayer2(decoded, dachora.width * 16, dachora.height * 16),
+            "Dachora stores embedded Layer 2 even though its X motion factor is nonzero",
+        )
     }
 
     @Test

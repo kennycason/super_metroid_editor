@@ -4,13 +4,14 @@ Use these checks for the first embedded Layer 2 editing slice.
 
 ## Scope
 
-- Supported now: rooms whose state data has `BG scrolling = 0x0000` and whose level data includes embedded Layer 2 after `[Layer 1][BTS]`.
-- Not supported yet: scrolling/door-dependent BG data streams. The Layer 2 chip is disabled for those rooms.
+- Supported now: rooms whose decompressed level data includes embedded Layer 2 after `[Layer 1][BTS]`, including rooms with nonzero parallax motion factors.
+- Read/render supported: bank-`$8F` library-background programs, including decompression, ROM/WRAM transfers, clears, 64×32 and Kraid 64×64 screen-block layout, and deterministic door-dependent previews.
+- Not supported yet: direct authoring of library-background command programs or choosing an incoming door context for the map preview.
 - Layer 2 edits are visual background edits only. The editor writes metatile ID plus H/V flip bits and does not write collision block type or BTS.
 
 ## Manual Checks
 
-1. Open an embedded Layer 2 room such as Bat Cave (`0xB07A`) or Hopper Energy Tank Room (`0xA15B`).
+1. Open an embedded Layer 2 room such as Bat Cave (`0xB07A`), Hopper Energy Tank Room (`0xA15B`), or parallax-enabled Dachora Room (`0x9CB3`).
 2. Confirm the map toolbar shows `L1` and enabled `L2` chips.
 3. Select `L2`, choose a metatile from the tileset, and paint onto the map.
 4. Confirm the visible Layer 2 background updates immediately and Layer 1 collision/block metadata does not change.
@@ -24,5 +25,6 @@ Use these checks for the first embedded Layer 2 editing slice.
 ## Follow-Ups
 
 - Add selection/copy/paste support for Layer 2 rectangles.
-- Add a dedicated editor for scrolling BG data streams (`bgScrolling != 0` / `bgDataPtr != 0`).
+- Add a dedicated editor for library-background command programs (`bgDataPtr != 0`).
+- Let the map preview choose the incoming door for door-dependent transfers.
 - Add a small status hint explaining why `L2` is disabled in non-embedded rooms.

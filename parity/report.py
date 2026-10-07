@@ -884,7 +884,8 @@ def samus_checks(
 
 
 def room_checks(
-    test_results: Dict[str, object], rooms: Dict[str, object], scroll_runtime: Dict[str, object]
+    test_results: Dict[str, object], rooms: Dict[str, object], scroll_runtime: Dict[str, object],
+    backgrounds: Dict[str, object],
 ) -> List[Dict[str, object]]:
     class_name = "com.supermetroid.editor.rom.RoomSourceParityTest"
     source_header_status = named_test_status(
@@ -934,6 +935,25 @@ def room_checks(
         ),
     ]
     runtime_status = "pass" if all(status == "pass" for status in runtime_test_statuses) else "mismatch"
+    background_class = "com.supermetroid.editor.rom.BackgroundSourceParityTest"
+    background_test_statuses = [
+        named_test_status(
+            test_results,
+            background_class,
+            "all library background programs and commands match named source",
+        ),
+        named_test_status(
+            test_results,
+            background_class,
+            "compressed assets transfers and embedded ownership cover every room state",
+        ),
+        named_test_status(
+            test_results,
+            background_class,
+            "production reconstructs repeated wide Kraid and door selected tilemaps",
+        ),
+    ]
+    background_status = "pass" if all(status == "pass" for status in background_test_statuses) else "mismatch"
     resources = rooms["resourceCounts"]
     runtime_plms = scroll_runtime["genericPlms"]
     runtime_doors = scroll_runtime["doors"]
@@ -1030,8 +1050,16 @@ def room_checks(
         {
             "id": "R-11",
             "name": "BG data and embedded Layer 2",
-            "status": "partial" if level_status == "pass" else level_status,
-            "evidence": f"All {rooms['levelStreamWithLayer2Count']} embedded Layer-2 payloads are proven; BG command lists and transfers remain to be inventoried.",
+            "status": background_status if level_status == "pass" else level_status,
+            "evidence": (
+                f"All {rooms['levelStreamWithLayer2Count']} Layer-2-bearing level streams and "
+                f"{backgrounds['embeddedLayer2StateCount']} active embedded-Layer-2 states are proven. "
+                f"All {backgrounds['programCount']} named library-background programs "
+                f"({backgrounds['activeProgramCount']} active + {backgrounds['unusedProgramCount']} unused), "
+                f"{backgrounds['commandCount']} commands, {backgrounds['stateAssociationCount']} state associations, "
+                f"{backgrounds['referencedCompressedBackgroundCount']} referenced compressed backgrounds, and "
+                f"{backgrounds['doorDependentTransferCount']} door-dependent transfers match source and production."
+            ),
         },
         {
             "id": "R-12",
@@ -1075,6 +1103,7 @@ def markdown_report(report: Dict[str, object]) -> str:
     samus = report["samus"]
     rooms = report["rooms"]
     scroll_runtime = report["scrollRuntime"]
+    backgrounds = report["backgrounds"]
     ordinary_enemy_animations = report["ordinaryEnemyAnimations"]
     enemy_species_status = report["enemySpeciesStatus"]
     tests = report["tests"]
@@ -1239,6 +1268,10 @@ def markdown_report(report: Dict[str, object]) -> str:
             f"**{scroll_runtime['extensionCount']}** extensions, **{scroll_runtime['doorWriterRoutineCount']}** active "
             f"door writer routines, and **{scroll_runtime['directWriterRoutineCount']}** total direct engine writers are source-pinned; "
             f"**{scroll_runtime['orphanExtensionCount']}** vanilla orphan is explicit.",
+            f"- Room backgrounds: **{backgrounds['programCount']}** named programs / "
+            f"**{backgrounds['commandCount']}** commands / **{backgrounds['stateAssociationCount']}** state associations, "
+            f"**{backgrounds['embeddedLayer2StateCount']}** embedded-Layer-2 states, and "
+            f"**{backgrounds['doorDependentTransferCount']}** door-dependent transfers are source-pinned.",
             f"- Ordinary enemy source routes: **{ordinary_enemy_animations['speciesCount']}** helper-selected species expose "
             f"**{ordinary_enemy_animations['animationCount']}** actions / "
             f"**{ordinary_enemy_animations['animationFrameCount']}** guided frames from exact source instruction lists.",
@@ -1255,7 +1288,7 @@ def markdown_report(report: Dict[str, object]) -> str:
             "Detailed symbol, asset, compression, tileset, tile-format, animated-tile, item-PLM, enemy-header, enemy-OAM, enemy-instruction, enemy-slice, room/state/resource, runtime-scroll, enemy-species-status, alias, and CRE records "
             "are in `symbols.json`, `assets.json`, `lz5.json`, `tilesets.json`, `tile-formats.json`, "
             "`animated-tiles.json`, `item-plm-graphics.json`, `enemy-headers.json`, `enemy-oam.json`, and "
-            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
+            "`enemy-instructions.json`, `enemy-vertical-slices.json`, `rooms.json`, `scroll-runtime.json`, `backgrounds.json`, `ordinary-enemy-animations.json`, `kraid.json`, `phantoon.json`, `draygon.json`, `ridley.json`, `mother-brain.json`, `crocomire.json`, `spore-spawn.json`, `botwoon.json`, `torizo.json`, `metroid.json`, `samus.json`, and `enemy-species-status.json` beside this report. "
             "A human-readable species ledger is also in `enemy-species-status.md`.",
             "",
         ]
@@ -1294,6 +1327,7 @@ def main() -> int:
     samus_path = report_dir / "samus.json"
     rooms_path = report_dir / "rooms.json"
     scroll_runtime_path = report_dir / "scroll-runtime.json"
+    backgrounds_path = report_dir / "backgrounds.json"
     ordinary_enemy_animations_path = report_dir / "ordinary-enemy-animations.json"
     enemy_species_status_path = report_dir / "enemy-species-status.json"
     if (
@@ -1321,11 +1355,12 @@ def main() -> int:
         or not samus_path.is_file()
         or not rooms_path.is_file()
         or not scroll_runtime_path.is_file()
+        or not backgrounds_path.is_file()
         or not ordinary_enemy_animations_path.is_file()
         or not enemy_species_status_path.is_file()
     ):
         print(
-            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
+            "ERROR: symbol/asset/LZ5/tileset/tile-format/animated-tile/item-PLM/enemy-header/enemy-OAM/enemy-instruction/enemy-slice/room/scroll-runtime/background/ordinary-enemy/Kraid/Phantoon/Draygon/Ridley/Mother-Brain/Crocomire/Spore-Spawn/Botwoon/Torizo/Metroid/Samus/enemy-species reports are missing; "
             "run ./gradlew parityReport",
             file=sys.stderr,
         )
@@ -1356,6 +1391,7 @@ def main() -> int:
     samus = json.loads(samus_path.read_text(encoding="utf-8"))
     rooms = json.loads(rooms_path.read_text(encoding="utf-8"))
     scroll_runtime = json.loads(scroll_runtime_path.read_text(encoding="utf-8"))
+    backgrounds = json.loads(backgrounds_path.read_text(encoding="utf-8"))
     ordinary_enemy_animations = json.loads(ordinary_enemy_animations_path.read_text(encoding="utf-8"))
     enemy_species_status = json.loads(enemy_species_status_path.read_text(encoding="utf-8"))
     tests = collect_test_results(args.test_results.expanduser().resolve())
@@ -1995,6 +2031,25 @@ def main() -> int:
         ]:
             raise ValueError(f"scroll-runtime aggregate {field} does not match the pinned reference")
 
+    pinned_background_fields = {
+        "programCount": "background.program.count",
+        "activeProgramCount": "background.program.active.count",
+        "unusedProgramCount": "background.program.unused.count",
+        "stateAssociationCount": "background.stateAssociation.count",
+        "embeddedLayer2StateCount": "background.embeddedState.count",
+        "commandCount": "background.command.count",
+        "doorDependentTransferCount": "background.doorTransfer.count",
+        "compressedBackgroundCount": "background.compressed.count",
+        "referencedCompressedBackgroundCount": "background.compressed.referenced.count",
+        "unreferencedCompressedBackgroundCount": "background.compressed.unreferenced.count",
+    }
+    for field, property_name in pinned_background_fields.items():
+        if int(backgrounds[field]) != int(reference[property_name]):
+            raise ValueError(f"background report field {field} does not match the pinned reference")
+    for field in ("programs", "commands", "consumers"):
+        if backgrounds["aggregateHashes"][field] != reference[f"background.{field}.aggregate.sha256"]:
+            raise ValueError(f"background aggregate {field} does not match the pinned reference")
+
     graphics_checks = (
         compression_checks(tests, lz5)
         + tile_format_checks(tests, tile_formats)
@@ -2022,7 +2077,7 @@ def main() -> int:
         + torizo_checks(tests, torizo)
         + metroid_checks(tests, metroid)
         + samus_checks(tests, samus)
-        + room_checks(tests, rooms, scroll_runtime)
+        + room_checks(tests, rooms, scroll_runtime, backgrounds)
     )
     raw_summary = Counter(str(check["status"]) for check in checks)
     summary = {
@@ -2031,9 +2086,9 @@ def main() -> int:
     }
     overall = "mismatch" if summary["mismatch"] else "pass"
     report: Dict[str, object] = {
-        "schemaVersion": 25,
+        "schemaVersion": 26,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
+        "scope": "foundation-compression-shared-graphics-rooms-states-resources-scroll-runtime-backgrounds-export-enemy-headers-oam-instructions-slices-ordinary-enemy-routes-kraid-phantoon-draygon-ridley-mother-brain-crocomire-spore-spawn-botwoon-torizo-metroid-samus-and-species-status",
         "overall": overall,
         "identity": {
             "smeditCommit": git_output("rev-parse", "HEAD"),
@@ -2360,6 +2415,19 @@ def main() -> int:
             "directStoreSiteCount": scroll_runtime["writerInventory"]["storeSiteCount"],
             "writerCategoryCounts": scroll_runtime["writerInventory"]["categoryCounts"],
             "aggregateHashes": scroll_runtime["aggregateHashes"],
+        },
+        "backgrounds": {
+            "programCount": backgrounds["programCount"],
+            "activeProgramCount": backgrounds["activeProgramCount"],
+            "unusedProgramCount": backgrounds["unusedProgramCount"],
+            "stateAssociationCount": backgrounds["stateAssociationCount"],
+            "embeddedLayer2StateCount": backgrounds["embeddedLayer2StateCount"],
+            "commandCount": backgrounds["commandCount"],
+            "commandCounts": backgrounds["commandCounts"],
+            "compressedBackgroundCount": backgrounds["compressedBackgroundCount"],
+            "referencedCompressedBackgroundCount": backgrounds["referencedCompressedBackgroundCount"],
+            "doorDependentTransferCount": backgrounds["doorDependentTransferCount"],
+            "aggregateHashes": backgrounds["aggregateHashes"],
         },
         "ordinaryEnemyAnimations": {
             "speciesCount": ordinary_enemy_animations["totals"]["speciesCount"],
