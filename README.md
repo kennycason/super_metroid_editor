@@ -94,6 +94,7 @@ Sound
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
 - **Expanded ROM Inspection** — Discover and inspect rooms in supported expanded-ROM layouts in read-only mode. This has been tested with SMART-generated output; no SMART project data is loaded or stored.
+- **ASM Reference Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, source search, clickable cross-bank labels, 65C816 instruction help, navigation history, and a provenance-aware binary inspector. The current workspace is intentionally read-only; see [the ASM workflow contract](docs/asm/reference_workspace.md).
 - **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
 
 ## Download
@@ -150,7 +151,10 @@ The native SPC library (`libspc`) is compiled automatically by Gradle from the `
 The optional [parity harness](parity/README.md) provisions a pinned Super Metroid
 disassembly checkout and validates a user-supplied clean ROM for source-backed
 regression tests. It is developer tooling only; the editor and release builds have
-no dependency on the ROM or disassembly checkout.
+no build-time dependency on the ROM or a pre-existing disassembly checkout. The
+separate read-only [ASM workspace](docs/asm/reference_workspace.md) can download the
+same pinned source on demand at runtime and derive its assets from the ROM already
+open in the editor.
 
 After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
 complete pinned asset-extraction and assembly build, including a byte-identity check.

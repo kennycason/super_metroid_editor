@@ -68,6 +68,9 @@ import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomValidator
+import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.ui.AsmWorkspaceCanvas
+import com.supermetroid.editor.ui.AsmWorkspaceSidebar
 import com.supermetroid.editor.ui.BossTabCanvas
 import com.supermetroid.editor.ui.BossTabSidebar
 import com.supermetroid.editor.ui.DraggableDividerVertical
@@ -130,6 +133,7 @@ private const val TAB_MAP = 6
 private const val TAB_TEXT = 7
 private const val TAB_ENEMY = 8
 private const val TAB_BOSS = 9
+private const val TAB_ASM = 10
 
 private val READ_ONLY_INSPECTABLE_TABS = setOf(
     TAB_ROOMS,
@@ -142,6 +146,7 @@ private val READ_ONLY_INSPECTABLE_TABS = setOf(
     TAB_TEXT,
     TAB_ENEMY,
     TAB_BOSS,
+    TAB_ASM,
 )
 
 private fun isTabAvailableForRom(tab: Int, romReadOnly: Boolean): Boolean =
@@ -608,6 +613,13 @@ fun main() = application {
                 }
                 val soundEditorState = remember { SoundEditorState() }
                 val minimapEditorState = remember { MinimapEditorState() }
+                val asmWorkspaceState = remember { AsmWorkspaceState() }
+                LaunchedEffect(Unit) {
+                    asmWorkspaceState.loadInstalled()
+                }
+                LaunchedEffect(romParser) {
+                    asmWorkspaceState.observeRom(romParser?.copyRomData())
+                }
                 var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
                 // Auto-switch to Palette tab when user samples a tile
                 val sampledRow = editorState.sampledPaletteRow
@@ -680,7 +692,7 @@ fun main() = application {
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss")
+                                val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss", "ASM")
                                 tabNames.forEachIndexed { idx, name ->
                                     val selected = leftTab == idx
                                     val tabEnabled = isTabAvailableForRom(idx, romReadOnly)
@@ -818,6 +830,12 @@ fun main() = application {
                                     )
                                     TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
                                     TAB_BOSS -> BossTabSidebar(editorState = editorState, romParser = romParser)
+                                    TAB_ASM -> AsmWorkspaceSidebar(
+                                        state = asmWorkspaceState,
+                                        romParser = romParser,
+                                        romName = romFileName,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                 }
                                 }
                             }
@@ -928,6 +946,7 @@ fun main() = application {
                                     )
                                     TAB_ENEMY -> EnemyTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
                                     TAB_BOSS -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    TAB_ASM -> AsmWorkspaceCanvas(state = asmWorkspaceState, modifier = Modifier.fillMaxSize())
                                 }
                                 }
                             }

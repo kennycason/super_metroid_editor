@@ -49,6 +49,7 @@
 - Minimap Area/Transform Hardening — Shared safe area reassignment, context actions, station-reveal migration, exact flip/rotation UX, and coherent undo/redo
 - Transactional ROM write planner — desktop/headless byte ownership, overlap and bounds failures, base-ROM hashes, expected-hook bytes, full allocation claims, runtime-resource declarations, and ownership reports
 - Scalable editor typography — Material control defaults plus Patch, Enemy, and Boss tuning surfaces use the global semantic font-size presets
+- Read-only ASM reference workspace — On-demand pinned source, current-ROM extraction of all 1,130 assets, bank/function/label navigation, source search, syntax coloring, 65C816 help, binary provenance/hex inspection, and transactional refresh
 
 ---
 

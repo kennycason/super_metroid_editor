@@ -23,7 +23,7 @@ kotlin {
         jvmToolchain(17)
         withJava()
         testRuns["test"].executionTask.configure {
-            useJUnitPlatform { excludeTags("community-samus-rom") }
+            useJUnitPlatform { excludeTags("community-samus-rom", "asm-reference-network") }
             systemProperty("smedit.realItFixture", System.getProperty("smedit.realItFixture", ""))
         }
     }
@@ -63,6 +63,17 @@ kotlin {
 }
 
 val regularJvmTest = tasks.named<org.gradle.api.tasks.testing.Test>("jvmTest")
+
+tasks.register<org.gradle.api.tasks.testing.Test>("asmReferenceIntegrationTest") {
+    group = "verification"
+    description = "Download the pinned ASM source and derive all assets from SMEDIT_TEST_ROM"
+    dependsOn(tasks.named("jvmTestClasses"))
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("asm-reference-network") }
+    systemProperty("smedit.requireParityFixtures", "true")
+    outputs.upToDateWhen { false }
+}
 
 tasks.register<org.gradle.api.tasks.testing.Test>("communitySamusRomTest") {
     group = "verification"

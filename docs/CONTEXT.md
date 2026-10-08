@@ -93,6 +93,12 @@ $A1:8000 → PC 0x108000    $B4:8000 → PC 0x1A0000
 | [`reference/fix_editor.txt`](reference/fix_editor.txt)     | FX editing reference from SMILE documentation.                          |
 | [`reference/sounds.txt`](reference/sounds.txt)             | Sound/music track data reference.                                       |
 
+### ASM Workflow (`docs/asm/`)
+
+| File | Contents |
+|------|----------|
+| [`asm/reference_workspace.md`](asm/reference_workspace.md) | Read-only ASM tab, pinned-source/download contract, current-ROM asset extraction, bank/section/label navigation, cache/privacy boundary, integration test, and the staged path toward writable assembly projects. |
+
 ### Project Planning (`docs/project/`)
 
 | File                                       | Contents                                                                                          |
@@ -384,6 +390,7 @@ companion frame occurrences / 270 ticks and deterministic complete renders. See
 | Metroid Construction wiki     | https://wiki.metroidconstruction.com/                                                                     |
 | SM decompilation (snesrev/sm) | `~/code/super_metroid/sm/` — C structs, bank-by-bank reimplementation                                     |
 | Exact SM disassembly          | `parity/work/sm_disassembly/` — ignored, pinned checkout provisioned by `./gradlew parityBootstrap`; override with `SMEDIT_DISASSEMBLY_DIR` |
+| In-app ASM reference          | `~/.smedit/asm/sm_disassembly/` — optional managed read-only source cache plus current-ROM-derived assets; provisioned from the ASM tab |
 | SM-SPC                        | `~/code/super_metroid/SM-SPC/` — A fully symbolic, asar-assemblable source code for Super Metroid's SPC (audio) engine. |
 | MapRandomizer                 | https://github.com/blkerby/MapRandomizer — room geometry and SpriteSomething-based Samus patch pipeline   |
 | MapRandoSprites               | https://github.com/blkerby/MapRandoSprites — community Samus PNG catalog                                   |

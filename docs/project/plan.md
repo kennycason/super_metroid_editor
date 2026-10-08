@@ -52,6 +52,7 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 | 25 | **TestRomHelper Migration** | ✅ Done | 73 test files, eliminated hardcoded ROM paths |
 | 26 | **New Room Creation Core** | ✅ Done | Blank/clone-current-state, stable project identity, native room/resource allocation, semantic project-room doors, state editing, and parser round trips |
 | 27 | **Project Room Lifecycle** | ✅ Done | Automatic vanilla-tile minimap footprints, collision-safe placement/moves, and guarded deletion of project-created rooms with dependency preview |
+| 28 | **Read-Only ASM Reference Workspace** | ✅ Done | On-demand pinned source; 1,130 assets derived from the open ROM; bank/section/search/label navigation; syntax and 65C816 help; binary provenance browser; transactional global cache |
 
 ---
 
