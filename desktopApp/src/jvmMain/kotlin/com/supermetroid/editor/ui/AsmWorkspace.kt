@@ -90,6 +90,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -98,6 +99,8 @@ import com.supermetroid.editor.asm.AsmAsset
 import com.supermetroid.editor.asm.AsmAddressQuery
 import com.supermetroid.editor.asm.AsmAddressSpace
 import com.supermetroid.editor.asm.AsmBrowserMode
+import com.supermetroid.editor.asm.AsmEditorLink
+import com.supermetroid.editor.asm.AsmEditorTarget
 import com.supermetroid.editor.asm.AsmInstructionCategory
 import com.supermetroid.editor.asm.AsmInstructionInfo
 import com.supermetroid.editor.asm.AsmInstructionReference
@@ -105,11 +108,17 @@ import com.supermetroid.editor.asm.AsmLibrary
 import com.supermetroid.editor.asm.AsmLibraryGuide
 import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceIndex
+import com.supermetroid.editor.asm.AsmRomDiffRange
+import com.supermetroid.editor.asm.AsmRomPreview
+import com.supermetroid.editor.asm.AsmRomPreviewView
+import com.supermetroid.editor.asm.AsmSemanticBridge
+import com.supermetroid.editor.asm.AsmSemanticIndex
 import com.supermetroid.editor.asm.AsmSourceFile
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.formatPcOffset
 import com.supermetroid.editor.asm.formatSnesAddress
 import com.supermetroid.editor.asm.parseAsmAddressQuery
+import com.supermetroid.editor.asm.pcToSnesLoRom
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
@@ -134,6 +143,7 @@ internal fun AsmWorkspaceSidebar(
     state: AsmWorkspaceState,
     romParser: RomParser?,
     romName: String?,
+    buildRomPreview: (() -> AsmRomPreview?)? = null,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -157,6 +167,11 @@ internal fun AsmWorkspaceSidebar(
         scope.launch { state.refreshAssets(parser.copyRomData(), romName ?: "loaded ROM") }
     }
 
+    fun previewRom() {
+        val build = buildRomPreview ?: return
+        scope.launch { state.buildRomPreview(build) }
+    }
+
     Column(modifier = modifier.padding(8.dp)) {
         Text("ASM Reference", fontSize = fs.heading, fontWeight = FontWeight.Bold)
         Text(
@@ -175,9 +190,12 @@ internal fun AsmWorkspaceSidebar(
             AsmModeButton("Library", state.browserMode == AsmBrowserMode.LIBRARY) {
                 state.showLibraryBrowser()
             }
+            AsmModeButton("ROM", state.browserMode == AsmBrowserMode.ROM) {
+                state.showRomBrowser()
+            }
         }
 
-        if (workspace != null || state.browserMode == AsmBrowserMode.LIBRARY) {
+        if ((workspace != null || state.browserMode == AsmBrowserMode.LIBRARY) && state.browserMode != AsmBrowserMode.ROM) {
             Spacer(Modifier.height(6.dp))
             OutlinedTextField(
                 value = state.query,
@@ -200,6 +218,7 @@ internal fun AsmWorkspaceSidebar(
                             AsmBrowserMode.SOURCE -> "Find bank, label, or address"
                             AsmBrowserMode.ASSETS -> "Find extracted asset"
                             AsmBrowserMode.LIBRARY -> "Find lesson or instruction"
+                            AsmBrowserMode.ROM -> ""
                         },
                         fontSize = fs.detail,
                     )
@@ -216,15 +235,23 @@ internal fun AsmWorkspaceSidebar(
                 AsmAssetTree(state, it.index.assets, Modifier.weight(1f).fillMaxWidth())
             } ?: Spacer(Modifier.weight(1f))
             AsmBrowserMode.LIBRARY -> AsmLibraryTree(state, Modifier.weight(1f).fillMaxWidth())
+            AsmBrowserMode.ROM -> AsmRomPreviewTree(
+                state = state,
+                romAvailable = romParser != null && buildRomPreview != null,
+                onBuild = ::previewRom,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
         }
 
-        Spacer(Modifier.height(6.dp))
-        AsmReferenceControls(
-            state = state,
-            romAvailable = romParser != null,
-            onDownload = ::download,
-            onSyncAssets = ::syncAssets,
-        )
+        if (state.browserMode != AsmBrowserMode.ROM) {
+            Spacer(Modifier.height(6.dp))
+            AsmReferenceControls(
+                state = state,
+                romAvailable = romParser != null,
+                onDownload = ::download,
+                onSyncAssets = ::syncAssets,
+            )
+        }
     }
 }
 
@@ -378,9 +405,156 @@ private fun RowScope.AsmModeButton(label: String, selected: Boolean, onClick: ()
             fontSize = fs.body,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
         )
     }
+}
+
+@Composable
+private fun AsmRomPreviewTree(
+    state: AsmWorkspaceState,
+    romAvailable: Boolean,
+    onBuild: () -> Unit,
+    modifier: Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val preview = state.romPreview
+    Column(modifier) {
+        Button(
+            onClick = onBuild,
+            enabled = romAvailable && !state.previewBusy,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                when {
+                    state.previewBusy -> "Building result…"
+                    preview == null -> "Build SMEDIT Result"
+                    else -> "Refresh SMEDIT Result"
+                },
+                fontSize = fs.body,
+            )
+        }
+        if (state.previewBusy) {
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+        state.error?.let { error ->
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(5.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            ) {
+                Row(Modifier.padding(7.dp), verticalAlignment = Alignment.Top) {
+                    Text(
+                        error,
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = state::dismissError, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Close, "Dismiss", modifier = Modifier.size(15.dp))
+                    }
+                }
+            }
+        }
+        Text(
+            "Runs the real export transaction in memory. No ROM or project file is written.",
+            fontSize = fs.detail,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 7.dp),
+        )
+
+        AsmRomViewRow(state, AsmRomPreviewView.LOADED_ROM, preview != null)
+        AsmRomViewRow(state, AsmRomPreviewView.SMEDIT_RESULT, preview != null)
+        AsmRomViewRow(state, AsmRomPreviewView.DIFF, preview != null)
+
+        if (preview == null) {
+            Spacer(Modifier.weight(1f))
+            Text(
+                "Loaded ROM is the file you opened, even when it is already a hack. SMEDIT Result includes pending project edits, enabled patches, generated data, and relocations.",
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(8.dp),
+            )
+        } else {
+            Divider(Modifier.padding(vertical = 7.dp))
+            Text(
+                "${preview.changedByteCount} changed bytes · ${preview.diffRanges.size} ranges · " +
+                    "${preview.writeReport.owners.size} owners",
+                fontSize = fs.detail,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            TreeHeading("Changed ranges")
+            if (preview.diffRanges.isEmpty()) {
+                Text("No byte differences", fontSize = fs.detail, modifier = Modifier.padding(8.dp))
+            } else {
+                AsmSidebarScrollPane(Modifier.weight(1f).fillMaxWidth()) {
+                    items(preview.diffRanges.size, key = { preview.diffRanges[it].pcOffset }) { index ->
+                        val range = preview.diffRanges[index]
+                        val selected = state.romPreviewView == AsmRomPreviewView.DIFF &&
+                            state.selectedRomDiffIndex == index
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                    else Color.Transparent,
+                                )
+                                .clickable { state.selectRomDiff(index) }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        ) {
+                            Text(
+                                romRangeTitle(range),
+                                fontSize = fs.body,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            Text(
+                                range.owners.firstOrNull() ?: "ROM expansion / unowned delta",
+                                fontSize = fs.detail,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmRomViewRow(state: AsmWorkspaceState, view: AsmRomPreviewView, enabled: Boolean) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val selected = state.browserMode == AsmBrowserMode.ROM && state.romPreviewView == view
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f) else Color.Transparent,
+        shape = RoundedCornerShape(5.dp),
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled) { state.selectRomPreviewView(view) },
+    ) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Text(view.title, fontSize = fs.body, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+            Text(
+                when (view) {
+                    AsmRomPreviewView.LOADED_ROM -> "Bytes from the ROM you opened"
+                    AsmRomPreviewView.SMEDIT_RESULT -> "Validated in-memory export result"
+                    AsmRomPreviewView.DIFF -> "Only bytes that would change"
+                },
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun romRangeTitle(range: AsmRomDiffRange): String {
+    val pc = formatPcOffset(range.pcOffset)
+    val snes = pcToSnesLoRom(range.pcOffset)?.let(::formatSnesAddress) ?: "unmapped"
+    return "$snes · $pc · ${range.length} B"
 }
 
 @Composable
@@ -767,9 +941,16 @@ private fun AsmAssetTree(state: AsmWorkspaceState, assets: List<AsmAsset>, modif
 @Composable
 internal fun AsmWorkspaceCanvas(
     state: AsmWorkspaceState,
+    romParser: RomParser? = null,
+    onOpenInEditor: (AsmEditorTarget) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val workspace = state.workspace
+    val semanticIndex = remember(romParser) { romParser?.let(AsmSemanticBridge::buildIndex) }
+    if (state.browserMode == AsmBrowserMode.ROM) {
+        AsmRomPreviewCanvas(state, modifier)
+        return
+    }
     if (state.browserMode == AsmBrowserMode.LIBRARY) {
         AsmLibraryCanvas(state, workspace?.index, modifier)
         return
@@ -780,11 +961,195 @@ internal fun AsmWorkspaceCanvas(
     }
     val asset = workspace.index.asset(state.selectedAssetPath)
     if (asset != null) {
-        AsmAssetCanvas(state, asset, workspace.metadata.romName, modifier)
+        AsmAssetCanvas(state, asset, workspace.metadata.romName, semanticIndex, onOpenInEditor, modifier)
     } else {
         val source = workspace.index.file(state.selectedFileId)
         if (source == null) AsmWelcomeCanvas(state, modifier)
-        else AsmSourceCanvas(state, workspace.index, source, modifier)
+        else AsmSourceCanvas(state, workspace.index, source, semanticIndex, onOpenInEditor, modifier)
+    }
+}
+
+@Composable
+private fun AsmRomPreviewCanvas(state: AsmWorkspaceState, modifier: Modifier) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val preview = state.romPreview
+    if (preview == null) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(0.68f),
+            ) {
+                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("ROM Comparison", fontSize = fs.display, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Build SMEDIT Result to compare the ROM you opened with the fully validated bytes SMEDIT would export. The preview never writes a ROM.",
+                        fontSize = fs.body,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    when (state.romPreviewView) {
+        AsmRomPreviewView.LOADED_ROM -> AsmWholeRomCanvas(state, preview, AsmRomPreviewView.LOADED_ROM, modifier)
+        AsmRomPreviewView.SMEDIT_RESULT -> AsmWholeRomCanvas(state, preview, AsmRomPreviewView.SMEDIT_RESULT, modifier)
+        AsmRomPreviewView.DIFF -> AsmRomDiffCanvas(state, preview, modifier)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AsmWholeRomCanvas(
+    state: AsmWorkspaceState,
+    preview: AsmRomPreview,
+    view: AsmRomPreviewView,
+    modifier: Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val bytes = preview.bytes(view)
+    val bodySize = (bytes.size - preview.headerSize).coerceAtLeast(0)
+    val rowCount = (bodySize + 15) / 16
+    val listState = rememberLazyListState()
+    val horizontal = rememberScrollState()
+    val minimumContentWidth = remember(fs.body) {
+        (ASM_ADDRESS_GUTTER_WIDTH.value + 34f + ASM_HEX_COLUMNS * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
+    }
+    val detail = when (view) {
+        AsmRomPreviewView.LOADED_ROM -> "The file opened in SMEDIT; no assumption that it is vanilla"
+        AsmRomPreviewView.SMEDIT_RESULT -> "Exact validated output of the current transactional export plan"
+        AsmRomPreviewView.DIFF -> ""
+    }
+    Column(modifier.fillMaxSize()) {
+        AsmNavigationHeader(
+            state = state,
+            title = view.title,
+            detail = detail,
+            trailing = "${bodySize} bytes${if (preview.headerSize > 0) " · 512-byte copier header hidden" else ""} · read-only",
+        )
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                AssetFact("View", view.title)
+                AssetFact("ROM body", "$bodySize bytes")
+                AssetFact("Changed bytes", preview.changedByteCount.toString())
+                AssetFact("Validated writes", preview.writeReport.totalWrites.toString())
+            }
+        }
+        AsmScrollableTextPane(
+            listState = listState,
+            horizontalState = horizontal,
+            minimumContentWidth = minimumContentWidth,
+            focusKey = "rom:${view.name}:${System.identityHashCode(preview)}",
+            onFind = {},
+            onBack = state::goBack,
+            onForward = state::goForward,
+            modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
+        ) {
+            items(rowCount, key = { it }) { rowIndex ->
+                val pcOffset = rowIndex * 16
+                val count = minOf(16, bodySize - pcOffset)
+                val values = (0 until count).map { bytes[preview.headerSize + pcOffset + it].toInt() and 0xFF }
+                val hex = values.joinToString(" ") { "%02X".format(it) }.padEnd(47)
+                val ascii = values.joinToString("") { if (it in 0x20..0x7E) it.toChar().toString() else "." }
+                val snes = pcToSnesLoRom(pcOffset)?.let(::formatSnesAddress) ?: "--:----"
+                Text(
+                    "$snes  ${formatPcOffset(pcOffset)}  $hex  |$ascii|",
+                    fontSize = fs.body,
+                    fontFamily = FontFamily.Monospace,
+                    color = codeForeground(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AsmRomDiffCanvas(state: AsmWorkspaceState, preview: AsmRomPreview, modifier: Modifier) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val range = preview.diffRanges.getOrNull(state.selectedRomDiffIndex)
+    val listState = rememberLazyListState()
+    val horizontal = rememberScrollState()
+    val minimumContentWidth = remember(fs.body) {
+        (ASM_ADDRESS_GUTTER_WIDTH.value + 72f + ASM_HEX_COLUMNS * fs.body.value * MONOSPACE_CHARACTER_WIDTH * 2f).dp
+    }
+    Column(modifier.fillMaxSize()) {
+        AsmNavigationHeader(
+            state = state,
+            title = AsmRomPreviewView.DIFF.title,
+            detail = "Loaded ROM → SMEDIT Result; generated by the validated export transaction",
+            trailing = "${preview.changedByteCount} changed bytes · ${preview.diffRanges.size} ranges",
+        )
+        if (range == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("The current SMEDIT Result is byte-identical to the Loaded ROM.", fontSize = fs.body)
+            }
+        } else {
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    AssetFact("Range", romRangeTitle(range))
+                    AssetFact("Owner", range.owners.joinToString().ifBlank { "ROM expansion / unowned delta" })
+                    AssetFact("Kind", range.kinds.joinToString { it.name.lowercase().replace('_', ' ') }.ifBlank { "structural" })
+                    pcToSnesLoRom(range.pcOffset)?.let { address ->
+                        if (state.workspace == null) {
+                            AssetFact("ASM context", "${formatSnesAddress(address)} · download source to open")
+                        } else {
+                            AssetFact("ASM context", formatSnesAddress(address)) { state.openAddress(address) }
+                        }
+                    }
+                }
+            }
+            if (range.labels.isNotEmpty()) {
+                Text(
+                    range.labels.joinToString(" · "),
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val rowCount = (range.length + 15) / 16
+            AsmScrollableTextPane(
+                listState = listState,
+                horizontalState = horizontal,
+                minimumContentWidth = minimumContentWidth,
+                focusKey = "diff:${range.pcOffset}:${System.identityHashCode(preview)}",
+                onFind = {},
+                onBack = state::goBack,
+                onForward = state::goForward,
+                modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
+            ) {
+                items(rowCount, key = { it }) { rowIndex ->
+                    val pcOffset = range.pcOffset + rowIndex * 16
+                    val count = minOf(16, range.endInclusive - pcOffset + 1)
+                    val loaded = (0 until count).map { preview.loadedByte(pcOffset + it) }
+                    val result = (0 until count).map { preview.resultByte(pcOffset + it) }
+                    val loadedHex = loaded.joinToString(" ") { it?.let { value -> "%02X".format(value) } ?: "--" }.padEnd(47)
+                    val resultHex = result.joinToString(" ") { it?.let { value -> "%02X".format(value) } ?: "--" }.padEnd(47)
+                    val snes = pcToSnesLoRom(pcOffset)?.let(::formatSnesAddress) ?: "--:----"
+                    Text(
+                        "$snes  ${formatPcOffset(pcOffset)}  $loadedHex  →  $resultHex",
+                        fontSize = fs.body,
+                        fontFamily = FontFamily.Monospace,
+                        color = codeForeground(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1112,6 +1477,8 @@ private fun AsmSourceCanvas(
     state: AsmWorkspaceState,
     index: AsmReferenceIndex,
     source: AsmSourceFile,
+    semanticIndex: AsmSemanticIndex?,
+    onOpenInEditor: (AsmEditorTarget) -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -1136,6 +1503,11 @@ private fun AsmSourceCanvas(
         val prefix = if (exactSelectionAddress != null) "" else "Near "
         "$prefix${formatSnesAddress(selectionAddress.snesAddress)} · ${formatPcOffset(pcOffset)} · "
     }.orEmpty()
+    val editorLinks = remember(semanticIndex, exactSelectionAddress?.snesAddress) {
+        val address = exactSelectionAddress?.snesAddress
+        if (semanticIndex == null || address == null) emptyList()
+        else semanticIndex.linksFor(address)
+    }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(
             state,
@@ -1143,6 +1515,7 @@ private fun AsmSourceCanvas(
             source.description,
             "$addressSummary${source.lines.size} lines · read-only",
         )
+        AsmEditorLinkBar(editorLinks, onOpenInEditor)
         AsmScrollableTextPane(
             listState = listState,
             horizontalState = horizontal,
@@ -1407,7 +1780,14 @@ private fun AsmNavigationHeader(state: AsmWorkspaceState, title: String, detail:
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: String, modifier: Modifier) {
+private fun AsmAssetCanvas(
+    state: AsmWorkspaceState,
+    asset: AsmAsset,
+    romName: String,
+    semanticIndex: AsmSemanticIndex?,
+    onOpenInEditor: (AsmEditorTarget) -> Unit,
+    modifier: Modifier,
+) {
     val fs = LocalEditorTheme.current.fontSize.value
     val bytesResult = remember(asset.file.absolutePath, asset.file.lastModified()) { runCatching { asset.file.readBytes() } }
     val bytes = bytesResult.getOrNull()
@@ -1421,11 +1801,15 @@ private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: S
     }
     val sourceAnchor = sourceResolution?.sourceAnchor
     val sourceIsExact = sourceResolution?.exactSourceAnchors?.isNotEmpty() == true
+    val editorLinks = remember(semanticIndex, asset.range.snesAddress, asset.range.path) {
+        semanticIndex?.linksFor(asset.range.snesAddress, asset.range.path).orEmpty()
+    }
     val minimumContentWidth = remember(fs.body) {
         (24f + ASM_HEX_COLUMNS * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
     }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(state, asset.range.path, asset.category, "${asset.range.length} bytes · read-only")
+        AsmEditorLinkBar(editorLinks, onOpenInEditor)
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -1478,6 +1862,49 @@ private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: S
                         color = codeForeground(),
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.dp),
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AsmEditorLinkBar(
+    links: List<AsmEditorLink>,
+    onOpenInEditor: (AsmEditorTarget) -> Unit,
+) {
+    if (links.isEmpty()) return
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text(
+                "Open in SMEDIT",
+                fontSize = fs.detail,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 7.dp),
+            )
+            for (link in links) {
+                OutlinedButton(
+                    onClick = { onOpenInEditor(link.target) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 9.dp, vertical = 3.dp),
+                ) {
+                    Column {
+                        Text(link.title, fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            link.detail,
+                            fontSize = fs.statusBar,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

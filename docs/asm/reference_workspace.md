@@ -33,6 +33,26 @@ ROM editing.
    nearest authored source context. Full 24-bit address operands in source are
    clickable. The source gutter displays exact addresses independently of line
    numbers.
+9. Open **ROM** and choose **Build SMEDIT Result** for a non-writing snapshot of
+   the real export transaction. **Loaded ROM** shows the bytes from the opened
+   file, **SMEDIT Result** shows the fully validated bytes SMEDIT would export,
+   and **Diff** groups only changed bytes with their write owner, mutation kind,
+   label, PC/SNES range, and a link back into ASM context. Refresh the snapshot
+   after making more edits. Loading a different ROM invalidates the old snapshot
+   automatically.
+10. When a source anchor or extracted asset has an exact semantic owner, use the
+    compact **Open in SMEDIT** actions to return to the existing visual editor.
+    The first reverse bridge covers room headers and layouts, tileset graphics,
+    metatiles, palettes and CRE, enemy/boss and Samus graphics, and music song
+    sets. Intentional aliases produce explicit destinations instead of silently
+    choosing one owner.
+
+The application-level **Back** and **Forward** buttons beside **EMU** preserve
+the workspace and selected resource across these jumps. For example, opening a
+room from bank `$8F`, pressing Back, and then Forward returns to the exact ASM
+bank/line and the same room respectively. Ordinary tab, room, tileset, sprite,
+and sound-track navigation joins the same bounded history. ASM's own compact
+history remains available for fine-grained source/asset/Library browsing.
 
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
@@ -114,13 +134,41 @@ conditionals. When an address falls after an anchor but has no exact record, the
 UI says **Near** and shows the byte delta; that is navigation context, not a
 claim that the selected source line assembled at that address.
 
-Room properties provide the first semantic bridge into the Atlas. Room headers,
-door lists, room-state records, layouts, backgrounds, FX, PLM/object sets, enemy
-sets and graphics, special X-Ray data, room ASM, and scroll data expose compact
-**ASM** links wherever the ROM stores a valid address. A link may land on exact
-source, the extracted asset that owns the byte, or clearly labeled nearby
-source context. Project-created data without a pinned vanilla anchor remains
-honest about that boundary.
+The editor provides semantic bridges into the Atlas rather than making users
+retype addresses. Room headers, door lists, room-state records, layouts,
+backgrounds, FX, PLM/object sets, enemy sets and graphics, special X-Ray data,
+room ASM, and scroll data expose compact **ASM** links wherever the ROM stores a
+valid address. The tile inspector also links a selected door to its `$83`
+DoorDef and every item/object to its `$84` PLM header. Expanded enemy stats link
+to the `$A0` species header, and the selected enemy/boss in the sprite catalog
+offers the same source jump. A link may land on exact source, the extracted
+asset that owns the byte, or clearly labeled nearby source context.
+Project-created data without a pinned vanilla anchor remains honest about that
+boundary and is not assigned a fictional vanilla address.
+
+The tileset toolbar exposes its detected area metatiles, area graphics,
+palette, CRE metatiles, and CRE graphics as one compact **ASM** menu. The sound
+editor links the selected track's effective song-set table entry and transfer
+data, including when a compatible ROM has relocated the table. Those links use
+the same addresses the active decoders consume; they do not assume vanilla
+locations when the parser has already discovered a valid relocation.
+
+The reverse bridge applies that rule in the other direction. It builds one
+semantic index for the loaded ROM from the room catalog, decoded room states,
+discovered tileset catalog, enemy species headers, and discovered music
+pointers. Source lines only offer an editor destination for an **exact** address
+anchor; nearby context never inherits a potentially false visual-editor link.
+Composite boss and Samus asset names are used only where the engine has no
+single species-owned pointer for the complete visual source.
+
+The ROM comparison has a different boundary from the extracted reference assets.
+It does not infer changes from project JSON. It invokes the same transactional
+export builder used by **Export ROM**, including preflight validation, patch
+preconditions, write-conflict detection, generated hooks, allocation/relocation,
+post-build verification, and write ownership. The resulting arrays remain in
+memory; building or refreshing the preview writes neither a ROM nor the project
+file. An explicit refresh keeps the snapshot model honest when the user continues
+editing.
 
 ## Architecture
 
@@ -133,8 +181,18 @@ honest about that boundary.
   canonical LoROM SNES/PC coordinates and resolves exact source anchors,
   contextual anchors, and extracted asset ownership without decoding assembler
   output heuristically.
+- `AsmSemanticBridge` indexes exact addresses consumed by SMEDIT's production
+  decoders and maps recognized source/assets back to Rooms, Tiles, Sprites, and
+  Sound. The index is built once per loaded ROM so browsing assets does not
+  repeatedly scan the room and species catalogs.
 - `AsmWorkspaceState` owns selection, source/asset/library mode, cross-mode
-  history, ROM freshness, progress, and safe navigation.
+  history, ROM freshness, preview state, progress, and safe navigation.
+- `RomExporter.build()` is the single disk-independent export transaction.
+  `RomExporter.export()` only adds the atomic output-file write around that
+  validated result, so preview and export cannot drift into separate pipelines.
+- `AsmRomPreview` compares canonical unheadered PC bytes, retains the write-plan
+  owners and labels for each changed range, handles optional copier headers and
+  expanded results, and supplies the three deliberately named read-only views.
 - `AsmLibrary` owns the original guided lessons, complete mnemonic catalog,
   practical forms/examples, categories, and stable page identifiers.
 - `AsmWorkspaceSidebar` and `AsmWorkspaceCanvas` provide the bank tree, search,
@@ -155,17 +213,12 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 
 The read-only boundary is intentional. Follow-up work can now be incremental:
 
-1. Add a non-writing export preview with three deliberately named views:
-   **Loaded ROM**, **SMEDIT Result**, and **Diff**. “Loaded ROM” avoids implying
-   that an opened hack is vanilla. The result must come from the transactional
-   write planner, not an incomplete comparison against project JSON, so pending
-   semantic edits, patches, relocations, and write ownership remain accurate.
-2. Expand the semantic links now begun in the room inspector into door, PLM,
-   enemy, sprite, palette, tilemap, and music editors. Reuse existing renderers
-   rather than implementing parallel decoders in the ASM tab.
-3. Create a project-owned writable ASM workspace with explicit dirty files,
+1. Extend the reverse semantic bridge to remaining specialized assets and
+   surfaces such as pause-map text and background programs as those editors gain
+   stable semantic selection entry points.
+2. Create a project-owned writable ASM workspace with explicit dirty files,
    compile diagnostics, and symbol output.
-4. Feed semantic editor changes into generated assets/source, assemble with the
+3. Feed semantic editor changes into generated assets/source, assemble with the
    pinned toolchain, and run the existing ownership/preflight checks over the
    resulting ROM delta so patch-mode features remain compatible.
 

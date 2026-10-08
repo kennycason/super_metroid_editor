@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.asm.AsmRomPreview
 import com.supermetroid.editor.data.PlmChange
 import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomParser
@@ -7,7 +8,9 @@ import com.supermetroid.editor.rom.TestRomHelper
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -59,6 +62,24 @@ class RomWritePlanIntegrationTest {
             val project = ProjectFileService.loadProject(projectFile).copy(romPath = tempRom.absolutePath)
             val logs = mutableListOf<String>()
 
+            val preview = RomExporter(
+                project = ProjectFileService.snapshotProject(project),
+                romParser = RomParser(tempRom.readBytes()),
+                onLog = logs::add,
+                onStatus = logs::add,
+            ).build()
+
+            assertNotNull(preview, logs.joinToString("\n"))
+            assertFalse(tempDir.listFiles().orEmpty().any { it != tempRom }, "A non-writing build created an output file")
+            val comparison = AsmRomPreview.create(
+                preview.loadedRom,
+                preview.resultRom,
+                preview.headerSize,
+                preview.writeReport,
+            )
+            assertTrue(comparison.changedByteCount > 0)
+            assertTrue(comparison.diffRanges.isNotEmpty())
+
             val output = ProjectFileService.exportToRom(
                 project = project,
                 romParser = RomParser(tempRom.readBytes()),
@@ -68,6 +89,7 @@ class RomWritePlanIntegrationTest {
 
             assertNotNull(output, logs.joinToString("\n"))
             assertTrue(File(output).isFile)
+            assertContentEquals(preview.resultRom, File(output).readBytes())
             assertTrue(logs.any { it.contains("[ROM-PLAN] Validated") })
             assertTrue(logs.any { it.contains("patch:bundled_spider_ball") })
             assertTrue(logs.any { it.contains("patch:config_room_name_pause_map") })

@@ -49,11 +49,19 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.ItemStateScope
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+
+@Composable
+private fun tilePropertiesLabelWidth() = when (LocalEditorTheme.current.fontSize.value) {
+    FontSize.SMALL -> 80.dp
+    FontSize.MEDIUM -> 88.dp
+    FontSize.LARGE -> 98.dp
+    FontSize.LARGER -> 110.dp
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -75,9 +83,17 @@ internal fun TilePropertiesPanel(
     emulatorConnected: Boolean,
     onMoveSamusHere: ((Int, Int) -> Unit)?,
     onWorkspaceChanged: (() -> Unit)? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val uiFont = LocalEditorTheme.current.fontSize.value
+    val panelWidth = when (uiFont) {
+        FontSize.SMALL -> 280.dp
+        FontSize.MEDIUM -> 300.dp
+        FontSize.LARGE -> 320.dp
+        FontSize.LARGER -> 340.dp
+    }
     var propsBlockType by remember(blockX, blockY, selectionEndX, selectionEndY, initialBlockType) {
         mutableStateOf(initialBlockType)
     }
@@ -110,8 +126,8 @@ internal fun TilePropertiesPanel(
     Card(
         modifier = modifier
             .padding(8.dp)
-            .width(260.dp)
-            .heightIn(max = 600.dp),
+            .width(panelWidth)
+            .heightIn(max = 720.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
@@ -136,7 +152,7 @@ internal fun TilePropertiesPanel(
                                 " 0x${it.toString(16).uppercase()} $propsTypeName"
                             } ?: "")
                     },
-                    fontSize = 11.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                 )
                 Text(
@@ -144,7 +160,7 @@ internal fun TilePropertiesPanel(
                     modifier = Modifier
                         .clickable { onDismiss() }
                         .padding(4.dp),
-                    fontSize = 14.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -152,7 +168,7 @@ internal fun TilePropertiesPanel(
             Spacer(modifier = Modifier.height(8.dp))
 
             // ── Block Type selector ──
-            Text("Block Type", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Block Type", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.height(2.dp))
             var btExpanded by remember { mutableStateOf(false) }
             Box {
@@ -173,7 +189,7 @@ internal fun TilePropertiesPanel(
                             selectedBlockType?.let {
                                 "0x${it.toString(16).uppercase()} $propsTypeName"
                             } ?: "Mixed block types — choose one",
-                            fontSize = 11.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = if (selectedBlockType == null) {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             } else {
@@ -181,7 +197,7 @@ internal fun TilePropertiesPanel(
                             },
                             modifier = Modifier.weight(1f),
                         )
-                        Text("▾", fontSize = 10.sp)
+                        Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.body)
                     }
                 }
                 DropdownMenu(expanded = btExpanded, onDismissRequest = { btExpanded = false }) {
@@ -190,7 +206,7 @@ internal fun TilePropertiesPanel(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     RadioButton(selected = selectedBlockType == typeVal, onClick = null, modifier = Modifier.size(16.dp))
-                                    Text("0x${typeVal.toString(16).uppercase()} $typeName", fontSize = 11.sp)
+                                    Text("0x${typeVal.toString(16).uppercase()} $typeName", fontSize = LocalEditorTheme.current.fontSize.value.body)
                                 }
                             },
                             onClick = {
@@ -219,7 +235,7 @@ internal fun TilePropertiesPanel(
                     val flipLabel = if (displayBts and 0x40 != 0) " [X-Flipped]" else ""
                     Text(
                         "0x${displayBts.toString(16).uppercase().padStart(2, '0')} $displayName$flipLabel",
-                        fontSize = 9.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = if (hoveredSlopeBts != null) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 2.dp)
@@ -235,7 +251,7 @@ internal fun TilePropertiesPanel(
                 "Sub Type (BTS)"
             }
             if (selectedBlockType != null) {
-                Text(btsLabel, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(btsLabel, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(2.dp))
             }
 
@@ -265,8 +281,8 @@ internal fun TilePropertiesPanel(
                             modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(connectionLabel, fontSize = 10.sp, modifier = Modifier.weight(1f))
-                            if (doorConnections.isNotEmpty()) Text("▾", fontSize = 9.sp)
+                            Text(connectionLabel, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                            if (doorConnections.isNotEmpty()) Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                         }
                     }
                     DropdownMenu(
@@ -278,7 +294,7 @@ internal fun TilePropertiesPanel(
                                 it.getRoomIdAsInt() == door.destRoomPtr
                             }?.name ?: "Unknown destination"
                             DropdownMenuItem(
-                                text = { Text("Connection ${index + 1} → $destination", fontSize = 10.sp) },
+                                text = { Text("Connection ${index + 1} → $destination", fontSize = LocalEditorTheme.current.fontSize.value.body) },
                                 onClick = {
                                     connectionDropExpanded = false
                                     if (index != propsBts || propsBtsMixed) {
@@ -330,8 +346,8 @@ internal fun TilePropertiesPanel(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(btsName, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                            Text("▾", fontSize = 10.sp)
+                            Text(btsName, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                            Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.body)
                         }
                     }
                     DropdownMenu(expanded = btsDropExpanded, onDismissRequest = { btsDropExpanded = false }) {
@@ -340,7 +356,7 @@ internal fun TilePropertiesPanel(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         RadioButton(selected = !propsBtsMixed && propsBts == btsVal, onClick = null, modifier = Modifier.size(16.dp))
-                                        Text("0x${btsVal.toString(16).uppercase().padStart(2, '0')} $btsOptName", fontSize = 11.sp)
+                                        Text("0x${btsVal.toString(16).uppercase().padStart(2, '0')} $btsOptName", fontSize = LocalEditorTheme.current.fontSize.value.body)
                                     }
                                 },
                                 onClick = {
@@ -365,7 +381,7 @@ internal fun TilePropertiesPanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(if (btsOptions.isNotEmpty()) "Raw:" else "BTS:", fontSize = 10.sp)
+                    Text(if (btsOptions.isNotEmpty()) "Raw:" else "BTS:", fontSize = LocalEditorTheme.current.fontSize.value.body)
                     var rawText by remember(blockX, blockY, selectionEndX, selectionEndY, propsBts, propsBtsMixed) {
                         mutableStateOf(
                             if (propsBtsMixed) ""
@@ -380,7 +396,7 @@ internal fun TilePropertiesPanel(
                             .padding(horizontal = 6.dp, vertical = 4.dp)
                     ) {
                         if (rawText.isEmpty()) {
-                            Text("Mixed", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Mixed", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         BasicTextField(
                             value = rawText,
@@ -395,7 +411,7 @@ internal fun TilePropertiesPanel(
                                 }
                             },
                             singleLine = true,
-                            textStyle = TextStyle(fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface),
+                            textStyle = TextStyle(fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurface),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
                         )
                     }
@@ -407,7 +423,7 @@ internal fun TilePropertiesPanel(
                 Spacer(modifier = Modifier.height(8.dp))
                 Divider()
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("Door Connection", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Door Connection", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(2.dp))
 
                 val allDoors = remember(editorState.editVersion) { editorState.doorEntries.toList() }
@@ -491,7 +507,7 @@ internal fun TilePropertiesPanel(
                         } else {
                             "BTS ${propsBts.toString(16).uppercase().padStart(2, '0')} is not linked to a connection."
                         },
-                        fontSize = 9.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (projectRoom != null && roomHeader != null) {
@@ -512,15 +528,19 @@ internal fun TilePropertiesPanel(
                     } else {
                         Text(
                             "This source-ROM room's door list cannot currently grow; select an existing connection BTS instead.",
-                            fontSize = 8.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     doorConnectionError?.let {
-                        Text(it, fontSize = 8.sp, color = MaterialTheme.colorScheme.error)
+                        Text(it, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.error)
                     }
                 } else {
                     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    val doorDefinitionAddress = semanticAsmAddress(
+                        RomConstants.BANK_FX,
+                        currentDoor.doorDefPtr,
+                    )
                     val connectionDiagnostic = remember(
                         roomId,
                         propsBts,
@@ -537,8 +557,17 @@ internal fun TilePropertiesPanel(
                             } else {
                                 "Connection ${propsBts + 1} is also used by another doorway; changes here affect both openings."
                             },
-                            fontSize = 8.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (doorDefinitionAddress != null && onNavigateToAsm != null) {
+                        AsmNavigationLink(
+                            snesAddress = doorDefinitionAddress,
+                            onNavigateToAsm = onNavigateToAsm,
+                            label = "DoorDef ASM ${'$'}83:${currentDoor.doorDefPtr.toString(16).uppercase().padStart(4, '0')}",
+                            modifier = Modifier.padding(bottom = 2.dp),
                         )
                     }
 
@@ -547,7 +576,7 @@ internal fun TilePropertiesPanel(
                     fun ScreenDropdown(label: String, value: Int, options: IntRange, onValueChange: (Int) -> Unit) {
                         var expanded by remember { mutableStateOf(false) }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text(label, fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                            Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                             Box(modifier = Modifier.weight(1f)) {
                                 Surface(
                                     modifier = Modifier.fillMaxWidth().height(28.dp)
@@ -557,8 +586,8 @@ internal fun TilePropertiesPanel(
                                 ) {
                                     Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
                                         verticalAlignment = Alignment.CenterVertically) {
-                                        Text("${value + 1}", fontSize = 10.sp, modifier = Modifier.weight(1f))
-                                        Text("▾", fontSize = 9.sp)
+                                        Text("${value + 1}", fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                                        Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                                     }
                                 }
                                 DropdownMenu(
@@ -571,7 +600,7 @@ internal fun TilePropertiesPanel(
                                             text = {
                                                 Text(
                                                     "${v + 1}",
-                                                    fontSize = 10.sp,
+                                                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                                                     fontWeight = if (v == value) FontWeight.Bold else FontWeight.Normal
                                                 )
                                             },
@@ -602,7 +631,7 @@ internal fun TilePropertiesPanel(
                         },
                     )
                     doorConnectionError?.let {
-                        Text(it, fontSize = 8.sp, color = MaterialTheme.colorScheme.error)
+                        Text(it, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.error)
                     }
                     val effectiveDestinationRoom = remember(currentDoor.destRoomPtr, editorState.editVersion) {
                         romParser.readRoomHeader(currentDoor.destRoomPtr)?.let(editorState::applyHeaderChanges)
@@ -616,11 +645,11 @@ internal fun TilePropertiesPanel(
 
                     val dirNames = listOf("Right", "Left", "Down", "Up")
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Text("Entrance:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                        Text("Entrance:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                         Text(
                             "${incomingDoorEdgeName(currentDoor.direction).replaceFirstChar { it.uppercase() }} edge" +
                                 " · screen ${oneBasedRoomCoordinate(currentDoor.screenX, currentDoor.screenY)}",
-                            fontSize = 9.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -631,7 +660,7 @@ internal fun TilePropertiesPanel(
                     val currentDir = currentDoor.direction and 0x03
                     val isBubble = (currentDoor.direction and 0x04) != 0
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Text("Travel:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                        Text("Travel:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                         Box(modifier = Modifier.weight(1f)) {
                             Surface(
                                 modifier = Modifier.fillMaxWidth().height(28.dp)
@@ -642,8 +671,8 @@ internal fun TilePropertiesPanel(
                                 Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
                                     verticalAlignment = Alignment.CenterVertically) {
                                     val bubbleTag = if (isBubble) " (closing)" else ""
-                                    Text("${dirNames.getOrElse(currentDir) { "?" }}$bubbleTag", fontSize = 9.sp, modifier = Modifier.weight(1f))
-                                    Text("▾", fontSize = 9.sp)
+                                    Text("${dirNames.getOrElse(currentDir) { "?" }}$bubbleTag", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.weight(1f))
+                                    Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                                 }
                             }
                             DropdownMenu(
@@ -652,7 +681,7 @@ internal fun TilePropertiesPanel(
                             ) {
                                 for ((di, dn) in dirNames.withIndex()) {
                                     DropdownMenuItem(
-                                        text = { Text(dn, fontSize = 10.sp) },
+                                        text = { Text(dn, fontSize = LocalEditorTheme.current.fontSize.value.body) },
                                         onClick = {
                                             dirDropExpanded = false
                                             val newDir = di + (if (isBubble) 4 else 0)
@@ -719,12 +748,12 @@ internal fun TilePropertiesPanel(
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
                         modifier = Modifier.height(24.dp),
                     ) {
-                        Text(if (advancedDoorFields) "▾ Hide advanced" else "▸ Advanced", fontSize = 9.sp)
+                        Text(if (advancedDoorFields) "▾ Hide advanced" else "▸ Advanced", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                     }
                     if (advancedDoorFields) {
                         // Distance from door (16-bit, keep as text)
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text("Distance:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                            Text("Distance:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                             var distText by remember(currentDoor) {
                                 mutableStateOf("0x${currentDoor.distFromDoor.toString(16).uppercase().padStart(4, '0')}")
                             }
@@ -737,7 +766,7 @@ internal fun TilePropertiesPanel(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
-                                fontSize = 10.sp, monospace = true
+                                fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -752,7 +781,7 @@ internal fun TilePropertiesPanel(
                                 },
                                 modifier = Modifier.size(20.dp)
                             )
-                            Text("Elevator", fontSize = 9.sp, modifier = Modifier.padding(start = 4.dp))
+                            Text("Elevator", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.padding(start = 4.dp))
                             Spacer(modifier = Modifier.width(12.dp))
                             Checkbox(
                                 checked = isBubble,
@@ -764,7 +793,7 @@ internal fun TilePropertiesPanel(
                                 },
                                 modifier = Modifier.size(20.dp)
                             )
-                            Text("Closing door", fontSize = 9.sp, modifier = Modifier.padding(start = 4.dp))
+                            Text("Closing door", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.padding(start = 4.dp))
                         }
                         Spacer(modifier = Modifier.height(4.dp))
 
@@ -782,7 +811,7 @@ internal fun TilePropertiesPanel(
                             )
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text("Door Cap:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                            Text("Door Cap:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                             var capText by remember(currentDoor) {
                                 mutableStateOf("0x${currentDoor.doorCapCode.toString(16).uppercase().padStart(4, '0')}")
                             }
@@ -795,7 +824,7 @@ internal fun TilePropertiesPanel(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
-                                fontSize = 10.sp, monospace = true
+                                fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                             )
                             if (autoCap != null) {
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -809,7 +838,7 @@ internal fun TilePropertiesPanel(
                                             else MaterialTheme.colorScheme.tertiaryContainer
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text("Auto", fontSize = 8.sp)
+                                        Text("Auto", fontSize = LocalEditorTheme.current.fontSize.value.statusBar)
                                     }
                                 }
                             }
@@ -819,14 +848,14 @@ internal fun TilePropertiesPanel(
                             val capY = (autoCap shr 8) and 0xFF
                             Text(
                                 "Suggested: 0x${autoCap.toString(16).uppercase().padStart(4, '0')} ($capX, $capY)",
-                                fontSize = 8.sp,
+                                fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                 color = MaterialTheme.colorScheme.tertiary,
                                 modifier = Modifier.padding(start = 72.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text("Entry ASM:", fontSize = 9.sp, color = labelColor, modifier = Modifier.width(72.dp))
+                            Text("Entry ASM:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                             var asmText by remember(currentDoor) {
                                 mutableStateOf("0x${currentDoor.entryCode.toString(16).uppercase().padStart(4, '0')}")
                             }
@@ -839,7 +868,7 @@ internal fun TilePropertiesPanel(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
-                                fontSize = 10.sp, monospace = true
+                                fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                             )
                         }
                     }
@@ -850,20 +879,20 @@ internal fun TilePropertiesPanel(
             Spacer(modifier = Modifier.height(8.dp))
             Divider()
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Items / PLMs", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Items / PLMs", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            Text("Item add/remove scope", fontSize = 8.sp, color = MaterialTheme.colorScheme.outline)
+            Text("Item add/remove scope", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.outline)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterChip(
                     selected = editorState.itemEditScope == ItemStateScope.THIS_STATE,
                     onClick = { editorState.selectItemEditScope(ItemStateScope.THIS_STATE) },
-                    label = { Text("This state", fontSize = 9.sp) },
+                    label = { Text("This state", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
                     modifier = Modifier.height(26.dp),
                 )
                 FilterChip(
                     selected = editorState.itemEditScope == ItemStateScope.ALL_STATES,
                     onClick = { editorState.selectItemEditScope(ItemStateScope.ALL_STATES) },
-                    label = { Text("All states", fontSize = 9.sp) },
+                    label = { Text("All states", fontSize = LocalEditorTheme.current.fontSize.value.detail) },
                     modifier = Modifier.height(26.dp),
                 )
             }
@@ -873,7 +902,7 @@ internal fun TilePropertiesPanel(
                 } else {
                     "Only the selected room-state branch"
                 },
-                fontSize = 8.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                 color = if (editorState.itemEditScope == ItemStateScope.ALL_STATES) {
                     MaterialTheme.colorScheme.primary
                 } else {
@@ -886,7 +915,7 @@ internal fun TilePropertiesPanel(
             val otherPlms = plmsHere.filter { !editorState.isEditorItemPlm(it.id) }
 
             if (itemPlms.isEmpty() && otherPlms.isEmpty()) {
-                Text("None", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline)
+                Text("None", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.outline)
             }
             for (plm in itemPlms) {
                 val iName = editorState.customItemNameForPlm(plm.id)
@@ -899,7 +928,13 @@ internal fun TilePropertiesPanel(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(iName, fontSize = 10.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(iName, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                            val definitionAddress = semanticAsmAddress(RomConstants.BANK_PLM, plm.id)
+                            if (definitionAddress != null && onNavigateToAsm != null) {
+                                AsmNavigationLink(definitionAddress, onNavigateToAsm)
+                            }
+                        }
                         Text(
                             "bit: 0x${plm.param.toString(16).uppercase().padStart(2, '0')} · " +
                                 when (configuredScope) {
@@ -907,7 +942,7 @@ internal fun TilePropertiesPanel(
                                     ItemStateScope.THIS_STATE -> "This state"
                                     null -> "Original state data"
                                 },
-                            fontSize = 8.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                             color = if (configuredScope == ItemStateScope.ALL_STATES) {
                                 MaterialTheme.colorScheme.primary
                             } else {
@@ -922,7 +957,7 @@ internal fun TilePropertiesPanel(
                                 contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp),
                                 modifier = Modifier.height(24.dp),
                             ) {
-                                Text("Apply to all", fontSize = 8.sp)
+                                Text("Apply to all", fontSize = LocalEditorTheme.current.fontSize.value.statusBar)
                             }
                         }
                         Text(
@@ -930,7 +965,7 @@ internal fun TilePropertiesPanel(
                             modifier = Modifier
                                 .clickable { editorState.removePlm(plm.x, plm.y, plm.id) }
                                 .padding(horizontal = 4.dp),
-                            fontSize = 12.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.heading,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -946,7 +981,18 @@ internal fun TilePropertiesPanel(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(pName, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                pName,
+                                fontSize = LocalEditorTheme.current.fontSize.value.body,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            val definitionAddress = semanticAsmAddress(RomConstants.BANK_PLM, plm.id)
+                            if (definitionAddress != null && onNavigateToAsm != null) {
+                                AsmNavigationLink(definitionAddress, onNavigateToAsm)
+                            }
+                        }
                         // Save station spawn details
                         if (plm.id == 0xB76F && romParser != null) {
                             val saveIdx = plm.param and 0xFF
@@ -954,22 +1000,22 @@ internal fun TilePropertiesPanel(
                             val saveEntry = editorState.effectiveSaveStationSpawn(area, saveIdx, romParser)
                             if (saveEntry != null) {
                                 val detailColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                Text("Save #$saveIdx (Area $area, ${saveEntry.source})", fontSize = 9.sp, color = detailColor)
+                                Text("Save #$saveIdx (Area $area, ${saveEntry.source})", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
                                 Row {
-                                    Text("Spawn: ", fontSize = 9.sp, color = detailColor)
-                                    Text("X=${saveEntry.samusXSigned} Y=${saveEntry.samusYSigned}", fontSize = 9.sp,
+                                    Text("Spawn: ", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
+                                    Text("X=${saveEntry.samusXSigned} Y=${saveEntry.samusYSigned}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurface)
                                 }
                                 Row {
-                                    Text("Scroll: ", fontSize = 9.sp, color = detailColor)
-                                    Text("X=${saveEntry.scrollX} Y=${saveEntry.scrollY}", fontSize = 9.sp,
+                                    Text("Scroll: ", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
+                                    Text("X=${saveEntry.scrollX} Y=${saveEntry.scrollY}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurface)
                                 }
                                 Row {
-                                    Text("Door: ", fontSize = 9.sp, color = detailColor)
-                                    Text("\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = 9.sp,
+                                    Text("Door: ", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
+                                    Text("\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurface)
                                 }
@@ -995,7 +1041,7 @@ internal fun TilePropertiesPanel(
                                         onValueChange = { spawnXText = it },
                                         label = "Samus X",
                                         singleLine = true,
-                                        fontSize = 9.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         modifier = Modifier.width(66.dp)
                                     )
                                     AppOutlinedTextField(
@@ -1003,7 +1049,7 @@ internal fun TilePropertiesPanel(
                                         onValueChange = { spawnYText = it },
                                         label = "Y",
                                         singleLine = true,
-                                        fontSize = 9.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         modifier = Modifier.width(54.dp)
                                     )
                                 }
@@ -1017,7 +1063,7 @@ internal fun TilePropertiesPanel(
                                         onValueChange = { scrollXText = it },
                                         label = "Scroll X",
                                         singleLine = true,
-                                        fontSize = 9.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         modifier = Modifier.width(66.dp)
                                     )
                                     AppOutlinedTextField(
@@ -1025,7 +1071,7 @@ internal fun TilePropertiesPanel(
                                         onValueChange = { scrollYText = it },
                                         label = "Y",
                                         singleLine = true,
-                                        fontSize = 9.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         modifier = Modifier.width(54.dp)
                                     )
                                 }
@@ -1051,12 +1097,12 @@ internal fun TilePropertiesPanel(
                                         },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                         modifier = Modifier.heightIn(min = 30.dp)
-                                    ) { Text("Apply Spawn", fontSize = 9.sp) }
+                                    ) { Text("Apply Spawn", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
                                     TextButton(
                                         onClick = { editorState.resetSaveStationSpawnToAuto(plm) },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                         modifier = Modifier.heightIn(min = 30.dp)
-                                    ) { Text("Reset Auto", fontSize = 9.sp) }
+                                    ) { Text("Reset Auto", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
                                 }
                             }
                         }
@@ -1064,7 +1110,7 @@ internal fun TilePropertiesPanel(
                             val rw = roomHeader?.width ?: 0
                             val rh = roomHeader?.height ?: 0
                             val isCustom = (plm.param and 0xFF00) == 0xCC00
-                            Text("When crossed:", fontSize = 8.sp,
+                            Text("When crossed:", fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (isCustom) {
                                 val cmdIdx = plm.param and 0xFF
@@ -1075,15 +1121,15 @@ internal fun TilePropertiesPanel(
                                         val invalid = cmd.screenIndex !in 0 until (rw * rh) || cmd.scrollValue !in 0..2
                                         Text(
                                             "  ${RomParser.formatScrollCommand(cmd.screenIndex, cmd.scrollValue, rw)}",
-                                            fontSize = 8.sp,
+                                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                             color = if (invalid) MaterialTheme.colorScheme.error else Color(0xFFFF8040)
                                         )
                                     }
                                 } else {
-                                    Text("  Missing custom scroll behavior", fontSize = 8.sp,
+                                    Text("  Missing custom scroll behavior", fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                         color = MaterialTheme.colorScheme.error)
                                 }
-                                Text("Custom scroll behavior", fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+                                Text("Custom scroll behavior", fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.outline)
                             } else if (rw > 0) {
                                 val cmds = RomParser.decodeScrollCommands(
                                     romParser,
@@ -1093,17 +1139,17 @@ internal fun TilePropertiesPanel(
                                     val invalid = screenIdx !in 0 until (rw * rh) || scrollVal !in 0..2
                                     Text(
                                         "  ${RomParser.formatScrollCommand(screenIdx, scrollVal, rw)}",
-                                        fontSize = 8.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                         color = if (invalid) MaterialTheme.colorScheme.error
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                                 Text("ROM scroll behavior \$${plm.param.toString(16).uppercase().padStart(4, '0')}",
-                                    fontSize = 7.sp, color = MaterialTheme.colorScheme.outline)
+                                    fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.outline)
                             }
                         } else if (plm.id in setOf(0xB63B, 0xB63F, 0xB647, 0xB643)) {
                             Text("Extends an adjacent scroll trigger's activation zone.",
-                                fontSize = 8.sp, color = MaterialTheme.colorScheme.outline)
+                                fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                     if (canRemove) {
@@ -1112,7 +1158,7 @@ internal fun TilePropertiesPanel(
                             modifier = Modifier
                                 .clickable { editorState.removePlm(plm.x, plm.y, plm.id) }
                                 .padding(horizontal = 4.dp),
-                            fontSize = 12.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.heading,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -1137,7 +1183,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Item", fontSize = 10.sp,
+                        Text("+ Add Item", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
@@ -1151,7 +1197,7 @@ internal fun TilePropertiesPanel(
                             FilterChip(
                                 selected = addItemStyle == idx,
                                 onClick = { addItemStyle = idx },
-                                label = { Text(label, fontSize = 9.sp) },
+                                label = { Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail) },
                                 modifier = Modifier.height(24.dp)
                             )
                         }
@@ -1167,10 +1213,10 @@ internal fun TilePropertiesPanel(
                             text = {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Text(item.shortLabel, fontSize = 9.sp,
+                                    Text(item.shortLabel, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                                    Text(item.name, fontSize = 11.sp)
+                                    Text(item.name, fontSize = LocalEditorTheme.current.fontSize.value.body)
                                 }
                             },
                             onClick = {
@@ -1190,10 +1236,10 @@ internal fun TilePropertiesPanel(
                             text = {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Text(item.shortLabel, fontSize = 9.sp,
+                                    Text(item.shortLabel, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                                    Text(item.name, fontSize = 11.sp)
+                                    Text(item.name, fontSize = LocalEditorTheme.current.fontSize.value.body)
                                 }
                             },
                             onClick = {
@@ -1220,7 +1266,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Station / Gate", fontSize = 10.sp,
+                        Text("+ Add Station / Gate", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onSecondaryContainer)
                     }
                 }
@@ -1228,7 +1274,7 @@ internal fun TilePropertiesPanel(
                     expanded = addStationExpanded,
                     onDismissRequest = { addStationExpanded = false }
                 ) {
-                    Text("Stations", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    Text("Stations", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     for (station in RomParser.STATION_PLMS) {
@@ -1236,10 +1282,10 @@ internal fun TilePropertiesPanel(
                             text = {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Text(station.shortLabel, fontSize = 9.sp,
+                                    Text(station.shortLabel, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         color = MaterialTheme.colorScheme.secondary,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                                    Text(station.name, fontSize = 11.sp)
+                                    Text(station.name, fontSize = LocalEditorTheme.current.fontSize.value.body)
                                 }
                             },
                             onClick = {
@@ -1250,12 +1296,12 @@ internal fun TilePropertiesPanel(
                         )
                     }
                     Divider()
-                    Text("Gates", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    Text("Gates", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                     for (gate in RomParser.GATE_PLMS) {
                         DropdownMenuItem(
-                            text = { Text(gate.name, fontSize = 11.sp) },
+                            text = { Text(gate.name, fontSize = LocalEditorTheme.current.fontSize.value.body) },
                             onClick = {
                                 addStationExpanded = false
                                 editorState.addPlm(gate.plmId, blockX, blockY, gate.param)
@@ -1289,7 +1335,7 @@ internal fun TilePropertiesPanel(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("+ Add Door Cap" + if (autoDir != null) " ($autoDir)" else "",
-                            fontSize = 10.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }
@@ -1299,7 +1345,7 @@ internal fun TilePropertiesPanel(
                 ) {
                     // If on screen edge, show auto-detected direction first
                     if (autoDir != null) {
-                        Text("Auto: $autoDir", fontSize = 9.sp,
+                        Text("Auto: $autoDir", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = Color(0xFF00CC66),
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
@@ -1319,7 +1365,7 @@ internal fun TilePropertiesPanel(
                     val doorColors = listOf("Blue", "Red", "Green", "Yellow", "Grey")
                     for (color in doorColors) {
                         val caps = RomParser.DOOR_CAP_PLMS.filter { it.color == color }
-                        Text(color, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                        Text(color, fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                         for (cap in caps) {
@@ -1352,7 +1398,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Scroll Trigger", fontSize = 10.sp,
+                        Text("+ Add Scroll Trigger", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = Color(0xFFFF8040))
                     }
                 }
@@ -1383,7 +1429,7 @@ internal fun TilePropertiesPanel(
                         } else emptyList()
                     }
                     if (originalHere.isNotEmpty()) {
-                        Text("Restore original scroll trigger here:", fontSize = 9.sp,
+                        Text("Restore original scroll trigger here:", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold)
@@ -1394,11 +1440,11 @@ internal fun TilePropertiesPanel(
                                 text = {
                                     Column {
                                         for (line in cmdLines) {
-                                            Text(line, fontSize = 9.sp,
+                                            Text(line, fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                                 color = Color.White)
                                         }
                                         Text("Original ROM scroll behavior \$${trigger.param.toString(16).uppercase().padStart(4, '0')}",
-                                            fontSize = 7.sp,
+                                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                             color = Color(0xFF99AABB))
                                     }
                                 },
@@ -1412,7 +1458,7 @@ internal fun TilePropertiesPanel(
                         Divider()
                     }
                     if (reusableCommandPtrs.isNotEmpty()) {
-                        Text("Use an existing scroll behavior:", fontSize = 9.sp,
+                        Text("Use an existing scroll behavior:", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold)
@@ -1423,7 +1469,7 @@ internal fun TilePropertiesPanel(
                                 text = {
                                     Column {
                                         for (line in cmdLines) {
-                                            Text(line, fontSize = 9.sp, color = Color.White)
+                                            Text(line, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color.White)
                                         }
                                         val useCount = editorState.workingPlms.count {
                                             it.id == 0xB703 && it.param == cmdPtr
@@ -1434,7 +1480,7 @@ internal fun TilePropertiesPanel(
                                             else -> "Used by $useCount triggers"
                                         }
                                         Text("$useLabel · ROM \$${cmdPtr.toString(16).uppercase().padStart(4, '0')}",
-                                            fontSize = 7.sp,
+                                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                             color = Color(0xFF99AABB))
                                     }
                                 },
@@ -1448,7 +1494,7 @@ internal fun TilePropertiesPanel(
                         Divider()
                     }
                     DropdownMenuItem(
-                        text = { Text("+ Create Scroll Behavior...", fontSize = 10.sp, color = Color.White) },
+                        text = { Text("+ Create Scroll Behavior...", fontSize = LocalEditorTheme.current.fontSize.value.body, color = Color.White) },
                         onClick = {
                             addScrollExpanded = false
                             showScrollEditor = true
@@ -1456,12 +1502,12 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.height(28.dp)
                     )
                     Divider()
-                    Text("Extend the activation zone:", fontSize = 9.sp,
+                    Text("Extend the activation zone:", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                         color = Color(0xFFFF8040),
                         fontWeight = FontWeight.Bold)
                     Text("Place next to a trigger or matching extension",
-                        fontSize = 7.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 0.dp),
                         color = Color(0xFF99AABB))
                     for ((plmId, label) in listOf(
@@ -1480,7 +1526,7 @@ internal fun TilePropertiesPanel(
                             text = {
                                 Text(
                                     label,
-                                    fontSize = 10.sp,
+                                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                                     color = if (canPlace) Color.White else Color(0xFF778899),
                                 )
                             },
@@ -1508,7 +1554,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Create Scroll Behavior...", fontSize = 10.sp,
+                        Text("+ Create Scroll Behavior...", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = Color(0xFFFF8040).copy(alpha = 0.7f))
                     }
                 }
@@ -1533,14 +1579,14 @@ internal fun TilePropertiesPanel(
             Spacer(modifier = Modifier.height(8.dp))
             Divider()
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Enemies", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Enemies", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             val tileCenterX = blockX * 16 + 8
             val tileCenterY = blockY * 16 + 8
             val enemiesHere = editorState.getEnemiesNear(tileCenterX, tileCenterY, radius = 16)
 
             if (enemiesHere.isEmpty()) {
-                Text("None", fontSize = 9.sp, color = MaterialTheme.colorScheme.outline)
+                Text("None", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.outline)
             }
             for (enemy in enemiesHere) {
                 val eName = RomParser.enemyName(enemy.id)
@@ -1553,17 +1599,17 @@ internal fun TilePropertiesPanel(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(eName, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(eName, fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Bold)
                                 Text(
                                     "0x${enemy.id.toString(16).uppercase().padStart(4, '0')}",
-                                    fontSize = 10.sp,
+                                    fontSize = LocalEditorTheme.current.fontSize.value.body,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             Text(
                                 "pos: (${enemy.x}, ${enemy.y})  prop: 0x${enemy.properties.toString(16).uppercase().padStart(4, '0')}",
-                                fontSize = 8.sp,
+                                fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -1572,7 +1618,7 @@ internal fun TilePropertiesPanel(
                             modifier = Modifier
                                 .clickable { editing = true }
                                 .padding(horizontal = 4.dp),
-                            fontSize = 12.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.heading,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
@@ -1580,7 +1626,7 @@ internal fun TilePropertiesPanel(
                             modifier = Modifier
                                 .clickable { editorState.removeEnemy(enemy) }
                                 .padding(horizontal = 4.dp),
-                            fontSize = 12.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.heading,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
@@ -1593,9 +1639,9 @@ internal fun TilePropertiesPanel(
                     var editExtra2 by remember { mutableStateOf(enemy.extra2.toString(16).uppercase().padStart(4, '0')) }
                     var editExtra3 by remember { mutableStateOf(enemy.extra3.toString(16).uppercase().padStart(4, '0')) }
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                        Text(eName, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(eName, fontSize = LocalEditorTheme.current.fontSize.value.body, fontWeight = FontWeight.Bold)
                         Text("ID: 0x${enemy.id.toString(16).uppercase().padStart(4, '0')}",
-                            fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(4.dp))
 
                         // Position
@@ -1603,23 +1649,23 @@ internal fun TilePropertiesPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("X:", fontSize = 9.sp)
+                            Text("X:", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                             AppTextInput(
                                 value = editX, onValueChange = { editX = it },
                                 modifier = Modifier.width(60.dp),
-                                fontSize = 10.sp, monospace = true
+                                fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                             )
-                            Text("Y:", fontSize = 9.sp)
+                            Text("Y:", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                             AppTextInput(
                                 value = editY, onValueChange = { editY = it },
                                 modifier = Modifier.width(60.dp),
-                                fontSize = 10.sp, monospace = true
+                                fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
 
                         // Property flag checkboxes (from SMILE enemy editor)
-                        Text("Enemy Data Flags", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Enemy Data Flags", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         // Per-room enemy population properties field (16-bit).
                         // These are PER-INSTANCE flags, not species-wide.
                         // From SM disassembly: stored in $7E:0F86,x at runtime.
@@ -1643,7 +1689,7 @@ internal fun TilePropertiesPanel(
                                     },
                                     modifier = Modifier.size(16.dp)
                                 )
-                                Text(label, fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                                Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.padding(start = 4.dp))
                             }
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1656,12 +1702,12 @@ internal fun TilePropertiesPanel(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.width(68.dp))
                                 AppTextInput(
                                     value = value, onValueChange = onValueChange,
                                     modifier = Modifier.weight(1f),
-                                    fontSize = 9.sp, monospace = true, height = 28.dp
+                                    fontSize = LocalEditorTheme.current.fontSize.value.detail, monospace = true, height = 28.dp
                                 )
                             }
                         }
@@ -1693,7 +1739,7 @@ internal fun TilePropertiesPanel(
                                 shape = MaterialTheme.shapes.small,
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
-                                Text("Save", fontSize = 9.sp,
+                                Text("Save", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     color = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
@@ -1702,7 +1748,7 @@ internal fun TilePropertiesPanel(
                                 shape = MaterialTheme.shapes.small,
                                 color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
-                                Text("Cancel", fontSize = 9.sp,
+                                Text("Cancel", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                         }
@@ -1725,7 +1771,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Enemy", fontSize = 10.sp,
+                        Text("+ Add Enemy", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }
@@ -1738,7 +1784,7 @@ internal fun TilePropertiesPanel(
                         value = enemySearch,
                         onValueChange = { enemySearch = it },
                         placeholder = "Search enemies…",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                     val filtered = remember(enemySearch) {
@@ -1756,11 +1802,11 @@ internal fun TilePropertiesPanel(
                                     verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         enemyId.toString(16).uppercase().padStart(4, '0'),
-                                        fontSize = 8.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                         color = MaterialTheme.colorScheme.tertiary,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    Text(enemyName, fontSize = 11.sp)
+                                    Text(enemyName, fontSize = LocalEditorTheme.current.fontSize.value.body)
                                 }
                             },
                             onClick = {
@@ -1773,7 +1819,7 @@ internal fun TilePropertiesPanel(
                         )
                     }
                     if (filtered.isEmpty()) {
-                        Text("No matches", fontSize = 10.sp,
+                        Text("No matches", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             modifier = Modifier.padding(8.dp),
                             color = MaterialTheme.colorScheme.outline)
                     }
@@ -1797,7 +1843,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Move Samus Here · tile ${oneBasedRoomCoordinate(blockX, blockY)}", fontSize = 10.sp,
+                        Text("Move Samus Here · tile ${oneBasedRoomCoordinate(blockX, blockY)}", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = Color.White)
                     }
                 }
@@ -1844,9 +1890,9 @@ private fun DoorDestinationPicker(
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(
             "Destination:",
-            fontSize = 9.sp,
+            fontSize = LocalEditorTheme.current.fontSize.value.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(72.dp),
+            modifier = Modifier.width(tilePropertiesLabelWidth()),
         )
         Box(modifier = Modifier.weight(1f)) {
             Surface(
@@ -1860,11 +1906,11 @@ private fun DoorDestinationPicker(
                 ) {
                     Text(
                         selectedName,
-                        fontSize = 9.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                         modifier = Modifier.weight(1f),
                     )
-                    if (enabled) Text("▾", fontSize = 9.sp)
+                    if (enabled) Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                 }
             }
             DropdownMenu(
@@ -1879,7 +1925,7 @@ private fun DoorDestinationPicker(
                 if (selectedRoomId == null) {
                     Text(
                         "Choose a room",
-                        fontSize = 9.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     )
@@ -1887,7 +1933,7 @@ private fun DoorDestinationPicker(
                         value = search,
                         onValueChange = { search = it },
                         placeholder = "Search room or area…",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth(),
                     )
                     for ((info, areaName, _) in filteredRooms) {
@@ -1897,14 +1943,14 @@ private fun DoorDestinationPicker(
                                 Column {
                                     Text(
                                         info.name,
-                                        fontSize = 10.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                                         fontWeight = if (optionRoomId == currentDoor?.destRoomPtr) {
                                             FontWeight.Bold
                                         } else FontWeight.Normal,
                                     )
                                     Text(
                                         areaName,
-                                        fontSize = 8.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -1919,7 +1965,7 @@ private fun DoorDestinationPicker(
                     if (filteredRooms.isEmpty()) {
                         Text(
                             "No matching rooms",
-                            fontSize = 9.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.outline,
                             modifier = Modifier.padding(8.dp),
                         )
@@ -1934,20 +1980,20 @@ private fun DoorDestinationPicker(
                     )
                     val destinationDoors = editorState.effectiveDoorsForRoom(destinationId, romParser)
                     DropdownMenuItem(
-                        text = { Text("‹ Back to rooms", fontSize = 10.sp) },
+                        text = { Text("‹ Back to rooms", fontSize = LocalEditorTheme.current.fontSize.value.body) },
                         onClick = { selectedRoomId = null },
                         modifier = Modifier.height(30.dp),
                     )
                     Text(
                         destination?.first?.name ?: "Destination room",
-                        fontSize = 10.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
                     )
                     Text(
                         "Source travels ${listOf("right", "left", "down", "up")[requiredDirection and 0x03]}; " +
                             "choose a ${incomingDoorEdgeName(requiredDirection)}-edge doorway.",
-                        fontSize = 8.sp,
+                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
                     )
@@ -1968,7 +2014,7 @@ private fun DoorDestinationPicker(
                                     Text(
                                         "${incomingDoorEdgeName(opening.direction).replaceFirstChar { it.uppercase() }} edge" +
                                             " · screen ${oneBasedRoomCoordinate(opening.screenX, opening.screenY)}",
-                                        fontSize = 10.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
                                         fontWeight = FontWeight.Bold,
                                     )
                                     Text(
@@ -1979,7 +2025,7 @@ private fun DoorDestinationPicker(
                                             } else {
                                                 " · unlinked opening"
                                             },
-                                        fontSize = 8.sp,
+                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -1996,7 +2042,7 @@ private fun DoorDestinationPicker(
                         Text(
                             "No compatible type-9 doorway tiles were found on this room's " +
                                 "${incomingDoorEdgeName(requiredDirection)} edge.",
-                            fontSize = 9.sp,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(10.dp),
                         )
@@ -2028,14 +2074,14 @@ private fun DoorConnectionHealthCard(diagnostic: DoorConnectionDiagnostic) {
         Column(modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)) {
             Text(
                 text = if (diagnostic.hasError) "⚠ Connection error" else "⚠ Connection needs attention",
-                fontSize = 9.sp,
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
                 fontWeight = FontWeight.Bold,
                 color = accent,
             )
             for (issue in diagnostic.issues) {
                 Text(
                     "• ${issue.message}",
-                    fontSize = 8.sp,
+                    fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
                 )
@@ -2053,6 +2099,6 @@ private fun DoorCapLabel(cap: RomParser.Companion.DoorCapDef) {
             else -> Color(0xFF808088)
         }
         Box(Modifier.size(10.dp).background(dotColor, RoundedCornerShape(2.dp)))
-        Text("${cap.color} ${cap.direction}", fontSize = 11.sp)
+        Text("${cap.color} ${cap.direction}", fontSize = LocalEditorTheme.current.fontSize.value.body)
     }
 }

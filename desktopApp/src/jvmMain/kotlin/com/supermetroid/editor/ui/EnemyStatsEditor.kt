@@ -116,7 +116,8 @@ fun EnemyStatsEditor(
     patch: SmPatch,
     editorState: EditorState,
     romParser: RomParser?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     // All enemy fields (HP, DMG, AI pointers, GFX) share this map.
     // Keys follow the pattern: "${enemyKey}_fieldName" (e.g., "zoomer_hp", "zoomer_touchAi")
@@ -159,7 +160,7 @@ fun EnemyStatsEditor(
         val grouped = ENEMY_DEFS.groupBy { it.category }
         for (cat in CATEGORY_ORDER) {
             val enemies = grouped[cat] ?: continue
-            EnemyCategorySection(cat, enemies, values, ::apply, romParser, editorState)
+            EnemyCategorySection(cat, enemies, values, ::apply, romParser, editorState, onNavigateToAsm)
             Spacer(Modifier.height(12.dp))
         }
 
@@ -186,6 +187,7 @@ private fun EnemyCategorySection(
     onApply: (String, Int) -> Unit,
     romParser: RomParser?,
     editorState: EditorState? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val catColor = when (category) {
         "Crawler" -> Color(0xFF8BC34A)
@@ -228,7 +230,7 @@ private fun EnemyCategorySection(
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (e in enemies) {
-                EnemyRow(e, values, onApply, romParser, editorState)
+                EnemyRow(e, values, onApply, romParser, editorState, onNavigateToAsm)
             }
         }
     }
@@ -241,6 +243,7 @@ private fun EnemyRow(
     onApply: (String, Int) -> Unit,
     romParser: RomParser? = null,
     editorState: EditorState? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val hp = values["${enemy.key}_hp"] ?: enemy.defaultHp
     val dmg = values["${enemy.key}_dmg"] ?: enemy.defaultDamage
@@ -264,7 +267,7 @@ private fun EnemyRow(
         }
         // Expandable AI/GFX detail section
         if (expanded && romParser != null) {
-            EnemyDetailSection(enemy, values, onApply, romParser, editorState)
+            EnemyDetailSection(enemy, values, onApply, romParser, editorState, onNavigateToAsm)
         }
     }
 }
@@ -277,6 +280,7 @@ private fun EnemyDetailSection(
     onApply: (String, Int) -> Unit,
     romParser: RomParser,
     editorState: EditorState? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val detailColor = MaterialTheme.colorScheme.onSurfaceVariant
     val aiFields = listOf(
@@ -302,10 +306,19 @@ private fun EnemyDetailSection(
         Column(modifier = Modifier.padding(8.dp)) {
             // Species ID + AI bank
             val aiBank = readEnemyStat(romParser, enemy.speciesId, 0x10)
-            Row {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Species", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor, modifier = Modifier.width(72.dp))
                 Text("\$${enemy.speciesId.toString(16).uppercase()}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                     fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
+                val speciesHeaderAddress = semanticAsmAddress(RomConstants.BANK_ENEMY_AI, enemy.speciesId)
+                if (speciesHeaderAddress != null && onNavigateToAsm != null) {
+                    Spacer(Modifier.width(4.dp))
+                    AsmNavigationLink(
+                        snesAddress = speciesHeaderAddress,
+                        onNavigateToAsm = onNavigateToAsm,
+                        label = "Header ASM",
+                    )
+                }
                 Spacer(Modifier.width(12.dp))
                 Text("AI Bank", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
                 Spacer(Modifier.width(4.dp))

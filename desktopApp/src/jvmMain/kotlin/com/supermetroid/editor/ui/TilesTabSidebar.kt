@@ -43,6 +43,7 @@ internal fun TilesTabSidebar(
     onSeedPatterns: () -> Unit,
     onReloadPaletteBackedViews: () -> Unit,
     onRefreshTilesetGrid: () -> Unit,
+    onTilesetWillSelect: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -63,6 +64,7 @@ internal fun TilesTabSidebar(
                 romParser = romParser,
                 editorState = editorState,
                 tilesetEditorState = tilesetEditorState,
+                onTilesetWillSelect = onTilesetWillSelect,
                 modifier = Modifier.fillMaxSize()
             )
             1 -> {

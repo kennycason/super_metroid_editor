@@ -174,6 +174,7 @@ fun SoundListPanel(
     soundEditorState: SoundEditorState,
     modifier: Modifier = Modifier,
     onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
+    onTrackWillSelect: (SpcData.TrackInfo) -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     var selectedTab by remember { mutableStateOf(0) }
@@ -193,7 +194,10 @@ fun SoundListPanel(
 
     fun selectSoundIndex(index: Int) {
         when (selectedTab) {
-            0 -> SpcData.KNOWN_TRACKS.getOrNull(index)?.let { soundEditorState.selectTrack(it) }
+            0 -> SpcData.KNOWN_TRACKS.getOrNull(index)?.let { track ->
+                if (track.id != soundEditorState.selectedTrackId) onTrackWillSelect(track)
+                soundEditorState.selectTrack(track)
+            }
             1 -> currentSamples.getOrNull(index)?.let { sample ->
                 scope.launch { soundEditorState.selectSample(sample) }
             }
@@ -241,6 +245,7 @@ fun SoundListPanel(
                     romParser,
                     editorState,
                     soundEditorState,
+                    onTrackWillSelect,
                     Modifier.fillMaxSize(),
                 )
                 1 -> SampleListContent(
@@ -258,6 +263,7 @@ private fun TrackListContent(
     romParser: RomParser?,
     editorState: EditorState,
     state: SoundEditorState,
+    onTrackWillSelect: (SpcData.TrackInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -272,6 +278,7 @@ private fun TrackListContent(
                 val isEdited = musicEditVersion.let { editorState.hasMusicEdit(track.songSet, track.playIndex) }
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable {
+                        if (track.id != state.selectedTrackId) onTrackWillSelect(track)
                         state.selectTrack(track)
                     }
                         .padding(horizontal = 2.dp),
@@ -386,7 +393,8 @@ fun SoundEditorCanvas(
     romParser: RomParser?,
     editorState: EditorState,
     soundEditorState: SoundEditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val state = soundEditorState
     val scope = rememberCoroutineScope()
@@ -440,6 +448,24 @@ fun SoundEditorCanvas(
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(track.area, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (romParser != null && onNavigateToAsm != null) {
+                    val asmTargets = remember(romParser, track.songSet) {
+                        buildList {
+                            val tablePc = SpcData.findSongSetPointerEntryPc(romParser, track.songSet)
+                            if (tablePc >= 0) {
+                                runCatching { romParser.pcToSnes(tablePc) }.getOrNull()?.let {
+                                    add("Table ASM" to it)
+                                }
+                            }
+                            SpcData.readSongSetPointer(romParser, track.songSet).takeIf { it > 0 }?.let {
+                                add("Data ASM" to it)
+                            }
+                        }
+                    }
+                    for ((label, address) in asmTargets) {
+                        AsmNavigationLink(address, onNavigateToAsm, label)
+                    }
+                }
             } else if (sample != null) {
                 Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Sample #${sample.dirEntry.index}", fontSize = 11.sp, fontWeight = FontWeight.Medium)

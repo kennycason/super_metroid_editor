@@ -7664,6 +7664,20 @@ class EditorState(
         return ProjectFileService.exportToRom(project, sourceParser, ::editorLog, ::postStatus)
     }
 
+    internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreview? {
+        seedDefaultPatches(forceRefreshBundled = true)
+        if (project.romPath.isEmpty()) return null
+        val projectSnapshot = ProjectFileService.snapshotProject(project)
+        val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
+        val result = ProjectFileService.buildRom(projectSnapshot, sourceParser, ::editorLog, ::postStatus) ?: return null
+        return com.supermetroid.editor.asm.AsmRomPreview.create(
+            loadedRom = result.loadedRom,
+            resultRom = result.resultRom,
+            headerSize = result.headerSize,
+            writeReport = result.writeReport,
+        )
+    }
+
     fun exportToIps(romParser: RomParser): String? {
         seedDefaultPatches(forceRefreshBundled = true)
         if (project.romPath.isEmpty()) return null

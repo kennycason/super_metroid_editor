@@ -6,12 +6,13 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-internal enum class AsmBrowserMode { SOURCE, ASSETS, LIBRARY }
+internal enum class AsmBrowserMode { SOURCE, ASSETS, LIBRARY, ROM }
 
-private sealed interface AsmLocation {
-    data class Source(val fileId: String, val lineIndex: Int) : AsmLocation
-    data class Asset(val path: String) : AsmLocation
-    data class Library(val pageId: String, val instructionToken: String?) : AsmLocation
+internal sealed interface AsmWorkspaceLocation {
+    data class Source(val fileId: String, val lineIndex: Int) : AsmWorkspaceLocation
+    data class Asset(val path: String) : AsmWorkspaceLocation
+    data class Library(val pageId: String, val instructionToken: String?) : AsmWorkspaceLocation
+    data class Rom(val view: AsmRomPreviewView) : AsmWorkspaceLocation
 }
 
 internal class AsmWorkspaceState(
@@ -49,9 +50,17 @@ internal class AsmWorkspaceState(
         private set
     var searchFocusSerial by mutableStateOf(0L)
         private set
+    var romPreview by mutableStateOf<AsmRomPreview?>(null)
+        private set
+    var romPreviewView by mutableStateOf(AsmRomPreviewView.DIFF)
+        private set
+    var selectedRomDiffIndex by mutableStateOf(0)
+        private set
+    var previewBusy by mutableStateOf(false)
+        private set
 
-    private val backStack = mutableListOf<AsmLocation>()
-    private val forwardStack = mutableListOf<AsmLocation>()
+    private val backStack = mutableListOf<AsmWorkspaceLocation>()
+    private val forwardStack = mutableListOf<AsmWorkspaceLocation>()
     private var pendingSnesAddress: Int? = null
 
     val canGoBack: Boolean get() = backStack.isNotEmpty()
@@ -76,9 +85,11 @@ internal class AsmWorkspaceState(
     }
 
     suspend fun observeRom(romBytes: ByteArray?) {
-        currentRomSha256 = if (romBytes == null) null else withContext(Dispatchers.Default) {
+        val observedHash = if (romBytes == null) null else withContext(Dispatchers.Default) {
             repository.romSha256(romBytes)
         }
+        if (currentRomSha256 != observedHash) clearRomPreview()
+        currentRomSha256 = observedHash
     }
 
     suspend fun download(romBytes: ByteArray, romName: String) {
@@ -91,6 +102,12 @@ internal class AsmWorkspaceState(
 
     fun dismissError() {
         error = null
+    }
+
+    private fun clearRomPreview() {
+        romPreview = null
+        selectedRomDiffIndex = 0
+        romPreviewView = AsmRomPreviewView.DIFF
     }
 
     fun requestSearchFocus() {
@@ -118,6 +135,52 @@ internal class AsmWorkspaceState(
         query = ""
         selectedAssetPath = null
         navigationSerial++
+    }
+
+    fun showRomBrowser() {
+        browserMode = AsmBrowserMode.ROM
+        query = ""
+        selectedAssetPath = null
+        navigationSerial++
+    }
+
+    fun selectRomPreviewView(view: AsmRomPreviewView, addToHistory: Boolean = true) {
+        if (addToHistory) rememberCurrentLocation()
+        browserMode = AsmBrowserMode.ROM
+        romPreviewView = view
+        query = ""
+        navigationSerial++
+        if (addToHistory) forwardStack.clear()
+    }
+
+    fun selectRomDiff(index: Int) {
+        val ranges = romPreview?.diffRanges.orEmpty()
+        if (ranges.isEmpty()) return
+        selectedRomDiffIndex = index.coerceIn(ranges.indices)
+        romPreviewView = AsmRomPreviewView.DIFF
+        navigationSerial++
+    }
+
+    suspend fun buildRomPreview(builder: () -> AsmRomPreview?) {
+        if (previewBusy) return
+        previewBusy = true
+        error = null
+        try {
+            val preview = withContext(Dispatchers.Default) { builder() }
+            if (preview == null) {
+                error = "SMEDIT Result could not be built. No ROM was written; check the export status or log for the blocker."
+            } else {
+                romPreview = preview
+                selectedRomDiffIndex = 0
+                romPreviewView = AsmRomPreviewView.DIFF
+                browserMode = AsmBrowserMode.ROM
+                navigationSerial++
+            }
+        } catch (problem: Exception) {
+            error = problem.message ?: "SMEDIT Result could not be built"
+        } finally {
+            previewBusy = false
+        }
     }
 
     fun openSource(fileId: String, lineIndex: Int = 0, addToHistory: Boolean = true) {
@@ -239,14 +302,14 @@ internal class AsmWorkspaceState(
 
     fun goBack() {
         val target = backStack.removeLastOrNull() ?: return
-        currentLocation()?.let(forwardStack::add)
-        restore(target)
+        locationSnapshot()?.let(forwardStack::add)
+        restoreLocation(target)
     }
 
     fun goForward() {
         val target = forwardStack.removeLastOrNull() ?: return
-        currentLocation()?.let(backStack::add)
-        restore(target)
+        locationSnapshot()?.let(backStack::add)
+        restoreLocation(target)
     }
 
     private suspend fun runOperation(operation: ((String) -> Unit) -> AsmReferenceWorkspace) {
@@ -281,27 +344,29 @@ internal class AsmWorkspaceState(
         pendingSnesAddress?.let(::openAddress)
     }
 
-    private fun currentLocation(): AsmLocation? = when (browserMode) {
-        AsmBrowserMode.SOURCE -> selectedFileId?.let { AsmLocation.Source(it, selectedLineIndex) }
-        AsmBrowserMode.ASSETS -> selectedAssetPath?.let(AsmLocation::Asset)
-        AsmBrowserMode.LIBRARY -> AsmLocation.Library(selectedLibraryPageId, selectedInstructionToken)
+    internal fun locationSnapshot(): AsmWorkspaceLocation? = when (browserMode) {
+        AsmBrowserMode.SOURCE -> selectedFileId?.let { AsmWorkspaceLocation.Source(it, selectedLineIndex) }
+        AsmBrowserMode.ASSETS -> selectedAssetPath?.let(AsmWorkspaceLocation::Asset)
+        AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(selectedLibraryPageId, selectedInstructionToken)
+        AsmBrowserMode.ROM -> AsmWorkspaceLocation.Rom(romPreviewView)
     }
 
     private fun rememberCurrentLocation() {
-        val current = currentLocation() ?: return
+        val current = locationSnapshot() ?: return
         if (backStack.lastOrNull() != current) backStack += current
         if (backStack.size > MAX_HISTORY) backStack.removeAt(0)
     }
 
-    private fun restore(location: AsmLocation) {
+    internal fun restoreLocation(location: AsmWorkspaceLocation) {
         when (location) {
-            is AsmLocation.Source -> openSource(location.fileId, location.lineIndex, addToHistory = false)
-            is AsmLocation.Asset -> openAsset(location.path, addToHistory = false)
-            is AsmLocation.Library -> {
+            is AsmWorkspaceLocation.Source -> openSource(location.fileId, location.lineIndex, addToHistory = false)
+            is AsmWorkspaceLocation.Asset -> openAsset(location.path, addToHistory = false)
+            is AsmWorkspaceLocation.Library -> {
                 val mnemonic = AsmLibrary.mnemonicFromPageId(location.pageId)
                 if (mnemonic != null) openLibraryInstruction(location.instructionToken ?: mnemonic, addToHistory = false)
                 else openLibraryGuide(location.pageId, addToHistory = false)
             }
+            is AsmWorkspaceLocation.Rom -> selectRomPreviewView(location.view, addToHistory = false)
         }
     }
 

@@ -250,6 +250,7 @@ fun MapCanvas(
     onMoveSamusHere: ((x: Int, y: Int) -> Unit)? = null,
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     onWorkspaceChanged: (() -> Unit)? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     roomKeyboardNavigationEnabled: Boolean = true,
     showItemNames: Boolean = true,
     showMetaNames: Boolean = true,
@@ -1860,6 +1861,7 @@ fun MapCanvas(
                                     emulatorConnected = emulatorConnected,
                                     onMoveSamusHere = onMoveSamusHere,
                                     onWorkspaceChanged = onWorkspaceChanged,
+                                    onNavigateToAsm = onNavigateToAsm,
                                     onDismiss = { propsExpanded = false; mapFocusReq.requestFocus() },
                                     modifier = Modifier.align(Alignment.TopEnd),
                                 )

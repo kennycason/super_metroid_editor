@@ -61,6 +61,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.supermetroid.editor.asm.formatSnesAddress
+import com.supermetroid.editor.asm.snesLoRomToPc
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.TilesetGridData
@@ -113,6 +115,7 @@ fun TilesetListPanel(
     romParser: RomParser?,
     editorState: EditorState,
     tilesetEditorState: TilesetEditorState,
+    onTilesetWillSelect: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -123,11 +126,12 @@ fun TilesetListPanel(
         requestFocusKey = romParser
     )
 
-    fun loadTileset(id: Int) {
+    fun loadTileset(id: Int, trackNavigation: Boolean = true) {
         val parser = romParser ?: run {
             tilesetEditorState.clear()
             return
         }
+        if (trackNavigation && id != tilesetId) onTilesetWillSelect(id)
         tilesetEditorState.isLoading = true
         tilesetEditorState.errorMessage = null
         tilesetEditorState.gridData = null
@@ -145,7 +149,7 @@ fun TilesetListPanel(
     }
 
     LaunchedEffect(romParser, editorState.romVersion) {
-        if (romParser != null) loadTileset(editorState.editorTilesetId)
+        if (romParser != null) loadTileset(editorState.editorTilesetId, trackNavigation = false)
         else tilesetEditorState.clear()
     }
 
@@ -155,7 +159,7 @@ fun TilesetListPanel(
             itemCount = TileGraphics.NUM_TILESETS,
             selectedIndex = tilesetId,
             enabled = romParser != null,
-            onSelectIndex = ::loadTileset
+            onSelectIndex = { loadTileset(it) }
         ),
         shape = androidx.compose.ui.graphics.RectangleShape,
         elevation = CardDefaults.cardElevation(2.dp)
@@ -230,7 +234,8 @@ fun TilesetCanvas(
     romParser: RomParser?,
     editorState: EditorState,
     tilesetEditorState: TilesetEditorState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val zoomState = remember { mutableStateOf(2.0f) }
     val zoomLevel = zoomState.value
@@ -307,6 +312,56 @@ fun TilesetCanvas(
             ) {
                     Text("Tileset $tilesetId", fontSize = 11.sp, fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.primary)
+
+                    if (romParser != null && onNavigateToAsm != null) {
+                        val catalog = romParser.graphicsCatalog
+                        val entry = catalog.entry(tilesetId)
+                        val asmSources = remember(romParser, tilesetId) {
+                            buildList {
+                                entry?.let {
+                                    add("Area metatiles" to it.tileTablePtr)
+                                    add("Area graphics" to it.gfxPtr)
+                                    add("Palette" to it.palettePtr)
+                                }
+                                add("CRE metatiles" to catalog.creTileTablePtr)
+                                add("CRE graphics" to catalog.creGfxPtr)
+                            }.filter { (_, address) -> snesLoRomToPc(address) != null }
+                        }
+                        if (asmSources.isNotEmpty()) {
+                            var asmMenuExpanded by remember(tilesetId) { mutableStateOf(false) }
+                            Box {
+                                Text(
+                                    "ASM ▾",
+                                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable { asmMenuExpanded = true }.padding(horizontal = 4.dp, vertical = 2.dp),
+                                )
+                                DropdownMenu(
+                                    expanded = asmMenuExpanded,
+                                    onDismissRequest = { asmMenuExpanded = false },
+                                ) {
+                                    for ((label, address) in asmSources) {
+                                        DropdownMenuItem(
+                                            text = {
+                                                Column {
+                                                    Text(label, fontSize = LocalEditorTheme.current.fontSize.value.body)
+                                                    Text(
+                                                        formatSnesAddress(address),
+                                                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            },
+                                            onClick = {
+                                                asmMenuExpanded = false
+                                                onNavigateToAsm(address)
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     Text("│", fontSize = 10.sp, color = MaterialTheme.colorScheme.outlineVariant)
 

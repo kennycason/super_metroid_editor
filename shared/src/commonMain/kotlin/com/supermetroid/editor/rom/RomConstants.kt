@@ -15,8 +15,11 @@ object RomConstants {
     /** Bank $8F — rooms, PLMs, scrolls, doors, state data */
     const val BANK_ROOM_DATA = 0x8F0000
 
-    /** Bank $83 — FX entries, door cap data */
+    /** Bank $83 — door definitions, FX entries, and related room-transition data */
     const val BANK_FX = 0x830000
+
+    /** Bank $84 — PLM headers, setup routines, and instruction lists */
+    const val BANK_PLM = 0x840000
 
     /** Bank $A0 — enemy/boss species headers (AI bank) */
     const val BANK_ENEMY_AI = 0xA00000

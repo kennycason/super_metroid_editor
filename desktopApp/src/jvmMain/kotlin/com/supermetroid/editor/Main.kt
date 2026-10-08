@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Info
@@ -73,6 +75,9 @@ import com.supermetroid.editor.data.WindowConfig
 import com.supermetroid.editor.procgen.TilesetProfileCache
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RomValidator
+import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.asm.AsmEditorTarget
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.ui.AsmWorkspaceCanvas
 import com.supermetroid.editor.ui.AsmWorkspaceSidebar
@@ -324,6 +329,164 @@ fun main() = application {
             LaunchedEffect(romLoadMessage) {
                 romLoadMessageDetailsOpen = false
             }
+
+            var leftTab by remember { mutableStateOf(TAB_ROOMS) }
+            var roomKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
+            var itemKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
+            var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
+            val mainContentFocusRequester = remember { FocusRequester() }
+            var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
+            val tilesetEditorState = remember { TilesetEditorState() }
+            val soundEditorState = remember { SoundEditorState() }
+            val minimapEditorState = remember { MinimapEditorState() }
+            val asmWorkspaceState = remember { AsmWorkspaceState() }
+            var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
+            val navigationHistory = remember { EditorNavigationHistory<EditorNavigationLocation>() }
+
+            fun captureNavigationLocation() = EditorNavigationLocation(
+                tab = leftTab,
+                roomId = selectedRoom?.getRoomIdAsInt(),
+                tilesetSubTab = tilesetSubTab,
+                tilesetId = editorState.editorTilesetId,
+                spriteIndex = selectedSpriteIdx,
+                soundTrackId = soundEditorState.selectedTrackId,
+                minimapArea = minimapEditorState.selectedArea,
+                minimapRoomId = minimapEditorState.selectedRoom?.roomId,
+                asmLocation = asmWorkspaceState.locationSnapshot(),
+            )
+
+            fun refreshCurrentEditorTilesetGrid() {
+                tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
+            }
+
+            fun restoreNavigationLocation(location: EditorNavigationLocation) {
+                val parser = romParser
+                if (location.tab == TAB_ROOMS || location.tab == TAB_ITEMS) {
+                    selectedRoom = location.roomId?.let { roomId ->
+                        rooms.firstOrNull { it.getRoomIdAsInt() == roomId }
+                    } ?: selectedRoom
+                }
+                if (location.tab == TAB_TILES) {
+                    tilesetSubTab = location.tilesetSubTab
+                    if (location.tilesetId >= 0 && location.tilesetId != editorState.editorTilesetId && parser != null) {
+                        scope.launch {
+                            val loaded = withContext(Dispatchers.Default) {
+                                editorState.loadEditorTileset(location.tilesetId, parser)
+                            }
+                            if (loaded) refreshCurrentEditorTilesetGrid()
+                        }
+                    }
+                }
+                if (location.tab == TAB_SPRITES) selectedSpriteIdx = location.spriteIndex
+                if (location.tab == TAB_SOUND) {
+                    SpcData.KNOWN_TRACKS.firstOrNull { it.id == location.soundTrackId }
+                        ?.let(soundEditorState::selectTrack)
+                }
+                if (location.tab == TAB_MAP && parser != null) {
+                    minimapEditorState.loadArea(
+                        parser = parser,
+                        area = location.minimapArea,
+                        editorState = editorState,
+                        selectRoomId = location.minimapRoomId,
+                    )
+                }
+                if (location.tab == TAB_ASM) {
+                    location.asmLocation?.let(asmWorkspaceState::restoreLocation)
+                }
+                leftTab = location.tab.takeIf { isTabAvailableForRom(it, romReadOnly) } ?: TAB_ROOMS
+            }
+
+            fun navigate(action: () -> Unit) {
+                val previous = captureNavigationLocation()
+                action()
+                if (captureNavigationLocation() != previous) {
+                    navigationHistory.recordDeparture(previous)
+                }
+            }
+
+            fun selectRoomFromNavigation(room: RoomInfo) {
+                navigate {
+                    selectedRoom = room
+                    RomPreferences.getLastRomPath()?.let { saveLastRoom(it, room) }
+                }
+            }
+
+            fun openAsmAddress(snesAddress: Int) {
+                navigate {
+                    asmWorkspaceState.openAddress(snesAddress)
+                    leftTab = TAB_ASM
+                }
+            }
+
+            fun openAsmEditorTarget(target: AsmEditorTarget) {
+                navigate {
+                    when (target) {
+                        is AsmEditorTarget.Room -> {
+                            rooms.firstOrNull { it.getRoomIdAsInt() == target.roomId }?.let { room ->
+                                selectedRoom = room
+                                RomPreferences.getLastRomPath()?.let { saveLastRoom(it, room) }
+                                leftTab = TAB_ROOMS
+                            }
+                        }
+                        is AsmEditorTarget.Tileset -> {
+                            val parser = romParser ?: return@navigate
+                            val tilesetId = target.tilesetId ?: editorState.editorTilesetId
+                            leftTab = TAB_TILES
+                            tilesetSubTab = if (target.palette) 2 else 0
+                            scope.launch {
+                                val loaded = withContext(Dispatchers.Default) {
+                                    editorState.loadEditorTileset(tilesetId, parser)
+                                }
+                                if (loaded) refreshCurrentEditorTilesetGrid()
+                            }
+                        }
+                        is AsmEditorTarget.Sprite -> {
+                            selectedSpriteIdx = target.speciesId?.let { speciesId ->
+                                EnemySpriteGraphics.EDITOR_ENEMIES.indexOfFirst { it.speciesId == speciesId }
+                                    .takeIf { it >= 0 }
+                            } ?: -1
+                            leftTab = TAB_SPRITES
+                        }
+                        is AsmEditorTarget.Sound -> {
+                            SpcData.KNOWN_TRACKS.firstOrNull { it.songSet == target.songSet }
+                                ?.let(soundEditorState::selectTrack)
+                            leftTab = TAB_SOUND
+                        }
+                    }
+                }
+            }
+
+            fun reloadPaletteBackedViews() {
+                val parser = romParser ?: return
+                val id = editorState.editorTilesetId
+                scope.launch {
+                    val ok = withContext(Dispatchers.Default) {
+                        editorState.reloadCurrentRoomTileGraphics(parser)
+                        editorState.loadEditorTileset(id, parser)
+                    }
+                    if (ok) refreshCurrentEditorTilesetGrid()
+                }
+            }
+
+            LaunchedEffect(Unit) {
+                asmWorkspaceState.loadInstalled()
+            }
+            LaunchedEffect(romParser) {
+                asmWorkspaceState.observeRom(romParser?.copyRomData())
+            }
+            LaunchedEffect(romReadOnly, leftTab) {
+                if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
+            }
+            LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
+                if (leftTab == TAB_ROOMS || leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
+                    requestVerticalSelectionFocus(mainContentFocusRequester)
+                }
+            }
+
+            // Auto-switch to Palette when sampling a color from the tiles canvas.
+            val sampledRow = editorState.sampledPaletteRow
+            if (sampledRow >= 0 && leftTab == TAB_TILES) tilesetSubTab = 2
+
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -354,6 +517,7 @@ fun main() = application {
                                 val selectedFile = fileDialog.file
                                 if (selectedFile != null) {
                                     val file = File(fileDialog.directory, selectedFile)
+                                    navigationHistory.clear()
                                     scope.launch {
                                         romLoadInFlight = true
                                         try {
@@ -404,6 +568,39 @@ fun main() = application {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    navigationHistory.goBack(captureNavigationLocation())
+                                        ?.let(::restoreNavigationLocation)
+                                },
+                                enabled = navigationHistory.canGoBack,
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowBack,
+                                    contentDescription = "Back",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    navigationHistory.goForward(captureNavigationLocation())
+                                        ?.let(::restoreNavigationLocation)
+                                },
+                                enabled = navigationHistory.canGoForward,
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.ArrowForward,
+                                    contentDescription = "Forward",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
                         OutlinedButton(
                             onClick = {
                                 if (emulatorEnabled) {
@@ -635,52 +832,6 @@ fun main() = application {
                         )
                     }
                 }
-                var leftTab by remember { mutableStateOf(0) }
-                LaunchedEffect(romReadOnly, leftTab) {
-                    if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
-                }
-                var roomKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
-                var itemKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
-                var soundKeyboardNavigator by remember { mutableStateOf<((Int) -> Boolean)?>(null) }
-                val mainContentFocusRequester = remember { FocusRequester() }
-                var selectedSpriteIdx by remember { mutableStateOf(-1) } // -1 = Samus
-                val tilesetEditorState = remember { TilesetEditorState() }
-                fun refreshCurrentEditorTilesetGrid() {
-                    tilesetEditorState.refreshGrid(editorState.editorTileGraphics)
-                }
-                fun reloadPaletteBackedViews() {
-                    val parser = romParser ?: return
-                    val id = editorState.editorTilesetId
-                    scope.launch {
-                        val ok = withContext(Dispatchers.Default) {
-                            editorState.reloadCurrentRoomTileGraphics(parser)
-                            editorState.loadEditorTileset(id, parser)
-                        }
-                        if (ok) {
-                            refreshCurrentEditorTilesetGrid()
-                        }
-                    }
-                }
-                val soundEditorState = remember { SoundEditorState() }
-                val minimapEditorState = remember { MinimapEditorState() }
-                val asmWorkspaceState = remember { AsmWorkspaceState() }
-                LaunchedEffect(Unit) {
-                    asmWorkspaceState.loadInstalled()
-                }
-                LaunchedEffect(romParser) {
-                    asmWorkspaceState.observeRom(romParser?.copyRomData())
-                }
-                var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
-                // Auto-switch to Palette tab when user samples a tile
-                val sampledRow = editorState.sampledPaletteRow
-                if (sampledRow >= 0 && leftTab == TAB_TILES) {
-                    tilesetSubTab = 2
-                }
-                LaunchedEffect(leftTab, soundEditorState.isPianoRollOpen) {
-                    if (leftTab == TAB_ROOMS || leftTab == TAB_ITEMS || (leftTab == TAB_SOUND && !soundEditorState.isPianoRollOpen)) {
-                        requestVerticalSelectionFocus(mainContentFocusRequester)
-                    }
-                }
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxSize()
@@ -757,7 +908,7 @@ fun main() = application {
                                         fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
                                         modifier = Modifier
                                             .clickable(enabled = tabEnabled) {
-                                                leftTab = idx
+                                                if (leftTab != idx) navigate { leftTab = idx }
                                                 if (!romReadOnly && (idx == TAB_PATCHES || idx == TAB_ITEMS)) {
                                                     editorState.seedDefaultPatches()
                                                 }
@@ -774,11 +925,7 @@ fun main() = application {
                                         RoomsTabSidebar(
                                             rooms = rooms,
                                             selectedRoom = selectedRoom,
-                                            onRoomSelected = { room ->
-                                                selectedRoom = room
-                                                val romPath = RomPreferences.getLastRomPath()
-                                                if (romPath != null) saveLastRoom(romPath, room)
-                                            },
+                                            onRoomSelected = ::selectRoomFromNavigation,
                                             romParser = romParser,
                                             editorState = editorState,
                                             onCreateRoom = { request ->
@@ -816,15 +963,14 @@ fun main() = application {
                                             onNavigateToMap = {
                                                 val parser = romParser
                                                 val roomId = selectedRoom?.getRoomIdAsInt()
-                                                if (parser != null && roomId != null) {
-                                                    minimapEditorState.openRoom(parser, roomId, editorState)
+                                                navigate {
+                                                    if (parser != null && roomId != null) {
+                                                        minimapEditorState.openRoom(parser, roomId, editorState)
+                                                    }
+                                                    leftTab = TAB_MAP
                                                 }
-                                                leftTab = TAB_MAP
                                             },
-                                            onNavigateToAsm = { snesAddress ->
-                                                asmWorkspaceState.openAddress(snesAddress)
-                                                leftTab = TAB_ASM
-                                            },
+                                            onNavigateToAsm = ::openAsmAddress,
                                             onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
                                             modifier = Modifier.fillMaxSize(),
                                         )
@@ -834,17 +980,15 @@ fun main() = application {
                                         selectedRoom = selectedRoom,
                                         romParser = romParser,
                                         editorState = editorState,
-                                        onRoomSelected = { room ->
-                                            selectedRoom = room
-                                            val romPath = RomPreferences.getLastRomPath()
-                                            if (romPath != null) saveLastRoom(romPath, room)
-                                        },
+                                        onRoomSelected = ::selectRoomFromNavigation,
                                         modifier = Modifier.fillMaxSize(),
                                         onKeyboardNavigatorChanged = { itemKeyboardNavigator = it },
                                     )
                                     TAB_TILES -> TilesTabSidebar(
                                         tilesetSubTab = tilesetSubTab,
-                                        onSubTabChange = { tilesetSubTab = it },
+                                        onSubTabChange = { subTab ->
+                                            if (tilesetSubTab != subTab) navigate { tilesetSubTab = subTab }
+                                        },
                                         romParser = romParser,
                                         editorState = editorState,
                                         tilesetEditorState = tilesetEditorState,
@@ -854,6 +998,9 @@ fun main() = application {
                                         onSeedPatterns = { editorState.seedBuiltInPatterns(romParser) },
                                         onReloadPaletteBackedViews = ::reloadPaletteBackedViews,
                                         onRefreshTilesetGrid = ::refreshCurrentEditorTilesetGrid,
+                                        onTilesetWillSelect = {
+                                            navigationHistory.recordDeparture(captureNavigationLocation())
+                                        },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                     TAB_PATCHES -> PatchListPanel(
@@ -866,10 +1013,16 @@ fun main() = application {
                                         soundEditorState = soundEditorState,
                                         modifier = Modifier.fillMaxSize(),
                                         onKeyboardNavigatorChanged = { soundKeyboardNavigator = it },
+                                        onTrackWillSelect = {
+                                            navigationHistory.recordDeparture(captureNavigationLocation())
+                                        },
                                     )
                                     TAB_SPRITES -> SpritesTabSidebar(
                                         selectedSpriteIdx = selectedSpriteIdx,
-                                        onSelectSprite = { selectedSpriteIdx = it },
+                                        onSelectSprite = { spriteIndex ->
+                                            if (selectedSpriteIdx != spriteIndex) navigate { selectedSpriteIdx = spriteIndex }
+                                        },
+                                        onNavigateToAsm = ::openAsmAddress,
                                     )
                                     TAB_MAP -> MinimapSidebar(
                                         state = minimapEditorState,
@@ -888,6 +1041,9 @@ fun main() = application {
                                         state = asmWorkspaceState,
                                         romParser = romParser,
                                         romName = romFileName,
+                                        buildRomPreview = romParser?.let { parser ->
+                                            { editorState.buildRomPreview(parser) }
+                                        },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -933,11 +1089,7 @@ fun main() = application {
                                             onMoveSamusHere = if (emuRunning) { x, y ->
                                                 scope.launch { emulatorWorkspaceState.moveSamusTo(x, y) }
                                             } else null,
-                                            onRoomSelected = { r ->
-                                                selectedRoom = r
-                                                val romPath = RomPreferences.getLastRomPath()
-                                                if (romPath != null) saveLastRoom(romPath, r)
-                                            },
+                                            onRoomSelected = ::selectRoomFromNavigation,
                                             onWorkspaceChanged = {
                                                 val selectedHandle = selectedRoom?.handle
                                                 val workspace = editorState.prepareWorkspaceParser()
@@ -946,6 +1098,7 @@ fun main() = application {
                                                 selectedRoom = rooms.firstOrNull { it.handle == selectedHandle }
                                                     ?: selectedRoom
                                             },
+                                            onNavigateToAsm = ::openAsmAddress,
                                             roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             showItemNames = showRoomItemNames,
                                             showMetaNames = showRoomMetaNames,
@@ -967,6 +1120,7 @@ fun main() = application {
                                                 romParser = romParser,
                                                 editorState = editorState,
                                                 tilesetEditorState = tilesetEditorState,
+                                                onNavigateToAsm = ::openAsmAddress,
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         }
@@ -980,6 +1134,7 @@ fun main() = application {
                                         romParser = romParser,
                                         editorState = editorState,
                                         soundEditorState = soundEditorState,
+                                        onNavigateToAsm = ::openAsmAddress,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_SPRITES -> SpritesTabCanvas(
@@ -998,9 +1153,19 @@ fun main() = application {
                                         editorState = editorState,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    TAB_ENEMY -> EnemyTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    TAB_ENEMY -> EnemyTabCanvas(
+                                        editorState = editorState,
+                                        romParser = romParser,
+                                        onNavigateToAsm = ::openAsmAddress,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                     TAB_BOSS -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
-                                    TAB_ASM -> AsmWorkspaceCanvas(state = asmWorkspaceState, modifier = Modifier.fillMaxSize())
+                                    TAB_ASM -> AsmWorkspaceCanvas(
+                                        state = asmWorkspaceState,
+                                        romParser = romParser,
+                                        onOpenInEditor = ::openAsmEditorTarget,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
                                 }
                                 }
                             }

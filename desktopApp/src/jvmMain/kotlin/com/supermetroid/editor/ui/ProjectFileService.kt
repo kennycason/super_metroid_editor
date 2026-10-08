@@ -25,6 +25,10 @@ internal object ProjectFileService {
             project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
 
+    /** Isolate non-writing previews from exporter metadata hydration. */
+    fun snapshotProject(project: SmEditProject): SmEditProject =
+        SmEditProjectFormat.decode(json, json.encodeToString(SmEditProject.serializer(), project))
+
     fun saveProject(
         project: SmEditProject,
         projectFilePath: String,
@@ -70,6 +74,26 @@ internal object ProjectFileService {
         RomExporter(project, romParser, onLog, onStatus).export()
     } catch (e: Exception) {
         val message = "Export failed safely: ${e.message ?: e::class.simpleName}"
+        onLog("ERROR: $message")
+        onStatus(message)
+        null
+    }
+
+    fun buildRom(
+        project: SmEditProject,
+        romParser: RomParser,
+        onLog: (String) -> Unit,
+        onStatus: (String) -> Unit,
+    ): RomBuildResult? = try {
+        RomExporter(
+            project = project,
+            romParser = romParser,
+            onLog = onLog,
+            onStatus = onStatus,
+            logWritePlanDetails = false,
+        ).build()
+    } catch (e: Exception) {
+        val message = "Export preview failed safely: ${e.message ?: e::class.simpleName}"
         onLog("ERROR: $message")
         onStatus(message)
         null

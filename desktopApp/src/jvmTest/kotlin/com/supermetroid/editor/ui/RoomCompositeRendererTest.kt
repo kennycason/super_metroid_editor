@@ -3,11 +3,29 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomRenderData
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 
 class RoomCompositeRendererTest {
+
+    @Test
+    fun `door cap badges use their actual PLM color`() {
+        val expected = mapOf(
+            0xC842 to RomParser.DOOR_CAP_GREY,
+            0xC85A to RomParser.DOOR_CAP_YELLOW,
+            0xC872 to RomParser.DOOR_CAP_GREEN,
+            0xC88A to RomParser.DOOR_CAP_RED,
+            0xC8A2 to RomParser.DOOR_CAP_BLUE,
+        )
+
+        for ((plmId, argb) in expected) {
+            assertEquals(argb, doorCapOverlayBorderColor(plmId)?.rgb, "PLM 0x${plmId.toString(16)}")
+        }
+        assertNull(doorCapOverlayBorderColor(0xB703), "A scroll PLM must not receive a door color")
+    }
 
     @Test
     fun `meta names hide non-item map text`() {

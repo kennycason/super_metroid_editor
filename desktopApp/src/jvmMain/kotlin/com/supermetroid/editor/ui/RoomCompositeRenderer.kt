@@ -88,6 +88,10 @@ internal fun buildItemOverlayDefs(customItems: List<CustomItemDef>): Map<Int, It
     }
 }
 
+/** Keep the PLM badge visually aligned with the cap color rendered in the room. */
+internal fun doorCapOverlayBorderColor(plmId: Int): java.awt.Color? =
+    RomParser.doorCapColor(plmId)?.let { java.awt.Color(it, true) }
+
 internal const val SCREEN_PX = 16 * 16  // 256 — one screen in pixels
 
 /** Enemy IDs whose sprites should be horizontally flipped when initParam != 0. */
@@ -482,7 +486,6 @@ internal fun buildCompositeImage(
         val itemColor = java.awt.Color(0xFF, 0xCC, 0x00)       // gold
         val stationColor = java.awt.Color(0x44, 0xCC, 0xFF)    // cyan
         val gateColor = java.awt.Color(0xCC, 0x66, 0xFF)       // purple
-        val doorCapColor = java.awt.Color(0x60, 0x80, 0xB0)    // gray-blue
         val itemSpriteSheet = ItemSpriteSheetCache.get()
         val itemDefs = buildItemOverlayDefs(customItems)
         for (plm in data.plmEntries) {
@@ -501,7 +504,7 @@ internal fun buildCompositeImage(
             val badgeBorder = when {
                 isStation -> stationColor
                 isGate -> gateColor
-                isDoorCap -> doorCapColor
+                isDoorCap -> doorCapOverlayBorderColor(plm.id) ?: continue
                 else -> itemColor
             }
             val horiz = isDoorCap && RomParser.doorCapIsHorizontal(plm.id)

@@ -22,6 +22,7 @@ import com.supermetroid.editor.rom.RomOverlapPolicy
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import com.supermetroid.editor.rom.RomWritePlanException
+import com.supermetroid.editor.rom.RomWritePlanReport
 import com.supermetroid.editor.rom.RomResourceAccess
 import com.supermetroid.editor.rom.RomResourceClaim
 import com.supermetroid.editor.rom.RomValidator
@@ -163,6 +164,33 @@ internal fun buildIpsPatch(original: ByteArray, patched: ByteArray): ByteArray {
 }
 
 /**
+ * Fully validated, in-memory output of the exact ROM export transaction.
+ *
+ * Keeping this result independent from disk I/O lets the ASM workspace inspect
+ * the same bytes and ownership report that Export ROM will use. Neither array
+ * aliases the parser or write planner.
+ */
+internal data class RomBuildResult(
+    val loadedRom: ByteArray,
+    val resultRom: ByteArray,
+    val headerSize: Int,
+    val writeReport: RomWritePlanReport,
+    val roomsPatched: Int,
+    val patchesApplied: Int,
+    val musicPatched: Int,
+    val graphicsPatched: Int,
+    val samusPatched: Int,
+    val minimapPatched: Int,
+    val textPatched: Int,
+    val asmPatched: Int,
+) {
+    val hasSemanticEdits: Boolean
+        get() = roomsPatched > 0 || patchesApplied > 0 || musicPatched > 0 ||
+            graphicsPatched > 0 || samusPatched > 0 || minimapPatched > 0 ||
+            textPatched > 0 || asmPatched > 0
+}
+
+/**
  * Handles all ROM patching and export logic for a given [project] snapshot.
  *
  * Callers are responsible for any pre-export setup (e.g. seeding default patches,
@@ -174,6 +202,7 @@ internal class RomExporter(
     private val romParser: RomParser,
     private val onLog: (String) -> Unit = {},
     private val onStatus: (String) -> Unit = {},
+    private val logWritePlanDetails: Boolean = true,
 ) {
 
     private fun exportSuffix(): String {
@@ -182,13 +211,13 @@ internal class RomExporter(
         return if (build.isNotEmpty()) "$build-$version" else version
     }
 
-    fun export(): String? {
+    fun build(): RomBuildResult? {
         val romPath = project.romPath
         if (romPath.isEmpty()) return null
         hydratePatchSafetyMetadata()
         onLog("[EXPORT] Starting export — romPath=$romPath, romSize=${romParser.getRomData().size}")
         onLog("[EXPORT] Project spriteTileBlocks keys: ${project.customGfx.spriteTileBlocks.keys}")
-        val originalRom = romParser.getRomData()
+        val originalRom = romParser.copyRomData()
         val headerSize = if (originalRom.size % 0x8000 == RomConstants.SMC_HEADER_SIZE) {
             RomConstants.SMC_HEADER_SIZE
         } else {
@@ -371,21 +400,31 @@ internal class RomExporter(
             return null
         }
 
-        for (line in writePlan.report().logLines()) onLog(line)
+        val writeReport = writePlan.report()
+        if (logWritePlanDetails) {
+            for (line in writeReport.logLines()) onLog(line)
+        } else {
+            onLog(
+                "[ROM-PLAN] Validated ${writeReport.totalWrites} writes / ${writeReport.totalBytes} bytes " +
+                    "across ${writeReport.owners.size} owners and ${writeReport.resources.size} resource claims",
+            )
+        }
 
         if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && samusPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
-            val orig = File(romPath)
-            val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
-            try {
-                writeBytesAtomically(out, romData)
-            } catch (e: Exception) {
-                val message = "Export failed safely while writing output: ${e.message ?: e::class.simpleName}"
-                onLog("ERROR: $message")
-                onStatus(message)
-                return null
-            }
-            onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
-            return out.absolutePath
+            return RomBuildResult(
+                loadedRom = originalRom,
+                resultRom = writePlan.finalRom(),
+                headerSize = headerSize,
+                writeReport = writeReport,
+                roomsPatched = 0,
+                patchesApplied = patchesApplied,
+                musicPatched = musicPatched,
+                graphicsPatched = gfxPatched,
+                samusPatched = samusPatched,
+                minimapPatched = minimapPatched,
+                textPatched = textPatched,
+                asmPatched = asmPatched,
+            )
         }
 
         val verificationErrors = try {
@@ -421,17 +460,39 @@ internal class RomExporter(
             return null
         }
 
-        val orig = File(romPath)
+        return RomBuildResult(
+            loadedRom = originalRom,
+            resultRom = writePlan.finalRom(),
+            headerSize = headerSize,
+            writeReport = writeReport,
+            roomsPatched = roomsPatched.size,
+            patchesApplied = patchesApplied,
+            musicPatched = musicPatched,
+            graphicsPatched = gfxPatched,
+            samusPatched = samusPatched,
+            minimapPatched = minimapPatched,
+            textPatched = textPatched,
+            asmPatched = asmPatched,
+        )
+    }
+
+    fun export(): String? {
+        val build = build() ?: return null
+        val orig = File(project.romPath)
         val out = File(orig.parent, "${orig.nameWithoutExtension}-${exportSuffix()}.${orig.extension}")
         try {
-            writeBytesAtomically(out, romData)
+            writeBytesAtomically(out, build.resultRom)
         } catch (e: Exception) {
             val message = "Export failed safely while writing output: ${e.message ?: e::class.simpleName}"
             onLog("ERROR: $message")
             onStatus(message)
             return null
         }
-        val msg = "Exported ROM: ${out.absolutePath} (${roomsPatched.size} rooms, $patchesApplied patches, $musicPatched music, $gfxPatched gfx, $samusPatched Samus)"
+        if (!build.hasSemanticEdits) {
+            onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
+            return out.absolutePath
+        }
+        val msg = "Exported ROM: ${out.absolutePath} (${build.roomsPatched} rooms, ${build.patchesApplied} patches, ${build.musicPatched} music, ${build.graphicsPatched} gfx, ${build.samusPatched} Samus)"
         onLog(msg)
         onStatus(msg)
         return out.absolutePath

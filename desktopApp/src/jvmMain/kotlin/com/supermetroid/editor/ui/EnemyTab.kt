@@ -58,13 +58,14 @@ fun EnemyTabCanvas(
     editorState: EditorState,
     romParser: RomParser?,
     modifier: Modifier = Modifier,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
     val subTab by enemySubTab
     val configType = when (subTab) { 0 -> "enemy_stats"; 1 -> "enemy_drops"; 2 -> "enemy_vuln"; else -> "enemy_stats" }
     val patch = remember(configType) { editorState.findOrCreateConfigPatch(configType) }
 
     when (subTab) {
-        0 -> EnemyStatsEditor(patch, editorState, romParser, modifier)
+        0 -> EnemyStatsEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
         1 -> EnemyDropRateEditor(patch, editorState, romParser, modifier)
         2 -> EnemyVulnerabilityEditor(patch, editorState, romParser, modifier)
     }
