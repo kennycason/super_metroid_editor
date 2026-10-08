@@ -175,6 +175,7 @@ fun SoundListPanel(
     modifier: Modifier = Modifier,
     onKeyboardNavigatorChanged: (((Int) -> Boolean)?) -> Unit = {},
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     var selectedTab by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val currentSamples = soundEditorState.samples
@@ -226,12 +227,12 @@ fun SoundListPanel(
             Tab(selected = selectedTab == 0, onClick = {
                 selectedTab = 0
             }, modifier = Modifier.height(32.dp)) {
-                Text("Tracks", fontSize = 12.sp)
+                Text("Tracks", fontSize = fs.tabLabel)
             }
             Tab(selected = selectedTab == 1, onClick = {
                 selectedTab = 1
             }, modifier = Modifier.height(32.dp)) {
-                Text("Samples", fontSize = 12.sp)
+                Text("Samples", fontSize = fs.tabLabel)
             }
         }
         key(selectedTab) {
@@ -259,10 +260,11 @@ private fun TrackListContent(
     state: SoundEditorState,
     modifier: Modifier = Modifier,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val musicEditVersion = editorState.musicEditVersion
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
         if (romParser == null) {
-            Text("Load a ROM to browse tracks", fontSize = 12.sp,
+            Text("Load a ROM to browse tracks", fontSize = fs.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
         } else {
             for (track in SpcData.KNOWN_TRACKS) {
@@ -280,8 +282,8 @@ private fun TrackListContent(
                         verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(track.name, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = 15.sp,
+                                Text(track.name, fontSize = fs.body, fontWeight = FontWeight.Medium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = fs.heading,
                                     modifier = Modifier.weight(1f, fill = false))
                                 if (isEdited) {
                                     Spacer(Modifier.width(4.dp))
@@ -289,7 +291,7 @@ private fun TrackListContent(
                                 }
                             }
                             Text("${track.area}  0x${track.songSet.toString(16).uppercase().padStart(2, '0')}:${track.playIndex.toString(16).uppercase().padStart(2, '0')}",
-                                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 13.sp)
+                                fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = fs.body)
                         }
                     }
                 }
@@ -300,6 +302,7 @@ private fun TrackListContent(
 
 @Composable
 private fun EditedMusicBadge() {
+    val fs = LocalEditorTheme.current.fontSize.value
     Surface(
         color = Color(0xFFFFB84D),
         contentColor = Color(0xFF2A1700),
@@ -307,10 +310,10 @@ private fun EditedMusicBadge() {
     ) {
         Text(
             "EDITED",
-            fontSize = 8.sp,
+            fontSize = fs.detail,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-            lineHeight = 9.sp
+            lineHeight = fs.body
         )
     }
 }
@@ -321,6 +324,7 @@ private fun SampleListContent(
     state: SoundEditorState,
     modifier: Modifier = Modifier,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(romParser) {
@@ -339,10 +343,10 @@ private fun SampleListContent(
     Column(modifier = modifier.verticalScroll(rememberScrollState())) {
         if (loading) {
             Box(Modifier.fillMaxWidth().padding(16.dp), Alignment.Center) {
-                Text("Loading samples...", fontSize = 12.sp)
+                Text("Loading samples...", fontSize = fs.body)
             }
         } else if (currentSamples.isEmpty()) {
-            Text("No samples found.\nLoad a ROM first.", fontSize = 12.sp,
+            Text("No samples found.\nLoad a ROM first.", fontSize = fs.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
         } else {
             for (sample in currentSamples) {
@@ -357,12 +361,12 @@ private fun SampleListContent(
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text("#${sample.dirEntry.index}", fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        Text("#${sample.dirEntry.index}", fontSize = fs.detail, fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(24.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Sample ${sample.dirEntry.index}", fontSize = 12.sp, maxLines = 1, lineHeight = 15.sp)
+                            Text("Sample ${sample.dirEntry.index}", fontSize = fs.body, maxLines = 1, lineHeight = fs.heading)
                             Text("${sample.pcmData.size} pcm" + if (sample.loopStart >= 0) " (loop)" else "",
-                                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 13.sp)
+                                fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = fs.body)
                         }
                         Icon(Icons.Default.PlayArrow, "Play",
                             modifier = Modifier.size(18.dp).clickable {

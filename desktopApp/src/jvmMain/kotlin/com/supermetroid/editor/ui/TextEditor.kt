@@ -45,17 +45,18 @@ fun TextEditorSidebar(
     editorState: EditorState,
     modifier: Modifier = Modifier,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val parser = romParser ?: return
     val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
     var selectedId by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
 
     Column(modifier = modifier.padding(8.dp).verticalScroll(scrollState)) {
-        Text("Text Editor", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("Text Editor", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit in-game text strings. Changes are applied on ROM export.",
-            fontSize = 10.sp,
+            fontSize = fs.detail,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(8.dp))
@@ -64,7 +65,7 @@ fun TextEditorSidebar(
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
-            Text(category.displayName, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+            Text(category.displayName, fontWeight = FontWeight.Bold, fontSize = fs.body,
                 color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(4.dp))
 
@@ -90,20 +91,20 @@ fun TextEditorSidebar(
                         ) {
                             Text(
                                 entry.label,
-                                fontSize = 11.sp,
+                                fontSize = fs.body,
                                 fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isModified) Color(0xFFFFCC00) else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 if (entry.writable) "$${entry.snesAddress.toString(16).uppercase()}" else "unmapped",
-                                fontSize = 9.sp,
+                                fontSize = fs.detail,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
                             displayText.replace('\n', ' ').take(40),
-                            fontSize = 10.sp,
+                            fontSize = fs.detail,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

@@ -59,9 +59,10 @@ fun PaletteEditor(
     onColorSelected: (row: Int, col: Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val tg = tileGraphics
     if (tg == null || tilesetId == null) {
-        Text("Load a room to edit its tileset palette.", fontSize = 12.sp,
+        Text("Load a room to edit its tileset palette.", fontSize = fs.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier.padding(16.dp))
         return
@@ -135,10 +136,10 @@ fun PaletteEditor(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
-                Text("Palette Editor", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Palette Editor", fontSize = fs.heading, fontWeight = FontWeight.Bold)
                 Text(
                     "Tileset $tilesetId" + if (hasCustomPalette) " (modified)" else "",
-                    fontSize = 11.sp,
+                    fontSize = fs.body,
                     color = if (hasCustomPalette) Color(0xFFFFD54F) else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -148,13 +149,13 @@ fun PaletteEditor(
                     onClick = { undoPalette() },
                     enabled = undoStack.isNotEmpty()
                 ) {
-                    Text("Undo", fontSize = 10.sp)
+                    Text("Undo", fontSize = fs.detail)
                 }
                 OutlinedButton(
                     onClick = { redoPalette() },
                     enabled = redoStack.isNotEmpty()
                 ) {
-                    Text("Redo", fontSize = 10.sp)
+                    Text("Redo", fontSize = fs.detail)
                 }
             }
         }
@@ -248,16 +249,16 @@ fun PaletteEditor(
                 ) {
                     Text(
                         "Row $selectedRow, Color $selectedCol",
-                        fontSize = 11.sp,
+                        fontSize = fs.body,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     if (selectedCol != 0) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("HSV", fontSize = 9.sp, fontWeight = if (showHsvPicker) FontWeight.Bold else FontWeight.Normal,
+                            Text("HSV", fontSize = fs.detail, fontWeight = if (showHsvPicker) FontWeight.Bold else FontWeight.Normal,
                                 color = if (showHsvPicker) Color(0xFF64B5F6) else Color(0xFF6A6F88),
                                 modifier = Modifier.clickable { showHsvPicker = true })
-                            Text("RGB", fontSize = 9.sp, fontWeight = if (!showHsvPicker) FontWeight.Bold else FontWeight.Normal,
+                            Text("RGB", fontSize = fs.detail, fontWeight = if (!showHsvPicker) FontWeight.Bold else FontWeight.Normal,
                                 color = if (!showHsvPicker) Color(0xFF64B5F6) else Color(0xFF6A6F88),
                                 modifier = Modifier.clickable { showHsvPicker = false })
                         }
@@ -268,7 +269,7 @@ fun PaletteEditor(
                 if (selectedCol == 0) {
                     Text(
                         "Color index 0 is transparent and cannot be edited.",
-                        fontSize = 10.sp,
+                        fontSize = fs.detail,
                         color = Color(0xFF6A6F88)
                     )
                 } else {
@@ -300,7 +301,7 @@ fun PaletteEditor(
             modifier = Modifier.fillMaxWidth()
         ) {
             OutlinedButton(onClick = { onPaletteSaved() }) {
-                Text("Save to Project", fontSize = 11.sp)
+                Text("Save to Project", fontSize = fs.body)
             }
             if (hasCustomPalette) {
                 OutlinedButton(onClick = {
@@ -309,7 +310,7 @@ fun PaletteEditor(
                     redoStack.clear()
                     editVersion++
                 }) {
-                    Text("Reset to ROM", fontSize = 11.sp)
+                    Text("Reset to ROM", fontSize = fs.body)
                 }
             }
         }

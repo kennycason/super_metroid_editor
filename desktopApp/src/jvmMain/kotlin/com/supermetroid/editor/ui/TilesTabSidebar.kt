@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.rom.RomParser
 
@@ -101,6 +100,7 @@ private fun PaletteSubTab(
     onReloadPaletteBackedViews: () -> Unit,
     onRefreshTilesetGrid: () -> Unit,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     var paletteCategory by remember { mutableStateOf(0) }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -115,7 +115,7 @@ private fun PaletteSubTab(
                     modifier = Modifier.clickable { paletteCategory = idx }
                 ) {
                     Text(
-                        label, fontSize = 10.sp,
+                        label, fontSize = fs.detail,
                         color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )

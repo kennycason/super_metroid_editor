@@ -27,7 +27,15 @@ class AsmReferenceIntegrationTest {
         assertTrue(workspace.index.files.count(AsmSourceFile::isBank) >= 50)
         assertTrue(workspace.index.files.sumOf { it.sections.size } >= 10_000)
         assertTrue(workspace.index.labels.size >= 30_000)
+        assertTrue(workspace.index.addressAtlas.anchors.size >= 10_000)
         assertTrue(workspace.index.assets.all { it.file.isFile })
+
+        val representativeAnchor = workspace.index.addressAtlas.anchors
+            .first { it.kind == AsmAddressAnchorKind.RECORDED }
+        val resolution = workspace.index.addressAtlas.resolve(
+            AsmAddressQuery(representativeAnchor.snesAddress, AsmAddressSpace.SNES),
+        )
+        assertTrue(representativeAnchor in resolution.exactSourceAnchors)
 
         val representative = listOf(ranges.first(), ranges[ranges.size / 2], ranges.last())
         representative.forEach { range ->

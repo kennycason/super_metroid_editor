@@ -159,6 +159,42 @@ class AsmReferenceTest {
         assertEquals("bank_80.asm", state.expandedSourceFileId)
     }
 
+    @Test
+    fun `workspace address navigation prefers a named exact source anchor`() = runBlocking {
+        val repository = AsmReferenceRepository(
+            referenceRoot = File(tempDirectory, "asm"),
+            fetchBytes = { fakeSourceArchive() },
+            assetRanges = emptyList(),
+        )
+        repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
+        val state = AsmWorkspaceState(repository)
+        state.showLibraryBrowser()
+        state.openAddress(0x808000)
+        state.loadInstalled()
+
+        assertEquals(AsmBrowserMode.SOURCE, state.browserMode)
+        assertEquals("bank_80.asm", state.selectedFileId)
+        assertEquals(2, state.selectedLineIndex)
+    }
+
+    @Test
+    fun `workspace address navigation opens an owning asset before nearby source`() = runBlocking {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val repository = AsmReferenceRepository(
+            referenceRoot = File(tempDirectory, "asm"),
+            fetchBytes = { fakeSourceArchive() },
+            assetRanges = listOf(range),
+        )
+        repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
+        val state = AsmWorkspaceState(repository)
+        state.loadInstalled()
+
+        state.openAddress(0x808011)
+
+        assertEquals(AsmBrowserMode.ASSETS, state.browserMode)
+        assertEquals(range.path, state.selectedAssetPath)
+    }
+
     private fun fakeSourceArchive(): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { zip ->

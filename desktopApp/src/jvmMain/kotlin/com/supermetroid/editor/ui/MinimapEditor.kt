@@ -167,12 +167,13 @@ fun MinimapSidebar(
     editorState: EditorState,
     modifier: Modifier = Modifier,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val parser = romParser ?: return
     state.initIfNeeded(parser, editorState)
 
     Column(modifier = modifier.fillMaxSize().padding(6.dp).verticalScroll(rememberScrollState())) {
         // Area
-        Text("Area", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text("Area", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         for (area in 0 until MinimapData.NUM_AREAS) {
             val sel = area == state.selectedArea
             Surface(
@@ -180,7 +181,7 @@ fun MinimapSidebar(
                 color = if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                 shape = RoundedCornerShape(3.dp),
             ) {
-                Text(MinimapData.AREA_NAMES[area], fontSize = 11.sp,
+                Text(MinimapData.AREA_NAMES[area], fontSize = fs.body,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
             }
@@ -191,25 +192,25 @@ fun MinimapSidebar(
         // Display toggles
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showGrid, onCheckedChange = { state.showGrid = it }, modifier = Modifier.size(16.dp))
-            Text("Grid", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+            Text("Grid", fontSize = fs.body, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showRoomOutlines, onCheckedChange = { state.showRoomOutlines = it }, modifier = Modifier.size(16.dp))
-            Text("Room outlines", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+            Text("Room outlines", fontSize = fs.body, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showPixelView, onCheckedChange = { state.showPixelView = it }, modifier = Modifier.size(16.dp))
-            Text("Tiles", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+            Text("Tiles", fontSize = fs.body, modifier = Modifier.padding(start = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(state.showStationOverlay, onCheckedChange = { state.showStationOverlay = it }, modifier = Modifier.size(16.dp))
-            Text("Station reveal", fontSize = 10.sp, modifier = Modifier.padding(start = 4.dp))
+            Text("Station reveal", fontSize = fs.body, modifier = Modifier.padding(start = 4.dp))
         }
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Tile palette — fills available width
-        Text("Tile", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text("Tile", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         MinimapTilePalette(
             selectedTile = state.selectedTile,
             selectedHFlip = state.selectedHFlip,
@@ -221,7 +222,7 @@ fun MinimapSidebar(
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Palette row
-        Text("Palette", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text("Palette", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             for (pal in 0..3) {
                 val label = when (pal) { 0 -> "Blk"; 1 -> "Blu"; 2 -> "Wht"; else -> "Red" }
@@ -232,14 +233,14 @@ fun MinimapSidebar(
                         .border(if (sel) 2.dp else 1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(3.dp)),
                     color = if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                     shape = RoundedCornerShape(3.dp),
-                ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 11.sp) } }
+                ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = fs.body) } }
             }
         }
 
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Room selector (dropdown)
-        Text("Room", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text("Room", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         val rooms = state.areaRooms
         val selRoom = state.selectedRoom
         var roomDropdownExpanded by remember { androidx.compose.runtime.mutableStateOf(false) }
@@ -251,7 +252,7 @@ fun MinimapSidebar(
             ) {
                 Text(
                     selRoom?.let { "0x${it.roomId.toString(16).uppercase()} ${it.name}" } ?: "Select room...",
-                    fontSize = 10.sp,
+                    fontSize = fs.body,
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                     color = if (selRoom != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -263,7 +264,7 @@ fun MinimapSidebar(
             ) {
                 for ((i, room) in rooms.withIndex()) {
                     androidx.compose.material3.DropdownMenuItem(
-                        text = { Text("0x${room.roomId.toString(16).uppercase()} ${room.name}", fontSize = 10.sp) },
+                        text = { Text("0x${room.roomId.toString(16).uppercase()} ${room.name}", fontSize = fs.body) },
                         onClick = { state.selectRoomByIndex(i, editorState); roomDropdownExpanded = false },
                     )
                 }
@@ -273,11 +274,11 @@ fun MinimapSidebar(
         if (selRoom != null) {
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("X:", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                Text("${selRoom.mapX}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                Text("Y:", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                Text("${selRoom.mapY}", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                Text("${selRoom.width}x${selRoom.height}", fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                Text("X:", fontSize = fs.detail, fontFamily = FontFamily.Monospace)
+                Text("${selRoom.mapX}", fontSize = fs.detail, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text("Y:", fontSize = fs.detail, fontFamily = FontFamily.Monospace)
+                Text("${selRoom.mapY}", fontSize = fs.detail, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text("${selRoom.width}x${selRoom.height}", fontSize = fs.detail, fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             var areaMenuExpanded by remember(selRoom.roomId) { androidx.compose.runtime.mutableStateOf(false) }
@@ -292,14 +293,14 @@ fun MinimapSidebar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("Area: ${MinimapData.AREA_NAMES[state.selectedArea]}", fontSize = 10.sp)
-                        Text("Move… ▾", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("Area: ${MinimapData.AREA_NAMES[state.selectedArea]}", fontSize = fs.body)
+                        Text("Move… ▾", fontSize = fs.detail, color = MaterialTheme.colorScheme.primary)
                     }
                 }
                 DropdownMenu(expanded = areaMenuExpanded, onDismissRequest = { areaMenuExpanded = false }) {
                     for (area in 0 until MinimapData.NUM_AREAS) {
                         DropdownMenuItem(
-                            text = { Text(MinimapData.AREA_NAMES[area], fontSize = 10.sp) },
+                            text = { Text(MinimapData.AREA_NAMES[area], fontSize = fs.body) },
                             enabled = area != selRoom.area,
                             onClick = {
                                 areaMenuExpanded = false
@@ -338,13 +339,13 @@ fun MinimapSidebar(
                             .clickable { state.applyMove(editorState) }
                             .border(1.dp, Color(0xFF00CC66), RoundedCornerShape(4.dp)),
                         color = Color(0xFF00CC66).copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp),
-                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Apply", fontSize = 10.sp, fontWeight = FontWeight.Bold) } }
+                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Apply", fontSize = fs.body, fontWeight = FontWeight.Bold) } }
                     Surface(
                         modifier = Modifier.weight(1f).height(28.dp)
                             .clickable { state.cancelMove(editorState) }
                             .border(1.dp, Color(0xFFCC3333), RoundedCornerShape(4.dp)),
                         color = Color(0xFFCC3333).copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp),
-                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Cancel", fontSize = 10.sp, fontWeight = FontWeight.Bold) } }
+                    ) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Cancel", fontSize = fs.body, fontWeight = FontWeight.Bold) } }
                 }
             }
         }
@@ -352,20 +353,20 @@ fun MinimapSidebar(
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Info
-        Text("Info", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text("Info", fontWeight = FontWeight.Bold, fontSize = fs.heading)
         val hx = state.hoverX; val hy = state.hoverY
         if (hx in 0 until MinimapData.MAP_WIDTH && hy in 0 until MinimapData.MAP_HEIGHT) {
             val w = state.displayData.getTile(hx, hy)
             val idx = MinimapData.tileIndex(w); val pal = MinimapData.tilePalette(w)
             val name = MinimapTiles.TILE_NAMES[idx] ?: "0x${idx.toString(16).uppercase()}"
-            Text("($hx,$hy) $name", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-            Text("Idx:0x${idx.toString(16).uppercase()} Pal:$pal", fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+            Text("($hx,$hy) $name", fontSize = fs.detail, fontFamily = FontFamily.Monospace)
+            Text("Idx:0x${idx.toString(16).uppercase()} Pal:$pal", fontSize = fs.detail, fontFamily = FontFamily.Monospace)
             val room = state.areaRooms.firstOrNull { r ->
                 hx in r.mapX until (r.mapX + r.width) && hy in r.mapY until (r.mapY + r.height)
             }
-            if (room != null) Text(room.name, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary)
+            if (room != null) Text(room.name, fontSize = fs.detail, color = MaterialTheme.colorScheme.primary)
         } else {
-            Text("Hover over map", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Hover over map", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -976,13 +977,14 @@ private fun DrawScope.drawArr(px: Float, py: Float, cs: Float, w: Float, d: Int)
 
 @Composable
 private fun DpadBtn(label: String, onClick: () -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
     Surface(
         modifier = Modifier.size(28.dp).clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(4.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Text(label, fontSize = 14.sp)
+            Text(label, fontSize = fs.body)
         }
     }
 }
@@ -995,6 +997,7 @@ private fun MinimapTilePalette(
     tileGfx: Array<IntArray>?,
     onSelect: (Int) -> Unit,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val tiles = MinimapTiles.PALETTE_TILES
     val cols = 7
     val cellDp = 24.dp
@@ -1043,7 +1046,7 @@ private fun MinimapTilePalette(
             }.joinToString(", ")
             Text(
                 if (transform.isEmpty()) name else "$name · $transform",
-                fontSize = 9.sp,
+                fontSize = fs.detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

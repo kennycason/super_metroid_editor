@@ -37,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.rom.SpritePalettes
@@ -575,10 +574,10 @@ internal fun RoomStateComparisonDialog(
                 } else {
                     for (difference in differences) {
                         Column {
-                            Text(difference.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text(difference.label, fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.SemiBold)
                             Text(
                                 difference.detail,
-                                fontSize = 10.sp,
+                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -619,7 +618,7 @@ internal fun RoomScrollsHelpDialog(editingAvailable: Boolean, onDismiss: () -> U
                 )
                 Text(
                     "Blue = normal · Green = open with a 31 px lower camera limit · Red = blocks camera",
-                    fontSize = 10.sp,
+                    fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!editingAvailable) {
@@ -646,12 +645,12 @@ private fun ScrollHelpStep(number: String, title: String, detail: String) {
             color = MaterialTheme.colorScheme.primaryContainer,
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(number, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(number, fontSize = ROOM_INFO_COMPACT_FONT_SIZE, fontWeight = FontWeight.Bold)
             }
         }
         Column {
-            Text(title, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(detail, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title, fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.SemiBold)
+            Text(detail, fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

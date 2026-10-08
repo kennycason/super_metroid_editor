@@ -103,6 +103,7 @@ fun PatternListPanel(
     editorState: EditorState,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     @Suppress("UNUSED_VARIABLE") val pv = editorState.patternVersion
     val patterns = editorState.project.patterns
     val tg = editorState.tileGraphics
@@ -115,12 +116,12 @@ fun PatternListPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Patterns", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("Patterns", fontWeight = FontWeight.Bold, fontSize = fs.heading)
             Button(
                 onClick = { showCreateDialog = true },
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                 modifier = Modifier.height(28.dp)
-            ) { Text("+ New", fontSize = 11.sp) }
+            ) { Text("+ New", fontSize = fs.body) }
         }
 
         Divider()
@@ -131,7 +132,7 @@ fun PatternListPanel(
             if (patterns.isEmpty()) {
                 Text(
                     "No patterns yet.\nClick + New to create one.",
-                    fontSize = 11.sp,
+                    fontSize = fs.body,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
                 )
@@ -141,7 +142,7 @@ fun PatternListPanel(
             val urePats = patterns.filter { it.tilesetId != null }
 
             if (crePats.isNotEmpty()) {
-                Text("CRE (Common)", fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                Text("CRE (Common)", fontSize = fs.detail, fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp))
                 for (pat in crePats) PatternListItem(pat, pat.id == selectedId, tg) {
@@ -152,7 +153,7 @@ fun PatternListPanel(
             if (urePats.isNotEmpty()) {
                 val grouped = urePats.groupBy { it.tilesetId!! }
                 for ((tsId, pats) in grouped.entries.sortedBy { it.key }) {
-                    Text("Tileset $tsId", fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                    Text("Tileset $tsId", fontSize = fs.detail, fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 2.dp))
                     for (pat in pats) PatternListItem(pat, pat.id == selectedId, tg) {
@@ -183,6 +184,7 @@ private fun PatternListItem(
     tg: TileGraphics?,
     onSelect: () -> Unit,
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
     val thumb = remember(pattern, pattern.cells.hashCode(), tg) {
         renderPatternThumbnail(pattern, tg)?.toComposeImageBitmap()
@@ -214,12 +216,12 @@ private fun PatternListItem(
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(pattern.name, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                Text(pattern.name, fontSize = fs.body, fontWeight = FontWeight.Medium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("${pattern.cols}×${pattern.rows}" +
                     (if (pattern.tilesetId != null) " TS:${pattern.tilesetId}" else " CRE") +
                     (if (pattern.builtIn) " (built-in)" else ""),
-                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -232,6 +234,7 @@ private fun CreatePatternDialog(
     onDismiss: () -> Unit,
     onCreate: (name: String, cols: Int, rows: Int, tilesetId: Int?) -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     var name by remember { mutableStateOf("") }
     var colsText by remember { mutableStateOf("4") }
     var rowsText by remember { mutableStateOf("4") }
@@ -239,7 +242,7 @@ private fun CreatePatternDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("New Pattern", fontSize = 14.sp) },
+        title = { Text("New Pattern", fontSize = fs.heading) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AppOutlinedTextField(
@@ -247,7 +250,7 @@ private fun CreatePatternDialog(
                     label = "Name",
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    fontSize = 12.sp
+                    fontSize = fs.body
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     AppOutlinedTextField(
@@ -256,7 +259,7 @@ private fun CreatePatternDialog(
                         label = "Width",
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        fontSize = 12.sp
+                        fontSize = fs.body
                     )
                     AppOutlinedTextField(
                         value = rowsText,
@@ -264,13 +267,13 @@ private fun CreatePatternDialog(
                         label = "Height",
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        fontSize = 12.sp
+                        fontSize = fs.body
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = isCre, onCheckedChange = { isCre = it }, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(if (isCre) "CRE (shared)" else "Tileset $currentTilesetId", fontSize = 11.sp)
+                    Text(if (isCre) "CRE (shared)" else "Tileset $currentTilesetId", fontSize = fs.body)
                 }
             }
         },
@@ -1116,6 +1119,7 @@ fun PatternThumbnailList(
     editorState: EditorState,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     @Suppress("UNUSED_VARIABLE") val pv = editorState.patternVersion
     val patterns = editorState.project.patterns
     val tg = editorState.tileGraphics
@@ -1127,16 +1131,16 @@ fun PatternThumbnailList(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Patterns", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("Patterns", fontWeight = FontWeight.Bold, fontSize = fs.heading)
             Button(
                 onClick = { showCreateDialog = true },
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 modifier = Modifier.height(26.dp)
-            ) { Text("+ New", fontSize = 10.sp) }
+            ) { Text("+ New", fontSize = fs.detail) }
         }
 
         if (patterns.isEmpty()) {
-            Text("No patterns yet", fontSize = 12.sp,
+            Text("No patterns yet", fontSize = fs.body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
         }
@@ -1179,11 +1183,11 @@ fun PatternThumbnailList(
                             }
                         }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(pat.name, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            Text(pat.name, fontSize = fs.body, fontWeight = FontWeight.Medium,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("${pat.cols}×${pat.rows}" +
                                 (if (pat.tilesetId != null) " TS:${pat.tilesetId}" else " CRE"),
-                                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

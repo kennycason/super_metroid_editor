@@ -37,7 +37,7 @@ internal data class AsmAssetRange(
 ) {
     val endExclusive: Int get() = pcOffset + length
     val snesAddress: Int
-        get() = ((pcOffset / 0x8000 + 0x80) shl 16) or (pcOffset % 0x8000 + 0x8000)
+        get() = checkNotNull(pcToSnesLoRom(pcOffset)) { "PC offset is outside LoROM range: $pcOffset" }
 }
 
 internal object AsmAssetManifest {
@@ -107,6 +107,7 @@ internal data class AsmReferenceIndex(
     val files: List<AsmSourceFile>,
     val labels: List<AsmLabel>,
     val assets: List<AsmAsset>,
+    val addressAtlas: AsmAddressAtlas,
 ) {
     private val filesById = files.associateBy { it.id }
     private val globalLabels = labels.filter { it.localScope == null }.groupBy { it.name }
@@ -246,7 +247,7 @@ internal class AsmSourceParser {
             )
         }
         val assets = ranges.map { range -> AsmAsset(range, File(dataDirectory, range.path)) }
-        return AsmReferenceIndex(files, labels, assets)
+        return AsmReferenceIndex(files, labels, assets, AsmAddressAtlas.build(files, labels, assets))
     }
 }
 

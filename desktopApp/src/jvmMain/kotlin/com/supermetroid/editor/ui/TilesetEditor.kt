@@ -115,6 +115,7 @@ fun TilesetListPanel(
     tilesetEditorState: TilesetEditorState,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val coroutineScope = rememberCoroutineScope()
     val tilesetId = editorState.editorTilesetId
     val navigationFocusRequester = rememberVerticalSelectionFocusRequester(
@@ -163,7 +164,7 @@ fun TilesetListPanel(
             Text(
                 "Tilesets",
                 style = MaterialTheme.typography.titleSmall,
-                fontSize = 12.sp,
+                fontSize = fs.heading,
                 modifier = Modifier.padding(8.dp, 6.dp, 8.dp, 4.dp)
             )
 
@@ -188,7 +189,7 @@ fun TilesetListPanel(
                     ) {
                         Text(
                             "Tileset $id",
-                            fontSize = 11.sp,
+                            fontSize = fs.body,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                             color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
                                    else MaterialTheme.colorScheme.onSurface
@@ -203,7 +204,7 @@ fun TilesetListPanel(
                 Divider()
                 Text(
                     "Palettes",
-                    fontSize = 10.sp,
+                    fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(8.dp, 4.dp, 8.dp, 2.dp)
                 )

@@ -32,7 +32,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 /**
@@ -50,6 +49,7 @@ fun HsvColorPicker(
     onColorChanged: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     // Convert BGR555 → RGB float → HSV
     val r5init = bgr555 and 0x1F
     val g5init = (bgr555 shr 5) and 0x1F
@@ -182,8 +182,8 @@ fun HsvColorPicker(
                     .border(1.dp, Color(0xFF5A5F7C), RoundedCornerShape(4.dp))
             )
             Column {
-                Text("\$$snesHex", fontSize = 10.sp, color = Color(0xFFFFD54F), fontFamily = FontFamily.Monospace)
-                Text("R:$r5 G:$g5 B:$b5", fontSize = 8.sp, color = Color(0xFF8890A8), fontFamily = FontFamily.Monospace)
+                Text("\$$snesHex", fontSize = fs.body, color = Color(0xFFFFD54F), fontFamily = FontFamily.Monospace)
+                Text("R:$r5 G:$g5 B:$b5", fontSize = fs.detail, color = Color(0xFF8890A8), fontFamily = FontFamily.Monospace)
             }
         }
     }

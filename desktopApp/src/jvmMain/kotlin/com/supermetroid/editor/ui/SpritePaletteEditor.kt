@@ -36,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.rom.PaletteEffects
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpritePalettes
@@ -54,8 +53,9 @@ fun SpritePaletteEditor(
     editorState: EditorState,
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     if (romParser == null) {
-        Text("Load a ROM to edit sprite palettes.", fontSize = 12.sp,
+        Text("Load a ROM to edit sprite palettes.", fontSize = fs.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier.padding(16.dp))
         return
@@ -82,8 +82,8 @@ fun SpritePaletteEditor(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
-                Text("Sprite Palettes", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("Samus, beams, bosses, enemies", fontSize = 11.sp,
+                Text("Sprite Palettes", fontSize = fs.heading, fontWeight = FontWeight.Bold)
+                Text("Samus, beams, bosses, enemies", fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val hasAnyOverride = SpritePalettes.REGIONS.any { editorState.hasSpritePaletteOverride(it.id) }
@@ -100,7 +100,7 @@ fun SpritePaletteEditor(
                         editVersion++
                     }
                 }) {
-                    Text("Reset All", fontSize = 10.sp, color = Color(0xFFEF5350))
+                    Text("Reset All", fontSize = fs.detail, color = Color(0xFFEF5350))
                 }
             }
         }
@@ -124,7 +124,7 @@ fun SpritePaletteEditor(
         @Composable
         fun PaletteRegionSection(title: String, regions: List<SpritePalettes.PaletteRegion>) {
             if (regions.isEmpty()) return
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, fontSize = fs.heading, fontWeight = FontWeight.SemiBold)
             Spacer(modifier = Modifier.height(4.dp))
             for (region in regions) {
                 PaletteRegionCard(
@@ -167,7 +167,7 @@ fun SpritePaletteEditor(
                     editorState.setPaletteEffect(regionId, "random_palette")
                 }
                 editVersion++
-            }) { Text("Random Palette", fontSize = 10.sp) }
+            }) { Text("Random Palette", fontSize = fs.detail) }
             OutlinedButton(onClick = {
                 for (regionId in targetSpriteRegionIds()) {
                     val colors = getColors(regionId) ?: continue
@@ -177,12 +177,12 @@ fun SpritePaletteEditor(
                     editorState.setPaletteEffect(regionId, "full_random")
                 }
                 editVersion++
-            }) { Text("Full Random", fontSize = 10.sp) }
+            }) { Text("Full Random", fontSize = fs.detail) }
             OutlinedButton(onClick = { applySpriteEffect("psychedelic-randomize") }) {
-                Text("Psychedelic", fontSize = 10.sp)
+                Text("Psychedelic", fontSize = fs.detail)
             }
             OutlinedButton(onClick = { applySpriteEffect("mathematical-randomize") }) {
-                Text("Mathematical", fontSize = 10.sp)
+                Text("Mathematical", fontSize = fs.detail)
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
@@ -191,7 +191,7 @@ fun SpritePaletteEditor(
         val scopeLabel = if (selectedRegionId != null) {
             SpritePalettes.findRegion(selectedRegionId!!)?.name ?: "Selected"
         } else "All Sprites"
-        Text("Effects — applies to: $scopeLabel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+        Text("Effects — applies to: $scopeLabel", fontSize = fs.body, fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -235,7 +235,7 @@ fun SpritePaletteEditor(
                 ) {
                     Text(
                         effect.name,
-                        fontSize = 9.sp,
+                        fontSize = fs.detail,
                         color = if (isActive) MaterialTheme.colorScheme.onPrimary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
@@ -268,7 +268,7 @@ fun SpritePaletteEditor(
                 Divider()
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Edit Color — ${region.name} #$selectedColorIdx",
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(4.dp))
 
                 val currentBgr = colors[selectedColorIdx]
@@ -298,6 +298,7 @@ private fun PaletteRegionCard(
     onColorClick: (Int) -> Unit,
     onReset: () -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val borderColor = if (isSelected) Color(0xFF4FC3F7) else Color.Transparent
     Surface(
         shape = RoundedCornerShape(6.dp),
@@ -314,10 +315,10 @@ private fun PaletteRegionCard(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(region.name, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(region.name, fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                     if (hasOverride) {
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("(modified)", fontSize = 9.sp, color = Color(0xFFFFD54F))
+                        Text("(modified)", fontSize = fs.detail, color = Color(0xFFFFD54F))
                     }
                 }
                 if (hasOverride) {
@@ -325,7 +326,7 @@ private fun PaletteRegionCard(
                         onClick = onReset,
                         colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFEF5350))
                     ) {
-                        Text("Reset", fontSize = 9.sp)
+                        Text("Reset", fontSize = fs.detail)
                     }
                 }
             }
@@ -373,8 +374,9 @@ fun AreaPaletteEditor(
     onCurrentTilesetPaletteChanged: (reloadCurrentTileset: Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     if (romParser == null) {
-        Text("Load a ROM to edit area palettes.", fontSize = 12.sp,
+        Text("Load a ROM to edit area palettes.", fontSize = fs.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier.padding(16.dp))
         return
@@ -400,8 +402,8 @@ fun AreaPaletteEditor(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column {
-                Text("Area Palettes", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("All 29 tileset palettes (8×16 colors each)", fontSize = 11.sp,
+                Text("Area Palettes", fontSize = fs.heading, fontWeight = FontWeight.Bold)
+                Text("All 29 tileset palettes (8×16 colors each)", fontSize = fs.detail,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val hasAnyOverride = (0 until 29).any { editorState.hasCustomPalette(it) }
@@ -419,7 +421,7 @@ fun AreaPaletteEditor(
                         onCurrentTilesetPaletteChanged(true)
                     }
                 }) {
-                    Text("Reset All", fontSize = 10.sp, color = Color(0xFFEF5350))
+                    Text("Reset All", fontSize = fs.detail, color = Color(0xFFEF5350))
                 }
             }
         }
@@ -463,7 +465,7 @@ fun AreaPaletteEditor(
                 }
                 notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
-            }) { Text("Random Palette", fontSize = 10.sp) }
+            }) { Text("Random Palette", fontSize = fs.detail) }
             OutlinedButton(onClick = {
                 val targets = targetTilesets()
                 for (tsId in targets) {
@@ -475,19 +477,19 @@ fun AreaPaletteEditor(
                 }
                 notifyCurrentTilesetIfAffected(targets, reloadCurrentTileset = false)
                 editVersion++
-            }) { Text("Full Random", fontSize = 10.sp) }
+            }) { Text("Full Random", fontSize = fs.detail) }
             OutlinedButton(onClick = { applyAreaEffect("psychedelic-randomize") }) {
-                Text("Psychedelic", fontSize = 10.sp)
+                Text("Psychedelic", fontSize = fs.detail)
             }
             OutlinedButton(onClick = { applyAreaEffect("mathematical-randomize") }) {
-                Text("Mathematical", fontSize = 10.sp)
+                Text("Mathematical", fontSize = fs.detail)
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
 
         // Effects bar
         val areaScopeLabel = if (selectedTileset >= 0) SpritePalettes.tilesetName(selectedTileset) else "All Tilesets"
-        Text("Effects — applies to: $areaScopeLabel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+        Text("Effects — applies to: $areaScopeLabel", fontSize = fs.body, fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -525,7 +527,7 @@ fun AreaPaletteEditor(
                         editVersion++
                     }
                 ) {
-                    Text(effect.name, fontSize = 9.sp,
+                    Text(effect.name, fontSize = fs.detail,
                         color = if (isActive) MaterialTheme.colorScheme.onPrimary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
@@ -567,10 +569,10 @@ fun AreaPaletteEditor(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("$tsId: ${SpritePalettes.tilesetName(tsId)}",
-                                fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                             if (hasOverride) {
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("(modified)", fontSize = 9.sp, color = Color(0xFFFFD54F))
+                                Text("(modified)", fontSize = fs.detail, color = Color(0xFFFFD54F))
                             }
                         }
                         if (hasOverride) {
@@ -582,7 +584,7 @@ fun AreaPaletteEditor(
                                     }
                                 },
                                 colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFEF5350))
-                            ) { Text("Reset", fontSize = 9.sp) }
+                            ) { Text("Reset", fontSize = fs.detail) }
                         }
                     }
 
@@ -634,7 +636,7 @@ fun AreaPaletteEditor(
                 Divider()
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Edit Color — ${SpritePalettes.tilesetName(selectedTileset)} [${selectedColorIdx / 16},${selectedColorIdx % 16}]",
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    fontSize = fs.body, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(4.dp))
                 HsvColorPicker(
                     bgr555 = colors[selectedColorIdx],

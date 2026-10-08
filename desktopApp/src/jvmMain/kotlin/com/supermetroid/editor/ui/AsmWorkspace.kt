@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -93,6 +95,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.asm.AsmAsset
+import com.supermetroid.editor.asm.AsmAddressQuery
+import com.supermetroid.editor.asm.AsmAddressSpace
 import com.supermetroid.editor.asm.AsmBrowserMode
 import com.supermetroid.editor.asm.AsmInstructionCategory
 import com.supermetroid.editor.asm.AsmInstructionInfo
@@ -103,6 +107,9 @@ import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceIndex
 import com.supermetroid.editor.asm.AsmSourceFile
 import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.asm.formatPcOffset
+import com.supermetroid.editor.asm.formatSnesAddress
+import com.supermetroid.editor.asm.parseAsmAddressQuery
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
@@ -112,8 +119,9 @@ import java.awt.event.MouseEvent
 private data class AsmSearchResult(
     val title: String,
     val detail: String,
-    val fileId: String,
-    val lineIndex: Int,
+    val fileId: String? = null,
+    val lineIndex: Int = 0,
+    val assetPath: String? = null,
 )
 
 private data class AsmLibrarySelection(
@@ -177,10 +185,19 @@ internal fun AsmWorkspaceSidebar(
                 modifier = Modifier.fillMaxWidth().focusRequester(searchFocusRequester),
                 singleLine = true,
                 textStyle = TextStyle(fontSize = fs.body),
+                placeholder = if (state.browserMode == AsmBrowserMode.SOURCE) {
+                    {
+                        Text(
+                            "\$8F:805A or PC:07805A",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else null,
                 label = {
                     Text(
                         when (state.browserMode) {
-                            AsmBrowserMode.SOURCE -> "Find bank, section, or label"
+                            AsmBrowserMode.SOURCE -> "Find bank, label, or address"
                             AsmBrowserMode.ASSETS -> "Find extracted asset"
                             AsmBrowserMode.LIBRARY -> "Find lesson or instruction"
                         },
@@ -561,16 +578,19 @@ private fun AsmSourceTree(state: AsmWorkspaceState, index: AsmReferenceIndex, mo
     }
     AsmSidebarScrollPane(modifier) {
         if (query.isNotEmpty()) {
-            items(results, key = { "${it.fileId}:${it.lineIndex}:${it.title}" }) { result ->
+            items(results, key = { "${it.fileId}:${it.assetPath}:${it.lineIndex}:${it.title}" }) { result ->
                 Column(
-                    Modifier.fillMaxWidth().clickable { state.openSource(result.fileId, result.lineIndex) }
+                    Modifier.fillMaxWidth().clickable {
+                        result.assetPath?.let(state::openAsset)
+                            ?: result.fileId?.let { state.openSource(it, result.lineIndex) }
+                    }
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                 ) {
                     Text(result.title, fontSize = fs.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(result.detail, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
             }
-            if (results.isEmpty()) item { Text("No source matches", fontSize = fs.detail, modifier = Modifier.padding(8.dp)) }
+            if (results.isEmpty()) item { Text("No source or address matches", fontSize = fs.detail, modifier = Modifier.padding(8.dp)) }
         } else {
             val banks = index.files.filter(AsmSourceFile::isBank)
             val references = index.files.filterNot(AsmSourceFile::isBank)
@@ -1097,15 +1117,32 @@ private fun AsmSourceCanvas(
     val fs = LocalEditorTheme.current.fontSize.value
     val listState = rememberLazyListState()
     val horizontal = rememberScrollState()
+    val addressAnchorsByLine = remember(index, source.id) {
+        source.lines.indices.mapNotNull { lineIndex ->
+            index.addressAtlas.exactAt(source.id, lineIndex).firstOrNull()?.let { lineIndex to it }
+        }.toMap()
+    }
     val minimumContentWidth = remember(source.id, fs.body) {
         val longestLine = source.lines.maxOfOrNull(String::length)?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
-        (ASM_LINE_NUMBER_WIDTH.value + 24f + longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
+        (ASM_LINE_NUMBER_WIDTH.value + ASM_ADDRESS_GUTTER_WIDTH.value + 24f +
+            longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
     }
     LaunchedEffect(state.navigationSerial, source.id) {
         if (source.lines.isNotEmpty()) listState.scrollToItem(state.selectedLineIndex.coerceIn(source.lines.indices))
     }
+    val exactSelectionAddress = addressAnchorsByLine[state.selectedLineIndex]
+    val selectionAddress = exactSelectionAddress ?: index.addressAtlas.contextAt(source.id, state.selectedLineIndex)
+    val addressSummary = selectionAddress?.pcOffset?.let { pcOffset ->
+        val prefix = if (exactSelectionAddress != null) "" else "Near "
+        "$prefix${formatSnesAddress(selectionAddress.snesAddress)} · ${formatPcOffset(pcOffset)} · "
+    }.orEmpty()
     Column(modifier.fillMaxSize()) {
-        AsmNavigationHeader(state, source.displayName, source.description, "${source.lines.size} lines · read-only")
+        AsmNavigationHeader(
+            state,
+            source.displayName,
+            source.description,
+            "$addressSummary${source.lines.size} lines · read-only",
+        )
         AsmScrollableTextPane(
             listState = listState,
             horizontalState = horizontal,
@@ -1125,13 +1162,22 @@ private fun AsmSourceCanvas(
                     verticalAlignment = Alignment.Top,
                 ) {
                     DisableSelection {
-                        Text(
-                            (lineIndex + 1).toString(),
-                            fontSize = fs.detail,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.width(ASM_LINE_NUMBER_WIDTH).padding(end = 10.dp),
-                        )
+                        Row {
+                            Text(
+                                (lineIndex + 1).toString(),
+                                fontSize = fs.detail,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.width(ASM_LINE_NUMBER_WIDTH).padding(end = 10.dp),
+                            )
+                            Text(
+                                addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
+                                fontSize = fs.detail,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.width(ASM_ADDRESS_GUTTER_WIDTH).padding(end = 10.dp),
+                            )
+                        }
                     }
                     val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
                     Box(Modifier.weight(1f)) {
@@ -1147,6 +1193,7 @@ private fun AsmSourceCanvas(
                                     "label" -> state.openLabel(source.id, lineIndex, annotation.item)
                                     "asset" -> state.openAssetReference(annotation.item)
                                     "instruction" -> state.showInstruction(annotation.item)
+                                    "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
                                 }
                             },
                         )
@@ -1358,6 +1405,7 @@ private fun AsmNavigationHeader(state: AsmWorkspaceState, title: String, detail:
     Divider()
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: String, modifier: Modifier) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -1366,16 +1414,34 @@ private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: S
     val rows = remember(bytes) { bytes?.asList()?.chunked(16).orEmpty() }
     val listState = rememberLazyListState()
     val horizontal = rememberScrollState()
+    val sourceResolution = remember(state.workspace, asset.range.snesAddress) {
+        state.workspace?.index?.addressAtlas?.resolve(
+            AsmAddressQuery(asset.range.snesAddress, AsmAddressSpace.SNES),
+        )
+    }
+    val sourceAnchor = sourceResolution?.sourceAnchor
+    val sourceIsExact = sourceResolution?.exactSourceAnchors?.isNotEmpty() == true
     val minimumContentWidth = remember(fs.body) {
         (24f + ASM_HEX_COLUMNS * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
     }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(state, asset.range.path, asset.category, "${asset.range.length} bytes · read-only")
         Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 AssetFact("ROM source", romName)
-                AssetFact("PC range", "\$${asset.range.pcOffset.hex(6)}–\$${(asset.range.endExclusive - 1).hex(6)}")
-                AssetFact("SNES start", "\$${asset.range.snesAddress.hex(6)}")
+                AssetFact("PC range", "0x${asset.range.pcOffset.hex(6)}–0x${(asset.range.endExclusive - 1).hex(6)}")
+                AssetFact("SNES start", formatSnesAddress(asset.range.snesAddress))
+                if (sourceAnchor != null) {
+                    AssetFact(
+                        label = "Source context",
+                        value = "${if (sourceIsExact) "Exact" else "Near"} ${formatSnesAddress(sourceAnchor.snesAddress)}",
+                        onClick = { state.openSource(sourceAnchor.fileId, sourceAnchor.lineIndex) },
+                    )
+                }
                 AssetFact("File", if (asset.file.isFile) "Extracted" else "Missing")
             }
         }
@@ -1419,15 +1485,25 @@ private fun AsmAssetCanvas(state: AsmWorkspaceState, asset: AsmAsset, romName: S
 }
 
 @Composable
-private fun AssetFact(label: String, value: String) {
+private fun AssetFact(label: String, value: String, onClick: (() -> Unit)? = null) {
     val fs = LocalEditorTheme.current.fontSize.value
-    Column {
+    Column(
+        modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick),
+    ) {
         Text(label, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontSize = fs.body, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+        Text(
+            value,
+            fontSize = fs.body,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            color = if (onClick == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+            textDecoration = if (onClick == null) null else TextDecoration.Underline,
+        )
     }
 }
 
 private fun sourceSearch(index: AsmReferenceIndex, query: String): List<AsmSearchResult> {
+    parseAsmAddressQuery(query)?.let { return addressSearch(index, it) }
     val results = mutableListOf<AsmSearchResult>()
     index.files.forEach { source ->
         if (source.displayName.contains(query, true) || source.description.contains(query, true) || source.id.contains(query, true)) {
@@ -1443,6 +1519,50 @@ private fun sourceSearch(index: AsmReferenceIndex, query: String): List<AsmSearc
         results += AsmSearchResult(label.name, "${source.displayName} · line ${label.lineIndex + 1}", label.fileId, label.lineIndex)
     }
     return results.take(250)
+}
+
+private fun addressSearch(index: AsmReferenceIndex, query: AsmAddressQuery): List<AsmSearchResult> {
+    val resolution = index.addressAtlas.resolve(query)
+    val formattedSnes = formatSnesAddress(query.snesAddress)
+    val formattedPc = formatPcOffset(query.pcOffset)
+    val results = mutableListOf<AsmSearchResult>()
+
+    resolution.exactSourceAnchors
+        // One high-quality landing per file keeps org/section/recorded aliases
+        // from turning a single address result into visual noise.
+        .distinctBy { it.fileId }
+        .forEach { anchor ->
+            val source = index.file(anchor.fileId) ?: return@forEach
+            results += AsmSearchResult(
+                title = anchor.label ?: formattedSnes,
+                detail = "Exact source · $formattedSnes · $formattedPc · ${source.displayName}",
+                fileId = anchor.fileId,
+                lineIndex = anchor.lineIndex,
+            )
+        }
+
+    resolution.containingAsset?.let { asset ->
+        val offset = resolution.assetDelta ?: 0
+        results += AsmSearchResult(
+            title = asset.range.path,
+            detail = "Extracted asset · $formattedSnes · $formattedPc · +0x${offset.hex(4)}",
+            assetPath = asset.range.path,
+        )
+    }
+
+    if (resolution.exactSourceAnchors.isEmpty()) {
+        resolution.nearestSourceAnchor?.let { anchor ->
+            val source = index.file(anchor.fileId) ?: return@let
+            val delta = resolution.sourceDelta ?: 0
+            results += AsmSearchResult(
+                title = formattedSnes,
+                detail = "Nearest source anchor ${formatSnesAddress(anchor.snesAddress)} +0x${delta.hex(4)} · $formattedPc · ${source.displayName}",
+                fileId = anchor.fileId,
+                lineIndex = anchor.lineIndex,
+            )
+        }
+    }
+    return results
 }
 
 @Composable
@@ -1462,7 +1582,7 @@ private fun asmAnnotatedLine(
     val foreground = codeForeground()
     val commentStart = line.indexOf(';').let { if (it < 0) line.length else it }
     val code = line.substring(0, commentStart)
-    val tokenRegex = Regex("\"[^\"]*\"|\\$[0-9A-Fa-f]+|%[01]+|\\b[0-9]+\\b|\\.?[A-Za-z_][A-Za-z0-9_.]*")
+    val tokenRegex = Regex("\"[^\"]*\"|\\$[0-9A-Fa-f]{2}:[0-9A-Fa-f]{4}|\\$[0-9A-Fa-f]+|%[01]+|\\b[0-9]+\\b|\\.?[A-Za-z_][A-Za-z0-9_.]*")
     val matches = tokenRegex.findAll(code).toList()
     val definition = Regex("^\\s*([A-Za-z_][A-Za-z0-9_]*|\\.[A-Za-z0-9_]+):").find(code)?.groupValues?.get(1)
         ?: Regex("^\\s*!([A-Za-z_][A-Za-z0-9_]*)\\s*=").find(code)?.groupValues?.get(1)
@@ -1492,7 +1612,26 @@ private fun asmAnnotatedLine(
                     pushStyle(SpanStyle(color = directiveColor, fontWeight = FontWeight.SemiBold)); append(token); pop(); pop()
                 }
                 token.startsWith('$') || token.startsWith('%') || token.firstOrNull()?.isDigit() == true -> {
-                    pushStyle(SpanStyle(color = numberColor)); append(token); pop()
+                    val parsedAddress = if (token.startsWith('$')) parseAsmAddressQuery(token) else null
+                    val navigableAddress = if (parsedAddress != null && index != null) {
+                        val resolution = index.addressAtlas.resolve(parsedAddress)
+                        parsedAddress.takeIf {
+                            resolution.exactSourceAnchors.isNotEmpty() ||
+                                resolution.containingAsset != null || resolution.nearestSourceAnchor != null
+                        }
+                    } else null
+                    if (navigableAddress != null) {
+                        pushStringAnnotation("address", navigableAddress.snesAddress.toString())
+                    }
+                    pushStyle(
+                        SpanStyle(
+                            color = numberColor,
+                            textDecoration = if (navigableAddress != null) TextDecoration.Underline else null,
+                        ),
+                    )
+                    append(token)
+                    pop()
+                    if (navigableAddress != null) pop()
                 }
                 token.lowercase() in ASM_DIRECTIVES -> {
                     pushStyle(SpanStyle(color = directiveColor)); append(token); pop()
@@ -1530,6 +1669,7 @@ private fun Int.hex(width: Int): String = toString(16).uppercase().padStart(widt
 
 private val ASM_SCROLLBAR_SIZE = 10.dp
 private val ASM_LINE_NUMBER_WIDTH = 60.dp
+private val ASM_ADDRESS_GUTTER_WIDTH = 92.dp
 private const val MONOSPACE_CHARACTER_WIDTH = 0.64f
 private const val MAX_MEASURED_CODE_COLUMNS = 800
 private const val ASM_HEX_COLUMNS = 76

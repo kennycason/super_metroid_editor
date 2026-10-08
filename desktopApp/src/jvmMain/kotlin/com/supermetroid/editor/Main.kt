@@ -821,6 +821,10 @@ fun main() = application {
                                                 }
                                                 leftTab = TAB_MAP
                                             },
+                                            onNavigateToAsm = { snesAddress ->
+                                                asmWorkspaceState.openAddress(snesAddress)
+                                                leftTab = TAB_ASM
+                                            },
                                             onKeyboardNavigatorChanged = { roomKeyboardNavigator = it },
                                             modifier = Modifier.fillMaxSize(),
                                         )

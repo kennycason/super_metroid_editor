@@ -27,6 +27,12 @@ ROM editing.
    The Library index automatically reveals the opened instruction.
 7. Click a source `incbin` path, or switch to **Assets**, to inspect the derived
    file, its PC/SNES provenance, and a read-only hex view.
+8. Search a full SNES address (`$8F:805A`, `$8F805A`, `8F805A`, or
+   `SNES:8F805A`) or an unheadered PC offset (`0x07805A`, `PC:07805A`, or
+   `07805A`) to find exact source anchors, a containing extracted asset, and the
+   nearest authored source context. Full 24-bit address operands in source are
+   clickable. The source gutter displays exact addresses independently of line
+   numbers.
 
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
@@ -100,6 +106,22 @@ The same distinction applies to editor changes that have not yet become a ROM:
 **Sync assets** derives from the current in-memory parser image, but it does not
 turn project deltas into new symbolic source.
 
+The Address Atlas follows the same accuracy rule. `org` directives, authored
+section headings, and recorded six-digit disassembly comments are exact anchors.
+A label inherits an address only when it is directly attached to one of those
+anchors. SMEDIT does not guess instruction sizes through macros or assembler
+conditionals. When an address falls after an anchor but has no exact record, the
+UI says **Near** and shows the byte delta; that is navigation context, not a
+claim that the selected source line assembled at that address.
+
+Room properties provide the first semantic bridge into the Atlas. Room headers,
+door lists, room-state records, layouts, backgrounds, FX, PLM/object sets, enemy
+sets and graphics, special X-Ray data, room ASM, and scroll data expose compact
+**ASM** links wherever the ROM stores a valid address. A link may land on exact
+source, the extracted asset that owns the byte, or clearly labeled nearby
+source context. Project-created data without a pinned vanilla anchor remains
+honest about that boundary.
+
 ## Architecture
 
 - `AsmReferenceRepository` owns download, archive safety, transactional cache
@@ -107,6 +129,10 @@ turn project deltas into new symbolic source.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
   every source file, authored section, global label, scoped local label, and
   extracted asset.
+- `AsmAddressAtlas` is the shared bidirectional address layer. It converts
+  canonical LoROM SNES/PC coordinates and resolves exact source anchors,
+  contextual anchors, and extracted asset ownership without decoding assembler
+  output heuristically.
 - `AsmWorkspaceState` owns selection, source/asset/library mode, cross-mode
   history, ROM freshness, progress, and safe navigation.
 - `AsmLibrary` owns the original guided lessons, complete mnemonic catalog,
@@ -129,20 +155,17 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 
 The read-only boundary is intentional. Follow-up work can now be incremental:
 
-1. Index source labels and authored regions in both directions so source can
-   resolve SNES/PC addresses and an address can navigate back to source.
-2. Add a non-writing export preview with three deliberately named views:
+1. Add a non-writing export preview with three deliberately named views:
    **Loaded ROM**, **SMEDIT Result**, and **Diff**. “Loaded ROM” avoids implying
    that an opened hack is vanilla. The result must come from the transactional
    write planner, not an incomplete comparison against project JSON, so pending
    semantic edits, patches, relocations, and write ownership remain accurate.
-3. Deep-link room states, PLMs, doors, FX, enemies, sprites, and other editor
-   structures to their indexed source labels and assets. Reuse existing renderers
-   for source-linked graphics, palettes, tilemaps, rooms, OAM, and music rather
-   than implementing parallel decoders in the ASM tab.
-4. Create a project-owned writable ASM workspace with explicit dirty files,
+2. Expand the semantic links now begun in the room inspector into door, PLM,
+   enemy, sprite, palette, tilemap, and music editors. Reuse existing renderers
+   rather than implementing parallel decoders in the ASM tab.
+3. Create a project-owned writable ASM workspace with explicit dirty files,
    compile diagnostics, and symbol output.
-5. Feed semantic editor changes into generated assets/source, assemble with the
+4. Feed semantic editor changes into generated assets/source, assemble with the
    pinned toolchain, and run the existing ownership/preflight checks over the
    resulting ROM delta so patch-mode features remain compatible.
 

@@ -548,6 +548,25 @@ internal object AsmLibrary {
                         "The two operands can refer to the same byte only when DBR is already \$7E.",
                     ),
                 ),
+                AsmLibrarySection(
+                    "LoROM addresses and file offsets",
+                    listOf(
+                        "A debugger and ASM source usually write a SNES CPU address as bank:offset, such as \$8F:805A. A hex editor usually writes the ROM file offset instead; for that example the unheadered PC offset is 0x07805A. They identify the same byte through the LoROM mapping.",
+                        "For SMEDIT's canonical \$80–\$FF ROM addresses, each bank contributes its upper \$8000 bytes. The conversion is PC = (bank & \$7F) × \$8000 + (offset - \$8000). A copier header, if present on an external ROM file, adds \$200 to file offsets; SMEDIT normalizes it away before parsing.",
+                        "A 16-bit operand such as \$805A is not a complete ROM address because its bank comes from CPU state or source placement. The Atlas only links a full 24-bit operand or an address explicitly anchored by org, an authored section, or a recorded disassembly address.",
+                    ),
+                    AsmCodeExample(
+                        "One location, two coordinate systems",
+                        code(
+                            "org \$8F805A             ; SNES \$8F:805A = PC 0x07805A",
+                            "RoomData:",
+                            "    dw \$1234",
+                            "PointerTable:",
+                            "    dl RoomData         ; emits a complete 24-bit pointer",
+                        ),
+                        "Search the ASM workspace for \$8F:805A or PC:07805A. Exact source anchors and extracted assets appear separately; a nearby anchor is labeled as context, not claimed as the exact byte.",
+                    ),
+                ),
             ),
         ),
         AsmLibraryGuide(

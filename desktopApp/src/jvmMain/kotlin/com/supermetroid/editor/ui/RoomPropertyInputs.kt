@@ -26,7 +26,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun PropertyRow(label: String, value: String) {
+internal fun PropertyRow(
+    label: String,
+    value: String,
+    onNavigateToAsm: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -34,6 +38,14 @@ internal fun PropertyRow(label: String, value: String) {
     ) {
         Text(label, fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp))
         Text(value, fontSize = ROOM_INFO_BODY_FONT_SIZE, modifier = Modifier.weight(1f))
+        if (onNavigateToAsm != null) {
+            Text(
+                "ASM",
+                fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable(onClick = onNavigateToAsm).padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+        }
     }
 }
 

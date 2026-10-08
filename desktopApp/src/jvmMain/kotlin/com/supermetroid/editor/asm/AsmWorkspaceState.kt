@@ -52,6 +52,7 @@ internal class AsmWorkspaceState(
 
     private val backStack = mutableListOf<AsmLocation>()
     private val forwardStack = mutableListOf<AsmLocation>()
+    private var pendingSnesAddress: Int? = null
 
     val canGoBack: Boolean get() = backStack.isNotEmpty()
     val canGoForward: Boolean get() = forwardStack.isNotEmpty()
@@ -158,6 +159,31 @@ internal class AsmWorkspaceState(
         workspace?.index?.resolveAsset(reference)?.let { openAsset(it.range.path) }
     }
 
+    fun openAddress(snesAddress: Int) {
+        val pcOffset = snesLoRomToPc(snesAddress)
+        if (pcOffset == null) {
+            error = "${formatSnesAddress(snesAddress)} is not a mapped LoROM address."
+            return
+        }
+        val index = workspace?.index
+        if (index == null) {
+            pendingSnesAddress = snesAddress
+            return
+        }
+        pendingSnesAddress = null
+        val resolution = index.addressAtlas.resolve(AsmAddressQuery(snesAddress, AsmAddressSpace.SNES))
+        val exactSource = resolution.exactSourceAnchors.firstOrNull()
+        when {
+            exactSource != null -> openSource(exactSource.fileId, exactSource.lineIndex)
+            resolution.containingAsset != null -> openAsset(resolution.containingAsset.range.path)
+            resolution.nearestSourceAnchor != null -> {
+                val nearest = resolution.nearestSourceAnchor
+                openSource(nearest.fileId, nearest.lineIndex)
+            }
+            else -> error = "No indexed source or asset owns ${formatSnesAddress(snesAddress)} (${formatPcOffset(pcOffset)})."
+        }
+    }
+
     fun openLabel(token: String) {
         val index = workspace?.index ?: return
         val fileId = selectedFileId ?: return
@@ -252,6 +278,7 @@ internal class AsmWorkspaceState(
             expandedSourceFileId = selectedFileId?.takeIf { index.file(it)?.isBank == true }
         }
         if (selectedAssetPath != null && index.asset(selectedAssetPath) == null) selectedAssetPath = null
+        pendingSnesAddress?.let(::openAddress)
     }
 
     private fun currentLocation(): AsmLocation? = when (browserMode) {

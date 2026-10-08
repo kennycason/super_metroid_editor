@@ -679,8 +679,9 @@ private fun SnesColorEditor(
     colIdx: Int,
     onColorChanged: () -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     if (colIdx == 0) {
-        Text("Index 0 is transparent (cannot edit)", fontSize = 9.sp, color = Color(0xFF6A6F88))
+        Text("Index 0 is transparent (cannot edit)", fontSize = fs.detail, color = Color(0xFF6A6F88))
         return
     }
 
@@ -702,6 +703,7 @@ internal fun SnesBgr555Editor(
     bgr555: Int,
     onColorChanged: (Int) -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     var r5 by remember(bgr555) { mutableStateOf(bgr555 and 0x1F) }
     var g5 by remember(bgr555) { mutableStateOf((bgr555 shr 5) and 0x1F) }
     var b5 by remember(bgr555) { mutableStateOf((bgr555 shr 10) and 0x1F) }
@@ -727,8 +729,8 @@ internal fun SnesBgr555Editor(
                 .border(1.dp, Color(0xFF5A5F7C), RoundedCornerShape(4.dp))
         )
         Column {
-            Text("\$$snesHex", fontSize = 10.sp, color = Color(0xFFFFD54F), fontFamily = FontFamily.Monospace)
-            Text("R:$r5 G:$g5 B:$b5", fontSize = 8.sp, color = Color(0xFF8890A8), fontFamily = FontFamily.Monospace)
+            Text("\$$snesHex", fontSize = fs.body, color = Color(0xFFFFD54F), fontFamily = FontFamily.Monospace)
+            Text("R:$r5 G:$g5 B:$b5", fontSize = fs.detail, color = Color(0xFF8890A8), fontFamily = FontFamily.Monospace)
         }
     }
     Spacer(Modifier.height(8.dp))
@@ -749,6 +751,7 @@ internal fun SnesChannelSlider(
     value: Int,
     onValueChanged: (Int) -> Unit
 ) {
+    val fs = LocalEditorTheme.current.fontSize.value
     val density = LocalDensity.current.density
     var isDragging by remember { mutableStateOf(false) }
     var sliderWidth by remember { mutableStateOf(1f) }
@@ -762,7 +765,7 @@ internal fun SnesChannelSlider(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(24.dp)
     ) {
-        Text(label, fontSize = 9.sp, color = channelColor, fontWeight = FontWeight.Bold,
+        Text(label, fontSize = fs.detail, color = channelColor, fontWeight = FontWeight.Bold,
             modifier = Modifier.width(16.dp))
 
         Box(
@@ -805,7 +808,7 @@ internal fun SnesChannelSlider(
 
         Text(
             value.toString().padStart(2),
-            fontSize = 9.sp, color = Color(0xFFB0B8D1),
+            fontSize = fs.detail, color = Color(0xFFB0B8D1),
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.width(20.dp),
             textAlign = TextAlign.End

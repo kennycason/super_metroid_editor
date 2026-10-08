@@ -39,7 +39,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.supermetroid.editor.data.FxChange
 import com.supermetroid.editor.data.ItemStateScope
 import com.supermetroid.editor.data.ProjectRoomStateCondition
@@ -51,11 +50,13 @@ import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.StateDataChange
+import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.analyzeDoorScrollAsm
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.rom.isSmEditGeneratedPredicate
+import com.supermetroid.editor.asm.snesLoRomToPc
 
 private enum class RoomInfoHelpTopic {
     STATES,
@@ -117,6 +118,7 @@ fun RoomPropertiesPanel(
     editorState: EditorState,
     modifier: Modifier = Modifier,
     onNavigateToMap: (() -> Unit)? = null,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     onWorkspaceChanged: (() -> Unit)? = null,
 ) {
     val stateInspection = remember(room.roomId, romParser) { romParser.inspectRoomStates(room.roomId) }
@@ -365,7 +367,11 @@ fun RoomPropertiesPanel(
     ) {
         // ── Room Header (all 11 bytes editable) ──
         SectionHeader("Room Header")
-        PropertyRow("Room ID", "0x${room.roomId.toString(16).uppercase().padStart(4, '0')}")
+        PropertyRow(
+            "Room ID",
+            "0x${room.roomId.toString(16).uppercase().padStart(4, '0')}",
+            onNavigateToAsm?.let { navigate -> { navigate(RomConstants.BANK_ROOM_DATA or room.roomId) } },
+        )
         PropertyRow("Room Index", "0x${room.index.toString(16).uppercase().padStart(2, '0')}")
         AreaDropdown(effectiveArea) { targetArea ->
             editorState.reassignRoomArea(room.roomId, targetArea, romParser)
@@ -397,7 +403,13 @@ fun RoomPropertiesPanel(
         EditableHexRow("CRE Bitflag", editCreBitflag, 1,
             suffix = " ${CRE_BITFLAG_NAMES[editCreBitflag] ?: ""}"
         ) { editCreBitflag = it; syncHeaderToState() }
-        PropertyRow("Door Out Ptr", "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)")
+        PropertyRow(
+            "Door Out Ptr",
+            "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)",
+            onNavigateToAsm?.takeIf { room.doorOut != 0 }?.let { navigate ->
+                { navigate(RomConstants.BANK_ROOM_DATA or room.doorOut) }
+            },
+        )
 
         val projectRoom = editorState.project.newRoomForPreviewId(room.roomId)
         if (projectRoom != null) {
@@ -472,11 +484,12 @@ fun RoomPropertiesPanel(
                     else -> "ELSE IF"
                 }
                 val sourceState = state.baseSourceStateIndex?.let(stateInspection.states::getOrNull)
-                val stateAddress = sourceState?.stateDataPointer?.let {
-                    "\$8F:${it.toString(16).uppercase().padStart(4, '0')}"
-                } ?: sourceState?.stateDataPcOffset?.let {
-                    val snes = romParser.pcToSnes(it)
-                    "inline \$${(snes ushr 16).toString(16).uppercase()}:" +
+                val stateSnesAddress = sourceState?.stateDataPointer?.let {
+                    RomConstants.BANK_ROOM_DATA or it
+                } ?: sourceState?.stateDataPcOffset?.let(romParser::pcToSnes)
+                val stateAddress = stateSnesAddress?.let { snes ->
+                    val prefix = if (sourceState?.stateDataPointer == null) "inline " else ""
+                    "$prefix\$${(snes ushr 16).toString(16).uppercase()}:" +
                         (snes and 0xFFFF).toString(16).uppercase().padStart(4, '0')
                 } ?: "new state"
                 Surface(
@@ -492,12 +505,24 @@ fun RoomPropertiesPanel(
                     },
                 ) {
                     Column(Modifier.padding(horizontal = 7.dp, vertical = 5.dp)) {
-                        Text(
-                            "$branchLabel ${projectConditionLabel(state.condition, room.area)}",
-                            fontSize = ROOM_INFO_BODY_FONT_SIZE,
-                            fontWeight = if (selectedStateIdx == idx) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (state.baseSourceStateIndex == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "$branchLabel ${projectConditionLabel(state.condition, room.area)}",
+                                fontSize = ROOM_INFO_BODY_FONT_SIZE,
+                                fontWeight = if (selectedStateIdx == idx) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (state.baseSourceStateIndex == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (stateSnesAddress != null && onNavigateToAsm != null) {
+                                Text(
+                                    "ASM",
+                                    fontSize = ROOM_INFO_COMPACT_FONT_SIZE,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable { onNavigateToAsm(stateSnesAddress) }
+                                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                                )
+                            }
+                        }
                         if (showRomAddresses) {
                             val engineCheck = if (state.condition.kind.isSmEditGeneratedPredicate()) {
                                 "generated typed check"
@@ -637,6 +662,9 @@ fun RoomPropertiesPanel(
         val enemyGfxPtr = stateData["enemyGfxPtr"] ?: room.enemyGfxPtr
         val plmSetPtr = stateData["plmSetPtr"] ?: room.plmSetPtr
         val xraySpecialCasingPtr = stateData["xraySpecialCasingPtr"] ?: room.xraySpecialCasingPtr
+        fun asmLink(snesAddress: Int?): (() -> Unit)? = snesAddress
+            ?.takeIf { snesLoRomToPc(it) != null }
+            ?.let { address -> onNavigateToAsm?.let { navigate -> { navigate(address) } } }
 
         val stateNames = states.map { projectConditionLabel(it.condition, room.area) }
         val defaultStateData = allStateData.lastOrNull().orEmpty()
@@ -874,17 +902,35 @@ fun RoomPropertiesPanel(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 3.dp),
             )
-            PropertyRow("Layout Data", snesAddr24(levelDataPtr))
-            PropertyRow("BG Data", if (bgDataPtr == 0) "None" else "\$8F:${hex16(bgDataPtr).removePrefix("0x")}")
-            PropertyRow("Object Set", "\$8F:${hex16(plmSetPtr).removePrefix("0x")}")
-            PropertyRow("Enemy Set", "\$A1:${hex16(enemySetPtr).removePrefix("0x")}")
-            PropertyRow("Enemy GFX", "\$B4:${hex16(enemyGfxPtr).removePrefix("0x")}")
+            PropertyRow("Layout Data", snesAddr24(levelDataPtr), asmLink(levelDataPtr))
+            PropertyRow(
+                "BG Data",
+                if (bgDataPtr == 0) "None" else "\$8F:${hex16(bgDataPtr).removePrefix("0x")}",
+                asmLink(bgDataPtr.takeIf { it != 0 }?.let { RomConstants.BANK_ROOM_DATA or it }),
+            )
+            PropertyRow(
+                "FX Data",
+                if (fxPtr == 0) "None" else "\$83:${hex16(fxPtr).removePrefix("0x")}",
+                asmLink(fxPtr.takeIf { it != 0 }?.let { RomConstants.BANK_FX or it }),
+            )
+            PropertyRow("Object Set", "\$8F:${hex16(plmSetPtr).removePrefix("0x")}", asmLink(RomConstants.BANK_ROOM_DATA or plmSetPtr))
+            PropertyRow("Enemy Set", "\$A1:${hex16(enemySetPtr).removePrefix("0x")}", asmLink(RomConstants.BANK_ENEMY_SET or enemySetPtr))
+            PropertyRow("Enemy GFX", "\$B4:${hex16(enemyGfxPtr).removePrefix("0x")}", asmLink(RomConstants.BANK_ENEMY_GFX or enemyGfxPtr))
             PropertyRow(
                 "Special X-Ray",
                 if (xraySpecialCasingPtr == 0) "None" else "\$8F:${hex16(xraySpecialCasingPtr).removePrefix("0x")}",
+                asmLink(xraySpecialCasingPtr.takeIf { it != 0 }?.let { RomConstants.BANK_ROOM_DATA or it }),
             )
-            PropertyRow("Main ASM", if (mainAsmPtr == 0) "None" else "\$8F:${hex16(mainAsmPtr).removePrefix("0x")}")
-            PropertyRow("Setup ASM", if (setupAsmPtr == 0) "None" else "\$8F:${hex16(setupAsmPtr).removePrefix("0x")}")
+            PropertyRow(
+                "Main ASM",
+                if (mainAsmPtr == 0) "None" else "\$8F:${hex16(mainAsmPtr).removePrefix("0x")}",
+                asmLink(mainAsmPtr.takeIf { it != 0 }?.let { RomConstants.BANK_ROOM_DATA or it }),
+            )
+            PropertyRow(
+                "Setup ASM",
+                if (setupAsmPtr == 0) "None" else "\$8F:${hex16(setupAsmPtr).removePrefix("0x")}",
+                asmLink(setupAsmPtr.takeIf { it != 0 }?.let { RomConstants.BANK_ROOM_DATA or it }),
+            )
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -1031,11 +1077,15 @@ fun RoomPropertiesPanel(
         val scrollsPtr = stateData["roomScrollsPtr"] ?: room.roomScrollsPtr
         PropertyRow("Room states", sharingDescription("roomScrollsPtr", scrollsPtr))
         if (showRomAddresses) {
-            PropertyRow("ROM scroll data", when (scrollsPtr) {
-                0x0000 -> "All Blue preset (\$0000)"
-                0x0001 -> "All Green preset (\$0001)"
-                else -> "\$8F:${scrollsPtr.toString(16).uppercase().padStart(4, '0')}"
-            })
+            PropertyRow(
+                "ROM scroll data",
+                when (scrollsPtr) {
+                    0x0000 -> "All Blue preset (\$0000)"
+                    0x0001 -> "All Green preset (\$0001)"
+                    else -> "\$8F:${scrollsPtr.toString(16).uppercase().padStart(4, '0')}"
+                },
+                asmLink(scrollsPtr.takeIf { it > 1 }?.let { RomConstants.BANK_ROOM_DATA or it }),
+            )
         }
 
         if (scrollData.isNotEmpty() && currentState?.stateDataPcOffset != null) {
@@ -1130,17 +1180,17 @@ private fun RoomResizeRow(room: Room, editorState: EditorState) {
                             modifier = Modifier.size(24.dp).clickable { if (newWidth > 1) newWidth-- },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
-                        Text("$newWidth", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold) } }
+                        Text("$newWidth", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Surface(
                             modifier = Modifier.size(24.dp).clickable { if (newWidth < 15) newWidth++ },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold) } }
                     }
                 }
-                Text("\u00D7", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("\u00D7", fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Height", fontSize = ROOM_INFO_COMPACT_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1148,14 +1198,14 @@ private fun RoomResizeRow(room: Room, editorState: EditorState) {
                             modifier = Modifier.size(24.dp).clickable { if (newHeight > 1) newHeight-- },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
-                        Text("$newHeight", fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("\u2212", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold) } }
+                        Text("$newHeight", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp),
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                         Surface(
                             modifier = Modifier.size(24.dp).clickable { if (newHeight < 15) newHeight++ },
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold) } }
+                        ) { Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { Text("+", fontSize = ROOM_INFO_BODY_FONT_SIZE, fontWeight = FontWeight.Bold) } }
                     }
                 }
             }
