@@ -14,15 +14,45 @@ ROM editing.
    1,130 NTSC binary assets from the ROM already open in memory.
 4. Browse banks as chapters, expand a bank into its authored `;;; $address:
    description ;;;` sections, search labels/functions, and click a label operand
-   to follow it to its definition. Back/forward navigation preserves the trail.
-5. Click a 65C816 mnemonic for the compact embedded instruction reference. Click
-   a source `incbin` path, or switch to **Assets**, to inspect the derived file,
-   its PC/SNES provenance, and a read-only hex view.
+   to follow it to its definition. Only the active bank chapter is expanded by
+   default, and selecting it again collapses it. Back/forward navigation
+   preserves the trail.
+5. Open **Library** for a practical learning path covering source/data syntax,
+   registers and banks, width state, `.B`/`.W`/`.L`, addressing modes, flags and
+   loops, calls and stack discipline, and common SNES runtime patterns.
+6. Click any 65C816 mnemonic in Source to open its full Library page. A sized
+   spelling such as `LDA.W` retains its suffix context, and each instruction page
+   shows common forms, a concise example, editing cautions, and direct usages in
+   the downloaded Super Metroid source that navigate back into the relevant bank.
+   The Library index automatically reveals the opened instruction.
+7. Click a source `incbin` path, or switch to **Assets**, to inspect the derived
+   file, its PC/SNES provenance, and a read-only hex view.
+
+Source and hex text are selectable and copyable without giving up clickable
+labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
+canvas expose draggable scrollbars for fast navigation. Mouse wheels and
+two-axis trackpads scroll normally; holding the middle mouse button and dragging
+pans both axes. Mouse back/forward buttons, `Alt+Left` / `Alt+Right`, and
+`Cmd/Ctrl+[` / `Cmd/Ctrl+]` follow navigation history, including transitions
+between source and Library pages. `Cmd/Ctrl+F` moves focus to the current
+Source/Assets/Library search field.
+
+The Library is bundled and remains available before the external disassembly is
+downloaded. Its eight SMEDIT-authored lessons are intentionally a field guide,
+not a general computer-science course. Their selectable, syntax-highlighted
+examples progress from literal formats, strings, tables, and bit masks through
+width state, pointers, comparisons, calls, and SNES runtime patterns; mnemonics
+inside the examples open their instruction pages. The complete 92-mnemonic index
+is validated against undisbeliever's **65816 Opcodes** reference (CC BY-SA 4.0),
+the official Asar manual, and Western Design Center processor documentation.
+Attribution and source links are visible both at the bottom of Library pages and
+under **Settings → Credits**.
 
 **Sync assets** re-extracts data from the currently loaded ROM without a network
 request. **Redownload** transactionally refreshes the pinned source and derives
-the assets again. A ROM fingerprint status makes stale assets visible after the
-loaded ROM changes.
+the assets again. These controls live in a compact, expandable status bar at the
+bottom of the sidebar so the bank chapters remain the primary navigation. A ROM
+fingerprint status makes stale assets visible after the loaded ROM changes.
 
 ## Source, ROM, and cache boundary
 
@@ -77,11 +107,15 @@ turn project deltas into new symbolic source.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
   every source file, authored section, global label, scoped local label, and
   extracted asset.
-- `AsmWorkspaceState` owns selection, source/asset mode, history, ROM freshness,
-  progress, and safe navigation.
+- `AsmWorkspaceState` owns selection, source/asset/library mode, cross-mode
+  history, ROM freshness, progress, and safe navigation.
+- `AsmLibrary` owns the original guided lessons, complete mnemonic catalog,
+  practical forms/examples, categories, and stable page identifiers.
 - `AsmWorkspaceSidebar` and `AsmWorkspaceCanvas` provide the bank tree, search,
-  syntax-colored source, instruction help, and binary inspector. Typography is
-  taken from SMEDIT's global UI setting.
+  syntax-colored source, navigable Library, real-source instruction examples,
+  and binary inspector. Typography is taken from SMEDIT's global UI setting.
+  Shared selectable, two-axis text panes keep source and hex navigation behavior
+  consistent.
 
 The install contract is covered by normal synthetic archive/range tests. The
 real pinned download plus all 1,130 byte-exact extractions can be exercised with:
@@ -95,13 +129,20 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 
 The read-only boundary is intentional. Follow-up work can now be incremental:
 
-1. Deep-link room states, PLMs, doors, FX, enemies, sprites, and other editor
-   structures to their indexed source labels and assets.
-2. Add richer source-linked visualizers for graphics, palettes, tilemaps, rooms,
-   OAM, and music instead of duplicating existing editor renderers.
-3. Create a project-owned writable ASM workspace with explicit dirty files,
+1. Index source labels and authored regions in both directions so source can
+   resolve SNES/PC addresses and an address can navigate back to source.
+2. Add a non-writing export preview with three deliberately named views:
+   **Loaded ROM**, **SMEDIT Result**, and **Diff**. “Loaded ROM” avoids implying
+   that an opened hack is vanilla. The result must come from the transactional
+   write planner, not an incomplete comparison against project JSON, so pending
+   semantic edits, patches, relocations, and write ownership remain accurate.
+3. Deep-link room states, PLMs, doors, FX, enemies, sprites, and other editor
+   structures to their indexed source labels and assets. Reuse existing renderers
+   for source-linked graphics, palettes, tilemaps, rooms, OAM, and music rather
+   than implementing parallel decoders in the ASM tab.
+4. Create a project-owned writable ASM workspace with explicit dirty files,
    compile diagnostics, and symbol output.
-4. Feed semantic editor changes into generated assets/source, assemble with the
+5. Feed semantic editor changes into generated assets/source, assemble with the
    pinned toolchain, and run the existing ownership/preflight checks over the
    resulting ROM delta so patch-mode features remain compatible.
 

@@ -59,6 +59,8 @@ data class AppSettings(
     val roomEditorHighlightItems: Boolean = true,
     val roomEditorShowEnemyNames: Boolean = true,
     val roomEditorShowFlatSlopeSurfaces: Boolean = true,
+    val mainSidebarWidthDp: Float = 340f,
+    val sidebarBottomPaneHeightDp: Float = 0f,
 )
 
 object AppConfig {

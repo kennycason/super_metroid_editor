@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +40,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.supermetroid.editor.data.AppConfig
 import com.supermetroid.editor.emulator.EmulatorRegistry
+
+internal const val STREAMING_WINDOW_WIDTH = 1920
+internal const val STREAMING_WINDOW_HEIGHT = 1080
 
 @Composable
 fun SettingsPopup(
@@ -54,6 +59,7 @@ fun SettingsPopup(
     onHighlightRoomItemsChange: (Boolean) -> Unit = {},
     onShowRoomEnemyNamesChange: (Boolean) -> Unit = {},
     onShowRoomFlatSlopeSurfacesChange: (Boolean) -> Unit = {},
+    onWindowSizeRequest: (width: Int, height: Int) -> Unit = { _, _ -> },
 ) {
     Popup(
         alignment = Alignment.TopEnd,
@@ -64,7 +70,7 @@ fun SettingsPopup(
         var currentTheme by themeState.theme
         var currentFontSize by themeState.fontSize
         var selectedTab by remember { mutableStateOf(0) }
-        val tabs = listOf("General", "Emulator")
+        val tabs = listOf("General", "Emulator", "Credits")
 
         Surface(
             shape = RoundedCornerShape(8.dp),
@@ -119,6 +125,7 @@ fun SettingsPopup(
                             currentFontSize = size
                             AppConfig.update { copy(fontSize = size.name) }
                         },
+                        onWindowSizeRequest = onWindowSizeRequest,
                         editorState = editorState,
                         showRoomItemNames = showRoomItemNames,
                         showRoomMetaNames = showRoomMetaNames,
@@ -132,8 +139,113 @@ fun SettingsPopup(
                         onShowRoomFlatSlopeSurfacesChange = onShowRoomFlatSlopeSurfacesChange,
                     )
                     1 -> EmulatorSettingsTab(emulatorWorkspaceState, currentFontSize)
+                    2 -> CreditsSettingsTab(currentFontSize)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CreditsSettingsTab(currentFontSize: FontSize) {
+    val uriHandler = LocalUriHandler.current
+
+    Text(
+        "SMEDIT is built with and informed by years of community reverse engineering, documentation, tools, and artwork.",
+        fontSize = currentFontSize.body,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+
+    Text(
+        "ASM Library & Reference",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    CreditLink(
+        title = "65816 Opcodes",
+        detail = "© 2019 undisbeliever, with contributions by InsaneFirebat · CC BY-SA 4.0. Used to validate SMEDIT's embedded instruction reference.",
+        url = "https://github.com/undisbeliever/snesdev-notes/blob/master/pages/65816-opcodes.md",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "Super Metroid disassembly",
+        detail = "InsaneFirebat and contributors. Provides the pinned, annotated source downloaded by the ASM workspace.",
+        url = "https://github.com/InsaneFirebat/sm_disassembly",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "Asar",
+        detail = "Alcaro, RPG Hacker, and contributors. Its documentation defines the assembler syntax used throughout the source.",
+        url = "https://github.com/RPGHacker/asar",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "SNESdev Wiki",
+        detail = "Community-maintained SNES hardware and programming knowledge referenced by SMEDIT's original lessons.",
+        url = "https://snes.nesdev.org/wiki/SNESdev_Wiki",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "W65C816S documentation",
+        detail = "Western Design Center's authoritative processor documentation; linked as a primary reference and not redistributed by SMEDIT.",
+        url = "https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+
+    Text(
+        "Community artwork",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    Text(
+        "Community Samus sprite authors and source projects are credited on their individual catalog entries so attribution travels with the selected work.",
+        fontSize = currentFontSize.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            "SMEDIT's tutorials and examples are original, practical explanations written for this editor.",
+            fontSize = currentFontSize.detail,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.padding(10.dp),
+        )
+    }
+}
+
+@Composable
+private fun CreditLink(
+    title: String,
+    detail: String,
+    url: String,
+    fontSize: FontSize,
+    onOpen: (String) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onOpen(url) },
+    ) {
+        Column(Modifier.padding(10.dp)) {
+            Text(
+                title,
+                fontSize = fontSize.body,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(detail, fontSize = fontSize.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(url, fontSize = fontSize.statusBar, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -144,6 +256,7 @@ private fun GeneralSettingsTab(
     currentFontSize: FontSize,
     onThemeChange: (EditorTheme) -> Unit,
     onFontSizeChange: (FontSize) -> Unit,
+    onWindowSizeRequest: (width: Int, height: Int) -> Unit,
     editorState: EditorState? = null,
     showRoomItemNames: Boolean,
     showRoomMetaNames: Boolean,
@@ -228,6 +341,28 @@ private fun GeneralSettingsTab(
             }
         }
     }
+
+    // ── Window Section ──
+    Text(
+        "Window",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    OutlinedButton(
+        onClick = { onWindowSizeRequest(STREAMING_WINDOW_WIDTH, STREAMING_WINDOW_HEIGHT) },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            "1920 × 1080 · Streaming",
+            fontSize = currentFontSize.body,
+        )
+    }
+    Text(
+        "Resize the SMEDIT window to a consistent Full HD canvas for recording or streaming.",
+        fontSize = currentFontSize.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 
     // ── Room Editor Section ──
     Text(

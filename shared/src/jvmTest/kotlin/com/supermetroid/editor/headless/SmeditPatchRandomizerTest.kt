@@ -8,6 +8,20 @@ import kotlin.math.roundToInt
 
 class SmeditPatchRandomizerTest {
     @Test
+    fun `headless vulnerability labels follow bank B4 byte order`() {
+        assertEquals(
+            listOf(
+                "Power (base beam)", "Wave", "Ice", "Ice + Wave",
+                "Spazer", "Spazer + Wave", "Spazer + Ice", "Spazer + Ice + Wave",
+                "Plasma", "Plasma + Wave / Shinespark echo", "Plasma + Ice", "Plasma + Ice + Wave",
+                "Missile", "Super Missile", "Bomb", "Power Bomb", "Speed Booster", "Shinespark",
+                "Screw Attack", "Charged Beam (including SBA)", "Pseudo-Screw Attack", "Unused",
+            ),
+            HEADLESS_WEAPON_SLOTS.map { it.label },
+        )
+    }
+
+    @Test
     fun `named patch fields use their source species headers`() {
         assertEquals(0xD27F, HEADLESS_ENEMY_DEFS.single { it.key == "reo" }.speciesId)
         assertEquals(0xD87F, HEADLESS_ENEMY_DEFS.single { it.key == "sbug" }.speciesId)

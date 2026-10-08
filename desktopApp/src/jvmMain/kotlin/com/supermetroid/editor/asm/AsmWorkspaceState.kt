@@ -6,11 +6,12 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-internal enum class AsmBrowserMode { SOURCE, ASSETS }
+internal enum class AsmBrowserMode { SOURCE, ASSETS, LIBRARY }
 
 private sealed interface AsmLocation {
     data class Source(val fileId: String, val lineIndex: Int) : AsmLocation
     data class Asset(val path: String) : AsmLocation
+    data class Library(val pageId: String, val instructionToken: String?) : AsmLocation
 }
 
 internal class AsmWorkspaceState(
@@ -31,6 +32,8 @@ internal class AsmWorkspaceState(
     var query by mutableStateOf("")
     var selectedFileId by mutableStateOf<String?>(null)
         private set
+    var expandedSourceFileId by mutableStateOf<String?>(null)
+        private set
     var selectedLineIndex by mutableStateOf(0)
         private set
     var selectedAssetPath by mutableStateOf<String?>(null)
@@ -38,7 +41,13 @@ internal class AsmWorkspaceState(
     var selectedAssetCategory by mutableStateOf<String?>(null)
     var selectedInstruction by mutableStateOf<String?>(null)
         private set
+    var selectedInstructionToken by mutableStateOf<String?>(null)
+        private set
+    var selectedLibraryPageId by mutableStateOf(AsmLibrary.guides.first().id)
+        private set
     var navigationSerial by mutableStateOf(0L)
+        private set
+    var searchFocusSerial by mutableStateOf(0L)
         private set
 
     private val backStack = mutableListOf<AsmLocation>()
@@ -83,6 +92,10 @@ internal class AsmWorkspaceState(
         error = null
     }
 
+    fun requestSearchFocus() {
+        searchFocusSerial++
+    }
+
     fun showSourceBrowser() {
         browserMode = AsmBrowserMode.SOURCE
         query = ""
@@ -99,16 +112,34 @@ internal class AsmWorkspaceState(
         navigationSerial++
     }
 
+    fun showLibraryBrowser() {
+        browserMode = AsmBrowserMode.LIBRARY
+        query = ""
+        selectedAssetPath = null
+        navigationSerial++
+    }
+
     fun openSource(fileId: String, lineIndex: Int = 0, addToHistory: Boolean = true) {
         val source = workspace?.index?.file(fileId) ?: return
         if (addToHistory) rememberCurrentLocation()
         browserMode = AsmBrowserMode.SOURCE
         selectedFileId = source.id
+        expandedSourceFileId = source.id
         selectedLineIndex = lineIndex.coerceIn(0, (source.lines.size - 1).coerceAtLeast(0))
         selectedAssetPath = null
         selectedInstruction = null
+        selectedInstructionToken = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
+    }
+
+    fun toggleSourceChapter(fileId: String) {
+        val source = workspace?.index?.file(fileId)?.takeIf(AsmSourceFile::isBank) ?: return
+        if (selectedFileId != source.id || browserMode != AsmBrowserMode.SOURCE) {
+            openSource(source.id)
+            return
+        }
+        expandedSourceFileId = if (expandedSourceFileId == source.id) null else source.id
     }
 
     fun openAsset(path: String, addToHistory: Boolean = true) {
@@ -118,6 +149,7 @@ internal class AsmWorkspaceState(
         selectedAssetPath = asset.range.path
         selectedAssetCategory = asset.category
         selectedInstruction = null
+        selectedInstructionToken = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
     }
@@ -138,11 +170,45 @@ internal class AsmWorkspaceState(
     }
 
     fun showInstruction(mnemonic: String) {
-        selectedInstruction = mnemonic.substringBefore('.').uppercase()
+        val token = mnemonic.uppercase()
+        val normalized = token.substringBefore('.')
+        if (AsmInstructionReference.find(normalized) == null) return
+        rememberCurrentLocation()
+        browserMode = AsmBrowserMode.LIBRARY
+        query = ""
+        selectedInstruction = normalized
+        selectedInstructionToken = token
+        selectedLibraryPageId = AsmLibrary.instructionPageId(normalized)
+        selectedAssetPath = null
+        navigationSerial++
+        forwardStack.clear()
     }
 
-    fun closeInstruction() {
+    fun openLibraryGuide(pageId: String, addToHistory: Boolean = true) {
+        val guide = AsmLibrary.guide(pageId) ?: return
+        if (addToHistory) rememberCurrentLocation()
+        browserMode = AsmBrowserMode.LIBRARY
+        query = ""
         selectedInstruction = null
+        selectedInstructionToken = null
+        selectedLibraryPageId = guide.id
+        selectedAssetPath = null
+        navigationSerial++
+        if (addToHistory) forwardStack.clear()
+    }
+
+    fun openLibraryInstruction(mnemonic: String, addToHistory: Boolean = true) {
+        val token = mnemonic.uppercase()
+        val instruction = AsmInstructionReference.find(token.substringBefore('.')) ?: return
+        if (addToHistory) rememberCurrentLocation()
+        browserMode = AsmBrowserMode.LIBRARY
+        query = ""
+        selectedInstruction = instruction.mnemonic
+        selectedInstructionToken = token
+        selectedLibraryPageId = AsmLibrary.instructionPageId(instruction.mnemonic)
+        selectedAssetPath = null
+        navigationSerial++
+        if (addToHistory) forwardStack.clear()
     }
 
     fun goBack() {
@@ -182,11 +248,17 @@ internal class AsmWorkspaceState(
                 ?: index.files.firstOrNull()?.id
             selectedLineIndex = 0
         }
+        if (expandedSourceFileId == null) {
+            expandedSourceFileId = selectedFileId?.takeIf { index.file(it)?.isBank == true }
+        }
         if (selectedAssetPath != null && index.asset(selectedAssetPath) == null) selectedAssetPath = null
     }
 
-    private fun currentLocation(): AsmLocation? = selectedAssetPath?.let(AsmLocation::Asset)
-        ?: selectedFileId?.let { AsmLocation.Source(it, selectedLineIndex) }
+    private fun currentLocation(): AsmLocation? = when (browserMode) {
+        AsmBrowserMode.SOURCE -> selectedFileId?.let { AsmLocation.Source(it, selectedLineIndex) }
+        AsmBrowserMode.ASSETS -> selectedAssetPath?.let(AsmLocation::Asset)
+        AsmBrowserMode.LIBRARY -> AsmLocation.Library(selectedLibraryPageId, selectedInstructionToken)
+    }
 
     private fun rememberCurrentLocation() {
         val current = currentLocation() ?: return
@@ -198,92 +270,15 @@ internal class AsmWorkspaceState(
         when (location) {
             is AsmLocation.Source -> openSource(location.fileId, location.lineIndex, addToHistory = false)
             is AsmLocation.Asset -> openAsset(location.path, addToHistory = false)
+            is AsmLocation.Library -> {
+                val mnemonic = AsmLibrary.mnemonicFromPageId(location.pageId)
+                if (mnemonic != null) openLibraryInstruction(location.instructionToken ?: mnemonic, addToHistory = false)
+                else openLibraryGuide(location.pageId, addToHistory = false)
+            }
         }
     }
 
     companion object {
         private const val MAX_HISTORY = 100
     }
-}
-
-internal data class AsmInstructionInfo(
-    val mnemonic: String,
-    val name: String,
-    val summary: String,
-    val flags: String = "—",
-)
-
-/** Compact embedded 65C816 reference used by clickable source mnemonics. */
-internal object AsmInstructionReference {
-    private fun i(mnemonic: String, name: String, summary: String, flags: String = "—") =
-        AsmInstructionInfo(mnemonic, name, summary, flags)
-
-    val instructions: Map<String, AsmInstructionInfo> = listOf(
-        i("ADC", "Add with carry", "Add memory and carry to the accumulator.", "N V Z C"),
-        i("AND", "Logical AND", "AND memory with the accumulator.", "N Z"),
-        i("ASL", "Arithmetic shift left", "Shift left; bit 7 enters carry and zero enters bit 0.", "N Z C"),
-        i("BCC", "Branch if carry clear", "Branch when C = 0."), i("BCS", "Branch if carry set", "Branch when C = 1."),
-        i("BEQ", "Branch if equal", "Branch when Z = 1."), i("BMI", "Branch if minus", "Branch when N = 1."),
-        i("BNE", "Branch if not equal", "Branch when Z = 0."), i("BPL", "Branch if plus", "Branch when N = 0."),
-        i("BRA", "Branch always", "Unconditional 8-bit relative branch."),
-        i("BRK", "Software break", "Enter the software interrupt handler.", "I D"),
-        i("BRL", "Branch always long", "Unconditional 16-bit relative branch."),
-        i("BVC", "Branch if overflow clear", "Branch when V = 0."), i("BVS", "Branch if overflow set", "Branch when V = 1."),
-        i("BIT", "Bit test", "Test accumulator bits against memory.", "N V Z"),
-        i("CLC", "Clear carry", "Set C = 0.", "C"), i("CLD", "Clear decimal", "Set D = 0.", "D"),
-        i("CLI", "Clear interrupt disable", "Set I = 0.", "I"), i("CLV", "Clear overflow", "Set V = 0.", "V"),
-        i("CMP", "Compare accumulator", "Subtract for flags without storing a result.", "N Z C"),
-        i("COP", "Coprocessor interrupt", "Enter the COP software interrupt handler.", "I D"),
-        i("CPX", "Compare X", "Compare memory with X.", "N Z C"), i("CPY", "Compare Y", "Compare memory with Y.", "N Z C"),
-        i("DEC", "Decrement", "Subtract one from memory or accumulator.", "N Z"),
-        i("DEX", "Decrement X", "Subtract one from X.", "N Z"), i("DEY", "Decrement Y", "Subtract one from Y.", "N Z"),
-        i("EOR", "Exclusive OR", "XOR memory with the accumulator.", "N Z"),
-        i("INC", "Increment", "Add one to memory or accumulator.", "N Z"),
-        i("INX", "Increment X", "Add one to X.", "N Z"), i("INY", "Increment Y", "Add one to Y.", "N Z"),
-        i("JML", "Jump long", "Jump to a 24-bit address."), i("JMP", "Jump", "Jump to the target address."),
-        i("JSL", "Jump to subroutine long", "Call a subroutine with a 24-bit return address."),
-        i("JSR", "Jump to subroutine", "Call a subroutine in the current program bank."),
-        i("LDA", "Load accumulator", "Load memory into the accumulator.", "N Z"),
-        i("LDX", "Load X", "Load memory into X.", "N Z"), i("LDY", "Load Y", "Load memory into Y.", "N Z"),
-        i("LSR", "Logical shift right", "Shift right; bit 0 enters carry and zero enters the top bit.", "N Z C"),
-        i("MVN", "Block move next", "Move bytes while incrementing X and Y."),
-        i("MVP", "Block move previous", "Move bytes while decrementing X and Y."),
-        i("NOP", "No operation", "Consume time without changing machine state."),
-        i("ORA", "Logical OR", "OR memory with the accumulator.", "N Z"),
-        i("PEA", "Push effective address", "Push a 16-bit immediate value."),
-        i("PEI", "Push effective indirect", "Push the 16-bit value addressed through direct page."),
-        i("PER", "Push effective relative", "Push the effective 16-bit relative address."),
-        i("PHA", "Push accumulator", "Push accumulator."), i("PHB", "Push data bank", "Push data-bank register."),
-        i("PHD", "Push direct page", "Push direct-page register."), i("PHK", "Push program bank", "Push program-bank register."),
-        i("PHP", "Push processor status", "Push processor status."), i("PHX", "Push X", "Push X."), i("PHY", "Push Y", "Push Y."),
-        i("PLA", "Pull accumulator", "Pull accumulator.", "N Z"), i("PLB", "Pull data bank", "Pull data-bank register.", "N Z"),
-        i("PLD", "Pull direct page", "Pull direct-page register.", "N Z"), i("PLP", "Pull processor status", "Pull processor status."),
-        i("PLX", "Pull X", "Pull X.", "N Z"), i("PLY", "Pull Y", "Pull Y.", "N Z"),
-        i("REP", "Reset status bits", "Clear selected processor-status bits."),
-        i("ROL", "Rotate left", "Rotate left through carry.", "N Z C"), i("ROR", "Rotate right", "Rotate right through carry.", "N Z C"),
-        i("RTI", "Return from interrupt", "Restore status and return from an interrupt."),
-        i("RTL", "Return long", "Return from JSL."), i("RTS", "Return", "Return from JSR."),
-        i("SBC", "Subtract with borrow", "Subtract memory and inverse carry from accumulator.", "N V Z C"),
-        i("SEC", "Set carry", "Set C = 1.", "C"), i("SED", "Set decimal", "Set D = 1.", "D"),
-        i("SEI", "Set interrupt disable", "Set I = 1.", "I"), i("SEP", "Set status bits", "Set selected processor-status bits."),
-        i("STA", "Store accumulator", "Store accumulator to memory."), i("STP", "Stop processor", "Stop the processor until reset."),
-        i("STX", "Store X", "Store X to memory."), i("STY", "Store Y", "Store Y to memory."), i("STZ", "Store zero", "Store zero to memory."),
-        i("TAX", "Transfer accumulator to X", "Copy accumulator to X.", "N Z"),
-        i("TAY", "Transfer accumulator to Y", "Copy accumulator to Y.", "N Z"),
-        i("TCD", "Transfer accumulator to direct page", "Copy 16-bit accumulator to direct page.", "N Z"),
-        i("TCS", "Transfer accumulator to stack", "Copy 16-bit accumulator to stack pointer."),
-        i("TDC", "Transfer direct page to accumulator", "Copy direct page to accumulator.", "N Z"),
-        i("TRB", "Test and reset bits", "Test accumulator bits, then clear them in memory.", "Z"),
-        i("TSB", "Test and set bits", "Test accumulator bits, then set them in memory.", "Z"),
-        i("TSC", "Transfer stack to accumulator", "Copy stack pointer to accumulator.", "N Z"),
-        i("TSX", "Transfer stack to X", "Copy stack pointer to X.", "N Z"),
-        i("TXA", "Transfer X to accumulator", "Copy X to accumulator.", "N Z"),
-        i("TXS", "Transfer X to stack", "Copy X to stack pointer."), i("TXY", "Transfer X to Y", "Copy X to Y.", "N Z"),
-        i("TYA", "Transfer Y to accumulator", "Copy Y to accumulator.", "N Z"), i("TYX", "Transfer Y to X", "Copy Y to X.", "N Z"),
-        i("WAI", "Wait for interrupt", "Pause execution until an interrupt."),
-        i("WDM", "Reserved", "Reserved two-byte instruction."), i("XBA", "Exchange accumulator bytes", "Swap accumulator high and low bytes.", "N Z"),
-        i("XCE", "Exchange carry and emulation", "Swap carry with the emulation-mode flag.", "C"),
-    ).associateBy { it.mnemonic }
-
-    fun find(mnemonic: String?): AsmInstructionInfo? = mnemonic?.let { instructions[it.uppercase()] }
 }

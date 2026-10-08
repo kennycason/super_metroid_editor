@@ -5,6 +5,7 @@ import java.io.File
 import java.util.Properties
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -134,6 +135,28 @@ class AsmReferenceTest {
             repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
         }
         assertFalse(File(tempDirectory, "escaped.asm").exists())
+    }
+
+    @Test
+    fun `bank chapters expand and collapse independently of source selection`() = runBlocking {
+        val repository = AsmReferenceRepository(
+            referenceRoot = File(tempDirectory, "asm"),
+            fetchBytes = { fakeSourceArchive() },
+            assetRanges = emptyList(),
+        )
+        repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
+        val state = AsmWorkspaceState(repository)
+        state.loadInstalled()
+
+        assertEquals("bank_80.asm", state.selectedFileId)
+        assertEquals("bank_80.asm", state.expandedSourceFileId)
+
+        state.toggleSourceChapter("bank_80.asm")
+        assertEquals("bank_80.asm", state.selectedFileId)
+        assertNull(state.expandedSourceFileId)
+
+        state.toggleSourceChapter("bank_80.asm")
+        assertEquals("bank_80.asm", state.expandedSourceFileId)
     }
 
     private fun fakeSourceArchive(): ByteArray {

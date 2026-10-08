@@ -94,7 +94,7 @@ Sound
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
 - **Expanded ROM Inspection** — Discover and inspect rooms in supported expanded-ROM layouts in read-only mode. This has been tested with SMART-generated output; no SMART project data is loaded or stored.
-- **ASM Reference Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, source search, clickable cross-bank labels, 65C816 instruction help, navigation history, and a provenance-aware binary inspector. The current workspace is intentionally read-only; see [the ASM workflow contract](docs/asm/reference_workspace.md).
+- **ASM Reference Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, source search, clickable cross-bank labels, navigation history, selectable/copyable text, explicit two-axis scrollbars and panning, and a provenance-aware binary inspector. Its built-in Library teaches practical SNES ASM through selectable, syntax-highlighted examples with clickable mnemonics, indexes all 92 65C816 mnemonics, explains selected `.B`/`.W`/`.L` forms, and links instruction pages to real usages in Super Metroid. The current workspace is intentionally read-only; see [the ASM workflow contract](docs/asm/reference_workspace.md).
 - **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
 
 ## Download
@@ -370,6 +370,8 @@ This project would not be possible without the incredible Super Metroid ROM hack
 - **[Kejardon's SM Documentation](https://patrickjohnston.org/ASM/ROM%20data/Super%20Metroid/Kejardon's%20docs/)** — authoritative sources for room headers, state data, and PLM structures
 - **[SNESLab Wiki](https://sneslab.net/wiki/Graphics_Format)** — SNES graphics format reference
 - **[snes.nesdev.org](https://snes.nesdev.org/wiki/Tiles)** — SNES tile system documentation
+- **[65816 Opcodes](https://github.com/undisbeliever/snesdev-notes/blob/master/pages/65816-opcodes.md)** (undisbeliever, with contributions by InsaneFirebat) — CC BY-SA 4.0 instruction reference used to validate SMEDIT's embedded ASM Library
+- **[W65C816S documentation](https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf)** (Western Design Center) — authoritative processor reference linked by the ASM Library
 
 ### Projects & Tools
 - **[SMILE Editor](https://wiki.metroidconstruction.com/doku.php?id=sm:editor_utility_guides:smile2.5)** — the original Super Metroid level editor that powered 15+ years of community hacks and served as the architectural reference for binary ROM patching
@@ -377,6 +379,8 @@ This project would not be possible without the incredible Super Metroid ROM hack
 - **[Super Metroid Decompilation](https://github.com/snesrev/sm)** (snesrev) — full C reimplementation with struct definitions and per-bank implementations
 - **[SM-SPC](https://github.com/PJBoy/SM-SPC)** (PJBoy) — fully symbolic, assemblable source code for Super Metroid's SPC audio engine
 - **[SM Mod 3.0.80](https://metroidconstruction.com/SMMM/)** — community reference for species IDs and PLM editing conventions
+- **[Asar](https://github.com/RPGHacker/asar)** (Alcaro, RPG Hacker, and contributors) — assembler and syntax documentation used by the Super Metroid source workspace
+- **[Super Metroid disassembly](https://github.com/InsaneFirebat/sm_disassembly)** (InsaneFirebat and contributors) — pinned annotated source used by the read-only ASM workspace
 
 ### Bundled Patches
 Many built-in patches are sourced from or inspired by community work:

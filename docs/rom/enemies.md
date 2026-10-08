@@ -16,6 +16,27 @@ exact aliases, partial overlaps, and transfers spanning adjacent assets. See
 for the byte layout and edit-safety implications; machine-readable evidence is in
 ignored `parity/reports/enemy-headers.json`.
 
+## Vulnerability Table (Bank $B4)
+
+Enemy header offset `+$3C` points to a 22-byte vulnerability table in bank `$B4`.
+The byte indexes are source-verified against `EnemyVulnerabilities` in
+`labels.asm`; they are not the reverse presentation order historically used by
+some editor UIs:
+
+| Index | Weapon/contact case |
+|---:|---|
+| 0–3 | Power, Wave, Ice, Ice + Wave |
+| 4–7 | Spazer, Spazer + Wave, Spazer + Ice, Spazer + Ice + Wave |
+| 8–11 | Plasma, Plasma + Wave / shinespark echo, Plasma + Ice, Plasma + Ice + Wave |
+| 12–15 | Missile, Super Missile, Bomb, Power Bomb |
+| 16–18 | Speed Booster contact, Shinespark contact, Screw Attack |
+| 19–21 | Charged Beam (including SBA), Pseudo-Screw Attack, Unused |
+
+Pseudo-Screw is spin-jump contact while holding a fully charged beam; it is not
+Space Jump. The low seven bits store twice the damage multiplier (`2` = 1× and
+`4` = 2×). Bit 7 normally prevents freezing, so `130` (`$82`) means normal
+damage without freezing. `$FF` is the special freeze-without-damage value.
+
 ## Enemy Population Set (Bank $A1)
 
 Each room state references an enemy population set. Each entry is 16 bytes:

@@ -39,6 +39,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,10 +56,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.supermetroid.editor.data.AppConfig
@@ -118,6 +123,9 @@ import java.awt.Frame
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -152,6 +160,21 @@ private val READ_ONLY_INSPECTABLE_TABS = setOf(
 private fun isTabAvailableForRom(tab: Int, romReadOnly: Boolean): Boolean =
     !romReadOnly || tab in READ_ONLY_INSPECTABLE_TABS
 
+private fun floatingWindowConfig(windowState: WindowState): WindowConfig? {
+    val position = windowState.position
+    val size = windowState.size
+    if (windowState.placement != WindowPlacement.Floating || !position.isSpecified ||
+        !size.width.isSpecified || !size.height.isSpecified
+    ) {
+        return null
+    }
+    return WindowConfig(
+        x = position.x.value.toInt(),
+        y = position.y.value.toInt(),
+        width = size.width.value.toInt(),
+        height = size.height.value.toInt(),
+    )
+}
 
 fun main() = application {
     val scope = rememberCoroutineScope()
@@ -240,16 +263,20 @@ fun main() = application {
             WindowPosition(appSettings.window.x.dp, appSettings.window.y.dp)
         else WindowPosition.PlatformDefault
     )
+    LaunchedEffect(windowState) {
+        snapshotFlow { floatingWindowConfig(windowState) }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collectLatest { window ->
+                delay(400)
+                AppConfig.update { copy(window = window) }
+            }
+    }
 
     Window(
         onCloseRequest = {
-            AppConfig.update {
-                copy(window = WindowConfig(
-                    x = windowState.position.x.value.toInt(),
-                    y = windowState.position.y.value.toInt(),
-                    width = windowState.size.width.value.toInt(),
-                    height = windowState.size.height.value.toInt()
-                ))
+            floatingWindowConfig(windowState)?.let { window ->
+                AppConfig.update { copy(window = window) }
             }
             exitApplication()
         },
@@ -489,6 +516,14 @@ fun main() = application {
                                         showRoomFlatSlopeSurfaces = enabled
                                         AppConfig.update { copy(roomEditorShowFlatSlopeSurfaces = enabled) }
                                     },
+                                    onWindowSizeRequest = { width, height ->
+                                        windowState.isMinimized = false
+                                        windowState.placement = WindowPlacement.Floating
+                                        windowState.size = DpSize(width.dp, height.dp)
+                                        AppConfig.update {
+                                            copy(window = window.copy(width = width, height = height))
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -583,8 +618,23 @@ fun main() = application {
                 }
                 
                 // Main content: resizable left column + right canvas
-                var leftColumnWidthDp by remember { mutableStateOf(330f) }
-                var tilesetHeightDp by remember { mutableStateOf(Float.NaN) }
+                var leftColumnWidthDp by remember { mutableStateOf(appSettings.mainSidebarWidthDp) }
+                var tilesetHeightDp by remember {
+                    mutableStateOf(
+                        appSettings.sidebarBottomPaneHeightDp.takeIf { it.isFinite() && it > 0f }
+                            ?: Float.NaN,
+                    )
+                }
+                LaunchedEffect(leftColumnWidthDp, tilesetHeightDp) {
+                    delay(300)
+                    val persistedBottomHeight = tilesetHeightDp.takeIf { it.isFinite() && it > 0f }
+                    AppConfig.update {
+                        copy(
+                            mainSidebarWidthDp = leftColumnWidthDp,
+                            sidebarBottomPaneHeightDp = persistedBottomHeight ?: sidebarBottomPaneHeightDp,
+                        )
+                    }
+                }
                 var leftTab by remember { mutableStateOf(0) }
                 LaunchedEffect(romReadOnly, leftTab) {
                     if (!isTabAvailableForRom(leftTab, romReadOnly)) leftTab = TAB_ROOMS
@@ -689,7 +739,7 @@ fun main() = application {
                             @OptIn(ExperimentalLayoutApi::class)
                             FlowRow(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(1.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
                                 val tabNames = listOf("Rooms", "Items", "Tiles", "Patches", "Sound", "Sprites", "Map", "Text", "Enemy", "Boss", "ASM")
@@ -712,7 +762,7 @@ fun main() = application {
                                                     editorState.seedDefaultPatches()
                                                 }
                                             }
-                                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                                            .padding(horizontal = 7.dp, vertical = 6.dp)
                                     )
                                 }
                             }
