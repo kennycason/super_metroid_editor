@@ -1,0 +1,4 @@
+# Generated ASM snapshots and ROM-derived assets stay local.
+/original/
+/workspace/
+/.smedit-project-asm.properties

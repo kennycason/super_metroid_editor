@@ -1,6 +1,7 @@
 package com.supermetroid.editor.asm
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
@@ -13,16 +14,25 @@ internal sealed interface AsmWorkspaceLocation {
         val fileId: String,
         val lineIndex: Int,
         val referenceSymbol: AsmSymbolId? = null,
+        val workspaceKind: AsmWorkspaceKind = AsmWorkspaceKind.REFERENCE,
     ) : AsmWorkspaceLocation
-    data class Asset(val path: String) : AsmWorkspaceLocation
+    data class Asset(
+        val path: String,
+        val workspaceKind: AsmWorkspaceKind = AsmWorkspaceKind.REFERENCE,
+    ) : AsmWorkspaceLocation
     data class Library(val pageId: String, val instructionToken: String?) : AsmWorkspaceLocation
     data class Rom(val view: AsmRomPreviewView) : AsmWorkspaceLocation
 }
 
 internal class AsmWorkspaceState(
     private val repository: AsmReferenceRepository = AsmReferenceRepository(),
+    private val projectRepository: AsmProjectWorkspaceRepository = AsmProjectWorkspaceRepository(),
 ) {
     var workspace by mutableStateOf<AsmReferenceWorkspace?>(null)
+        private set
+    var workspaceKind by mutableStateOf(AsmWorkspaceKind.REFERENCE)
+        private set
+    var projectWorkspace by mutableStateOf<AsmProjectWorkspace?>(null)
         private set
     var busy by mutableStateOf(false)
         private set
@@ -64,15 +74,34 @@ internal class AsmWorkspaceState(
         private set
     var previewBusy by mutableStateOf(false)
         private set
+    var editSessionSerial by mutableStateOf(0L)
+        private set
 
     private val backStack = mutableListOf<AsmWorkspaceLocation>()
     private val forwardStack = mutableListOf<AsmWorkspaceLocation>()
     private var pendingSnesAddress: Int? = null
+    private var referenceWorkspace: AsmReferenceWorkspace? = null
+    private var boundProjectFilePath: String = ""
+    private var boundProjectEnabled: Boolean = false
+    private val sourceBuffers = mutableStateMapOf<String, String>()
+    private val savedSourceTexts = mutableMapOf<String, String>()
 
     val canGoBack: Boolean get() = backStack.isNotEmpty()
     val canGoForward: Boolean get() = forwardStack.isNotEmpty()
     val assetsMatchCurrentRom: Boolean
         get() = currentRomSha256 != null && currentRomSha256 == workspace?.metadata?.romSha256
+    val referenceMetadata: AsmReferenceMetadata? get() = referenceWorkspace?.metadata
+    val referenceAssetsMatchCurrentRom: Boolean
+        get() = currentRomSha256 != null && currentRomSha256 == referenceWorkspace?.metadata?.romSha256
+    val hasReferenceWorkspace: Boolean get() = referenceWorkspace != null
+    val hasProjectWorkspace: Boolean get() = projectWorkspace != null
+    val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
+    val unsavedSourceFileIds: Set<String>
+        get() = sourceBuffers.keys.filterTo(linkedSetOf(), ::hasUnsavedSourceChanges)
+    val isProjectSourceEditable: Boolean
+        get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
+            browserMode == AsmBrowserMode.SOURCE &&
+            selectedFileId != null
 
     suspend fun loadInstalled() {
         if (busy) return
@@ -80,7 +109,10 @@ internal class AsmWorkspaceState(
         progress = "Opening ASM reference…"
         error = null
         try {
-            workspace = withContext(Dispatchers.IO) { repository.loadInstalled() }
+            referenceWorkspace = withContext(Dispatchers.IO) { repository.loadInstalled() }
+            workspace = referenceWorkspace
+            workspaceKind = AsmWorkspaceKind.REFERENCE
+            if (boundProjectEnabled) loadBoundProjectWorkspace()
             ensureSelection()
         } catch (problem: Exception) {
             error = problem.message ?: "Could not open the ASM reference"
@@ -99,11 +131,62 @@ internal class AsmWorkspaceState(
     }
 
     suspend fun download(romBytes: ByteArray, romName: String) {
-        runOperation { update -> repository.installOrRefresh(romBytes, romName, update) }
+        runReferenceOperation { update -> repository.installOrRefresh(romBytes, romName, update) }
     }
 
     suspend fun refreshAssets(romBytes: ByteArray, romName: String) {
-        runOperation { update -> repository.refreshAssets(romBytes, romName, update) }
+        runReferenceOperation { update -> repository.refreshAssets(romBytes, romName, update) }
+    }
+
+    suspend fun bindProject(projectFilePath: String, enabled: Boolean) {
+        val changedProject = boundProjectFilePath != projectFilePath
+        boundProjectFilePath = projectFilePath
+        boundProjectEnabled = enabled
+        if (changedProject) clearEditSessions()
+        if (!enabled || projectFilePath.isBlank()) {
+            projectWorkspace = null
+            if (workspaceKind == AsmWorkspaceKind.PROJECT) showReferenceWorkspace()
+            return
+        }
+        loadBoundProjectWorkspace()
+    }
+
+    suspend fun enableProjectWorkspace(projectFilePath: String): Boolean {
+        val reference = referenceWorkspace ?: run {
+            error = "Download the ASM reference before enabling project ASM"
+            return false
+        }
+        if (busy) return false
+        busy = true
+        error = null
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.initialize(projectFilePath, reference) { message -> progress = message }
+            }
+            boundProjectFilePath = projectFilePath
+            boundProjectEnabled = true
+            projectWorkspace = result
+            activateProjectWorkspace(result)
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not create the project ASM workspace"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    fun showReferenceWorkspace() {
+        val reference = referenceWorkspace ?: return
+        workspace = reference
+        workspaceKind = AsmWorkspaceKind.REFERENCE
+        ensureSelection()
+        navigationSerial++
+    }
+
+    fun showProjectWorkspace() {
+        projectWorkspace?.let(::activateProjectWorkspace)
     }
 
     fun dismissError() {
@@ -207,6 +290,93 @@ internal class AsmWorkspaceState(
         selectedInstructionToken = null
         navigationSerial++
         if (addToHistory) forwardStack.clear()
+    }
+
+    fun sourceEditText(fileId: String): String = sourceBuffers[fileId]
+        ?: workspace?.index?.file(fileId)?.file?.readText().orEmpty()
+
+    fun updateSourceEditText(fileId: String, text: String) {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || selectedFileId != fileId) return
+        if (sourceBuffers[fileId] == null) {
+            val diskText = workspace?.index?.file(fileId)?.file?.readText() ?: return
+            savedSourceTexts[fileId] = diskText
+        }
+        sourceBuffers[fileId] = text
+    }
+
+    fun hasUnsavedSourceChanges(fileId: String): Boolean {
+        val buffer = sourceBuffers[fileId] ?: return false
+        val saved = savedSourceTexts[fileId] ?: workspace?.index?.file(fileId)?.file?.readText() ?: return false
+        return buffer != saved
+    }
+
+    fun discardSourceBuffer(fileId: String? = selectedFileId) {
+        val selectedId = fileId ?: return
+        val source = workspace?.index?.file(selectedId) ?: return
+        val diskText = source.file.readText()
+        sourceBuffers[selectedId] = diskText
+        savedSourceTexts[selectedId] = diskText
+        editSessionSerial++
+    }
+
+    suspend fun saveSource(fileId: String? = selectedFileId): Boolean {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank()) return false
+        val selectedId = fileId ?: return false
+        val text = sourceBuffers[selectedId] ?: return true
+        if (busy) return false
+        busy = true
+        error = null
+        return try {
+            progress = "Saving $selectedId…"
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.saveSource(boundProjectFilePath, selectedId, text)
+            }
+            projectWorkspace = result
+            workspace = result.referenceWorkspace
+            savedSourceTexts[selectedId] = text
+            selectedLineIndex = selectedLineIndex.coerceIn(
+                0,
+                (workspace?.index?.file(selectedId)?.lines?.lastIndex ?: 0).coerceAtLeast(0),
+            )
+            activeReferenceSymbol = null
+            navigationSerial++
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not save $selectedId"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun restoreOriginalSource(fileId: String? = selectedFileId): Boolean {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank()) return false
+        val selectedId = fileId ?: return false
+        if (busy) return false
+        busy = true
+        error = null
+        return try {
+            progress = "Restoring $selectedId…"
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.restoreSource(boundProjectFilePath, selectedId)
+            }
+            projectWorkspace = result
+            workspace = result.referenceWorkspace
+            val restored = workspace?.index?.file(selectedId)?.file?.readText().orEmpty()
+            sourceBuffers[selectedId] = restored
+            savedSourceTexts[selectedId] = restored
+            activeReferenceSymbol = null
+            editSessionSerial++
+            navigationSerial++
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not restore $selectedId"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
     }
 
     fun toggleSourceChapter(fileId: String) {
@@ -354,7 +524,7 @@ internal class AsmWorkspaceState(
         restoreLocation(target)
     }
 
-    private suspend fun runOperation(operation: ((String) -> Unit) -> AsmReferenceWorkspace) {
+    private suspend fun runReferenceOperation(operation: ((String) -> Unit) -> AsmReferenceWorkspace) {
         if (busy) return
         busy = true
         error = null
@@ -362,7 +532,8 @@ internal class AsmWorkspaceState(
             val result = withContext(Dispatchers.IO) {
                 operation { message -> progress = message }
             }
-            workspace = result
+            referenceWorkspace = result
+            if (workspaceKind == AsmWorkspaceKind.REFERENCE) workspace = result
             ensureSelection()
         } catch (problem: Exception) {
             error = problem.message ?: "ASM operation failed"
@@ -370,6 +541,32 @@ internal class AsmWorkspaceState(
             busy = false
             progress = null
         }
+    }
+
+    private suspend fun loadBoundProjectWorkspace() {
+        if (boundProjectFilePath.isBlank()) return
+        val result = withContext(Dispatchers.IO) { projectRepository.load(boundProjectFilePath) }
+        if (result == null) {
+            projectWorkspace = null
+            if (workspaceKind == AsmWorkspaceKind.PROJECT) showReferenceWorkspace()
+            error = "This project has ASM enabled, but its sidecar workspace is missing or incomplete. Recreate it from the pinned reference."
+        } else {
+            projectWorkspace = result
+            activateProjectWorkspace(result)
+        }
+    }
+
+    private fun activateProjectWorkspace(project: AsmProjectWorkspace) {
+        workspace = project.referenceWorkspace
+        workspaceKind = AsmWorkspaceKind.PROJECT
+        ensureSelection()
+        navigationSerial++
+    }
+
+    private fun clearEditSessions() {
+        sourceBuffers.clear()
+        savedSourceTexts.clear()
+        editSessionSerial++
     }
 
     private fun ensureSelection() {
@@ -388,9 +585,9 @@ internal class AsmWorkspaceState(
 
     internal fun locationSnapshot(): AsmWorkspaceLocation? = when (browserMode) {
         AsmBrowserMode.SOURCE -> selectedFileId?.let {
-            AsmWorkspaceLocation.Source(it, selectedLineIndex, activeReferenceSymbol)
+            AsmWorkspaceLocation.Source(it, selectedLineIndex, activeReferenceSymbol, workspaceKind)
         }
-        AsmBrowserMode.ASSETS -> selectedAssetPath?.let(AsmWorkspaceLocation::Asset)
+        AsmBrowserMode.ASSETS -> selectedAssetPath?.let { AsmWorkspaceLocation.Asset(it, workspaceKind) }
         AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(selectedLibraryPageId, selectedInstructionToken)
         AsmBrowserMode.ROM -> AsmWorkspaceLocation.Rom(romPreviewView)
     }
@@ -404,6 +601,7 @@ internal class AsmWorkspaceState(
     internal fun restoreLocation(location: AsmWorkspaceLocation) {
         when (location) {
             is AsmWorkspaceLocation.Source -> {
+                restoreWorkspaceKind(location.workspaceKind)
                 activeReferenceSymbol = location.referenceSymbol
                 openSource(
                     location.fileId,
@@ -412,7 +610,10 @@ internal class AsmWorkspaceState(
                     preserveReferences = true,
                 )
             }
-            is AsmWorkspaceLocation.Asset -> openAsset(location.path, addToHistory = false)
+            is AsmWorkspaceLocation.Asset -> {
+                restoreWorkspaceKind(location.workspaceKind)
+                openAsset(location.path, addToHistory = false)
+            }
             is AsmWorkspaceLocation.Library -> {
                 val mnemonic = AsmLibrary.mnemonicFromPageId(location.pageId)
                 if (mnemonic != null) openLibraryInstruction(location.instructionToken ?: mnemonic, addToHistory = false)
@@ -420,6 +621,20 @@ internal class AsmWorkspaceState(
             }
             is AsmWorkspaceLocation.Rom -> selectRomPreviewView(location.view, addToHistory = false)
         }
+    }
+
+    private fun restoreWorkspaceKind(kind: AsmWorkspaceKind) {
+        when (kind) {
+            AsmWorkspaceKind.REFERENCE -> referenceWorkspace?.let {
+                workspace = it
+                workspaceKind = AsmWorkspaceKind.REFERENCE
+            }
+            AsmWorkspaceKind.PROJECT -> projectWorkspace?.let {
+                workspace = it.referenceWorkspace
+                workspaceKind = AsmWorkspaceKind.PROJECT
+            }
+        }
+        ensureSelection()
     }
 
     companion object {

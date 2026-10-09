@@ -1,10 +1,12 @@
 # ASM Reference Workspace
 
-SMEDIT's **ASM** tab is the first, deliberately read-only layer of the future
-assembly workflow. It turns the exact annotated Super Metroid disassembly used
-by the parity suite into an IDE-like reference inside the editor, without making
-either an ASM checkout or a second ROM-selection step a prerequisite for ordinary
-ROM editing.
+SMEDIT's **ASM** tab begins with a deliberately read-only reference layer and can
+now opt an editable project into an isolated **Project ASM** workspace. The
+reference turns the exact annotated Super Metroid disassembly used by the parity
+suite into an IDE-like knowledge browser without making either an ASM checkout
+or a second ROM-selection step a prerequisite for ordinary ROM editing. Project
+ASM establishes safe source ownership and editing; compilation remains a later,
+explicit layer.
 
 ## User workflow
 
@@ -51,6 +53,16 @@ ROM editing.
     metatiles, palettes and CRE, enemy/boss and Samus graphics, pause-map tilemaps
     and graphics, editable text entries, and music song sets. Intentional aliases
     produce explicit destinations instead of silently choosing one owner.
+11. Use the persistent workspace control at the bottom of the sidebar and choose
+    **Enable Project ASM** to create an isolated source workspace beside the
+    `.smedit` file. Its collapsed summary always reports whether Project ASM is
+    disabled, enabled, or needs repair; expand it for provenance and asset-sync
+    details. Switch between
+    **Reference** and **Project** at any time. Project source offers syntax-aware
+    editing, unsaved and saved-modification indicators, `Cmd/Ctrl+S`, buffer
+    revert, and a confirmed **Restore original** action. Saving reparses the
+    complete source index so label navigation and references reflect the saved
+    project text. No assembler runs and no ROM write is produced by this layer.
 
 The application-level **Back** and **Forward** buttons beside **EMU** preserve
 the workspace and selected resource across these jumps. For example, opening a
@@ -59,6 +71,13 @@ bank/line and the same room respectively. Ordinary tab, room, tileset, sprite,
 sound-track, map-area, and text-entry context joins the same bounded history.
 ASM's own compact history remains available for fine-grained
 source/asset/Library browsing.
+
+When **Project** source is selected, the source pane is immediately editable;
+there is no second per-file edit mode. **Save**, **Revert buffer**, and
+**Restore original** provide the explicit write and recovery boundaries. Large
+banks are presented in bounded line pages so syntax highlighting, selection,
+and scrolling remain reliable; edits from every page are merged into the same
+whole-file project buffer.
 
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
@@ -70,11 +89,14 @@ between source and Library pages. `Cmd/Ctrl+F` moves focus to the current
 Source/Assets/Library search field.
 
 The Library is bundled and remains available before the external disassembly is
-downloaded. Its eight SMEDIT-authored lessons are intentionally a field guide,
+downloaded. Its nine SMEDIT-authored lessons are intentionally a field guide,
 not a general computer-science course. Their selectable, syntax-highlighted
 examples progress from literal formats, strings, tables, and bit masks through
 width state, pointers, comparisons, calls, and SNES runtime patterns; mnemonics
-inside the examples open their instruction pages. The complete 92-mnemonic index
+inside the examples open their instruction pages. A capstone walkthrough traces
+Samus's jump from `Make_Samus_Jump` to its paired fixed-point physics tables,
+makes a reversible project-owned source edit, and defines the exact compilation
+and ROM-diff checks that will eventually prove it safe. The complete 92-mnemonic index
 is validated against undisbeliever's **65816 Opcodes** reference (CC BY-SA 4.0),
 the official Asar manual, and Western Design Center processor documentation.
 Attribution and source links are visible both at the bottom of Library pages and
@@ -101,6 +123,18 @@ the reference to a `.smedit` project, or commit downloaded source/assets to this
 repository. Metadata retains only the ROM display name, normalized size, and
 SHA-256 fingerprint.
 
+An opted-in project's files live beside the project at
+`<project-name>_smedit/asm/`. `original/` is an immutable, offline snapshot of
+the pinned source and ROM-derived assets at opt-in time; `workspace/` is the
+editable tree that future compilation will consume. Both generated trees are
+ignored by the sidecar's own `.gitignore`; intentionally saved source changes are
+mirrored under `overrides/src/`, which is small, reviewable, and suitable for
+source control. A recreated local tree reapplies those overrides automatically.
+The `.smedit` JSON records only that ASM mode is enabled and its source revision.
+Initial creation is staged and validated before activation. Repairing an
+incomplete sidecar preserves the prior tree as a recoverable hidden backup rather
+than deleting it.
+
 Installation uses a staging directory and activates it only after the archive,
 entry point, asset ranges, and counts validate. Refreshing assets uses the same
 staged replacement. Archive paths, expanded size, entry count, and extraction
@@ -120,7 +154,7 @@ The manifest records paths and ROM ranges only; it contains no extracted bytes.
 
 ## Accuracy boundary
 
-This first workspace is an annotated **vanilla-source reference**, not a general
+The global workspace is an annotated **vanilla-source reference**, not a general
 binary decompiler. For a normal layout-preserving hack, the data files reflect
 the bytes at the loaded ROM's known vanilla ranges and are useful for comparison.
 If a hack relocates a resource or adds new custom assembly, the vanilla source
@@ -182,6 +216,10 @@ editing.
 
 - `AsmReferenceRepository` owns download, archive safety, transactional cache
   activation, ROM normalization, exact range extraction, and metadata.
+- `AsmProjectWorkspaceRepository` owns transactional project-sidecar creation,
+  immutable original/working-tree separation, bounded atomic source writes,
+  trackable source overrides, modified-file detection, offline restore, and
+  recoverable repair of incomplete workspaces.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
   every source file, authored section, global label, scoped local label,
   cross-reference, and extracted asset. Reference resolution uses the same
@@ -195,8 +233,9 @@ editing.
   decoders and maps recognized source/assets back to Rooms, Tiles, Sprites, and
   Sound. The index is built once per loaded ROM so browsing assets does not
   repeatedly scan the room and species catalogs.
-- `AsmWorkspaceState` owns selection, source/asset/library mode, cross-mode
-  history, ROM freshness, preview state, progress, and safe navigation.
+- `AsmWorkspaceState` owns reference/project selection, source edit buffers and
+  dirty state, source/asset/library mode, cross-mode history, ROM freshness,
+  preview state, progress, and safe navigation.
 - `RomExporter.build()` is the single disk-independent export transaction.
   `RomExporter.export()` only adds the atomic output-file write around that
   validated result, so preview and export cannot drift into separate pipelines.
@@ -221,16 +260,18 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 
 ## Next layers
 
-The read-only boundary is intentional. Follow-up work can now be incremental:
+The separation between editable source and executable output is intentional.
+Follow-up work can now be incremental:
 
 1. Extend the reverse semantic bridge to remaining specialized title/menu,
    cinematic, and generated-runtime assets as those editors gain stable semantic
    selection entry points.
-2. Create a project-owned writable ASM workspace with explicit dirty files,
-   compile diagnostics, and symbol output.
+2. Add the pinned assembler toolchain, compile diagnostics, and generated symbol
+   output to the project-owned workspace now that editable files, dirty state,
+   persistence, and restore semantics are established.
 3. Feed semantic editor changes into generated assets/source, assemble with the
    pinned toolchain, and run the existing ownership/preflight checks over the
    resulting ROM delta so patch-mode features remain compatible.
 
-Writable source, arbitrary-hack disassembly, merge/conflict handling, and ASM
-compilation are not implied by the current browser.
+Arbitrary-hack disassembly, source merge/conflict handling, and ASM compilation
+are not implied by the current editable workspace.

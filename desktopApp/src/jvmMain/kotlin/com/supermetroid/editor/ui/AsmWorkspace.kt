@@ -10,6 +10,7 @@ import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -36,6 +37,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -46,6 +48,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -88,6 +92,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +105,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import com.supermetroid.editor.asm.AsmAsset
 import com.supermetroid.editor.asm.AsmAddressQuery
 import com.supermetroid.editor.asm.AsmAddressSpace
@@ -118,6 +128,7 @@ import com.supermetroid.editor.asm.AsmSemanticBridge
 import com.supermetroid.editor.asm.AsmSemanticIndex
 import com.supermetroid.editor.asm.AsmSourceFile
 import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.asm.AsmWorkspaceKind
 import com.supermetroid.editor.asm.formatPcOffset
 import com.supermetroid.editor.asm.formatSnesAddress
 import com.supermetroid.editor.asm.parseAsmAddressQuery
@@ -146,6 +157,9 @@ internal fun AsmWorkspaceSidebar(
     state: AsmWorkspaceState,
     romParser: RomParser?,
     romName: String?,
+    projectFilePath: String,
+    projectAsmEnabled: Boolean,
+    onProjectAsmEnabled: () -> Unit,
     buildRomPreview: (() -> AsmRomPreview?)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -175,14 +189,13 @@ internal fun AsmWorkspaceSidebar(
         scope.launch { state.buildRomPreview(build) }
     }
 
+    fun enableProjectAsm() {
+        scope.launch {
+            if (state.enableProjectWorkspace(projectFilePath)) onProjectAsmEnabled()
+        }
+    }
+
     Column(modifier = modifier.padding(8.dp)) {
-        Text("ASM Reference", fontSize = fs.heading, fontWeight = FontWeight.Bold)
-        Text(
-            "Read-only, source-backed Super Metroid knowledge workspace",
-            fontSize = fs.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth()) {
             AsmModeButton("Source", state.browserMode == AsmBrowserMode.SOURCE) {
                 state.showSourceBrowser()
@@ -195,6 +208,17 @@ internal fun AsmWorkspaceSidebar(
             }
             AsmModeButton("ROM", state.browserMode == AsmBrowserMode.ROM) {
                 state.showRomBrowser()
+            }
+        }
+        if (state.hasProjectWorkspace) {
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth()) {
+                AsmModeButton("Reference", state.workspaceKind == AsmWorkspaceKind.REFERENCE) {
+                    state.showReferenceWorkspace()
+                }
+                AsmModeButton("Project", state.workspaceKind == AsmWorkspaceKind.PROJECT) {
+                    state.showProjectWorkspace()
+                }
             }
         }
 
@@ -246,52 +270,87 @@ internal fun AsmWorkspaceSidebar(
             )
         }
 
-        if (state.browserMode != AsmBrowserMode.ROM) {
-            Spacer(Modifier.height(6.dp))
-            AsmReferenceControls(
-                state = state,
-                romAvailable = romParser != null,
-                onDownload = ::download,
-                onSyncAssets = ::syncAssets,
-            )
-        }
+        Spacer(Modifier.height(6.dp))
+        AsmWorkspaceControls(
+            state = state,
+            romAvailable = romParser != null,
+            projectFilePath = projectFilePath,
+            projectAsmEnabled = projectAsmEnabled,
+            onDownload = ::download,
+            onSyncAssets = ::syncAssets,
+            onEnableProjectAsm = ::enableProjectAsm,
+        )
     }
 }
 
 @Composable
-private fun AsmReferenceControls(
+private fun AsmWorkspaceControls(
     state: AsmWorkspaceState,
     romAvailable: Boolean,
+    projectFilePath: String,
+    projectAsmEnabled: Boolean,
     onDownload: () -> Unit,
     onSyncAssets: () -> Unit,
+    onEnableProjectAsm: () -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
-    val workspace = state.workspace
+    val referenceReady = state.hasReferenceWorkspace
+    val projectReady = state.hasProjectWorkspace
     var expanded by remember { mutableStateOf(false) }
-    val showDetails = expanded || workspace == null || state.busy || state.error != null
+    val showDetails = expanded || !referenceReady || state.busy || state.error != null
+    val summary = when {
+        state.busy -> state.progress ?: "Updating ASM workspace…"
+        projectReady -> {
+            val modified = state.projectModifiedFileIds.size
+            val unsaved = state.unsavedSourceFileIds.size
+            "Project ASM enabled" + when {
+                unsaved > 0 -> " · $unsaved unsaved"
+                modified > 0 -> " · $modified edited"
+                else -> " · clean"
+            }
+        }
+        projectAsmEnabled -> "Project ASM needs repair"
+        else -> "Project ASM disabled"
+    }
+    val summaryColor = when {
+        state.error != null || projectAsmEnabled && !projectReady -> MaterialTheme.colorScheme.error
+        projectReady -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurface
+    }
 
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+        color = if (projectReady) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
         shape = RoundedCornerShape(6.dp),
-        modifier = Modifier.fillMaxWidth().clickable(enabled = workspace != null) { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    when {
-                        state.busy -> state.progress ?: "Updating ASM reference…"
-                        workspace == null -> "ASM source is not downloaded"
-                        state.assetsMatchCurrentRom -> "ASM source + ROM assets ready"
-                        else -> "ASM assets belong to another ROM"
-                    },
-                    fontSize = fs.detail,
+                    summary,
+                    fontSize = fs.body,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (workspace != null && !state.assetsMatchCurrentRom) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurface,
+                    color = summaryColor,
                     modifier = Modifier.weight(1f),
                 )
-                if (workspace != null) {
-                    Text(if (showDetails) "▾" else "▸", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (showDetails) "▾" else "▸", fontSize = fs.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            if (!projectReady && referenceReady && !state.busy) {
+                Spacer(Modifier.height(7.dp))
+                Button(
+                    onClick = onEnableProjectAsm,
+                    enabled = projectFilePath.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ASM_CONTROL_SHAPE,
+                ) {
+                    Text(
+                        if (projectAsmEnabled) "Repair Project ASM" else "Enable Project ASM",
+                        fontSize = fs.body,
+                    )
                 }
             }
 
@@ -314,18 +373,23 @@ private fun AsmReferenceControls(
 
             if (showDetails && !state.busy) {
                 Spacer(Modifier.height(7.dp))
-                if (workspace == null) {
+                Divider()
+                Spacer(Modifier.height(7.dp))
+                if (!referenceReady) {
+                    Text("ASM reference", fontSize = fs.detail, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(5.dp))
                     Button(
                         onClick = onDownload,
                         enabled = romAvailable,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = ASM_CONTROL_SHAPE,
                     ) {
                         Icon(Icons.Default.Download, null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Download ASM Reference", fontSize = fs.body)
                     }
                     Text(
-                        "Downloads the pinned source and derives its .bin assets from the ROM already open in SMEDIT. The ROM itself is never copied.",
+                        "Downloads pinned source and derives .bin assets from the open ROM; the ROM itself is never copied.",
                         fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),
@@ -339,6 +403,7 @@ private fun AsmReferenceControls(
                             enabled = romAvailable,
                             modifier = Modifier.weight(1f),
                             contentPadding = ButtonDefaults.ContentPadding,
+                            shape = ASM_CONTROL_SHAPE,
                         ) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
@@ -349,12 +414,41 @@ private fun AsmReferenceControls(
                             enabled = romAvailable,
                             modifier = Modifier.weight(1f),
                             contentPadding = ButtonDefaults.ContentPadding,
+                            shape = ASM_CONTROL_SHAPE,
                         ) {
                             Icon(Icons.Default.Download, null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Redownload", fontSize = fs.detail)
                         }
                     }
+                }
+                if (projectReady) {
+                    Spacer(Modifier.height(8.dp))
+                    Divider()
+                    Spacer(Modifier.height(7.dp))
+                    Text("Project ASM enabled", fontSize = fs.body, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${state.projectModifiedFileIds.size} saved edits · ${state.unsavedSourceFileIds.size} unsaved buffers",
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Original snapshot ${AsmReferenceContract.COMMIT.take(12)} · compilation is not enabled yet",
+                        fontSize = fs.detail,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (referenceReady) {
+                    Spacer(Modifier.height(7.dp))
+                    Text(
+                        if (projectAsmEnabled) {
+                            "Repair recreates the local working tree and reapplies saved source overrides."
+                        } else {
+                            "Enable Project ASM to create an isolated editable workspace for this project."
+                        },
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -364,18 +458,18 @@ private fun AsmReferenceControls(
 @Composable
 private fun AsmReferenceStatus(state: AsmWorkspaceState) {
     val fs = LocalEditorTheme.current.fontSize.value
-    val workspace = state.workspace
+    val metadata = state.referenceMetadata
     val background = when {
-        workspace == null -> MaterialTheme.colorScheme.surfaceVariant
-        state.assetsMatchCurrentRom -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        metadata == null -> MaterialTheme.colorScheme.surfaceVariant
+        state.referenceAssetsMatchCurrentRom -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
         else -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)
     }
     Surface(color = background, shape = RoundedCornerShape(6.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(8.dp)) {
             Text(
                 when {
-                    workspace == null -> "Reference not downloaded"
-                    state.assetsMatchCurrentRom -> "Source + assets ready"
+                    metadata == null -> "Reference not downloaded"
+                    state.referenceAssetsMatchCurrentRom -> "Reference source + assets ready"
                     else -> "Source ready · assets belong to another ROM"
                 },
                 fontSize = fs.body,
@@ -383,12 +477,12 @@ private fun AsmReferenceStatus(state: AsmWorkspaceState) {
             )
             Text(
                 "InsaneFirebat/sm_disassembly · ${AsmReferenceContract.COMMIT.take(12)}" +
-                    (workspace?.let { " · ${it.metadata.assetCount} assets" } ?: ""),
+                    (metadata?.let { " · ${it.assetCount} assets" } ?: ""),
                 fontSize = fs.detail,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            workspace?.metadata?.romName?.let {
+            metadata?.romName?.let {
                 Text("Assets: $it", fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -428,6 +522,7 @@ private fun AsmRomPreviewTree(
             onClick = onBuild,
             enabled = romAvailable && !state.previewBusy,
             modifier = Modifier.fillMaxWidth(),
+            shape = ASM_CONTROL_SHAPE,
         ) {
             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
@@ -837,7 +932,28 @@ private fun SourceFileRow(
             )
         }
         Column(Modifier.weight(1f)) {
-            Text(source.displayName, fontSize = fs.body, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    source.displayName,
+                    fontSize = fs.body,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.weight(1f),
+                )
+                when {
+                    state.hasUnsavedSourceChanges(source.id) -> Text(
+                        "UNSAVED",
+                        fontSize = fs.statusBar,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    source.id in state.projectModifiedFileIds -> Text(
+                        "EDITED",
+                        fontSize = fs.statusBar,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
             if (source.description.isNotBlank()) {
                 Text(source.description, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
@@ -1330,20 +1446,28 @@ private fun AsmLibraryExample(
         Text(example.title, fontSize = fs.body, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
         Surface(color = codeBackground(), shape = RoundedCornerShape(7.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                example.code.lines().forEach { line ->
-                    val annotated = asmAnnotatedLine(line, knownLabels = localLabels)
-                    AsmSelectableLinkedText(
-                        text = annotated,
-                        style = TextStyle(
-                            fontSize = fs.body,
-                            fontFamily = FontFamily.Monospace,
-                            color = codeForeground(),
-                        ),
-                        onAnnotationClick = { annotation ->
-                            if (annotation.tag == "instruction") onInstructionClick(annotation.item)
-                        },
-                    )
+                val codeLines = example.code.lines()
+                val annotatedLines = mutableListOf<AnnotatedString>()
+                for (line in codeLines) {
+                    annotatedLines += asmAnnotatedLine(line, knownLabels = localLabels)
                 }
+                val annotated = buildAnnotatedString {
+                    annotatedLines.forEachIndexed { index, line ->
+                        append(line)
+                        if (index != annotatedLines.lastIndex) append('\n')
+                    }
+                }
+                AsmSelectableLinkedText(
+                    text = annotated,
+                    style = TextStyle(
+                        fontSize = fs.body,
+                        fontFamily = FontFamily.Monospace,
+                        color = codeForeground(),
+                    ),
+                    onAnnotationClick = { annotation ->
+                        if (annotation.tag == "instruction") onInstructionClick(annotation.item)
+                    },
+                )
             }
         }
         Text(example.explanation, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1485,6 +1609,7 @@ private fun AsmSourceCanvas(
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
+    val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val horizontal = rememberScrollState()
     val addressAnchorsByLine = remember(index, source.id) {
@@ -1519,82 +1644,371 @@ private fun AsmSourceCanvas(
     val labelUsages = remember(index, referenceLabel) {
         referenceLabel?.let(index::usagesFor).orEmpty()
     }
+    var confirmRestore by remember(source.id) { mutableStateOf(false) }
+    if (confirmRestore) {
+        AlertDialog(
+            onDismissRequest = { confirmRestore = false },
+            title = { Text("Restore original source?", fontSize = fs.heading) },
+            text = {
+                Text(
+                    "This replaces the saved project copy of ${source.displayName} with its immutable original snapshot. Unsaved changes in this file will also be discarded.",
+                    fontSize = fs.body,
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmRestore = false
+                    scope.launch { state.restoreOriginalSource(source.id) }
+                }, shape = ASM_CONTROL_SHAPE) { Text("Restore original", fontSize = fs.body) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRestore = false }) { Text("Cancel", fontSize = fs.body) }
+            },
+        )
+    }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(
             state,
             source.displayName,
             source.description,
-            "$addressSummary${source.lines.size} lines · read-only",
+            "$addressSummary${source.lines.size} lines · " + when {
+                state.workspaceKind == AsmWorkspaceKind.REFERENCE -> "read-only reference"
+                source.id in state.projectModifiedFileIds -> "project source · modified"
+                else -> "project source · editable"
+            },
         )
-        AsmEditorLinkBar(editorLinks, onOpenInEditor)
-        if (referenceLabel != null) {
-            AsmReferencesBar(
+        if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
+            AsmSourceEditBar(
                 state = state,
-                index = index,
-                label = referenceLabel,
-                usages = labelUsages,
+                source = source,
+                onSave = { scope.launch { state.saveSource(source.id) } },
+                onRestoreOriginal = { confirmRestore = true },
             )
-        }
-        AsmScrollableTextPane(
-            listState = listState,
-            horizontalState = horizontal,
-            minimumContentWidth = minimumContentWidth,
-            focusKey = source.id,
-            onFind = state::requestSearchFocus,
-            onBack = state::goBack,
-            onForward = state::goForward,
-            modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
-        ) {
-            items(source.lines.size, key = { it }) { lineIndex ->
-                val selected = lineIndex == state.selectedLineIndex
-                Row(
-                    Modifier.fillMaxWidth()
-                        .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
-                        .padding(vertical = 1.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    DisableSelection {
-                        Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
-                            Text(
-                                (lineIndex + 1).toString(),
-                                fontSize = fs.detail,
-                                fontFamily = FontFamily.Monospace,
-                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                modifier = Modifier.width(ASM_LINE_NUMBER_WIDTH).padding(end = 10.dp),
-                            )
-                            Text(
-                                addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
-                                fontSize = fs.detail,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.width(ASM_ADDRESS_GUTTER_WIDTH).padding(end = 10.dp),
+            AsmEditableSourcePane(
+                state = state,
+                source = source,
+                modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
+            )
+        } else {
+            AsmEditorLinkBar(editorLinks, onOpenInEditor)
+            if (referenceLabel != null) {
+                AsmReferencesBar(
+                    state = state,
+                    index = index,
+                    label = referenceLabel,
+                    usages = labelUsages,
+                )
+            }
+            AsmScrollableTextPane(
+                listState = listState,
+                horizontalState = horizontal,
+                minimumContentWidth = minimumContentWidth,
+                focusKey = source.id,
+                onFind = state::requestSearchFocus,
+                onBack = state::goBack,
+                onForward = state::goForward,
+                modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
+            ) {
+                items(source.lines.size, key = { it }) { lineIndex ->
+                    val selected = lineIndex == state.selectedLineIndex
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
+                            .padding(vertical = 1.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        DisableSelection {
+                            Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
+                                Text(
+                                    (lineIndex + 1).toString(),
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.width(ASM_LINE_NUMBER_WIDTH).padding(end = 10.dp),
+                                )
+                                Text(
+                                    addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.width(ASM_ADDRESS_GUTTER_WIDTH).padding(end = 10.dp),
+                                )
+                            }
+                        }
+                        val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
+                        Box(Modifier.weight(1f)) {
+                            AsmSelectableLinkedText(
+                                text = annotated,
+                                style = TextStyle(
+                                    fontSize = fs.body,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = codeForeground(),
+                                ),
+                                onAnnotationClick = { annotation ->
+                                    when (annotation.tag) {
+                                        "label" -> state.openLabel(source.id, lineIndex, annotation.item)
+                                        "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
+                                        "asset" -> state.openAssetReference(annotation.item)
+                                        "instruction" -> state.showInstruction(annotation.item)
+                                        "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
+                                    }
+                                }
                             )
                         }
-                    }
-                    val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
-                    Box(Modifier.weight(1f)) {
-                        AsmSelectableLinkedText(
-                            text = annotated,
-                            style = TextStyle(
-                                fontSize = fs.body,
-                                fontFamily = FontFamily.Monospace,
-                                color = codeForeground(),
-                            ),
-                            onAnnotationClick = { annotation ->
-                                when (annotation.tag) {
-                                    "label" -> state.openLabel(source.id, lineIndex, annotation.item)
-                                    "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
-                                    "asset" -> state.openAssetReference(annotation.item)
-                                    "instruction" -> state.showInstruction(annotation.item)
-                                    "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
-                                }
-                            },
-                        )
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun AsmSourceEditBar(
+    state: AsmWorkspaceState,
+    source: AsmSourceFile,
+    onSave: () -> Unit,
+    onRestoreOriginal: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val unsaved = state.hasUnsavedSourceChanges(source.id)
+    val modified = source.id in state.projectModifiedFileIds
+    Surface(
+        color = if (unsaved) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.38f)
+        else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                when {
+                    unsaved -> "Unsaved buffer"
+                    modified -> "Saved project edit"
+                    else -> "Matches original snapshot"
+                },
+                fontSize = fs.detail,
+                fontWeight = FontWeight.SemiBold,
+                color = if (unsaved) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(
+                onClick = { state.discardSourceBuffer(source.id) },
+                enabled = unsaved && !state.busy,
+                shape = ASM_CONTROL_SHAPE,
+            ) {
+                Text("Revert buffer", fontSize = fs.detail)
+            }
+            Button(onClick = onSave, enabled = unsaved && !state.busy, shape = ASM_CONTROL_SHAPE) {
+                Text("Save", fontSize = fs.detail)
+            }
+            OutlinedButton(
+                onClick = onRestoreOriginal,
+                enabled = (modified || unsaved) && !state.busy,
+                shape = ASM_CONTROL_SHAPE,
+            ) {
+                Text("Restore original", fontSize = fs.detail)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmEditableSourcePane(
+    state: AsmWorkspaceState,
+    source: AsmSourceFile,
+    modifier: Modifier,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    val density = LocalDensity.current
+    var pageStartLine by remember(source.id, state.editSessionSerial) {
+        mutableStateOf((state.selectedLineIndex / ASM_EDIT_PAGE_LINES) * ASM_EDIT_PAGE_LINES)
+    }
+    LaunchedEffect(source.id, state.selectedLineIndex) {
+        val targetPage = (state.selectedLineIndex / ASM_EDIT_PAGE_LINES) * ASM_EDIT_PAGE_LINES
+        if (state.selectedLineIndex !in pageStartLine until (pageStartLine + ASM_EDIT_PAGE_LINES)) {
+            pageStartLine = targetPage
+        }
+    }
+    val pageKey = AsmEditPageKey(source.id, state.editSessionSerial, state.navigationSerial, pageStartLine)
+    val page = remember(pageKey) {
+        asmSourceEditPage(state.sourceEditText(source.id), pageStartLine, ASM_EDIT_PAGE_LINES)
+    }
+    val initialCursorLine = state.selectedLineIndex
+        .takeIf { it in page.startLine until (page.startLine + page.lineCount) }
+        ?.minus(page.startLine)
+        ?: 0
+    var fieldValue by remember(pageKey) {
+        val cursor = asmLineStartOffset(page.text, initialCursorLine)
+        mutableStateOf(TextFieldValue(page.text, selection = TextRange(cursor)))
+    }
+    val vertical = rememberScrollState()
+    val horizontal = rememberScrollState()
+    val lineCount = fieldValue.text.count { it == '\n' } + 1
+    val fullText = page.merge(fieldValue.text)
+    val totalLineCount = fullText.count { it == '\n' } + 1
+    val displayedEndLine = (page.startLine + lineCount).coerceAtMost(totalLineCount)
+    val longestLine = fieldValue.text.lineSequence().maxOfOrNull(String::length)
+        ?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
+    val lineHeight = fs.body * 1.4f
+    LaunchedEffect(pageKey) {
+        val targetWithinPage = initialCursorLine.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+        if (targetWithinPage > 0) {
+            snapshotFlow { vertical.maxValue }.first { it > 0 }
+            val lineHeightPx = with(density) { lineHeight.toPx() }
+            vertical.scrollTo((targetWithinPage * lineHeightPx).toInt().coerceAtMost(vertical.maxValue))
+        }
+    }
+    val syntaxColors = AsmEditSyntaxColors(
+        foreground = codeForeground(),
+        comment = if (isDarkCodeTheme()) Color(0xFF789879) else Color(0xFF4D7A50),
+        number = if (isDarkCodeTheme()) Color(0xFFFFB86C) else Color(0xFF9A4F00),
+        directive = if (isDarkCodeTheme()) Color(0xFFC792EA) else Color(0xFF7B1FA2),
+        string = if (isDarkCodeTheme()) Color(0xFFC3E88D) else Color(0xFF397B24),
+        definition = if (isDarkCodeTheme()) Color(0xFFFFCB6B) else Color(0xFF8A6100),
+    )
+    val transformation = remember(syntaxColors) {
+        VisualTransformation { input ->
+            TransformedText(asmEditableHighlight(input.text, syntaxColors), OffsetMapping.Identity)
+        }
+    }
+    Column(modifier) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                OutlinedButton(
+                    onClick = { pageStartLine = (page.startLine - ASM_EDIT_PAGE_LINES).coerceAtLeast(0) },
+                    enabled = page.startLine > 0,
+                    shape = ASM_CONTROL_SHAPE,
+                    contentPadding = ButtonDefaults.ContentPadding,
+                ) { Text("Previous", fontSize = fs.detail) }
+                Text(
+                    "Lines ${page.startLine + 1}–$displayedEndLine of $totalLineCount",
+                    fontSize = fs.detail,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(
+                    onClick = { pageStartLine = page.startLine + lineCount },
+                    enabled = displayedEndLine < totalLineCount,
+                    shape = ASM_CONTROL_SHAPE,
+                    contentPadding = ButtonDefaults.ContentPadding,
+                ) { Text("Next", fontSize = fs.detail) }
+            }
+        }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val contentWidth = maxOf(
+                maxWidth - ASM_SCROLLBAR_SIZE,
+                (ASM_LINE_NUMBER_WIDTH.value + 28f + longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp,
+            )
+            Row(
+                Modifier.fillMaxSize()
+                    .padding(end = ASM_SCROLLBAR_SIZE, bottom = ASM_SCROLLBAR_SIZE)
+                    .horizontalScroll(horizontal)
+                    .verticalScroll(vertical)
+                    .width(contentWidth)
+                    .padding(vertical = 5.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Text(
+                    buildString {
+                        repeat(lineCount) { index ->
+                            append(page.startLine + index + 1)
+                            if (index != lineCount - 1) append('\n')
+                        }
+                    },
+                    fontSize = fs.body,
+                    lineHeight = lineHeight,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.width(ASM_LINE_NUMBER_WIDTH).padding(end = 10.dp),
+                )
+                BasicTextField(
+                    value = fieldValue,
+                    onValueChange = { updated ->
+                        fieldValue = updated
+                        state.updateSourceEditText(source.id, page.merge(updated.text))
+                    },
+                    modifier = Modifier.weight(1f),
+                    textStyle = TextStyle(
+                        fontSize = fs.body,
+                        lineHeight = lineHeight,
+                        fontFamily = FontFamily.Monospace,
+                        color = syntaxColors.foreground,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    visualTransformation = transformation,
+                )
+            }
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(vertical),
+                modifier = Modifier.align(Alignment.CenterEnd)
+                    .padding(bottom = ASM_SCROLLBAR_SIZE)
+                    .fillMaxHeight()
+                    .width(ASM_SCROLLBAR_SIZE),
+            )
+            HorizontalScrollbar(
+                adapter = rememberScrollbarAdapter(horizontal),
+                modifier = Modifier.align(Alignment.BottomStart)
+                    .padding(end = ASM_SCROLLBAR_SIZE)
+                    .fillMaxWidth()
+                    .height(ASM_SCROLLBAR_SIZE),
+            )
+        }
+    }
+}
+
+private data class AsmEditPageKey(
+    val fileId: String,
+    val editSessionSerial: Long,
+    val navigationSerial: Long,
+    val startLine: Int,
+)
+
+internal data class AsmSourceEditPage(
+    val startLine: Int,
+    val text: String,
+    val prefix: String,
+    val suffix: String,
+    val totalLineCount: Int,
+) {
+    val lineCount: Int get() = text.count { it == '\n' } + 1
+    fun merge(updatedPageText: String): String = prefix + updatedPageText + suffix
+}
+
+internal fun asmSourceEditPage(text: String, requestedStartLine: Int, maxLines: Int): AsmSourceEditPage {
+    require(maxLines > 0) { "maxLines must be positive" }
+    val starts = mutableListOf(0)
+    text.forEachIndexed { index, character ->
+        if (character == '\n') starts += index + 1
+    }
+    val startLine = requestedStartLine.coerceIn(0, starts.lastIndex)
+    val endLineExclusive = (startLine + maxLines).coerceAtMost(starts.size)
+    val startOffset = starts[startLine]
+    val endOffset = if (endLineExclusive < starts.size) starts[endLineExclusive] - 1 else text.length
+    return AsmSourceEditPage(
+        startLine = startLine,
+        text = text.substring(startOffset, endOffset),
+        prefix = text.substring(0, startOffset),
+        suffix = text.substring(endOffset),
+        totalLineCount = starts.size,
+    )
+}
+
+private fun asmLineStartOffset(text: String, lineIndex: Int): Int {
+    if (lineIndex <= 0) return 0
+    var remaining = lineIndex
+    text.forEachIndexed { index, character ->
+        if (character == '\n' && --remaining == 0) return index + 1
+    }
+    return text.length
 }
 
 @Composable
@@ -2018,6 +2432,7 @@ private fun AsmEditorLinkBar(
                 OutlinedButton(
                     onClick = { onOpenInEditor(link.target) },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 9.dp, vertical = 3.dp),
+                    shape = ASM_CONTROL_SHAPE,
                 ) {
                     Column {
                         Text(link.title, fontSize = fs.detail, fontWeight = FontWeight.SemiBold)
@@ -2228,7 +2643,79 @@ private fun codeForeground(): Color = if (isDarkCodeTheme()) Color(0xFFD8DEE9) e
 
 private fun Int.hex(width: Int): String = toString(16).uppercase().padStart(width, '0')
 
+private data class AsmEditSyntaxColors(
+    val foreground: Color,
+    val comment: Color,
+    val number: Color,
+    val directive: Color,
+    val string: Color,
+    val definition: Color,
+)
+
+private fun asmEditableHighlight(text: String, colors: AsmEditSyntaxColors): AnnotatedString {
+    val lines = text.split('\n')
+    return buildAnnotatedString {
+        lines.forEachIndexed { lineIndex, line ->
+        val commentStart = asmCommentStart(line)
+        val code = line.substring(0, commentStart)
+        val matches = ASM_EDIT_TOKEN_REGEX.findAll(code).toList()
+        val definition = ASM_EDIT_DEFINITION_REGEX.find(code)?.let { match ->
+            match.groupValues[1].ifEmpty { match.groupValues[2] }
+        }
+        val instruction = matches.firstOrNull { match ->
+            match.value != definition && AsmInstructionReference.find(match.value.substringBefore('.')) != null
+        }
+        var cursor = 0
+        matches.forEach { match ->
+            append(code.substring(cursor, match.range.first))
+            val token = match.value
+            val style = when {
+                token.startsWith('"') -> SpanStyle(color = colors.string)
+                token == definition -> SpanStyle(color = colors.definition, fontWeight = FontWeight.SemiBold)
+                match == instruction -> SpanStyle(color = colors.directive, fontWeight = FontWeight.SemiBold)
+                token.startsWith('$') || token.startsWith('%') || token.firstOrNull()?.isDigit() == true ->
+                    SpanStyle(color = colors.number)
+                token.lowercase() in ASM_DIRECTIVES -> SpanStyle(color = colors.directive)
+                else -> SpanStyle(color = colors.foreground)
+            }
+            pushStyle(style)
+            append(token)
+            pop()
+            cursor = match.range.last + 1
+        }
+        append(code.substring(cursor))
+        if (commentStart < line.length) {
+            pushStyle(SpanStyle(color = colors.comment))
+            append(line.substring(commentStart))
+            pop()
+        }
+            if (lineIndex != lines.lastIndex) append('\n')
+        }
+    }
+}
+
+private fun asmCommentStart(line: String): Int {
+    var quoted = false
+    var escaped = false
+    line.forEachIndexed { index, character ->
+        when {
+            escaped -> escaped = false
+            character == '\\' && quoted -> escaped = true
+            character == '"' -> quoted = !quoted
+            character == ';' && !quoted -> return index
+        }
+    }
+    return line.length
+}
+
+private val ASM_EDIT_TOKEN_REGEX =
+    Regex("\"(?:\\\\.|[^\"])*\"|\\$[0-9A-Fa-f]{2}:[0-9A-Fa-f]{4}|\\$[0-9A-Fa-f]+|%[01]+|\\b[0-9]+\\b|\\.?[A-Za-z_][A-Za-z0-9_.]*")
+private val ASM_EDIT_DEFINITION_REGEX =
+    Regex("^\\s*([A-Za-z_][A-Za-z0-9_]*|\\.[A-Za-z0-9_]+):|^\\s*!([A-Za-z_][A-Za-z0-9_]*)\\s*=")
+
 private val ASM_SCROLLBAR_SIZE = 10.dp
+private val ASM_CONTROL_SHAPE = RoundedCornerShape(5.dp)
+private const val ASM_EDIT_PAGE_LINES = 500
 private val ASM_LINE_NUMBER_WIDTH = 60.dp
 private val ASM_ADDRESS_GUTTER_WIDTH = 92.dp
 private const val MONOSPACE_CHARACTER_WIDTH = 0.64f

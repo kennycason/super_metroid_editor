@@ -326,6 +326,14 @@ class EditorState(
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
 
+    /** Persist the opt-in ASM workspace contract without treating it as a room edit. */
+    fun enableProjectAsmWorkspace(sourceRevision: String) {
+        if (project.asmWorkspace.enabled && project.asmWorkspace.sourceRevision == sourceRevision) return
+        project.asmWorkspace.enabled = true
+        project.asmWorkspace.sourceRevision = sourceRevision
+        dirty = true
+    }
+
     fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
         if (project.customGfx.samusCommunitySource == source) return false
         project.customGfx.samusCommunitySource = source

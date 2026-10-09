@@ -97,4 +97,20 @@ class ProjectFileServiceTest {
         assertEquals(source, reopened.customGfx.samusCommunitySource)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
     }
+
+    @Test
+    fun `project file preserves the opt-in ASM workspace contract`() {
+        val projectFile = File(tempDir, "asm-project.smedit")
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.asmWorkspace.enabled = true
+            it.asmWorkspace.sourceRevision = "11c906f547ed"
+        }
+
+        assertTrue(ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {})
+        val reopened = ProjectFileService.loadProject(projectFile)
+
+        assertTrue(reopened.asmWorkspace.enabled)
+        assertEquals("11c906f547ed", reopened.asmWorkspace.sourceRevision)
+        assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
+    }
 }

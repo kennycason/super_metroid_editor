@@ -21,7 +21,7 @@ class AsmLibraryTest {
 
     @Test
     fun `guide and instruction page ids round trip`() {
-        assertEquals(8, AsmLibrary.guides.size)
+        assertEquals(9, AsmLibrary.guides.size)
         assertEquals(AsmLibrary.guides.size, AsmLibrary.guides.map { it.id }.toSet().size)
         AsmLibrary.guides.forEach { guide ->
             assertNotNull(AsmLibrary.guide(guide.id))
@@ -29,6 +29,14 @@ class AsmLibraryTest {
         }
         val valuesGuide = AsmLibrary.guide("values-and-data")!!
         assertTrue(valuesGuide.sections.flatMap { it.example?.code?.lines().orEmpty() }.any { "%00010000" in it })
+        val jumpGuide = AsmLibrary.guide("samus-jump-edit")!!
+        val jumpText = jumpGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + (section.example?.code.orEmpty())
+        }
+        assertTrue("Make_Samus_Jump" in jumpText)
+        assertTrue("\$90:9EB9" in jumpText)
+        assertTrue("\$90:9EBF" in jumpText)
+        assertTrue("does not compile" in jumpText)
         EXPECTED_MNEMONICS.forEach { mnemonic ->
             val pageId = AsmLibrary.instructionPageId(mnemonic)
             assertEquals(mnemonic, AsmLibrary.mnemonicFromPageId(pageId))

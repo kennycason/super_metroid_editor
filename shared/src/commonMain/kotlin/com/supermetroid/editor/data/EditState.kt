@@ -860,6 +860,17 @@ data class ProjectGeneralSettings(
 )
 
 /**
+ * Opt-in project ASM mode. Source and binary files live beside the `.smedit`
+ * file rather than being serialized into JSON; this records the portable
+ * project contract and the immutable upstream revision they were seeded from.
+ */
+@Serializable
+data class ProjectAsmWorkspaceSettings(
+    var enabled: Boolean = false,
+    var sourceRevision: String = "",
+)
+
+/**
  * The .smedit project file. JSON-serializable.
  * Keys are hex room IDs (as strings), values are the list of edit operations.
  */
@@ -880,6 +891,7 @@ data class SmEditProject(
     val customAsm: MutableMap<String, CustomAsmEntry> = mutableMapOf(), // key = "speciesHex:fieldName" (e.g. "DCFF:shotAi")
     val musicEdits: MutableMap<String, MusicTrackEdit> = mutableMapOf(), // key = MusicTrackEdit.key(songSet, playIndex)
     val generalSettings: ProjectGeneralSettings = ProjectGeneralSettings(),
+    val asmWorkspace: ProjectAsmWorkspaceSettings = ProjectAsmWorkspaceSettings(),
     var versionMajor: Int = 1,
     var versionMinor: Int = 0,
     var buildName: String = "",
@@ -887,7 +899,7 @@ data class SmEditProject(
     var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
 ) {
     companion object {
-        const val CURRENT_PROJECT_FORMAT_VERSION = 6
+        const val CURRENT_PROJECT_FORMAT_VERSION = 7
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 

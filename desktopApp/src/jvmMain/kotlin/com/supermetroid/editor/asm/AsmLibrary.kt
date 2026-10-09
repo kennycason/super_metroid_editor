@@ -805,6 +805,117 @@ internal object AsmLibrary {
                 ),
             ),
         ),
+        AsmLibraryGuide(
+            id = "samus-jump-edit",
+            title = "First project edit: Samus's jump",
+            summary = "Trace a real Super Metroid behavior from caller to data, make a safe project override, and define a byte-exact test plan.",
+            keywords = setOf(
+                "super metroid", "samus", "jump", "physics", "project", "edit", "bank 90",
+                "fixed point", "velocity", "table", "spf", "compile", "verify",
+            ),
+            sections = listOf(
+                AsmLibrarySection(
+                    "Start with behavior, not a magic address",
+                    listOf(
+                        "Suppose you want Samus's ordinary jump to launch higher. Open Source, choose Bank \$90, and search for InitialYSpeeds_Jumping. That label leads to the physics table; Find Usages or a source search then leads back to Make_Samus_Jump, the code that consumes it.",
+                        "This order matters: inspect the reader before changing its data. It tells you how each entry is selected, which related values travel together, and whether another path bypasses the table.",
+                    ),
+                    AsmCodeExample(
+                        "The normal-jump reader",
+                        code(
+                            "LDA.W SamusPhysicsConstants_InitialYSubSpeeds_Jumping,X",
+                            "STA.W SamusYSubSpeed",
+                            "LDA.W SamusPhysicsConstants_InitialYSpeeds_Jumping,X",
+                            "STA.W SamusYSpeed",
+                        ),
+                        "Make_Samus_Jump loads the fractional and whole-number halves of one initial vertical velocity.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Read the selection logic",
+                    listOf(
+                        "Immediately above those loads, the routine assigns X = \$0000 for normal gravity, X = \$0002 for submerged water, or X = \$0004 for acid/lava. Each entry is a two-byte word, so those byte offsets select the first, second, or third word.",
+                        "The Hi-Jump Boots branch reads InitialYSpeeds_HiJumpJumping and InitialYSubSpeeds_HiJumpJumping instead. Editing the ordinary table therefore changes a no-Hi-Jump launch, not every kind of jump in the game.",
+                    ),
+                    AsmCodeExample(
+                        "X selects the environment",
+                        code(
+                            ".normalGravity:",
+                            "    LDX.W #\$0000    ; first word: air",
+                            ".submergedInWater:",
+                            "    LDX.W #\$0002    ; second word: water",
+                            ".submergedInAcidLava:",
+                            "    LDX.W #\$0004    ; third word: acid/lava",
+                        ),
+                        "These are byte offsets into a word table, not three arbitrary mode numbers.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "One velocity is stored in two words",
+                    listOf(
+                        "The source expresses launch velocity as an 8.8 fixed-point value. On NTSC, \$04E0 means 4 + \$E0/256 = 4.875 pixels per frame. The assembler expressions split it into SamusYSpeed and SamusYSubSpeed, which the runtime stores separately.",
+                        "Change the matching entry in both rows. Editing only the whole-number row or only the fractional row creates a different value than the source appears to describe. !SPF is 1 for NTSC and 6/5 for PAL, so retaining the expression also retains the project's regional timing adjustment.",
+                    ),
+                    AsmCodeExample(
+                        "Vanilla ordinary-jump tables at \$90:9EB9",
+                        code(
+                            ".InitialYSpeeds_Jumping:",
+                            "    dw \$04E0*!SPF/\$100,\$01C0*!SPF/\$100,\$02C0*!SPF/\$100",
+                            ".InitialYSubSpeeds_Jumping:",
+                            "    dw \$04E0*!SPF*\$100,\$01C0*!SPF*\$100,\$02C0*!SPF*\$100",
+                        ),
+                        "The columns are air, submerged water, and acid/lava. The paired rows are the whole and fractional halves.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Make a conservative project override",
+                    listOf(
+                        "Enable Project ASM from the bottom of the ASM sidebar and switch from Reference to Project. Project source is directly editable: click into bank_90.asm, replace the first \$04E0 in both ordinary-jump rows with \$0600, then save the file.",
+                        "Reference remains an immutable baseline. Project owns the saved override and marks the source as edited, so you can compare the two modes or restore the original without redownloading the disassembly.",
+                    ),
+                    AsmCodeExample(
+                        "Use the vanilla Hi-Jump launch value for ordinary air jumps",
+                        code(
+                            ".InitialYSpeeds_Jumping:",
+                            "    dw \$0600*!SPF/\$100,\$01C0*!SPF/\$100,\$02C0*!SPF/\$100",
+                            ".InitialYSubSpeeds_Jumping:",
+                            "    dw \$0600*!SPF*\$100,\$01C0*!SPF*\$100,\$02C0*!SPF*\$100",
+                        ),
+                        "Only the first column changes. \$0600 is 6.0 pixels per frame and already serves as vanilla's normal-gravity Hi-Jump launch value.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Know exactly what this does",
+                    listOf(
+                        "This raises the initial upward velocity of ordinary, no-Hi-Jump jumps in air. It does not alter water or acid/lava entries, Hi-Jump Boots, wall jumps, gravity/acceleration, jump-button duration, or horizontal speed.",
+                        "Using an existing vanilla value is a useful first experiment: it proves the edit path with a physically reasonable constant before you invent a more extreme value. Change one concept at a time so emulator behavior and ROM diffs stay explainable.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Verify the edit at every layer",
+                    listOf(
+                        "Today, SMEDIT saves this project-owned source override but deliberately does not compile it into an exported ROM. The editor must not imply otherwise. Until ASM compilation is enabled, use the edited marker, Reference/Project comparison, and Restore original to exercise the source workflow.",
+                        "When compilation lands, this lesson is the first end-to-end acceptance test: an unchanged source tree must reproduce the baseline ROM; this edit must change only the owned words beginning at SNES \$90:9EB9 and \$90:9EBF; those writes must pass the normal ownership/conflict checks; and an emulator test must show the stronger ordinary jump while Hi-Jump and liquid behavior remain distinct.",
+                    ),
+                    AsmCodeExample(
+                        "Expected NTSC value split",
+                        code(
+                            "; \$04E0 -> whole \$0004, fraction \$E000",
+                            "; \$0600 -> whole \$0006, fraction \$0000",
+                            "; Verify both words change together; reject unrelated ROM differences.",
+                        ),
+                        "A visible gameplay change is useful evidence, but a small, owner-aware byte diff is the safety proof.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Continue the investigation",
+                    listOf(
+                        "Nearby tables cover Hi-Jump, wall-jump, knockback, and other vertical velocities. Follow each label to its reader instead of assuming the same column meanings everywhere. Air acceleration is a separate control: launch velocity determines the start of the arc, while acceleration determines how quickly upward motion slows and reverses.",
+                        "The reusable workflow is: name the behavior, find the data, inspect every reader, identify coupled fields and table indices, make the narrowest project edit, predict the exact binary difference, test behavior, and keep an immediate restore path.",
+                    ),
+                ),
+            ),
+        ),
     )
 
     fun guide(id: String?): AsmLibraryGuide? = guides.firstOrNull { it.id == id }

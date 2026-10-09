@@ -78,6 +78,7 @@ import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.asm.AsmEditorTarget
+import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.ui.AsmWorkspaceCanvas
 import com.supermetroid.editor.ui.AsmWorkspaceSidebar
@@ -192,6 +193,7 @@ fun main() = application {
     var romLoadMessage by remember { mutableStateOf<String?>(null) }
     var romLoadMessageIsError by remember { mutableStateOf(false) }
     val editorState = remember { EditorState() }
+    val asmWorkspaceState = remember { AsmWorkspaceState() }
 
     fun pickDefaultRoom(allRooms: List<RoomInfo>, romPath: String): RoomInfo? {
         val romKey = File(romPath).name
@@ -292,9 +294,13 @@ fun main() = application {
         onPreviewKeyEvent = { keyEvent ->
             if (keyEvent.type == KeyEventType.KeyDown && keyEvent.key == Key.S &&
                 (keyEvent.isCtrlPressed || keyEvent.isMetaPressed)) {
-                val parser = romParser
-                if (parser?.roomCatalog?.editable == true) {
-                    editorState.saveProject(parser)
+                if (asmWorkspaceState.isProjectSourceEditable) {
+                    scope.launch { asmWorkspaceState.saveSource() }
+                } else {
+                    val parser = romParser
+                    if (parser?.roomCatalog?.editable == true) {
+                        editorState.saveProject(parser)
+                    }
                 }
                 true
             } else false
@@ -341,7 +347,6 @@ fun main() = application {
             val soundEditorState = remember { SoundEditorState() }
             val minimapEditorState = remember { MinimapEditorState() }
             val textEditorState = remember { TextEditorState() }
-            val asmWorkspaceState = remember { AsmWorkspaceState() }
             var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
             val navigationHistory = remember { EditorNavigationHistory<EditorNavigationLocation>() }
 
@@ -487,6 +492,12 @@ fun main() = application {
 
             LaunchedEffect(Unit) {
                 asmWorkspaceState.loadInstalled()
+            }
+            LaunchedEffect(editorState.projectFilePath, editorState.project.asmWorkspace.enabled) {
+                asmWorkspaceState.bindProject(
+                    projectFilePath = editorState.projectFilePath,
+                    enabled = editorState.project.asmWorkspace.enabled,
+                )
             }
             LaunchedEffect(romParser) {
                 asmWorkspaceState.observeRom(romParser?.copyRomData())
@@ -1061,6 +1072,12 @@ fun main() = application {
                                         state = asmWorkspaceState,
                                         romParser = romParser,
                                         romName = romFileName,
+                                        projectFilePath = editorState.projectFilePath,
+                                        projectAsmEnabled = editorState.project.asmWorkspace.enabled,
+                                        onProjectAsmEnabled = {
+                                            editorState.enableProjectAsmWorkspace(AsmReferenceContract.COMMIT)
+                                            romParser?.let(editorState::saveProject)
+                                        },
                                         buildRomPreview = romParser?.let { parser ->
                                             { editorState.buildRomPreview(parser) }
                                         },
