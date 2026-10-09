@@ -16,7 +16,11 @@ ROM editing.
    description ;;;` sections, search labels/functions, and click a label operand
    to follow it to its definition. Only the active bank chapter is expanded by
    default, and selecting it again collapses it. Back/forward navigation
-   preserves the trail.
+   preserves the trail. At a definition, the compact **References** bar reports
+   every resolved use; **Prev**, **Next**, and **Show all** navigate callers and
+   data references without losing the active symbol. Definition names and source
+   gutters are clickable, so reference browsing also works from search/address
+   landings instead of only from an operand.
 5. Open **Library** for a practical learning path covering source/data syntax,
    registers and banks, width state, `.B`/`.W`/`.L`, addressing modes, flags and
    loops, calls and stack discipline, and common SNES runtime patterns.
@@ -42,17 +46,19 @@ ROM editing.
    automatically.
 10. When a source anchor or extracted asset has an exact semantic owner, use the
     compact **Open in SMEDIT** actions to return to the existing visual editor.
-    The first reverse bridge covers room headers and layouts, tileset graphics,
-    metatiles, palettes and CRE, enemy/boss and Samus graphics, and music song
-    sets. Intentional aliases produce explicit destinations instead of silently
-    choosing one owner.
+    The reverse bridge covers room headers and complete runtime-state resources,
+    door definitions, library-background programs and payloads, tileset graphics,
+    metatiles, palettes and CRE, enemy/boss and Samus graphics, pause-map tilemaps
+    and graphics, editable text entries, and music song sets. Intentional aliases
+    produce explicit destinations instead of silently choosing one owner.
 
 The application-level **Back** and **Forward** buttons beside **EMU** preserve
 the workspace and selected resource across these jumps. For example, opening a
 room from bank `$8F`, pressing Back, and then Forward returns to the exact ASM
 bank/line and the same room respectively. Ordinary tab, room, tileset, sprite,
-and sound-track navigation joins the same bounded history. ASM's own compact
-history remains available for fine-grained source/asset/Library browsing.
+sound-track, map-area, and text-entry context joins the same bounded history.
+ASM's own compact history remains available for fine-grained
+source/asset/Library browsing.
 
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
@@ -155,11 +161,13 @@ locations when the parser has already discovered a valid relocation.
 
 The reverse bridge applies that rule in the other direction. It builds one
 semantic index for the loaded ROM from the room catalog, decoded room states,
-discovered tileset catalog, enemy species headers, and discovered music
-pointers. Source lines only offer an editor destination for an **exact** address
-anchor; nearby context never inherits a potentially false visual-editor link.
-Composite boss and Samus asset names are used only where the engine has no
-single species-owned pointer for the complete visual source.
+door lists, library-background command streams, placed-object definitions,
+pause-map tables, decoded text entries, discovered tileset catalog, enemy
+species headers, and discovered music pointers. Source lines only offer an
+editor destination for an **exact** address anchor; nearby context never
+inherits a potentially false visual-editor link. Composite boss, Samus, and
+shared pause-map asset names are used only where the engine has no single
+semantic pointer for the complete visual source.
 
 The ROM comparison has a different boundary from the extracted reference assets.
 It does not infer changes from project JSON. It invokes the same transactional
@@ -175,8 +183,10 @@ editing.
 - `AsmReferenceRepository` owns download, archive safety, transactional cache
   activation, ROM normalization, exact range extraction, and metadata.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
-  every source file, authored section, global label, scoped local label, and
-  extracted asset.
+  every source file, authored section, global label, scoped local label,
+  cross-reference, and extracted asset. Reference resolution uses the same
+  local-scope rules as label navigation and ignores comments and quoted strings;
+  it is not a raw text search.
 - `AsmAddressAtlas` is the shared bidirectional address layer. It converts
   canonical LoROM SNES/PC coordinates and resolves exact source anchors,
   contextual anchors, and extracted asset ownership without decoding assembler
@@ -213,9 +223,9 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 
 The read-only boundary is intentional. Follow-up work can now be incremental:
 
-1. Extend the reverse semantic bridge to remaining specialized assets and
-   surfaces such as pause-map text and background programs as those editors gain
-   stable semantic selection entry points.
+1. Extend the reverse semantic bridge to remaining specialized title/menu,
+   cinematic, and generated-runtime assets as those editors gain stable semantic
+   selection entry points.
 2. Create a project-owned writable ASM workspace with explicit dirty files,
    compile diagnostics, and symbol output.
 3. Feed semantic editor changes into generated assets/source, assemble with the

@@ -91,6 +91,49 @@ class AsmReferenceTest {
     }
 
     @Test
+    fun `cross references resolve global and scoped local labels without matching comments or strings`() {
+        val source = File(tempDirectory, "xref-src").apply { mkdirs() }
+        File(source, "main.asm").writeText(
+            "incsrc bank_80.asm ; Engine\nincsrc bank_81.asm ; Data\n",
+        )
+        File(source, "bank_80.asm").writeText(
+            """
+            Root:
+                JSR Shared
+              .loop:
+                BRA .loop
+            Other:
+              .loop:
+                BRA .loop
+                db "Shared; .loop" ; Shared and .loop are comments here
+            SelfTable: dw SelfTable
+            """.trimIndent(),
+        )
+        File(source, "bank_81.asm").writeText(
+            """
+            Shared:
+                JSL Root
+                LDA Root
+                RTS
+            """.trimIndent(),
+        )
+
+        val index = AsmSourceParser().parse(source, File(tempDirectory, "xref-data"), emptyList())
+        val shared = assertNotNull(index.resolveLabel("bank_80.asm", 1, "Shared"))
+        val root = assertNotNull(index.resolveLabel("bank_81.asm", 1, "Root"))
+        val rootLoop = assertNotNull(index.resolveLabel("bank_80.asm", 3, ".loop"))
+        val otherLoop = assertNotNull(index.resolveLabel("bank_80.asm", 6, ".loop"))
+        val selfTable = assertNotNull(index.resolveLabel("bank_80.asm", 8, "SelfTable"))
+
+        assertEquals(listOf("bank_80.asm" to 1), index.usagesFor(shared).map { it.fileId to it.lineIndex })
+        assertEquals(listOf(1, 2), index.usagesFor(root).map(AsmLabelUsage::lineIndex))
+        assertEquals(listOf(3), index.usagesFor(rootLoop).map(AsmLabelUsage::lineIndex))
+        assertEquals(listOf(6), index.usagesFor(otherLoop).map(AsmLabelUsage::lineIndex))
+        assertEquals(listOf(8), index.usagesFor(selfTable).map(AsmLabelUsage::lineIndex))
+        assertEquals(root, index.definition("bank_80.asm", 0, "Root"))
+    }
+
+    @Test
     fun `managed install derives assets without retaining a ROM copy and can resync`() {
         val ranges = listOf(
             AsmAssetRange("Tiles_Test.bin", 0x10, 4),
@@ -195,6 +238,37 @@ class AsmReferenceTest {
         assertEquals(range.path, state.selectedAssetPath)
     }
 
+    @Test
+    fun `reference navigation preserves its symbol through ASM back and forward`() = runBlocking {
+        val repository = AsmReferenceRepository(
+            referenceRoot = File(tempDirectory, "asm-xref"),
+            fetchBytes = { fakeSourceArchive() },
+            assetRanges = emptyList(),
+        )
+        repository.installOrRefresh(ByteArray(0x300000), "fixture.sfc")
+        val state = AsmWorkspaceState(repository)
+        state.loadInstalled()
+
+        state.openSource("bank_80.asm", 3)
+        state.openLabel("Helper")
+        val index = assertNotNull(state.workspace).index
+        val helper = assertNotNull(index.label(state.activeReferenceSymbol))
+        val usage = index.usagesFor(helper).single()
+        assertEquals(5, state.selectedLineIndex)
+
+        state.openReference(helper, usage)
+        assertEquals(3, state.selectedLineIndex)
+        assertEquals(helper.symbolId, state.activeReferenceSymbol)
+
+        state.goBack()
+        assertEquals(5, state.selectedLineIndex)
+        assertEquals(helper.symbolId, state.activeReferenceSymbol)
+
+        state.goForward()
+        assertEquals(3, state.selectedLineIndex)
+        assertEquals(helper.symbolId, state.activeReferenceSymbol)
+    }
+
     private fun fakeSourceArchive(): ByteArray {
         val output = ByteArrayOutputStream()
         ZipOutputStream(output).use { zip ->
@@ -204,7 +278,10 @@ class AsmReferenceTest {
                 zip.closeEntry()
             }
             entry("src/main.asm", "incsrc bank_80.asm ; Game engine\n")
-            entry("src/bank_80.asm", "; Game engine\norg \$808000\nBoot:\n    RTS\n")
+            entry(
+                "src/bank_80.asm",
+                "; Game engine\norg \$808000\nBoot:\n    JSR Helper\n    RTS\nHelper:\n    RTS\n",
+            )
             entry("README.md", "test")
         }
         return output.toByteArray()

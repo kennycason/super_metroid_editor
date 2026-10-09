@@ -165,6 +165,7 @@ fun MinimapSidebar(
     state: MinimapEditorState,
     romParser: RomParser?,
     editorState: EditorState,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -181,9 +182,24 @@ fun MinimapSidebar(
                 color = if (sel) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                 shape = RoundedCornerShape(3.dp),
             ) {
-                Text(MinimapData.AREA_NAMES[area], fontSize = fs.body,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        MinimapData.AREA_NAMES[area],
+                        fontSize = fs.body,
+                        modifier = Modifier.weight(1f).padding(vertical = 2.dp),
+                        color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (onNavigateToAsm != null) {
+                        AsmNavigationLink(
+                            parser.readMinimapTilemapAddress(area),
+                            onNavigateToAsm,
+                            label = "ASM",
+                        )
+                    }
+                }
             }
         }
 
@@ -210,7 +226,19 @@ fun MinimapSidebar(
         Spacer(Modifier.height(4.dp)); Divider(); Spacer(Modifier.height(4.dp))
 
         // Tile palette — fills available width
-        Text("Tile", fontWeight = FontWeight.Bold, fontSize = fs.heading)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Tile", fontWeight = FontWeight.Bold, fontSize = fs.heading, modifier = Modifier.weight(1f))
+            if (onNavigateToAsm != null) {
+                AsmNavigationLink(
+                    parser.readMinimapTileGraphicsAddress(),
+                    onNavigateToAsm,
+                    label = "Tiles ASM",
+                )
+            }
+        }
         MinimapTilePalette(
             selectedTile = state.selectedTile,
             selectedHFlip = state.selectedHFlip,

@@ -9,7 +9,11 @@ import kotlinx.coroutines.withContext
 internal enum class AsmBrowserMode { SOURCE, ASSETS, LIBRARY, ROM }
 
 internal sealed interface AsmWorkspaceLocation {
-    data class Source(val fileId: String, val lineIndex: Int) : AsmWorkspaceLocation
+    data class Source(
+        val fileId: String,
+        val lineIndex: Int,
+        val referenceSymbol: AsmSymbolId? = null,
+    ) : AsmWorkspaceLocation
     data class Asset(val path: String) : AsmWorkspaceLocation
     data class Library(val pageId: String, val instructionToken: String?) : AsmWorkspaceLocation
     data class Rom(val view: AsmRomPreviewView) : AsmWorkspaceLocation
@@ -36,6 +40,8 @@ internal class AsmWorkspaceState(
     var expandedSourceFileId by mutableStateOf<String?>(null)
         private set
     var selectedLineIndex by mutableStateOf(0)
+        private set
+    var activeReferenceSymbol by mutableStateOf<AsmSymbolId?>(null)
         private set
     var selectedAssetPath by mutableStateOf<String?>(null)
         private set
@@ -183,9 +189,15 @@ internal class AsmWorkspaceState(
         }
     }
 
-    fun openSource(fileId: String, lineIndex: Int = 0, addToHistory: Boolean = true) {
+    fun openSource(
+        fileId: String,
+        lineIndex: Int = 0,
+        addToHistory: Boolean = true,
+        preserveReferences: Boolean = false,
+    ) {
         val source = workspace?.index?.file(fileId) ?: return
         if (addToHistory) rememberCurrentLocation()
+        if (!preserveReferences) activeReferenceSymbol = null
         browserMode = AsmBrowserMode.SOURCE
         selectedFileId = source.id
         expandedSourceFileId = source.id
@@ -250,12 +262,42 @@ internal class AsmWorkspaceState(
     fun openLabel(token: String) {
         val index = workspace?.index ?: return
         val fileId = selectedFileId ?: return
-        index.resolveLabel(fileId, selectedLineIndex, token)?.let { openSource(it.fileId, it.lineIndex) }
+        index.resolveLabel(fileId, selectedLineIndex, token)?.let { label ->
+            openSource(label.fileId, label.lineIndex)
+            activeReferenceSymbol = label.symbolId
+        }
     }
 
     fun openLabel(fileId: String, lineIndex: Int, token: String) {
         workspace?.index?.resolveLabel(fileId, lineIndex, token)
-            ?.let { openSource(it.fileId, it.lineIndex) }
+            ?.let { label ->
+                openSource(label.fileId, label.lineIndex)
+                activeReferenceSymbol = label.symbolId
+            }
+    }
+
+    fun showReferences(fileId: String, lineIndex: Int, token: String) {
+        val index = workspace?.index ?: return
+        val label = index.definition(fileId, lineIndex, token) ?: return
+        selectedFileId = fileId
+        selectedLineIndex = lineIndex
+        activeReferenceSymbol = label.symbolId
+        navigationSerial++
+    }
+
+    fun selectSourceLine(lineIndex: Int) {
+        val source = workspace?.index?.file(selectedFileId) ?: return
+        selectedLineIndex = lineIndex.coerceIn(0, (source.lines.size - 1).coerceAtLeast(0))
+        activeReferenceSymbol = null
+    }
+
+    fun openReference(label: AsmLabel, usage: AsmLabelUsage) {
+        activeReferenceSymbol = label.symbolId
+        openSource(
+            fileId = usage.fileId,
+            lineIndex = usage.lineIndex,
+            preserveReferences = true,
+        )
     }
 
     fun showInstruction(mnemonic: String) {
@@ -345,7 +387,9 @@ internal class AsmWorkspaceState(
     }
 
     internal fun locationSnapshot(): AsmWorkspaceLocation? = when (browserMode) {
-        AsmBrowserMode.SOURCE -> selectedFileId?.let { AsmWorkspaceLocation.Source(it, selectedLineIndex) }
+        AsmBrowserMode.SOURCE -> selectedFileId?.let {
+            AsmWorkspaceLocation.Source(it, selectedLineIndex, activeReferenceSymbol)
+        }
         AsmBrowserMode.ASSETS -> selectedAssetPath?.let(AsmWorkspaceLocation::Asset)
         AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(selectedLibraryPageId, selectedInstructionToken)
         AsmBrowserMode.ROM -> AsmWorkspaceLocation.Rom(romPreviewView)
@@ -359,7 +403,15 @@ internal class AsmWorkspaceState(
 
     internal fun restoreLocation(location: AsmWorkspaceLocation) {
         when (location) {
-            is AsmWorkspaceLocation.Source -> openSource(location.fileId, location.lineIndex, addToHistory = false)
+            is AsmWorkspaceLocation.Source -> {
+                activeReferenceSymbol = location.referenceSymbol
+                openSource(
+                    location.fileId,
+                    location.lineIndex,
+                    addToHistory = false,
+                    preserveReferences = true,
+                )
+            }
             is AsmWorkspaceLocation.Asset -> openAsset(location.path, addToHistory = false)
             is AsmWorkspaceLocation.Library -> {
                 val mnemonic = AsmLibrary.mnemonicFromPageId(location.pageId)

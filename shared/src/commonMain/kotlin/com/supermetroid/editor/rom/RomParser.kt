@@ -1350,6 +1350,9 @@ class RomParser(
         }
     }
 
+    /** SNES address of the pause-map 4bpp tile sheet consumed by [readMinimapTileGraphics]. */
+    fun readMinimapTileGraphicsAddress(): Int = pcToSnes(romStartOffset + PAUSE_MAP_GFX_PC)
+
     // ─── Layer 2 / BG Data ─────────────────────────────────────────────
 
     /**

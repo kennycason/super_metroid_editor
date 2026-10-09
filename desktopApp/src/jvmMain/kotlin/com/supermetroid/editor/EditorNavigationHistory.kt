@@ -15,6 +15,7 @@ internal data class EditorNavigationLocation(
     val soundTrackId: Int,
     val minimapArea: Int,
     val minimapRoomId: Int?,
+    val textEntryId: String?,
     val asmLocation: AsmWorkspaceLocation?,
 )
 

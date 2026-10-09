@@ -1,9 +1,12 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.EnemySpriteGraphics
+import com.supermetroid.editor.rom.MinimapData
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.SpcData
+import com.supermetroid.editor.rom.TextData
+import com.supermetroid.editor.rom.parseLibraryBackground
 
 /** Existing visual editor that can explain or render a recognized ASM address. */
 internal sealed interface AsmEditorTarget {
@@ -11,6 +14,8 @@ internal sealed interface AsmEditorTarget {
     data class Tileset(val tilesetId: Int?, val palette: Boolean = false) : AsmEditorTarget
     data class Sprite(val speciesId: Int?) : AsmEditorTarget // null = Samus
     data class Sound(val songSet: Int) : AsmEditorTarget
+    data class Map(val area: Int?) : AsmEditorTarget
+    data class Text(val entryId: String) : AsmEditorTarget
 }
 
 internal data class AsmEditorLink(
@@ -31,6 +36,9 @@ internal class AsmSemanticIndex internal constructor(
         return buildList {
             if (path.startsWith("SamusTiles_") || path == "Tiles_SamusDeathSequence.bin") {
                 add(AsmEditorLink("Open Samus", "Player sprite graphics", AsmEditorTarget.Sprite(null)))
+            }
+            if (path == "Tiles_PauseScreen_BG1_BG2.bin") {
+                add(AsmEditorLink("Open pause map", "Map tile graphics", AsmEditorTarget.Map(null)))
             }
             bossSpeciesForAsset(path)?.let { speciesId ->
                 val name = EnemySpriteGraphics.EDITOR_ENEMIES.firstOrNull { it.speciesId == speciesId }?.name
@@ -55,21 +63,95 @@ internal object AsmSemanticBridge {
 
         for (roomInfo in romParser.roomCatalog.rooms) {
             val roomId = roomInfo.getRoomIdAsInt()
+            val roomTarget = AsmEditorTarget.Room(roomId)
+            fun roomLink(detail: String) = AsmEditorLink("Open ${roomInfo.name}", detail, roomTarget)
+            fun addRoomPointer(bank: Int, pointer: Int, detail: String) {
+                if (pointer in 0x8000..0xFFFE) add(bank or pointer, roomLink(detail))
+            }
             add(
                 RomConstants.BANK_ROOM_DATA or roomId,
-                AsmEditorLink("Open ${roomInfo.name}", "Room header", AsmEditorTarget.Room(roomId)),
+                roomLink("Room header"),
             )
+
+            val room = runCatching { romParser.readRoomHeader(roomId) }.getOrNull()
+            room?.doorOut?.let { doorOut ->
+                addRoomPointer(RomConstants.BANK_ROOM_DATA, doorOut, "Door list")
+                runCatching { romParser.parseDoorList(doorOut) }.getOrDefault(emptyList()).forEach { door ->
+                    addRoomPointer(RomConstants.BANK_FX, door.doorDefPtr, "Door definition")
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, door.doorCapCode, "Door scroll ASM")
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, door.entryCode, "Door entry ASM")
+                }
+            }
+
             runCatching { romParser.parseRoomStatesWithData(roomId) }.getOrDefault(emptyList())
-                .map { it.levelDataPtr }
-                .filter { it != 0 }
-                .distinct()
-                .forEach { address ->
-                    add(
-                        address,
-                        AsmEditorLink("Open ${roomInfo.name}", "Room layout", AsmEditorTarget.Room(roomId)),
+                .forEach { state ->
+                    val stateName = state.stateInfo.conditionName
+                    runCatching { romParser.pcToSnes(state.stateInfo.stateDataPcOffset) }.getOrNull()?.let { address ->
+                        add(address, roomLink("State record · $stateName"))
+                    }
+                    state.levelDataPtr.takeIf { it != 0 }?.let { add(it, roomLink("Room layout · $stateName")) }
+                    addRoomPointer(RomConstants.BANK_FX, state.fxPtr, "FX data · $stateName")
+                    addRoomPointer(RomConstants.BANK_ENEMY_SET, state.enemySetPtr, "Enemy population · $stateName")
+                    addRoomPointer(RomConstants.BANK_ENEMY_GFX, state.enemyGfxPtr, "Enemy graphics set · $stateName")
+                    if (state.scrollPtr > 1) {
+                        addRoomPointer(RomConstants.BANK_ROOM_DATA, state.scrollPtr, "Scroll data · $stateName")
+                    }
+                    addRoomPointer(
+                        RomConstants.BANK_ROOM_DATA,
+                        state.xraySpecialCasingPtr,
+                        "Special X-Ray data · $stateName",
                     )
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, state.mainAsmPtr, "Main room ASM · $stateName")
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, state.plmSetPtr, "Placed-object set · $stateName")
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, state.bgDataPtr, "Background program · $stateName")
+                    addRoomPointer(RomConstants.BANK_ROOM_DATA, state.setupAsmPtr, "Setup room ASM · $stateName")
+
+                    if (state.plmSetPtr in 0x8000..0xFFFE) {
+                        runCatching { romParser.parsePlmSet(state.plmSetPtr) }.getOrDefault(emptyList())
+                            .map { it.id }
+                            .distinct()
+                            .forEach { plmId ->
+                                addRoomPointer(RomConstants.BANK_PLM, plmId, "Placed-object definition · $stateName")
+                            }
+                    }
+                    if (state.bgDataPtr in 0x8000..0xFFFE) {
+                        runCatching { romParser.parseLibraryBackground(state.bgDataPtr) }.getOrNull()
+                            ?.commands
+                            ?.mapNotNull { it.sourceAddress }
+                            ?.distinct()
+                            ?.forEach { sourceAddress ->
+                                add(sourceAddress, roomLink("Background payload · $stateName"))
+                            }
+                    }
                 }
         }
+
+        for (area in 0 until MinimapData.NUM_AREAS) {
+            val areaName = MinimapData.AREA_NAMES.getOrElse(area) { "Area $area" }
+            val target = AsmEditorTarget.Map(area)
+            runCatching { romParser.readMinimapTilemapAddress(area) }.getOrNull()?.let { address ->
+                add(address, AsmEditorLink("Open $areaName map", "Pause-map tilemap", target))
+            }
+            runCatching { romParser.readMapStationDataAddress(area) }.getOrNull()?.let { address ->
+                add(address, AsmEditorLink("Open $areaName map", "Map-station reveal data", target))
+            }
+        }
+        runCatching { romParser.readMinimapTileGraphicsAddress() }.getOrNull()?.let { address ->
+            add(address, AsmEditorLink("Open pause map", "Map tile graphics", AsmEditorTarget.Map(null)))
+        }
+
+        TextData.readAllText(romParser.getRomData())
+            .filter { it.writable }
+            .forEach { entry ->
+                add(
+                    entry.snesAddress,
+                    AsmEditorLink(
+                        title = "Open ${entry.label}",
+                        detail = "Text · ${entry.category.displayName}",
+                        target = AsmEditorTarget.Text(entry.id),
+                    ),
+                )
+            }
 
         val catalog = romParser.graphicsCatalog
         for ((tilesetId, entry) in catalog.entries.withIndex()) {

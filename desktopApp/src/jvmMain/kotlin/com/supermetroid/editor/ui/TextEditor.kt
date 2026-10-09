@@ -1,8 +1,12 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,16 +43,33 @@ import com.supermetroid.editor.rom.TextCategory
 import com.supermetroid.editor.rom.TextData
 import com.supermetroid.editor.rom.TextEntry
 
+class TextEditorState {
+    var selectedEntryId by mutableStateOf<String?>(null)
+        private set
+    var navigationSerial by mutableStateOf(0L)
+        private set
+
+    fun select(entryId: String?) {
+        selectedEntryId = entryId
+        navigationSerial++
+    }
+
+    fun toggle(entryId: String) {
+        select(entryId.takeUnless { it == selectedEntryId })
+    }
+}
+
 @Composable
 fun TextEditorSidebar(
     romParser: RomParser?,
     editorState: EditorState,
+    textEditorState: TextEditorState,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val parser = romParser ?: return
     val entries = remember(parser) { TextData.readAllText(parser.getRomData()) }
-    var selectedId by remember { mutableStateOf<String?>(null) }
     val scrollState = rememberScrollState()
 
     Column(modifier = modifier.padding(8.dp).verticalScroll(scrollState)) {
@@ -70,14 +91,22 @@ fun TextEditorSidebar(
             Spacer(Modifier.height(4.dp))
 
             for (entry in categoryEntries) {
-                val isSelected = entry.id == selectedId
+                val isSelected = entry.id == textEditorState.selectedEntryId
                 val editedText = editorState.project.textEdits[entry.id]
                 val displayText = editedText ?: entry.text
                 val isModified = editedText != null
+                val bringIntoViewRequester = remember(entry.id) { BringIntoViewRequester() }
+                androidx.compose.runtime.LaunchedEffect(
+                    isSelected,
+                    textEditorState.navigationSerial,
+                ) {
+                    if (isSelected) bringIntoViewRequester.bringIntoView()
+                }
 
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp)
-                        .clickable { selectedId = if (isSelected) null else entry.id }
+                        .bringIntoViewRequester(bringIntoViewRequester)
+                        .clickable { textEditorState.toggle(entry.id) }
                         .then(if (isSelected) Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)) else Modifier),
                     color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
                         else MaterialTheme.colorScheme.surface,
@@ -95,12 +124,16 @@ fun TextEditorSidebar(
                                 fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isModified) Color(0xFFFFCC00) else MaterialTheme.colorScheme.onSurface
                             )
-                            Text(
-                                if (entry.writable) "$${entry.snesAddress.toString(16).uppercase()}" else "unmapped",
-                                fontSize = fs.detail,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (entry.writable && onNavigateToAsm != null) {
+                                AsmNavigationLink(entry.snesAddress, onNavigateToAsm, label = "ASM")
+                            } else {
+                                Text(
+                                    if (entry.writable) "$${entry.snesAddress.toString(16).uppercase()}" else "unmapped",
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Text(
                             displayText.replace('\n', ' ').take(40),
@@ -122,6 +155,8 @@ fun TextEditorSidebar(
 fun TextEditorPreview(
     romParser: RomParser?,
     editorState: EditorState,
+    textEditorState: TextEditorState,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val parser = romParser ?: return
@@ -139,7 +174,7 @@ fun TextEditorPreview(
         )
         Spacer(Modifier.height(16.dp))
 
-        for (category in TextCategory.entries) {
+        for (category in TextCategory.entries.filterNot { it == TextCategory.ITEM_NAME }) {
             val categoryEntries = entries.filter { it.category == category }
             if (categoryEntries.isEmpty()) continue
 
@@ -148,7 +183,13 @@ fun TextEditorPreview(
             Spacer(Modifier.height(8.dp))
 
             for (entry in categoryEntries) {
-                TextEntryEditor(entry, editorState)
+                TextEntryEditor(
+                    entry = entry,
+                    editorState = editorState,
+                    selected = entry.id == textEditorState.selectedEntryId,
+                    navigationSerial = textEditorState.navigationSerial,
+                    onNavigateToAsm = onNavigateToAsm,
+                )
                 Spacer(Modifier.height(4.dp))
             }
 
@@ -164,7 +205,13 @@ fun TextEditorPreview(
                 fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(4.dp))
             for (entry in itemEntries) {
-                TextEntryEditor(entry, editorState)
+                TextEntryEditor(
+                    entry = entry,
+                    editorState = editorState,
+                    selected = entry.id == textEditorState.selectedEntryId,
+                    navigationSerial = textEditorState.navigationSerial,
+                    onNavigateToAsm = onNavigateToAsm,
+                )
                 Spacer(Modifier.height(4.dp))
             }
         }
@@ -172,13 +219,23 @@ fun TextEditorPreview(
 }
 
 @Composable
-private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
+private fun TextEntryEditor(
+    entry: TextEntry,
+    editorState: EditorState,
+    selected: Boolean,
+    navigationSerial: Long,
+    onNavigateToAsm: ((Int) -> Unit)?,
+) {
     val editVersion = editorState.editVersion // observe edit changes for recomposition
     val editedText = editorState.project.textEdits[entry.id]
     var currentText by remember(entry.id, editedText, editVersion) { mutableStateOf(editedText ?: entry.text) }
     val isModified = currentText != entry.text
     val singleLine = entry.category in listOf(TextCategory.AREA_NAME, TextCategory.ITEM_NAME, TextCategory.UI_MESSAGE)
     val isReadOnly = !entry.writable
+    val bringIntoViewRequester = remember(entry.id) { BringIntoViewRequester() }
+    androidx.compose.runtime.LaunchedEffect(selected, navigationSerial) {
+        if (selected) bringIntoViewRequester.bringIntoView()
+    }
 
     val textField = @Composable { modifier: Modifier ->
         TextField(
@@ -210,7 +267,17 @@ private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
         )
     }
 
-    Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), shape = RoundedCornerShape(6.dp)) {
+    Surface(
+        modifier = Modifier.fillMaxWidth()
+            .bringIntoViewRequester(bringIntoViewRequester)
+            .then(
+                if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
+                else Modifier
+            ),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.24f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(6.dp),
+    ) {
         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
             if (singleLine) {
                 // Compact: label + field on one row
@@ -231,6 +298,10 @@ private fun TextEntryEditor(entry: TextEntry, editorState: EditorState) {
             // Footer: address + max + reset
             Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("\$${entry.snesAddress.toString(16).uppercase().padStart(6, '0')}", fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (entry.writable && onNavigateToAsm != null) {
+                    Spacer(Modifier.width(4.dp))
+                    AsmNavigationLink(entry.snesAddress, onNavigateToAsm, label = "ASM")
+                }
                 Spacer(Modifier.width(8.dp))
                 Text("${entry.maxLength} max", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.weight(1f))

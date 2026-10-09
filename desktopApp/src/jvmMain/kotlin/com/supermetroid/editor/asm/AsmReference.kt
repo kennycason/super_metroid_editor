@@ -83,6 +83,23 @@ internal data class AsmLabel(
     val fileId: String,
     val lineIndex: Int,
     val localScope: String? = null,
+) {
+    val symbolId: AsmSymbolId get() = AsmSymbolId(fileId, lineIndex, name)
+}
+
+internal data class AsmSymbolId(
+    val fileId: String,
+    val lineIndex: Int,
+    val name: String,
+)
+
+internal data class AsmLabelUsage(
+    val symbolId: AsmSymbolId,
+    val fileId: String,
+    val lineIndex: Int,
+    val column: Int,
+    val token: String,
+    val sourceLine: String,
 )
 
 internal data class AsmSourceFile(
@@ -114,10 +131,25 @@ internal data class AsmReferenceIndex(
     private val localLabels = labels.filter { it.localScope != null }
         .associateBy { Triple(it.fileId, it.localScope, it.name) }
     private val assetsByPath = assets.associateBy { it.range.path }
+    private val labelsByLocation = labels.groupBy { it.fileId to it.lineIndex }
+    private val labelsBySymbol = labels.associateBy(AsmLabel::symbolId)
+    private val usagesBySymbol = buildLabelUsages()
 
     fun file(id: String?): AsmSourceFile? = id?.let(filesById::get)
 
     fun asset(path: String?): AsmAsset? = path?.let(assetsByPath::get)
+
+    fun labelsAt(fileId: String, lineIndex: Int): List<AsmLabel> =
+        labelsByLocation[fileId to lineIndex].orEmpty()
+
+    fun label(symbolId: AsmSymbolId?): AsmLabel? = symbolId?.let(labelsBySymbol::get)
+
+    fun definition(fileId: String, lineIndex: Int, token: String): AsmLabel? =
+        labelsAt(fileId, lineIndex).firstOrNull { label ->
+            label.name == token || label.name.substringAfterLast('.') == token.removePrefix(".")
+        }
+
+    fun usagesFor(label: AsmLabel): List<AsmLabelUsage> = usagesBySymbol[label.symbolId].orEmpty()
 
     fun resolveLabel(fileId: String, lineIndex: Int, token: String): AsmLabel? {
         val source = filesById[fileId] ?: return null
@@ -136,6 +168,63 @@ internal data class AsmReferenceIndex(
             .removePrefix("./data/")
         return assetsByPath[normalized]
     }
+
+    private fun buildLabelUsages(): Map<AsmSymbolId, List<AsmLabelUsage>> {
+        val bySymbol = linkedMapOf<AsmSymbolId, MutableList<AsmLabelUsage>>()
+        files.forEach { source ->
+            source.lines.forEachIndexed { lineIndex, sourceLine ->
+                val code = asmCodeBeforeComment(sourceLine)
+                ASM_REFERENCE_TOKEN_REGEX.findAll(code).forEach tokenLoop@{ match ->
+                    val token = match.value
+                    if (token.startsWith('"')) return@tokenLoop
+                    val target = resolveLabel(source.id, lineIndex, token) ?: return@tokenLoop
+                    // Do not count the name that declares a symbol as a use, but retain
+                    // legitimate same-line references such as `Table: dw Table`.
+                    if (
+                        target.fileId == source.id &&
+                        target.lineIndex == lineIndex &&
+                        isAsmDefinitionOccurrence(code, match.range)
+                    ) return@tokenLoop
+                    bySymbol.getOrPut(target.symbolId) { mutableListOf() } += AsmLabelUsage(
+                        symbolId = target.symbolId,
+                        fileId = source.id,
+                        lineIndex = lineIndex,
+                        column = match.range.first,
+                        token = token,
+                        sourceLine = sourceLine.trim(),
+                    )
+                }
+            }
+        }
+        return bySymbol.mapValues { (_, usages) ->
+            usages.sortedWith(compareBy(AsmLabelUsage::fileId, AsmLabelUsage::lineIndex, AsmLabelUsage::column))
+        }
+    }
+}
+
+private val ASM_REFERENCE_TOKEN_REGEX =
+    Regex("\"(?:\\\\.|[^\"])*\"|\\.?[A-Za-z_][A-Za-z0-9_.]*")
+
+private fun asmCodeBeforeComment(line: String): String {
+    var quoted = false
+    var escaped = false
+    line.forEachIndexed { index, character ->
+        when {
+            escaped -> escaped = false
+            character == '\\' && quoted -> escaped = true
+            character == '"' -> quoted = !quoted
+            character == ';' && !quoted -> return line.substring(0, index)
+        }
+    }
+    return line
+}
+
+private fun isAsmDefinitionOccurrence(code: String, range: IntRange): Boolean {
+    val suffix = code.substring(range.last + 1).trimStart()
+    if (suffix.startsWith(':')) return true
+    val prefix = code.substring(0, range.first).trimEnd()
+    return prefix.endsWith("struct", ignoreCase = true) &&
+        prefix.dropLast("struct".length).lastOrNull()?.let { it.isLetterOrDigit() || it == '_' } != true
 }
 
 internal data class AsmReferenceMetadata(

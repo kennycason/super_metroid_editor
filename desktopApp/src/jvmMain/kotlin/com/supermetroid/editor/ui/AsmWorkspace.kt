@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -106,6 +107,8 @@ import com.supermetroid.editor.asm.AsmInstructionInfo
 import com.supermetroid.editor.asm.AsmInstructionReference
 import com.supermetroid.editor.asm.AsmLibrary
 import com.supermetroid.editor.asm.AsmLibraryGuide
+import com.supermetroid.editor.asm.AsmLabel
+import com.supermetroid.editor.asm.AsmLabelUsage
 import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmReferenceIndex
 import com.supermetroid.editor.asm.AsmRomDiffRange
@@ -1508,6 +1511,14 @@ private fun AsmSourceCanvas(
         if (semanticIndex == null || address == null) emptyList()
         else semanticIndex.linksFor(address)
     }
+    val referenceLabel = remember(index, source.id, state.selectedLineIndex, state.activeReferenceSymbol) {
+        index.label(state.activeReferenceSymbol)
+            ?: index.labelsAt(source.id, state.selectedLineIndex)
+                .maxByOrNull { index.usagesFor(it).size }
+    }
+    val labelUsages = remember(index, referenceLabel) {
+        referenceLabel?.let(index::usagesFor).orEmpty()
+    }
     Column(modifier.fillMaxSize()) {
         AsmNavigationHeader(
             state,
@@ -1516,6 +1527,14 @@ private fun AsmSourceCanvas(
             "$addressSummary${source.lines.size} lines · read-only",
         )
         AsmEditorLinkBar(editorLinks, onOpenInEditor)
+        if (referenceLabel != null) {
+            AsmReferencesBar(
+                state = state,
+                index = index,
+                label = referenceLabel,
+                usages = labelUsages,
+            )
+        }
         AsmScrollableTextPane(
             listState = listState,
             horizontalState = horizontal,
@@ -1535,7 +1554,7 @@ private fun AsmSourceCanvas(
                     verticalAlignment = Alignment.Top,
                 ) {
                     DisableSelection {
-                        Row {
+                        Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
                             Text(
                                 (lineIndex + 1).toString(),
                                 fontSize = fs.detail,
@@ -1564,12 +1583,115 @@ private fun AsmSourceCanvas(
                             onAnnotationClick = { annotation ->
                                 when (annotation.tag) {
                                     "label" -> state.openLabel(source.id, lineIndex, annotation.item)
+                                    "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
                                     "asset" -> state.openAssetReference(annotation.item)
                                     "instruction" -> state.showInstruction(annotation.item)
                                     "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
                                 }
                             },
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsmReferencesBar(
+    state: AsmWorkspaceState,
+    index: AsmReferenceIndex,
+    label: AsmLabel,
+    usages: List<AsmLabelUsage>,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var expanded by remember(label.symbolId) { mutableStateOf(false) }
+    val currentIndex = usages.indexOfFirst {
+        it.fileId == state.selectedFileId && it.lineIndex == state.selectedLineIndex
+    }
+    val previous = when {
+        usages.isEmpty() -> null
+        currentIndex <= 0 -> usages.last()
+        else -> usages[currentIndex - 1]
+    }
+    val next = when {
+        usages.isEmpty() -> null
+        currentIndex < 0 || currentIndex == usages.lastIndex -> usages.first()
+        else -> usages[currentIndex + 1]
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.38f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "References",
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    label.name,
+                    fontSize = fs.body,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${usages.size} ${if (usages.size == 1) "usage" else "usages"}",
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(5.dp))
+                TextButton(
+                    onClick = { previous?.let { state.openReference(label, it) } },
+                    enabled = previous != null,
+                ) { Text("Prev", fontSize = fs.detail) }
+                TextButton(
+                    onClick = { next?.let { state.openReference(label, it) } },
+                    enabled = next != null,
+                ) { Text("Next", fontSize = fs.detail) }
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    enabled = usages.isNotEmpty(),
+                ) { Text(if (expanded) "Hide" else "Show all", fontSize = fs.detail) }
+            }
+            if (expanded) {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 190.dp)) {
+                    items(usages, key = { "${it.fileId}:${it.lineIndex}:${it.column}" }) { usage ->
+                        val selected = usage.fileId == state.selectedFileId && usage.lineIndex == state.selectedLineIndex
+                        val source = index.file(usage.fileId)
+                        Surface(
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            else Color.Transparent,
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { state.openReference(label, usage) },
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                Text(
+                                    "${source?.displayName ?: usage.fileId}:${usage.lineIndex + 1}",
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.width(150.dp),
+                                )
+                                Text(
+                                    usage.sourceLine,
+                                    fontSize = fs.detail,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -2032,7 +2154,19 @@ private fun asmAnnotatedLine(
                     if (asset != null) pop()
                 }
                 token == definition -> {
-                    pushStyle(SpanStyle(color = definitionColor, fontWeight = FontWeight.SemiBold)); append(token); pop()
+                    val navigableDefinition = index != null && fileId != null &&
+                        index.definition(fileId, lineIndex, token) != null
+                    if (navigableDefinition) pushStringAnnotation("definition", token)
+                    pushStyle(
+                        SpanStyle(
+                            color = definitionColor,
+                            fontWeight = FontWeight.SemiBold,
+                            textDecoration = if (navigableDefinition) TextDecoration.Underline else null,
+                        ),
+                    )
+                    append(token)
+                    pop()
+                    if (navigableDefinition) pop()
                 }
                 match == instructionMatch -> {
                     pushStringAnnotation("instruction", token.uppercase())

@@ -113,6 +113,7 @@ import com.supermetroid.editor.ui.SpritesTabCanvas
 import com.supermetroid.editor.ui.SpritesTabSidebar
 import com.supermetroid.editor.ui.TextEditorPreview
 import com.supermetroid.editor.ui.TextEditorSidebar
+import com.supermetroid.editor.ui.TextEditorState
 import com.supermetroid.editor.ui.TilesetCanvas
 import com.supermetroid.editor.ui.TilesetEditorState
 import com.supermetroid.editor.ui.TilesTabSidebar
@@ -339,6 +340,7 @@ fun main() = application {
             val tilesetEditorState = remember { TilesetEditorState() }
             val soundEditorState = remember { SoundEditorState() }
             val minimapEditorState = remember { MinimapEditorState() }
+            val textEditorState = remember { TextEditorState() }
             val asmWorkspaceState = remember { AsmWorkspaceState() }
             var tilesetSubTab by remember { mutableStateOf(0) } // 0 = Tilesets, 1 = Patterns, 2 = Palette
             val navigationHistory = remember { EditorNavigationHistory<EditorNavigationLocation>() }
@@ -352,6 +354,7 @@ fun main() = application {
                 soundTrackId = soundEditorState.selectedTrackId,
                 minimapArea = minimapEditorState.selectedArea,
                 minimapRoomId = minimapEditorState.selectedRoom?.roomId,
+                textEntryId = textEditorState.selectedEntryId,
                 asmLocation = asmWorkspaceState.locationSnapshot(),
             )
 
@@ -390,6 +393,7 @@ fun main() = application {
                         selectRoomId = location.minimapRoomId,
                     )
                 }
+                if (location.tab == TAB_TEXT) textEditorState.select(location.textEntryId)
                 if (location.tab == TAB_ASM) {
                     location.asmLocation?.let(asmWorkspaceState::restoreLocation)
                 }
@@ -451,6 +455,19 @@ fun main() = application {
                             SpcData.KNOWN_TRACKS.firstOrNull { it.songSet == target.songSet }
                                 ?.let(soundEditorState::selectTrack)
                             leftTab = TAB_SOUND
+                        }
+                        is AsmEditorTarget.Map -> {
+                            val parser = romParser ?: return@navigate
+                            minimapEditorState.loadArea(
+                                parser = parser,
+                                area = target.area ?: minimapEditorState.selectedArea,
+                                editorState = editorState,
+                            )
+                            leftTab = TAB_MAP
+                        }
+                        is AsmEditorTarget.Text -> {
+                            textEditorState.select(target.entryId)
+                            leftTab = TAB_TEXT
                         }
                     }
                 }
@@ -1028,11 +1045,14 @@ fun main() = application {
                                         state = minimapEditorState,
                                         romParser = romParser,
                                         editorState = editorState,
+                                        onNavigateToAsm = ::openAsmAddress,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_TEXT -> TextEditorSidebar(
                                         romParser = romParser,
                                         editorState = editorState,
+                                        textEditorState = textEditorState,
+                                        onNavigateToAsm = ::openAsmAddress,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
@@ -1151,6 +1171,8 @@ fun main() = application {
                                     TAB_TEXT -> TextEditorPreview(
                                         romParser = romParser,
                                         editorState = editorState,
+                                        textEditorState = textEditorState,
+                                        onNavigateToAsm = ::openAsmAddress,
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_ENEMY -> EnemyTabCanvas(
