@@ -1,6 +1,9 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.asm.AsmCompiledBuildBase
+import com.supermetroid.editor.asm.AsmProjectCompiler
 import com.supermetroid.editor.data.PatternLibrary
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmEditProjectFormat
 import com.supermetroid.editor.rom.RomParser
@@ -70,8 +73,10 @@ internal object ProjectFileService {
         romParser: RomParser,
         onLog: (String) -> Unit,
         onStatus: (String) -> Unit,
+        projectFilePath: String = "",
     ): String? = try {
-        RomExporter(project, romParser, onLog, onStatus).export()
+        val compiledAsmBase = prepareBuildBase(project, projectFilePath, romParser, onLog, onStatus)
+        RomExporter(project, romParser, onLog, onStatus, compiledAsmBase = compiledAsmBase).export()
     } catch (e: Exception) {
         val message = "Export failed safely: ${e.message ?: e::class.simpleName}"
         onLog("ERROR: $message")
@@ -84,13 +89,16 @@ internal object ProjectFileService {
         romParser: RomParser,
         onLog: (String) -> Unit,
         onStatus: (String) -> Unit,
+        projectFilePath: String = "",
     ): RomBuildResult? = try {
+        val compiledAsmBase = prepareBuildBase(project, projectFilePath, romParser, onLog, onStatus)
         RomExporter(
             project = project,
             romParser = romParser,
             onLog = onLog,
             onStatus = onStatus,
             logWritePlanDetails = false,
+            compiledAsmBase = compiledAsmBase,
         ).build()
     } catch (e: Exception) {
         val message = "Export preview failed safely: ${e.message ?: e::class.simpleName}"
@@ -104,9 +112,10 @@ internal object ProjectFileService {
         romParser: RomParser,
         onLog: (String) -> Unit,
         onStatus: (String) -> Unit,
+        projectFilePath: String = "",
     ): String? {
         val original = romParser.getRomData()
-        val smcPath = exportToRom(project, romParser, onLog, onStatus) ?: return null
+        val smcPath = exportToRom(project, romParser, onLog, onStatus, projectFilePath) ?: return null
         val patched = File(smcPath).readBytes()
         val ipsData = buildIpsPatch(original, patched)
         val orig = File(project.romPath)
@@ -126,6 +135,34 @@ internal object ProjectFileService {
         onLog(message)
         onStatus(message)
         return ipsFile.absolutePath
+    }
+
+    private fun prepareBuildBase(
+        project: SmEditProject,
+        projectFilePath: String,
+        romParser: RomParser,
+        onLog: (String) -> Unit,
+        onStatus: (String) -> Unit,
+    ): AsmCompiledBuildBase? {
+        if (project.asmWorkspace.buildMode == ProjectRomBuildMode.PATCHED_ROM) return null
+        require(project.asmWorkspace.enabled) { "Enable Project ASM before selecting the ASM source build" }
+        require(projectFilePath.isNotBlank()) { "Save the SMEDIT project before building from ASM source" }
+        onLog("[ASM-BUILD] Preparing clean source build for $projectFilePath")
+        val compiled = AsmProjectCompiler().compile(
+            projectFilePath = projectFilePath,
+            loadedRom = romParser.copyRomData(),
+        ) { progress ->
+            onLog("[ASM-BUILD] $progress")
+            onStatus(progress)
+        }
+        compiled.compilerOutput
+            .filter { it.contains("warn", ignoreCase = true) || it.contains("error", ignoreCase = true) }
+            .forEach { onLog("[ASAR] $it") }
+        onLog(
+            "[ASM-BUILD] Source base ready: ${compiled.sourceOwnedRanges.sumOf { it.length }} changed byte(s) " +
+                "across ${compiled.sourceOwnedRanges.size} owned range(s)"
+        )
+        return compiled
     }
 
     private fun exportCustomGfxPngs(

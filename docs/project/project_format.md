@@ -5,8 +5,10 @@ does not embed either tool's configuration model.
 
 ## What A Project Stores
 
-A project identifies an immutable base ROM with `romPath` and stores semantic edits applied by
-SMEDIT at export time. The current top-level model includes room edits, room-state manifests,
+A project identifies its loaded ROM with `romPath` and stores semantic edits applied by
+SMEDIT at export time. By default that file is the immutable build base. An opted-in
+Project ASM workspace may instead select a clean source compilation as the build base;
+the loaded ROM remains the private asset source and comparison input. The current top-level model includes room edits, room-state manifests,
 tileset defaults, patches, custom graphics, patterns, minimap and map-station edits, text and room
 name overrides, custom ASM, music edits, project UI settings, and ROM build-label fields.
 
@@ -27,6 +29,15 @@ to SMEDIT's global config; the project field remains only as a migration source 
 by older builds. Patch search text is intentionally session-only and is not saved. Enabled patches
 are always grouped above disabled patches; favorites and alphabetical sorting apply within those
 groups. These settings affect presentation only and never change ROM export behavior.
+
+`asmWorkspace` is the portable contract for the project-owned ASM sidecar. `enabled`
+and `sourceRevision` identify the pinned source snapshot, while `buildMode` is either
+`PATCHED_ROM` (the backward-compatible default shown as **Loaded ROM**) or
+`ASM_SOURCE`. Source/data trees remain beside the project under
+`<project-name>_smedit/asm/`; they are not embedded in JSON. Saved source overrides
+are the portable authored content. In `ASM_SOURCE` mode the two source trees compile
+before the shared semantic-edit and patch transaction, and their authored byte delta
+becomes a normal conflict-checked ROM owner.
 
 Room data is described in [`room_model.md`](room_model.md). `newRooms` owns stable project room
 identities, complete initial headers/default-state payloads, and semantic door destinations.

@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.CommunitySamusSpriteSource
 import com.supermetroid.editor.data.CommunitySamusInjectionArtifact
 import com.supermetroid.editor.data.PatchSortOrder
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -104,6 +105,7 @@ class ProjectFileServiceTest {
         val project = SmEditProject(romPath = "base.smc").also {
             it.asmWorkspace.enabled = true
             it.asmWorkspace.sourceRevision = "11c906f547ed"
+            it.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
         }
 
         assertTrue(ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {})
@@ -111,6 +113,7 @@ class ProjectFileServiceTest {
 
         assertTrue(reopened.asmWorkspace.enabled)
         assertEquals("11c906f547ed", reopened.asmWorkspace.sourceRevision)
+        assertEquals(ProjectRomBuildMode.ASM_SOURCE, reopened.asmWorkspace.buildMode)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
     }
 }

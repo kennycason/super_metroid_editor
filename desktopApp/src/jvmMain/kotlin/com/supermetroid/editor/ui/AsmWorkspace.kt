@@ -133,6 +133,7 @@ import com.supermetroid.editor.asm.formatPcOffset
 import com.supermetroid.editor.asm.formatSnesAddress
 import com.supermetroid.editor.asm.parseAsmAddressQuery
 import com.supermetroid.editor.asm.pcToSnesLoRom
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.rom.RomParser
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
@@ -160,6 +161,8 @@ internal fun AsmWorkspaceSidebar(
     projectFilePath: String,
     projectAsmEnabled: Boolean,
     onProjectAsmEnabled: () -> Unit,
+    projectBuildMode: ProjectRomBuildMode = ProjectRomBuildMode.PATCHED_ROM,
+    onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit = {},
     buildRomPreview: (() -> AsmRomPreview?)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -276,9 +279,11 @@ internal fun AsmWorkspaceSidebar(
             romAvailable = romParser != null,
             projectFilePath = projectFilePath,
             projectAsmEnabled = projectAsmEnabled,
+            projectBuildMode = projectBuildMode,
             onDownload = ::download,
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
+            onProjectBuildModeChanged = onProjectBuildModeChanged,
         )
     }
 }
@@ -289,9 +294,11 @@ private fun AsmWorkspaceControls(
     romAvailable: Boolean,
     projectFilePath: String,
     projectAsmEnabled: Boolean,
+    projectBuildMode: ProjectRomBuildMode,
     onDownload: () -> Unit,
     onSyncAssets: () -> Unit,
     onEnableProjectAsm: () -> Unit,
+    onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val referenceReady = state.hasReferenceWorkspace
@@ -307,7 +314,7 @@ private fun AsmWorkspaceControls(
                 unsaved > 0 -> " · $unsaved unsaved"
                 modified > 0 -> " · $modified edited"
                 else -> " · clean"
-            }
+            } + if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) " · source build" else ""
         }
         projectAsmEnabled -> "Project ASM needs repair"
         else -> "Project ASM disabled"
@@ -433,10 +440,34 @@ private fun AsmWorkspaceControls(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Original snapshot ${AsmReferenceContract.COMMIT.take(12)} · compilation is not enabled yet",
+                        "Original snapshot ${AsmReferenceContract.COMMIT.take(12)}",
                         fontSize = fs.detail,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    Text("ROM build base", fontSize = fs.detail, fontWeight = FontWeight.Bold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AsmBuildModeButton(
+                            label = "Loaded ROM",
+                            selected = projectBuildMode == ProjectRomBuildMode.PATCHED_ROM,
+                            modifier = Modifier.weight(1f),
+                        ) { onProjectBuildModeChanged(ProjectRomBuildMode.PATCHED_ROM) }
+                        AsmBuildModeButton(
+                            label = "ASM source",
+                            selected = projectBuildMode == ProjectRomBuildMode.ASM_SOURCE,
+                            modifier = Modifier.weight(1f),
+                        ) { onProjectBuildModeChanged(ProjectRomBuildMode.ASM_SOURCE) }
+                    }
+                    Text(
+                        if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) {
+                            "Compiles project source first, then applies normal SMEDIT edits and patches with conflict checks."
+                        } else {
+                            "Uses the ROM you opened, preserving the established patch-only export path."
+                        },
+                        fontSize = fs.detail,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 5.dp),
                     )
                 } else if (referenceReady) {
                     Spacer(Modifier.height(7.dp))
@@ -452,6 +483,29 @@ private fun AsmWorkspaceControls(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun AsmBuildModeButton(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        shape = ASM_CONTROL_SHAPE,
+        modifier = modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            label,
+            fontSize = fs.detail,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 7.dp),
+        )
     }
 }
 

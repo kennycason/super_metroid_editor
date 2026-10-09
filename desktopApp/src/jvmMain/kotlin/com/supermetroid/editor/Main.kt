@@ -1078,6 +1078,11 @@ fun main() = application {
                                             editorState.enableProjectAsmWorkspace(AsmReferenceContract.COMMIT)
                                             romParser?.let(editorState::saveProject)
                                         },
+                                        projectBuildMode = editorState.project.asmWorkspace.buildMode,
+                                        onProjectBuildModeChanged = { mode ->
+                                            editorState.setProjectRomBuildMode(mode)
+                                            romParser?.let(editorState::saveProject)
+                                        },
                                         buildRomPreview = romParser?.let { parser ->
                                             { editorState.buildRomPreview(parser) }
                                         },

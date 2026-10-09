@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.asm.AsmCompiledBuildBase
 import com.supermetroid.editor.data.RoomRepository
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchWrite
@@ -183,11 +184,12 @@ internal data class RomBuildResult(
     val minimapPatched: Int,
     val textPatched: Int,
     val asmPatched: Int,
+    val sourcePatched: Int = 0,
 ) {
     val hasSemanticEdits: Boolean
         get() = roomsPatched > 0 || patchesApplied > 0 || musicPatched > 0 ||
             graphicsPatched > 0 || samusPatched > 0 || minimapPatched > 0 ||
-            textPatched > 0 || asmPatched > 0
+            textPatched > 0 || asmPatched > 0 || sourcePatched > 0
 }
 
 /**
@@ -203,6 +205,7 @@ internal class RomExporter(
     private val onLog: (String) -> Unit = {},
     private val onStatus: (String) -> Unit = {},
     private val logWritePlanDetails: Boolean = true,
+    private val compiledAsmBase: AsmCompiledBuildBase? = null,
 ) {
 
     private fun exportSuffix(): String {
@@ -218,12 +221,20 @@ internal class RomExporter(
         onLog("[EXPORT] Starting export — romPath=$romPath, romSize=${romParser.getRomData().size}")
         onLog("[EXPORT] Project spriteTileBlocks keys: ${project.customGfx.spriteTileBlocks.keys}")
         val originalRom = romParser.copyRomData()
-        val headerSize = if (originalRom.size % 0x8000 == RomConstants.SMC_HEADER_SIZE) {
+        val buildBase = compiledAsmBase?.romBytes ?: originalRom
+        val headerSize = if (buildBase.size % 0x8000 == RomConstants.SMC_HEADER_SIZE) {
             RomConstants.SMC_HEADER_SIZE
         } else {
             0
         }
-        val inputRomHash = bytesSha256(originalRom.copyOfRange(headerSize, originalRom.size))
+        val inputRomHash = compiledAsmBase?.referenceRomSha256
+            ?: bytesSha256(buildBase.copyOfRange(headerSize, buildBase.size))
+        if (compiledAsmBase != null) {
+            onLog(
+                "[ASM-BUILD] ${compiledAsmBase.assemblerVersion} compiled project source; " +
+                    "${compiledAsmBase.sourceOwnedRanges.size} changed range(s)"
+            )
+        }
         val communitySamusArtifact = try {
             project.customGfx.samusCommunitySource
                 ?.let(CommunitySamusSourceCodec::load)
@@ -236,8 +247,8 @@ internal class RomExporter(
         }
         val exportBase = try {
             communitySamusArtifact?.let {
-                CommunitySamusRomInjector.expandedBase(originalRom, headerSize, inputRomHash, it)
-            } ?: originalRom
+                CommunitySamusRomInjector.expandedBase(buildBase, headerSize, inputRomHash, it)
+            } ?: buildBase
         } catch (problem: RomWritePlanException) {
             val message = "Export failed safely: ${problem.message}"
             onLog("ERROR: $message")
@@ -245,7 +256,17 @@ internal class RomExporter(
             return null
         }
         val writePlan = RomWritePlan(exportBase, headerSize)
+        compiledAsmBase?.sourceOwnedRanges?.forEachIndexed { index, range ->
+            writePlan.claimCurrentRange(
+                owner = "asm-source:project",
+                label = "Compiled project source ${index + 1}/${compiledAsmBase.sourceOwnedRanges.size}",
+                offset = range.pcOffset,
+                size = range.length,
+                kind = RomWriteKind.ASM_SOURCE,
+            )
+        }
         val romData = writePlan.romData
+        val buildBaseParser = RomParser(buildBase)
         val allocationParser = RomParser(romData)
         val freeSpaceAllocator = RomFreeSpaceAllocator(
             romData = romData,
@@ -260,11 +281,11 @@ internal class RomExporter(
 
         val validationRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
         val baselineIssues = RomValidator.validate(
-            parser = romParser,
+            parser = buildBaseParser,
             roomIds = validationRoomIds,
         ).toSet()
         val preflightIssues = RomValidator.validate(
-            parser = romParser,
+            parser = buildBaseParser,
             roomIds = validationRoomIds,
             project = project,
         )
@@ -410,7 +431,11 @@ internal class RomExporter(
             )
         }
 
-        if (roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 && samusPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0) {
+        if (
+            roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 &&
+            samusPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0 &&
+            compiledAsmBase?.sourceOwnedRanges.orEmpty().isEmpty()
+        ) {
             return RomBuildResult(
                 loadedRom = originalRom,
                 resultRom = writePlan.finalRom(),
@@ -424,6 +449,7 @@ internal class RomExporter(
                 minimapPatched = minimapPatched,
                 textPatched = textPatched,
                 asmPatched = asmPatched,
+                sourcePatched = compiledAsmBase?.sourceOwnedRanges?.sumOf { it.length } ?: 0,
             )
         }
 
@@ -473,6 +499,7 @@ internal class RomExporter(
             minimapPatched = minimapPatched,
             textPatched = textPatched,
             asmPatched = asmPatched,
+            sourcePatched = compiledAsmBase?.sourceOwnedRanges?.sumOf { it.length } ?: 0,
         )
     }
 
@@ -492,7 +519,8 @@ internal class RomExporter(
             onLog("Exported (vanilla copy, no edits): ${out.absolutePath}")
             return out.absolutePath
         }
-        val msg = "Exported ROM: ${out.absolutePath} (${build.roomsPatched} rooms, ${build.patchesApplied} patches, ${build.musicPatched} music, ${build.graphicsPatched} gfx, ${build.samusPatched} Samus)"
+        val sourceSummary = if (build.sourcePatched > 0) ", ${build.sourcePatched} ASM bytes" else ""
+        val msg = "Exported ROM: ${out.absolutePath} (${build.roomsPatched} rooms, ${build.patchesApplied} patches, ${build.musicPatched} music, ${build.graphicsPatched} gfx, ${build.samusPatched} Samus$sourceSummary)"
         onLog(msg)
         onStatus(msg)
         return out.absolutePath

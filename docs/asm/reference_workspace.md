@@ -5,8 +5,9 @@ now opt an editable project into an isolated **Project ASM** workspace. The
 reference turns the exact annotated Super Metroid disassembly used by the parity
 suite into an IDE-like knowledge browser without making either an ASM checkout
 or a second ROM-selection step a prerequisite for ordinary ROM editing. Project
-ASM establishes safe source ownership and editing; compilation remains a later,
-explicit layer.
+ASM establishes safe source ownership and editing and now provides an explicit,
+opt-in source-build base for ROM export. Ordinary projects remain on the existing
+loaded-ROM patch path unless their build base is deliberately changed.
 
 ## User workflow
 
@@ -62,7 +63,15 @@ explicit layer.
     editing, unsaved and saved-modification indicators, `Cmd/Ctrl+S`, buffer
     revert, and a confirmed **Restore original** action. Saving reparses the
     complete source index so label navigation and references reflect the saved
-    project text. No assembler runs and no ROM write is produced by this layer.
+    project text.
+12. Expand the Project ASM control and choose **ASM source** under **ROM build
+    base** when the saved source should become executable. **Loaded ROM** keeps
+    the established patch-only path. In source mode SMEDIT compiles both the
+    immutable snapshot and project tree in isolated temporary directories,
+    measures the authored delta, registers it as `asm-source:project`, and then
+    runs the normal semantic-edit, patch, validation, and atomic-output stages.
+    The ROM preview uses the same selection and performs the same build without
+    writing an output file.
 
 The application-level **Back** and **Forward** buttons beside **EMU** preserve
 the workspace and selected resource across these jumps. For example, opening a
@@ -130,7 +139,8 @@ editable tree that future compilation will consume. Both generated trees are
 ignored by the sidecar's own `.gitignore`; intentionally saved source changes are
 mirrored under `overrides/src/`, which is small, reviewable, and suitable for
 source control. A recreated local tree reapplies those overrides automatically.
-The `.smedit` JSON records only that ASM mode is enabled and its source revision.
+The `.smedit` JSON records that ASM mode is enabled, its source revision, and the
+explicit ROM build-base choice. Existing projects default to **Loaded ROM**.
 Initial creation is staged and validated before activation. Repairing an
 incomplete sidecar preserves the prior tree as a recoverable hidden backup rather
 than deleting it.
@@ -140,8 +150,12 @@ entry point, asset ranges, and counts validate. Refreshing assets uses the same
 staged replacement. Archive paths, expanded size, entry count, and extraction
 destinations are bounded before writes occur.
 
-No Git or Python installation is required in the desktop workflow. A checked-in,
-data-only range manifest lets Kotlin perform the extraction directly.
+No Git or Python installation is required to download/browse source or extract
+assets. A checked-in, data-only range manifest lets Kotlin perform extraction
+directly. Source compilation requires exact Asar 1.81. SMEDIT accepts
+`SMEDIT_ASAR`/`smedit.asar`, uses a compatible platform binary when available,
+or provisions the pinned Asar source with Git and CMake into
+`~/.smedit/asm/asar/`. The compiler version is verified before every build.
 That manifest is regenerated from the pinned upstream `tools/rip_assets.py` with:
 
 ```bash
@@ -212,6 +226,14 @@ memory; building or refreshing the preview writes neither a ROM nor the project
 file. An explicit refresh keeps the snapshot model honest when the user continues
 editing.
 
+In **ASM source** mode, source compilation is not an untracked pre-step. The
+immutable and edited trees are assembled separately; only their byte delta is
+claimed as project source. Asar's generated SNES checksum/complement bytes are
+excluded from source ownership because later deterministic writers may replace
+them. Any patch, community sprite injection, or semantic exporter that tries to
+write a different value over an authored source byte fails through the same
+`RomWritePlan` conflict used by loaded-ROM builds.
+
 ## Architecture
 
 - `AsmReferenceRepository` owns download, archive safety, transactional cache
@@ -220,6 +242,12 @@ editing.
   immutable original/working-tree separation, bounded atomic source writes,
   trackable source overrides, modified-file detection, offline restore, and
   recoverable repair of incomplete workspaces.
+- `AsmProjectCompiler` performs clean out-of-tree reference/project builds,
+  preserves optional copier headers, captures Asar diagnostics, requires a valid
+  emitted symbol map, and returns minimal authored source ranges rather than an
+  opaque ROM replacement.
+- `AsmToolchain` pins and verifies Asar 1.81, preferring an explicitly configured
+  executable and otherwise using/provisioning a managed local compiler.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
   every source file, authored section, global label, scoped local label,
   cross-reference, and extracted asset. Reference resolution uses the same
@@ -266,12 +294,13 @@ Follow-up work can now be incremental:
 1. Extend the reverse semantic bridge to remaining specialized title/menu,
    cinematic, and generated-runtime assets as those editors gain stable semantic
    selection entry points.
-2. Add the pinned assembler toolchain, compile diagnostics, and generated symbol
-   output to the project-owned workspace now that editable files, dirty state,
-   persistence, and restore semantics are established.
-3. Feed semantic editor changes into generated assets/source, assemble with the
-   pinned toolchain, and run the existing ownership/preflight checks over the
-   resulting ROM delta so patch-mode features remain compatible.
+2. Surface structured file/line compile diagnostics and the generated symbol map
+   directly in Source instead of reporting compiler text only in status/logs.
+3. Add artifact sinks for semantic editors so room, graphics, map, text, and
+   sound changes can materialize into project-owned `data/`/source before Asar.
+   Today those edits still run safely after compilation through the shared
+   transaction; moving each stable encoder before compilation is the next
+   incremental step toward fully source-native assets.
 
-Arbitrary-hack disassembly, source merge/conflict handling, and ASM compilation
-are not implied by the current editable workspace.
+Arbitrary-hack disassembly and automatic source merge/conflict resolution are not
+implied by the current editable workspace.

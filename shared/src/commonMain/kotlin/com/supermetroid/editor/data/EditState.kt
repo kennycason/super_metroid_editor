@@ -865,9 +865,21 @@ data class ProjectGeneralSettings(
  * project contract and the immutable upstream revision they were seeded from.
  */
 @Serializable
+enum class ProjectRomBuildMode {
+    PATCHED_ROM,
+    ASM_SOURCE,
+}
+
+@Serializable
 data class ProjectAsmWorkspaceSettings(
     var enabled: Boolean = false,
     var sourceRevision: String = "",
+    /**
+     * PATCHED_ROM preserves the established exporter exactly. ASM_SOURCE first
+     * assembles the project-owned source tree, then runs the same validated
+     * semantic-edit and patch transaction over that compiled base.
+     */
+    var buildMode: ProjectRomBuildMode = ProjectRomBuildMode.PATCHED_ROM,
 )
 
 /**
@@ -899,7 +911,7 @@ data class SmEditProject(
     var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
 ) {
     companion object {
-        const val CURRENT_PROJECT_FORMAT_VERSION = 7
+        const val CURRENT_PROJECT_FORMAT_VERSION = 8
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 

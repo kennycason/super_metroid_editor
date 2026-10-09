@@ -34,6 +34,7 @@ import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.data.RoomStateEdits
 import com.supermetroid.editor.data.ProjectRoomStateCondition
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.ProjectDoorDefinition
 import com.supermetroid.editor.data.ProjectEnemyEntry
 import com.supermetroid.editor.data.ProjectEnemyGfxEntry
@@ -331,6 +332,13 @@ class EditorState(
         if (project.asmWorkspace.enabled && project.asmWorkspace.sourceRevision == sourceRevision) return
         project.asmWorkspace.enabled = true
         project.asmWorkspace.sourceRevision = sourceRevision
+        dirty = true
+    }
+
+    fun setProjectRomBuildMode(mode: ProjectRomBuildMode) {
+        if (project.asmWorkspace.buildMode == mode) return
+        project.asmWorkspace.buildMode = mode
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
     }
 
@@ -7669,7 +7677,13 @@ class EditorState(
         if (project.romPath.isEmpty()) return null
         saveProject(romParser)
         val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
-        return ProjectFileService.exportToRom(project, sourceParser, ::editorLog, ::postStatus)
+        return ProjectFileService.exportToRom(
+            project,
+            sourceParser,
+            ::editorLog,
+            ::postStatus,
+            projectFilePath,
+        )
     }
 
     internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreview? {
@@ -7677,7 +7691,13 @@ class EditorState(
         if (project.romPath.isEmpty()) return null
         val projectSnapshot = ProjectFileService.snapshotProject(project)
         val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
-        val result = ProjectFileService.buildRom(projectSnapshot, sourceParser, ::editorLog, ::postStatus) ?: return null
+        val result = ProjectFileService.buildRom(
+            projectSnapshot,
+            sourceParser,
+            ::editorLog,
+            ::postStatus,
+            projectFilePath,
+        ) ?: return null
         return com.supermetroid.editor.asm.AsmRomPreview.create(
             loadedRom = result.loadedRom,
             resultRom = result.resultRom,
@@ -7691,7 +7711,13 @@ class EditorState(
         if (project.romPath.isEmpty()) return null
         saveProject(romParser)
         val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
-        return ProjectFileService.exportToIps(project, sourceParser, ::editorLog, ::postStatus)
+        return ProjectFileService.exportToIps(
+            project,
+            sourceParser,
+            ::editorLog,
+            ::postStatus,
+            projectFilePath,
+        )
     }
 
 }
