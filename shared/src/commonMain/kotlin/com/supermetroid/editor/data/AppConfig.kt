@@ -61,6 +61,7 @@ data class AppSettings(
     val roomEditorShowFlatSlopeSurfaces: Boolean = true,
     val mainSidebarWidthDp: Float = 340f,
     val sidebarBottomPaneHeightDp: Float = 0f,
+    val asmProblemsPaneHeightDp: Float = 180f,
 )
 
 object AppConfig {

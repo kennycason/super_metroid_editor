@@ -70,6 +70,7 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.supermetroid.editor.data.AppConfig
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.RomPreferences
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.WindowConfig
@@ -296,7 +297,13 @@ fun main() = application {
             if (keyEvent.type == KeyEventType.KeyDown && keyEvent.key == Key.S &&
                 (keyEvent.isCtrlPressed || keyEvent.isMetaPressed)) {
                 if (asmWorkspaceState.isProjectSourceEditable) {
-                    scope.launch { asmWorkspaceState.saveSource() }
+                    scope.launch {
+                        editorState.setProjectRomBuildMode(ProjectRomBuildMode.ASM_SOURCE)
+                        if (asmWorkspaceState.saveSource()) {
+                            val parser = romParser
+                            if (parser != null) editorState.saveProject(parser)
+                        }
+                    }
                 } else {
                     val parser = romParser
                     if (parser?.roomCatalog?.editable == true) {
@@ -500,6 +507,9 @@ fun main() = application {
                     enabled = editorState.project.asmWorkspace.enabled,
                 )
             }
+            LaunchedEffect(editorState.romBuildInProgress, editorState.projectFilePath) {
+                if (!editorState.romBuildInProgress) asmWorkspaceState.refreshBuildReport()
+            }
             LaunchedEffect(romParser) {
                 asmWorkspaceState.observeRom(romParser?.copyRomData())
             }
@@ -686,10 +696,23 @@ fun main() = application {
                             }
                         }
                         Button(
-                            onClick = { editorState.saveProject(romParser) },
+                            onClick = {
+                                scope.launch {
+                                    if (asmWorkspaceState.unsavedSourceFileIds.isNotEmpty()) {
+                                        editorState.setProjectRomBuildMode(ProjectRomBuildMode.ASM_SOURCE)
+                                    }
+                                    if (asmWorkspaceState.saveAllSources()) {
+                                        val parser = romParser
+                                        editorState.saveProject(parser)
+                                    }
+                                }
+                            },
                             enabled = romEditable,
                             shape = RoundedCornerShape(6.dp),
-                        ) { Text(if (editorState.dirty) "Save*" else "Save", fontSize = fs.body) }
+                        ) {
+                            val hasUnsavedAsm = asmWorkspaceState.unsavedSourceFileIds.isNotEmpty()
+                            Text(if (editorState.dirty || hasUnsavedAsm) "Save*" else "Save", fontSize = fs.body)
+                        }
                         Button(
                             onClick = {
                                 romParser?.let { editorState.exportToRom(it) }
@@ -858,13 +881,17 @@ fun main() = application {
                             ?: Float.NaN,
                     )
                 }
-                LaunchedEffect(leftColumnWidthDp, tilesetHeightDp) {
+                var asmProblemsPaneHeightDp by remember {
+                    mutableStateOf(appSettings.asmProblemsPaneHeightDp.coerceIn(96f, 420f))
+                }
+                LaunchedEffect(leftColumnWidthDp, tilesetHeightDp, asmProblemsPaneHeightDp) {
                     delay(300)
                     val persistedBottomHeight = tilesetHeightDp.takeIf { it.isFinite() && it > 0f }
                     AppConfig.update {
                         copy(
                             mainSidebarWidthDp = leftColumnWidthDp,
                             sidebarBottomPaneHeightDp = persistedBottomHeight ?: sidebarBottomPaneHeightDp,
+                            asmProblemsPaneHeightDp = asmProblemsPaneHeightDp,
                         )
                     }
                 }
@@ -1216,6 +1243,15 @@ fun main() = application {
                                         state = asmWorkspaceState,
                                         romParser = romParser,
                                         onOpenInEditor = ::openAsmEditorTarget,
+                                        onSaveProject = {
+                                            editorState.setProjectRomBuildMode(ProjectRomBuildMode.ASM_SOURCE)
+                                            romParser?.let(editorState::saveProject) ?: false
+                                        },
+                                        buildProjectRom = romParser?.let { parser ->
+                                            { editorState.buildRomPreview(parser) }
+                                        },
+                                        problemsPaneHeightDp = asmProblemsPaneHeightDp,
+                                        onProblemsPaneHeightChange = { asmProblemsPaneHeightDp = it },
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }

@@ -121,6 +121,60 @@ class AsmProjectWorkspaceTest {
         val projectRepository = AsmProjectWorkspaceRepository(listOf(range))
         val projectFile = File(tempDirectory, "State.smedit").apply { writeText("{}") }
         projectRepository.initialize(projectFile.absolutePath, reference)
+        val buildArtifacts = AsmBuildArtifactRepository(projectRepository)
+        buildArtifacts.publishSuccess(
+            projectFilePath = projectFile.absolutePath,
+            symbols = ByteArray(0),
+            output = listOf("Build succeeded"),
+            assemblerVersion = "fixture",
+        )
+        val state = AsmWorkspaceState(
+            repository = AsmReferenceRepository(
+                referenceRoot = File(tempDirectory, "unused-global-cache"),
+                fetchBytes = { error("network should not be used") },
+                assetRanges = listOf(range),
+            ),
+            projectRepository = projectRepository,
+            buildArtifactRepository = buildArtifacts,
+        )
+
+        state.bindProject(projectFile.absolutePath, enabled = true)
+        state.openSource("bank_80.asm", lineIndex = 3, columnIndex = 4)
+        assertEquals(
+            AsmWorkspaceKind.PROJECT,
+            (state.locationSnapshot() as AsmWorkspaceLocation.Source).workspaceKind,
+        )
+        assertEquals(4, (state.locationSnapshot() as AsmWorkspaceLocation.Source).columnIndex)
+        assertTrue(state.isProjectSourceEditable)
+        assertFalse(state.sourceBuildRequired)
+        val original = state.sourceEditText("bank_80.asm")
+        state.updateSourceEditText("bank_80.asm", "$original\n; project edit")
+
+        assertTrue(state.hasUnsavedSourceChanges("bank_80.asm"))
+        assertTrue(state.sourceBuildRequired)
+        assertTrue(state.hasProjectSourceChanges)
+        assertEquals(setOf("bank_80.asm"), state.unsavedSourceFileIds)
+        state.discardSourceBuffer("bank_80.asm")
+        assertFalse(state.sourceBuildRequired, "reverting an unsaved edit retains the matching successful build")
+        state.updateSourceEditText("bank_80.asm", "$original\n; project edit")
+        assertTrue(state.saveSource("bank_80.asm"))
+        assertFalse(state.hasUnsavedSourceChanges("bank_80.asm"))
+        assertTrue(state.sourceBuildRequired, "newly saved source requires an explicit build")
+        assertEquals(setOf("bank_80.asm"), state.projectModifiedFileIds)
+
+        assertTrue(state.restoreOriginalSource("bank_80.asm"))
+        assertEquals(original, state.sourceEditText("bank_80.asm"))
+        assertEquals(emptySet<String>(), state.projectModifiedFileIds)
+        assertFalse(state.hasProjectSourceChanges)
+    }
+
+    @Test
+    fun `reviewed project replacement stages buffers without writing source`() = runBlocking {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val projectRepository = AsmProjectWorkspaceRepository(listOf(range))
+        val projectFile = File(tempDirectory, "Replace.smedit").apply { writeText("{}") }
+        val project = projectRepository.initialize(projectFile.absolutePath, reference)
         val state = AsmWorkspaceState(
             repository = AsmReferenceRepository(
                 referenceRoot = File(tempDirectory, "unused-global-cache"),
@@ -129,28 +183,17 @@ class AsmProjectWorkspaceTest {
             ),
             projectRepository = projectRepository,
         )
-
         state.bindProject(projectFile.absolutePath, enabled = true)
-        state.openSource("bank_80.asm")
-        assertEquals(
-            AsmWorkspaceKind.PROJECT,
-            (state.locationSnapshot() as AsmWorkspaceLocation.Source).workspaceKind,
-        )
-        assertTrue(state.isProjectSourceEditable)
-        val original = state.sourceEditText("bank_80.asm")
-        state.updateSourceEditText("bank_80.asm", "$original\n; project edit")
+        val diskSource = File(project.workingDirectory, "src/bank_80.asm")
+        val original = diskSource.readText()
+        val preview = state.previewProjectSourceReplacement("RTS", "NOP", caseSensitive = true)
 
-        assertTrue(state.hasUnsavedSourceChanges("bank_80.asm"))
-        assertTrue(state.hasProjectSourceChanges)
+        assertEquals(1, preview.occurrenceCount)
+        assertEquals(1, state.stageProjectSourceReplacement(preview))
+        assertEquals(original, diskSource.readText(), "staging must not write the working tree")
         assertEquals(setOf("bank_80.asm"), state.unsavedSourceFileIds)
-        assertTrue(state.saveSource("bank_80.asm"))
-        assertFalse(state.hasUnsavedSourceChanges("bank_80.asm"))
-        assertEquals(setOf("bank_80.asm"), state.projectModifiedFileIds)
-
-        assertTrue(state.restoreOriginalSource("bank_80.asm"))
-        assertEquals(original, state.sourceEditText("bank_80.asm"))
+        assertTrue(state.sourceEditText("bank_80.asm").contains("NOP"))
         assertEquals(emptySet<String>(), state.projectModifiedFileIds)
-        assertFalse(state.hasProjectSourceChanges)
     }
 
     private fun fakeReference(ranges: List<AsmAssetRange>): AsmReferenceWorkspace {

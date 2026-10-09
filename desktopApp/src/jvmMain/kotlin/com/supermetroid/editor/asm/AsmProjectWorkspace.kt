@@ -123,7 +123,10 @@ internal class AsmProjectWorkspaceRepository(
     }
 
     fun saveSource(projectFilePath: String, fileId: String, text: String): AsmProjectWorkspace {
-        val current = requireNotNull(load(projectFilePath)) { "Project ASM workspace is unavailable" }
+        // Resolve and validate the lightweight filesystem workspace first. A
+        // complete source-index parse is needed only once, after the atomic
+        // write, when the browser adopts the new saved tree.
+        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         val sourceRoot = File(current.workingDirectory, "src")
         val target = resolveManagedSource(sourceRoot, fileId)
         require(target.isFile) { "ASM source does not exist: $fileId" }
@@ -140,7 +143,7 @@ internal class AsmProjectWorkspaceRepository(
     }
 
     fun restoreSource(projectFilePath: String, fileId: String): AsmProjectWorkspace {
-        val current = requireNotNull(load(projectFilePath)) { "Project ASM workspace is unavailable" }
+        val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         val originalRoot = File(current.originalDirectory, "src")
         val workingRoot = File(current.workingDirectory, "src")
         val original = resolveManagedSource(originalRoot, fileId)
@@ -369,6 +372,7 @@ internal class AsmProjectWorkspaceRepository(
             # Generated ASM snapshots and ROM-derived assets stay local.
             /original/
             /workspace/
+            /build/
             /.smedit-project-asm.properties
         """.trimIndent() + "\n"
     }

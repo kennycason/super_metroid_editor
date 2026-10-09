@@ -18,14 +18,16 @@ never be silently omitted from an export.
 3. SMEDIT downloads the pinned `sm_disassembly` source revision and extracts all
    1,130 NTSC binary assets from the ROM already open in memory.
 4. Browse banks as chapters, expand a bank into its authored `;;; $address:
-   description ;;;` sections, search labels/functions, and click a label operand
+   description ;;;` sections, search bank names, labels, addresses, or literal
+   source text—including instructions, values, and comments—and click a label operand
    to follow it to its definition. Only the active bank chapter is expanded by
    default, and selecting it again collapses it. Back/forward navigation
    preserves the trail. At a definition, the compact **References** bar reports
    every resolved use; **Prev**, **Next**, and **Show all** navigate callers and
    data references without losing the active symbol. Definition names and source
    gutters are clickable, so reference browsing also works from search/address
-   landings instead of only from an operand.
+   landings instead of only from an operand. Literal-text results land on the
+   exact matching column, and ASM back/forward history retains that caret target.
 5. Open **Library** for a practical learning path covering source/data syntax,
    registers and banks, width state, `.B`/`.W`/`.L`, addressing modes, flags and
    loops, calls and stack discipline, and common SNES runtime patterns.
@@ -64,10 +66,29 @@ never be silently omitted from an export.
     opens **Project (editable)**. Switch between **Original (read-only)** and
     **Project (editable)** at any time; the original view also provides an explicit
     shortcut back to editable source. Project source offers syntax-aware
-    editing, unsaved and saved-modification indicators, `Cmd/Ctrl+S`, buffer
-    revert, and a confirmed **Restore original** action. Saving reparses the
-    complete source index so label navigation and references reflect the saved
-    project text.
+    editing, a compact `Save *` dirty indicator, `Cmd/Ctrl+S`, buffer
+    revert, and a confirmed **Restore original** action. Enter inherits the
+    current instruction indentation and opens an instruction column after a
+    label. **Tab** advances a caret to the next four-column stop or indents the
+    selected rows; **Shift+Tab** removes up to one indentation level. Paste and
+    multi-line replacement are deliberately never reformatted.
+    Saving persists both the source override and the `.smedit` project, reparses
+    the complete source index, and immediately checks the complete source tree
+    for unsafe data literals. Label navigation and references therefore reflect
+    the saved project text. Asar `!defines` such as `!SPF` are colored and
+    navigate to their declarations like ordinary source symbols; use
+    **Cmd/Ctrl + click** while editing so an ordinary click remains available for
+    caret placement and selection.
+    With literal source text in the Find field, **Replace in project…** opens an
+    explicit project-wide preview. It reports every occurrence and affected file,
+    shows before/after rows, and offers a case-sensitive option. Applying the
+    preview only stages unsaved bank buffers; it does not touch the source tree,
+    project file, or ROM until the normal Save/Build boundary. Replacement text
+    is literal, so Asar punctuation such as `!`, `$`, and `\\` is never treated
+    as a regular-expression or replacement escape.
+    An **EDITED** badge in the bank tree means the source intentionally differs
+    from the immutable vanilla snapshot; only `Save *` or an explicit
+    **unsaved** count means a buffer or project still needs to be written.
 12. **ASM source** is now the active ROM build base. A project with no source
     edits may choose **Loaded ROM** to use the established patch-only path. The
     first new source edit selects ASM source again; Loaded ROM is unavailable
@@ -99,8 +120,39 @@ When **Project** source is selected, the source pane is immediately editable;
 there is no second per-file edit mode. **Save**, **Revert**, and
 **Restore original** provide the explicit write and recovery boundaries. Large
 banks are presented in bounded line pages so syntax highlighting, selection,
-and scrolling remain reliable; edits from every page are merged into the same
-whole-file project buffer.
+and scrolling remain reliable; one continuous right scrollbar addresses the
+whole bank, the bottom scrollbar exposes long lines, and edits from every page
+are merged into the same whole-file project buffer. The paging implementation
+is intentionally hidden from the editing workflow; the toolbar does not expose
+internal page ranges. Search, symbol, and diagnostic
+navigation highlights the complete destination row with surrounding context;
+the highlight then follows the editing caret. **Save** is deliberately a fast
+persistence boundary: it atomically writes the source override, reparses its
+index, saves the `.smedit` project, and performs fast source-literal validation.
+It does not wait for Asar. The button becomes `Build*` whenever unsaved or
+newly saved source has not produced a successful build; an explicit **Build**,
+EMU launch, preview, or export performs the complete validated build. This keeps
+ordinary source-saving responsive without allowing execution to use stale
+bytes. Unsafe source fails before Asar is launched. Asar still
+assembles its include tree as one program rather than incrementally compiling an
+individual bank, but SMEDIT reuses an unchanged compiled base and unchanged
+generated inputs. Successful builds add only a compact status to the existing
+source header. Source-validation and Asar diagnostics use one collapsible strip
+below the source editor, where it cannot obscure a linked line; located problems
+open the exact source file with several lines of surrounding context rather than
+adding a permanent Problems tool window. Every located error row is also shaded
+red with an edge marker directly in source; warning rows use the corresponding
+amber treatment, while the ordinary caret/navigation row remains blue. Failed
+builds expand the drawer automatically, successful builds leave a compact status,
+and its top divider can be dragged to resize a scrollable multi-problem list; the
+chosen height is retained in global SMEDIT layout settings. Build diagnostics do
+not open the unrelated ASM workspace/download controls in the sidebar.
+
+Editable banks use a bounded 250-line text window over the whole saved buffer;
+the continuous scrollbar hides that implementation detail. Caret movement does
+not reparse the complete bank, and an open Source search is refreshed when its
+query or saved source index changes rather than rescanning every bank on each
+keystroke.
 
 The **Library** and **Original (read-only)** source views are read-only. To turn a Library
 example into a real edit, switch to **Source**, select **Project (editable)**, open or search
@@ -112,8 +164,9 @@ source edits; beginning an edit returns the project to ASM source automatically.
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
 canvas expose draggable scrollbars for fast navigation. Mouse wheels and
-two-axis trackpads scroll normally; holding the middle mouse button and dragging
-pans both axes. Mouse back/forward buttons, `Alt+Left` / `Alt+Right`, and
+two-axis trackpads scroll normally; **Shift + mouse wheel** scrolls editable
+source horizontally, and holding the middle mouse button and dragging pans both
+axes in read-only canvases. Mouse back/forward buttons, `Alt+Left` / `Alt+Right`, and
 `Cmd/Ctrl+[` / `Cmd/Ctrl+]` follow navigation history, including transitions
 between source and Library pages. `Cmd/Ctrl+F` moves focus to the current
 Source/Assets/Library search field.
@@ -160,6 +213,9 @@ editable tree that future compilation will consume. Both generated trees are
 ignored by the sidecar's own `.gitignore`; intentionally saved source changes are
 mirrored under `overrides/src/`, which is small, reviewable, and suitable for
 source control. A recreated local tree reapplies those overrides automatically.
+The ignored `build/` directory retains the latest Asar log and WLA symbol map so
+compiled addresses and diagnostics remain available to the ASM workspace. These
+are reproducible local products, never project-authored source.
 The `.smedit` JSON records that ASM mode is enabled, its source revision, and the
 ROM build-base choice. Existing non-ASM projects default to **Loaded ROM**; enabling
 Project ASM selects **ASM source**. A clean workspace may switch back, but saved
@@ -385,6 +441,14 @@ once conversion.
   emitted symbol map, applies size-checked staged data overrides, and returns
   separate minimal authored-source, generated-asset, and generated-patch ranges
   rather than an opaque ROM replacement.
+- `AsmBuildArtifactRepository` retains the latest local Asar log and WLA map;
+  `AsmBuildOutputParser` turns compiler messages into file/line diagnostics and
+  `AsmWlaSymbolParser` indexes emitted labels and exact source-line addresses.
+  Every retained report includes a fingerprint of the source tree that produced
+  it, so repaired source can never inherit stale errors after reopening SMEDIT.
+- `AsmSourceLinter` catches data literals that exceed their explicit
+  `db`/`dw`/`dl`/`dd` storage width before Asar can silently keep only the low
+  bits. Intentional truncation remains expressible with an explicit mask.
 - `AsmSourceAssetMaterializer` projects eligible write-plan bytes into exact
   manifest-owned `data/` files, excludes allocations and ambiguous ownership,
   and leaves the project workspace unchanged.
@@ -409,8 +473,8 @@ once conversion.
   Sound. The index is built once per loaded ROM so browsing assets does not
   repeatedly scan the room and species catalogs.
 - `AsmWorkspaceState` owns reference/project selection, source edit buffers and
-  dirty state, source/asset/library mode, cross-mode history, ROM freshness,
-  preview state, progress, and safe navigation.
+  dirty state, guarded multi-bank replacement staging, source/asset/library mode,
+  cross-mode history, ROM freshness, preview state, progress, and safe navigation.
 - `RomExporter.build()` is the single disk-independent export transaction.
   `RomExporter.export()` only adds the atomic output-file write around that
   validated result, so preview and export cannot drift into separate pipelines.
@@ -438,16 +502,24 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 The separation between editable source and executable output is intentional.
 Follow-up work can now be incremental:
 
-1. Extend the reverse semantic bridge to remaining specialized title/menu,
-   cinematic, and generated-runtime assets as those editors gain stable semantic
-   selection entry points.
-2. Surface structured file/line compile diagnostics and the generated symbol map
-   directly in Source instead of reporting compiler text only in status/logs.
+1. Add project-owned custom ASM modules through a stable generated include point,
+   with explicit ordering and ROM ownership instead of requiring new routines to
+   be inserted into pinned banks.
+2. Continue conservative editing assistance with source completion and explicit
+   statement formatting that preserves expressions, comments, literal forms,
+   and `.B`/`.W`/`.L` suffixes. Literal project-wide find/replace now has a
+   reviewed, buffer-only preview, and Tab/Shift-Tab provide selection-scoped
+   indentation without a whole-file formatter.
 3. Add artifact sinks for semantic editors so room, graphics, map, text, and
    sound changes can materialize into project-owned `data/`/source before Asar.
    Today those edits still run safely after compilation through the shared
    transaction; moving each stable encoder before compilation is the next
    incremental step toward fully source-native assets.
+4. Extend the reverse semantic bridge to remaining specialized title/menu,
+   cinematic, and generated-runtime assets as those editors gain stable semantic
+   selection entry points.
+5. Use retained project symbols for emulator run-to-address, breakpoints,
+   registers/stack inspection, and source-mapped crash diagnostics.
 
 Arbitrary-hack disassembly and automatic source merge/conflict resolution are not
 implied by the current editable workspace.

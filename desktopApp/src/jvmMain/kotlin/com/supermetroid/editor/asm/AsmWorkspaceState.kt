@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.time.Instant
 
 internal enum class AsmBrowserMode { SOURCE, ASSETS, LIBRARY, ROM }
 
@@ -15,6 +16,7 @@ internal sealed interface AsmWorkspaceLocation {
         val lineIndex: Int,
         val referenceSymbol: AsmSymbolId? = null,
         val workspaceKind: AsmWorkspaceKind = AsmWorkspaceKind.REFERENCE,
+        val columnIndex: Int = 0,
     ) : AsmWorkspaceLocation
     data class Asset(
         val path: String,
@@ -27,6 +29,7 @@ internal sealed interface AsmWorkspaceLocation {
 internal class AsmWorkspaceState(
     private val repository: AsmReferenceRepository = AsmReferenceRepository(),
     private val projectRepository: AsmProjectWorkspaceRepository = AsmProjectWorkspaceRepository(),
+    private val buildArtifactRepository: AsmBuildArtifactRepository = AsmBuildArtifactRepository(projectRepository),
 ) {
     var workspace by mutableStateOf<AsmReferenceWorkspace?>(null)
         private set
@@ -50,6 +53,8 @@ internal class AsmWorkspaceState(
     var expandedSourceFileId by mutableStateOf<String?>(null)
         private set
     var selectedLineIndex by mutableStateOf(0)
+        private set
+    var selectedColumnIndex by mutableStateOf(0)
         private set
     var activeReferenceSymbol by mutableStateOf<AsmSymbolId?>(null)
         private set
@@ -76,6 +81,10 @@ internal class AsmWorkspaceState(
         private set
     var editSessionSerial by mutableStateOf(0L)
         private set
+    var sourceBufferRevision by mutableStateOf(0L)
+        private set
+    var buildReport by mutableStateOf<AsmBuildReport?>(null)
+        private set
 
     private val backStack = mutableListOf<AsmWorkspaceLocation>()
     private val forwardStack = mutableListOf<AsmWorkspaceLocation>()
@@ -85,6 +94,7 @@ internal class AsmWorkspaceState(
     private var boundProjectEnabled: Boolean = false
     private val sourceBuffers = mutableStateMapOf<String, String>()
     private val savedSourceTexts = mutableMapOf<String, String>()
+    private val dirtySourceFileIds = mutableStateMapOf<String, Unit>()
 
     val canGoBack: Boolean get() = backStack.isNotEmpty()
     val canGoForward: Boolean get() = forwardStack.isNotEmpty()
@@ -97,13 +107,16 @@ internal class AsmWorkspaceState(
     val hasProjectWorkspace: Boolean get() = projectWorkspace != null
     val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
     val unsavedSourceFileIds: Set<String>
-        get() = sourceBuffers.keys.filterTo(linkedSetOf(), ::hasUnsavedSourceChanges)
+        get() = dirtySourceFileIds.keys.toSet()
     val hasProjectSourceChanges: Boolean
         get() = projectModifiedFileIds.isNotEmpty() || unsavedSourceFileIds.isNotEmpty()
     val isProjectSourceEditable: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
             browserMode == AsmBrowserMode.SOURCE &&
             selectedFileId != null
+    val sourceBuildRequired: Boolean
+        get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
+            (dirtySourceFileIds.isNotEmpty() || buildReport?.succeeded != true)
 
     suspend fun loadInstalled() {
         if (busy) return
@@ -147,10 +160,23 @@ internal class AsmWorkspaceState(
         if (changedProject) clearEditSessions()
         if (!enabled || projectFilePath.isBlank()) {
             projectWorkspace = null
+            buildReport = null
             if (workspaceKind == AsmWorkspaceKind.PROJECT) showReferenceWorkspace()
             return
         }
         loadBoundProjectWorkspace()
+        refreshBuildReport()
+    }
+
+    suspend fun refreshBuildReport() {
+        val projectFilePath = boundProjectFilePath
+        buildReport = if (!boundProjectEnabled || projectFilePath.isBlank()) null else {
+            withContext(Dispatchers.IO) {
+                val sourceRoot = projectWorkspace?.workingDirectory?.let { java.io.File(it, "src") }
+                val validation = sourceRoot?.let(AsmSourceLinter::lintTree).orEmpty()
+                AsmSourceLinter.report(validation) ?: buildArtifactRepository.load(projectFilePath)
+            }
+        }
     }
 
     suspend fun enableProjectWorkspace(projectFilePath: String): Boolean {
@@ -169,6 +195,7 @@ internal class AsmWorkspaceState(
             boundProjectEnabled = true
             projectWorkspace = result
             activateProjectWorkspace(result)
+            buildReport = null
             true
         } catch (problem: Exception) {
             error = problem.message ?: "Could not create the project ASM workspace"
@@ -258,6 +285,7 @@ internal class AsmWorkspaceState(
         error = null
         try {
             val preview = withContext(Dispatchers.Default) { builder() }
+            refreshBuildReport()
             if (preview == null) {
                 error = "SMEDIT Result could not be built. No ROM was written; check the export status or log for the blocker."
             } else {
@@ -274,11 +302,56 @@ internal class AsmWorkspaceState(
         }
     }
 
+    /** Runs the same non-writing validated build as ROM comparison while
+     * keeping the user in Source. */
+    suspend fun validateProjectBuild(builder: () -> AsmRomPreview?): Boolean {
+        if (previewBusy) return false
+        previewBusy = true
+        error = null
+        return try {
+            val result = withContext(Dispatchers.Default) { builder() }
+            refreshBuildReport()
+            if (result == null) {
+                retainOrCreateBuildFailure("ROM build did not complete. No ROM was written.")
+                false
+            } else {
+                true
+            }
+        } catch (problem: Exception) {
+            refreshBuildReport()
+            retainOrCreateBuildFailure(problem.message ?: "ROM build did not complete")
+            false
+        } finally {
+            previewBusy = false
+        }
+    }
+
+    /** Compilation/export failures belong to the source diagnostics drawer,
+     * not the workspace setup controls in the sidebar. A source/Asar report is
+     * more specific, so retain it when one already exists. */
+    private fun retainOrCreateBuildFailure(message: String) {
+        val existing = buildReport
+        if (existing != null && !existing.succeeded) return
+        val diagnostic = AsmBuildDiagnostic(
+            severity = AsmDiagnosticSeverity.ERROR,
+            message = message,
+        )
+        buildReport = AsmBuildReport(
+            succeeded = false,
+            generatedAt = Instant.now().toString(),
+            assemblerVersion = existing?.assemblerVersion.orEmpty(),
+            output = listOf(message),
+            diagnostics = listOf(diagnostic),
+            symbols = existing?.symbols ?: AsmCompiledSymbols.EMPTY,
+        )
+    }
+
     fun openSource(
         fileId: String,
         lineIndex: Int = 0,
         addToHistory: Boolean = true,
         preserveReferences: Boolean = false,
+        columnIndex: Int = 0,
     ) {
         val source = workspace?.index?.file(fileId) ?: return
         if (addToHistory) rememberCurrentLocation()
@@ -286,7 +359,12 @@ internal class AsmWorkspaceState(
         browserMode = AsmBrowserMode.SOURCE
         selectedFileId = source.id
         expandedSourceFileId = source.id
-        selectedLineIndex = lineIndex.coerceIn(0, (source.lines.size - 1).coerceAtLeast(0))
+        val currentLines = if (workspaceKind == AsmWorkspaceKind.PROJECT) {
+            sourceEditText(source.id).lineSequence().toList()
+        } else source.lines
+        selectedLineIndex = lineIndex.coerceIn(0, (currentLines.size - 1).coerceAtLeast(0))
+        val selectedLine = currentLines.getOrNull(selectedLineIndex).orEmpty()
+        selectedColumnIndex = columnIndex.coerceIn(0, selectedLine.length)
         selectedAssetPath = null
         selectedInstruction = null
         selectedInstructionToken = null
@@ -303,14 +381,67 @@ internal class AsmWorkspaceState(
             val diskText = workspace?.index?.file(fileId)?.file?.readText() ?: return
             savedSourceTexts[fileId] = diskText
         }
+        // A successful report still describes the saved source while this edit
+        // is only in memory; sourceBuildRequired adds the star via dirty buffers.
+        // Failed diagnostics, however, may point at text the user just fixed.
+        if (sourceBuffers[fileId] != text && buildReport?.succeeded != true) buildReport = null
         sourceBuffers[fileId] = text
+        val saved = savedSourceTexts[fileId]
+        if (saved != null && text != saved) dirtySourceFileIds[fileId] = Unit
+        else dirtySourceFileIds.remove(fileId)
+        sourceBufferRevision++
     }
 
-    fun hasUnsavedSourceChanges(fileId: String): Boolean {
-        val buffer = sourceBuffers[fileId] ?: return false
-        val saved = savedSourceTexts[fileId] ?: workspace?.index?.file(fileId)?.file?.readText() ?: return false
-        return buffer != saved
+    fun sourceTexts(): List<AsmSourceText> = workspace?.index?.files.orEmpty().map { source ->
+        AsmSourceText(source.id, source.displayName, sourceEditText(source.id))
     }
+
+    fun previewProjectSourceReplacement(
+        query: String,
+        replacement: String,
+        caseSensitive: Boolean,
+        limit: Int = Int.MAX_VALUE,
+    ): AsmSourceReplacementPreview = previewAsmSourceReplacement(
+        sources = sourceTexts(),
+        query = query,
+        replacement = replacement,
+        caseSensitive = caseSensitive,
+        limit = limit,
+    )
+
+    /** Applies a reviewed multi-file replacement to in-memory edit buffers.
+     * Saving/building remains explicit, so this operation is reversible per
+     * file and can never partially write a project source tree. */
+    fun stageProjectSourceReplacement(preview: AsmSourceReplacementPreview): Int {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || preview.query.isEmpty()) return 0
+        val matchingFileIds = preview.matches.mapTo(linkedSetOf(), AsmSourceTextMatch::fileId)
+        var replacementCount = 0
+        matchingFileIds.forEach { fileId ->
+            val source = workspace?.index?.file(fileId) ?: return@forEach
+            val current = sourceEditText(fileId)
+            val (updated, count) = replaceAsmSourceText(
+                text = current,
+                query = preview.query,
+                replacement = preview.replacement,
+                caseSensitive = preview.caseSensitive,
+            )
+            if (count > 0) {
+                savedSourceTexts.putIfAbsent(fileId, source.file.readText())
+                sourceBuffers[fileId] = updated
+                if (updated != savedSourceTexts[fileId]) dirtySourceFileIds[fileId] = Unit
+                else dirtySourceFileIds.remove(fileId)
+                replacementCount += count
+            }
+        }
+        if (replacementCount > 0) {
+            if (buildReport?.succeeded != true) buildReport = null
+            sourceBufferRevision++
+            editSessionSerial++
+        }
+        return replacementCount
+    }
+
+    fun hasUnsavedSourceChanges(fileId: String): Boolean = fileId in dirtySourceFileIds
 
     fun discardSourceBuffer(fileId: String? = selectedFileId) {
         val selectedId = fileId ?: return
@@ -318,7 +449,9 @@ internal class AsmWorkspaceState(
         val diskText = source.file.readText()
         sourceBuffers[selectedId] = diskText
         savedSourceTexts[selectedId] = diskText
+        dirtySourceFileIds.remove(selectedId)
         editSessionSerial++
+        sourceBufferRevision++
     }
 
     suspend fun saveSource(fileId: String? = selectedFileId): Boolean {
@@ -335,10 +468,21 @@ internal class AsmWorkspaceState(
             }
             projectWorkspace = result
             workspace = result.referenceWorkspace
+            buildReport = withContext(Dispatchers.IO) {
+                AsmSourceLinter.report(
+                    AsmSourceLinter.lintTree(java.io.File(result.workingDirectory, "src")),
+                )
+            }
             savedSourceTexts[selectedId] = text
+            dirtySourceFileIds.remove(selectedId)
+            sourceBufferRevision++
             selectedLineIndex = selectedLineIndex.coerceIn(
                 0,
                 (workspace?.index?.file(selectedId)?.lines?.lastIndex ?: 0).coerceAtLeast(0),
+            )
+            selectedColumnIndex = selectedColumnIndex.coerceIn(
+                0,
+                workspace?.index?.file(selectedId)?.lines?.getOrNull(selectedLineIndex)?.length ?: 0,
             )
             activeReferenceSymbol = null
             navigationSerial++
@@ -350,6 +494,14 @@ internal class AsmWorkspaceState(
             busy = false
             progress = null
         }
+    }
+
+    suspend fun saveAllSources(): Boolean {
+        val pending = unsavedSourceFileIds.toList()
+        for (fileId in pending) {
+            if (!saveSource(fileId)) return false
+        }
+        return true
     }
 
     suspend fun restoreOriginalSource(fileId: String? = selectedFileId): Boolean {
@@ -365,11 +517,14 @@ internal class AsmWorkspaceState(
             }
             projectWorkspace = result
             workspace = result.referenceWorkspace
+            buildReport = null
             val restored = workspace?.index?.file(selectedId)?.file?.readText().orEmpty()
             sourceBuffers[selectedId] = restored
             savedSourceTexts[selectedId] = restored
+            dirtySourceFileIds.remove(selectedId)
             activeReferenceSymbol = null
             editSessionSerial++
+            sourceBufferRevision++
             navigationSerial++
             true
         } catch (problem: Exception) {
@@ -453,13 +608,22 @@ internal class AsmWorkspaceState(
         val label = index.definition(fileId, lineIndex, token) ?: return
         selectedFileId = fileId
         selectedLineIndex = lineIndex
+        selectedColumnIndex = 0
         activeReferenceSymbol = label.symbolId
         navigationSerial++
     }
 
     fun selectSourceLine(lineIndex: Int) {
-        val source = workspace?.index?.file(selectedFileId) ?: return
-        selectedLineIndex = lineIndex.coerceIn(0, (source.lines.size - 1).coerceAtLeast(0))
+        selectSourcePosition(lineIndex, 0)
+    }
+
+    fun selectSourcePosition(lineIndex: Int, columnIndex: Int) {
+        if (workspace?.index?.file(selectedFileId) == null) return
+        // Editable callers already provide a position from TextFieldValue.
+        // Re-splitting an 18k-line bank merely to revalidate that caret on
+        // every keystroke made ordinary typing visibly lag.
+        selectedLineIndex = lineIndex.coerceAtLeast(0)
+        selectedColumnIndex = columnIndex.coerceAtLeast(0)
         activeReferenceSymbol = null
     }
 
@@ -568,7 +732,9 @@ internal class AsmWorkspaceState(
     private fun clearEditSessions() {
         sourceBuffers.clear()
         savedSourceTexts.clear()
+        dirtySourceFileIds.clear()
         editSessionSerial++
+        sourceBufferRevision++
     }
 
     private fun ensureSelection() {
@@ -577,6 +743,7 @@ internal class AsmWorkspaceState(
             selectedFileId = index.files.firstOrNull { it.id == "bank_80.asm" }?.id
                 ?: index.files.firstOrNull()?.id
             selectedLineIndex = 0
+            selectedColumnIndex = 0
         }
         if (expandedSourceFileId == null) {
             expandedSourceFileId = selectedFileId?.takeIf { index.file(it)?.isBank == true }
@@ -587,7 +754,13 @@ internal class AsmWorkspaceState(
 
     internal fun locationSnapshot(): AsmWorkspaceLocation? = when (browserMode) {
         AsmBrowserMode.SOURCE -> selectedFileId?.let {
-            AsmWorkspaceLocation.Source(it, selectedLineIndex, activeReferenceSymbol, workspaceKind)
+            AsmWorkspaceLocation.Source(
+                fileId = it,
+                lineIndex = selectedLineIndex,
+                referenceSymbol = activeReferenceSymbol,
+                workspaceKind = workspaceKind,
+                columnIndex = selectedColumnIndex,
+            )
         }
         AsmBrowserMode.ASSETS -> selectedAssetPath?.let { AsmWorkspaceLocation.Asset(it, workspaceKind) }
         AsmBrowserMode.LIBRARY -> AsmWorkspaceLocation.Library(selectedLibraryPageId, selectedInstructionToken)
@@ -610,6 +783,7 @@ internal class AsmWorkspaceState(
                     location.lineIndex,
                     addToHistory = false,
                     preserveReferences = true,
+                    columnIndex = location.columnIndex,
                 )
             }
             is AsmWorkspaceLocation.Asset -> {

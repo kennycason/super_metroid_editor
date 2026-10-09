@@ -134,6 +134,22 @@ class AsmReferenceTest {
     }
 
     @Test
+    fun `Asar defines are indexed and navigable like source symbols`() {
+        val source = File(tempDirectory, "define-src").apply { mkdirs() }
+        File(source, "main.asm").writeText(
+            "!SPF = 1 ; speed-per-frame scale\nincsrc bank_90.asm ; Samus\n",
+        )
+        File(source, "bank_90.asm").writeText("dw ${'$'}0600*!SPF*${'$'}100\n")
+
+        val index = AsmSourceParser().parse(source, File(tempDirectory, "define-data"), emptyList())
+        val define = assertNotNull(index.resolveLabel("bank_90.asm", 0, "!SPF"))
+
+        assertEquals("main.asm", define.fileId)
+        assertEquals(0, define.lineIndex)
+        assertEquals(listOf("bank_90.asm" to 0), index.usagesFor(define).map { it.fileId to it.lineIndex })
+    }
+
+    @Test
     fun `managed install derives assets without retaining a ROM copy and can resync`() {
         val ranges = listOf(
             AsmAssetRange("Tiles_Test.bin", 0x10, 4),

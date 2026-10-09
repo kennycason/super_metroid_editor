@@ -31,6 +31,7 @@ internal data class AsmCompiledBuildBase(
     val generatedPatchClaims: List<AsmGeneratedPatchClaim> = emptyList(),
     val assemblerVersion: String,
     val compilerOutput: List<String>,
+    val compilerSymbols: ByteArray = ByteArray(0),
     val expectedFinalRomSha256: String? = null,
 )
 
@@ -41,9 +42,13 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     generatedAssetClaims = generatedAssetClaims.map { it.copy(bytes = it.bytes.copyOf()) },
     generatedPatchClaims = generatedPatchClaims.map { it.copy(bytes = it.bytes.copyOf()) },
     compilerOutput = compilerOutput.toList(),
+    compilerSymbols = compilerSymbols.copyOf(),
 )
 
-internal class AsmCompilationException(message: String) : IllegalStateException(message)
+internal class AsmCompilationException(
+    message: String,
+    val compilerOutput: List<String> = emptyList(),
+) : IllegalStateException(message)
 
 /** Small session-local LRU. Entries are copied at the boundary so no exporter
  * can mutate a cached ROM or generated claim. */
@@ -71,6 +76,7 @@ private object AsmCompiledBuildCache {
 internal class AsmProjectCompiler(
     private val workspaceRepository: AsmProjectWorkspaceRepository = AsmProjectWorkspaceRepository(),
     private val toolchain: AsmToolchain = AsmToolchain(),
+    private val buildArtifacts: AsmBuildArtifactRepository = AsmBuildArtifactRepository(workspaceRepository),
 ) {
     private data class ResolvedToolchain(
         val executable: File,
@@ -92,6 +98,15 @@ internal class AsmProjectCompiler(
     ): AsmCompiledBuildBase {
         val workspace = workspaceRepository.loadForBuild(projectFilePath)
             ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")
+        val sourceDiagnostics = AsmSourceLinter.lintTree(File(workspace.workingDirectory, "src"))
+        if (sourceDiagnostics.isNotEmpty()) {
+            val output = sourceDiagnostics.map(AsmSourceLinter::format)
+            runCatching { buildArtifacts.publishFailure(projectFilePath, output) }
+            throw AsmCompilationException(
+                "SMEDIT source validation found ${sourceDiagnostics.size} unsafe data literal(s)",
+                compilerOutput = output,
+            )
+        }
         val resolved = resolveToolchain(workspace.workingDirectory, onProgress)
         val asar = resolved.executable
         val version = resolved.version
@@ -111,26 +126,47 @@ internal class AsmProjectCompiler(
                 "Generated ASM inputs unchanged — reusing compiled base…"
             }
             onProgress(label)
+            runCatching {
+                buildArtifacts.publishSuccess(
+                    projectFilePath = projectFilePath,
+                    symbols = cached.compilerSymbols,
+                    output = cached.compilerOutput,
+                    assemblerVersion = cached.assemblerVersion,
+                )
+            }
             return cached
         }
 
-        val reference = if (referenceRomBody == null) {
-            onProgress("Compiling immutable ASM snapshot…")
-            compileTree(workspace.originalDirectory, asar)
-        } else {
-            require(referenceRomBody.size == ASM_ROM_SIZE) {
-                "Reusable immutable ASM snapshot has ${referenceRomBody.size} bytes; expected $ASM_ROM_SIZE"
+        val reference: CompiledTree
+        val project: CompiledTree
+        try {
+            reference = if (referenceRomBody == null) {
+                onProgress("Compiling immutable ASM snapshot…")
+                compileTree(workspace.originalDirectory, asar)
+            } else {
+                require(referenceRomBody.size == ASM_ROM_SIZE) {
+                    "Reusable immutable ASM snapshot has ${referenceRomBody.size} bytes; expected $ASM_ROM_SIZE"
+                }
+                onProgress("Reusing immutable ASM snapshot…")
+                CompiledTree(referenceRomBody.copyOf(), emptyList(), ByteArray(0))
             }
-            onProgress("Reusing immutable ASM snapshot…")
-            CompiledTree(referenceRomBody.copyOf(), emptyList())
+            onProgress("Compiling project ASM source…")
+            project = compileTree(
+                sourceTree = workspace.workingDirectory,
+                asar = asar,
+                assetOverrides = materialization.assetOverrides,
+                generatedPatchSource = patchMaterialization.source,
+            )
+        } catch (problem: AsmCompilationException) {
+            runCatching {
+                buildArtifacts.publishFailure(
+                    projectFilePath = projectFilePath,
+                    output = problem.compilerOutput.ifEmpty { listOfNotNull(problem.message) },
+                    assemblerVersion = version,
+                )
+            }
+            throw problem
         }
-        onProgress("Compiling project ASM source…")
-        val project = compileTree(
-            sourceTree = workspace.workingDirectory,
-            asar = asar,
-            assetOverrides = materialization.assetOverrides,
-            generatedPatchSource = patchMaterialization.source,
-        )
         if (reference.rom.size != project.rom.size) {
             throw AsmCompilationException(
                 "Project ASM produced ${project.rom.size} bytes; the immutable snapshot produced ${reference.rom.size}"
@@ -174,7 +210,18 @@ internal class AsmProjectCompiler(
             generatedPatchClaims = patchMaterialization.claims,
             assemblerVersion = version.lineSequence().firstOrNull().orEmpty(),
             compilerOutput = (reference.output + project.output).distinct(),
-        ).also { compiled -> AsmCompiledBuildCache.put(cacheKey, compiled) }
+            compilerSymbols = project.symbols,
+        ).also { compiled ->
+            runCatching {
+                buildArtifacts.publishSuccess(
+                    projectFilePath = projectFilePath,
+                    symbols = compiled.compilerSymbols,
+                    output = compiled.compilerOutput,
+                    assemblerVersion = version,
+                )
+            }
+            AsmCompiledBuildCache.put(cacheKey, compiled)
+        }
     }
 
     /** Exact fingerprint used by the higher-level prepared-base cache. */
@@ -288,7 +335,8 @@ internal class AsmProjectCompiler(
                     buildString {
                         append("Asar failed with exit code ${result.exitCode}")
                         result.output.takeLast(40).forEach { append("\n").append(it) }
-                    }
+                    },
+                    compilerOutput = result.output,
                 )
             }
             if (!rom.isFile || rom.length() != ASM_ROM_SIZE.toLong()) {
@@ -297,7 +345,7 @@ internal class AsmProjectCompiler(
             if (!symbols.isFile || symbols.length() == 0L) {
                 throw AsmCompilationException("Asar completed without a symbol map")
             }
-            return CompiledTree(rom.readBytes(), result.output)
+            return CompiledTree(rom.readBytes(), result.output, symbols.readBytes())
         } finally {
             deleteTree(staging)
         }
@@ -376,7 +424,11 @@ internal class AsmProjectCompiler(
         }
     }
 
-    private data class CompiledTree(val rom: ByteArray, val output: List<String>)
+    private data class CompiledTree(
+        val rom: ByteArray,
+        val output: List<String>,
+        val symbols: ByteArray,
+    )
 
     companion object {
         const val ASM_ROM_SIZE = 3 * 1024 * 1024

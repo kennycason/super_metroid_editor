@@ -7883,6 +7883,11 @@ class EditorState(
     }
 
     fun saveProject(romParser: RomParser? = null): Boolean {
+        // Saving must capture the same deterministic patch catalog hydration
+        // that a following Build/preview/export will use. Otherwise Save can
+        // clear dirty state and the next build can immediately mutate the live
+        // project back to Save*.
+        seedDefaultPatches(forceRefreshBundled = true)
         val saved = ProjectFileService.saveProject(
             project = project,
             projectFilePath = projectFilePath,

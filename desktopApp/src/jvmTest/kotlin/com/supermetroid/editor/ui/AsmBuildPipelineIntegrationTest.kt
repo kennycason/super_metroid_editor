@@ -2,6 +2,8 @@ package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.asm.AsmPatchBackendRegistry
+import com.supermetroid.editor.asm.AsmDiagnosticSeverity
+import com.supermetroid.editor.asm.AsmSourceLinter
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.RomWriteKind
@@ -23,6 +25,10 @@ class AsmBuildPipelineIntegrationTest {
         val rom = File(projectFile.parentFile, "Super Metroid Sandbox.smc").takeIf(File::isFile) ?: return
         val source = File(projectFile.parentFile, "Super Metroid Sandbox_smedit/asm/workspace/src/bank_90.asm")
         if (!source.isFile) return
+        // The optional Sandbox is a mutable developer project. An intentional
+        // syntax/literal error used to test the editor is not a valid pipeline
+        // fixture and must not make unrelated repository tests fail.
+        if (AsmSourceLinter.lintTree(source.parentFile).any { it.severity == AsmDiagnosticSeverity.ERROR }) return
         val parser = RomParser(rom.readBytes())
         val project = ProjectFileService.snapshotProject(ProjectFileService.loadProject(projectFile)).also {
             it.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE

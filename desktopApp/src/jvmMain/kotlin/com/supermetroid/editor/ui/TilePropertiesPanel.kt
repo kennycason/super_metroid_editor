@@ -1622,11 +1622,16 @@ internal fun TilePropertiesPanel(
                 )
             }
 
-            // ─── Enemies at/near this tile ───
+            // ─── Enemy-engine runtime objects at/near this tile ───
             Spacer(modifier = Modifier.height(8.dp))
             Divider()
             Spacer(modifier = Modifier.height(4.dp))
-            Text("Enemies", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Runtime Objects", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Enemy-engine actors near this tile",
+                fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                color = MaterialTheme.colorScheme.outline,
+            )
 
             val tileCenterX = blockX * 16 + 8
             val tileCenterY = blockY * 16 + 8
@@ -1653,6 +1658,14 @@ internal fun TilePropertiesPanel(
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
+                                if (enemy.id == 0xD73F) {
+                                    Text(
+                                        "MECHANISM",
+                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                             Text(
                                 "pos: (${enemy.x}, ${enemy.y})  prop: 0x${enemy.properties.toString(16).uppercase().padStart(4, '0')}",
@@ -1803,7 +1816,7 @@ internal fun TilePropertiesPanel(
                 }
             }
 
-            // Add Enemy button + searchable dropdown
+            // Add runtime object button + searchable enemy-engine catalog
             Spacer(modifier = Modifier.height(4.dp))
             var addEnemyExpanded by remember { mutableStateOf(false) }
             var enemySearch by remember { mutableStateOf("") }
@@ -1818,7 +1831,7 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Enemy", fontSize = LocalEditorTheme.current.fontSize.value.body,
+                        Text("+ Add Runtime Object", fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onTertiaryContainer)
                     }
                 }

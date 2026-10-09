@@ -16,6 +16,7 @@ class AppLayoutSettingsTest {
 
         assertEquals(340f, settings.mainSidebarWidthDp)
         assertEquals(0f, settings.sidebarBottomPaneHeightDp)
+        assertEquals(180f, settings.asmProblemsPaneHeightDp)
     }
 
     @Test
@@ -23,12 +24,14 @@ class AppLayoutSettingsTest {
         val settings = AppSettings(
             mainSidebarWidthDp = 412f,
             sidebarBottomPaneHeightDp = 368f,
+            asmProblemsPaneHeightDp = 246f,
         )
 
         val restored = json.decodeFromString<AppSettings>(json.encodeToString(settings))
 
         assertEquals(412f, restored.mainSidebarWidthDp)
         assertEquals(368f, restored.sidebarBottomPaneHeightDp)
+        assertEquals(246f, restored.asmProblemsPaneHeightDp)
     }
 
     @Test

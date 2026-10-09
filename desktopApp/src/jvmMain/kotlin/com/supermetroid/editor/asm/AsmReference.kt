@@ -203,7 +203,7 @@ internal data class AsmReferenceIndex(
 }
 
 private val ASM_REFERENCE_TOKEN_REGEX =
-    Regex("\"(?:\\\\.|[^\"])*\"|\\.?[A-Za-z_][A-Za-z0-9_.]*")
+    Regex("\"(?:\\\\.|[^\"])*\"|!?\\.?[A-Za-z_][A-Za-z0-9_.]*")
 
 private fun asmCodeBeforeComment(line: String): String {
     var quoted = false
@@ -222,6 +222,10 @@ private fun asmCodeBeforeComment(line: String): String {
 private fun isAsmDefinitionOccurrence(code: String, range: IntRange): Boolean {
     val suffix = code.substring(range.last + 1).trimStart()
     if (suffix.startsWith(':')) return true
+    if (
+        code.substring(range.first).startsWith('!') &&
+        (suffix.startsWith('=') || suffix.startsWith("?=") || suffix.startsWith("#="))
+    ) return true
     val prefix = code.substring(0, range.first).trimEnd()
     return prefix.endsWith("struct", ignoreCase = true) &&
         prefix.dropLast("struct".length).lastOrNull()?.let { it.isLetterOrDigit() || it == '_' } != true
@@ -248,6 +252,7 @@ internal class AsmSourceParser {
     private val sectionRegex = Regex("""^\s*;;;\s*(.*?)\s*;;;\s*$""")
     private val sectionAddressRegex = Regex("""^\$([0-9A-Fa-f]{4,6}):\s*(.*)$""")
     private val labelRegex = Regex("""^\s*([A-Za-z_][A-Za-z0-9_]*|\.[A-Za-z0-9_]+):""")
+    private val defineRegex = Regex("""^\s*(![A-Za-z_][A-Za-z0-9_]*)\s*(?:\?=|#=|=)""")
     private val structRegex = Regex("""^\s*struct\s+([A-Za-z_][A-Za-z0-9_]*)\b""", RegexOption.IGNORE_CASE)
     private val endStructRegex = Regex("""^\s*endstruct\b""", RegexOption.IGNORE_CASE)
 
@@ -300,6 +305,9 @@ internal class AsmSourceParser {
                     if (labelName.startsWith('.') && structScope != null) {
                         labels += AsmLabel("$structScope$labelName", relativeName, lineIndex)
                     }
+                }
+                defineRegex.find(line)?.groupValues?.get(1)?.let { name ->
+                    labels += AsmLabel(name, relativeName, lineIndex)
                 }
                 scopes[lineIndex] = globalScope
                 sectionRegex.matchEntire(line)?.groupValues?.get(1)?.trim()?.let { heading ->
