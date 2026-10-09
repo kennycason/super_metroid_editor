@@ -85,6 +85,12 @@ import com.supermetroid.editor.rom.toUnsigned16
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 import java.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 private val editorStateLog = KotlinLogging.logger {}
 
@@ -94,6 +100,31 @@ private fun editorLog(message: Any? = "") {
         text.startsWith("ERROR") || text.contains(" ERROR:") -> editorStateLog.error { text }
         text.startsWith("WARN") || text.contains(" WARN:") -> editorStateLog.warn { text }
         else -> editorStateLog.info { text }
+    }
+}
+
+/**
+ * Run synchronous build work on a worker thread while delivering ordered
+ * progress messages on the caller's coroutine context. Compose Desktop uses
+ * its own AWT dispatcher and does not necessarily install Dispatchers.Main.
+ */
+internal suspend fun <T> runBackgroundBuildWithProgress(
+    onProgress: (String) -> Unit,
+    work: ((String) -> Unit) -> T,
+): T = coroutineScope {
+    val updates = Channel<String>(Channel.UNLIMITED)
+    val reporter = launch {
+        for (message in updates) onProgress(message)
+    }
+    try {
+        val result = withContext(Dispatchers.Default) {
+            work { message -> updates.trySend(message).getOrThrow() }
+        }
+        updates.close()
+        reporter.join()
+        result
+    } finally {
+        updates.close()
     }
 }
 
@@ -187,6 +218,15 @@ internal data class MapSelectionProperties(
     val metatile: Int,
     val blockType: Int?,
     val bts: Int?,
+)
+
+internal data class DoorCapPlacement(
+    val anchorX: Int,
+    val anchorY: Int,
+    val direction: String,
+    val doorwayX: Int,
+    val doorwayY: Int,
+    val snappedToDoorway: Boolean,
 )
 
 enum class LayoutEditScope {
@@ -327,11 +367,21 @@ class EditorState(
         _roomEditOrder[currentRoomId] = ++_editCounter
     }
 
-    /** Persist the opt-in ASM workspace contract without treating it as a room edit. */
+    /**
+     * Persist the opt-in ASM workspace contract without treating it as a room edit.
+     * Enabling the editable workspace also makes it the build source: otherwise a
+     * user can successfully edit ASM while exports silently continue from the ROM.
+     */
     fun enableProjectAsmWorkspace(sourceRevision: String) {
-        if (project.asmWorkspace.enabled && project.asmWorkspace.sourceRevision == sourceRevision) return
+        if (
+            project.asmWorkspace.enabled &&
+            project.asmWorkspace.sourceRevision == sourceRevision &&
+            project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE
+        ) return
         project.asmWorkspace.enabled = true
         project.asmWorkspace.sourceRevision = sourceRevision
+        project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
     }
 
@@ -483,9 +533,21 @@ class EditorState(
     var statusMessageTimestamp by mutableStateOf(0L)
         private set
 
+    /** Long-running ROM build state stays visible instead of expiring like a transient status. */
+    var romBuildInProgress by mutableStateOf(false)
+        private set
+    var romBuildStatus by mutableStateOf("")
+        private set
+
     fun postStatus(msg: String) {
         statusMessage = msg
         statusMessageTimestamp = System.currentTimeMillis()
+    }
+
+    private fun reportRomBuildStatus(message: String, onProgress: (String) -> Unit) {
+        romBuildStatus = message
+        postStatus(message)
+        onProgress(message)
     }
 
     /** TileGraphics for rendering brush preview. Set when room loads. */
@@ -5094,6 +5156,144 @@ class EditorState(
             false
         }
 
+    /**
+     * Resolve the canonical PLM anchor for a door cap selected on or near a
+     * type-9 doorway. Super Metroid stores the cap one block inward for a
+     * left/right door and two blocks inward for an up/down door, so the tile a
+     * user naturally clicks is not necessarily the PLM's stored coordinate.
+     *
+     * A result is returned only when the nearest doorway is unambiguous. An
+     * existing cap remains a fallback for intentionally unusual layouts.
+     */
+    internal fun suggestedDoorCapPlacement(
+        x: Int,
+        y: Int,
+        requiredDirection: String? = null,
+    ): DoorCapPlacement? {
+        val existing = getPlmsAt(x, y)
+            .firstOrNull { RomParser.isDoorCapPlm(it.id) }
+            ?.let { plm ->
+                val direction = RomParser.doorCapDefFor(plm.id)?.direction ?: return@let null
+                if (requiredDirection != null && direction != requiredDirection) return@let null
+                DoorCapPlacement(
+                    anchorX = plm.x,
+                    anchorY = plm.y,
+                    direction = direction,
+                    doorwayX = plm.x,
+                    doorwayY = plm.y,
+                    snappedToDoorway = false,
+                )
+            }
+        if (workingLevelData == null || workingBlocksWide <= 0 || workingBlocksTall <= 0) return existing
+
+        data class Candidate(
+            val placement: DoorCapPlacement,
+            val doorwayTiles: List<Pair<Int, Int>>,
+        )
+
+        val candidates = mutableListOf<Candidate>()
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        for (blockY in 0 until workingBlocksTall) {
+            for (blockX in 0 until workingBlocksWide) {
+                if (blockX to blockY in visited) continue
+                if (((readBlockWord(blockX, blockY) ushr 12) and 0xF) != 0x9) continue
+                val doorway = connectedDoorwayTiles(blockX, blockY)
+                if (doorway.isEmpty()) continue
+                visited += doorway
+                val minX = doorway.minOf { it.first }
+                val maxX = doorway.maxOf { it.first }
+                val minY = doorway.minOf { it.second }
+                val maxY = doorway.maxOf { it.second }
+                val vertical = maxY - minY >= maxX - minX
+
+                if (vertical) {
+                    for (edgeX in doorway.map { it.first }.distinct()) {
+                        val direction = when (edgeX.mod(16)) {
+                            0 -> "Right"
+                            15 -> "Left"
+                            else -> continue
+                        }
+                        if (requiredDirection != null && direction != requiredDirection) continue
+                        val edgeTiles = doorway.filter { it.first == edgeX }
+                        val edgeY = edgeTiles.minOf { it.second }
+                        val anchorX = if (direction == "Right") edgeX + 1 else edgeX - 1
+                        if (anchorX !in 0 until workingBlocksWide) continue
+                        candidates += Candidate(
+                            DoorCapPlacement(anchorX, edgeY, direction, edgeX, edgeY, true),
+                            edgeTiles,
+                        )
+                    }
+                } else {
+                    for (edgeY in doorway.map { it.second }.distinct()) {
+                        val direction = when (edgeY.mod(16)) {
+                            0 -> "Down"
+                            15 -> "Up"
+                            else -> continue
+                        }
+                        if (requiredDirection != null && direction != requiredDirection) continue
+                        val edgeTiles = doorway.filter { it.second == edgeY }
+                        val edgeX = edgeTiles.minOf { it.first }
+                        val anchorY = if (direction == "Down") edgeY + 2 else edgeY - 2
+                        if (anchorY !in 0 until workingBlocksTall) continue
+                        candidates += Candidate(
+                            DoorCapPlacement(edgeX, anchorY, direction, edgeX, edgeY, true),
+                            edgeTiles,
+                        )
+                    }
+                }
+            }
+        }
+
+        fun capTiles(placement: DoorCapPlacement): List<Pair<Int, Int>> =
+            if (placement.direction == "Left" || placement.direction == "Right") {
+                (0 until 4).map { placement.anchorX to placement.anchorY + it }
+            } else {
+                (0 until 4).map { placement.anchorX + it to placement.anchorY }
+            }
+
+        fun distance(candidate: Candidate): Int =
+            (candidate.doorwayTiles + capTiles(candidate.placement)).minOf { (tileX, tileY) ->
+                kotlin.math.abs(tileX - x) + kotlin.math.abs(tileY - y)
+            }
+
+        val scored = candidates.map { it to distance(it) }
+        val nearestDistance = scored.minOfOrNull { it.second } ?: return existing
+        if (nearestDistance > 2) return existing
+        val nearest = scored
+            .filter { it.second == nearestDistance }
+            .map { it.first.placement }
+            .distinctBy { Triple(it.anchorX, it.anchorY, it.direction) }
+        return nearest.singleOrNull() ?: existing
+    }
+
+    /** Find the cap represented by a click, including a legacy cap shifted a
+     * tile or two away from an otherwise unambiguous doorway anchor. */
+    internal fun existingDoorCapForPlacement(
+        x: Int,
+        y: Int,
+        placement: DoorCapPlacement?,
+        requiredDirection: String? = null,
+    ): RomParser.PlmEntry? {
+        getPlmsAt(x, y)
+            .firstOrNull { plm ->
+                RomParser.isDoorCapPlm(plm.id) &&
+                    (requiredDirection == null || RomParser.doorCapDefFor(plm.id)?.direction == requiredDirection)
+            }
+            ?.let { return it }
+        if (placement?.snappedToDoorway != true) return null
+        val nearby = _workingPlms
+            .filter { plm ->
+                RomParser.isDoorCapPlm(plm.id) &&
+                    RomParser.doorCapDefFor(plm.id)?.direction == placement.direction
+            }
+            .map { plm ->
+                plm to kotlin.math.abs(plm.x - placement.anchorX) + kotlin.math.abs(plm.y - placement.anchorY)
+            }
+            .filter { it.second <= 2 }
+        val nearestDistance = nearby.minOfOrNull { it.second } ?: return null
+        return nearby.filter { it.second == nearestDistance }.singleOrNull()?.first
+    }
+
     private fun refreshVanillaSaveIndices(romParser: RomParser) {
         if (vanillaSaveIndicesByArea.isNotEmpty()) return
         val byArea = mutableMapOf<Int, MutableSet<Int>>()
@@ -5329,12 +5529,35 @@ class EditorState(
         itemScopeOverride: ItemStateScope? = null,
     ) {
         val isItem = isEditorItemPlm(plmId)
+        val isDoorCap = RomParser.isDoorCapPlm(plmId)
+        val requestedDoorDirection = RomParser.doorCapDefFor(plmId)?.direction
+        val doorPlacement = if (isDoorCap) {
+            suggestedDoorCapPlacement(x, y, requestedDoorDirection)
+        } else {
+            null
+        }
+        // A cap occupies four visible blocks, but its PLM coordinate is the
+        // engine-defined anchor beside the type-9 doorway. Prefer that derived
+        // anchor; retain an existing cap when a custom layout has no clear door.
+        val existingDoorCap = if (isDoorCap) {
+            existingDoorCapForPlacement(x, y, doorPlacement, requestedDoorDirection)
+        } else {
+            null
+        }
+        val targetX = doorPlacement?.anchorX ?: existingDoorCap?.x ?: x
+        val targetY = doorPlacement?.anchorY ?: existingDoorCap?.y ?: y
         val scope = if (isItem) itemScopeOverride ?: itemEditScope else ItemStateScope.THIS_STATE
-        if (isItem && !validateItemPlacement(plmId, x, y, scope)) return
+        if (isItem && !validateItemPlacement(plmId, targetX, targetY, scope)) return
         val family = itemFamilyName(plmId)
-        val existing = _workingPlms.filter {
-            it.x == x && it.y == y &&
-                (it.id == plmId || (family != null && itemFamilyName(it.id) == family))
+        val existing = _workingPlms.filter { plm ->
+            val replacesSelectedShiftedCap = isDoorCap && plm == existingDoorCap
+            val replacesAtResolvedAnchor = plm.x == targetX && plm.y == targetY &&
+                (
+                    plm.id == plmId ||
+                        (family != null && itemFamilyName(plm.id) == family) ||
+                        (isDoorCap && RomParser.isDoorCapPlm(plm.id))
+                )
+            replacesSelectedShiftedCap || replacesAtResolvedAnchor
         }
         val retainedSaveParam = existing.singleOrNull()
             ?.takeIf { plmId == 0xB76F && param == 0x8000 }
@@ -5345,11 +5568,11 @@ class EditorState(
         val actualParam = retainedSaveParam ?: retainedItemParam ?: autoAssignParam(plmId, param) ?: return
         if (isItem && scope == ItemStateScope.ALL_STATES) {
             val before = itemScopeSnapshot()
-            val removedChanges = addItemToAllStates(plmId, x, y, actualParam)
-            val addChange = PlmChange("add", plmId, x, y, actualParam)
+            val removedChanges = addItemToAllStates(plmId, targetX, targetY, actualParam)
+            val addChange = PlmChange("add", plmId, targetX, targetY, actualParam)
             val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
             val operation = EditOperation(
-                "Add $name to all states ($x,$y)",
+                "Add $name to all states ($targetX,$targetY)",
                 plmAdds = listOf(addChange),
                 plmRemoves = removedChanges,
                 itemScope = ItemStateScope.ALL_STATES,
@@ -5373,16 +5596,16 @@ class EditorState(
             removedChanges.add(rc)
         }
 
-        _workingPlms.add(RomParser.PlmEntry(plmId, x, y, actualParam))
-        val addChange = PlmChange("add", plmId, x, y, actualParam)
+        _workingPlms.add(RomParser.PlmEntry(plmId, targetX, targetY, actualParam))
+        val addChange = PlmChange("add", plmId, targetX, targetY, actualParam)
         plmChanges.add(addChange)
         if (plmId == 0xB76F && retainedSaveParam == null) {
-            ensureAutoSaveStationSpawn(x, y, actualParam and 0xFF)
+            ensureAutoSaveStationSpawn(targetX, targetY, actualParam and 0xFF)
         }
 
         val name = customItemNameForPlm(plmId) ?: RomParser.plmDisplayName(plmId)
         val op = EditOperation(
-            "Add $name ($x,$y)",
+            "Add $name ($targetX,$targetY)",
             plmAdds = listOf(addChange),
             plmRemoves = removedChanges,
             itemScope = if (isItem) ItemStateScope.THIS_STATE else null,
@@ -5392,6 +5615,12 @@ class EditorState(
         undoVersion++
         dirty = true
         editVersion++
+        if (doorPlacement?.snappedToDoorway == true) {
+            postStatus(
+                "$name anchored to nearby ${doorPlacement.direction.lowercase()} doorway at " +
+                    "tile (${targetX + 1}, ${targetY + 1}).",
+            )
+        }
     }
 
     // ─── Custom scroll command management ─────────────────────
@@ -7684,6 +7913,43 @@ class EditorState(
             ::postStatus,
             projectFilePath,
         )
+    }
+
+    /**
+     * Builds an emulator ROM without monopolizing Compose's UI thread. Mutable
+     * editor state is snapshotted before dispatch; compiler/export work then
+     * operates on that immutable snapshot while progress returns to the
+     * caller's Compose/AWT coroutine context.
+     */
+    suspend fun exportToRomAsync(
+        romParser: RomParser,
+        onProgress: (String) -> Unit = {},
+    ): String? {
+        if (romBuildInProgress) return null
+        romBuildInProgress = true
+        reportRomBuildStatus("Preparing ROM build…", onProgress)
+        // Let Compose paint the busy state before project serialization begins.
+        yield()
+        return try {
+            seedDefaultPatches(forceRefreshBundled = true)
+            if (project.romPath.isEmpty()) return null
+            if (!saveProject(romParser)) return null
+            val projectSnapshot = ProjectFileService.snapshotProject(project)
+            val sourceParser = sourceRomData?.let { RomParser(it.copyOf(), sourceRoomCatalog) } ?: romParser
+            runBackgroundBuildWithProgress(
+                onProgress = { message -> reportRomBuildStatus(message, onProgress) },
+            ) { reportProgress ->
+                ProjectFileService.exportToRom(
+                    projectSnapshot,
+                    sourceParser,
+                    ::editorLog,
+                    reportProgress,
+                    projectFilePath,
+                )
+            }
+        } finally {
+            romBuildInProgress = false
+        }
     }
 
     internal fun buildRomPreview(romParser: RomParser): com.supermetroid.editor.asm.AsmRomPreview? {

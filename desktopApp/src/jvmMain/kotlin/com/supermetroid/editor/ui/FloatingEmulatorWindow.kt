@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -248,7 +249,7 @@ fun FloatingEmulatorWindow(
             if (workspaceState.isConnected) {
                 val rp = romParser
                 if (rp != null) {
-                    val patchedPath = editorState.exportToRom(rp)
+                    val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                     if (patchedPath != null) {
                         workspaceState.updateRomPath(patchedPath)
                     } else {
@@ -272,7 +273,7 @@ fun FloatingEmulatorWindow(
         if (workspaceState.isConnected && !workspaceState.session.active) {
             val rp = romParser
             if (rp != null) {
-                val patchedPath = editorState.exportToRom(rp)
+                val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                 if (patchedPath != null) {
                     workspaceState.updateRomPath(patchedPath)
                 } else {
@@ -598,6 +599,31 @@ fun FloatingEmulatorWindow(
                                 )
                             }
                         }
+                        if (editorState.romBuildInProgress) {
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.82f),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    Text(
+                                        editorState.romBuildStatus.ifBlank { "Building ROM…" },
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -623,7 +649,7 @@ fun FloatingEmulatorWindow(
                                 if (workspaceState.isConnected && !workspaceState.session.active) {
                                     val rp = romParser
                                     if (rp != null) {
-                                        val patchedPath = editorState.exportToRom(rp)
+                                        val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                                         if (patchedPath != null) {
                                             workspaceState.updateRomPath(patchedPath)
                                         } else {
@@ -640,7 +666,7 @@ fun FloatingEmulatorWindow(
                                 }
                             }
                         },
-                        enabled = !workspaceState.isBusy,
+                        enabled = !workspaceState.isBusy && !editorState.romBuildInProgress,
                         modifier = Modifier
                             .size(32.dp)
                             .clip(btnShape)
@@ -685,7 +711,7 @@ fun FloatingEmulatorWindow(
                                 if (workspaceState.isConnected) {
                                     val rp = romParser
                                     if (rp != null) {
-                                        val patchedPath = editorState.exportToRom(rp)
+                                        val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                                         if (patchedPath != null) {
                                             workspaceState.updateRomPath(patchedPath)
                                         } else {
@@ -698,7 +724,7 @@ fun FloatingEmulatorWindow(
                                 }
                             }
                         },
-                        enabled = workspaceState.session.active && !workspaceState.isBusy,
+                        enabled = workspaceState.session.active && !workspaceState.isBusy && !editorState.romBuildInProgress,
                         modifier = Modifier.size(30.dp).clip(btnShape),
                     ) {
                         Icon(Icons.Default.Refresh, "Restart with latest patches", Modifier.size(18.dp))

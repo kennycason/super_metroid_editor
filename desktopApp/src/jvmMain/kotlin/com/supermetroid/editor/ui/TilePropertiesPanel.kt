@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -44,11 +47,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import com.supermetroid.editor.data.Room
 import com.supermetroid.editor.data.RoomInfo
 import com.supermetroid.editor.data.ItemStateScope
@@ -85,6 +92,7 @@ internal fun TilePropertiesPanel(
     onWorkspaceChanged: (() -> Unit)? = null,
     onNavigateToAsm: ((Int) -> Unit)? = null,
     onDismiss: () -> Unit,
+    onDrag: (Offset) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val uiFont = LocalEditorTheme.current.fontSize.value
@@ -137,10 +145,23 @@ internal fun TilePropertiesPanel(
         ) {
             // Header
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(blockX, blockY, selectionEndX, selectionEndY) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            onDrag(dragAmount)
+                        }
+                    },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    "⠿",
+                    fontSize = LocalEditorTheme.current.fontSize.value.body,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
                 Text(
                     if (selectionTileCount > 1) {
                         "$selectionTileCount tiles · ${oneBasedRoomCoordinate(blockX, blockY)}–" +
@@ -153,16 +174,20 @@ internal fun TilePropertiesPanel(
                             } ?: "")
                     },
                     fontSize = LocalEditorTheme.current.fontSize.value.body,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    "✕",
-                    modifier = Modifier
-                        .clickable { onDismiss() }
-                        .padding(4.dp),
-                    fontSize = LocalEditorTheme.current.fontSize.value.heading,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close tile properties",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1313,8 +1338,15 @@ internal fun TilePropertiesPanel(
             }
 
             // Add Door Cap button + dropdown
-            // Auto-detect direction from screen edge position
-            val autoDir = when {
+            // Resolve the actual type-9 doorway rather than expecting the user
+            // to know the cap PLM's inward engine coordinate.
+            val doorCapSuggestion = remember(blockX, blockY, editorState.editVersion) {
+                editorState.suggestedDoorCapPlacement(blockX, blockY)
+            }
+            val existingDoorCap = remember(blockX, blockY, editorState.editVersion) {
+                editorState.existingDoorCapForPlacement(blockX, blockY, doorCapSuggestion)
+            }
+            val autoDir = doorCapSuggestion?.direction ?: when {
                 blockX % 16 == 0 -> "Right"   // left edge of screen → door opens right
                 blockX % 16 == 15 -> "Left"   // right edge → opens left
                 blockY % 16 == 0 -> "Down"    // top edge → opens down
@@ -1334,7 +1366,8 @@ internal fun TilePropertiesPanel(
                         modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("+ Add Door Cap" + if (autoDir != null) " ($autoDir)" else "",
+                        Text((if (existingDoorCap != null) "Change Door Cap" else "+ Add Door Cap") +
+                            if (autoDir != null) " · $autoDir" else "",
                             fontSize = LocalEditorTheme.current.fontSize.value.body,
                             color = MaterialTheme.colorScheme.onTertiaryContainer)
                     }
@@ -1345,7 +1378,13 @@ internal fun TilePropertiesPanel(
                 ) {
                     // If on screen edge, show auto-detected direction first
                     if (autoDir != null) {
-                        Text("Auto: $autoDir", fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                        Text(
+                            if (doorCapSuggestion?.snappedToDoorway == true) {
+                                "Nearby doorway: $autoDir · anchor ${oneBasedRoomCoordinate(doorCapSuggestion.anchorX, doorCapSuggestion.anchorY)}"
+                            } else {
+                                "Auto: $autoDir"
+                            },
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             color = Color(0xFF00CC66),
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
@@ -1381,6 +1420,14 @@ internal fun TilePropertiesPanel(
                         if (color != doorColors.last()) Divider()
                     }
                 }
+            }
+            if (doorCapSuggestion?.snappedToDoorway == true) {
+                Text(
+                    "Snaps to nearby doorway · anchor ${oneBasedRoomCoordinate(doorCapSuggestion.anchorX, doorCapSuggestion.anchorY)}",
+                    fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                    color = Color(0xFF00CC66),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                )
             }
 
             // Add scroll trigger button + dropdown

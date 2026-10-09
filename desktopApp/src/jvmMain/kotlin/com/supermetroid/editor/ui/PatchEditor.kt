@@ -55,6 +55,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.supermetroid.editor.asm.AsmPatchBackendRegistry
+import com.supermetroid.editor.asm.PatchImplementationBackend
 import com.supermetroid.editor.data.PatchRepository
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.PatchWrite
@@ -549,6 +551,21 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp),
             )
+        }
+        when (AsmPatchBackendRegistry.supportFor(patch).asm) {
+            PatchImplementationBackend.ASM_GENERATED_OVERLAY -> Text(
+                "Build backends: direct ROM writes in Loaded ROM mode · generated source overlay in ASM mode",
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            PatchImplementationBackend.ASM_CURATED_MODULE -> Text(
+                "Build backends: direct ROM writes in Loaded ROM mode · curated source module in ASM mode",
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+            else -> Unit
         }
 
         Spacer(Modifier.height(6.dp))

@@ -170,6 +170,20 @@ internal fun AsmWorkspaceSidebar(
     val scope = rememberCoroutineScope()
     val workspace = state.workspace
     val searchFocusRequester = remember { FocusRequester() }
+    val hasProjectSourceChanges = state.hasProjectSourceChanges
+
+    LaunchedEffect(projectAsmEnabled, hasProjectSourceChanges, projectBuildMode) {
+        // A source edit must never be silently ignored by a Loaded ROM build.
+        // Enabling starts in ASM mode, and the first edit switches a clean
+        // workspace back to ASM mode if the user had temporarily chosen ROM.
+        if (
+            projectAsmEnabled &&
+            hasProjectSourceChanges &&
+            projectBuildMode != ProjectRomBuildMode.ASM_SOURCE
+        ) {
+            onProjectBuildModeChanged(ProjectRomBuildMode.ASM_SOURCE)
+        }
+    }
 
     LaunchedEffect(state.searchFocusSerial) {
         if (state.searchFocusSerial > 0L) {
@@ -216,10 +230,10 @@ internal fun AsmWorkspaceSidebar(
         if (state.hasProjectWorkspace) {
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth()) {
-                AsmModeButton("Reference", state.workspaceKind == AsmWorkspaceKind.REFERENCE) {
+                AsmModeButton("Original (read-only)", state.workspaceKind == AsmWorkspaceKind.REFERENCE) {
                     state.showReferenceWorkspace()
                 }
-                AsmModeButton("Project", state.workspaceKind == AsmWorkspaceKind.PROJECT) {
+                AsmModeButton("Project (editable)", state.workspaceKind == AsmWorkspaceKind.PROJECT) {
                     state.showProjectWorkspace()
                 }
             }
@@ -451,6 +465,7 @@ private fun AsmWorkspaceControls(
                         AsmBuildModeButton(
                             label = "Loaded ROM",
                             selected = projectBuildMode == ProjectRomBuildMode.PATCHED_ROM,
+                            enabled = !state.hasProjectSourceChanges,
                             modifier = Modifier.weight(1f),
                         ) { onProjectBuildModeChanged(ProjectRomBuildMode.PATCHED_ROM) }
                         AsmBuildModeButton(
@@ -460,10 +475,12 @@ private fun AsmWorkspaceControls(
                         ) { onProjectBuildModeChanged(ProjectRomBuildMode.ASM_SOURCE) }
                     }
                     Text(
-                        if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) {
+                        if (state.hasProjectSourceChanges) {
+                            "ASM source is required while saved or unsaved source edits exist. Restore every edited file to its original snapshot before returning to Loaded ROM."
+                        } else if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) {
                             "Compiles project source first, then applies normal SMEDIT edits and patches with conflict checks."
                         } else {
-                            "Uses the ROM you opened, preserving the established patch-only export path."
+                            "Uses the ROM you opened. You can return to ASM source at any time; the first source edit selects it automatically."
                         },
                         fontSize = fs.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -490,19 +507,25 @@ private fun AsmWorkspaceControls(
 private fun AsmBuildModeButton(
     label: String,
     selected: Boolean,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     Surface(
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        color = when {
+            selected -> MaterialTheme.colorScheme.primaryContainer
+            enabled -> MaterialTheme.colorScheme.surface
+            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        },
         shape = ASM_CONTROL_SHAPE,
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(enabled = enabled, onClick = onClick),
     ) {
         Text(
             label,
             fontSize = fs.detail,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 7.dp),
         )
@@ -1732,18 +1755,17 @@ private fun AsmSourceCanvas(
             },
         )
         if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
-            AsmSourceEditBar(
+            AsmEditableSourcePane(
                 state = state,
                 source = source,
                 onSave = { scope.launch { state.saveSource(source.id) } },
                 onRestoreOriginal = { confirmRestore = true },
-            )
-            AsmEditableSourcePane(
-                state = state,
-                source = source,
                 modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
             )
         } else {
+            if (state.hasProjectWorkspace) {
+                AsmReadOnlySourceNotice(onOpenProjectSource = state::showProjectWorkspace)
+            }
             AsmEditorLinkBar(editorLinks, onOpenInEditor)
             if (referenceLabel != null) {
                 AsmReferencesBar(
@@ -1817,9 +1839,41 @@ private fun AsmSourceCanvas(
 }
 
 @Composable
+private fun AsmReadOnlySourceNotice(onOpenProjectSource: () -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "You are viewing the immutable original source.",
+                fontSize = fs.detail,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            Button(onClick = onOpenProjectSource, shape = ASM_CONTROL_SHAPE) {
+                Text("Open editable project source", fontSize = fs.detail)
+            }
+        }
+    }
+}
+
+@Composable
 private fun AsmSourceEditBar(
     state: AsmWorkspaceState,
     source: AsmSourceFile,
+    pageStartLine: Int,
+    displayedEndLine: Int,
+    totalLineCount: Int,
+    canGoPrevious: Boolean,
+    canGoNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
     onSave: () -> Unit,
     onRestoreOriginal: () -> Unit,
 ) {
@@ -1836,23 +1890,44 @@ private fun AsmSourceEditBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            OutlinedButton(
+                onClick = onPrevious,
+                enabled = canGoPrevious,
+                shape = ASM_CONTROL_SHAPE,
+                contentPadding = ButtonDefaults.ContentPadding,
+            ) {
+                Text("Previous", fontSize = fs.detail)
+            }
             Text(
-                when {
-                    unsaved -> "Unsaved buffer"
-                    modified -> "Saved project edit"
-                    else -> "Matches original snapshot"
-                },
+                "Lines ${pageStartLine + 1}–$displayedEndLine of $totalLineCount",
                 fontSize = fs.detail,
-                fontWeight = FontWeight.SemiBold,
-                color = if (unsaved) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f),
             )
+            OutlinedButton(
+                onClick = onNext,
+                enabled = canGoNext,
+                shape = ASM_CONTROL_SHAPE,
+                contentPadding = ButtonDefaults.ContentPadding,
+            ) {
+                Text("Next", fontSize = fs.detail)
+            }
+            if (unsaved) {
+                Text(
+                    "Unsaved",
+                    fontSize = fs.detail,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             OutlinedButton(
                 onClick = { state.discardSourceBuffer(source.id) },
                 enabled = unsaved && !state.busy,
                 shape = ASM_CONTROL_SHAPE,
             ) {
-                Text("Revert buffer", fontSize = fs.detail)
+                Text("Revert", fontSize = fs.detail)
             }
             Button(onClick = onSave, enabled = unsaved && !state.busy, shape = ASM_CONTROL_SHAPE) {
                 Text("Save", fontSize = fs.detail)
@@ -1872,6 +1947,8 @@ private fun AsmSourceEditBar(
 private fun AsmEditableSourcePane(
     state: AsmWorkspaceState,
     source: AsmSourceFile,
+    onSave: () -> Unit,
+    onRestoreOriginal: () -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -1928,34 +2005,19 @@ private fun AsmEditableSourcePane(
         }
     }
     Column(modifier) {
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f), modifier = Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { pageStartLine = (page.startLine - ASM_EDIT_PAGE_LINES).coerceAtLeast(0) },
-                    enabled = page.startLine > 0,
-                    shape = ASM_CONTROL_SHAPE,
-                    contentPadding = ButtonDefaults.ContentPadding,
-                ) { Text("Previous", fontSize = fs.detail) }
-                Text(
-                    "Lines ${page.startLine + 1}–$displayedEndLine of $totalLineCount",
-                    fontSize = fs.detail,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedButton(
-                    onClick = { pageStartLine = page.startLine + lineCount },
-                    enabled = displayedEndLine < totalLineCount,
-                    shape = ASM_CONTROL_SHAPE,
-                    contentPadding = ButtonDefaults.ContentPadding,
-                ) { Text("Next", fontSize = fs.detail) }
-            }
-        }
+        AsmSourceEditBar(
+            state = state,
+            source = source,
+            pageStartLine = page.startLine,
+            displayedEndLine = displayedEndLine,
+            totalLineCount = totalLineCount,
+            canGoPrevious = page.startLine > 0,
+            canGoNext = displayedEndLine < totalLineCount,
+            onPrevious = { pageStartLine = (page.startLine - ASM_EDIT_PAGE_LINES).coerceAtLeast(0) },
+            onNext = { pageStartLine = page.startLine + lineCount },
+            onSave = onSave,
+            onRestoreOriginal = onRestoreOriginal,
+        )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val contentWidth = maxOf(
                 maxWidth - ASM_SCROLLBAR_SIZE,

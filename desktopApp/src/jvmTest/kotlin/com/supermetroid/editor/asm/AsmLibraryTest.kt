@@ -36,7 +36,7 @@ class AsmLibraryTest {
         assertTrue("Make_Samus_Jump" in jumpText)
         assertTrue("\$90:9EB9" in jumpText)
         assertTrue("\$90:9EBF" in jumpText)
-        assertTrue("does not compile" in jumpText)
+        assertTrue("cannot silently omit" in jumpText)
         EXPECTED_MNEMONICS.forEach { mnemonic ->
             val pageId = AsmLibrary.instructionPageId(mnemonic)
             assertEquals(mnemonic, AsmLibrary.mnemonicFromPageId(pageId))

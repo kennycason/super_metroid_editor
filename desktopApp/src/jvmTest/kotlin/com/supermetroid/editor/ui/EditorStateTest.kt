@@ -18,6 +18,7 @@ import com.supermetroid.editor.rom.TestRomHelper
 import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.data.ProjectRoomStateConditionKind
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Assertions.*
@@ -58,6 +59,29 @@ class EditorStateTest {
         val offset = 2 + layer1Size + totalTiles + idx * 2
         data[offset] = (word and 0xFF).toByte()
         data[offset + 1] = ((word shr 8) and 0xFF).toByte()
+    }
+
+    @Test
+    fun `background build progress returns to caller without requiring Main dispatcher`() = runBlocking {
+        val callerThread = Thread.currentThread()
+        val callbackThreads = mutableListOf<Thread>()
+        val messages = mutableListOf<String>()
+
+        val result = runBackgroundBuildWithProgress(
+            onProgress = { message ->
+                callbackThreads += Thread.currentThread()
+                messages += message
+            },
+        ) { report ->
+            report("Compile")
+            report("Patch")
+            42
+        }
+
+        assertEquals(42, result)
+        assertEquals(listOf("Compile", "Patch"), messages)
+        assertTrue(callbackThreads.isNotEmpty())
+        assertTrue(callbackThreads.all { it == callerThread })
     }
 
     @Nested
@@ -125,6 +149,68 @@ class EditorStateTest {
             assertTrue(patch.enabled)
             assertTrue(state.statusMessage.contains("Cannot disable"))
             assertTrue(state.statusMessage.contains("PLM \$F200"))
+        }
+    }
+
+    @Nested
+    inner class DoorCapEditing {
+        @Test
+        fun `recoloring from a cap sub-tile preserves its anchor and replaces the old cap`() {
+            state.addPlm(0xC85A, 1, 0, 0) // Yellow Left, vertically spans y=0..3.
+
+            state.addPlm(0xC8A2, 1, 1, 0) // Blue Left selected from the second visible tile.
+
+            val caps = state.workingPlms.filter { RomParser.isDoorCapPlm(it.id) }
+            assertEquals(1, caps.size)
+            assertEquals(0xC8A2, caps.single().id)
+            assertEquals(1, caps.single().x)
+            assertEquals(0, caps.single().y)
+            val changes = state.project.getOrCreateRoom(state.currentRoomId).plmChanges
+            assertTrue(changes.any { it.action == "remove" && it.plmId == 0xC85A && it.x == 1 && it.y == 0 })
+            assertTrue(changes.any { it.action == "add" && it.plmId == 0xC8A2 && it.x == 1 && it.y == 0 })
+        }
+
+        @Test
+        fun `nearby right-edge doorway supplies canonical cap anchor and repairs a shifted cap`() {
+            state.initTestLevel(blocksWide = 16, blocksTall = 16)
+            state.addPlm(0xC85A, 14, 5, 0) // Legacy shifted Yellow Left cap.
+            for (y in 4..7) state.setTileProperties(15, y, blockType = 0x9, bts = 0)
+
+            val suggested = state.suggestedDoorCapPlacement(15, 4)
+            assertNotNull(suggested)
+            assertEquals("Left", suggested!!.direction)
+            assertEquals(14, suggested.anchorX)
+            assertEquals(4, suggested.anchorY)
+            assertTrue(suggested.snappedToDoorway)
+
+            // Select the actual doorway, not the malformed cap artwork.
+            state.addPlm(0xC8A2, 15, 4, 0)
+
+            val caps = state.workingPlms.filter { RomParser.isDoorCapPlm(it.id) }
+            assertEquals(1, caps.size)
+            assertEquals(0xC8A2, caps.single().id)
+            assertEquals(14, caps.single().x)
+            assertEquals(4, caps.single().y)
+            val changes = state.project.getOrCreateRoom(state.currentRoomId).plmChanges
+            assertTrue(changes.any { it.action == "remove" && it.plmId == 0xC85A && it.x == 14 && it.y == 5 })
+            assertTrue(changes.any { it.action == "add" && it.plmId == 0xC8A2 && it.x == 14 && it.y == 4 })
+        }
+
+        @Test
+        fun `top-edge doorway places horizontal cap two tiles inward`() {
+            state.initTestLevel(blocksWide = 16, blocksTall = 16)
+            for (x in 4..7) state.setTileProperties(x, 0, blockType = 0x9, bts = 0)
+
+            val suggested = state.suggestedDoorCapPlacement(5, 0)
+            assertNotNull(suggested)
+            assertEquals("Down", suggested!!.direction)
+            assertEquals(4, suggested.anchorX)
+            assertEquals(2, suggested.anchorY)
+
+            state.addPlm(0xC8B4, 5, 0, 0)
+            val cap = state.workingPlms.single { RomParser.isDoorCapPlm(it.id) }
+            assertEquals(4, cap.x)
+            assertEquals(2, cap.y)
         }
     }
 

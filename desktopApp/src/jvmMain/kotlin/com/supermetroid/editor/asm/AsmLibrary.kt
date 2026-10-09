@@ -870,8 +870,9 @@ internal object AsmLibrary {
                 AsmLibrarySection(
                     "Make a conservative project override",
                     listOf(
-                        "Enable Project ASM from the bottom of the ASM sidebar and switch from Reference to Project. Project source is directly editable: click into bank_90.asm, replace the first \$04E0 in both ordinary-jump rows with \$0600, then save the file.",
-                        "Reference remains an immutable baseline. Project owns the saved override and marks the source as edited, so you can compare the two modes or restore the original without redownloading the disassembly.",
+                        "Code examples on this Library page are read-only teaching material. To edit the real file, choose Source at the top of the ASM sidebar, enable Project ASM from the bottom, and open Project (editable). Enabling Project ASM selects it automatically; Original (read-only) remains available for comparison.",
+                        "Project source is directly editable: open Bank \$90 / bank_90.asm, search for InitialYSpeeds_Jumping, click into the source text, replace the first \$04E0 in both ordinary-jump rows with \$0600, then press Cmd/Ctrl+S or use Save. There is no separate per-file Edit button.",
+                        "Original (read-only) remains an immutable baseline. Project owns the saved override and marks the source as edited, so you can compare the two views or restore the original without redownloading the disassembly.",
                     ),
                     AsmCodeExample(
                         "Use the vanilla Hi-Jump launch value for ordinary air jumps",
@@ -894,8 +895,9 @@ internal object AsmLibrary {
                 AsmLibrarySection(
                     "Verify the edit at every layer",
                     listOf(
-                        "Today, SMEDIT saves this project-owned source override but deliberately does not compile it into an exported ROM. The editor must not imply otherwise. Until ASM compilation is enabled, use the edited marker, Reference/Project comparison, and Restore original to exercise the source workflow.",
-                        "When compilation lands, this lesson is the first end-to-end acceptance test: an unchanged source tree must reproduce the baseline ROM; this edit must change only the owned words beginning at SNES \$90:9EB9 and \$90:9EBF; those writes must pass the normal ownership/conflict checks; and an emulator test must show the stronger ordinary jump while Hi-Jump and liquid behavior remain distinct.",
+                        "Enabling Project ASM selects ASM source as the build base. A clean workspace may temporarily return to Loaded ROM, but the first source edit selects ASM source again. Loaded ROM is unavailable while saved or unsaved source edits exist, so an export cannot silently omit this change.",
+                        "Build SMEDIT Result in the ROM view before exporting. The source edit should appear under asm-source:project and change only the owned words beginning at SNES \$90:9EB9 and \$90:9EBF. The normal conflict checks reject a GUI patch that tries to own different values at those same bytes.",
+                        "Finally, test the output in the emulator: ordinary air jumps should be stronger while Hi-Jump and liquid behavior remain distinct. An unchanged source tree must still reproduce the baseline ROM.",
                     ),
                     AsmCodeExample(
                         "Expected NTSC value split",

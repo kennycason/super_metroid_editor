@@ -5,7 +5,9 @@ import com.supermetroid.editor.data.CommunitySamusInjectionArtifact
 import com.supermetroid.editor.data.PatchSortOrder
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.rom.RomParser
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -115,5 +117,29 @@ class ProjectFileServiceTest {
         assertEquals("11c906f547ed", reopened.asmWorkspace.sourceRevision)
         assertEquals(ProjectRomBuildMode.ASM_SOURCE, reopened.asmWorkspace.buildMode)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
+    }
+
+    @Test
+    fun `loaded ROM build refuses to ignore saved ASM source overrides`() {
+        val projectFile = File(tempDir, "asm-edited.smedit").apply { writeText("{}") }
+        val override = File(tempDir, "asm-edited_smedit/asm/overrides/src/bank_90.asm")
+        override.parentFile.mkdirs()
+        override.writeText("; saved project edit")
+        val project = SmEditProject(romPath = "base.smc").also {
+            it.asmWorkspace.enabled = true
+            it.asmWorkspace.buildMode = ProjectRomBuildMode.PATCHED_ROM
+        }
+        val messages = mutableListOf<String>()
+
+        val result = ProjectFileService.buildRom(
+            project = project,
+            romParser = RomParser(ByteArray(0x300000)),
+            onLog = messages::add,
+            onStatus = messages::add,
+            projectFilePath = projectFile.absolutePath,
+        )
+
+        assertNull(result)
+        assertTrue(messages.any { it.contains("cannot ignore saved ASM source edits") })
     }
 }

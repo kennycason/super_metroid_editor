@@ -5128,16 +5128,16 @@ SamusPhysicsConstants:
     dw $0600*!SPF*$100,$01C0*!SPF*$100,$02C0*!SPF*$100                   ;909EBF;
 
   .InitialYSpeeds_HiJumpJumping:
-    dw $0600*!SPF/$100,$0280*!SPF/$100,$0380*!SPF/$100                   ;909EC5;
+    dw $0900*!SPF/$100,$0280*!SPF/$100,$0380*!SPF/$100                   ;909EC5;
 
   .InitialYSubSpeeds_HiJumpJumping:
-    dw $0600*!SPF*$100,$0280*!SPF*$100,$0380*!SPF*$100                   ;909ECB;
+    dw $0900*!SPF*$100,$0280*!SPF*$100,$0380*!SPF*$100                   ;909ECB;
 
   .InitialYSpeeds_WallJumping:
-    dw $04A0*!SPF/$100,$0040*!SPF/$100,$02A0*!SPF/$100                   ;909ED1;
+    dw $06A0*!SPF/$100,$0040*!SPF/$100,$02A0*!SPF/$100                   ;909ED1;
 
   .InitialYSubSpeeds_WallJumping:
-    dw $04A0*!SPF*$100,$0040*!SPF*$100,$02A0*!SPF*$100                   ;909ED7;
+    dw $06A0*!SPF*$100,$0040*!SPF*$100,$02A0*!SPF*$100                   ;909ED7;
 
   .InitialYSpeeds_HiJumpWallJumping:
     dw $0580*!SPF/$100,$0080*!SPF/$100,$0380*!SPF/$100                   ;909EDD;
@@ -5146,16 +5146,16 @@ SamusPhysicsConstants:
     dw $0580*!SPF*$100,$0080*!SPF*$100,$0380*!SPF*$100                   ;909EE3;
 
   .InitialYSpeeds_Knockback:
-    dw $0500*!SPF/$100,$0200*!SPF/$100,$0200*!SPF/$100                   ;909EE9;
+    dw $1980*!SPF/$100,$0200*!SPF/$100,$0200*!SPF/$100                   ;909EE9;
 
   .InitialYSubSpeeds_Knockback:
-    dw $0500*!SPF*$100,$0200*!SPF*$100,$0200*!SPF*$100                   ;909EEF;
+    dw $1980*!SPF*$100,$0200*!SPF*$100,$0200*!SPF*$100                   ;909EEF;
 
   .InitialYSpeeds_BombJump:
-    dw $02C0*!SPF/$100,$0010*!SPF/$100,$0010*!SPF/$100                   ;909EF5;
+    dw $12C0*!SPF/$100,$0010*!SPF/$100,$0010*!SPF/$100                   ;909EF5;
 
   .InitialYSubSpeeds_BombJump:
-    dw $02C0*!SPF*$100,$0010*!SPF*$100,$0010*!SPF*$100                   ;909EFB;
+    dw $12C0*!SPF*$100,$0010*!SPF*$100,$0010*!SPF*$100                   ;909EFB;
 
   .XAccelerations_DashHeld:
     dw $0000,$0000,$0000                                                 ;909F01;

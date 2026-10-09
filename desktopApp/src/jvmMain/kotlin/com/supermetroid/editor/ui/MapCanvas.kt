@@ -1078,6 +1078,13 @@ fun MapCanvas(
                             var propsBts by remember { mutableStateOf(0) }
                             var propsBtsMixed by remember { mutableStateOf(false) }
                             var propsMetatile by remember { mutableStateOf(0) }
+                            var propsPanelOnLeft by remember { mutableStateOf(false) }
+                            var propsPanelDragOffset by remember {
+                                mutableStateOf(androidx.compose.ui.geometry.Offset.Zero)
+                            }
+                            var propsPanelSize by remember {
+                                mutableStateOf(androidx.compose.ui.unit.IntSize.Zero)
+                            }
 
                             // Right-click context menu state
                             var contextMenuExpanded by remember { mutableStateOf(false) }
@@ -1107,6 +1114,10 @@ fun MapCanvas(
                                 propsBlockType = (word shr 12) and 0xF
                                 propsBts = es.readBts(bx, by)
                                 propsBtsMixed = false
+                                val tilePx = 16f * zoomLevel * density
+                                val selectedViewportCenterX = (bx + 0.5f) * tilePx - hScrollState.value
+                                propsPanelOnLeft = selectedViewportCenterX >= canvasViewW / 2f
+                                propsPanelDragOffset = androidx.compose.ui.geometry.Offset.Zero
                                 propsExpanded = true
                             }
 
@@ -1122,6 +1133,11 @@ fun MapCanvas(
                                 propsBlockType = selection.blockType
                                 propsBts = selection.bts ?: es.readBts(selection.minX, selection.minY)
                                 propsBtsMixed = selection.bts == null
+                                val tilePx = 16f * zoomLevel * density
+                                val selectionCenterX = (selection.minX + selection.maxX + 1) * tilePx / 2f
+                                val selectedViewportCenterX = selectionCenterX - hScrollState.value
+                                propsPanelOnLeft = selectedViewportCenterX >= canvasViewW / 2f
+                                propsPanelDragOffset = androidx.compose.ui.geometry.Offset.Zero
                                 propsExpanded = true
                                 return true
                             }
@@ -1843,6 +1859,22 @@ fun MapCanvas(
 
                             // ─── Right-click tile properties panel (floating, non-modal) ──────
                             if (propsExpanded && editorState != null) {
+                                val panelAlignment = if (propsPanelOnLeft) Alignment.TopStart else Alignment.TopEnd
+                                fun dragPropertiesPanel(dragAmount: androidx.compose.ui.geometry.Offset) {
+                                    val panelWidth = propsPanelSize.width.toFloat()
+                                    val panelHeight = propsPanelSize.height.toFloat()
+                                    val maxX = (canvasViewW - panelWidth).coerceAtLeast(0f)
+                                    val maxY = (canvasViewH - panelHeight).coerceAtLeast(0f)
+                                    val baseX = if (propsPanelOnLeft) 0f else maxX
+                                    val absoluteX = (baseX + propsPanelDragOffset.x + dragAmount.x)
+                                        .coerceIn(0f, maxX)
+                                    val absoluteY = (propsPanelDragOffset.y + dragAmount.y)
+                                        .coerceIn(0f, maxY)
+                                    propsPanelDragOffset = androidx.compose.ui.geometry.Offset(
+                                        absoluteX - baseX,
+                                        absoluteY,
+                                    )
+                                }
                                 TilePropertiesPanel(
                                     blockX = propsBlockX,
                                     blockY = propsBlockY,
@@ -1863,7 +1895,16 @@ fun MapCanvas(
                                     onWorkspaceChanged = onWorkspaceChanged,
                                     onNavigateToAsm = onNavigateToAsm,
                                     onDismiss = { propsExpanded = false; mapFocusReq.requestFocus() },
-                                    modifier = Modifier.align(Alignment.TopEnd),
+                                    onDrag = ::dragPropertiesPanel,
+                                    modifier = Modifier
+                                        .align(panelAlignment)
+                                        .offset {
+                                            androidx.compose.ui.unit.IntOffset(
+                                                propsPanelDragOffset.x.toInt(),
+                                                propsPanelDragOffset.y.toInt(),
+                                            )
+                                        }
+                                        .onSizeChanged { propsPanelSize = it },
                                 )
                             }
 

@@ -137,7 +137,7 @@ fun EmulatorWorkspace(
             if (workspaceState.isConnected) {
                 val rp = romParser
                 if (rp != null) {
-                    val patchedPath = editorState.exportToRom(rp)
+                    val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                     if (patchedPath != null) {
                         workspaceState.updateRomPath(patchedPath)
                     } else {
@@ -278,7 +278,7 @@ fun EmulatorWorkspace(
                                         // Build patched ROM so the emulator runs the edited version
                                         val rp = romParser
                                         if (rp != null) {
-                                            val patchedPath = editorState.exportToRom(rp)
+                                            val patchedPath = editorState.exportToRomAsync(rp, workspaceState::setStatus)
                                             if (patchedPath != null) {
                                                 workspaceState.updateRomPath(patchedPath)
                                             } else {

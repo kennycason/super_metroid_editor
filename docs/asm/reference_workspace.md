@@ -5,9 +5,11 @@ now opt an editable project into an isolated **Project ASM** workspace. The
 reference turns the exact annotated Super Metroid disassembly used by the parity
 suite into an IDE-like knowledge browser without making either an ASM checkout
 or a second ROM-selection step a prerequisite for ordinary ROM editing. Project
-ASM establishes safe source ownership and editing and now provides an explicit,
-opt-in source-build base for ROM export. Ordinary projects remain on the existing
-loaded-ROM patch path unless their build base is deliberately changed.
+ASM establishes safe source ownership and editing and makes that source the build
+base as soon as it is enabled. Ordinary projects remain on the existing loaded-ROM
+patch path. A clean Project ASM workspace can temporarily return to **Loaded ROM**;
+once a saved or unsaved source edit exists, source mode is required so the edit can
+never be silently omitted from an export.
 
 ## User workflow
 
@@ -58,18 +60,30 @@ loaded-ROM patch path unless their build base is deliberately changed.
     **Enable Project ASM** to create an isolated source workspace beside the
     `.smedit` file. Its collapsed summary always reports whether Project ASM is
     disabled, enabled, or needs repair; expand it for provenance and asset-sync
-    details. Switch between
-    **Reference** and **Project** at any time. Project source offers syntax-aware
+    details. Enabling Project ASM automatically selects the **ASM source** build and
+    opens **Project (editable)**. Switch between **Original (read-only)** and
+    **Project (editable)** at any time; the original view also provides an explicit
+    shortcut back to editable source. Project source offers syntax-aware
     editing, unsaved and saved-modification indicators, `Cmd/Ctrl+S`, buffer
     revert, and a confirmed **Restore original** action. Saving reparses the
     complete source index so label navigation and references reflect the saved
     project text.
-12. Expand the Project ASM control and choose **ASM source** under **ROM build
-    base** when the saved source should become executable. **Loaded ROM** keeps
-    the established patch-only path. In source mode SMEDIT compiles both the
+12. **ASM source** is now the active ROM build base. A project with no source
+    edits may choose **Loaded ROM** to use the established patch-only path. The
+    first new source edit selects ASM source again; Loaded ROM is unavailable
+    while any saved or unsaved source edit exists, and export independently rejects
+    stale projects that would otherwise ignore a saved override. In source mode
+    SMEDIT compiles both the
     immutable snapshot and project tree in isolated temporary directories,
     measures the authored delta, registers it as `asm-source:project`, and then
-    runs the normal semantic-edit, patch, validation, and atomic-output stages.
+    plans the normal semantic-edit transaction. Fixed-range editor writes that
+    fit wholly inside one known `incbin` are staged into temporary project
+    `data/` overrides and assembled into the source base. They appear in ROM
+    ownership as `asm-asset:<path>`. Inline ASM data, ambiguous aliases, and
+    relocated/allocated writes remain in the normal post-compile transaction.
+    SMEDIT requires the staged and unstaged routes to produce the same final ROM
+    hash before export succeeds. Patches, conflict checks, validation, and
+    atomic output remain shared with Loaded ROM mode.
     The ROM preview uses the same selection and performs the same build without
     writing an output file.
 
@@ -82,11 +96,18 @@ ASM's own compact history remains available for fine-grained
 source/asset/Library browsing.
 
 When **Project** source is selected, the source pane is immediately editable;
-there is no second per-file edit mode. **Save**, **Revert buffer**, and
+there is no second per-file edit mode. **Save**, **Revert**, and
 **Restore original** provide the explicit write and recovery boundaries. Large
 banks are presented in bounded line pages so syntax highlighting, selection,
 and scrolling remain reliable; edits from every page are merged into the same
 whole-file project buffer.
+
+The **Library** and **Original (read-only)** source views are read-only. To turn a Library
+example into a real edit, switch to **Source**, select **Project (editable)**, open or search
+for the referenced bank/label, click into the source text, and save with
+`Cmd/Ctrl+S` or **Save**. Enabling Project ASM creates the editable tree and selects
+it as the build base. Loaded ROM remains available only while that tree has no
+source edits; beginning an edit returns the project to ASM source automatically.
 
 Source and hex text are selectable and copyable without giving up clickable
 labels, mnemonics, or assets. The source tree, asset tree, source canvas, and hex
@@ -140,7 +161,9 @@ ignored by the sidecar's own `.gitignore`; intentionally saved source changes ar
 mirrored under `overrides/src/`, which is small, reviewable, and suitable for
 source control. A recreated local tree reapplies those overrides automatically.
 The `.smedit` JSON records that ASM mode is enabled, its source revision, and the
-explicit ROM build-base choice. Existing projects default to **Loaded ROM**.
+ROM build-base choice. Existing non-ASM projects default to **Loaded ROM**; enabling
+Project ASM selects **ASM source**. A clean workspace may switch back, but saved
+source overrides make Loaded ROM invalid until they are restored.
 Initial creation is staged and validated before activation. Repairing an
 incomplete sidecar preserves the prior tree as a recoverable hidden backup rather
 than deleting it.
@@ -234,6 +257,121 @@ them. Any patch, community sprite injection, or semantic exporter that tries to
 write a different value over an authored source byte fails through the same
 `RomWritePlan` conflict used by loaded-ROM builds.
 
+Emulator launch and restart run this build on a worker dispatcher so Compose can
+continue painting and accepting window events. While it runs, the toolbar,
+bottom status bar, and emulator viewport show the current compiler/export phase;
+duplicate Play/Restart requests are disabled. This removes the operating-system
+wait cursor but does not weaken the clean-build contract. The current safe path
+may still perform an immutable-baseline compile, a project compile for ownership
+and planning, and a final project compile when generated source assets or patch
+modules are present. The final pass reuses the immutable ROM compiled by the
+first pass instead of assembling that same baseline twice.
+
+Compiled bases also use bounded, session-local content-addressed caches. Their
+keys contain the SMEDIT compiler-contract version, loaded-ROM identity, exact
+Asar binary and version, immutable or compiled reference input, editable
+`src/`/`data/` trees, and every generated source-asset and patch claim. An exact
+project/source match can reuse the already prepared base and avoid both Asar and
+the preliminary materialization-planning pass. A change handled only by the ROM
+patch backend misses that whole-project shortcut but still reuses both compiled
+bases, so Asar runs zero times and only planning plus post-compile export remain.
+A saved ASM edit invalidates the project base, while a GUI edit mapped into an
+`incbin` asset or a source-backed patch invalidates the generated-input base.
+Cache entries are copied before use and are never accepted as the final ROM:
+every Play/Restart still runs the current export transaction, conflict checks,
+and final-ROM/parity validation. The caches are deliberately memory-only for
+now, so restarting SMEDIT establishes a fresh trust boundary without adding
+generated build artifacts to the project.
+
+Editor-owned source assets follow an equally strict boundary. SMEDIT first runs
+the complete validated export plan against the compiled source, then maps only
+fixed writes wholly contained by one manifest asset into an in-memory override
+of that project `data/` file. Allocator-owned ranges, the community-Samus
+injection, inline source data, crossings, and intentional aliases are never
+guessed. The working sidecar is not rewritten: overrides exist only in the clean
+temporary build tree. Generated ranges are excluded from authored-source
+ownership, reintroduced as `ASM_ASSET`/`asm-asset:<path>` claims, and the final
+ROM must match the pre-materialization plan byte for byte. Unsupported domains
+therefore retain the proven post-compile behavior instead of blocking source
+mode or being silently reclassified.
+
+### Authority and patch backends
+
+SMEDIT does not try to reverse-edit arbitrary handwritten assembly. Each value
+has one authority for a given build:
+
+- Saved files under project `overrides/src/` are user-authored ASM.
+- Structured room, graphics, music, map, and patch settings in the `.smedit`
+  model are GUI-authored data.
+- Source generated from GUI data is a temporary, reserved build product. It is
+  deliberately absent from the editable workspace, which effectively freezes
+  that generated region against a second source of truth.
+
+If user-authored ASM and a GUI feature target the same byte, the ownership plan
+reports a conflict instead of choosing one silently. For reciprocal structures
+such as room data, the safe future path is a shared typed codec—decode source or
+ROM into the semantic model, edit that model, then encode a generated asset—not
+text replacement inside a bank file.
+
+Both build modes ultimately produce the same kind of output: a binary SNES ROM.
+The difference is where an edit enters the pipeline:
+
+```text
+Loaded ROM mode
+  loaded ROM
+    → SMEDIT semantic edits and ROM-byte/IPS patches
+    → validation
+    → final ROM
+
+ASM source mode
+  ASM source + extracted data assets
+    → generated assets and supported ASM patch modules
+    → Asar compilation into a ROM
+    → remaining post-compile ROM-byte/IPS patches
+    → validation and parity proof
+    → final ROM
+```
+
+In other words, ASM is an earlier build stage rather than a different final
+format. ASM mode does not require every existing patch to acquire a source
+implementation before it can be used.
+
+Terminology matters at this boundary:
+
+- An extracted **`.bin` source asset** is input to the disassembly, normally
+  consumed by an `incbin` directive. Graphics and compressed room data are
+  common examples.
+- A **ROM-byte patch** is a set of writes to offsets in an already compiled ROM.
+  IPS records and SMEDIT's fixed hex writes are examples.
+- A generated **ASM overlay/module** is source input compiled by Asar before the
+  remaining ROM-byte patches run.
+
+All three contain or produce bytes, but they belong to different stages. The
+documentation avoids calling ROM-byte patches “`.bin` patches” so `.bin` remains
+unambiguous shorthand for disassembly source assets.
+
+A patch can advertise a ROM implementation, an ASM implementation, or both,
+but one build selects exactly one implementation. **Loaded ROM** uses direct ROM
+writes. **ASM source** prefers an explicitly registered source implementation;
+patches that have not migrated yet continue through the post-compile ROM backend.
+Migration is atomic per patch family: if any required record cannot be represented
+safely, the complete patch stays on the ROM backend for that build.
+The two current ASM implementation levels are:
+
+1. **Generated overlay** — validated write intents become a readable temporary
+   Asar `org`/`db` module. This establishes source ownership without pretending
+   byte patches are already symbolic source.
+2. **Curated module** — a future patch-specific implementation can use labels,
+   mnemonics, macros, and source-level allocation while keeping the same backend
+   and parity contract.
+
+Samus Physics is the first dual-backend patch. Its GUI remains authoritative;
+Loaded ROM mode uses the established writer, while ASM mode compiles the
+generated overlay and records those bytes as `ASM_PATCH`. The pre-materialized
+ROM plan remains the oracle, so the final output must be byte-identical. This
+lets patch families migrate incrementally rather than forcing an unsafe all-at-
+once conversion.
+
 ## Architecture
 
 - `AsmReferenceRepository` owns download, archive safety, transactional cache
@@ -244,8 +382,17 @@ write a different value over an authored source byte fails through the same
   recoverable repair of incomplete workspaces.
 - `AsmProjectCompiler` performs clean out-of-tree reference/project builds,
   preserves optional copier headers, captures Asar diagnostics, requires a valid
-  emitted symbol map, and returns minimal authored source ranges rather than an
-  opaque ROM replacement.
+  emitted symbol map, applies size-checked staged data overrides, and returns
+  separate minimal authored-source, generated-asset, and generated-patch ranges
+  rather than an opaque ROM replacement.
+- `AsmSourceAssetMaterializer` projects eligible write-plan bytes into exact
+  manifest-owned `data/` files, excludes allocations and ambiguous ownership,
+  and leaves the project workspace unchanged.
+- `AsmPatchBackendRegistry` explicitly declares which patch families have an
+  ASM implementation; unregistered patches retain the ROM backend.
+- `AsmSourcePatchMaterializer` converts validated writes for a selected generated
+  overlay backend into temporary Asar source and separately owned `ASM_PATCH`
+  ranges. Overlapping or out-of-ROM records fall back instead of being guessed.
 - `AsmToolchain` pins and verifies Asar 1.81, preferring an explicitly configured
   executable and otherwise using/provisioning a managed local compiler.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes

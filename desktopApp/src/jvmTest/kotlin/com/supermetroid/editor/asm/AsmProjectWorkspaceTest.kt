@@ -37,6 +37,7 @@ class AsmProjectWorkspaceTest {
         assertEquals(editedText, File(saved.root, "overrides/src/bank_80.asm").readText())
         assertTrue(File(saved.root, ".gitignore").readText().contains("/workspace/"))
         assertEquals(setOf("bank_80.asm"), saved.modifiedFileIds)
+        assertEquals(setOf("bank_80.asm"), repository.sourceOverrideFileIds(projectFile.absolutePath))
         val reopened = requireNotNull(repository.load(projectFile.absolutePath))
         assertNotNull(reopened)
         assertEquals(editedText, reopened.referenceWorkspace.index.file("bank_80.asm")?.file?.readText())
@@ -47,6 +48,7 @@ class AsmProjectWorkspaceTest {
         assertEquals(originalText, File(restored.workingDirectory, "src/bank_80.asm").readText())
         assertFalse(File(restored.root, "overrides/src/bank_80.asm").exists())
         assertEquals(emptySet<String>(), restored.modifiedFileIds)
+        assertEquals(emptySet<String>(), repository.sourceOverrideFileIds(projectFile.absolutePath))
     }
 
     @Test
@@ -139,6 +141,7 @@ class AsmProjectWorkspaceTest {
         state.updateSourceEditText("bank_80.asm", "$original\n; project edit")
 
         assertTrue(state.hasUnsavedSourceChanges("bank_80.asm"))
+        assertTrue(state.hasProjectSourceChanges)
         assertEquals(setOf("bank_80.asm"), state.unsavedSourceFileIds)
         assertTrue(state.saveSource("bank_80.asm"))
         assertFalse(state.hasUnsavedSourceChanges("bank_80.asm"))
@@ -147,6 +150,7 @@ class AsmProjectWorkspaceTest {
         assertTrue(state.restoreOriginalSource("bank_80.asm"))
         assertEquals(original, state.sourceEditText("bank_80.asm"))
         assertEquals(emptySet<String>(), state.projectModifiedFileIds)
+        assertFalse(state.hasProjectSourceChanges)
     }
 
     private fun fakeReference(ranges: List<AsmAssetRange>): AsmReferenceWorkspace {

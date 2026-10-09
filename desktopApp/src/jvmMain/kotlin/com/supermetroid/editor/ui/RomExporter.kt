@@ -185,11 +185,14 @@ internal data class RomBuildResult(
     val textPatched: Int,
     val asmPatched: Int,
     val sourcePatched: Int = 0,
+    val sourceAssetPatched: Int = 0,
+    val sourcePatchPatched: Int = 0,
 ) {
     val hasSemanticEdits: Boolean
         get() = roomsPatched > 0 || patchesApplied > 0 || musicPatched > 0 ||
             graphicsPatched > 0 || samusPatched > 0 || minimapPatched > 0 ||
-            textPatched > 0 || asmPatched > 0 || sourcePatched > 0
+            textPatched > 0 || asmPatched > 0 || sourcePatched > 0 || sourceAssetPatched > 0 ||
+            sourcePatchPatched > 0
 }
 
 /**
@@ -232,7 +235,9 @@ internal class RomExporter(
         if (compiledAsmBase != null) {
             onLog(
                 "[ASM-BUILD] ${compiledAsmBase.assemblerVersion} compiled project source; " +
-                    "${compiledAsmBase.sourceOwnedRanges.size} changed range(s)"
+                    "${compiledAsmBase.sourceOwnedRanges.size} authored range(s), " +
+                    "${compiledAsmBase.generatedAssetClaims.size} generated asset range(s), " +
+                    "${compiledAsmBase.generatedPatchClaims.size} ASM patch range(s)"
             )
         }
         val communitySamusArtifact = try {
@@ -263,6 +268,24 @@ internal class RomExporter(
                 offset = range.pcOffset,
                 size = range.length,
                 kind = RomWriteKind.ASM_SOURCE,
+            )
+        }
+        compiledAsmBase?.generatedAssetClaims?.forEach { claim ->
+            writePlan.claimCurrentRange(
+                owner = claim.owner,
+                label = claim.label,
+                offset = claim.pcOffset,
+                size = claim.length,
+                kind = RomWriteKind.ASM_ASSET,
+            )
+        }
+        compiledAsmBase?.generatedPatchClaims?.forEach { claim ->
+            writePlan.claimCurrentRange(
+                owner = claim.owner,
+                label = "ASM backend · ${claim.label}",
+                offset = claim.pcOffset,
+                size = claim.length,
+                kind = RomWriteKind.ASM_PATCH,
             )
         }
         val romData = writePlan.romData
@@ -430,15 +453,29 @@ internal class RomExporter(
                     "across ${writeReport.owners.size} owners and ${writeReport.resources.size} resource claims",
             )
         }
+        val finalRom = writePlan.finalRom()
+        compiledAsmBase?.expectedFinalRomSha256?.let { expected ->
+            val actual = bytesSha256(finalRom)
+            if (actual != expected) {
+                val message =
+                    "Export failed safely: generated ASM inputs changed the planned ROM result " +
+                        "(expected ${expected.take(12)}, got ${actual.take(12)})"
+                onLog("ERROR: $message")
+                onStatus(message)
+                return null
+            }
+        }
 
         if (
             roomsPatched.isEmpty() && patchesApplied == 0 && musicPatched == 0 && gfxPatched == 0 &&
             samusPatched == 0 && minimapPatched == 0 && textPatched == 0 && asmPatched == 0 &&
-            compiledAsmBase?.sourceOwnedRanges.orEmpty().isEmpty()
+            compiledAsmBase?.sourceOwnedRanges.orEmpty().isEmpty() &&
+            compiledAsmBase?.generatedAssetClaims.orEmpty().isEmpty() &&
+            compiledAsmBase?.generatedPatchClaims.orEmpty().isEmpty()
         ) {
             return RomBuildResult(
                 loadedRom = originalRom,
-                resultRom = writePlan.finalRom(),
+                resultRom = finalRom,
                 headerSize = headerSize,
                 writeReport = writeReport,
                 roomsPatched = 0,
@@ -450,6 +487,8 @@ internal class RomExporter(
                 textPatched = textPatched,
                 asmPatched = asmPatched,
                 sourcePatched = compiledAsmBase?.sourceOwnedRanges?.sumOf { it.length } ?: 0,
+                sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
+                sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
             )
         }
 
@@ -488,7 +527,7 @@ internal class RomExporter(
 
         return RomBuildResult(
             loadedRom = originalRom,
-            resultRom = writePlan.finalRom(),
+            resultRom = finalRom,
             headerSize = headerSize,
             writeReport = writeReport,
             roomsPatched = roomsPatched.size,
@@ -500,6 +539,8 @@ internal class RomExporter(
             textPatched = textPatched,
             asmPatched = asmPatched,
             sourcePatched = compiledAsmBase?.sourceOwnedRanges?.sumOf { it.length } ?: 0,
+            sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
+            sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
         )
     }
 
@@ -520,7 +561,17 @@ internal class RomExporter(
             return out.absolutePath
         }
         val sourceSummary = if (build.sourcePatched > 0) ", ${build.sourcePatched} ASM bytes" else ""
-        val msg = "Exported ROM: ${out.absolutePath} (${build.roomsPatched} rooms, ${build.patchesApplied} patches, ${build.musicPatched} music, ${build.graphicsPatched} gfx, ${build.samusPatched} Samus$sourceSummary)"
+        val sourceAssetSummary = if (build.sourceAssetPatched > 0) {
+            ", ${build.sourceAssetPatched} generated ASM asset bytes"
+        } else {
+            ""
+        }
+        val sourcePatchSummary = if (build.sourcePatchPatched > 0) {
+            ", ${build.sourcePatchPatched} ASM patch bytes"
+        } else {
+            ""
+        }
+        val msg = "Exported ROM: ${out.absolutePath} (${build.roomsPatched} rooms, ${build.patchesApplied} patches, ${build.musicPatched} music, ${build.graphicsPatched} gfx, ${build.samusPatched} Samus$sourceSummary$sourceAssetSummary$sourcePatchSummary)"
         onLog(msg)
         onStatus(msg)
         return out.absolutePath
@@ -604,6 +655,13 @@ internal class RomExporter(
             if (!patch.enabled) continue
             onLog("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
             claimPatchResources(writePlan, patch)
+            val compiledPatchRanges = compiledAsmBase?.generatedPatchClaims.orEmpty()
+                .count { it.owner == "patch:${patch.id}" }
+            if (patch.configType != null && compiledPatchRanges > 0) {
+                onLog("[EXPORT]   ASM backend supplied $compiledPatchRanges compiled range(s)")
+                patchesApplied++
+                continue
+            }
             if (patch.configType == null) {
                 if (patch.id == "bundled_infinite_blue_suit") {
                     onLog("[EXPORT]   (deferred to combined per-frame hook; legacy standalone hook suppressed)")
@@ -635,7 +693,12 @@ internal class RomExporter(
                     patch.writes
                 }
                 val totalBytes = writesToApply.sumOf { it.bytes.size }
+                var compiledWrites = 0
                 for ((index, write) in writesToApply.withIndex()) {
+                    if (isCompiledAsmPatchWrite("patch:${patch.id}", write)) {
+                        compiledWrites++
+                        continue
+                    }
                     writePlan.add(
                         owner = "patch:${patch.id}",
                         label = "${patch.name} record ${index + 1}",
@@ -652,6 +715,9 @@ internal class RomExporter(
                     )
                 }
                 onLog("[EXPORT]   Hex writes: ${writesToApply.size} records, $totalBytes bytes")
+                if (compiledWrites > 0) {
+                    onLog("[EXPORT]   ASM backend supplied $compiledWrites/${writesToApply.size} records")
+                }
                 if (patch.id.startsWith("bundled_spider_ball")) {
                     val flatHash = bytesSha256(writesToApply.flatMap { it.bytes })
                     val header = writePlan.headerSize
@@ -1099,6 +1165,16 @@ internal class RomExporter(
             )
         }
     }
+
+    private fun isCompiledAsmPatchWrite(owner: String, write: PatchWrite): Boolean =
+        compiledAsmBase?.generatedPatchClaims?.any { claim ->
+            claim.owner == owner &&
+                claim.pcOffset == write.offset.toInt() &&
+                claim.bytes.size == write.bytes.size &&
+                claim.bytes.indices.all { index ->
+                    (claim.bytes[index].toInt() and 0xFF) == write.bytes[index]
+                }
+        } == true
 
     private fun claimPerFrameHookResources(writePlan: RomWritePlan) {
         val participants = project.patches.filter { patch ->

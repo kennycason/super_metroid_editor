@@ -19,6 +19,14 @@ internal data class AsmProjectWorkspace(
     val modifiedFileIds: Set<String>,
 )
 
+/** Minimal workspace view for compilation. It avoids rebuilding the browser's
+ * complete parsed source index when Asar only needs the filesystem trees. */
+internal data class AsmProjectBuildWorkspace(
+    val root: File,
+    val originalDirectory: File,
+    val workingDirectory: File,
+)
+
 /**
  * Owns the project-local ASM sidecar. Initial creation is transactional and
  * never mutates the global downloaded reference. An immutable original tree is
@@ -28,6 +36,22 @@ internal class AsmProjectWorkspaceRepository(
     private val assetRanges: List<AsmAssetRange> = AsmAssetManifest.loadBundled(),
 ) {
     fun load(projectFilePath: String): AsmProjectWorkspace? {
+        val buildWorkspace = loadForBuild(projectFilePath) ?: return null
+        val metadata = readMetadata(File(buildWorkspace.root, METADATA_FILE)) ?: return null
+        val workspace = referenceWorkspace(buildWorkspace.workingDirectory, metadata.reference)
+        return AsmProjectWorkspace(
+            root = buildWorkspace.root,
+            originalDirectory = buildWorkspace.originalDirectory,
+            workingDirectory = buildWorkspace.workingDirectory,
+            referenceWorkspace = workspace,
+            modifiedFileIds = modifiedSourceFiles(
+                buildWorkspace.originalDirectory,
+                buildWorkspace.workingDirectory,
+            ),
+        )
+    }
+
+    fun loadForBuild(projectFilePath: String): AsmProjectBuildWorkspace? {
         val root = projectRoot(projectFilePath) ?: return null
         if (!root.isDirectory) return null
         val metadata = readMetadata(File(root, METADATA_FILE)) ?: return null
@@ -38,13 +62,10 @@ internal class AsmProjectWorkspaceRepository(
         val working = File(root, WORKING_DIRECTORY)
         if (!File(original, "src/main.asm").isFile || !File(working, "src/main.asm").isFile) return null
         if (!assetRanges.all { File(working, "data/${it.path}").isFile }) return null
-        val workspace = referenceWorkspace(working, metadata.reference)
-        return AsmProjectWorkspace(
+        return AsmProjectBuildWorkspace(
             root = root,
             originalDirectory = original,
             workingDirectory = working,
-            referenceWorkspace = workspace,
-            modifiedFileIds = modifiedSourceFiles(original, working),
         )
     }
 
@@ -133,6 +154,22 @@ internal class AsmProjectWorkspaceRepository(
     }
 
     fun rootFor(projectFilePath: String): File? = projectRoot(projectFilePath)
+
+    /**
+     * Saved project source edits are mirrored as small override files. Reading
+     * this ledger does not require parsing the generated source/data trees, so
+     * export-mode validation stays cheap and also works before the workspace UI
+     * has been opened.
+     */
+    fun sourceOverrideFileIds(projectFilePath: String): Set<String> {
+        val root = projectRoot(projectFilePath) ?: return emptySet()
+        val sourceRoot = File(root, "$OVERRIDES_DIRECTORY/src")
+        if (!sourceRoot.isDirectory) return emptySet()
+        return sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
+            .map { it.relativeTo(sourceRoot).invariantSeparatorsPath }
+            .toCollection(linkedSetOf())
+    }
 
     private fun referenceWorkspace(root: File, metadata: AsmReferenceMetadata): AsmReferenceWorkspace {
         val index = AsmSourceParser().parse(File(root, "src"), File(root, "data"), assetRanges)

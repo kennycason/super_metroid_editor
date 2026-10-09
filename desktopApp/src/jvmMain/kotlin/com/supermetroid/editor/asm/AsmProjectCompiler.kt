@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -16,37 +17,120 @@ internal data class AsmSourceOwnedRange(
  * An immutable source-built base for the normal SMEDIT export transaction.
  * [referenceRomSha256] identifies the unedited project snapshot against which
  * source changes were measured; [sourceOwnedRanges] makes those changes visible
- * to the shared ROM ownership/conflict planner.
+ * to the shared ROM ownership/conflict planner. [generatedAssetClaims] keeps
+ * staged editor data separate from source the user authored directly, while
+ * [generatedPatchClaims] identifies patches selected for the ASM backend.
  */
 internal data class AsmCompiledBuildBase(
     val romBytes: ByteArray,
+    /** Headerless immutable snapshot output, reusable by later passes in the same build. */
+    val referenceRomBody: ByteArray,
     val referenceRomSha256: String,
     val sourceOwnedRanges: List<AsmSourceOwnedRange>,
+    val generatedAssetClaims: List<AsmGeneratedAssetClaim> = emptyList(),
+    val generatedPatchClaims: List<AsmGeneratedPatchClaim> = emptyList(),
     val assemblerVersion: String,
     val compilerOutput: List<String>,
+    val expectedFinalRomSha256: String? = null,
+)
+
+internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
+    romBytes = romBytes.copyOf(),
+    referenceRomBody = referenceRomBody.copyOf(),
+    sourceOwnedRanges = sourceOwnedRanges.toList(),
+    generatedAssetClaims = generatedAssetClaims.map { it.copy(bytes = it.bytes.copyOf()) },
+    generatedPatchClaims = generatedPatchClaims.map { it.copy(bytes = it.bytes.copyOf()) },
+    compilerOutput = compilerOutput.toList(),
 )
 
 internal class AsmCompilationException(message: String) : IllegalStateException(message)
+
+/** Small session-local LRU. Entries are copied at the boundary so no exporter
+ * can mutate a cached ROM or generated claim. */
+private object AsmCompiledBuildCache {
+    private const val MAX_ENTRIES = 6
+    private val entries = object : LinkedHashMap<String, AsmCompiledBuildBase>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, AsmCompiledBuildBase>?,
+        ): Boolean = size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun get(key: String): AsmCompiledBuildBase? = entries[key]?.copyForReuse()
+
+    @Synchronized
+    fun put(key: String, value: AsmCompiledBuildBase) {
+        entries[key] = value.copyForReuse()
+    }
+
+    @Synchronized
+    fun clear() = entries.clear()
+}
 
 /** Clean, out-of-tree Asar compiler for a project-owned ASM workspace. */
 internal class AsmProjectCompiler(
     private val workspaceRepository: AsmProjectWorkspaceRepository = AsmProjectWorkspaceRepository(),
     private val toolchain: AsmToolchain = AsmToolchain(),
 ) {
+    private data class ResolvedToolchain(
+        val executable: File,
+        val length: Long,
+        val lastModified: Long,
+        val version: String,
+    )
+
+    @Volatile
+    private var resolvedToolchain: ResolvedToolchain? = null
+
     fun compile(
         projectFilePath: String,
         loadedRom: ByteArray,
+        materialization: AsmAssetMaterialization = AsmAssetMaterialization.EMPTY,
+        patchMaterialization: AsmPatchMaterialization = AsmPatchMaterialization.EMPTY,
+        referenceRomBody: ByteArray? = null,
         onProgress: (String) -> Unit = {},
     ): AsmCompiledBuildBase {
-        val workspace = workspaceRepository.load(projectFilePath)
+        val workspace = workspaceRepository.loadForBuild(projectFilePath)
             ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")
-        val asar = toolchain.resolve(workspace.referenceWorkspace.root, onProgress)
-        val version = toolchain.version(asar)
+        val resolved = resolveToolchain(workspace.workingDirectory, onProgress)
+        val asar = resolved.executable
+        val version = resolved.version
+        val cacheKey = buildCacheKey(
+            workspace = workspace,
+            asar = asar,
+            assemblerVersion = version,
+            loadedRom = loadedRom,
+            materialization = materialization,
+            patchMaterialization = patchMaterialization,
+            referenceRomBody = referenceRomBody,
+        )
+        AsmCompiledBuildCache.get(cacheKey)?.let { cached ->
+            val label = if (materialization.isEmpty && patchMaterialization.isEmpty) {
+                "ASM source unchanged — reusing compiled base…"
+            } else {
+                "Generated ASM inputs unchanged — reusing compiled base…"
+            }
+            onProgress(label)
+            return cached
+        }
 
-        onProgress("Compiling immutable ASM snapshot…")
-        val reference = compileTree(workspace.originalDirectory, asar)
+        val reference = if (referenceRomBody == null) {
+            onProgress("Compiling immutable ASM snapshot…")
+            compileTree(workspace.originalDirectory, asar)
+        } else {
+            require(referenceRomBody.size == ASM_ROM_SIZE) {
+                "Reusable immutable ASM snapshot has ${referenceRomBody.size} bytes; expected $ASM_ROM_SIZE"
+            }
+            onProgress("Reusing immutable ASM snapshot…")
+            CompiledTree(referenceRomBody.copyOf(), emptyList())
+        }
         onProgress("Compiling project ASM source…")
-        val project = compileTree(workspace.workingDirectory, asar)
+        val project = compileTree(
+            sourceTree = workspace.workingDirectory,
+            asar = asar,
+            assetOverrides = materialization.assetOverrides,
+            generatedPatchSource = patchMaterialization.source,
+        )
         if (reference.rom.size != project.rom.size) {
             throw AsmCompilationException(
                 "Project ASM produced ${project.rom.size} bytes; the immutable snapshot produced ${reference.rom.size}"
@@ -60,6 +144,12 @@ internal class AsmProjectCompiler(
                 "ASM produced ${project.rom.size} bytes, but the loaded ROM body is $expectedBodySize bytes"
             )
         }
+        materialization.claims.forEach { claim ->
+            validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "source asset ${claim.assetPath}")
+        }
+        patchMaterialization.claims.forEach { claim ->
+            validateCompiledClaim(project.rom, claim.pcOffset, claim.bytes, "patch ${claim.owner}/${claim.label}")
+        }
         val output = if (headerSize == 0) {
             project.rom
         } else {
@@ -67,24 +157,117 @@ internal class AsmProjectCompiler(
         }
         return AsmCompiledBuildBase(
             romBytes = output,
+            referenceRomBody = reference.rom,
             referenceRomSha256 = sha256(reference.rom),
             // The internal-header checksum/complement are Asar build metadata,
             // not authored source. Downstream SMEDIT writes may legitimately
             // replace them (community sprite IPS files commonly do), so keep
             // them out of source ownership.
-            sourceOwnedRanges = changedRanges(reference.rom, project.rom, SNES_CHECKSUM_RANGE),
+            sourceOwnedRanges = changedRanges(
+                reference.rom,
+                project.rom,
+                listOf(SNES_CHECKSUM_RANGE) +
+                    materialization.claims.map { it.pcOffset until it.endExclusive } +
+                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
+            ),
+            generatedAssetClaims = materialization.claims,
+            generatedPatchClaims = patchMaterialization.claims,
             assemblerVersion = version.lineSequence().firstOrNull().orEmpty(),
             compilerOutput = (reference.output + project.output).distinct(),
+        ).also { compiled -> AsmCompiledBuildCache.put(cacheKey, compiled) }
+    }
+
+    /** Exact fingerprint used by the higher-level prepared-base cache. */
+    fun sourceInputsFingerprint(
+        projectFilePath: String,
+        loadedRom: ByteArray,
+        onProgress: (String) -> Unit = {},
+    ): String {
+        val workspace = workspaceRepository.loadForBuild(projectFilePath)
+            ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")
+        val resolved = resolveToolchain(workspace.workingDirectory, onProgress)
+        return buildCacheKey(
+            workspace = workspace,
+            asar = resolved.executable,
+            assemblerVersion = resolved.version,
+            loadedRom = loadedRom,
+            materialization = AsmAssetMaterialization.EMPTY,
+            patchMaterialization = AsmPatchMaterialization.EMPTY,
+            referenceRomBody = null,
         )
     }
 
-    private fun compileTree(sourceTree: File, asar: File): CompiledTree {
+    @Synchronized
+    private fun resolveToolchain(referenceRoot: File, onProgress: (String) -> Unit): ResolvedToolchain {
+        resolvedToolchain?.takeIf { cached ->
+            cached.executable.isFile &&
+                cached.executable.length() == cached.length &&
+                cached.executable.lastModified() == cached.lastModified
+        }?.let { return it }
+        val executable = toolchain.resolve(referenceRoot, onProgress)
+        return ResolvedToolchain(
+            executable = executable,
+            length = executable.length(),
+            lastModified = executable.lastModified(),
+            version = toolchain.version(executable),
+        ).also { resolvedToolchain = it }
+    }
+
+    private fun buildCacheKey(
+        workspace: AsmProjectBuildWorkspace,
+        asar: File,
+        assemblerVersion: String,
+        loadedRom: ByteArray,
+        materialization: AsmAssetMaterialization,
+        patchMaterialization: AsmPatchMaterialization,
+        referenceRomBody: ByteArray?,
+    ): String {
+        val fingerprint = BuildFingerprint()
+        fingerprint.addText(CACHE_FORMAT_VERSION)
+        fingerprint.addText(assemblerVersion)
+        fingerprint.addFile("asar", asar)
+        fingerprint.addBytes("loaded-rom", loadedRom)
+        if (referenceRomBody == null) {
+            fingerprint.addTree("reference-src", File(workspace.originalDirectory, "src"))
+            fingerprint.addTree("reference-data", File(workspace.originalDirectory, "data"))
+        } else {
+            fingerprint.addBytes("reference-rom", referenceRomBody)
+        }
+        fingerprint.addTree("project-src", File(workspace.workingDirectory, "src"))
+        fingerprint.addTree("project-data", File(workspace.workingDirectory, "data"))
+        materialization.assetOverrides.toSortedMap().forEach { (path, bytes) ->
+            fingerprint.addBytes("asset:$path", bytes)
+        }
+        materialization.claims
+            .sortedWith(compareBy({ it.pcOffset }, { it.assetPath }, { it.owner }, { it.label }))
+            .forEach { claim ->
+                fingerprint.addText("asset-claim:${claim.owner}:${claim.label}:${claim.assetPath}:${claim.pcOffset}")
+                fingerprint.addBytes("asset-claim-bytes", claim.bytes)
+            }
+        fingerprint.addText("generated-patch-source:${patchMaterialization.source}")
+        patchMaterialization.claims
+            .sortedWith(compareBy({ it.pcOffset }, { it.owner }, { it.label }))
+            .forEach { claim ->
+                fingerprint.addText("patch-claim:${claim.owner}:${claim.label}:${claim.pcOffset}")
+                fingerprint.addBytes("patch-claim-bytes", claim.bytes)
+            }
+        return fingerprint.finish()
+    }
+
+    private fun compileTree(
+        sourceTree: File,
+        asar: File,
+        assetOverrides: Map<String, ByteArray> = emptyMap(),
+        generatedPatchSource: String = "",
+    ): CompiledTree {
         require(File(sourceTree, "src/main.asm").isFile) { "ASM source tree has no src/main.asm: $sourceTree" }
         require(File(sourceTree, "data").isDirectory) { "ASM source tree has no extracted data: $sourceTree" }
         val staging = Files.createTempDirectory("smedit-asm-build-").toFile()
         try {
             copyTree(File(sourceTree, "src"), File(staging, "src"))
             copyTree(File(sourceTree, "data"), File(staging, "data"))
+            applyAssetOverrides(File(staging, "data"), assetOverrides)
+            applyGeneratedPatchSource(File(staging, "src"), generatedPatchSource)
             val rom = File(staging, "SM.sfc")
             rom.writeBytes(ByteArray(ASM_ROM_SIZE) { 0xFF.toByte() })
             val symbols = File(staging, "symbols.sym")
@@ -120,6 +303,51 @@ internal class AsmProjectCompiler(
         }
     }
 
+    private fun validateCompiledClaim(
+        rom: ByteArray,
+        pcOffset: Int,
+        bytes: ByteArray,
+        description: String,
+    ) {
+        val endExclusive = pcOffset + bytes.size
+        require(pcOffset >= 0 && endExclusive <= rom.size) {
+            "Generated ASM $description claim is outside the compiled ROM"
+        }
+        if (!rom.copyOfRange(pcOffset, endExclusive).contentEquals(bytes)) {
+            throw AsmCompilationException(
+                "Generated ASM $description was not assembled at PC 0x${pcOffset.toString(16).uppercase()}"
+            )
+        }
+    }
+
+    private fun applyGeneratedPatchSource(sourceRoot: File, source: String) {
+        if (source.isBlank()) return
+        val generated = File(sourceRoot, GENERATED_PATCH_FILE)
+        require(!generated.exists()) { "Project source uses reserved SMEDIT file name $GENERATED_PATCH_FILE" }
+        generated.writeText(source)
+        val main = File(sourceRoot, "main.asm")
+        val include = "; SMEDIT generated patch backend\nincsrc \"$GENERATED_PATCH_FILE\"\n\n"
+        val original = main.readText()
+        val marker = "print \"Assembly complete. Total bytes written: \", bytes"
+        main.writeText(
+            if (marker in original) original.replaceFirst(marker, include + marker)
+            else original + "\n" + include
+        )
+    }
+
+    private fun applyAssetOverrides(dataRoot: File, overrides: Map<String, ByteArray>) {
+        val rootPath = dataRoot.canonicalFile.toPath()
+        overrides.forEach { (relativePath, bytes) ->
+            val target = rootPath.resolve(relativePath).normalize()
+            require(target.startsWith(rootPath)) { "Unsafe generated ASM asset path: $relativePath" }
+            require(Files.isRegularFile(target)) { "Generated ASM asset does not exist: $relativePath" }
+            require(Files.size(target) == bytes.size.toLong()) {
+                "Generated ASM asset $relativePath has ${bytes.size} bytes; expected ${Files.size(target)}"
+            }
+            Files.write(target, bytes)
+        }
+    }
+
     private fun copyTree(source: File, destination: File) {
         val sourcePath = source.canonicalFile.toPath()
         val destinationPath = destination.toPath().normalize()
@@ -152,17 +380,28 @@ internal class AsmProjectCompiler(
 
     companion object {
         const val ASM_ROM_SIZE = 3 * 1024 * 1024
+        private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v1"
+
+        internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
 
         internal fun changedRanges(
             reference: ByteArray,
             project: ByteArray,
-            excludedOffsets: IntRange = IntRange.EMPTY,
+            excludedOffsets: List<IntRange> = emptyList(),
         ): List<AsmSourceOwnedRange> {
             require(reference.size == project.size) { "ASM build products must have equal sizes" }
+            val excluded = BooleanArray(reference.size)
+            excludedOffsets.forEach { range ->
+                require(range.first >= 0 && range.last < reference.size) {
+                    "ASM ownership exclusion is outside the compiled ROM: $range"
+                }
+                for (index in range) excluded[index] = true
+            }
             val ranges = mutableListOf<AsmSourceOwnedRange>()
             var offset = 0
             while (offset < reference.size) {
-                if (offset in excludedOffsets || reference[offset] == project[offset]) {
+                if (excluded[offset] || reference[offset] == project[offset]) {
                     offset++
                     continue
                 }
@@ -171,7 +410,7 @@ internal class AsmProjectCompiler(
                     offset++
                 } while (
                     offset < reference.size &&
-                    offset !in excludedOffsets &&
+                    !excluded[offset] &&
                     reference[offset] != project[offset]
                 )
                 ranges += AsmSourceOwnedRange(start, offset - start)
@@ -180,6 +419,47 @@ internal class AsmProjectCompiler(
         }
 
         private val SNES_CHECKSUM_RANGE = 0x007FDC..0x007FDF
+    }
+}
+
+private class BuildFingerprint {
+    private val digest = MessageDigest.getInstance("SHA-256")
+
+    fun addText(value: String) = addBytes("text", value.toByteArray(Charsets.UTF_8))
+
+    fun addFile(label: String, file: File) {
+        require(file.isFile) { "ASM build input is missing: $file" }
+        addBytes(label, file.readBytes())
+    }
+
+    fun addTree(label: String, root: File) {
+        require(root.isDirectory) { "ASM build input tree is missing: $root" }
+        addText("tree:$label")
+        root.walkTopDown()
+            .filter(File::isFile)
+            .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+            .forEach { file ->
+                addBytes(file.relativeTo(root).invariantSeparatorsPath, file.readBytes())
+            }
+    }
+
+    fun addBytes(label: String, bytes: ByteArray) {
+        val labelBytes = label.toByteArray(Charsets.UTF_8)
+        addInt(labelBytes.size)
+        digest.update(labelBytes)
+        addInt(bytes.size)
+        digest.update(bytes)
+    }
+
+    fun finish(): String = digest.digest().joinToString("") {
+        (it.toInt() and 0xFF).toString(16).padStart(2, '0')
+    }
+
+    private fun addInt(value: Int) {
+        digest.update((value ushr 24).toByte())
+        digest.update((value ushr 16).toByte())
+        digest.update((value ushr 8).toByte())
+        digest.update(value.toByte())
     }
 }
 

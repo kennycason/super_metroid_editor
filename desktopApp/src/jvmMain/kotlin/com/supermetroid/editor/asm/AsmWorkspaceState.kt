@@ -98,6 +98,8 @@ internal class AsmWorkspaceState(
     val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
     val unsavedSourceFileIds: Set<String>
         get() = sourceBuffers.keys.filterTo(linkedSetOf(), ::hasUnsavedSourceChanges)
+    val hasProjectSourceChanges: Boolean
+        get() = projectModifiedFileIds.isNotEmpty() || unsavedSourceFileIds.isNotEmpty()
     val isProjectSourceEditable: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
             browserMode == AsmBrowserMode.SOURCE &&

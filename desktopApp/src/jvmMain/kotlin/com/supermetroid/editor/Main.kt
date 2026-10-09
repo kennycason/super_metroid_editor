@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -646,13 +647,20 @@ fun main() = application {
                                     else MaterialTheme.colorScheme.surface,
                             ),
                         ) {
-                            Icon(
-                                Icons.Default.Gamepad,
-                                contentDescription = "Toggle emulator",
-                                modifier = Modifier.size(16.dp),
-                            )
+                            if (editorState.romBuildInProgress) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            } else {
+                                Icon(
+                                    Icons.Default.Gamepad,
+                                    contentDescription = "Toggle emulator",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                             Spacer(Modifier.width(4.dp))
-                            Text("EMU", fontSize = fs.detail)
+                            Text(if (editorState.romBuildInProgress) "BUILDING" else "EMU", fontSize = fs.detail)
                         }
                         Box {
                             Button(
@@ -1254,7 +1262,24 @@ fun main() = application {
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         val monoFont = FontFamily.Monospace
-                                        if (showTransient && es.statusMessage.isNotEmpty()) {
+                                        if (es.romBuildInProgress) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            ) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(12.dp),
+                                                    strokeWidth = 1.5.dp,
+                                                )
+                                                Text(
+                                                    es.romBuildStatus.ifBlank { "Building ROM…" },
+                                                    fontSize = fs.statusBar,
+                                                    fontFamily = monoFont,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    maxLines = 1,
+                                                )
+                                            }
+                                        } else if (showTransient && es.statusMessage.isNotEmpty()) {
                                             Text(
                                                 es.statusMessage,
                                                 fontSize = fs.statusBar,

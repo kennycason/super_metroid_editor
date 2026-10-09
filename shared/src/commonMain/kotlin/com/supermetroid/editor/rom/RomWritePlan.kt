@@ -17,6 +17,8 @@ enum class RomWriteKind {
     MINIMAP,
     CUSTOM_ASM,
     ASM_SOURCE,
+    ASM_ASSET,
+    ASM_PATCH,
     RAW,
 }
 

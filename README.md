@@ -94,7 +94,7 @@ Sound
 - **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
 - **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
 - **Expanded ROM Inspection** — Discover and inspect rooms in supported expanded-ROM layouts in read-only mode. This has been tested with SMART-generated output; no SMART project data is loaded or stored.
-- **ASM Reference & Project Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, source search, clickable cross-bank labels, scope-aware Find Usages with caller/data-reference navigation, navigation history, selectable/copyable text, explicit two-axis scrollbars and panning, and a provenance-aware binary inspector. Its bidirectional Address Atlas searches SNES or PC coordinates, gives source an exact-address gutter, links full 24-bit operands, distinguishes exact locations from nearby context, and lets room/state, door, PLM, enemy, sprite, tileset/palette, map, text, and music tools jump into the reference. Exact source/assets link back into Rooms—including runtime-state and library-background ownership—Tiles, Sprites, Map, Text, and Sound, including intentional shared-resource aliases; application-level Back/Forward beside EMU preserves the exact resource on both sides of those jumps. Projects can explicitly opt into an isolated editable ASM sidecar with an immutable offline original, syntax-aware editing, saved/unsaved file state, safe buffer revert, and confirmed byte-exact restore. The built-in Library teaches practical SNES ASM through selectable, syntax-highlighted examples with clickable mnemonics, indexes all 92 65C816 mnemonics, explains selected `.B`/`.W`/`.L` forms and LoROM addressing, links instruction pages to real usages in Super Metroid, and includes a complete Samus jump-physics project-edit walkthrough. Projects explicitly choose either the established **Loaded ROM** export base or a clean **ASM source** build. Source mode assembles immutable/project trees with pinned Asar 1.81, records only authored deltas as first-class ROM owners, then applies the same SMEDIT edits, patches, conflict checks, validation, and atomic export used by patch mode. The non-writing ROM comparison uses that exact selected transaction to show **Loaded ROM**, **SMEDIT Result**, and an owner-aware **Diff**; see [the ASM workflow contract](docs/asm/reference_workspace.md).
+- **ASM Reference & Project Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, source search, clickable cross-bank labels, scope-aware Find Usages with caller/data-reference navigation, navigation history, selectable/copyable text, explicit two-axis scrollbars and panning, and a provenance-aware binary inspector. Its bidirectional Address Atlas searches SNES or PC coordinates, gives source an exact-address gutter, links full 24-bit operands, distinguishes exact locations from nearby context, and lets room/state, door, PLM, enemy, sprite, tileset/palette, map, text, and music tools jump into the reference. Exact source/assets link back into Rooms—including runtime-state and library-background ownership—Tiles, Sprites, Map, Text, and Sound, including intentional shared-resource aliases; application-level Back/Forward beside EMU preserves the exact resource on both sides of those jumps. Projects can explicitly opt into an isolated editable ASM sidecar with an immutable offline original, syntax-aware editing, saved/unsaved file state, safe buffer revert, and confirmed byte-exact restore. The built-in Library teaches practical SNES ASM through selectable, syntax-highlighted examples with clickable mnemonics, indexes all 92 65C816 mnemonics, explains selected `.B`/`.W`/`.L` forms and LoROM addressing, links instruction pages to real usages in Super Metroid, and includes a complete Samus jump-physics project-edit walkthrough. Enabling Project ASM automatically selects the clean **ASM source** build; **Loaded ROM** remains available only while that workspace has no source edits. Source mode assembles immutable/project trees with pinned Asar 1.81, records authored deltas as first-class ROM owners, and projects validated fixed-range visual-editor changes into their exact staged `data/` assets before assembly. Patches can expose separate ROM and ASM implementations; each build selects one, with unmigrated patches safely retaining the post-compile writer. Samus Physics is the first dual-backend patch and compiles a temporary GUI-owned source overlay in ASM mode. Ambiguous, inline, and relocated edits remain in the established post-compile transaction; a byte-for-byte parity guard proves that moving eligible assets or patches earlier does not change the resulting ROM. The same conflict checks, validation, and atomic export remain shared with patch mode. The non-writing ROM comparison uses that exact selected transaction to show **Loaded ROM**, **SMEDIT Result**, and an owner-aware **Diff**; see [the ASM workflow contract](docs/asm/reference_workspace.md).
 - **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
 
 ## Download
@@ -115,7 +115,7 @@ Requires JDK 17+ and a C++ compiler (Xcode CLI tools on macOS, `g++` on Linux, M
 
 The editor includes an embedded SNES emulator powered by snes9x, loaded in-process via JNA. The snes9x core is built from source as a git submodule (`tools/snes9x`).
 
-The emulator runs in a floating draggable/resizable window. Click the **EMU** button in the toolbar to toggle it. Press **Play** to export a patched ROM with all current edits applied and start the emulator.
+The emulator runs in a floating draggable/resizable window. Click the **EMU** button in the toolbar to toggle it. Press **Play** to build a ROM with all current edits applied and start the emulator. Long ASM builds run off the UI thread and report their active phase in the toolbar, bottom status bar, and emulator viewport. Compiled ASM bases are content-cached for the session, so repeated Play/Restart actions—and edits limited to ROM-backed patches—skip Asar while still rerunning SMEDIT's write/conflict validation.
 
 **Controller support:** Bluetooth SNES controllers (and other SDL-compatible gamepads) are supported via Jamepad/SDL2. Save state combos follow the Super Metroid practice ROM pattern:
 - `R + Y + SELECT` — Save state to current slot
@@ -322,13 +322,29 @@ desktop editor can validate, repair, rank, preview, and apply its candidate bund
 
 ## Editing Approach
 
-SMEDIT uses **binary ROM patching with safe data relocation**. Edits are stored as native,
-non-destructive deltas in a `.smedit` JSON project against an immutable ROM and are applied at
-export time. `.smedit` is SMEDIT's own format; it is not a SMILE or SMART project wrapper.
+SMEDIT stores edits as native, non-destructive deltas in a `.smedit` JSON project. **Loaded ROM**
+mode applies them through binary ROM patching with safe data relocation. Enabling Project ASM
+automatically selects **ASM source** mode, which compiles project source and extracted assets first,
+incorporates supported source-stage edits, and then applies any remaining ROM-only patches. Both modes produce a binary ROM
+and use the same ownership, conflict, validation, and atomic-export transaction. `.smedit` is
+SMEDIT's own format; it is not a SMILE or SMART project wrapper.
+
+A clean Project ASM workspace may switch back to Loaded ROM. Once a saved or unsaved source edit
+exists, ASM source is required; SMEDIT disables the ROM choice and rejects any stale configuration
+that would omit a saved source override.
+
+An extracted `data/*.bin` file is a disassembly source asset consumed by `incbin`; it is distinct
+from an IPS or fixed-offset ROM-byte patch applied to an already compiled ROM. See the
+[ASM workflow contract](docs/asm/reference_workspace.md#authority-and-patch-backends) for the
+complete build order and terminology.
 
 When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
 
-This approach supports the vast majority of ROM hacking use cases. The main constraints are finite free space in each ROM bank (solvable via ROM expansion) and the inability to change the engine's data structure formats (which would require a disassembly-based workflow). For context, SMILE used the same binary patching model and powered 15+ years of community hacks.
+The Loaded ROM approach supports the vast majority of ROM hacking use cases. Its main constraints
+are finite free space in each ROM bank (solvable via ROM expansion) and changing engine data
+formats. ASM source mode provides the incremental path for those deeper changes while preserving
+ROM-patch fallback for features that have not migrated yet. For context, SMILE used the same binary
+patching model and powered 15+ years of community hacks.
 
 ### ROM Compatibility
 

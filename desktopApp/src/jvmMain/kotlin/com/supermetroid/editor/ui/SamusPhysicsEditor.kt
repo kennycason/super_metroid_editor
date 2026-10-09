@@ -138,7 +138,7 @@ fun SamusPhysicsEditor(
         Spacer(Modifier.height(4.dp))
         Text(
             "Edit Samus movement physics — jump heights, gravity, run speed, air control, and more. " +
-            "Values are 16-bit. Changes apply when patch is enabled.",
+                "Values are single-byte table entries. Changes apply when the patch is enabled.",
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
