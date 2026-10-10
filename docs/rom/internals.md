@@ -260,8 +260,8 @@ States are checked first-to-last. First matching condition wins. Default (E5E6) 
 2-byte address and jumps to it indirectly. The C decompilation represents addresses it
 observed as a `CallRoomDefStateSelect` switch, but that switch is not a runtime whitelist.
 E5EB/E640/E678 are callable vanilla entry points even though vanilla room data does not use
-them. E60F enters the common `INX; INX; RTS` path and is used by SMART projects as an
-always-false condition.
+them. E60F enters the common `INX; INX; RTS` path and can serve as an explicit always-false
+condition in modified ROMs.
 
 **SMEDIT graph relocation**: the selector loop enters every predicate with X immediately after
 the routine word and resumes through an RTS return address it placed on the stack. SMEDIT uses that

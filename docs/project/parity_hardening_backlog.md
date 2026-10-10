@@ -48,7 +48,6 @@ This file captures the current SMILE/local-reference audit so the next work can 
   semantic project-room doors, guarded project-room-only deletion, and parser round trips.
   Generator output and cross-project/JSON room import remain; a separate template library is
   deferred because Clone current state already covers the immediate template workflow.
-- SMART XML import: useful for interoperability and migration from older tools.
 - Managed layout/ROM expansion: variable graphics, music, and level data can
   already relocate when free space exists. Expansion is still needed for large
   projects, but must extend the shared allocator and mapper/header/checksum
@@ -60,7 +59,7 @@ This file captures the current SMILE/local-reference audit so the next work can 
 ## Notes From Local References
 
 - `smile` remains the reference for graphics/metatile editing expectations, old UI workflows, and editor affordances.
-- `smart` and `MapRandomizer` are useful for room graph, topology, and randomizer-facing data modeling.
+- `MapRandomizer` is useful for room graph, topology, and randomizer-facing data modeling.
 - `SM-SPC` and current sound docs are the reference path for N-SPC/SPC transfer correctness.
 - `sm_disassembly` and `sm` remain the canonical source for engine behavior and data layout.
 

@@ -63,29 +63,28 @@
 | 2 | **Tileset/Metatile Composer** | Large | Define 16x16 metatiles from 4 8x8 tiles with palette/flip per sub-tile. Enables truly custom tilesets. |
 | 3 | **Room JSON Import** | Small | Export done; import should create semantic project-owned rooms rather than address-keyed legacy deltas. This is also the foundation for importing rooms from other hacks into expanded ROM space. |
 | 4 | **AreaSave Expansion / Conflict UI** | Small-Medium | Save station spawn editing and cross-area moves safely allocate existing empty slots; table expansion and manual collision resolution remain. |
-| 5 | **SMART XML Interop** | Medium | Translate supported SMART project data into the native stateful model without making SMART XML an internal save format. |
 
 ### Tier 2: Medium Impact
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 6 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
-| 7 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
-| 8 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
-| 9 | **Generated Room Output** | Medium | Send biome/generator results into the same project-owned-room lifecycle. Dedicated static templates are deferred because Clone current state already covers the immediate workflow. |
-| 10 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
-| 11 | **Optional World Graph Viewer** | Small | Visualize and navigate door/save topology without requiring reciprocity or treating intentional disconnected hack content as invalid. |
+| 5 | **Managed ROM Expansion / Shared Allocator** | Medium-Large | Replace independent free-space scanners with one ownership-aware registry, then extend beyond 3MB without invalid pointer or mapper assumptions. |
+| 6 | **Palette Blending / FX Tint** | Medium | SNES color math register editing for transparency/blending effects. |
+| 7 | **Layer 2/BG Scrolling Hardening** | Medium | Embedded L2 editing exists; still need richer parallax mode, BG pointer, and door-dependent transfer workflows. |
+| 8 | **Generated Room Output** | Medium | Send biome/generator results into the same project-owned-room lifecycle. Dedicated static templates are deferred because Clone current state already covers the immediate workflow. |
+| 9 | **Auto Item/Door ID Assignment** | Small | Scan all rooms, deduplicate collection bits, sequential ID assignment. |
+| 10 | **Optional World Graph Viewer** | Small | Visualize and navigate door/save topology without requiring reciprocity or treating intentional disconnected hack content as invalid. |
 
 ### Tier 3: Backlog
 
 | # | Feature | Effort | Why |
 |---|---------|--------|-----|
-| 12 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
-| 13 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks that break together with respawn toggles. |
-| 14 | **Hotkey Configuration** | Small | Custom keyboard shortcut mapping. |
-| 15 | **Samus Pose/Animation Editor** | Large | Configure animation poses per equipment state. |
-| 16 | **Color Math Editor** | Medium | SNES Add/Subtract color math registers. |
-| 17 | **Plugin System** | Large | Extensibility framework for custom tool integration. |
+| 11 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
+| 12 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks that break together with respawn toggles. |
+| 13 | **Hotkey Configuration** | Small | Custom keyboard shortcut mapping. |
+| 14 | **Samus Pose/Animation Editor** | Large | Configure animation poses per equipment state. |
+| 15 | **Color Math Editor** | Medium | SNES Add/Subtract color math registers. |
+| 16 | **Plugin System** | Large | Extensibility framework for custom tool integration. |
 
 ---
 

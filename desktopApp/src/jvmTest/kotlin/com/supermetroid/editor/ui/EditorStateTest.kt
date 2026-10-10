@@ -102,7 +102,7 @@ class EditorStateTest {
             assertTrue(state.metatileBlockTypePresets.isNotEmpty())
             assertTrue(state.undoStack.isNotEmpty())
 
-            state.initForReadOnlyRom("/tmp/smart-readonly.smc")
+            state.initForReadOnlyRom("/tmp/expanded-readonly.smc")
 
             assertNull(state.brush)
             assertEquals(EditorTool.SELECT, state.activeTool)

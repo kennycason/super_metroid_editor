@@ -1,7 +1,7 @@
 # Native SMEDIT Project Format
 
-`.smedit` is SMEDIT's native JSON project format. It is not a SMILE or SMART project file and it
-does not embed either tool's configuration model.
+`.smedit` is SMEDIT's native JSON project format. It is not another editor's project file and it
+does not embed another editor's configuration model.
 
 ## What A Project Stores
 
@@ -96,11 +96,11 @@ The ordinary editable path targets the standard 3 MiB Super Metroid ROM layout. 
 community Samus artifact is the narrow exception: it requires the exact clean base and produces a
 known 4 MiB output inside the normal transactional exporter. Other expanded or relocated ROMs can
 be inspected read-only when discovery succeeds; their discovered catalogs are derived from ROM
-bytes in memory and are not copied into the project as SMART or SMILE metadata.
+bytes in memory and are not copied into the project as foreign-editor metadata.
 
 ## Foreign-Format Imports
 
-Any future SMART XML or other editor import must be a one-way translation boundary:
+Any future foreign-editor import must be a one-way translation boundary:
 
 1. Parse the foreign file into a temporary importer model.
 2. Validate every supported concept and report anything that cannot be represented safely.

@@ -46,7 +46,7 @@ class AsmSourceEditPageTest {
         val previous = TextFieldValue("    LDA.W #\$01", TextRange(14))
         val updated = TextFieldValue("    LDA.W #\$01\n", TextRange(15))
 
-        val result = asmApplySmartIndentation(previous, updated)
+        val result = asmApplyAutomaticIndentation(previous, updated)
 
         assertEquals("    LDA.W #\$01\n    ", result.text)
         assertEquals(TextRange(19), result.selection)
@@ -57,7 +57,7 @@ class AsmSourceEditPageTest {
         val previous = TextFieldValue("HandleJump:", TextRange(11))
         val updated = TextFieldValue("HandleJump:\n", TextRange(12))
 
-        val result = asmApplySmartIndentation(previous, updated)
+        val result = asmApplyAutomaticIndentation(previous, updated)
 
         assertEquals("HandleJump:\n    ", result.text)
         assertEquals(TextRange(16), result.selection)
@@ -69,7 +69,7 @@ class AsmSourceEditPageTest {
         val pasted = "LDA.W #\$01\nSTA.W \$12\n"
         val updated = TextFieldValue(pasted, TextRange(pasted.length))
 
-        assertEquals(updated, asmApplySmartIndentation(previous, updated))
+        assertEquals(updated, asmApplyAutomaticIndentation(previous, updated))
     }
 
     @Test

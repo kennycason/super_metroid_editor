@@ -319,7 +319,7 @@ class RomCompatibilityTest {
 
         val phantoon = PhantoonSpritemap(parser)
         assertTrue(phantoon.load(), "Phantoon special spritemap should load")
-        assertEquals(5, phantoon.getTilesetId(), "SMART Phantoon renderer should resolve the state containing enemy \$E4BF")
+        assertEquals(5, phantoon.getTilesetId(), "Phantoon renderer should resolve the state containing enemy \$E4BF")
         val phantoonBody = requireNotNull(phantoon.renderComponent(PhantoonSpritemap.COMPONENT_TILEMAPS[0]))
         assertTrue(phantoonBody.pixels.count { it != 0 } > 100, "Phantoon body should have visible pixels")
 
@@ -477,7 +477,7 @@ class RomCompatibilityTest {
         val gfxSnes = 0xE18080
         val paletteSnes = 0xE18120
 
-        // SMART-style layouts keep a 29-entry pointer table in bank $8F;
+        // This relocated layout keeps a 29-entry pointer table in bank $8F;
         // each 16-bit offset points to the 9-byte graphics entry record.
         for (tilesetId in 0 until TileGraphics.NUM_TILESETS) {
             val entryPc = firstEntryPc + tilesetId * 9

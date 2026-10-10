@@ -77,8 +77,8 @@ class RoomStateInspectionTest {
         write16(fixture.rom, cursor + 3, 0x9120)
         cursor += 5
 
-        // $8F:E60F is the vanilla "skip the state pointer and return" entry
-        // used by SMART as an explicit always-false condition.
+        // $8F:E60F is the vanilla "skip the state pointer and return" entry,
+        // which modified ROMs can use as an explicit always-false condition.
         write16(fixture.rom, cursor, 0xE60F)
         write16(fixture.rom, cursor + 2, 0x9140)
         cursor += 4

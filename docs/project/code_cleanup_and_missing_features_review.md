@@ -2,7 +2,7 @@
 
 Last updated: 2026-08-28
 
-Scope: static review of the current codebase, docs, and test structure. SMART experimental support is intentionally excluded. The original review pass was static; the 2026-08-08 implementation follow-up ran shared and desktop JVM tests.
+Scope: static review of the current codebase, docs, and test structure. Experimental foreign-editor support is intentionally excluded. The original review pass was static; the 2026-08-08 implementation follow-up ran shared and desktop JVM tests.
 
 Primary assumption: the desktop app is currently the canonical editing/export surface because it supports the broadest project export behavior.
 

@@ -108,22 +108,7 @@ SMEDIT has broad feature coverage plus an embedded emulator, custom ASM embeddin
 
 ---
 
-## 4. FEATURES BEYOND SMILE (SMEDIT + SMART Parity)
-
-These features match or exceed what SMART offers:
-
-| Feature | SMART | SMEDIT |
-|---------|-------|--------|
-| **Auto-repointing** | All data types | Level data, PLMs, scrolls, door ASM ✅ |
-| **Room creation** | Auto-assigned IDs, blank level data | Blank/clone creation with stable project IDs and semantic doors ✅ |
-| **Room resize** | With auto-repoint | With scroll/door ASM remapping ✅ |
-| **XML export** | SMART XML format | JSON export (XML interop planned) |
-| **Free space management** | Automatic | Backwards scan from bank end ✅ |
-| **Room graph discovery** | Save station traversal | Not yet |
-
----
-
-## 5. SMEDIT-UNIQUE FEATURES
+## 4. SMEDIT-UNIQUE FEATURES
 
 Features that differentiate SMEDIT from existing editors:
 

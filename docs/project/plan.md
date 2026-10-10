@@ -1,6 +1,6 @@
 # SM Editor — Feature Parity Plan
 
-Gap analysis and implementation plan derived from studying SMILE, SMART, and the SM disassembly.
+Gap analysis and implementation plan derived from studying SMILE and the SM disassembly.
 
 **See also:** `smile_parity.md` for the complete feature-by-feature comparison matrix.
 **See also:** `roadmap.md` for the prioritized feature list.
@@ -73,21 +73,20 @@ Gap analysis and implementation plan derived from studying SMILE, SMART, and the
 |---|---------|--------|-------|
 | 5 | **Palette Blending / FX Tint Editor** | Medium | SNES color math register editing for transparency/blending. |
 | 6 | **Layer 2/BG Scrolling Editor** | Medium | Parallax mode selector + BG pointer editing. |
-| 7 | **SMART XML Interop** | Medium | Translate supported SMART project data into SMEDIT's native format at import time. |
-| 8 | **Validation Suite** | Medium | PLM scanner, door validator, item bitflag checker, GFX limit warnings. |
-| 9 | **Auto Item/Door ID Assignment** | Small | Scan rooms, deduplicate collection bits. |
-| 10 | **Room Graph Discovery** | Small | Trace door connections, find orphaned rooms. |
+| 7 | **Validation Suite** | Medium | PLM scanner, door validator, item bitflag checker, GFX limit warnings. |
+| 8 | **Auto Item/Door ID Assignment** | Small | Scan rooms, deduplicate collection bits. |
+| 9 | **Room Graph Discovery** | Small | Trace door connections, find orphaned rooms. |
 
 ### LOWER IMPACT — Backlog
 
 | # | Feature | Effort | Notes |
 |---|---------|--------|-------|
-| 11 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
-| 12 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks with respawn toggles. |
-| 13 | **Hotkey Configuration** | Small | Custom keyboard shortcuts. |
-| 14 | **Samus Pose/Animation Editor** | Large | Per-equipment animation poses. |
-| 15 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
-| 16 | **Plugin System** | Large | Extensibility framework for custom tools. |
+| 10 | **Projectile Editor** | Medium | Edit projectile behaviors, damage values, graphics. |
+| 11 | **Block Grouping (2x1, 1x2, 2x2)** | Small | Grouped destructible blocks with respawn toggles. |
+| 12 | **Hotkey Configuration** | Small | Custom keyboard shortcuts. |
+| 13 | **Samus Pose/Animation Editor** | Large | Per-equipment animation poses. |
+| 14 | **Color Math / Add-Subtract Editor** | Medium | SNES color math registers for transparency. |
+| 15 | **Plugin System** | Large | Extensibility framework for custom tools. |
 
 Layout sharing and relinking are implemented. Equivalent controls for non-layout state resources,
 typed state-triggered actions, and automated migration of early development-only project behavior

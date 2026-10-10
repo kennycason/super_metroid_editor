@@ -2751,7 +2751,7 @@ private fun AsmEditableSourcePane(
                 BasicTextField(
                     value = fieldValue,
                     onValueChange = { updated ->
-                        val adjusted = asmApplySmartIndentation(fieldValue, updated)
+                        val adjusted = asmApplyAutomaticIndentation(fieldValue, updated)
                         fieldValue = adjusted
                         state.updateSourceEditText(source.id, page.merge(adjusted.text))
                         val activeOffset = adjusted.selection.end.coerceIn(0, adjusted.text.length)
@@ -3019,7 +3019,7 @@ internal fun asmEditableSymbolAt(
 
 /** Applies only to a single newline entered by the user. Paste, replacement,
  * and formatter-style rewrites pass through untouched. */
-internal fun asmApplySmartIndentation(
+internal fun asmApplyAutomaticIndentation(
     previous: TextFieldValue,
     updated: TextFieldValue,
 ): TextFieldValue {

@@ -297,8 +297,8 @@ object MinimapTiles {
         // Row 6: Items
         ITEM_OPEN, ITEM_WALL_TOP, ITEM_WALL_BOTTOM,
         ITEM_WALL_LEFT, ITEM_WALL_RIGHT,
-        // Row 7: elevator tiles. Station/recharge icons live in separate map
-        // metadata on SMART ROMs, so keep them out of the default paint palette.
+        // Row 7: elevator tiles. Station/recharge icons may live in separate map
+        // metadata on expanded ROMs, so keep them out of the default paint palette.
         ELEVATOR_SHAFT, ELEVATOR,
     )
 

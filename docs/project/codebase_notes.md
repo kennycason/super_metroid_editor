@@ -98,7 +98,6 @@ These live under `/Users/kenny/code/super_metroid/` and are the primary referenc
 | `/Users/kenny/code/super_metroid/MapRandomizer` | Door, room geometry, and ASM patch reference. Not sound-specific, but useful for room graph/export work. |
 | `/Users/kenny/code/super_metroid/metroid-infinite-mission` | Hack/project reference. Lower priority unless comparing hack data layouts. |
 | `/Users/kenny/code/super_metroid/Planets v1.33` | Hack/resource reference. Lower priority for SMEDIT core. |
-| `/Users/kenny/code/super_metroid/smart` | SMART-related reference area. Use when implementing SMART XML or interoperability work. |
 
 ## Nearby Repositories
 
