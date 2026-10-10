@@ -263,8 +263,8 @@ internal class RomExporter(
         val writePlan = RomWritePlan(exportBase, headerSize)
         compiledAsmBase?.sourceOwnedRanges?.forEachIndexed { index, range ->
             writePlan.claimCurrentRange(
-                owner = "asm-source:project",
-                label = "Compiled project source ${index + 1}/${compiledAsmBase.sourceOwnedRanges.size}",
+                owner = range.owner,
+                label = "${range.label} ${index + 1}/${compiledAsmBase.sourceOwnedRanges.size}",
                 offset = range.pcOffset,
                 size = range.length,
                 kind = RomWriteKind.ASM_SOURCE,

@@ -112,6 +112,29 @@ class AsmBuildArtifactsTest {
     }
 
     @Test
+    fun `source validation ignores disabled project modules`() {
+        val directory = createTempDirectory("smedit-disabled-module-lint-").toFile()
+        try {
+            val sourceRoot = File(directory, "src").apply { mkdirs() }
+            File(sourceRoot, "bank_80.asm").writeText("dw ${'$'}1234\n")
+            File(sourceRoot, "project/unfinished.asm").apply {
+                parentFile.mkdirs()
+                writeText("dw ${'$'}123456\n")
+            }
+
+            assertEquals(
+                emptyList(),
+                AsmSourceLinter.lintTree(
+                    sourceRoot,
+                    excludedFileIds = setOf("project/unfinished.asm"),
+                ),
+            )
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `pinned source has no unsafe data literal diagnostics when local fixture exists`() {
         val cursor: File? = File(System.getProperty("user.dir")).absoluteFile
         val sourceRoot = generateSequence(cursor) { it.parentFile }

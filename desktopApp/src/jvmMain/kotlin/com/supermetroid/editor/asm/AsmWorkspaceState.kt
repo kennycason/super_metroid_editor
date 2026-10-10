@@ -106,17 +106,29 @@ internal class AsmWorkspaceState(
     val hasReferenceWorkspace: Boolean get() = referenceWorkspace != null
     val hasProjectWorkspace: Boolean get() = projectWorkspace != null
     val projectModifiedFileIds: Set<String> get() = projectWorkspace?.modifiedFileIds.orEmpty()
+    val projectModuleFileIds: List<String> get() = projectWorkspace?.projectModuleFileIds.orEmpty()
+    val disabledProjectModuleFileIds: Set<String>
+        get() = projectWorkspace?.disabledProjectModuleFileIds.orEmpty()
     val unsavedSourceFileIds: Set<String>
         get() = dirtySourceFileIds.keys.toSet()
+    private val activeUnsavedSourceFileIds: Set<String>
+        get() = dirtySourceFileIds.keys.filterNotTo(linkedSetOf()) {
+            it in disabledProjectModuleFileIds
+        }
     val hasProjectSourceChanges: Boolean
-        get() = projectModifiedFileIds.isNotEmpty() || unsavedSourceFileIds.isNotEmpty()
+        get() = projectModifiedFileIds.isNotEmpty() || activeUnsavedSourceFileIds.isNotEmpty()
     val isProjectSourceEditable: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
             browserMode == AsmBrowserMode.SOURCE &&
             selectedFileId != null
     val sourceBuildRequired: Boolean
         get() = workspaceKind == AsmWorkspaceKind.PROJECT &&
-            (dirtySourceFileIds.isNotEmpty() || buildReport?.succeeded != true)
+            (activeUnsavedSourceFileIds.isNotEmpty() || buildReport?.succeeded != true)
+
+    fun isProjectModule(fileId: String?): Boolean = fileId != null && fileId in projectModuleFileIds
+
+    fun isProjectModuleEnabled(fileId: String?): Boolean =
+        isProjectModule(fileId) && fileId !in disabledProjectModuleFileIds
 
     suspend fun loadInstalled() {
         if (busy) return
@@ -173,7 +185,9 @@ internal class AsmWorkspaceState(
         buildReport = if (!boundProjectEnabled || projectFilePath.isBlank()) null else {
             withContext(Dispatchers.IO) {
                 val sourceRoot = projectWorkspace?.workingDirectory?.let { java.io.File(it, "src") }
-                val validation = sourceRoot?.let(AsmSourceLinter::lintTree).orEmpty()
+                val validation = sourceRoot?.let {
+                    AsmSourceLinter.lintTree(it, disabledProjectModuleFileIds)
+                }.orEmpty()
                 AsmSourceLinter.report(validation) ?: buildArtifactRepository.load(projectFilePath)
             }
         }
@@ -384,7 +398,13 @@ internal class AsmWorkspaceState(
         // A successful report still describes the saved source while this edit
         // is only in memory; sourceBuildRequired adds the star via dirty buffers.
         // Failed diagnostics, however, may point at text the user just fixed.
-        if (sourceBuffers[fileId] != text && buildReport?.succeeded != true) buildReport = null
+        if (
+            sourceBuffers[fileId] != text &&
+            fileId !in disabledProjectModuleFileIds &&
+            buildReport?.succeeded != true
+        ) {
+            buildReport = null
+        }
         sourceBuffers[fileId] = text
         val saved = savedSourceTexts[fileId]
         if (saved != null && text != saved) dirtySourceFileIds[fileId] = Unit
@@ -416,6 +436,7 @@ internal class AsmWorkspaceState(
         if (workspaceKind != AsmWorkspaceKind.PROJECT || preview.query.isEmpty()) return 0
         val matchingFileIds = preview.matches.mapTo(linkedSetOf(), AsmSourceTextMatch::fileId)
         var replacementCount = 0
+        var affectsBuild = false
         matchingFileIds.forEach { fileId ->
             val source = workspace?.index?.file(fileId) ?: return@forEach
             val current = sourceEditText(fileId)
@@ -431,10 +452,11 @@ internal class AsmWorkspaceState(
                 if (updated != savedSourceTexts[fileId]) dirtySourceFileIds[fileId] = Unit
                 else dirtySourceFileIds.remove(fileId)
                 replacementCount += count
+                if (fileId !in disabledProjectModuleFileIds) affectsBuild = true
             }
         }
         if (replacementCount > 0) {
-            if (buildReport?.succeeded != true) buildReport = null
+            if (affectsBuild && buildReport?.succeeded != true) buildReport = null
             sourceBufferRevision++
             editSessionSerial++
         }
@@ -459,6 +481,8 @@ internal class AsmWorkspaceState(
         val selectedId = fileId ?: return false
         val text = sourceBuffers[selectedId] ?: return true
         if (busy) return false
+        val affectsBuild = !isProjectModule(selectedId) || isProjectModuleEnabled(selectedId)
+        val previousBuildReport = buildReport
         busy = true
         error = null
         return try {
@@ -468,10 +492,17 @@ internal class AsmWorkspaceState(
             }
             projectWorkspace = result
             workspace = result.referenceWorkspace
-            buildReport = withContext(Dispatchers.IO) {
-                AsmSourceLinter.report(
-                    AsmSourceLinter.lintTree(java.io.File(result.workingDirectory, "src")),
-                )
+            buildReport = if (affectsBuild) {
+                withContext(Dispatchers.IO) {
+                    AsmSourceLinter.report(
+                        AsmSourceLinter.lintTree(
+                            java.io.File(result.workingDirectory, "src"),
+                            result.disabledProjectModuleFileIds,
+                        ),
+                    )
+                }
+            } else {
+                previousBuildReport
             }
             savedSourceTexts[selectedId] = text
             dirtySourceFileIds.remove(selectedId)
@@ -507,6 +538,10 @@ internal class AsmWorkspaceState(
     suspend fun restoreOriginalSource(fileId: String? = selectedFileId): Boolean {
         if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank()) return false
         val selectedId = fileId ?: return false
+        if (isProjectModule(selectedId)) {
+            error = "Project modules have no immutable original; delete the module instead"
+            return false
+        }
         if (busy) return false
         busy = true
         error = null
@@ -529,6 +564,138 @@ internal class AsmWorkspaceState(
             true
         } catch (problem: Exception) {
             error = problem.message ?: "Could not restore $selectedId"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun createProjectModule(name: String): Boolean {
+        if (workspaceKind != AsmWorkspaceKind.PROJECT || boundProjectFilePath.isBlank() || busy) return false
+        busy = true
+        error = null
+        return try {
+            progress = "Creating project module…"
+            val (result, fileId) = withContext(Dispatchers.IO) {
+                projectRepository.createModule(boundProjectFilePath, name)
+            }
+            adoptProjectWorkspace(result)
+            buildReport = null
+            openSource(fileId, addToHistory = false)
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not create the project module"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun renameProjectModule(fileId: String, name: String): Boolean {
+        if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (hasUnsavedSourceChanges(fileId)) {
+            error = "Save or revert this module before renaming it"
+            return false
+        }
+        busy = true
+        error = null
+        return try {
+            progress = "Renaming project module…"
+            val (result, newFileId) = withContext(Dispatchers.IO) {
+                projectRepository.renameModule(boundProjectFilePath, fileId, name)
+            }
+            val buffered = sourceBuffers.remove(fileId)
+            val saved = savedSourceTexts.remove(fileId)
+            dirtySourceFileIds.remove(fileId)
+            if (buffered != null) sourceBuffers[newFileId] = buffered
+            if (saved != null) savedSourceTexts[newFileId] = saved
+            adoptProjectWorkspace(result)
+            buildReport = null
+            openSource(newFileId, addToHistory = false)
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not rename the project module"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun deleteProjectModule(fileId: String): Boolean {
+        if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        busy = true
+        error = null
+        return try {
+            progress = "Deleting project module…"
+            val oldOrder = projectModuleFileIds
+            val oldIndex = oldOrder.indexOf(fileId).coerceAtLeast(0)
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.deleteModule(boundProjectFilePath, fileId)
+            }
+            sourceBuffers.remove(fileId)
+            savedSourceTexts.remove(fileId)
+            dirtySourceFileIds.remove(fileId)
+            adoptProjectWorkspace(result)
+            buildReport = null
+            val next = result.projectModuleFileIds.getOrNull(oldIndex.coerceAtMost(result.projectModuleFileIds.lastIndex))
+                ?: result.referenceWorkspace.index.files.firstOrNull(AsmSourceFile::isBank)?.id
+            next?.let { openSource(it, addToHistory = false) }
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not delete the project module"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun moveProjectModule(fileId: String, offset: Int): Boolean {
+        if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (hasUnsavedSourceChanges(fileId)) {
+            error = "Save or revert this module before changing its build order"
+            return false
+        }
+        busy = true
+        error = null
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.moveModule(boundProjectFilePath, fileId, offset)
+            }
+            adoptProjectWorkspace(result)
+            buildReport = null
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not reorder the project module"
+            false
+        } finally {
+            busy = false
+            progress = null
+        }
+    }
+
+    suspend fun setProjectModuleEnabled(fileId: String, enabled: Boolean): Boolean {
+        if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (hasUnsavedSourceChanges(fileId)) {
+            error = "Save or revert this module before ${if (enabled) "enabling" else "disabling"} it"
+            return false
+        }
+        if (isProjectModuleEnabled(fileId) == enabled) return true
+        busy = true
+        error = null
+        return try {
+            progress = if (enabled) "Enabling project module…" else "Disabling project module…"
+            val result = withContext(Dispatchers.IO) {
+                projectRepository.setModuleEnabled(boundProjectFilePath, fileId, enabled)
+            }
+            adoptProjectWorkspace(result)
+            buildReport = null
+            true
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not ${if (enabled) "enable" else "disable"} the project module"
             false
         } finally {
             busy = false
@@ -726,6 +893,15 @@ internal class AsmWorkspaceState(
         workspace = project.referenceWorkspace
         workspaceKind = AsmWorkspaceKind.PROJECT
         ensureSelection()
+        navigationSerial++
+    }
+
+    private fun adoptProjectWorkspace(project: AsmProjectWorkspace) {
+        projectWorkspace = project
+        workspace = project.referenceWorkspace
+        workspaceKind = AsmWorkspaceKind.PROJECT
+        sourceBufferRevision++
+        editSessionSerial++
         navigationSerial++
     }
 

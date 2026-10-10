@@ -115,6 +115,56 @@ class AsmProjectWorkspaceTest {
     }
 
     @Test
+    fun `project modules are portable ordered editable and separate from bank overrides`() {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val repository = AsmProjectWorkspaceRepository(listOf(range))
+        val projectFile = File(tempDirectory, "Modules.smedit").apply { writeText("{}") }
+        repository.initialize(projectFile.absolutePath, reference)
+
+        val (withFirst, firstId) = repository.createModule(projectFile.absolutePath, "first hook")
+        val (withSecond, secondId) = repository.createModule(projectFile.absolutePath, "second_hook.asm")
+
+        assertEquals("project/first_hook.asm", firstId)
+        assertEquals("project/second_hook.asm", secondId)
+        assertEquals(listOf(firstId), withFirst.projectModuleFileIds)
+        assertEquals(listOf(firstId, secondId), withSecond.projectModuleFileIds)
+        assertTrue(File(withSecond.root, "modules/first_hook.asm").isFile)
+        assertTrue(File(withSecond.workingDirectory, "src/project/first_hook.asm").isFile)
+        assertFalse(File(withSecond.root, "overrides/src/project/first_hook.asm").exists())
+
+        val moduleText = "; first module\norg ${'$'}808000\nProjectHook:\n    NOP\n"
+        val saved = repository.saveSource(projectFile.absolutePath, firstId, moduleText)
+        assertEquals(moduleText, File(saved.root, "modules/first_hook.asm").readText())
+        assertEquals(moduleText, File(saved.workingDirectory, "src/project/first_hook.asm").readText())
+        assertEquals(setOf(firstId, secondId), repository.sourceOverrideFileIds(projectFile.absolutePath))
+
+        val disabled = repository.setModuleEnabled(projectFile.absolutePath, firstId, enabled = false)
+        assertEquals(setOf(firstId), disabled.disabledProjectModuleFileIds)
+        assertEquals("first_hook.asm\n", File(disabled.root, "modules/.disabled").readText())
+        assertEquals("first_hook.asm\n", File(disabled.workingDirectory, "src/project/.disabled").readText())
+        assertEquals(setOf(secondId), repository.sourceOverrideFileIds(projectFile.absolutePath))
+        assertEquals(setOf(firstId), requireNotNull(repository.load(projectFile.absolutePath)).disabledProjectModuleFileIds)
+
+        val reordered = repository.moveModule(projectFile.absolutePath, secondId, -1)
+        assertEquals(listOf(secondId, firstId), reordered.projectModuleFileIds)
+        assertEquals("second_hook.asm\nfirst_hook.asm\n", File(reordered.root, "modules/.order").readText())
+
+        val (renamed, renamedId) = repository.renameModule(projectFile.absolutePath, secondId, "setup")
+        assertEquals("project/setup.asm", renamedId)
+        assertEquals(listOf(renamedId, firstId), renamed.projectModuleFileIds)
+        assertFalse(File(renamed.root, "modules/second_hook.asm").exists())
+        assertTrue(File(renamed.root, "modules/setup.asm").isFile)
+
+        val deleted = repository.deleteModule(projectFile.absolutePath, firstId)
+        assertEquals(listOf(renamedId), deleted.projectModuleFileIds)
+        assertEquals(emptySet<String>(), deleted.disabledProjectModuleFileIds)
+        assertFalse(File(deleted.root, "modules/.disabled").exists())
+        assertEquals(listOf(renamedId), requireNotNull(repository.load(projectFile.absolutePath)).projectModuleFileIds)
+        assertEquals(setOf(renamedId), repository.sourceOverrideFileIds(projectFile.absolutePath))
+    }
+
+    @Test
     fun `workspace state tracks unsaved saved and restored project source`() = runBlocking {
         val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
         val reference = fakeReference(listOf(range))
@@ -165,6 +215,54 @@ class AsmProjectWorkspaceTest {
         assertTrue(state.restoreOriginalSource("bank_80.asm"))
         assertEquals(original, state.sourceEditText("bank_80.asm"))
         assertEquals(emptySet<String>(), state.projectModifiedFileIds)
+        assertFalse(state.hasProjectSourceChanges)
+    }
+
+    @Test
+    fun `workspace state manages project modules as saved build inputs`() = runBlocking {
+        val range = AsmAssetRange("Tiles_Test.bin", 0x10, 4)
+        val reference = fakeReference(listOf(range))
+        val projectRepository = AsmProjectWorkspaceRepository(listOf(range))
+        val projectFile = File(tempDirectory, "ModuleState.smedit").apply { writeText("{}") }
+        projectRepository.initialize(projectFile.absolutePath, reference)
+        val state = AsmWorkspaceState(
+            repository = AsmReferenceRepository(
+                referenceRoot = File(tempDirectory, "unused-module-cache"),
+                fetchBytes = { error("network should not be used") },
+                assetRanges = listOf(range),
+            ),
+            projectRepository = projectRepository,
+        )
+        state.bindProject(projectFile.absolutePath, enabled = true)
+
+        assertTrue(state.createProjectModule("door hook"))
+        val fileId = "project/door_hook.asm"
+        assertEquals(listOf(fileId), state.projectModuleFileIds)
+        assertEquals(fileId, state.selectedFileId)
+        assertTrue(state.isProjectModule(fileId))
+        assertTrue(state.isProjectModuleEnabled(fileId))
+        assertTrue(state.hasProjectSourceChanges)
+        assertTrue(state.sourceBuildRequired)
+
+        assertTrue(state.setProjectModuleEnabled(fileId, enabled = false))
+        assertFalse(state.isProjectModuleEnabled(fileId))
+        assertEquals(setOf(fileId), state.disabledProjectModuleFileIds)
+        assertFalse(state.hasProjectSourceChanges)
+        assertTrue(state.setProjectModuleEnabled(fileId, enabled = true))
+        assertTrue(state.isProjectModuleEnabled(fileId))
+
+        val original = state.sourceEditText(fileId)
+        state.updateSourceEditText(fileId, "$original\nDoorHook:\n    RTS\n")
+        assertTrue(state.hasUnsavedSourceChanges(fileId))
+        assertTrue(state.saveSource(fileId))
+        assertFalse(state.hasUnsavedSourceChanges(fileId))
+
+        assertTrue(state.renameProjectModule(fileId, "door_runtime"))
+        val renamed = "project/door_runtime.asm"
+        assertEquals(listOf(renamed), state.projectModuleFileIds)
+        assertEquals(renamed, state.selectedFileId)
+        assertTrue(state.deleteProjectModule(renamed))
+        assertEquals(emptyList<String>(), state.projectModuleFileIds)
         assertFalse(state.hasProjectSourceChanges)
     }
 

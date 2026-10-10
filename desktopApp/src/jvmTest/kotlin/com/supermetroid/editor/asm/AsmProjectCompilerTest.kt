@@ -4,12 +4,17 @@ import com.supermetroid.editor.rom.RomWriteConflictException
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlan
 import java.io.File
+import org.junit.jupiter.api.io.TempDir
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class AsmProjectCompilerTest {
+    @TempDir
+    lateinit var tempDirectory: File
+
     @Test
     fun `source ownership ranges are contiguous minimal and deterministic`() {
         val reference = byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7)
@@ -62,6 +67,72 @@ class AsmProjectCompilerTest {
     }
 
     @Test
+    fun `project module gateway preserves explicit order without editing authored main source`() {
+        val source = File(tempDirectory, "src").apply { mkdirs() }
+        val main = File(source, "main.asm").apply {
+            writeText("incsrc \"bank_80.asm\"\nprint \"Assembly complete. Total bytes written: \", bytes\n")
+        }
+        val project = File(source, "project").apply { mkdirs() }
+        File(project, "later.asm").writeText("Later:\n    RTS\n")
+        File(project, "first.asm").writeText("First:\n    RTS\n")
+        File(project, ASM_PROJECT_MODULE_ORDER_FILE).writeText("first.asm\nlater.asm\n")
+
+        assertEquals(
+            listOf("project/first.asm", "project/later.asm"),
+            AsmProjectModuleGateway.apply(source),
+        )
+
+        val gateway = File(source, "__smedit_project_modules.asm").readText()
+        assertTrue(gateway.indexOf("project/first.asm") < gateway.indexOf("project/later.asm"))
+        val generatedMain = main.readText()
+        assertTrue(generatedMain.indexOf("__smedit_project_modules.asm") < generatedMain.indexOf("Assembly complete"))
+    }
+
+    @Test
+    fun `project module gateway omits disabled modules without deleting their source`() {
+        val source = File(tempDirectory, "disabled-src").apply { mkdirs() }
+        val main = File(source, "main.asm").apply {
+            writeText("incsrc \"bank_80.asm\"\nprint \"Assembly complete. Total bytes written: \", bytes\n")
+        }
+        val project = File(source, "project").apply { mkdirs() }
+        File(project, "enabled.asm").writeText("Enabled:\n    RTS\n")
+        File(project, "unfinished.asm").writeText("this is intentionally invalid\n")
+        File(project, ASM_PROJECT_MODULE_ORDER_FILE).writeText("enabled.asm\nunfinished.asm\n")
+        File(project, ASM_PROJECT_MODULE_DISABLED_FILE).writeText("unfinished.asm\n")
+
+        assertEquals(listOf("project/enabled.asm"), AsmProjectModuleGateway.apply(source))
+
+        val gateway = File(source, "__smedit_project_modules.asm").readText()
+        assertTrue(gateway.contains("project/enabled.asm"))
+        assertFalse(gateway.contains("project/unfinished.asm"))
+        assertTrue(File(project, "unfinished.asm").isFile)
+        assertTrue(main.readText().contains("__smedit_project_modules.asm"))
+    }
+
+    @Test
+    fun `module source map gives its changed bytes a specific owner`() {
+        val symbols = """
+            [source files]
+            0001 0 src/project/jump_hook.asm
+            0002 0 src/bank_90.asm
+            [addr-to-line mapping]
+            90:9EB9 0001:00000001
+            90:9EC0 0002:00000001
+            [rom checksum]
+        """.trimIndent().toByteArray()
+        val start = checkNotNull(snesLoRomToPc(0x909EB9))
+
+        val attributed = AsmProjectCompiler.attributeSourceFiles(
+            ranges = listOf(AsmSourceOwnedRange(start + 1, 2)),
+            symbols = symbols,
+        ).single()
+
+        assertEquals("project/jump_hook.asm", attributed.sourceFileId)
+        assertEquals("asm-module:jump_hook", attributed.owner)
+        assertEquals("Project module jump_hook.asm", attributed.label)
+    }
+
+    @Test
     fun `saved Sandbox jump edit compiles to owned bank 90 bytes when local fixtures exist`() {
         val projectFile = findWorkspaceFile(
             "projects/Super Metroid Sandbox/Super Metroid Sandbox.smedit"
@@ -70,6 +141,7 @@ class AsmProjectCompilerTest {
         val sidecar = File(projectFile.parentFile, "Super Metroid Sandbox_smedit/asm")
         val sourceRoot = File(sidecar, "workspace/src")
         if (!File(sourceRoot, "bank_90.asm").isFile) return
+        if ("bank_90.asm" !in AsmProjectWorkspaceRepository().sourceOverrideFileIds(projectFile.absolutePath)) return
         // This is an optional developer-owned live project, not a checked-in
         // immutable fixture. Deliberately malformed source used to exercise the
         // editor diagnostics does not satisfy this compilation test's premise.

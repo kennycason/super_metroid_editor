@@ -192,6 +192,7 @@ internal fun AsmWorkspaceSidebar(
     val searchFocusRequester = remember { FocusRequester() }
     val hasProjectSourceChanges = state.hasProjectSourceChanges
     var showReplaceDialog by remember { mutableStateOf(false) }
+    var showCreateModuleDialog by remember { mutableStateOf(false) }
 
     if (showReplaceDialog) {
         AsmProjectReplaceDialog(
@@ -204,6 +205,26 @@ internal fun AsmWorkspaceSidebar(
                 showReplaceDialog = false
                 firstMatch?.let {
                     state.openSource(it.fileId, it.lineIndex, columnIndex = it.columnIndex)
+                }
+            },
+        )
+    }
+    if (showCreateModuleDialog) {
+        AsmModuleNameDialog(
+            title = "New project module",
+            initialName = if (state.projectModuleFileIds.isEmpty()) {
+                "custom_code"
+            } else {
+                "custom_code_${state.projectModuleFileIds.size + 1}"
+            },
+            confirmLabel = "Create module",
+            onDismiss = { showCreateModuleDialog = false },
+            onConfirm = { name ->
+                showCreateModuleDialog = false
+                scope.launch {
+                    if (state.createProjectModule(name)) {
+                        onProjectBuildModeChanged(ProjectRomBuildMode.ASM_SOURCE)
+                    }
                 }
             },
         )
@@ -322,7 +343,22 @@ internal fun AsmWorkspaceSidebar(
 
         when (state.browserMode) {
             AsmBrowserMode.SOURCE -> workspace?.let {
-                AsmSourceTree(state, it.index, Modifier.weight(1f).fillMaxWidth())
+                AsmSourceTree(
+                    state = state,
+                    index = it.index,
+                    onCreateModule = { showCreateModuleDialog = true },
+                    onMoveModule = { fileId, offset ->
+                        scope.launch {
+                            if (state.moveProjectModule(fileId, offset)) {
+                                onProjectBuildModeChanged(ProjectRomBuildMode.ASM_SOURCE)
+                            }
+                        }
+                    },
+                    onSetModuleEnabled = { fileId, enabled ->
+                        scope.launch { state.setProjectModuleEnabled(fileId, enabled) }
+                    },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             } ?: Spacer(Modifier.weight(1f))
             AsmBrowserMode.ASSETS -> workspace?.let {
                 AsmAssetTree(state, it.index.assets, Modifier.weight(1f).fillMaxWidth())
@@ -349,6 +385,47 @@ internal fun AsmWorkspaceSidebar(
             onProjectBuildModeChanged = onProjectBuildModeChanged,
         )
     }
+}
+
+@Composable
+private fun AsmModuleNameDialog(
+    title: String,
+    initialName: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontSize = fs.heading) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Module name", fontSize = fs.detail) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = fs.body, fontFamily = FontFamily.Monospace),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "SMEDIT stores this as a small source-controlled .asm file and includes it in the order shown in Source.",
+                    fontSize = fs.detail,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank(),
+                shape = ASM_CONTROL_SHAPE,
+            ) { Text(confirmLabel, fontSize = fs.body) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", fontSize = fs.body) } },
+    )
 }
 
 @Composable
@@ -508,7 +585,7 @@ private fun AsmWorkspaceControls(
             val unsaved = state.unsavedSourceFileIds.size
             "Project ASM enabled" + when {
                 unsaved > 0 -> " · $unsaved unsaved"
-                modified > 0 -> " · $modified saved override${if (modified == 1) "" else "s"}"
+                modified > 0 -> " · $modified saved source file${if (modified == 1) "" else "s"}"
                 else -> " · clean"
             } + if (projectBuildMode == ProjectRomBuildMode.ASM_SOURCE) " · source build" else ""
         }
@@ -1101,7 +1178,14 @@ private fun librarySidebarIndex(
 }
 
 @Composable
-private fun AsmSourceTree(state: AsmWorkspaceState, index: AsmReferenceIndex, modifier: Modifier) {
+private fun AsmSourceTree(
+    state: AsmWorkspaceState,
+    index: AsmReferenceIndex,
+    onCreateModule: () -> Unit,
+    onMoveModule: (String, Int) -> Unit,
+    onSetModuleEnabled: (String, Boolean) -> Unit,
+    modifier: Modifier,
+) {
     val fs = LocalEditorTheme.current.fontSize.value
     val query = state.query.trim()
     val results = remember(index, query) {
@@ -1126,7 +1210,66 @@ private fun AsmSourceTree(state: AsmWorkspaceState, index: AsmReferenceIndex, mo
             if (results.isEmpty()) item { Text("No source or address matches", fontSize = fs.detail, modifier = Modifier.padding(8.dp)) }
         } else {
             val banks = index.files.filter(AsmSourceFile::isBank)
-            val references = index.files.filterNot(AsmSourceFile::isBank)
+            val modules = state.projectModuleFileIds.mapNotNull(index::file)
+            val moduleIds = modules.mapTo(hashSetOf(), AsmSourceFile::id)
+            val references = index.files.filterNot { it.isBank || it.id in moduleIds }
+            if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "PROJECT MODULES",
+                            fontSize = fs.detail,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onCreateModule, enabled = !state.busy) {
+                            Text("+ Module", fontSize = fs.detail)
+                        }
+                    }
+                }
+                if (modules.isEmpty()) {
+                    item {
+                        Text(
+                            "Standalone custom code appears here.",
+                            fontSize = fs.detail,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+                modules.forEachIndexed { indexInOrder, source ->
+                    item(key = source.id) {
+                        SourceFileRow(
+                            state = state,
+                            source = source,
+                            onClick = { state.openSource(source.id) },
+                            trailingContent = {
+                                AsmModuleOrderButton(
+                                    label = if (state.isProjectModuleEnabled(source.id)) "ON" else "OFF",
+                                    onClick = {
+                                        onSetModuleEnabled(source.id, !state.isProjectModuleEnabled(source.id))
+                                    },
+                                    enabled = !state.busy && !state.hasUnsavedSourceChanges(source.id),
+                                )
+                                AsmModuleOrderButton(
+                                    label = "↑",
+                                    onClick = { onMoveModule(source.id, -1) },
+                                    enabled = indexInOrder > 0 && !state.busy && !state.hasUnsavedSourceChanges(source.id),
+                                )
+                                AsmModuleOrderButton(
+                                    label = "↓",
+                                    onClick = { onMoveModule(source.id, 1) },
+                                    enabled = indexInOrder < modules.lastIndex && !state.busy && !state.hasUnsavedSourceChanges(source.id),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
             item { TreeHeading("Banks · select a chapter to expand") }
             banks.forEach { source ->
                 val expanded = state.expandedSourceFileId == source.id
@@ -1168,12 +1311,29 @@ private fun AsmSourceTree(state: AsmWorkspaceState, index: AsmReferenceIndex, mo
 }
 
 @Composable
+private fun AsmModuleOrderButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    val fs = LocalEditorTheme.current.fontSize.value
+    Box(
+        Modifier.width(if (label.length > 1) 34.dp else 26.dp).height(26.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = fs.body,
+            color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f),
+        )
+    }
+}
+
+@Composable
 private fun SourceFileRow(
     state: AsmWorkspaceState,
     source: AsmSourceFile,
     expandable: Boolean = false,
     expanded: Boolean = false,
     onClick: () -> Unit,
+    trailingContent: @Composable RowScope.() -> Unit = {},
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val selected = state.selectedFileId == source.id && state.selectedAssetPath == null
@@ -1207,7 +1367,7 @@ private fun SourceFileRow(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    source.id in state.projectModifiedFileIds -> Text(
+                    !state.isProjectModule(source.id) && source.id in state.projectModifiedFileIds -> Text(
                         "EDITED",
                         fontSize = fs.statusBar,
                         fontWeight = FontWeight.Bold,
@@ -1219,6 +1379,7 @@ private fun SourceFileRow(
                 Text(source.description, fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
+        trailingContent()
     }
 }
 
@@ -1933,25 +2094,56 @@ private fun AsmSourceCanvas(
     val labelUsages = remember(index, referenceLabel) {
         referenceLabel?.let(index::usagesFor).orEmpty()
     }
-    var confirmRestore by remember(source.id) { mutableStateOf(false) }
-    if (confirmRestore) {
+    val isProjectModule = state.isProjectModule(source.id)
+    var confirmRestoreOrDelete by remember(source.id) { mutableStateOf(false) }
+    var showRenameModule by remember(source.id) { mutableStateOf(false) }
+    if (showRenameModule) {
+        AsmModuleNameDialog(
+            title = "Rename project module",
+            initialName = source.id.substringAfterLast('/').removeSuffix(".asm"),
+            confirmLabel = "Rename",
+            onDismiss = { showRenameModule = false },
+            onConfirm = { name ->
+                showRenameModule = false
+                scope.launch {
+                    if (state.renameProjectModule(source.id, name)) onSaveProject()
+                }
+            },
+        )
+    }
+    if (confirmRestoreOrDelete) {
         AlertDialog(
-            onDismissRequest = { confirmRestore = false },
-            title = { Text("Restore original source?", fontSize = fs.heading) },
+            onDismissRequest = { confirmRestoreOrDelete = false },
+            title = {
+                Text(
+                    if (isProjectModule) "Delete project module?" else "Restore original source?",
+                    fontSize = fs.heading,
+                )
+            },
             text = {
                 Text(
-                    "This replaces the saved project copy of ${source.displayName} with its immutable original snapshot. Unsaved changes in this file will also be discarded.",
+                    if (isProjectModule) {
+                        "This permanently removes ${source.displayName} from the project and its build order. Its saved and unsaved source will be discarded."
+                    } else {
+                        "This replaces the saved project copy of ${source.displayName} with its immutable original snapshot. Unsaved changes in this file will also be discarded."
+                    },
                     fontSize = fs.body,
                 )
             },
             confirmButton = {
                 Button(onClick = {
-                    confirmRestore = false
-                    scope.launch { state.restoreOriginalSource(source.id) }
-                }, shape = ASM_CONTROL_SHAPE) { Text("Restore original", fontSize = fs.body) }
+                    confirmRestoreOrDelete = false
+                    scope.launch {
+                        val changed = if (isProjectModule) state.deleteProjectModule(source.id)
+                        else state.restoreOriginalSource(source.id)
+                        if (changed) onSaveProject()
+                    }
+                }, shape = ASM_CONTROL_SHAPE) {
+                    Text(if (isProjectModule) "Delete module" else "Restore original", fontSize = fs.body)
+                }
             },
             dismissButton = {
-                TextButton(onClick = { confirmRestore = false }) { Text("Cancel", fontSize = fs.body) }
+                TextButton(onClick = { confirmRestoreOrDelete = false }) { Text("Cancel", fontSize = fs.body) }
             },
         )
     }
@@ -1990,7 +2182,11 @@ private fun AsmSourceCanvas(
                         }
                     }
                 },
-                onRestoreOriginal = { confirmRestore = true },
+                onRenameModule = if (isProjectModule) ({ showRenameModule = true }) else null,
+                onSetModuleEnabled = if (isProjectModule) ({ enabled ->
+                    scope.launch { state.setProjectModuleEnabled(source.id, enabled) }
+                }) else null,
+                onRestoreOrDelete = { confirmRestoreOrDelete = true },
                 modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
             )
             state.buildReport?.let { report ->
@@ -2248,11 +2444,14 @@ private fun AsmSourceEditBar(
     source: AsmSourceFile,
     onSave: () -> Unit,
     onBuild: (() -> Unit)?,
-    onRestoreOriginal: () -> Unit,
+    onRenameModule: (() -> Unit)?,
+    onSetModuleEnabled: ((Boolean) -> Unit)?,
+    onRestoreOrDelete: () -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
     val unsaved = state.hasUnsavedSourceChanges(source.id)
     val modified = source.id in state.projectModifiedFileIds
+    val isProjectModule = state.isProjectModule(source.id)
     Surface(
         color = if (unsaved) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.38f)
         else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f),
@@ -2288,12 +2487,31 @@ private fun AsmSourceEditBar(
                     fontSize = fs.detail,
                 )
             }
+            if (onRenameModule != null) {
+                OutlinedButton(
+                    onClick = { onSetModuleEnabled?.invoke(!state.isProjectModuleEnabled(source.id)) },
+                    enabled = onSetModuleEnabled != null && !unsaved && !state.busy,
+                    shape = ASM_CONTROL_SHAPE,
+                ) {
+                    Text(
+                        if (state.isProjectModuleEnabled(source.id)) "Disable" else "Enable",
+                        fontSize = fs.detail,
+                    )
+                }
+                OutlinedButton(
+                    onClick = onRenameModule,
+                    enabled = !unsaved && !state.busy,
+                    shape = ASM_CONTROL_SHAPE,
+                ) {
+                    Text("Rename", fontSize = fs.detail)
+                }
+            }
             OutlinedButton(
-                onClick = onRestoreOriginal,
-                enabled = (modified || unsaved) && !state.busy,
+                onClick = onRestoreOrDelete,
+                enabled = (isProjectModule || modified || unsaved) && !state.busy,
                 shape = ASM_CONTROL_SHAPE,
             ) {
-                Text("Restore original", fontSize = fs.detail)
+                Text(if (isProjectModule) "Delete" else "Restore original", fontSize = fs.detail)
             }
         }
     }
@@ -2306,7 +2524,9 @@ private fun AsmEditableSourcePane(
     source: AsmSourceFile,
     onSave: () -> Unit,
     onBuild: (() -> Unit)?,
-    onRestoreOriginal: () -> Unit,
+    onRenameModule: (() -> Unit)?,
+    onSetModuleEnabled: ((Boolean) -> Unit)?,
+    onRestoreOrDelete: () -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -2428,7 +2648,9 @@ private fun AsmEditableSourcePane(
             source = source,
             onSave = onSave,
             onBuild = onBuild,
-            onRestoreOriginal = onRestoreOriginal,
+            onRenameModule = onRenameModule,
+            onSetModuleEnabled = onSetModuleEnabled,
+            onRestoreOrDelete = onRestoreOrDelete,
         )
         BoxWithConstraints(
             Modifier.weight(1f).fillMaxWidth().onSizeChanged { editorViewportHeightPx = it.height },

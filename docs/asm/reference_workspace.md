@@ -89,6 +89,11 @@ never be silently omitted from an export.
     An **EDITED** badge in the bank tree means the source intentionally differs
     from the immutable vanilla snapshot; only `Save *` or an explicit
     **unsaved** count means a buffer or project still needs to be written.
+    Use **+ Module** above the banks for new standalone project code. Modules are
+    immediately portable authored files, can be renamed or deleted from their
+    editor bar, and use the sidebar arrows for explicit include order. Their
+    empty template is safe by default: adding emitted code still requires an
+    intentional `org`/free-space target and a hook from existing engine code.
 12. **ASM source** is now the active ROM build base. A project with no source
     edits may choose **Loaded ROM** to use the established patch-only path. The
     first new source edit selects ASM source again; Loaded ROM is unavailable
@@ -213,6 +218,16 @@ editable tree that future compilation will consume. Both generated trees are
 ignored by the sidecar's own `.gitignore`; intentionally saved source changes are
 mirrored under `overrides/src/`, which is small, reviewable, and suitable for
 source control. A recreated local tree reapplies those overrides automatically.
+Standalone project-authored routines and tables live under `modules/`, beside an
+explicit `.order` file and, when needed, a small `.disabled` manifest. They
+appear first in the Project Source tree and can be created, renamed, disabled,
+re-enabled, deleted, and reordered without editing the pinned `main.asm`.
+At build time SMEDIT creates a reserved gateway that includes those modules after
+the vanilla source and before generated patch backends. Disabled modules remain
+editable and retain their position, but are omitted from the gateway and source
+validation until re-enabled. Both `modules/` and
+`overrides/src/` are portable authored inputs; only their generated mirrors under
+`workspace/src/project/` are ignored.
 The ignored `build/` directory retains the latest Asar log and WLA symbol map so
 compiled addresses and diagnostics remain available to the ASM workspace. These
 are reproducible local products, never project-authored source.
@@ -357,6 +372,10 @@ SMEDIT does not try to reverse-edit arbitrary handwritten assembly. Each value
 has one authority for a given build:
 
 - Saved files under project `overrides/src/` are user-authored ASM.
+- Saved files under project `modules/` are user-authored standalone ASM, compiled
+  in the explicit order stored beside them when enabled. Disabled module source
+  is preserved without contributing bytes or blocking the build. Module bytes receive an
+  `asm-module:<name>` owner when Asar's source map identifies their range.
 - Structured room, graphics, music, map, and patch settings in the `.smedit`
   model are GUI-authored data.
 - Source generated from GUI data is a temporary, reserved build product. It is
@@ -502,23 +521,20 @@ export SMEDIT_TEST_ROM='/path/to/clean/unheadered/Super Metroid.sfc'
 The separation between editable source and executable output is intentional.
 Follow-up work can now be incremental:
 
-1. Add project-owned custom ASM modules through a stable generated include point,
-   with explicit ordering and ROM ownership instead of requiring new routines to
-   be inserted into pinned banks.
-2. Continue conservative editing assistance with source completion and explicit
+1. Continue conservative editing assistance with source completion and explicit
    statement formatting that preserves expressions, comments, literal forms,
    and `.B`/`.W`/`.L` suffixes. Literal project-wide find/replace now has a
    reviewed, buffer-only preview, and Tab/Shift-Tab provide selection-scoped
    indentation without a whole-file formatter.
-3. Add artifact sinks for semantic editors so room, graphics, map, text, and
+2. Add artifact sinks for semantic editors so room, graphics, map, text, and
    sound changes can materialize into project-owned `data/`/source before Asar.
    Today those edits still run safely after compilation through the shared
    transaction; moving each stable encoder before compilation is the next
    incremental step toward fully source-native assets.
-4. Extend the reverse semantic bridge to remaining specialized title/menu,
+3. Extend the reverse semantic bridge to remaining specialized title/menu,
    cinematic, and generated-runtime assets as those editors gain stable semantic
    selection entry points.
-5. Use retained project symbols for emulator run-to-address, breakpoints,
+4. Use retained project symbols for emulator run-to-address, breakpoints,
    registers/stack inspection, and source-mapped crash diagnostics.
 
 Arbitrary-hack disassembly and automatic source merge/conflict resolution are not

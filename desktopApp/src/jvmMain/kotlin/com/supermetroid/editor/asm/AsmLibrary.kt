@@ -94,6 +94,42 @@ internal object AsmLibrary {
                     ),
                 ),
                 AsmLibrarySection(
+                    "Reading Super Metroid's label hierarchy",
+                    listOf(
+                        "The dot is the scope marker. Indentation and capitalization are only source-formatting conventions: a flush-left CapitalLabel is commonly a main label, while an indented .DottedLabel is commonly one of its children, but the leading dot is what changes the assembled symbol.",
+                        "A dotted label belongs to the nearest preceding main label until another main label begins. Outside that scope, Super Metroid source refers to it through the combined main-and-local name. Do not casually add or remove the dot: that renames the symbol and can break every reference to it.",
+                    ),
+                    AsmCodeExample(
+                        "A real Samus physics table",
+                        code(
+                            "SamusPhysicsConstants:",
+                            "  .InitialYSpeeds_Jumping:",
+                            "    dw \$04E0,\$01C0,\$02C0",
+                            "",
+                            "    LDA.W SamusPhysicsConstants_InitialYSpeeds_Jumping,X",
+                        ),
+                        ".InitialYSpeeds_Jumping is scoped beneath SamusPhysicsConstants, so its complete symbol is SamusPhysicsConstants_InitialYSpeeds_Jumping. The two spaces make the hierarchy easier to see but do not affect assembly.",
+                    ),
+                ),
+                AsmLibrarySection(
+                    "Bank edits versus project modules",
+                    listOf(
+                        "Edit a vanilla bank when you are changing source that already exists, such as a physics table or an instruction in a known routine. Create a Project Module when you are adding a new hook, routine, table, or shared constants that should remain clearly separate from the pinned disassembly.",
+                        "SMEDIT includes enabled project modules after the vanilla source in the exact top-to-bottom order shown in the Source sidebar. Disable temporarily removes a module from the generated gateway without deleting its source or its position. Reordering modules changes build order; it does not automatically allocate ROM space, so a module must still use an intentional org/freespace strategy and connect new code to the engine.",
+                    ),
+                    AsmCodeExample(
+                        "A standalone project module",
+                        code(
+                            "; modules/example_hook.asm",
+                            "org \$90FF00              ; verified free-space target",
+                            "ExampleHook:",
+                            "    LDA.W SamusYSpeed",
+                            "    RTL",
+                        ),
+                        "The module owns its source file and compiled ROM bytes. A separate hook at the intended call site is still required before this routine can execute.",
+                    ),
+                ),
+                AsmLibrarySection(
                     "Directives, macros, and included data",
                     listOf(
                         "Directives describe the build. org changes the output address, db/dw/dl emit data, incsrc includes more source, and incbin inserts an existing binary asset. None of them execute at runtime.",

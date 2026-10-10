@@ -29,6 +29,12 @@ class AsmLibraryTest {
         }
         val valuesGuide = AsmLibrary.guide("values-and-data")!!
         assertTrue(valuesGuide.sections.flatMap { it.example?.code?.lines().orEmpty() }.any { "%00010000" in it })
+        val readingGuide = AsmLibrary.guide("reading-source")!!
+        val readingText = readingGuide.sections.joinToString("\n") { section ->
+            section.paragraphs.joinToString("\n") + "\n" + (section.example?.code.orEmpty())
+        }
+        assertTrue("SamusPhysicsConstants_InitialYSpeeds_Jumping" in readingText)
+        assertTrue("dot is the scope marker" in readingText)
         val jumpGuide = AsmLibrary.guide("samus-jump-edit")!!
         val jumpText = jumpGuide.sections.joinToString("\n") { section ->
             section.paragraphs.joinToString("\n") + "\n" + (section.example?.code.orEmpty())

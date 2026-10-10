@@ -11,7 +11,22 @@ import java.util.concurrent.TimeUnit
 internal data class AsmSourceOwnedRange(
     val pcOffset: Int,
     val length: Int,
-)
+    val sourceFileId: String? = null,
+) {
+    val owner: String
+        get() = if (sourceFileId?.startsWith(ASM_PROJECT_MODULE_PREFIX) == true) {
+            "asm-module:${sourceFileId.removePrefix(ASM_PROJECT_MODULE_PREFIX).removeSuffix(".asm")}"
+        } else {
+            "asm-source:project"
+        }
+
+    val label: String
+        get() = if (sourceFileId?.startsWith(ASM_PROJECT_MODULE_PREFIX) == true) {
+            "Project module ${sourceFileId.removePrefix(ASM_PROJECT_MODULE_PREFIX)}"
+        } else {
+            sourceFileId?.let { "Compiled project source ($it)" } ?: "Compiled project source"
+        }
+}
 
 /**
  * An immutable source-built base for the normal SMEDIT export transaction.
@@ -49,6 +64,67 @@ internal class AsmCompilationException(
     message: String,
     val compilerOutput: List<String> = emptyList(),
 ) : IllegalStateException(message)
+
+/** Materializes the single reserved include boundary used by project-authored
+ * modules. The authored files and their order remain outside main.asm, so a
+ * refreshed pinned disassembly never has to merge a generated include edit. */
+internal object AsmProjectModuleGateway {
+    private const val GENERATED_FILE = "__smedit_project_modules.asm"
+
+    fun apply(sourceRoot: File): List<String> {
+        val projectDirectory = File(sourceRoot, "project")
+        if (!projectDirectory.isDirectory) return emptyList()
+        val orderFile = File(projectDirectory, ASM_PROJECT_MODULE_ORDER_FILE)
+        if (!orderFile.isFile) return emptyList()
+        val moduleNames = orderFile.readLines().map(String::trim).filter(String::isNotEmpty)
+        if (moduleNames.isEmpty()) return emptyList()
+        require(moduleNames.distinct().size == moduleNames.size) { "Project ASM module order contains duplicates" }
+        moduleNames.forEach { fileName ->
+            require(fileName.matches(Regex("[A-Za-z0-9_-]+\\.asm", RegexOption.IGNORE_CASE))) {
+                "Unsafe project ASM module name: $fileName"
+            }
+            require(File(projectDirectory, fileName).isFile) {
+                "Project ASM module order references missing $fileName"
+            }
+        }
+        val discovered = projectDirectory.listFiles().orEmpty()
+            .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
+            .map(File::getName)
+            .toSet()
+        require(discovered == moduleNames.toSet()) { "Project ASM module order does not match the module files" }
+        val disabledNames = File(projectDirectory, ASM_PROJECT_MODULE_DISABLED_FILE)
+            .takeIf(File::isFile)
+            ?.readLines()
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            .orEmpty()
+        require(disabledNames.distinct().size == disabledNames.size) {
+            "Disabled project ASM modules contain duplicates"
+        }
+        require(disabledNames.all(moduleNames::contains)) {
+            "Disabled project ASM modules reference an unknown module"
+        }
+        val enabledNames = moduleNames.filterNot(disabledNames.toSet()::contains)
+        if (enabledNames.isEmpty()) return emptyList()
+        val gateway = File(sourceRoot, GENERATED_FILE)
+        require(!gateway.exists()) { "Project source uses reserved SMEDIT file name $GENERATED_FILE" }
+        gateway.writeText(
+            buildString {
+                append("; SMEDIT project modules — explicit order\n")
+                enabledNames.forEach { append("incsrc \"project/").append(it).append("\"\n") }
+            },
+        )
+        val main = File(sourceRoot, "main.asm")
+        val include = "; SMEDIT project module gateway\nincsrc \"$GENERATED_FILE\"\n\n"
+        val original = main.readText()
+        val marker = "print \"Assembly complete. Total bytes written: \", bytes"
+        main.writeText(
+            if (marker in original) original.replaceFirst(marker, include + marker)
+            else original + "\n" + include,
+        )
+        return enabledNames.map { ASM_PROJECT_MODULE_PREFIX + it }
+    }
+}
 
 /** Small session-local LRU. Entries are copied at the boundary so no exporter
  * can mutate a cached ROM or generated claim. */
@@ -98,7 +174,10 @@ internal class AsmProjectCompiler(
     ): AsmCompiledBuildBase {
         val workspace = workspaceRepository.loadForBuild(projectFilePath)
             ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")
-        val sourceDiagnostics = AsmSourceLinter.lintTree(File(workspace.workingDirectory, "src"))
+        val sourceDiagnostics = AsmSourceLinter.lintTree(
+            sourceRoot = File(workspace.workingDirectory, "src"),
+            excludedFileIds = workspace.disabledProjectModuleFileIds,
+        )
         if (sourceDiagnostics.isNotEmpty()) {
             val output = sourceDiagnostics.map(AsmSourceLinter::format)
             runCatching { buildArtifacts.publishFailure(projectFilePath, output) }
@@ -199,12 +278,15 @@ internal class AsmProjectCompiler(
             // not authored source. Downstream SMEDIT writes may legitimately
             // replace them (community sprite IPS files commonly do), so keep
             // them out of source ownership.
-            sourceOwnedRanges = changedRanges(
-                reference.rom,
-                project.rom,
-                listOf(SNES_CHECKSUM_RANGE) +
-                    materialization.claims.map { it.pcOffset until it.endExclusive } +
-                    patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
+            sourceOwnedRanges = attributeSourceFiles(
+                ranges = changedRanges(
+                    reference.rom,
+                    project.rom,
+                    listOf(SNES_CHECKSUM_RANGE) +
+                        materialization.claims.map { it.pcOffset until it.endExclusive } +
+                        patchMaterialization.claims.map { it.pcOffset until it.endExclusive },
+                ),
+                symbols = project.symbols,
             ),
             generatedAssetClaims = materialization.claims,
             generatedPatchClaims = patchMaterialization.claims,
@@ -280,7 +362,11 @@ internal class AsmProjectCompiler(
         } else {
             fingerprint.addBytes("reference-rom", referenceRomBody)
         }
-        fingerprint.addTree("project-src", File(workspace.workingDirectory, "src"))
+        fingerprint.addTree(
+            label = "project-src",
+            root = File(workspace.workingDirectory, "src"),
+            excludedRelativePaths = workspace.disabledProjectModuleFileIds,
+        )
         fingerprint.addTree("project-data", File(workspace.workingDirectory, "data"))
         materialization.assetOverrides.toSortedMap().forEach { (path, bytes) ->
             fingerprint.addBytes("asset:$path", bytes)
@@ -314,6 +400,7 @@ internal class AsmProjectCompiler(
             copyTree(File(sourceTree, "src"), File(staging, "src"))
             copyTree(File(sourceTree, "data"), File(staging, "data"))
             applyAssetOverrides(File(staging, "data"), assetOverrides)
+            AsmProjectModuleGateway.apply(File(staging, "src"))
             applyGeneratedPatchSource(File(staging, "src"), generatedPatchSource)
             val rom = File(staging, "SM.sfc")
             rom.writeBytes(ByteArray(ASM_ROM_SIZE) { 0xFF.toByte() })
@@ -433,7 +520,7 @@ internal class AsmProjectCompiler(
     companion object {
         const val ASM_ROM_SIZE = 3 * 1024 * 1024
         private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
-        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v1"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v3"
 
         internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
 
@@ -470,6 +557,41 @@ internal class AsmProjectCompiler(
             return ranges
         }
 
+        internal fun attributeSourceFiles(
+            ranges: List<AsmSourceOwnedRange>,
+            symbols: ByteArray,
+        ): List<AsmSourceOwnedRange> {
+            if (ranges.isEmpty() || symbols.isEmpty()) return ranges
+            val parsed = AsmWlaSymbolParser.parse(symbols.toString(Charsets.UTF_8))
+            val anchors = parsed.lineAddressesByFile.flatMap { (fileId, entries) ->
+                buildList {
+                    var index = 0
+                    while (index + 1 < entries.size) {
+                        snesLoRomToPc(entries[index])?.let { add(SourceAnchor(it, fileId)) }
+                        index += 2
+                    }
+                }
+            }.sortedWith(
+                compareBy<SourceAnchor>({ it.pcOffset }, { !it.fileId.startsWith(ASM_PROJECT_MODULE_PREFIX) }),
+            ).distinctBy(SourceAnchor::pcOffset)
+            if (anchors.isEmpty()) return ranges
+            return ranges.map { range ->
+                val start = range.pcOffset
+                val endExclusive = start + range.length
+                val previousIndex = anchors.binarySearchBy(start) { it.pcOffset }.let { result ->
+                    if (result >= 0) result else -result - 2
+                }
+                val previous = anchors.getOrNull(previousIndex)
+                val next = anchors.getOrNull(previousIndex + 1)
+                val sourceFile = previous?.takeIf {
+                    it.pcOffset <= start && (next == null || endExclusive <= next.pcOffset)
+                }?.fileId
+                range.copy(sourceFileId = sourceFile)
+            }
+        }
+
+        private data class SourceAnchor(val pcOffset: Int, val fileId: String)
+
         private val SNES_CHECKSUM_RANGE = 0x007FDC..0x007FDF
     }
 }
@@ -484,11 +606,16 @@ private class BuildFingerprint {
         addBytes(label, file.readBytes())
     }
 
-    fun addTree(label: String, root: File) {
+    fun addTree(
+        label: String,
+        root: File,
+        excludedRelativePaths: Set<String> = emptySet(),
+    ) {
         require(root.isDirectory) { "ASM build input tree is missing: $root" }
         addText("tree:$label")
         root.walkTopDown()
             .filter(File::isFile)
+            .filterNot { it.relativeTo(root).invariantSeparatorsPath in excludedRelativePaths }
             .sortedBy { it.relativeTo(root).invariantSeparatorsPath }
             .forEach { file ->
                 addBytes(file.relativeTo(root).invariantSeparatorsPath, file.readBytes())

@@ -69,10 +69,14 @@ internal object AsmSourceLinter {
     private val hexLiteral = Regex("\\$([0-9A-Fa-f]+)")
     private val widths = mapOf("db" to 2, "dw" to 4, "dl" to 6, "dd" to 8)
 
-    fun lintTree(sourceRoot: File): List<AsmBuildDiagnostic> {
+    fun lintTree(
+        sourceRoot: File,
+        excludedFileIds: Set<String> = emptySet(),
+    ): List<AsmBuildDiagnostic> {
         if (!sourceRoot.isDirectory) return emptyList()
         return sourceRoot.walkTopDown()
             .filter { it.isFile && it.extension.equals("asm", ignoreCase = true) }
+            .filterNot { it.relativeTo(sourceRoot).invariantSeparatorsPath in excludedFileIds }
             .flatMap { file ->
                 lintText(file.relativeTo(sourceRoot).invariantSeparatorsPath, file.readText()).asSequence()
             }
