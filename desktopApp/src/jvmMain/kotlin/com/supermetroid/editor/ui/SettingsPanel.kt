@@ -178,7 +178,7 @@ private fun CreditsSettingsTab(currentFontSize: FontSize) {
     )
     CreditLink(
         title = "Asar",
-        detail = "Alcaro, RPG Hacker, and contributors. Its documentation defines the assembler syntax used throughout the source.",
+        detail = "Alcaro, RPG Hacker, and contributors · GPLv3. SMEDIT packages native Asar 1.81 and uses its documentation for the source workspace.",
         url = "https://github.com/RPGHacker/asar",
         fontSize = currentFontSize,
         onOpen = uriHandler::openUri,

@@ -646,20 +646,36 @@ private class BuildFingerprint {
 internal class AsmToolchain(
     private val homeDirectory: File = File(System.getProperty("user.home")),
     private val environment: Map<String, String> = System.getenv(),
+    private val systemProperties: Map<String, String> = System.getProperties()
+        .stringPropertyNames()
+        .associateWith(System::getProperty),
 ) {
     fun resolve(referenceRoot: File, onProgress: (String) -> Unit = {}): File {
-        val candidates = buildList {
+        val explicitCandidates = buildList {
             environment["SMEDIT_ASAR"]?.takeIf(String::isNotBlank)?.let { add(File(it)) }
-            System.getProperty("smedit.asar")?.takeIf(String::isNotBlank)?.let { add(File(it)) }
-            val suffix = if (isWindows()) ".exe" else ""
-            add(File(homeDirectory, ".smedit/asm/asar/build/asar/asar-standalone$suffix"))
-            add(File(referenceRoot, "tools/asar-standalone$suffix"))
+            systemProperties["smedit.asar"]?.takeIf(String::isNotBlank)?.let { add(File(it)) }
+        }.distinctBy { it.absolutePath }
+        explicitCandidates.firstOrNull(::isExpectedAsar)?.let { return it }
+
+        bundledAsarSource()?.let { source ->
+            installBundledAsar(source).takeIf(::isExpectedAsar)?.let { return it }
+        }
+
+        val fallbackCandidates = buildList {
+            add(managedSourceBuildExecutable())
+            add(File(referenceRoot, "tools/${executableName()}"))
             if (isWindows()) add(File(referenceRoot, "tools/asar.exe"))
+            val installedReference = File(homeDirectory, ".smedit/asm/sm_disassembly/tools")
+            add(File(installedReference, executableName()))
+            if (isWindows()) add(File(installedReference, "asar.exe"))
             workspaceAncestors().forEach { root ->
-                add(File(root, "parity/work/asar/build/asar/asar-standalone$suffix"))
+                add(File(root, "parity/work/asar/build/asar/${executableName()}"))
             }
         }.distinctBy { it.absolutePath }
-        candidates.firstOrNull(::isExpectedAsar)?.let { return it }
+        fallbackCandidates.firstOrNull { candidate ->
+            makeManagedExecutable(candidate)
+            isExpectedAsar(candidate)
+        }?.let { return it }
         return buildManagedAsar(onProgress)
     }
 
@@ -682,11 +698,11 @@ internal class AsmToolchain(
 
     private fun buildManagedAsar(onProgress: (String) -> Unit): File {
         val managed = File(homeDirectory, ".smedit/asm/asar")
-        val suffix = if (isWindows()) ".exe" else ""
-        val expected = File(managed, "build/asar/asar-standalone$suffix")
+        val expected = managedSourceBuildExecutable()
         if (isExpectedAsar(expected)) return expected
         val parent = managed.parentFile.also(File::mkdirs)
         val staging = File(parent, "asar.installing-${UUID.randomUUID()}")
+        val stagedExecutable = File(staging, "build/asar/${executableName()}")
         var backup: File? = null
         try {
             onProgress("Downloading pinned Asar $ASAR_VERSION source…")
@@ -705,7 +721,14 @@ internal class AsmToolchain(
             onProgress("Building pinned Asar $ASAR_VERSION…")
             requireSuccessful(
                 runProcess(
-                    listOf("cmake", "-S", "src", "-B", "build", "-DCMAKE_BUILD_TYPE=Release"),
+                    listOf(
+                        "cmake", "-S", "src", "-B", "build",
+                        "-DCMAKE_BUILD_TYPE=Release",
+                        "-DASAR_GEN_EXE=ON",
+                        "-DASAR_GEN_DLL=OFF",
+                        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${stagedExecutable.parentFile.absolutePath}",
+                        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${stagedExecutable.parentFile.absolutePath}",
+                    ),
                     staging,
                     5,
                 ),
@@ -719,7 +742,7 @@ internal class AsmToolchain(
                 ),
                 "Could not build Asar",
             )
-            val stagedExecutable = File(staging, "build/asar/asar-standalone$suffix")
+            makeManagedExecutable(stagedExecutable)
             if (!isExpectedAsar(stagedExecutable)) {
                 throw AsmCompilationException("Managed Asar build did not produce Asar $ASAR_VERSION")
             }
@@ -776,7 +799,7 @@ internal class AsmToolchain(
 
     private fun workspaceAncestors(): List<File> {
         val roots = mutableListOf<File>()
-        var cursor: File? = File(System.getProperty("user.dir")).absoluteFile
+        var cursor: File? = File(systemProperties["user.dir"] ?: ".").absoluteFile
         repeat(5) {
             cursor?.let(roots::add)
             cursor = cursor?.parentFile
@@ -784,7 +807,110 @@ internal class AsmToolchain(
         return roots
     }
 
-    private fun isWindows(): Boolean = System.getProperty("os.name").contains("Windows", ignoreCase = true)
+    private fun bundledAsarSource(): File? {
+        val resources = systemProperties["compose.application.resources.dir"]
+            ?.takeIf(String::isNotBlank)
+            ?.let(::File)
+            ?: return null
+        return File(resources, "tools/asar/$ASAR_VERSION/${executableName()}").takeIf(File::isFile)
+    }
+
+    /**
+     * App resources can be read-only and archive extraction does not reliably
+     * preserve POSIX execute bits. Copy the bundled compiler into SMEDIT's
+     * managed toolchain directory before invoking it.
+     */
+    private fun installBundledAsar(source: File): File {
+        verifyBundledChecksum(source)
+        val destination = File(
+            homeDirectory,
+            ".smedit/asm/toolchains/asar/$ASAR_VERSION/${platformKey()}/${executableName()}",
+        )
+        destination.parentFile.mkdirs()
+        val needsCopy = !destination.isFile || runCatching {
+            Files.mismatch(source.toPath(), destination.toPath()) != -1L
+        }.getOrDefault(true)
+        if (needsCopy) {
+            val staged = File(destination.parentFile, ".${destination.name}.${UUID.randomUUID()}.installing")
+            try {
+                Files.copy(source.toPath(), staged.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                if (!isWindows()) require(staged.setExecutable(true, false) || staged.canExecute()) {
+                    "Could not make bundled Asar executable: ${staged.absolutePath}"
+                }
+                try {
+                    Files.move(
+                        staged.toPath(),
+                        destination.toPath(),
+                        StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING,
+                    )
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(staged.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            } finally {
+                Files.deleteIfExists(staged.toPath())
+            }
+        }
+        makeManagedExecutable(destination)
+        return destination
+    }
+
+    private fun verifyBundledChecksum(source: File) {
+        val manifest = File(source.parentFile, "SHA256")
+        if (!manifest.isFile) {
+            throw AsmCompilationException("Bundled Asar checksum is missing: ${manifest.absolutePath}")
+        }
+        val expected = manifest.readText().trim().substringBefore(' ').lowercase()
+        if (!expected.matches(Regex("[0-9a-f]{64}"))) {
+            throw AsmCompilationException("Bundled Asar checksum is invalid: ${manifest.absolutePath}")
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        source.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest().joinToString("") {
+            (it.toInt() and 0xFF).toString(16).padStart(2, '0')
+        }
+        if (actual != expected) {
+            throw AsmCompilationException("Bundled Asar failed its SHA-256 integrity check")
+        }
+    }
+
+    private fun managedSourceBuildExecutable() =
+        File(homeDirectory, ".smedit/asm/asar/build/asar/${executableName()}")
+
+    private fun makeManagedExecutable(candidate: File) {
+        if (isWindows() || !candidate.isFile) return
+        val managedRoot = File(homeDirectory, ".smedit").absoluteFile.toPath().normalize()
+        val candidatePath = candidate.absoluteFile.toPath().normalize()
+        if (candidatePath.startsWith(managedRoot) && !candidate.canExecute()) {
+            candidate.setExecutable(true, false)
+        }
+    }
+
+    private fun executableName() = "asar-standalone" + if (isWindows()) ".exe" else ""
+
+    private fun platformKey(): String {
+        val os = systemProperties["os.name"].orEmpty().lowercase()
+        val arch = systemProperties["os.arch"].orEmpty().lowercase()
+        val arm64 = arch == "aarch64" || arch == "arm64"
+        return when {
+            os.contains("mac") && arm64 -> "macos-arm64"
+            os.contains("mac") -> "macos-x64"
+            os.contains("win") && arm64 -> "windows-arm64"
+            os.contains("win") -> "windows-x64"
+            arm64 -> "linux-arm64"
+            else -> "linux-x64"
+        }
+    }
+
+    private fun isWindows(): Boolean =
+        systemProperties["os.name"].orEmpty().contains("Windows", ignoreCase = true)
 
     private companion object {
         const val ASAR_REPOSITORY_URL = "https://github.com/RPGHacker/asar.git"

@@ -340,6 +340,11 @@ complete build order and terminology. The repository also includes three readabl
 [ASM module examples](examples/asm/README.md), ranging from a tiny HUD/data override to a complete
 live Objectives pause screen.
 
+Packaged macOS, Windows, and Linux releases include a native build of SMEDIT's pinned Asar 1.81
+compiler; users do not need Git, CMake, or a C++ toolchain. Every release job installs that
+packaged-layout compiler into an isolated test home and uses it to assemble a copyright-free
+synthetic LoROM with symbols before building the installer.
+
 When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
 
 The Loaded ROM approach supports the vast majority of ROM hacking use cases. Its main constraints
@@ -397,7 +402,7 @@ This project would not be possible without the incredible Super Metroid ROM hack
 - **[Super Metroid Decompilation](https://github.com/snesrev/sm)** (snesrev) — full C reimplementation with struct definitions and per-bank implementations
 - **[SM-SPC](https://github.com/PJBoy/SM-SPC)** (PJBoy) — fully symbolic, assemblable source code for Super Metroid's SPC audio engine
 - **[SM Mod 3.0.80](https://metroidconstruction.com/SMMM/)** — community reference for species IDs and PLM editing conventions
-- **[Asar](https://github.com/RPGHacker/asar)** (Alcaro, RPG Hacker, and contributors) — assembler and syntax documentation used by the Super Metroid source workspace
+- **[Asar](https://github.com/RPGHacker/asar)** (Alcaro, RPG Hacker, and contributors) — GPLv3 assembler and syntax documentation used by the Super Metroid source workspace; release packages include a native build of pinned version 1.81
 - **[Super Metroid disassembly](https://github.com/InsaneFirebat/sm_disassembly)** (InsaneFirebat and contributors) — pinned annotated source used by the ASM reference and project build workspace
 
 ### Bundled Patches

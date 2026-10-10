@@ -19,11 +19,11 @@ jobs:
             artifact: super-metroid-editor-windows
             path: desktopApp/build/compose/binaries/main/msi/*.msi
             package_task: packageDistributionForCurrentOS
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact: super-metroid-editor-linux-deb
             path: desktopApp/build/compose/binaries/main/deb/*.deb
             package_task: packageDeb
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact: super-metroid-editor-fedora-rpm
             path: desktopApp/build/compose/binaries/main/rpm/*.rpm
             package_task: packageRpm
@@ -69,6 +69,12 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
+
+      - name: Build and verify packaged Asar toolchain
+        run: ./gradlew :desktopApp:asarToolchainSmokeTest
+        shell: bash
+        env:
+          JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
 
       - name: Run tests
         run: ./gradlew :shared:jvmTest :desktopApp:jvmTest

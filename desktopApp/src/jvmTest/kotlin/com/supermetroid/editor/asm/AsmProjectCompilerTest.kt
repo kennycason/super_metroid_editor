@@ -133,6 +133,35 @@ class AsmProjectCompilerTest {
     }
 
     @Test
+    fun `bundled Asar fails closed when its package checksum is wrong`() {
+        val osName = System.getProperty("os.name")
+        val executableName = if (osName.contains("Windows", ignoreCase = true)) {
+            "asar-standalone.exe"
+        } else {
+            "asar-standalone"
+        }
+        val resources = File(tempDirectory, "resources")
+        val toolDirectory = File(resources, "tools/asar/1.81").apply { mkdirs() }
+        File(toolDirectory, executableName).writeBytes(byteArrayOf(1, 2, 3, 4))
+        File(toolDirectory, "SHA256").writeText("${"0".repeat(64)}  $executableName\n")
+        val toolchain = AsmToolchain(
+            homeDirectory = File(tempDirectory, "home"),
+            environment = emptyMap(),
+            systemProperties = mapOf(
+                "compose.application.resources.dir" to resources.absolutePath,
+                "os.name" to osName,
+                "os.arch" to System.getProperty("os.arch"),
+                "user.dir" to tempDirectory.absolutePath,
+            ),
+        )
+
+        val failure = assertFailsWith<AsmCompilationException> {
+            toolchain.resolve(File(tempDirectory, "reference"))
+        }
+        assertTrue(failure.message.orEmpty().contains("SHA-256"))
+    }
+
+    @Test
     fun `saved Sandbox jump edit compiles to owned bank 90 bytes when local fixtures exist`() {
         val projectFile = findWorkspaceFile(
             "projects/Super Metroid Sandbox/Super Metroid Sandbox.smedit"

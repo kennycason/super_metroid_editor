@@ -1,8 +1,35 @@
+import java.security.MessageDigest
+
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization") version "1.9.0"
     id("org.jetbrains.compose")
 }
+
+val asarVersion = "1.81"
+val asarTag = "v1.81"
+val asarCommit = "a8538ca8582cdc81de6941223b358aa851e3b7b1"
+val asarRepositoryUrl = "https://github.com/RPGHacker/asar.git"
+val hostOs = System.getProperty("os.name").lowercase()
+val hostArch = System.getProperty("os.arch").lowercase()
+val hostIsWindows = hostOs.contains("win")
+val hostIsArm64 = hostArch == "aarch64" || hostArch == "arm64"
+val appResourcePlatformDir = when {
+    hostOs.contains("mac") && hostIsArm64 -> "macos-arm64"
+    hostOs.contains("mac") -> "macos-x64"
+    hostIsWindows && hostIsArm64 -> "windows-arm64"
+    hostIsWindows -> "windows-x64"
+    hostIsArm64 -> "linux-arm64"
+    else -> "linux-x64"
+}
+val asarExecutableName = "asar-standalone" + if (hostIsWindows) ".exe" else ""
+val asarToolchainRoot = layout.buildDirectory.dir("toolchains/asar-$asarVersion")
+val asarSourceDirectory = asarToolchainRoot.map { it.dir("source") }
+val asarBuildDirectory = asarToolchainRoot.map { it.dir("build") }
+val asarRuntimeOutputDirectory = asarToolchainRoot.map { it.dir("runtime") }
+val asarBuiltExecutable = asarRuntimeOutputDirectory.map { it.file(asarExecutableName) }
+val platformAppResourcesDirectory = layout.buildDirectory.dir("appResources/$appResourcePlatformDir")
+val packagedAsarDirectory = platformAppResourcesDirectory.map { it.dir("tools/asar/$asarVersion") }
 
 val macGestureJvmArgs = listOf(
     "--add-exports", "java.desktop/com.apple.eawt.event=ALL-UNNAMED",
@@ -23,7 +50,7 @@ kotlin {
         jvmToolchain(17)
         withJava()
         testRuns["test"].executionTask.configure {
-            useJUnitPlatform { excludeTags("community-samus-rom", "asm-reference-network") }
+            useJUnitPlatform { excludeTags("community-samus-rom", "asm-reference-network", "asm-toolchain") }
             systemProperty("smedit.realItFixture", System.getProperty("smedit.realItFixture", ""))
         }
     }
@@ -124,7 +151,7 @@ tasks.named("jvmMainClasses") {
 // Wire the copy into packaging tasks so the core is bundled in the app
 afterEvaluate {
     tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach {
-        dependsOn(copyLibretroToAppResources)
+        dependsOn(copyLibretroToAppResources, copyAsarToAppResources)
     }
 }
 
@@ -132,24 +159,140 @@ afterEvaluate {
 val copyLibretroToAppResources by tasks.registering(Copy::class) {
     dependsOn(rootProject.tasks.named("buildLibretroCore"))
 
-    val os = System.getProperty("os.name").lowercase()
-    val arch = System.getProperty("os.arch").lowercase()
     val ext = when {
-        os.contains("mac") -> ".dylib"
-        os.contains("win") -> ".dll"
+        hostOs.contains("mac") -> ".dylib"
+        hostIsWindows -> ".dll"
         else -> ".so"
-    }
-    val platformDir = when {
-        os.contains("mac") && (arch == "aarch64" || arch == "arm64") -> "macos-arm64"
-        os.contains("mac") -> "macos-x64"
-        os.contains("win") -> "windows-x64"
-        else -> "linux-x64"
     }
     val coreFile = rootProject.file("tools/snes9x/libretro/snes9x_libretro$ext")
 
     from(coreFile)
-    into(project.layout.buildDirectory.dir("appResources/$platformDir"))
+    into(project.layout.buildDirectory.dir("appResources/$appResourcePlatformDir"))
     onlyIf { coreFile.exists() }
+}
+
+// ── Build and bundle the pinned Asar compiler ─────────────────────────────
+
+val provisionAsarSource by tasks.registering {
+    group = "build"
+    description = "Fetch the exact Asar $asarVersion source used by Project ASM"
+    inputs.property("asarCommit", asarCommit)
+    val marker = asarSourceDirectory.map { it.file(".smedit-commit") }
+    outputs.file(marker)
+    doLast {
+        val source = asarSourceDirectory.get().asFile
+        val current = marker.get().asFile.takeIf { it.isFile }?.readText()?.trim()
+        if (current != asarCommit || !source.resolve("src/CMakeLists.txt").isFile) {
+            if (source.exists()) source.deleteRecursively()
+            source.parentFile.mkdirs()
+            project.exec {
+                commandLine(
+                    "git", "clone", "--filter=blob:none", "--no-checkout", "--depth=1",
+                    "--branch", asarTag, asarRepositoryUrl, source.absolutePath,
+                )
+            }
+            project.exec {
+                workingDir(source)
+                commandLine("git", "checkout", "--detach", asarCommit)
+            }
+            marker.get().asFile.writeText("$asarCommit\n")
+        }
+    }
+}
+
+val configureAsarStandalone by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Configure pinned Asar $asarVersion for the current platform"
+    dependsOn(provisionAsarSource)
+    inputs.property("asarCommit", asarCommit)
+    inputs.file(asarSourceDirectory.map { it.file("src/CMakeLists.txt") })
+    outputs.file(asarBuildDirectory.map { it.file("CMakeCache.txt") })
+    doFirst {
+        asarBuildDirectory.get().asFile.mkdirs()
+        asarRuntimeOutputDirectory.get().asFile.mkdirs()
+    }
+    commandLine(
+        "cmake",
+        "-Wno-dev",
+        "-Wno-deprecated",
+        "-S", asarSourceDirectory.get().asFile.resolve("src").absolutePath,
+        "-B", asarBuildDirectory.get().asFile.absolutePath,
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DASAR_GEN_EXE=ON",
+        "-DASAR_GEN_DLL=OFF",
+        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${asarRuntimeOutputDirectory.get().asFile.absolutePath}",
+        "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=${asarRuntimeOutputDirectory.get().asFile.absolutePath}",
+    )
+    if (hostOs.contains("mac")) {
+        args(
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+            "-DCMAKE_CXX_FLAGS=-Wno-deprecated-declarations -Wno-unknown-warning-option",
+        )
+    }
+}
+
+val buildAsarStandalone by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Build pinned Asar $asarVersion for the current platform"
+    dependsOn(configureAsarStandalone)
+    inputs.dir(asarSourceDirectory.map { it.dir("src") })
+    outputs.file(asarBuiltExecutable)
+    commandLine(
+        "cmake", "--build", asarBuildDirectory.get().asFile.absolutePath,
+        "--target", "asar-standalone", "--config", "Release", "--parallel",
+    )
+    doLast {
+        val executable = asarBuiltExecutable.get().asFile
+        require(executable.isFile) { "Asar build did not produce ${executable.absolutePath}" }
+        if (!hostIsWindows) require(executable.setExecutable(true, false) || executable.canExecute()) {
+            "Could not make bundled Asar executable: ${executable.absolutePath}"
+        }
+    }
+}
+
+val copyAsarToAppResources by tasks.registering(Copy::class) {
+    group = "build"
+    description = "Bundle pinned Asar $asarVersion and its license with this platform's app resources"
+    dependsOn(buildAsarStandalone)
+    from(asarBuiltExecutable)
+    from(asarSourceDirectory.map { it.file("license-gpl.txt") }) {
+        rename { "LICENSE-GPL-3.0.txt" }
+    }
+    from(rootProject.file("docs/licenses/asar.md")) {
+        rename { "NOTICE.md" }
+    }
+    into(packagedAsarDirectory)
+    doLast {
+        val executable = packagedAsarDirectory.get().file(asarExecutableName).asFile
+        require(executable.isFile) { "Packaged Asar is missing: ${executable.absolutePath}" }
+        if (!hostIsWindows) require(executable.setExecutable(true, false) || executable.canExecute()) {
+            "Could not preserve bundled Asar executable permissions: ${executable.absolutePath}"
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        executable.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val sha256 = digest.digest().joinToString("") { byte ->
+            (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
+        }
+        packagedAsarDirectory.get().file("SHA256").asFile.writeText("$sha256  $asarExecutableName\n")
+    }
+}
+
+tasks.register<org.gradle.api.tasks.testing.Test>("asarToolchainSmokeTest") {
+    group = "verification"
+    description = "Run the packaged-layout Asar compiler against a copyright-free synthetic ROM"
+    dependsOn(tasks.named("jvmTestClasses"), copyAsarToAppResources)
+    testClassesDirs = regularJvmTest.get().testClassesDirs
+    classpath = regularJvmTest.get().classpath
+    useJUnitPlatform { includeTags("asm-toolchain") }
+    systemProperty("smedit.testPackagedResourcesDir", platformAppResourcesDirectory.get().asFile.absolutePath)
+    outputs.upToDateWhen { false }
 }
 
 compose.desktop {

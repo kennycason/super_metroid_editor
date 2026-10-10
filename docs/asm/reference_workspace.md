@@ -246,10 +246,23 @@ destinations are bounded before writes occur.
 
 No Git or Python installation is required to download/browse source or extract
 assets. A checked-in, data-only range manifest lets Kotlin perform extraction
-directly. Source compilation requires exact Asar 1.81. SMEDIT accepts
-`SMEDIT_ASAR`/`smedit.asar`, uses a compatible platform binary when available,
-or provisions the pinned Asar source with Git and CMake into
-`~/.smedit/asm/asar/`. The compiler version is verified before every build.
+directly. Source compilation requires exact Asar 1.81. SMEDIT release packages
+carry a native build for their own OS/architecture; on first use it is copied
+from the read-only application resources into
+`~/.smedit/asm/toolchains/asar/1.81/<platform>/`, given executable permissions
+where required, checked against the platform package's SHA-256 manifest, and
+version-verified before use. Users therefore do not need
+Git, CMake, or a C++ compiler. `SMEDIT_ASAR`/`smedit.asar` remains the highest
+priority developer override, and source checkout/build into
+`~/.smedit/asm/asar/` remains a final development fallback.
+
+Each release runner builds Asar from the pinned revision used by SMEDIT, bundles
+the GPLv3 license and distribution notice, then runs
+`./gradlew :desktopApp:asarToolchainSmokeTest`. That ROM-free test resolves Asar
+through the packaged-resource path, installs it into an isolated home directory,
+verifies the 1.81 banner and native executable permission, assembles a synthetic
+LoROM, checks its emitted bytes, and confirms WLA symbol output. It runs on the
+macOS, Windows, and Linux GitHub Actions jobs before application packaging.
 That manifest is regenerated from the pinned upstream `tools/rip_assets.py` with:
 
 ```bash
@@ -477,7 +490,8 @@ once conversion.
   overlay backend into temporary Asar source and separately owned `ASM_PATCH`
   ranges. Overlapping or out-of-ROM records fall back instead of being guessed.
 - `AsmToolchain` pins and verifies Asar 1.81, preferring an explicitly configured
-  executable and otherwise using/provisioning a managed local compiler.
+  executable, then the release-bundled native compiler, and only then using or
+  provisioning a managed developer compiler.
 - `AsmSourceParser` reads `main.asm` include order and descriptions, then indexes
   every source file, authored section, global label, scoped local label,
   cross-reference, and extracted asset. Reference resolution uses the same
