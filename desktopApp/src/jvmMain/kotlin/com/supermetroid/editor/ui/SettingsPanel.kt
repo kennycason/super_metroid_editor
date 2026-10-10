@@ -157,6 +157,25 @@ private fun CreditsSettingsTab(currentFontSize: FontSize) {
     )
 
     Text(
+        "SMEDIT License",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    CreditLink(
+        title = "Apache License 2.0",
+        detail = "Original SMEDIT code and documentation · © 2025-2026 Kenny Cason",
+        url = "https://github.com/kennycason/super_metroid_editor/blob/main/LICENSE",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    Text(
+        "Third-party tools, patches, schemas, artwork, and Nintendo material retain their own terms. Release packages include their notices in the legal directory.",
+        fontSize = currentFontSize.detail,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    Text(
         "ASM Library & Reference",
         fontSize = currentFontSize.body,
         fontWeight = FontWeight.SemiBold,
@@ -194,6 +213,41 @@ private fun CreditsSettingsTab(currentFontSize: FontSize) {
         title = "W65C816S documentation",
         detail = "Western Design Center's authoritative processor documentation; linked as a primary reference and not redistributed by SMEDIT.",
         url = "https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+
+    Text(
+        "Runtime, patches & compatibility",
+        fontSize = currentFontSize.body,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
+    CreditLink(
+        title = "Snes9x",
+        detail = "Gary Henderson, Jeremy Koot, and contributors · custom non-commercial license. Powers SMEDIT's embedded emulator.",
+        url = "https://github.com/libretro/snes9x/blob/master/LICENSE",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "snes_spc",
+        detail = "Shay Green / blargg and contributors · LGPL-2.1-or-later. Powers SPC700 music playback.",
+        url = "https://github.com/jprjr/snes_spc/blob/master/license.txt",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "MapRandomizer",
+        detail = "© 2023 maddo, kyleb · MIT. Source for compatible patch infrastructure and research.",
+        url = "https://github.com/blkerby/MapRandomizer/blob/main/LICENSE",
+        fontSize = currentFontSize,
+        onOpen = uriHandler::openUri,
+    )
+    CreditLink(
+        title = "SpriteSomething",
+        detail = "Artheau and Mike Trethewey · CC BY-SA 4.0. Source of the pinned community-Samus compatibility schemas.",
+        url = "https://github.com/Artheau/SpriteSomething/blob/master/LICENSE.md",
         fontSize = currentFontSize,
         onOpen = uriHandler::openUri,
     )

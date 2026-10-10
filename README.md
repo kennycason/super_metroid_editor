@@ -383,6 +383,16 @@ Planned:
 
 Pull requests welcome. Run `./gradlew :shared:jvmTest :desktopApp:jvmTest` before submitting to make sure all tests pass.
 
+## License
+
+Original SMEDIT code and documentation are licensed under the
+[Apache License 2.0](LICENSE), Copyright 2025-2026 Kenny Cason and Lucas
+"Luke" Vinze. Third-party tools, patches, compatibility schemas, community
+artwork, and Nintendo material are not relicensed under Apache-2.0; review
+[the third-party notices](THIRD_PARTY_NOTICES.md) before redistribution or
+commercial use. In particular, the embedded Snes9x core has a separate
+non-commercial license.
+
 ## Special Thanks
 
 This project would not be possible without the incredible Super Metroid ROM hacking community and the resources they've built over the years.

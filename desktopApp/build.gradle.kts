@@ -151,7 +151,7 @@ tasks.named("jvmMainClasses") {
 // Wire the copy into packaging tasks so the core is bundled in the app
 afterEvaluate {
     tasks.matching { it.name.startsWith("prepareAppResources") }.configureEach {
-        dependsOn(copyLibretroToAppResources, copyAsarToAppResources)
+        dependsOn(copyLibretroToAppResources, copyAsarToAppResources, copyLegalNoticesToAppResources)
     }
 }
 
@@ -284,6 +284,32 @@ val copyAsarToAppResources by tasks.registering(Copy::class) {
     }
 }
 
+val copyLegalNoticesToAppResources by tasks.registering(Copy::class) {
+    group = "build"
+    description = "Bundle SMEDIT and third-party license notices with the desktop application"
+    into(platformAppResourcesDirectory.map { it.dir("legal") })
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE-APACHE-2.0.txt" }
+    }
+    from(rootProject.file("NOTICE"))
+    from(rootProject.file("THIRD_PARTY_NOTICES.md"))
+    from(rootProject.file("tools/snes9x")) {
+        into("snes9x")
+        include("LICENSE", "**/LICENSE*", "**/license*", "**/*-license.*")
+    }
+    from(rootProject.file("tools/snes_spc/license.txt")) {
+        into("snes_spc")
+        rename { "LICENSE-LGPL-2.1.txt" }
+    }
+    from(rootProject.file("docs/licenses/maprandomizer-MIT.txt")) {
+        into("maprandomizer")
+        rename { "LICENSE-MIT.txt" }
+    }
+    from(rootProject.file("shared/src/jvmMain/resources/samus-community/NOTICE.md")) {
+        into("spritesomething")
+    }
+}
+
 tasks.register<org.gradle.api.tasks.testing.Test>("asarToolchainSmokeTest") {
     group = "verification"
     description = "Run the packaged-layout Asar compiler against a copyright-free synthetic ROM"
@@ -313,7 +339,7 @@ compose.desktop {
             packageName = "Super Metroid Editor"
             packageVersion = "1.0.0"
             description = "Super Metroid ROM editor — tile, PLM, enemy, and patch editing"
-            copyright = "© 2025 Super Metroid Editor"
+            copyright = "© 2025-2026 Kenny Cason and Lucas \"Luke\" Vinze"
 
             macOS {
                 bundleID = "com.supermetroid.editor"
