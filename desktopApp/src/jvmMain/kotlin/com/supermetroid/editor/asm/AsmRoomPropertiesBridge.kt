@@ -122,7 +122,6 @@ internal class AsmRoomPropertiesBridge(
                 state.stateDataChange = saved.stateDataChange; state.asmStatePropertiesProjection = saved.asmStatePropertiesProjection
             }
             if (undo && existing == null) owner.rooms.remove(key) else owner.rooms[key] = live
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
         fun notify() { refreshAll(); changed() }
         checkCurrent(false)
@@ -157,7 +156,6 @@ internal class AsmRoomPropertiesBridge(
                 state.stateDataChange = saved.stateDataChange
                 state.asmStatePropertiesProjection = saved.asmStatePropertiesProjection
             }
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             changed()
         }
         workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, after,

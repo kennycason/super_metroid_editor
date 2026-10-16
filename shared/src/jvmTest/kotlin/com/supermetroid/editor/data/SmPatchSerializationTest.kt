@@ -35,7 +35,7 @@ class SmPatchSerializationTest {
     fun `projects without general settings get patch browser defaults`() {
         val decoded = json.decodeFromString(
             SmEditProject.serializer(),
-            """{"romPath":"/tmp/sm.smc"}""",
+            """{"projectFormat":"smedit-project","projectFormatVersion":1,"projectId":"defaults-test","romPath":"/tmp/sm.smc"}""",
         )
 
         assertEquals(PatchSortOrder.NAME_ASCENDING, decoded.generalSettings.patchBrowser.sortOrder)

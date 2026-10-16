@@ -93,7 +93,6 @@ class ProjectRoomStatesTest {
         roomEdits.stateGraphChanged = true
 
         val decoded = SmEditProjectFormat.decode(
-            json,
             json.encodeToString(SmEditProject.serializer(), project),
         )
         val actual = decoded.rooms.getValue("CD13").states.first()
@@ -114,17 +113,6 @@ class ProjectRoomStatesTest {
         assertEquals(state.sourceStateIndex, decoded.rooms.getValue("CD13").states[1].templateSourceStateIndex)
         assertEquals(added.condition, decoded.rooms.getValue("CD13").states[1].condition)
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, decoded.projectFormatVersion)
-    }
-
-    @Test
-    fun `markerless beta file is detected without changing new project defaults`() {
-        val json = Json { ignoreUnknownKeys = true }
-
-        val markerless = SmEditProjectFormat.decode(json, """{"romPath":"base.smc","rooms":{}}""")
-        val current = SmEditProject("base.smc")
-
-        assertEquals(SmEditProjectFormat.PRE_VERSIONED_FILE_FORMAT, markerless.projectFormatVersion)
-        assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, current.projectFormatVersion)
     }
 
     @Test

@@ -505,7 +505,6 @@ internal class AsmPlmSourceBridge(
             onMetadataChanged()
         })
         plan.metadataAfter.applyTo(plan.room)
-        plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         onMetadataChanged()
         return true
     }
@@ -822,7 +821,6 @@ internal class AsmPlmSourceBridge(
             applyRoomResizeModel(plan.room, snapshot)
             if (undo && !plan.wasPresent) plan.owner.rooms.remove(plan.owner.roomKey(plan.room.roomId))
             else plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] = plan.room
-            plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
         fun notify(undo: Boolean) {
             onMetadataChanged()
@@ -880,7 +878,6 @@ internal class AsmPlmSourceBridge(
             room.saveStationSpawns.clear()
             room.states.forEach { it.plmChanges.clear(); it.customScrollCommands.clear() }
             room.asmPlmSourceVersion = 1
-            current.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             onMetadataChanged()
         }
         fun restore() {

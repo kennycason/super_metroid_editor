@@ -58,7 +58,6 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
             if (room.states.isEmpty()) room.states.addAll(staged.states)
             room.enemyChanges.clear(); room.states.forEach { it.enemyChanges.clear() }
             room.asmEnemySourceVersion = 1
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             metadataChanged()
         }
         fun restore() {

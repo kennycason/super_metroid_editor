@@ -230,9 +230,8 @@ fun main() = application {
         else action()
     }
 
-    fun projectPreferenceKey(romPath: String): String = editorState.project.projectId.ifBlank {
-        editorState.projectFilePath.ifBlank { File(romPath).absolutePath }
-    }
+    fun projectPreferenceKey(romPath: String): String =
+        ProjectLifecycle.preferenceKey(editorState.project, editorState.projectFilePath, romPath)
 
     fun pickDefaultRoom(allRooms: List<RoomInfo>, romPath: String): RoomInfo? {
         val romKey = projectPreferenceKey(romPath)

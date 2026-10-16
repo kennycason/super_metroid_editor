@@ -180,7 +180,6 @@ internal class AsmDoorStructure(
             }
             applyRoomResizeModel(plan.live, target)
             if (undo && !plan.wasPresent) plan.owner.rooms.remove(key) else plan.owner.rooms[key] = plan.live
-            plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
         fun notify(undo: Boolean) { doors.refreshAll(); changed(); afterTransition(undo); history?.onTransition?.invoke(undo) }
         check(false)

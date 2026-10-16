@@ -247,8 +247,8 @@ Other resources keep their existing model/backend. This does **not** change the 
 editing model described below. See the [source/GUI ownership contract](../asm/reference_workspace.md#reciprocal-sourcegui-ownership--first-authoring-slice).
 
 Door connections are room-wide source resources in bank `$83`, independent of
-state ownership and of their separate executable arrival ASM. Schema 17 introduced
-ownership via `asmDoorSourceVersion`, not persisted decoded door values. Ordinary field edits retain native list order,
+state ownership and of their separate executable arrival ASM. Ownership uses
+`asmDoorSourceVersion`, not persisted decoded door values. Ordinary field edits retain native list order,
 count and DoorDef addresses; GUI/source edits share exact literal
 fields and reciprocal history. Door ASM opens as an editor-only staged bank;
 the first actual edit adopts ownership and text atomically, without a separate
@@ -266,7 +266,7 @@ Cross-area moves now use
 the coordinated source/map/save transaction described below. See
 [door connection authoring](../asm/reference_workspace.md#reciprocal-door-connections).
 
-Schema 20 adds structural lists without a second JSON copy of their order or values.
+Structural lists have no second JSON copy of their order or values.
 An optional source list refers to stable Door_N identities; native records keep
 their addresses and new records remain unresolved until checked allocation at
 build time. Completed GUI Add/Remove operations automatically adopt the required
@@ -279,7 +279,7 @@ below; new DoorDef references in FX/save codecs and stable added-room source
 identities remain separate work.
 See [structural door lists](../asm/reference_workspace.md#structural-door-lists).
 
-Schema 21 links incoming-door state conditions to `(sourceRoomId, declarationId)`
+Symbolic incoming-door state conditions link to `(sourceRoomId, declarationId)`
 rather than BTS position or an allocated pointer. The source argument is the
 corresponding `SmeditDoors_*_Door_*_Entry` label; the condition picker lists live
 incoming connections, including new/unbuilt records, and the simulator uses their
@@ -292,7 +292,7 @@ room resources. GUI removal and external-owner Reset refuse referenced identitie
 No additional Enable ASM prompt or build is needed to choose a new connection.
 FX/save and arbitrary executable-code references remain separate work.
 
-Schema 18 adds checked symbolic arrival references: marked bank-$8F routine bodies
+Checked symbolic arrival references use marked bank-$8F routine bodies
 and native `DoorASM_*` labels resolve through actual assembler symbols, never a
 persisted preview/allocation address. Managed arrivals and predicates share one
 packed, fully claimed code pool. Creation preserves known native dispatch context
@@ -302,7 +302,7 @@ fields remain reciprocal. Initial-scroll diagnostics explicitly omit authored
 arrival execution, and room-only JSON export refuses to discard its source/code
 dependencies. See [managed arrival ASM](../asm/reference_workspace.md#managed-arrival-asm-and-symbolic-connections).
 
-Schema 19 supports coordinated existing-room area moves in ASM source mode.
+Existing-room area moves are coordinated in ASM source mode.
 Room Info and minimap area actions automatically adopt supported headers and
 affected DoorDefs, then publish header/map placement, visible/reveal map cells,
 incoming/outgoing cross-area flags and ordinary save migration as one shared
@@ -593,17 +593,20 @@ door-list growth/removal, and managed ROM expansion when verified free space is 
 separate static template library is deferred because Clone current state already supplies the
 practical template workflow.
 
-## Project Schema During Beta
+## Development Project Format
 
-`projectFormatVersion` is an internal serialization-safety marker. It does not select a room model,
-a ROM layout, or an export mode. The existing `versionMajor` and `versionMinor` fields only label
-exported ROM builds.
+The named `smedit-project` format is currently version 1. It includes the complete
+current room/resource model, not one format revision per implemented feature.
+Only the current explicit format is accepted; missing metadata, unknown fields
+and invalid enum values are not silently replaced with defaults. Optional domain
+settings still default normally. Project IDs are created once and stored explicitly.
+The separate `versionMajor` and `versionMinor` fields label exported ROM builds.
 
-New projects and checked-in beta projects use the current schema. Markerless early beta files can
-still be read; if saving would cross a schema boundary, SMEDIT writes one untouched pre-upgrade
-backup first. We do not maintain parallel public room models during beta. A future incompatible
-schema change must ship with a tested, one-way migration into this model and must never silently
-downgrade a project.
+Development projects are updated explicitly when the saved contract changes, rather
+than maintaining automatic beta migrations and per-edit version stamping. The
+checked-in active projects are normalized; historical archives/backups are preserved
+as records, not silently reopened as current projects. See
+[project format and offline normalization](project_format.md#project-format-and-versioning).
 
 Top-level room edit lists remain intentional common edits: they apply across the room's states.
 Entries inside `RoomStateEdits` are state-specific non-layout changes. Layout edits live in
@@ -636,10 +639,9 @@ This is a resource-ownership distinction in one model, not old-versus-new storag
 ### 1. Schema and project format — complete for current-format projects
 
 - Serializable room/state/resource identities are implemented inside the existing `RoomEdits`.
-- Explicit `projectFormatVersion` and markerless beta-file detection are implemented.
-- A one-time pre-upgrade backup is implemented.
-- Checked-in beta projects are normalized to the current schema; markerless external beta files
-  remain readable.
+- The explicit named format/version and stable project identity are validated by one desktop/CLI codec.
+- Offline normalization previews and verifies changes, with recovery copies on explicit apply.
+- Active checked-in projects use the current model; old/markerless formats are rejected on Open.
 - Serialization and byte/semantic equivalence tests cover current-format round trips.
 
 ### 2. State-scoped editing — complete for the current milestone

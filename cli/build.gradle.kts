@@ -7,6 +7,11 @@ kotlin {
     jvm {
         jvmToolchain(17)
         withJava()
+        testRuns["test"].executionTask.configure {
+            useJUnitPlatform()
+            maxHeapSize = "2g"
+            systemProperty("smedit.repositoryRoot", rootProject.projectDir.absolutePath)
+        }
     }
 
     sourceSets {
@@ -16,7 +21,25 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
             }
         }
+        val jvmTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation("org.junit.jupiter:junit-jupiter:5.10.0")
+            }
+        }
     }
+}
+
+tasks.register<JavaExec>("normalizeProjects") {
+    group = "maintenance"
+    description = "Explicit offline project normalization; previews by default, --apply writes with recovery copies"
+    dependsOn("jvmMainClasses")
+    mainClass.set("com.supermetroid.editor.cli.tools.ProjectFormatToolKt")
+    classpath = kotlin.jvm().compilations["main"].runtimeDependencyFiles +
+        kotlin.jvm().compilations["main"].output.allOutputs
+    workingDir(rootProject.projectDir)
+    maxHeapSize = "2g"
+    args = parseCliArgs(project.findProperty("args") as? String ?: "projects")
 }
 
 tasks.register<JavaExec>("runCli") {

@@ -7,12 +7,15 @@ import com.supermetroid.editor.rom.RomParser
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
-import java.util.UUID
 
 internal data class OpenProject(val file: File, val project: SmEditProject)
 
 /** File operations shared by NEW, OPEN and missing-ROM recovery. No recursive discovery or migration. */
 internal object ProjectLifecycle {
+    /** Read-only ROMs have no saved project identity; their navigation preferences remain ROM-local. */
+    fun preferenceKey(project: SmEditProject, projectFilePath: String, romPath: String): String =
+        if (projectFilePath.isEmpty()) File(romPath).absolutePath else project.projectId
+
     fun projectBeside(selected: File): File? {
         if (selected.extension.equals("smedit", true)) return selected
         val directory = if (selected.isDirectory) selected else selected.absoluteFile.parentFile
@@ -65,7 +68,6 @@ internal object ProjectLifecycle {
             val file = File(staging, "$name.smedit")
             val project = SmEditProject(
                 romPath = File(staging, base.name).absolutePath,
-                projectId = UUID.randomUUID().toString(),
                 baseRom = baseIdentity,
             )
             check(ProjectFileService.saveProject(project, file.absolutePath, null, false) {}) { "Could not save the new project." }

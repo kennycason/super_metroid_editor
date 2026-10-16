@@ -37,7 +37,6 @@ import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.TileGraphics
 import com.supermetroid.editor.rom.words
-import kotlinx.serialization.json.Json
 import java.io.File
 import java.security.MessageDigest
 
@@ -54,37 +53,17 @@ internal object ProjectFileService {
             eldest: MutableMap.MutableEntry<String, AsmCompiledBuildBase>?,
         ): Boolean = size > MAX_PREPARED_ASM_BASES
     }
-    private val json = Json {
-        // Project files can contain hundreds of thousands of generated tile edits.
-        // Keep saves compact; use jq or an editor formatter when human-readable JSON is needed.
-        prettyPrint = false
-        ignoreUnknownKeys = true
-        coerceInputValues = true
-        encodeDefaults = true
-    }
-
     fun loadProject(file: File): SmEditProject =
-        SmEditProjectFormat.decode(json, file.readText()).let { saved ->
-            val project = saved.copy(
-                romPath = ProjectPaths(file).resolveBaseRom(saved.romPath).absolutePath,
-                // Keep preferences stable even before a metadata-less project
-                // has been saved once; that first save persists the ID on moves.
-                projectId = saved.projectId.ifBlank {
-                    java.util.UUID.nameUUIDFromBytes(file.canonicalPath.toByteArray()).toString()
-                },
-            )
-            // Markerless beta files use the same semantic model with defaulted fields.
-            // Normalize the in-memory project so its next save writes the current schema.
-            project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
-            project
+        SmEditProjectFormat.decode(file.readText()).let { saved ->
+            saved.copy(romPath = ProjectPaths(file).resolveBaseRom(saved.romPath).absolutePath)
         }
 
     /** Isolate non-writing previews from exporter metadata hydration. */
     fun snapshotProject(project: SmEditProject): SmEditProject =
-        SmEditProjectFormat.decode(json, json.encodeToString(SmEditProject.serializer(), project))
+        SmEditProjectFormat.decode(SmEditProjectFormat.encode(project))
 
     /** Capture mutable editor data on its caller thread; decode/persist this detached snapshot on a worker. */
-    fun serializeProject(project: SmEditProject): String = json.encodeToString(SmEditProject.serializer(), project)
+    fun serializeProject(project: SmEditProject): String = SmEditProjectFormat.encode(project)
 
     fun saveSerializedProject(
         text: String,
@@ -92,7 +71,7 @@ internal object ProjectFileService {
         onLog: (String) -> Unit,
         romParser: RomParser? = null,
         savePatternLibrary: Boolean = false,
-    ): Boolean = saveProject(SmEditProjectFormat.decode(json, text), projectFilePath, romParser, savePatternLibrary, onLog)
+    ): Boolean = saveProject(SmEditProjectFormat.decode(text), projectFilePath, romParser, savePatternLibrary, onLog)
 
     fun saveProject(
         project: SmEditProject,
@@ -104,18 +83,6 @@ internal object ProjectFileService {
         if (projectFilePath.isEmpty()) return false
         return try {
             val projectFile = File(projectFilePath)
-            if (projectFile.isFile) {
-                val existingVersion = runCatching {
-                    SmEditProjectFormat.decode(json, projectFile.readText()).projectFormatVersion
-                }.getOrNull()
-                if (existingVersion != null && existingVersion < project.projectFormatVersion) {
-                    val backup = File(projectFile.parentFile, "${projectFile.name}.before-schema-upgrade.backup")
-                    if (!backup.exists()) {
-                        projectFile.copyTo(backup, overwrite = false)
-                        onLog("Backed up project before schema upgrade: ${backup.absolutePath}")
-                    }
-                }
-            }
             val paths = ProjectPaths(projectFile)
             val base = paths.resolveBaseRom(project.romPath)
             val portable = project.copy(
@@ -125,7 +92,7 @@ internal object ProjectFileService {
                 romPath = paths.relativeBaseRom(base),
                 baseRom = project.baseRom ?: base.takeIf(File::isFile)?.let(ProjectLifecycle::identity),
             )
-            writeBytesAtomically(projectFile, json.encodeToString(SmEditProject.serializer(), portable).toByteArray())
+            writeBytesAtomically(projectFile, SmEditProjectFormat.encode(portable).toByteArray())
             onLog("Project saved: $projectFilePath")
             romParser?.let { exportCustomGfxPngs(project, projectFilePath, it, onLog) }
             if (savePatternLibrary) PatternLibrary.saveAll(project.patterns)
@@ -614,7 +581,7 @@ internal object ProjectFileService {
         }
         update(PREPARED_ASM_CACHE_VERSION.toByteArray())
         update(sourceInputs.toByteArray())
-        update(json.encodeToString(SmEditProject.serializer(), project).toByteArray())
+        update(SmEditProjectFormat.encode(project).toByteArray())
         return digest.digest().joinToString("") {
             (it.toInt() and 0xFF).toString(16).padStart(2, '0')
         }

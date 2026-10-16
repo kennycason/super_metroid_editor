@@ -32,7 +32,7 @@ groups. These settings affect presentation only and never change ROM export beha
 
 `asmWorkspace` is the portable contract for the project-owned ASM sidecar. `enabled`
 and `sourceRevision` identify the pinned source snapshot, while `buildMode` is either
-`PATCHED_ROM` (the backward-compatible default shown as **Loaded ROM**) or
+`PATCHED_ROM` (the default shown as **Loaded ROM**) or
 `ASM_SOURCE`. Enabling Project ASM selects `ASM_SOURCE` automatically. A clean ASM
 workspace may return to `PATCHED_ROM`, but saved or unsaved source edits require
 `ASM_SOURCE`; both the UI and export validation prevent those edits from being
@@ -196,85 +196,57 @@ authored data. Existing rooms remain keyed by their source room-header ID. Proje
 IDs such as `room-1`; their `previewRoomId` is a rebuildable workspace adapter and is never used to
 resolve exported doors or treated as persistent identity.
 
-## Version Fields
+## Project Format and Versioning
 
-Schema 21 adds stable incoming-door selector references. `INCOMING_DOOR` may use
-`dw SmeditDoors_ROOM_Door_ID_Entry` instead of a literal bank-$83 pointer in typed
-selector source, including inside AND/OR/NOT trees. The semantic condition's
-optional `sourceDoor: { roomId, identity }` is mutually exclusive with `argument`;
-normal source-owned projects persist the authored token, not the transient GUI
-projection or resolved address. Only active connections leading to the selected
-room qualify. DoorDefs are allocated before selectors are encoded; missing,
-retired, wrong-destination and unresolved references block builds. Existing
-numeric references retain their original meaning. The normal schema-upgrade
-backup applies. See [symbolic incoming-door conditions](../asm/reference_workspace.md#symbolic-incoming-door-conditions).
+There is one development format, identified by an explicit envelope:
 
-Schema 20 supports optional structural door-list macros alongside the existing
-`asmDoorSourceVersion = 1` fields. Order and stable Door_N identities live only in
-source; new DoorDef/list addresses are build results, never project JSON fields.
-The schema bump prevents older editors from silently ignoring authored list order.
-Completed GUI structure edits adopt door/layout source atomically; ASM-first list
-edits are validated against all final runtime layouts without requiring layout
-adoption. Existing schema-upgrade backups apply. See
-[structural door lists](../asm/reference_workspace.md#structural-door-lists).
+```json
+{"projectFormat":"smedit-project","projectFormatVersion":1,"projectId":"stable-project-id","romPath":"Base.smc"}
+```
 
-Schema 14 adds `RoomEdits.asmLayoutSourceVersion` (default 0, supported value 1).
-Decoded L1 tile words, BTS bytes, embedded L2 and retained allocation/tail bytes
-live in `SmeditLayout_*` macros in project `bank_8F.asm`. Stable state wrappers
-reference whole-layout resources; shared and private identities are not inferred
-from equal bytes. Adoption retires tile edits from common/state operations and
-`levelResourceOperations`, preserving non-layout history. JSON stores ownership
-and resource links, never duplicate authored level values or allocated addresses.
-The build validates literals, allocation size, state coverage and dimensions,
-LZ5-compresses each independent resource, and emits checked ASM placements and
-24-bit state pointers. Missing/invalid source, unknown versions, competing GUI
-tile deltas and ROM-only builds fail closed. Existing schema-upgrade backups apply.
+The 2026-10-16 baseline consolidates the experimental numbered beta formats. Both
+desktop and CLI use the same strict codec. Missing/wrong format markers, unsupported
+versions, unknown fields, invalid enums and missing/blank identities are errors;
+opening a project never silently migrates, drops or coerces authoring data. Optional
+domain values still have ordinary defaults. New projects receive an identity once,
+and saved identities survive moving/renaming a project folder.
 
-Schema 13 adds `RoomEdits.asmEnemySourceVersion` (default 0, supported value 1).
-It owns paired population/GFX declarations in `bank_A1.asm`; the checked planner
-emits the population in bank `$A1` and GFX in `$B4`. Stable state wrappers can
-share the two resources independently. Adoption retires room/state `enemyChanges`;
-JSON stores neither duplicate actor values nor allocated addresses. Missing source,
-unknown versions, competing deltas or incomplete paired build inputs fail closed.
-The usual schema-upgrade backup protects older editors from dropping this ownership.
+Version 1 includes all current room/resource ownership, structural doors, symbolic
+incoming-door conditions, assets, patches and project settings. The version is not
+a feature counter: compatible optional additions use defaults; incompatible saved
+contracts require an intentional version change and an explicit update of our
+development projects. We do not maintain parallel historical model implementations.
+Pre-baseline builds are unsupported for normalized projects; do not round-trip these
+files through an old editor, which cannot understand the new format identity.
 
-Schema 11 adds `RoomEdits.asmPlmSourceVersion` (default 0; current authored format 1).
-It marks room PLM values as owned by the project's editable `bank_8F.asm` macros,
-using existing stable state IDs. Common/state `plmChanges` are empty after verified
-migration; source is not duplicated into a new JSON object list. Historical edit
-operations may remain, but are not replayed as independent object inputs. Missing
-source, unknown versions or competing deltas block builds, including ROM-only
-export. An older editor must reject this schema rather than silently lose source
-ownership. Project Save persists source and metadata together; the normal
-backup-on-schema-upgrade rule applies.
+`versionMajor`, `versionMinor` and `buildName` label exported ROM/IPS filenames. They
+are independent of the project format. Room capability markers such as
+`asmDoorSourceVersion` and `asmLayoutSourceVersion` are also independent: 0 means
+GUI/ROM ownership and 1 means the supported authored source contract. They retain
+their ownership checks. JSON stores identities/ownership, not duplicate source
+values, compiled addresses or transient GUI projections. See the
+[source ownership contract](../asm/reference_workspace.md#reciprocal-sourcegui-ownership--first-authoring-slice),
+[structural doors](../asm/reference_workspace.md#structural-door-lists) and
+[symbolic conditions](../asm/reference_workspace.md#symbolic-incoming-door-conditions).
 
-The same beta schema has optional `asmInitialScrollSourceVersion` and
-`asmFxSourceVersion` room capability markers (default 0, current supported value 1).
-They own starting screen grids in `bank_8F.asm` and ordinary FX tables in
-`bank_83.asm`, respectively. Adoption retires the corresponding room/state deltas;
-stable state IDs link source wrappers, not compiled allocation addresses. Missing
-source, unsupported marker values or competing metadata fail builds explicitly.
-These markers are not copies of typed preview caches. Other resources retain their
-existing representation until their own reciprocal codec is implemented.
+### Explicit Offline Normalization
 
-Schema 10 adds `asmWorkspace.plmSourceBindings`: source label, original bank-$8F
-pointer and fixed record count. These are ownership/layout identities, not copied
-PLM values. Linked GUI/source editing reads the authored bank document. The schema
-bump prevents older editors from silently dropping this authority contract;
-existing projects still load with no bindings, and the normal backup-on-upgrade
-save rule applies. Supported source-only PLM changes are now also recognized
-automatically against the baseline; those require no saved binding. Existing
-explicit bindings retain their ownership until released, and GUI-only room edits
-keep their current serialized representation. See the [reciprocal ASM/GUI pilot](../asm/reference_workspace.md#reciprocal-sourcegui-ownership--first-authoring-slice).
+Close SMEDIT before rewriting project files. These commands preview, apply, or
+verify the active projects (one `.smedit` per immediate child folder):
 
-- `projectFormatVersion` is an internal serialization-safety marker. It lets the loader reject a
-  project written by an incompatible future build. It is not a user-selectable V1/V2 room model.
-- `versionMajor`, `versionMinor`, and `buildName` label exported ROM/IPS filenames. They do not
-  change project parsing or room behavior.
+```bash
+./gradlew :cli:normalizeProjects
+./gradlew :cli:normalizeProjects -Pargs='--apply projects'
+./gradlew :cli:normalizeProjects -Pargs='--check projects'
+```
 
-New and checked-in beta projects use the current schema. Markerless files from early beta builds
-remain readable. Before a save crosses an internal schema boundary, SMEDIT keeps one untouched
-`before-schema-upgrade` backup beside the project.
+The offline tool validates every input first, fills current serialized defaults,
+preserves every existing authored value/list/identity, verifies idempotent strict
+round trips, and refuses unknown fields or future formats. Applying writes creates
+verified recovery copies in a printed temporary directory and atomically replaces
+each unchanged input. It does not modify ROMs, ASM, assets, historical archives or
+existing backups. Explicit `.smedit` file paths may also be supplied. Ordinary
+Open/Save never invokes this tool and no longer generates schema-upgrade sidecars.
 
 ## ROM Compatibility Is Separate
 

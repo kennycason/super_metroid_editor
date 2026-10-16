@@ -62,7 +62,6 @@ internal class AsmRoomLayoutBridge(
             room.operations.clear(); room.operations.addAll(target.operations)
             room.levelResourceOperations.clear(); target.levelResourceOperations.forEach { (id, ops) -> room.levelResourceOperations[id] = ops.toMutableList() }
             room.states.zip(target.states).forEach { (state, saved) -> state.operations.clear(); state.operations.addAll(saved.operations) }
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             changed()
         }
         workspace.replaceProjectSource(PLM_SOURCE_FILE, before, after,

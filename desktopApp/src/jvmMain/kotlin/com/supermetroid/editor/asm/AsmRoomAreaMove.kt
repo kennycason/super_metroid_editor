@@ -232,7 +232,6 @@ internal class AsmRoomAreaMove(
         (if (undo) plan.mapsBefore else plan.mapsAfter).forEach { (key, value) -> plan.owner.minimapEdits[key] = value.toMutableList() }
         plan.owner.mapStationEdits.clear()
         (if (undo) plan.stationsBefore else plan.stationsAfter).forEach { (key, value) -> plan.owner.mapStationEdits[key] = value.toMutableList() }
-        plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
     }
 
     fun apply(plan: AsmRoomAreaMovePlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit): AsmRoomAreaMoveHistory {

@@ -152,8 +152,18 @@ class ProjectLifecycleTest {
         assertEquals("keep", file.readText())
     }
 
-    @Test fun `opening metadata-less project twice retains its preference key before first save`() {
+    @Test fun `opening metadata-less projects refuses implicit migration without rewriting them`() {
         val file = File(temporary, "Existing.smedit").apply { writeText("""{"romPath":"Base.smc"}""") }
-        assertEquals(ProjectFileService.loadProject(file).projectId, ProjectFileService.loadProject(file).projectId)
+        val original = file.readText()
+        assertThrows<IllegalArgumentException> { ProjectFileService.loadProject(file) }
+        assertEquals(original, file.readText())
+    }
+
+    @Test fun `saved project preferences follow identity but read only ROM preferences follow the ROM`() {
+        val project = SmEditProject("Base.smc")
+        assertEquals(project.projectId, ProjectLifecycle.preferenceKey(project, "/one/Project.smedit", project.romPath))
+        assertEquals(project.projectId, ProjectLifecycle.preferenceKey(project, "/moved/Project.smedit", project.romPath))
+        assertEquals(ProjectLifecycle.preferenceKey(project, "", project.romPath),
+            ProjectLifecycle.preferenceKey(SmEditProject(project.romPath), "", project.romPath))
     }
 }

@@ -1,6 +1,8 @@
 package com.supermetroid.editor.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Required
+import kotlin.random.Random
 
 const val TILE_EDIT_LAYER_1 = 1
 const val TILE_EDIT_LAYER_2 = 2
@@ -977,13 +979,15 @@ data class SmEditProject(
     var versionMinor: Int = 0,
     var buildName: String = "",
     /** Serialization schema only; unrelated to the exported ROM version above. */
-    var projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
-    val projectId: String = "",
+    @Required val projectFormatVersion: Int = CURRENT_PROJECT_FORMAT_VERSION,
+    @Required val projectId: String = newProjectId(),
     val baseRom: ProjectBaseRom? = null,
+    /** Distinguishes this development baseline from the retired numbered beta formats. */
+    @Required val projectFormat: String = PROJECT_FORMAT,
 ) {
     companion object {
-        // Source ownership cannot be silently ignored by older editors.
-        const val CURRENT_PROJECT_FORMAT_VERSION = 21
+        const val PROJECT_FORMAT = "smedit-project"
+        const val CURRENT_PROJECT_FORMAT_VERSION = 1
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 
@@ -1012,4 +1016,13 @@ data class SmEditProject(
     fun removeTileDefault(tilesetId: Int, metatileIndex: Int) {
         tileDefaults.remove(tileDefaultKey(tilesetId, metatileIndex))
     }
+}
+
+/** Opaque workspace identity; generated once for a new project, never inferred from its path. */
+private fun newProjectId(): String {
+    val bytes = Random.nextBytes(16)
+    bytes[6] = ((bytes[6].toInt() and 0x0F) or 0x40).toByte()
+    bytes[8] = ((bytes[8].toInt() and 0x3F) or 0x80).toByte()
+    val hex = bytes.joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}"
 }

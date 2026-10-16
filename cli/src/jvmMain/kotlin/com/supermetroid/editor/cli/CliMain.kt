@@ -339,7 +339,7 @@ private fun cmdBuild(
         ?: requestWithStrict
     val project = request.project?.let { projectPath ->
         val projectFile = resolveRelative(configFile.parentFile, projectPath)
-        SmEditProjectFormat.decode(jsonInput, projectFile.readText())
+        SmEditProjectFormat.decode(projectFile.readText())
     }
 
     val service = SmeditBuildService()

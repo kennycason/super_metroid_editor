@@ -60,10 +60,10 @@ class SmEditProjectMusicTest {
     }
 
     @Test
-    fun `old project json defaults to no music edits`() {
+    fun `current project without optional music data defaults to no music edits`() {
         val decoded = json.decodeFromString(
             SmEditProject.serializer(),
-            """{"romPath":"/tmp/sm.smc","rooms":{},"patches":[]}"""
+            """{"projectFormat":"smedit-project","projectFormatVersion":1,"projectId":"music-defaults-test","romPath":"/tmp/sm.smc","rooms":{},"patches":[]}"""
         )
 
         assertTrue(decoded.musicEdits.isEmpty())

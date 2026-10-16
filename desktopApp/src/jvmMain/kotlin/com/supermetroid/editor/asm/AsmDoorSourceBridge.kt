@@ -108,7 +108,6 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
             live.doorChanges.clear(); live.doorChanges.addAll(target.doorChanges)
             live.asmDoorSourceVersion = target.asmDoorSourceVersion; live.asmDoorProjection = target.asmDoorProjection
             if (undo && existing == null) owner.rooms.remove(key) else owner.rooms[key] = live
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
         fun notify() { refreshAll(); changed() }
         checkCurrent(false)
@@ -150,7 +149,6 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
             require(project() === owner && owner.rooms[owner.roomKey(roomId)] === room && room == expected) { "Undo newer room changes before restoring door ownership." }
             room.doorChanges.clear(); room.doorChanges.addAll(target.doorChanges)
             room.asmDoorSourceVersion = target.asmDoorSourceVersion; room.asmDoorProjection = target.asmDoorProjection
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             changed()
         }
         workspace.replaceProjectSource(DOOR_SOURCE_FILE, before, after,
@@ -203,7 +201,6 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
             afterUndo = afterUndo, afterRedo = afterRedo)
         else editUnmanaged(roomId, roomName, planned83, after83, afterUndo, afterRedo,
             additionalSources = mapOf(PLM_SOURCE_FILE to (before8F to after8F)))
-        owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         refreshAll()
     }
 

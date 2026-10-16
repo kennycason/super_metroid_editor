@@ -438,7 +438,6 @@ class EditorState(
         project.asmWorkspace.enabled = true
         project.asmWorkspace.sourceRevision = sourceRevision
         project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         asmModeRevision++
         dirty = true
     }
@@ -451,7 +450,6 @@ class EditorState(
         }
         if (project.asmWorkspace.buildMode == mode) return
         project.asmWorkspace.buildMode = mode
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         asmModeRevision++
         dirty = true
     }
@@ -459,7 +457,6 @@ class EditorState(
     fun setCommunitySamusSource(source: CommunitySamusSpriteSource): Boolean {
         if (project.customGfx.samusCommunitySource == source) return false
         project.customGfx.samusCommunitySource = source
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         samusSourceVersion++
         return true
@@ -468,7 +465,6 @@ class EditorState(
     fun restoreBaseRomSamus(): Boolean {
         if (project.customGfx.samusCommunitySource == null) return false
         project.customGfx.samusCommunitySource = null
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         samusSourceVersion++
         return true
@@ -1087,7 +1083,6 @@ class EditorState(
             }
             throw problem
         }
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         true // The source document owns this undo step; the unrelated room's GUI stack is untouched.
     }.getOrElse { postStatus("Room source blocked: ${it.message}"); false }
 
@@ -3735,7 +3730,6 @@ class EditorState(
             project.rooms.clear()
             project.rooms.putAll(remapped)
         }
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         val workspaceCatalog = sourceRoomCatalog?.let { catalog ->
             catalog.copy(
                 rooms = (catalog.rooms + projectRoomInfos()).distinctBy { it.getRoomIdAsInt() },
@@ -3995,7 +3989,6 @@ class EditorState(
                 automaticMapTiles,
             ),
         )
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
         postStatus("Created ${if (sourceRoom == null) "blank" else "cloned"} room '$name' with pause-map tiles")
@@ -4137,7 +4130,6 @@ class EditorState(
         project.roomNameOverrides.remove(project.roomKey(roomId))
         project.newRooms.removeAll { it.id == target.id }
         _roomEditOrder.remove(roomId)
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
         postStatus("Deleted project room '${preview.roomName}'.")
@@ -4493,7 +4485,6 @@ class EditorState(
         roomEdits.ensureStateManifest(parser)
         val state = selectedStateEdits(roomEdits)
             ?: return null
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         return state
     }
 
@@ -4857,7 +4848,6 @@ class EditorState(
         state.resources = state.resources.copy(level = resourceId)
         state.levelResourceChanged = false
         pruneUnusedLevelResources(roomEdits)
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         return true
     }
@@ -4958,7 +4948,6 @@ class EditorState(
             }
         }
         if (editCount > 0) {
-            project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             dirty = true
             editVersion++
         }
@@ -5041,7 +5030,6 @@ class EditorState(
         target.levelResourceChanged = true
         pruneUnusedLevelResources(roomEdits)
         layoutEditScopes[layoutScopeKey(currentRoomId, destinationResourceId)] = LayoutEditScope.ALL_SHARING_STATES
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         switchRoomState(target.id, romParser)
         layoutEditScopes[layoutScopeKey(currentRoomId, destinationResourceId)] = LayoutEditScope.ALL_SHARING_STATES
@@ -7713,7 +7701,6 @@ class EditorState(
         val stateEdits = roomEdits.stateEditsForId(stateId)
             ?: error("Room state '$stateId' is not available for room 0x${currentRoomId.toString(16)}")
         stateEdits.fxChange = change
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
     }
@@ -7736,7 +7723,6 @@ class EditorState(
         } else {
             stateEdits.doorFxChanges[key] = change
         }
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
     }
@@ -8420,7 +8406,6 @@ class EditorState(
             ?.let { romParser.parseRoomStatesWithData(currentRoomId).getOrNull(it) }
         currentBgScrolling = change?.bgScrolling ?: common?.bgScrolling ?: state?.bgScrolling ?: currentBgScrolling
         if (!canEditEmbeddedLayer2()) activeRoomLayer = RoomEditLayer.LAYER1
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
     }
@@ -8447,7 +8432,6 @@ class EditorState(
         }
         stateEdits.condition = condition
         stateEdits.conditionChanged = stateEdits.sourceCondition?.let { condition != it } ?: true
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
     }
@@ -8530,7 +8514,6 @@ class EditorState(
         newState.asmStatePropertiesProjection = template.asmStatePropertiesProjection
         roomEdits.states.add(insertionIndex, newState)
         roomEdits.stateGraphChanged = true
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
         return id
@@ -8556,7 +8539,6 @@ class EditorState(
         if (oldLevel != null && roomEdits.states.none { it.resources.level == oldLevel }) {
             layoutEditScopes.remove(layoutScopeKey(currentRoomId, oldLevel))
         }
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true; editVersion++
         return next
     }
@@ -8680,7 +8662,6 @@ class EditorState(
                 redoStack.addAll(retainedRedo)
                 if (undo) redoStack.add(operation) else undoStack.add(operation)
             }
-            project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             dirty = true; undoVersion++; editVersion++
         })
         return selectedAfter
@@ -8702,7 +8683,6 @@ class EditorState(
         roomEdits.states[index] = roomEdits.states[target]
         roomEdits.states[target] = state
         roomEdits.stateGraphChanged = true
-        project.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         dirty = true
         editVersion++
         return true

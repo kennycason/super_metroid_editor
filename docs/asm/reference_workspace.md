@@ -992,7 +992,7 @@ first **item → ASM** navigation for a supported GUI-owned room, the bridge:
    no generated per-object Common helpers; state-local exceptions stay local.
    Original vanilla declarations and surrounding source are unchanged.
 3. Verifies that decoding those macros reproduces every effective list, then
-   retires only the room/state `plmChanges` streams. Schema 11 stores
+   retires only the room/state `plmChanges` streams. Project JSON stores
    `RoomEdits.asmPlmSourceVersion = 1`, plus existing state identities—not a second
    authoritative copy of the object values. Historical operations and unrelated
    tile/enemy/FX edits remain intact.
@@ -1455,7 +1455,7 @@ encounter-specific knowledge; these checks are not a gameplay simulation.
 Source-only values are decoded from a revision-local typed lens, including during
 progressive startup, without waiting for the full IDE index or invoking Asar.
 Invalid drafts remain saveable, preserve the last valid live preview and block GUI
-overwrites/builds. JSON schema 13 stores `asmEnemySourceVersion = 1`, not another
+overwrites/builds. Project JSON stores `asmEnemySourceVersion = 1`, not another
 population/GFX value list; common/state enemy deltas retire with metadata-aware
 source undo. Header/population macro layout changes, native loader changes and
 competing original tables/state pointers/selectors fail explicitly instead of
@@ -1762,7 +1762,7 @@ edits prevent older GUI undo from overwriting them. Generation, themed generatio
 functional tile/PLM patterns, resize and whole-room reset retain their joint
 source/model history without reintroducing duplicate tile operations. Source
 builds use validated resource inputs and checked allocations/pointers; ROM-only
-export cannot ignore authored ownership. Project schema 14 records ownership and
+export cannot ignore authored ownership. Project JSON records ownership and
 resource identities only. Added-room projects and selection-to-multiple-state
 application remain guarded; copy/share complete layouts instead.
 
@@ -1806,7 +1806,7 @@ share these literal declarations and preserve unrelated comments. Like decoded
 layouts, these are typed input macros: the build validates them and uses the room
 encoder's checked placement plan, rather than invoking them at an arbitrary `org`.
 
-Project schema 15 records source ownership, not duplicate scalar values. Adoption
+Project JSON records source ownership, not duplicate scalar values. Adoption
 preserves earlier GUI overrides in the source, retires the JSON overrides and
 supports reciprocal undo. Invalid drafts remain saveable, retain a last-valid
 preview even when the first keystroke is incomplete, and block GUI writes and builds.
@@ -1894,7 +1894,7 @@ bounds validation rather than silently inheriting that exception.
 The inspector's **Advanced** controls distinguish None / Blue door / Escape gate
 closure; travel and elevator edits preserve unrelated flag bits.
 
-Schema 17 stores ownership only, retiring old GUI door overrides with reciprocal
+Project JSON stores ownership only, retiring old GUI door overrides with reciprocal
 undo/redo. Source-only undo also restores ownership. Invalid drafts remain
 saveable, show the last valid read-only preview (or an unavailable-source notice
 on a cold load), and block door GUI writes/builds. Other supported room resources
@@ -1942,7 +1942,7 @@ overlapping patch and competing original-bank edits.
 
 ## Structural door lists
 
-Schema 20 adds an optional `SmeditDoors_<room>_List()` declaration in bank `$83`.
+Structural doors use an optional `SmeditDoors_<room>_List()` declaration in bank `$83`.
 It contains ordered `dw SmeditDoors_<room>_Door_<identity>_Entry` references and a
 final `dw $0000`. Position is the doorway BTS index; declaration identities are
 independent and never renumbered or reused by GUI operations. Inactive declarations
@@ -2045,7 +2045,7 @@ conditions together is allowed. Direct ASM drafts may be temporarily invalid and
 remain saveable. Arbitrary executable predicate references, FX/save references to
 new records and stable project-created-room identities remain separate work.
 
-Schema 21 protects these authored tokens from older editors. Codec, semantic
+The current project-format contract includes these authored tokens. Codec, semantic
 linking, cross-room ordering, simulator, stale-draft, state lifecycle and reciprocal
 history regressions live beside the existing selector/door tests. The structural
 real-Asar scenario additionally reserves a former DoorDef address in source and
@@ -2123,8 +2123,8 @@ Incoming scroll diagnostics follow effective connection targets but do not show
 base-ROM scroll writes as the execution of authored arrivals; they identify
 source-managed effects as unsimulated while leaving the initial grid editable.
 Room-only JSON cannot carry these code dependencies and is explicitly refused;
-save the portable ASM project or build/export a ROM instead. Schema 18 marks this
-project compatibility boundary; no labels, code or guessed addresses are copied
+save the portable ASM project or build/export a ROM instead. This source-ownership
+boundary is explicit; no labels, code or guessed addresses are copied
 into persisted room deltas.
 
 Room reset retires unreferenced arrival macros with the door declarations and
@@ -2173,7 +2173,7 @@ and unrelated resources are preserved. The move does not interpret or rewrite
 arbitrary arrival routines, state logic or area-specific engine graphics behavior.
 Room index is preserved rather than guessed or renumbered.
 
-Schema 19 permits explicit all-zero historical save releases in earlier areas.
+Authored save resources permit explicit all-zero historical releases in earlier areas.
 Live save records must still match the owning room's current area, and historical
 releases must pass native slot ownership checks. The old and new fourteen-byte
 records retain complete build claims. JSON stores existing ownership/identity
@@ -2366,7 +2366,7 @@ predicates use the same validated build encoders as the GUI. Arbitrary expressio
 unknown IDs, malformed trees, invalid argument widths and default replacement are
 rejected. These are typed input macros, not tables to invoke at an arbitrary `org`.
 
-Schema 16 records `asmStateSelectorsSourceVersion = 1`; current predicate values
+Project JSON records `asmStateSelectorsSourceVersion = 1`; current predicate values
 and branch order are authored only in source. JSON retains native conditions as
 baseline provenance, not competing overrides. Invalid drafts remain saveable,
 retain last-good previews and block selector writes/builds. Adoption, raw/GUI

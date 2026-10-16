@@ -29,7 +29,7 @@ class ProjectNewRoomMaterializerTest {
         val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
         val text = json.encodeToString(SmEditProject.serializer(), original)
 
-        val reopened = SmEditProjectFormat.decode(json, text)
+        val reopened = SmEditProjectFormat.decode(text)
 
         assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, reopened.projectFormatVersion)
         assertEquals("room-save", reopened.newRooms.single().id)

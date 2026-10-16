@@ -76,7 +76,6 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
                 state.condition = saved.condition; state.conditionChanged = saved.conditionChanged
                 state.asmConditionProjection = saved.asmConditionProjection
             }
-            owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
             changed()
         }
         workspace.replaceProjectSource(PLM_SOURCE_FILE, before, after,

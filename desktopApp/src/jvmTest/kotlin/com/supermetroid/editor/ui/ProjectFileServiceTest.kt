@@ -97,29 +97,16 @@ class ProjectFileServiceTest {
     }
 
     @Test
-    fun `saving an upgraded project keeps one untouched pre-upgrade backup`() {
+    fun `current project save is stable and does not create schema upgrade sidecars`() {
         val projectFile = File(tempDir, "test.smedit")
-        val markerlessText = """{"romPath":"base.smc","rooms":{}}"""
-        projectFile.writeText(markerlessText)
-        val project = ProjectFileService.loadProject(projectFile)
-        assertEquals(SmEditProject.CURRENT_PROJECT_FORMAT_VERSION, project.projectFormatVersion)
-
-        assertTrue(
-            ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {},
-        )
-        val backup = File(tempDir, "test.smedit.before-schema-upgrade.backup")
-        assertTrue(backup.isFile)
-        assertEquals(markerlessText, backup.readText())
-        assertEquals(
-            SmEditProject.CURRENT_PROJECT_FORMAT_VERSION,
-            ProjectFileService.loadProject(projectFile).projectFormatVersion,
-        )
-
-        backup.writeText("do not overwrite")
-        assertTrue(
-            ProjectFileService.saveProject(project, projectFile.absolutePath, null, false) {},
-        )
-        assertEquals("do not overwrite", backup.readText())
+        val project = SmEditProject("base.smc")
+        assertTrue(ProjectFileService.saveProject(project, projectFile.path, null, false) {})
+        val original = projectFile.readText()
+        val reopened = ProjectFileService.loadProject(projectFile)
+        assertEquals(project.projectId, reopened.projectId)
+        assertTrue(ProjectFileService.saveProject(reopened, projectFile.path, null, false) {})
+        assertEquals(original, projectFile.readText())
+        assertEquals(listOf("test.smedit"), tempDir.listFiles()!!.map { it.name })
     }
 
     @Test
