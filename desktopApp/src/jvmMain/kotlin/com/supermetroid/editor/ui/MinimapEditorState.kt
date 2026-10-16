@@ -113,6 +113,21 @@ class MinimapEditorState {
         loadedParser = parser
         refreshAreaRooms(parser, area, editorState)
         selectedRoomIndex = selectRoomId?.let { id -> areaRooms.indexOfFirst { it.roomId == id } } ?: -1
+        val owner = editorState.project
+        editorState.prepareSourceMapTransaction = { transactionParser ->
+            if (editorState.project !== owner || loadedParser !== transactionParser) ({ _: com.supermetroid.editor.asm.AsmRoomAreaMoveHistory -> })
+            else {
+                require(pendingStroke == null && moveBuffer == null) {
+                    "Finish the map stroke or Apply/Cancel the floating room before this room operation."
+                }
+                val before = captureSnapshot(editorState)
+                val record: (com.supermetroid.editor.asm.AsmRoomAreaMoveHistory) -> Unit = { history ->
+                    loadArea(transactionParser, before.selectedArea, editorState, resetHistory = false, selectRoomId = before.selectedRoomId)
+                    recordRoomMove(before, history, transactionParser, editorState)
+                }
+                record
+            }
+        }
     }
 
     fun openRoom(parser: RomParser, roomId: Int, editorState: EditorState) {
@@ -662,7 +677,7 @@ class MinimapEditorState {
         return result
     }
 
-    /** Both kinds of move use the same session-only source/canvas/map history identity. */
+    /** Moves and relocation-aware Reset share a session-only source/canvas/map history identity. */
     private fun recordRoomMove(before: MinimapProjectSnapshot, history: com.supermetroid.editor.asm.AsmRoomAreaMoveHistory?,
                                parser: RomParser, editorState: EditorState) {
         val marker = before.copy(sourceHistory = history)
@@ -675,7 +690,7 @@ class MinimapEditorState {
         val after = captureSnapshot(editorState)
         history.beforeTransition = {
             if (editorState.project === owner && loadedParser === parser) require(pendingStroke == null && moveBuffer == null) {
-                "Finish the map stroke or Apply/Cancel the floating room before restoring this room move."
+                "Finish the map stroke or Apply/Cancel the floating room before restoring this room operation."
             }
         }
         history.onTransition = { undo ->

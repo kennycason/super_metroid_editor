@@ -10,10 +10,12 @@ internal data class AsmSelectorConversionPreview(
     val stateIds: List<String>,
 )
 
-/** A literal prefix-tree lens. No executed macros, arbitrary expressions or compiled addresses. */
+/** A typed prefix-tree lens. Arguments may name stable DoorDefs, never arbitrary expressions. */
 internal class AsmRoomSelectorsSource(val text: String) {
     private data class Definition(val range: IntRange, val bodyStart: Int, val body: String)
-    private data class Field(val range: IntRange, val size: Int, val value: Int)
+    private data class Field(val range: IntRange, val size: Int, val value: Int?, val door: ProjectSourceDoorReference?) {
+        val literal: Int get() = requireNotNull(value) { "A DoorDef symbol is only valid as an incoming-door argument." }
+    }
     private val definitions by lazy {
         val matches = Regex("(?m)^macro (SmeditSelectors_[A-Za-z0-9_]+)\\(\\)[ \\t]*(?:;[^\\r\\n]*)?\\r?\\n([\\s\\S]*?)^endmacro[ \\t]*(?:;[^\\r\\n]*)?(?:\\r?\\n|$)").findAll(text).toList()
         require(matches.map { it.groupValues[1] }.distinct().size == matches.size) { "Duplicate selector declarations." }
@@ -34,8 +36,11 @@ internal class AsmRoomSelectorsSource(val text: String) {
                         val clean = token.trim()
                         val first = start + token.indexOfFirst { !it.isWhitespace() }.coerceAtLeast(0)
                         val value = AsmPlmDocument.literal(clean)
-                        require(value != null && value in 0..if (size == 1) 255 else 65535) { "$name: invalid ${size * 8}-bit literal '$clean'." }
-                        add(Field(offset + first until offset + first + clean.length, size, value))
+                        val door = if (size == 2) ProjectSourceDoorReference.fromEntryLabel(clean) else null
+                        require(door != null || value != null && value in 0..if (size == 1) 255 else 65535) {
+                            "$name: expected a ${size * 8}-bit literal or an incoming-door DoorDef entry label, got '$clean'."
+                        }
+                        add(Field(offset + first until offset + first + clean.length, size, value, door))
                         start += token.length + 1
                     }
                 }
@@ -118,15 +123,17 @@ internal class AsmRoomSelectorsSource(val text: String) {
                 require(depth <= 8 && ++nodes <= 64 && cursor + 4 <= f.size) { "Truncated or oversized condition tree." }
                 val record = f.subList(cursor, cursor + 4); cursor += 4
                 require(record.map { it.size } == listOf(1, 1, 1, 2)) { "Selector node widths must be db kind, NOT, children; dw argument." }
-                val kind = requireNotNull(KINDS.getOrNull(record[0].value)) { "Unknown selector kind." }
-                val not = record[1].value
-                val children = record[2].value
+                val kind = requireNotNull(KINDS.getOrNull(record[0].literal)) { "Unknown selector kind." }
+                val not = record[1].literal
+                val children = record[2].literal
                 require(not in 0..1 && children <= 64) { "Invalid selector NOT/child count." }
                 val argument = record[3].value
+                val door = record[3].door
+                require(door == null || kind == ProjectRoomStateConditionKind.INCOMING_DOOR) { "A DoorDef symbol is only valid as an incoming-door argument." }
                 val typed = projectRoomStateCondition(kind)
                 require(typed.argumentKind !in setOf(ProjectRoomStateConditionArgumentKind.NONE, ProjectRoomStateConditionArgumentKind.CHILDREN) || argument == 0) { "Argument must be zero for ${kind.name}." }
                 return projectRoomStateCondition(kind, argument.takeUnless { typed.argumentKind in setOf(ProjectRoomStateConditionArgumentKind.NONE, ProjectRoomStateConditionArgumentKind.CHILDREN) },
-                    not == 1, List(children) { read(depth + 1) })
+                    not == 1, List(children) { read(depth + 1) }, door)
             }
             val condition = read(0)
             require(cursor == f.size) { "Trailing selector fields." }
@@ -147,11 +154,14 @@ internal class AsmRoomSelectorsSource(val text: String) {
         val existing = fields(name)
         return if (replacements.map { it.first } == existing.map { it.size }) {
             val literals = existing.mapIndexedNotNull { index, field ->
-                if (field.value == replacements[index].second) null else field.range to hex(replacements[index].second, field.size * 2)
+                val token = replacements[index].second
+                if (field.value != null && field.value == AsmPlmDocument.literal(token) ||
+                    field.door != null && field.door == ProjectSourceDoorReference.fromEntryLabel(token)) null
+                else field.range to token
             }
             // Refresh only our generated kind hint. Handwritten comments and unrelated spelling survive.
             val hints = condition.flattened().mapIndexedNotNull { index, node ->
-                val old = KINDS[existing[index * 4].value]
+                val old = KINDS[existing[index * 4].literal]
                 if (old == node.kind) null else {
                     val start = existing[index * 4 + 2].range.last + 1
                     val end = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
@@ -212,15 +222,19 @@ internal class AsmRoomSelectorsSource(val text: String) {
         private fun decodeId(hex: String): String { require(hex.length % 2 == 0); return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray().toString(Charsets.UTF_8) }
         fun conditionName(roomId: Int, id: String) = prefix(roomId) + "Condition_" + idHex(id)
         private fun hex(value: Int, width: Int) = "\$${value.toString(16).uppercase().padStart(width, '0')}"
-        private fun nodeFields(c: ProjectRoomStateCondition): List<Pair<Int, Int>> = listOf(1 to KINDS.indexOf(c.kind), 1 to if (c.negated) 1 else 0, 1 to c.children.size, 2 to (c.argument ?: 0)) + c.children.flatMap(::nodeFields)
+        private fun argumentToken(c: ProjectRoomStateCondition) = c.sourceDoor?.entryLabel ?: hex(c.argument ?: 0, 4)
+        private fun nodeFields(c: ProjectRoomStateCondition): List<Pair<Int, String>> = listOf(
+            1 to hex(KINDS.indexOf(c.kind), 2), 1 to hex(if (c.negated) 1 else 0, 2),
+            1 to hex(c.children.size, 2), 2 to argumentToken(c)) + c.children.flatMap(::nodeFields)
         private fun renderCondition(c: ProjectRoomStateCondition): String = buildString {
             appendLine("    db ${hex(KINDS.indexOf(c.kind), 2)}, ${hex(if (c.negated) 1 else 0, 2)}, ${hex(c.children.size, 2)} ; ${c.kind}: kind, NOT, child count")
-            appendLine("    dw ${hex(c.argument ?: 0, 4)} ; argument (zero for NONE/compound)")
+            appendLine("    dw ${argumentToken(c)} ; argument (zero for NONE/compound)")
             c.children.forEach { append(renderCondition(it)) }
         }
         fun render(roomId: Int, name: String, selectors: SourceRoomSelectors): String = buildString {
             require(selectors.routines.isEmpty()) { "Executable predicates must not be rendered as typed GUI data." }
             appendLine("; SMEDIT selectors v1 · ${name.replace('\n', ' ').replace('\r', ' ')} · typed input, not executable placement")
+            appendLine("; INCOMING_DOOR arguments may name an active SmeditDoors_ROOM_Door_ID_Entry; its address is resolved at build.")
             appendLine("; Bounded predicate import: mark a conditional macro body with '; smedit:predicate-v1'.")
             appendLine("; Room Info offers review/conversion; marked code cannot build until explicitly converted.")
             appendLine("; Custom executable logic: replace a NON-default condition body with '; smedit:managed-predicate-v1' and instructions.")

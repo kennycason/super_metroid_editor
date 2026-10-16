@@ -66,6 +66,7 @@ object SmEditCompiledRoomStateConditionFormat {
         }
 
         fun encode(node: ProjectRoomStateCondition, depth: Int) {
+            require(node.sourceDoor == null) { "Resolve symbolic DoorDefs before compiling condition bytecode." }
             require(depth <= MAX_DEPTH) { "Condition nesting exceeds $MAX_DEPTH levels" }
             nodeCount++
             require(nodeCount <= MAX_NODES) { "Condition contains more than $MAX_NODES nodes" }

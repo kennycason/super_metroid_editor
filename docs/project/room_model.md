@@ -248,8 +248,8 @@ editing model described below. See the [source/GUI ownership contract](../asm/re
 
 Door connections are room-wide source resources in bank `$83`, independent of
 state ownership and of their separate executable arrival ASM. Schema 17 introduced
-ownership via `asmDoorSourceVersion`, not persisted decoded door values. Native list order,
-count and DoorDef addresses remain fixed; GUI/source edits share exact literal
+ownership via `asmDoorSourceVersion`, not persisted decoded door values. Ordinary field edits retain native list order,
+count and DoorDef addresses; GUI/source edits share exact literal
 fields and reciprocal history. Door ASM opens as an editor-only staged bank;
 the first actual edit adopts ownership and text atomically, without a separate
 opt-in or dirty/build marker on inspection. Save/build inputs exclude staged
@@ -257,10 +257,40 @@ declarations. Explicit arrival creation also adopts DoorDefs in its single
 cross-bank action when necessary. Full record/list/header-pointer claims include
 unchanged bytes. Invalid drafts lock only door editing/building, not unrelated
 room resources. Native exceptional geometry is preserved, while new geometry is
-validated. Shared DoorDefs, structural list edits, added-room source identities
-and joint incoming-door resize changes remain guarded. Cross-area moves now use
+validated. Shared native DoorDefs and added-room source identities
+remain guarded. Incoming DoorDefs and proven scroll-only arrivals now participate
+in compound resize/Reset, with symbolic private routines, checked byte/word
+remapping and preserved native code/CPU context. Opaque geometry and externally
+shared canonical arrivals require ASM review; unrelated editing stays available.
+Cross-area moves now use
 the coordinated source/map/save transaction described below. See
 [door connection authoring](../asm/reference_workspace.md#reciprocal-door-connections).
+
+Schema 20 adds structural lists without a second JSON copy of their order or values.
+An optional source list refers to stable Door_N identities; native records keep
+their addresses and new records remain unresolved until checked allocation at
+build time. Completed GUI Add/Remove operations automatically adopt the required
+door/layout source and share source/canvas/map history. Removal checks every
+state and modeled pointer consumer, remaps higher BTS indices while preserving
+the elevator bit, and retains surviving identities/arrival names. ASM-first lists
+need no layout opt-in; builds inspect every final runtime state's doorway indices.
+Native Reset restores the original list. Symbolic state conditions are covered
+below; new DoorDef references in FX/save codecs and stable added-room source
+identities remain separate work.
+See [structural door lists](../asm/reference_workspace.md#structural-door-lists).
+
+Schema 21 links incoming-door state conditions to `(sourceRoomId, declarationId)`
+rather than BTS position or an allocated pointer. The source argument is the
+corresponding `SmeditDoors_*_Door_*_Entry` label; the condition picker lists live
+incoming connections, including new/unbuilt records, and the simulator uses their
+semantic identities. Typed AND/OR/NOT conditions remain reciprocal. Build planning
+allocates the full door graph before resolving conditions, so address movement
+and room iteration order do not change behavior. Only active connections leading
+to that room are accepted. Retired or retargeted references show a stale-selector
+warning, disable selector writes and block building without locking unrelated
+room resources. GUI removal and external-owner Reset refuse referenced identities.
+No additional Enable ASM prompt or build is needed to choose a new connection.
+FX/save and arbitrary executable-code references remain separate work.
 
 Schema 18 adds checked symbolic arrival references: marked bank-$8F routine bodies
 and native `DoorASM_*` labels resolve through actual assembler symbols, never a
@@ -284,9 +314,14 @@ checks. Cold exports and projection caches derive that area from source, never
 from transient GUI projections. No duplicate decoded values are persisted.
 Custom arrival code, other connection fields, room index and state logic remain
 unchanged. Added rooms, shared DoorDefs, special load records, slot expansion
-and joint geometry changes remain separate work.
-Reset after relocation is guarded until the move is undone; raw header ASM edits
-do not trigger hidden map/save migrations. See
+and arbitrary geometry/code transformations remain separate work.
+Reset after relocation now restores native room data/location, owned current/native
+map/reveal cells, save declarations and affected cross-area flags in one
+source/canvas/minimap transaction, including after reopen. Newer unrelated edits
+and neighboring arrival code survive; occupied original locations, reused slots
+and pending gestures block the whole reset. Required outgoing area corrections
+remain if neighboring rooms are still moved. Raw header ASM edits do not trigger
+hidden map/save migrations. See
 [coordinated ASM area moves](../asm/reference_workspace.md#coordinated-asm-area-moves).
 
 Same-area room drags now use the same atomic source/map history. An applied move

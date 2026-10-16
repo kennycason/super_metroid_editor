@@ -12,6 +12,15 @@ class DoorConnectionDiagnosticsTest {
     private val destinationRoomId = 0x9100
 
     @Test
+    fun `elevator flag is not part of an opening connection index`() {
+        val words = IntArray(256); val bts = IntArray(256)
+        for (y in 4..7) { words[y * 16] = 0x9000; bts[y * 16] = 0x82 }
+        val opening = doorwayOpenings(destinationRoomId, RoomGrids(16, 16, words, bts), 0).single()
+        assertEquals(2, opening.connectionIndex)
+        assertEquals(4, opening.tileCount)
+    }
+
+    @Test
     fun `opposite-facing reciprocal door is healthy`() {
         val diagnostic = evaluateDoorConnection(
             sourceRoomId = sourceRoomId,

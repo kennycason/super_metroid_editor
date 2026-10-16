@@ -45,6 +45,296 @@ import kotlin.test.assertContains
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
 
+    @Test fun `structural doors allocate symbolically preserve native identities and rebuild cold add remove reset histories`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true, progressive = true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val catalog = AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser)
+        editor.bindRoomSources(catalog, workspace)
+        val native = assertNotNull(parser.readRoomHeader(0x91F8))
+        val nativeDoors = parser.parseDoorList(native.doorOut)
+        editor.loadRoom(native.roomId, parser, native)
+        repeat(2) { editor.addProjectRoomDoor(native.roomId, native.roomId, 0, 0, 0, parser) }
+        val keptId = nativeDoors.size + 1
+        assertTrue(editor.createManagedDoorArrival(keptId), editor.statusMessage)
+        val conditional = project.rooms.getValue(project.roomKey(native.roomId)).states.first {
+            it.sourceCondition?.kind != ProjectRoomStateConditionKind.DEFAULT
+        }.id
+        val reference = com.supermetroid.editor.data.ProjectSourceDoorReference(native.roomId, keptId)
+        editor.setRoomStateCondition(conditional, projectRoomStateCondition(ProjectRoomStateConditionKind.ALL_OF, children = listOf(
+            projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, sourceDoor = reference),
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7, negated = true))), parser)
+        editor.addRoomState(conditional, projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR,
+            negated = true, sourceDoor = reference), parser)
+        val json = kotlinx.serialization.json.Json
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        val cw = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true, progressive = true) }
+        val ce = EditorState().apply { testMode = true; initForProject(fixture.projectFile, cold) }
+        val cb = ce.bindRoomSources(catalog, cw)
+        ce.loadRoom(native.roomId, parser, native)
+        val map = MinimapEditorState().apply { loadArea(parser, native.area, ce, selectRoomId = native.roomId) }
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(cw.saveAllSources(), cw.error); logs.clear()
+            return ProjectFileService.buildRom(json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), cold)), parser,
+                logs::add, logs::add, fixture.projectFile.path)
+        }
+        fun verify(result: RomBuildResult, count: Int) {
+            val built = RomParser(result.resultRom)
+            val h = assertNotNull(built.readRoomHeader(native.roomId))
+            assertNotEquals(native.doorOut, h.doorOut)
+            val entries = built.parseDoorList(h.doorOut)
+            assertEquals(count, entries.size)
+            assertEquals(nativeDoors, entries.take(nativeDoors.size))
+            val labels = assertNotNull(AsmBuildArtifactRepository().load(fixture.projectFile.path)).symbols.labels
+            assertEquals(labels.getValue("SmeditDoors_91F8_Door_${keptId}_Entry") and 65535, entries.last().doorDefPtr)
+            assertEquals(labels.getValue("SmeditArrival_91F8_Door_${keptId}_Entry") and 65535, entries.last().entryCode)
+            val condition = built.inspectRoomStates(native.roomId).states.first().condition
+            assertEquals(com.supermetroid.editor.rom.RoomStateConditionKind.ALL_OF, condition.kind)
+            assertEquals(com.supermetroid.editor.rom.RoomStateConditionKind.INCOMING_DOOR, condition.children.first().kind)
+            assertEquals(entries.last().doorDefPtr, condition.children.first().argument)
+            assertEquals(7, condition.children.last().argument); assertTrue(condition.children.last().negated)
+            val invertedDoor = built.inspectRoomStates(native.roomId).states.single {
+                it.condition.kind == com.supermetroid.editor.rom.RoomStateConditionKind.INCOMING_DOOR && it.condition.negated
+            }.condition
+            assertEquals(entries.last().doorDefPtr, invertedDoor.argument)
+            assertEquals(0, built.readUInt16At(built.snesToPc(0x8F0000 or h.doorOut) + count * 2))
+            assertContentEquals(fixture.rom.copyOfRange(parser.snesToPc(0x8F0000 or native.doorOut), parser.snesToPc(0x8F0000 or native.doorOut) + nativeDoors.size * 2),
+                result.resultRom.copyOfRange(parser.snesToPc(0x8F0000 or native.doorOut), parser.snesToPc(0x8F0000 or native.doorOut) + nativeDoors.size * 2))
+            for (info in parser.roomCatalog.rooms) {
+                val room = parser.readRoomHeader(info.getRoomIdAsInt()) ?: continue
+                assertEquals(parser.parseDoorList(room.doorOut), built.parseDoorList(room.doorOut), "Native DoorDefs remain at their original identities")
+            }
+            assertContentEquals(effectiveMinimapData(parser, cold, native.area).tiles, built.readMinimapTiles(native.area).tiles)
+        }
+        var added = assertNotNull(build(), logs.joinToString("\n")); verify(added, nativeDoors.size + 2)
+        val initialBuilt = RomParser(added.resultRom)
+        val initialPointer = initialBuilt.parseDoorList(initialBuilt.readRoomHeader(native.roomId)!!.doorOut).last().doorDefPtr
+        // Occupy the old allocation in authored ASM. Both the list and the nested
+        // condition must follow the DoorDef's newly planned address on the next build.
+        val bank83 = cb.doors.sourceText()
+        cw.replaceProjectSource(FX_SOURCE_FILE, bank83, bank83 + "\norg \$83${initialPointer.toString(16).uppercase()}\n db \$42 ; reserve old DoorDef location\n")
+        added = assertNotNull(build(), logs.joinToString("\n")); verify(added, nativeDoors.size + 2)
+        val relocated = RomParser(added.resultRom)
+        assertNotEquals(initialPointer, relocated.parseDoorList(relocated.readRoomHeader(native.roomId)!!.doorOut).last().doorDefPtr)
+        ce.removeProjectRoomDoor(native.roomId, nativeDoors.size)
+        val removed = assertNotNull(build(), logs.joinToString("\n")); verify(removed, nativeDoors.size + 1)
+        assertTrue(cw.undoSourceEdit(com.supermetroid.editor.asm.DOOR_SOURCE_FILE), cw.error)
+        assertContentEquals(added.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        map.redo(ce)
+        assertContentEquals(removed.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val current = RomParser(removed.resultRom)
+        val list = current.readRoomHeader(native.roomId)!!.doorOut
+        val terminator = current.snesToPc(0x8F0000 or list) + (nativeDoors.size + 1) * 2
+        cold.patches += SmPatch("door-list-conflict", "Cannot replace an owned list terminator", enabled = true,
+            writes = mutableListOf(PatchWrite(terminator.toLong(), listOf(0), expectedBytes = listOf(0))))
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        cold.patches.removeLast()
+        assertTrue(ce.resetCurrentRoomToOriginal(parser), ce.statusMessage)
+        val reset = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(native, RomParser(reset.resultRom).readRoomHeader(native.roomId))
+        assertEquals(nativeDoors, RomParser(reset.resultRom).parseDoorList(native.doorOut))
+        assertFalse(cb.doors.sourceText().contains("macro SmeditDoors_91F8_List()"))
+        assertTrue(cw.undoSourceEdit(com.supermetroid.editor.asm.DOOR_SOURCE_FILE), cw.error)
+        assertContentEquals(removed.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
+    @Test fun `coordinated resize authors incoming arrivals preserves native code and rebuilds cold reciprocal geometry`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState()
+        workspace.bindProject(fixture.projectFile.path, true, progressive = true)
+        val catalog = AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser)
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val bridge = editor.bindRoomSources(catalog, workspace)
+        val native = assertNotNull(parser.readRoomHeader(0x91F8)) // Landing Site: 9x5 -> the 50-screen boundary.
+        val neighbor = assertNotNull(parser.readRoomHeader(0x92B3)) // Gauntlet Entrance, native scroll $13 -> blue.
+        editor.loadRoom(native.roomId, parser, native)
+        project.getOrCreateRoom(neighbor.roomId).ensureStateManifest(parser)
+        bridge.doors.migrate(neighbor.roomId, neighbor.name)
+        val entrance = parser.parseDoorList(neighbor.doorOut).first { it.destRoomPtr == native.roomId && it.entryCode != 0 }
+        val index = parser.parseDoorList(neighbor.doorOut).indexOf(entrance)
+        val nativeWrites = com.supermetroid.editor.rom.analyzeDoorScrollAsm(parser, entrance.entryCode).writes
+        assertTrue(nativeWrites.any { it.screenIndex >= native.width })
+        val beforeModel = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val before8F = bridge.sourceText(); val before83 = bridge.doors.sourceText()
+        assertTrue(editor.resizeRoom(native.width, native.height, native.width + 1, native.height), editor.statusMessage)
+        val label = assertNotNull(bridge.doors.view(neighbor.roomId).resource).entries[index].arrival!!.label
+        val macro = label.removeSuffix("_Entry")
+        val adopted8F = bridge.sourceText(); val adopted83 = bridge.doors.sourceText()
+        assertTrue(workspace.undoSourceEdit(FX_SOURCE_FILE), workspace.error)
+        assertEquals(beforeModel, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        assertEquals(before8F, bridge.sourceText()); assertEquals(before83, bridge.doors.sourceText())
+        assertTrue(editor.redo(), editor.statusMessage)
+        assertEquals(adopted8F, bridge.sourceText()); assertEquals(adopted83, bridge.doors.sourceText())
+        val body = authoredMacroBody(bridge.sourceText(), macro)
+        // A user source edit remains authoritative through save/reopen and the next resize.
+        assertContains(body, "lda.b #\$01")
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bridge.sourceText(), bridge.sourceText().replaceFirst(body,
+            body.replaceFirst("lda.b #\$01", "lda.b #\$02 ; authored arrival color")))
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        val json = kotlinx.serialization.json.Json
+        val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        val reopenedWorkspace = AsmWorkspaceState()
+        reopenedWorkspace.bindProject(fixture.projectFile.path, true, progressive = true)
+        val reopenedEditor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, cold) }
+        val reopenedBridge = reopenedEditor.bindRoomSources(catalog, reopenedWorkspace)
+        reopenedEditor.loadRoom(native.roomId, parser, native)
+        val map = MinimapEditorState().apply { loadArea(parser, native.area, reopenedEditor, selectRoomId = native.roomId) }
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(reopenedWorkspace.saveAllSources(), reopenedWorkspace.error)
+            logs.clear()
+            val headless = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), cold))
+            return ProjectFileService.buildRom(headless, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        fun verify(result: RomBuildResult, width: Int) {
+            val built = RomParser(result.resultRom)
+            assertEquals(width, built.readRoomHeader(native.roomId)!!.width)
+            val labels = assertNotNull(AsmBuildArtifactRepository().load(fixture.projectFile.path)).symbols.labels
+            val compiledDoor = built.parseDoorList(neighbor.doorOut)[index]
+            assertEquals(labels.getValue(label) and 65535, compiledDoor.entryCode)
+            assertEquals(entrance.copy(entryCode = compiledDoor.entryCode), compiledDoor)
+            // The known dispatch-context prefix is LDA.w #native; STA.b $12. The
+            // remaining emitted instructions must write precisely the resized coordinates.
+            val expected = nativeWrites.map { it.copy(scrollValue = 2,
+                addressLowByte = 0x20 + (it.screenIndex / native.width) * width + it.screenIndex % native.width) }
+            assertEquals(expected, com.supermetroid.editor.rom.analyzeDoorScrollAsm(built, compiledDoor.entryCode + 5).writes)
+            val pc = parser.snesToPc(0x8F0000 or entrance.entryCode)
+            assertContentEquals(fixture.rom.copyOfRange(pc, pc + 11), result.resultRom.copyOfRange(pc, pc + 11), "Never patch the native routine in place")
+            for (info in parser.roomCatalog.rooms) {
+                val source = assertNotNull(parser.readRoomHeader(info.getRoomIdAsInt()))
+                parser.parseDoorList(source.doorOut).zip(built.parseDoorList(source.doorOut)).forEach { (old, current) ->
+                    assertEquals(old.copy(entryCode = if (old.doorDefPtr == entrance.doorDefPtr) compiledDoor.entryCode else old.entryCode), current)
+                }
+            }
+            assertContentEquals(effectiveMinimapData(parser, cold, native.area).tiles, built.readMinimapTiles(native.area).tiles)
+            assertContentEquals(effectiveMapStationData(parser, cold, native.area).revealed, built.readMapStationData(native.area).revealed)
+            assertContains(reopenedBridge.sourceText(), "; authored arrival color")
+            assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+        }
+        val grownModel = json.encodeToString(SmEditProject.serializer(), cold)
+        val grown8F = reopenedBridge.sourceText(); val grown83 = reopenedBridge.doors.sourceText()
+        val grown = assertNotNull(build(), logs.joinToString("\n")); verify(grown, native.width + 1)
+        assertTrue(reopenedEditor.resizeRoom(native.width + 1, native.height, native.width, native.height), reopenedEditor.statusMessage)
+        val returnedModel = json.encodeToString(SmEditProject.serializer(), cold)
+        val returned8F = reopenedBridge.sourceText(); val returned83 = reopenedBridge.doors.sourceText()
+        val returned = assertNotNull(build(), logs.joinToString("\n")); verify(returned, native.width)
+        assertTrue(reopenedWorkspace.undoSourceEdit(FX_SOURCE_FILE), reopenedWorkspace.error)
+        assertEquals(grownModel, json.encodeToString(SmEditProject.serializer(), cold))
+        assertEquals(grown8F, reopenedBridge.sourceText()); assertEquals(grown83, reopenedBridge.doors.sourceText())
+        assertContentEquals(grown.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        map.redo(reopenedEditor)
+        assertEquals(returnedModel, json.encodeToString(SmEditProject.serializer(), cold))
+        assertEquals(returned8F, reopenedBridge.sourceText()); assertEquals(returned83, reopenedBridge.doors.sourceText())
+        assertContentEquals(returned.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val actual = RomParser(returned.resultRom).parseDoorList(neighbor.doorOut)[index]
+        val arrivalPc = parser.snesToPc(0x8F0000 or actual.entryCode)
+        cold.patches += SmPatch("arrival-resize-conflict", "Cannot replace source-owned arrival code", enabled = true,
+            writes = mutableListOf(PatchWrite(arrivalPc.toLong(), listOf(0xEA), expectedBytes = listOf(returned.resultRom[arrivalPc].toInt() and 255))))
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        cold.patches.removeLast()
+        assertContentEquals(returned.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertTrue(reopenedEditor.resizeRoom(native.width, native.height, native.width + 1, native.height), reopenedEditor.statusMessage)
+        val beforeReset = json.encodeToString(SmEditProject.serializer(), cold)
+        val beforeReset8F = reopenedBridge.sourceText(); val beforeReset83 = reopenedBridge.doors.sourceText()
+        assertTrue(reopenedEditor.resetCurrentRoomToOriginal(parser), reopenedEditor.statusMessage)
+        assertFalse(cold.rooms.getValue(cold.roomKey(native.roomId)).hasEdits)
+        val reset = assertNotNull(build(), logs.joinToString("\n")); verify(reset, native.width)
+        assertEquals(native, RomParser(reset.resultRom).readRoomHeader(native.roomId))
+        assertTrue(reopenedWorkspace.undoSourceEdit(FX_SOURCE_FILE), reopenedWorkspace.error)
+        assertEquals(beforeReset, json.encodeToString(SmEditProject.serializer(), cold))
+        assertEquals(beforeReset8F, reopenedBridge.sourceText()); assertEquals(beforeReset83, reopenedBridge.doors.sourceText())
+        verify(assertNotNull(build(), logs.joinToString("\n")), native.width + 1)
+        map.redo(reopenedEditor)
+        assertContentEquals(reset.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+    }
+
+    @Test fun `relocated room reset reopens headless returns native data and builds exact reciprocal undo redo`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState(sourceIndexLoader = { com.supermetroid.editor.asm.AsmProjectWorkspaceRepository().loadRoomWorkspace(it) })
+        workspace.bindProject(fixture.projectFile.path, true, progressive = true)
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val catalog = AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser)
+        val bridge = editor.bindRoomSources(catalog, workspace)
+        val native = assertNotNull(parser.readRoomHeader(0xB167))
+        editor.loadRoom(native.roomId, parser, native)
+        assertTrue(editor.createManagedDoorArrival(0), editor.statusMessage)
+        val ownArrival = assertNotNull(editor.doorArrivalBindings[0]).label.removeSuffix("_Entry")
+        val neighbor = parser.roomCatalog.rooms.mapNotNull { parser.readRoomHeader(it.getRoomIdAsInt()) }.first { candidate ->
+            candidate.roomId != native.roomId && parser.parseDoorList(candidate.doorOut).any { it.destRoomPtr == native.roomId }
+        }
+        val incomingIndex = parser.parseDoorList(neighbor.doorOut).indexOfFirst { it.destRoomPtr == native.roomId }
+        bridge.doors.createManagedArrival(neighbor.roomId, incomingIndex, neighbor.name)
+        val arrival = assertNotNull(bridge.doors.view(neighbor.roomId).resource).entries[incomingIndex].arrival!!.label
+        val arrivalBody = authoredMacroBody(bridge.sourceText(), arrival.removeSuffix("_Entry"))
+        val map = MinimapEditorState().apply { loadArea(parser, native.area, editor, selectRoomId = native.roomId) }
+        assertTrue(map.reassignSelectedRoomArea(1, editor)!!.success, editor.statusMessage)
+        val migrated = bridge.saveResources(native.roomId).single { !it.cleared }
+        // This edit is newer than the move, but belongs to the neighboring room.
+        val neighborDoor = assertNotNull(bridge.doors.view(neighbor.roomId).resource).entries[incomingIndex].entry()
+        bridge.doors.edit(neighbor.roomId, incomingIndex, neighborDoor.copy(distFromDoor = 0x1234))
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        val json = kotlinx.serialization.json.Json
+        val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        val reopenedWorkspace = AsmWorkspaceState(sourceIndexLoader = { com.supermetroid.editor.asm.AsmProjectWorkspaceRepository().loadRoomWorkspace(it) })
+        reopenedWorkspace.bindProject(fixture.projectFile.path, true, progressive = true)
+        val reopenedEditor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, cold) }
+        val reopenedBridge = reopenedEditor.bindRoomSources(catalog, reopenedWorkspace)
+        reopenedEditor.loadRoom(native.roomId, parser, native)
+        assertTrue(reopenedEditor.undoStack.isEmpty(), "Reset must not need session move history")
+        val beforeModel = json.encodeToString(SmEditProject.serializer(), cold)
+        val before8F = reopenedBridge.sourceText(); val before83 = reopenedBridge.doors.sourceText()
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(reopenedWorkspace.saveAllSources(), reopenedWorkspace.error)
+            logs.clear()
+            val headless = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), cold))
+            return ProjectFileService.buildRom(headless, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        val movedBuild = assertNotNull(build(), logs.joinToString("\n"))
+        assertTrue(reopenedEditor.resetCurrentRoomToOriginal(parser), reopenedEditor.statusMessage)
+        val afterModel = json.encodeToString(SmEditProject.serializer(), cold)
+        val after8F = reopenedBridge.sourceText(); val after83 = reopenedBridge.doors.sourceText()
+        assertFalse(cold.rooms.getValue(cold.roomKey(native.roomId)).hasEdits)
+        assertFalse(after8F.contains("macro $ownArrival()"), "Reset retires this room's own managed arrival, not its neighbor's")
+        assertEquals(arrivalBody, authoredMacroBody(after8F, arrival.removeSuffix("_Entry")))
+        val resetBuild = assertNotNull(build(), logs.joinToString("\n"))
+        val built = RomParser(resetBuild.resultRom)
+        assertEquals(native, built.readRoomHeader(native.roomId))
+        assertEquals(parser.parseDoorList(native.doorOut), built.parseDoorList(native.doorOut))
+        val neighborBuilt = built.parseDoorList(neighbor.doorOut)[incomingIndex]
+        val neighborNative = parser.parseDoorList(neighbor.doorOut)[incomingIndex]
+        val labels = assertNotNull(AsmBuildArtifactRepository().load(fixture.projectFile.path)).symbols.labels
+        assertEquals(neighborNative.copy(distFromDoor = 0x1234, entryCode = labels.getValue(arrival) and 65535), neighborBuilt)
+        for (area in setOf(native.area, 1)) {
+            assertContentEquals(effectiveMinimapData(parser, cold, area).tiles, built.readMinimapTiles(area).tiles)
+            assertContentEquals(effectiveMapStationData(parser, cold, area).revealed, built.readMapStationData(area).revealed)
+            for (slot in 0 until parser.saveStationSlotCount(area))
+                assertEquals(parser.readSaveEntry(area, slot)!!.words(), built.readSaveEntry(area, slot)!!.words())
+        }
+        assertEquals(parser.readSaveEntry(1, migrated.slot)!!.words(), built.readSaveEntry(1, migrated.slot)!!.words())
+        assertTrue(reopenedWorkspace.undoSourceEdit(FX_SOURCE_FILE), reopenedWorkspace.error)
+        assertEquals(beforeModel, json.encodeToString(SmEditProject.serializer(), cold))
+        assertEquals(before8F, reopenedBridge.sourceText()); assertEquals(before83, reopenedBridge.doors.sourceText())
+        assertContentEquals(movedBuild.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertTrue(reopenedEditor.redo(), reopenedEditor.statusMessage)
+        assertEquals(afterModel, json.encodeToString(SmEditProject.serializer(), cold))
+        assertEquals(after8F, reopenedBridge.sourceText()); assertEquals(after83, reopenedBridge.doors.sourceText())
+        assertContentEquals(resetBuild.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `same area room drags build exact maps and reciprocal header history without rewriting saves or arrival code`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)

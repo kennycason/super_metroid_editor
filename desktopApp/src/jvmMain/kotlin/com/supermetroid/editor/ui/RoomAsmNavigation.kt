@@ -16,12 +16,12 @@ internal class RoomAsmNavigation(
 ) {
     fun open(request: RoomAsmSourceRequest): Boolean = openRoom(editor.currentRoomId, roomName(), request)
 
-    fun openArrival(doorIndex: Int, create: Boolean = false): Boolean {
+    fun openArrival(doorIndex: Int, create: Boolean = false, expectedIdentity: Int? = null): Boolean {
         if (!editor.asmNavigationEnabled) return false
         return runCatching {
             val bridge = requireNotNull(editor.asmPlmSourceBridge) { "Wait for the project ASM workspace." }
             require(editor.roomSourceParser === bridge.catalog.parser) { "Wait for the current room/ASM link." }
-            if (create) require(editor.createManagedDoorArrival(doorIndex)) { editor.statusMessage }
+            if (create) require(editor.createManagedDoorArrival(doorIndex, expectedIdentity)) { editor.statusMessage }
             val binding = editor.doorArrivalBindings[doorIndex]
             val entry = requireNotNull(editor.doorEntries.getOrNull(doorIndex)) { "Reopen the current connection." }
             val line = if (binding == null) null else bridge.doors.arrivalLine(editor.currentRoomId, doorIndex)
@@ -35,8 +35,20 @@ internal class RoomAsmNavigation(
         }.getOrElse { editor.postStatus("Arrival navigation unavailable: ${it.message}"); false }
     }
 
-    fun openFromAsm(link: AsmRoomSourceLink): Boolean = openRoom(link.roomId, link.roomName,
-        RoomAsmSourceRequest(link.kind, door = link.doorIndex), link.sourceStateIndex)
+    fun openFromAsm(link: AsmRoomSourceLink): Boolean {
+        var index = link.doorIndex
+        val doors = editor.asmPlmSourceBridge?.doors
+        // Native Source/Assets links carry a native declaration identity, not the
+        // current BTS position after a structural deletion/reorder.
+        if (link.kind == RoomAsmSourceKind.DOORS && index != null && doors?.isManaged(link.roomId) == true) {
+            index = doors.view(link.roomId).resource?.entries?.indexOfFirst { it.identity == link.doorIndex }
+            if (index == null || index < 0) {
+                editor.postStatus("This native connection was removed from the authored list. Choose a current connection; its old declaration is retained in ASM.")
+                return false
+            }
+        }
+        return openRoom(link.roomId, link.roomName, RoomAsmSourceRequest(link.kind, door = index), link.sourceStateIndex)
+    }
 
     private fun openRoom(roomId: Int, name: String, requested: RoomAsmSourceRequest, sourceStateIndex: Int? = null,
                          refreshView: Boolean = false, redoHead: AsmSourceTextChange? = null): Boolean {

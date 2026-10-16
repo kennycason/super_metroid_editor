@@ -11,10 +11,11 @@ data class SourceDoorArrival(val label: String, val snesAddress: Int? = null) {
     }
 }
 
-/** Fixed native connection identities; values are ephemeral decoded ASM, never duplicate JSON deltas. */
-data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arrival: SourceDoorArrival? = null) {
+/** Stable declaration identity is independent from its current BTS/list position. Zero is an unallocated new DoorDef. */
+data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arrival: SourceDoorArrival? = null,
+                          val identity: Int = change.doorIndex) {
     init {
-        require(doorDefPtr in 0x8000..0xFFF4 && change.doorIndex in 0..15) { "Invalid DoorDef identity." }
+        require((doorDefPtr == 0 || doorDefPtr in 0x8000..0xFFF4) && change.doorIndex in 0..15 && identity in 0..65535) { "Invalid DoorDef identity." }
         // Direction 0..3: no closure, 4..7: blue door, 8..11: escape gate (bank $82:E8EB).
         require(change.destRoomPtr in 0x8000..0xFFFE && change.bitflag in 0..65535 && change.bitflag ushr 8 in 0..11 &&
             change.doorCapCode in 0..65535 && change.screenX in 0..255 && change.screenY in 0..255 &&
@@ -33,10 +34,13 @@ data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arriv
     }.toByteArray()
 }
 
-data class SourceRoomDoors(val doorOutPtr: Int, val entries: List<SourceRoomDoor>) {
+data class SourceRoomDoors(val doorOutPtr: Int, val entries: List<SourceRoomDoor>, val structural: Boolean = false) {
     init {
-        require(doorOutPtr in 0x8000..0xFFFE && entries.size in 1..16 && doorOutPtr + entries.size * 2 <= 0x10000 &&
-            entries.map { it.change.doorIndex } == entries.indices.toList() && entries.map { it.doorDefPtr }.distinct().size == entries.size) {
+        require((doorOutPtr in 0x8000..0xFFFE || structural && doorOutPtr == 0) && entries.size in (if (structural) 0 else 1)..16 &&
+            (structural || doorOutPtr + entries.size * 2 <= 0x10000) && entries.map { it.change.doorIndex } == entries.indices.toList() &&
+            entries.map { it.identity }.distinct().size == entries.size &&
+            entries.filter { it.doorDefPtr != 0 }.map { it.doorDefPtr }.distinct().size == entries.count { it.doorDefPtr != 0 } &&
+            (structural || entries.all { it.doorDefPtr != 0 && it.identity == it.change.doorIndex })) {
             "Door source must cover each existing connection exactly once; list growth/reordering needs a structural transaction."
         }
     }
@@ -51,15 +55,17 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
         "Door-list relocation is not supported by the fixed DoorDef source format."
     }
     val native = parser.parseDoorList(header.doorOut)
-    require(native.map { it.doorDefPtr } == source.entries.map { it.doorDefPtr }) { "Door count/order/identities changed; repair the native list before building." }
+    require(if (source.structural) source.entries.all { door ->
+        door.doorDefPtr == (native.getOrNull(door.identity)?.doorDefPtr ?: 0)
+    } else native.map { it.doorDefPtr } == source.entries.map { it.doorDefPtr }) { "Door count/order/identities changed; repair the native list before building." }
     for (door in source.entries) {
         val target = requireNotNull(dimensions(door.change.destRoomPtr)) { "Door ${door.change.doorIndex + 1}: destination has no readable room header." }
         // Vanilla includes unused/special entrances outside their target dimensions (e.g. Waterway
         // E-Tank -> Kraid Refill). Adoption and distance edits must retain them byte-for-byte, not
         // normalize them. Only the original geometry in the original-sized destination is exempt.
-        val baseline = native[door.change.doorIndex]
+        val baseline = native.getOrNull(door.identity)
         val nativeTarget = parser.readRoomHeader(door.change.destRoomPtr)?.let { it.width to it.height }
-        if (target == nativeTarget && door.entry() == baseline.copy(
+        if (baseline != null && target == nativeTarget && door.entry() == baseline.copy(
                 bitflag = (baseline.bitflag and 0x40.inv()) or (door.change.bitflag and 0x40),
                 distFromDoor = door.change.distFromDoor, entryCode = door.change.entryCode)) continue
         require(door.change.screenX < target.first && door.change.screenY < target.second) { "Door ${door.change.doorIndex + 1}: arrival screen is outside the destination room." }
@@ -70,9 +76,21 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
 }
 
 fun validateSourceDoorOwnership(roomId: Int, source: SourceRoomDoors, parser: RomParser) {
-    val pointers = source.entries.map { it.doorDefPtr }.toSet()
+    val pointers = source.entries.map { it.doorDefPtr }.filter { it != 0 }.toSet()
     require(parser.roomCatalog.rooms.none { info -> info.getRoomIdAsInt() != roomId &&
         parser.readRoomHeader(info.getRoomIdAsInt())?.let { h -> parser.parseDoorList(h.doorOut).any { it.doorDefPtr in pointers } } == true }) {
         "DoorDefs shared by multiple rooms need an explicit joint-owner workflow; no room was changed."
+    }
+}
+
+/** Structural lists must not turn a doorway tile in any state into an out-of-list read. */
+fun validateStructuralDoorLayout(layout: SourceRoomLayoutResource, count: Int) {
+    val bytes = layout.bytes()
+    val layerBytes = layout.values[0] or (layout.values[1] shl 8)
+    for (index in 0 until layout.width * layout.height) {
+        if ((layout.values[3 + index * 2] ushr 4) == 9) {
+            val bts = bytes[2 + layerBytes + index].toInt() and 0x7F // Bit 7 is the elevator flag, not part of the list index.
+            require(bts < count) { "${layout.identity}: doorway (${index % layout.width}, ${index / layout.width}) uses missing connection ${bts + 1}. Relink or erase it first." }
+        }
     }
 }

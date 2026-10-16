@@ -48,18 +48,20 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
         val header = requireNotNull(parser.readRoomHeader(room.roomId))
         val native = parser.parseDoorList(header.doorOut)
         val declared = Regex("(?m)^macro (${prefix(room.roomId)}Door_[0-9]+)\\(").findAll(text).map { it.groupValues[1] }.toList()
-        require(declared.size == native.size && declared.toSet() == native.indices.map { name(room.roomId, it) }.toSet()) {
+        require(declared.distinct().size == declared.size) { "Duplicate door declarations." }
+        val order = order(room.roomId)
+        require(order != null || declared.size == native.size && declared.toSet() == native.indices.map { name(room.roomId, it) }.toSet()) {
             "Door source must cover the existing list exactly; added, missing or duplicate connection declarations need a structural workflow."
         }
-        val entries = native.mapIndexed { index, original ->
-            val name = name(room.roomId, index)
+        val entries = (order ?: native.indices.toList()).mapIndexed { index, identity ->
+            val name = name(room.roomId, identity)
             val fields = fields(name)
             require(fields.map { it.width } == listOf(2, 1, 1, 1, 1, 1, 1, 2, 2)) { "$name: DoorDef field widths/order changed; expected 12 bytes." }
             val v = fields.map { it.value ?: 0 }
-            SourceRoomDoor(original.doorDefPtr, DoorChange(index, v[0], v[1] or (v[2] shl 8), v[3] or (v[4] shl 8), v[5], v[6], v[7], v[8]),
-                fields.last().symbol?.let { SourceDoorArrival(it) })
+            SourceRoomDoor(native.getOrNull(identity)?.doorDefPtr ?: 0, DoorChange(index, v[0], v[1] or (v[2] shl 8), v[3] or (v[4] shl 8), v[5], v[6], v[7], v[8]),
+                fields.last().symbol?.let { SourceDoorArrival(it) }, identity)
         }
-        return SourceRoomDoors(header.doorOut, entries).also { value ->
+        return SourceRoomDoors(header.doorOut, entries, order != null).also { value ->
             if (dimensions == null) validateSourceRoomDoors(room, value, parser) else validateSourceRoomDoors(room, value, parser, dimensions)
         }
     }
@@ -71,7 +73,7 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
         }
         val values = listOf(entry.destRoomPtr, entry.bitflag and 255, entry.bitflag ushr 8, entry.doorCapCode and 255,
             entry.doorCapCode ushr 8, entry.screenX, entry.screenY, entry.distFromDoor, entry.entryCode)
-        val result = fields(name(room.roomId, index)).mapIndexedNotNull { i, field ->
+        val result = fields(name(room.roomId, current.entries[index].identity)).mapIndexedNotNull { i, field ->
             if (field.symbol != null || field.value == values[i]) null else field.range to hex(values[i], field.width * 2)
         }.sortedByDescending { it.first.first }.fold(text) { result, (range, value) -> result.replaceRange(range, value) }
         AsmDoorSource(result, arrivalSource, nativeSymbols).resource(room, parser, dimensions)
@@ -79,25 +81,70 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
     }
     fun withArrival(roomId: Int, index: Int, label: String): String {
         validateArrival(label)
-        return text.replaceRange(fields(name(roomId, index)).last().range, label)
+        val identity = order(roomId)?.get(index) ?: index
+        return text.replaceRange(fields(name(roomId, identity)).last().range, label)
     }
     fun line(roomId: Int, index: Int = 0): Int {
-        val name = name(roomId, index)
+        val order = order(roomId)
+        val name = if (order != null && (index < 0 || order.isEmpty())) listName(roomId) else order?.getOrNull(index)?.let { name(roomId, it) } ?: name(roomId, index)
         val start = requireNotNull(Regex("(?m)^macro $name\\(\\)").find(text)) { "Missing door declaration $name." }.range.first
         return text.take(start).count { it == '\n' }
     }
+    /** An explicit order is the sole authority for structural lists; inactive macros retain identities/notes. */
+    fun order(roomId: Int): List<Int>? {
+        val matches = Regex("(?m)^macro ${listName(roomId)}\\(\\)[ \\t]*(?:;[^\\r\\n]*)?\\r?\\n([\\s\\S]*?)^endmacro[ \\t]*(?:;[^\\r\\n]*)?(?:\\r?\\n|$)").findAll(text).toList()
+        require(matches.size <= 1) { "Duplicate door-list declarations." }
+        val match = matches.singleOrNull() ?: return null
+        val tokens = match.groupValues[1].lineSequence().map { asmCodeBeforeComment(it).trim() }.filter { it.isNotEmpty() }.flatMap { line ->
+            require(line.startsWith("dw ") || line.startsWith("dw\t")) { "Door list expects symbolic dw entries and a final dw \$0000." }
+            line.drop(2).split(',').map { it.trim() }.asSequence()
+        }.toList()
+        require(tokens.isNotEmpty() && AsmPlmDocument.literal(tokens.last()) == 0) { "Door list requires a final dw \$0000 terminator." }
+        val ids = tokens.dropLast(1).map { token ->
+            requireNotNull(Regex("${Regex.escape(prefix(roomId))}Door_([0-9]+)_Entry").matchEntire(token)) {
+                "Door list expects this room's stable Door_N_Entry symbols, not numeric addresses."
+            }.groupValues[1].toInt()
+        }
+        require(ids.size <= 16 && ids.distinct().size == ids.size) { "Door list supports at most 16 distinct connections." }
+        return ids
+    }
+    fun withOrder(roomId: Int, ids: List<Int>): String {
+        val old = Regex("(?m)^macro ${listName(roomId)}\\(\\)[^\\r\\n]*\\r?\\n[\\s\\S]*?^endmacro[^\\r\\n]*(?:\\r?\\n|$)").find(text)
+        val notes = old?.value?.lineSequence()?.mapNotNull { line ->
+            line.indexOf(';').takeIf { it >= 0 }?.let { line.substring(it) }
+                ?.takeUnless { it.contains("List position is") || it.contains("End of connections") }
+        }?.joinToString("") { "    $it\n" }.orEmpty()
+        val replacement = renderOrder(roomId, ids).replaceFirst("()\n", "()\n$notes").replace("\n", if (text.contains("\r\n")) "\r\n" else "\n")
+        return if (old == null) text + (if (text.contains("\r\n")) "\r\n" else "\n") + replacement else text.replaceRange(old.range, replacement)
+    }
+    fun nextIdentity(roomId: Int, nativeCount: Int): Int = maxOf(nativeCount - 1,
+        Regex("(?m)^macro ${prefix(roomId)}Door_([0-9]+)\\(").findAll(text).maxOfOrNull { it.groupValues[1].toInt() } ?: -1) + 1
     companion object {
         fun prefix(roomId: Int) = "SmeditDoors_${roomId.toString(16).uppercase().padStart(4, '0')}_"
         fun name(roomId: Int, index: Int) = prefix(roomId) + "Door_$index"
+        fun listName(roomId: Int) = prefix(roomId) + "List"
+        fun entryLabel(roomId: Int, identity: Int) = name(roomId, identity) + "_Entry"
+        fun renderOrder(roomId: Int, ids: List<Int>) = buildString {
+            appendLine("macro ${listName(roomId)}()")
+            appendLine("    ; List position is the doorway BTS index; Door_N identities never renumber.")
+            ids.forEach { appendLine("    dw ${entryLabel(roomId, it)}") }
+            appendLine("    dw \$0000 ; End of connections")
+            appendLine("endmacro")
+        }
         private fun hex(value: Int, width: Int) = "\$${value.toString(16).uppercase().padStart(width, '0')}"
         fun render(roomId: Int, roomName: String, source: SourceRoomDoors) = buildString {
             appendLine("; SMEDIT doors v1 · ${roomName.replace('\n', ' ').replace('\r', ' ')}")
-            appendLine("; Existing connection order and DoorDef identities stay fixed; one-way connections are allowed.")
+            appendLine(if (source.structural) "; Stable declaration identities; the List macro determines BTS order. One-way connections are allowed."
+                else "; Existing connection order and DoorDef identities stay fixed; one-way connections are allowed.")
             appendLine("; Arrival ASM is authored separately in bank_8F.asm; editing it does not disable these data fields.")
-            source.entries.forEach { door ->
+            source.entries.forEach { append(renderDoor(roomId, it)) }
+            if (source.structural) appendLine(renderOrder(roomId, source.entries.map { it.identity }))
+        }
+        fun renderDoor(roomId: Int, door: SourceRoomDoor) = buildString {
                 val d = door.change
-                appendLine("; Connection ${d.doorIndex + 1} · DoorDef \$83:${hex(door.doorDefPtr, 4).drop(1)}")
-                appendLine("macro ${name(roomId, d.doorIndex)}()")
+                appendLine(if (door.doorDefPtr == 0) "; Door identity ${door.identity} · symbolic DoorDef, placed at build"
+                    else "; Door identity ${door.identity} · DoorDef \$83:${hex(door.doorDefPtr, 4).drop(1)}")
+                appendLine("macro ${name(roomId, door.identity)}()")
                 appendLine("    dw ${hex(d.destRoomPtr, 4)} ; Destination room · bank \$8F")
                 appendLine("    db ${hex(d.bitflag and 255, 2)}, ${hex(d.bitflag ushr 8, 2)} ; Flags, direction / closing door")
                 appendLine("    db ${hex(d.doorCapCode and 255, 2)}, ${hex(d.doorCapCode ushr 8, 2)} ; Door cap tile X, Y (not an ASM pointer)")
@@ -105,12 +152,11 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
                 appendLine("    dw ${hex(d.distFromDoor, 4)} ; Distance (\$8000 = default)")
                 appendLine("    dw ${door.arrival?.label ?: hex(d.entryCode, 4)} ; Arrival ASM · bank \$8F (\$0000 = none)")
                 appendLine("endmacro\n")
-            }
         }
         fun targetAt(lines: List<String>, line: Int): AsmEditorTarget.Room? {
             for (index in line.coerceAtMost(lines.lastIndex) downTo 0) {
                 if (lines[index].trimStart().startsWith("endmacro") && index != line) return null
-                Regex("^macro SmeditDoors_([0-9A-F]{4})_Door_[0-9]+\\(\\)").find(lines[index])?.let {
+                Regex("^macro SmeditDoors_([0-9A-F]{4})_(?:Door_[0-9]+|List)\\(\\)").find(lines[index])?.let {
                     return AsmEditorTarget.Room(it.groupValues[1].toInt(16))
                 }
                 if (lines[index].trimStart().startsWith("macro ")) return null

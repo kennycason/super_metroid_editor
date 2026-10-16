@@ -405,14 +405,29 @@ class AsmRoomPropertiesSourceTest {
         assertEquals(7, f.input().states.getValue(id).musicTrack)
     }
 
-    @Test fun `unsupported structural header edits and area reassignment stop before model or source mutations`() = runBlocking {
+    @Test fun `unsupported direct structural header edits stop before model or source mutations`() = runBlocking {
         val f = fixture(); f.adopt()
         val before = Json.encodeToString(SmEditProject.serializer(), f.project)
         val source = f.bridge.sourceText()
         f.editor.setRoomHeaderChange(RoomHeaderChange(width = 3))
-        assertFalse(f.editor.reassignRoomArea(0x91F8, 1, f.parser).success)
         assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
         assertEquals(source, f.bridge.sourceText())
+    }
+
+    @Test fun `a room without door dependencies moves and resets using only its available header bank`() = runBlocking {
+        val f = fixture(); f.adopt()
+        val before = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val source = f.bridge.sourceText()
+        assertTrue(f.editor.reassignRoomArea(0x91F8, 1, f.parser).success, f.editor.statusMessage)
+        val moved = Json.encodeToString(SmEditProject.serializer(), f.project); val movedSource = f.bridge.sourceText()
+        assertEquals(1, f.input().header.area)
+        assertNull(f.workspace.sourceUndoHead(DOOR_SOURCE_FILE))
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertFalse(f.project.rooms.getValue("91F8").hasEdits)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(moved, Json.encodeToString(SmEditProject.serializer(), f.project)); assertEquals(movedSource, f.bridge.sourceText())
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project)); assertEquals(source, f.bridge.sourceText())
     }
 
     @Test fun `literal lens rejects duplicate expression reordered widths and invalid byte and word ranges`() = runBlocking {

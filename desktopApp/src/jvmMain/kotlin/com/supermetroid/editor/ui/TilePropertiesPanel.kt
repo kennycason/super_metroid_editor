@@ -91,7 +91,8 @@ internal fun TilePropertiesPanel(
     onMoveSamusHere: ((Int, Int) -> Unit)?,
     onWorkspaceChanged: (() -> Unit)? = null,
     onNavigateToAsm: ((Int) -> Unit)? = null,
-    onNavigateToDoorArrival: ((Int, Boolean) -> Unit)? = null,
+    onNavigateToDoorArrival: ((Int, Boolean, Int?) -> Unit)? = null,
+    onNavigateToDoorSource: ((Int) -> Unit)? = null,
     onNavigateToPlmPlacement: ((RomParser.PlmEntry) -> Unit)? = null,
     onNavigateToScrollCommands: ((RomParser.PlmEntry) -> Unit)? = null,
     onNavigateToSaveSpawn: ((RomParser.PlmEntry) -> Unit)? = null,
@@ -462,21 +463,40 @@ internal fun TilePropertiesPanel(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 val allDoors = remember(editorState.editVersion) { editorState.doorEntries.toList() }
-                val currentDoor = allDoors.getOrNull(propsBts)
-                val arrivalBinding = editorState.doorArrivalBindings[propsBts]
+                val connectionIndex = propsBts and 0x7F
+                val currentDoor = allDoors.getOrNull(connectionIndex)
+                val arrivalBinding = editorState.doorArrivalBindings[connectionIndex]
+                val declarationIdentity = editorState.doorSourceIdentities[connectionIndex]
+                var choosingConnection by remember(roomId, blockX, blockY) { mutableStateOf(false) }
+                if (allDoors.isNotEmpty()) Box {
+                    TextButton(onClick = { choosingConnection = true }, enabled = editorState.doorPreviewProblem == null) {
+                        Text("Use existing connection…", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                    }
+                    DropdownMenu(expanded = choosingConnection, onDismissRequest = { choosingConnection = false }) {
+                        allDoors.forEachIndexed { index, door ->
+                            val identity = editorState.doorSourceIdentities[index]
+                            val name = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name ?: "Room ${door.destRoomPtr.toString(16).uppercase()}"
+                            DropdownMenuItem(text = { Text("${index + 1}. $name", fontSize = LocalEditorTheme.current.fontSize.value.detail) }, onClick = {
+                                choosingConnection = false
+                                editorState.linkDoorwayTilesToConnection(blockX, blockY, index, identity) { propsBts = it }
+                            })
+                        }
+                    }
+                }
                 if (currentDoor == null) editorState.doorPreviewProblem?.let {
                     Text("Door source unavailable: $it. Open bank_83.asm to repair its declaration.",
                         fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error)
                 }
                 val projectRoom = editorState.project.newRoomForPreviewId(roomId)
+                val canGrowConnections = editorState.canEditDoorStructure(roomId)
                 val connectionSharedOutsideDoorway = remember(
-                    blockX, blockY, propsBts, currentDoor, editorState.editVersion,
+                    blockX, blockY, connectionIndex, currentDoor, editorState.editVersion,
                 ) {
                     currentDoor != null && editorState.isDoorConnectionSharedOutsideDoorway(
-                        blockX, blockY, propsBts,
+                        blockX, blockY, connectionIndex,
                     )
                 }
-                val pickerDirection = if (connectionSharedOutsideDoorway && projectRoom != null) {
+                val pickerDirection = if (connectionSharedOutsideDoorway && canGrowConnections) {
                     editorState.suggestedDoorDirection(blockX, blockY)
                 } else {
                     currentDoor?.direction?.and(0x03)
@@ -484,8 +504,12 @@ internal fun TilePropertiesPanel(
                 }
 
                 fun createConnectionForDoorway(opening: DoorwayOpening) {
-                    require(projectRoom != null) { "Only project-owned room door lists can currently grow" }
+                    require(canGrowConnections) { "Door-list growth requires ASM mode for existing rooms." }
                     require(allDoors.size < 16) { "A room can currently have at most 16 connections" }
+                    if (projectRoom == null) {
+                        editorState.addSourceDoorwayConnection(roomId, opening, blockX, blockY) { propsBts = (propsBts and 0x80) or it }
+                        return
+                    }
                     val addedIndex = editorState.addProjectRoomDoor(
                         roomId = roomId,
                         destinationRoomId = opening.roomId,
@@ -506,7 +530,7 @@ internal fun TilePropertiesPanel(
                 }
 
                 fun selectDoorway(opening: DoorwayOpening) {
-                    if (currentDoor == null || (connectionSharedOutsideDoorway && projectRoom != null)) {
+                    if (currentDoor == null || (connectionSharedOutsideDoorway && canGrowConnections)) {
                         createConnectionForDoorway(opening)
                         return
                     }
@@ -528,7 +552,7 @@ internal fun TilePropertiesPanel(
                         currentDoor.bitflag, match?.orientation, crossArea,
                     )
                     editorState.updateDoor(
-                        propsBts,
+                        connectionIndex,
                         currentDoor.copy(
                             destRoomPtr = opening.roomId,
                             bitflag = bitflag,
@@ -537,6 +561,7 @@ internal fun TilePropertiesPanel(
                             entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: 0,
                             doorCapCode = opening.doorCapCode,
                         ),
+                        expectedIdentity = declarationIdentity,
                     )
                 }
 
@@ -550,7 +575,7 @@ internal fun TilePropertiesPanel(
                         fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (projectRoom != null && roomHeader != null) {
+                    if (canGrowConnections && roomHeader != null) {
                         DoorDestinationPicker(
                             currentDoor = null,
                             sourceRoomId = roomId,
@@ -583,26 +608,28 @@ internal fun TilePropertiesPanel(
                     )
                     val connectionDiagnostic = remember(
                         roomId,
-                        propsBts,
+                        connectionIndex,
                         currentDoor,
                         editorState.editVersion,
                         rooms,
                     ) {
-                        doorDiagnosticsForRoom(roomId, romParser, editorState, rooms)[propsBts]
+                        doorDiagnosticsForRoom(roomId, romParser, editorState, rooms)[connectionIndex]
                     }
                     if (connectionSharedOutsideDoorway) {
                         Text(
-                            if (projectRoom != null) {
-                                "Connection ${propsBts + 1} is also used by another doorway. Choosing a destination here will give this doorway its own connection."
+                            if (canGrowConnections) {
+                                "Connection ${connectionIndex + 1} is also used by another doorway. Choosing a destination here will give this doorway its own connection."
                             } else {
-                                "Connection ${propsBts + 1} is also used by another doorway; changes here affect both openings."
+                                "Connection ${connectionIndex + 1} is also used by another doorway; changes here affect both openings."
                             },
                             fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
 
-                    if (doorDefinitionAddress != null && asmLink != null) {
+                    if (onNavigateToDoorSource != null && editorState.asmNavigationEnabled) {
+                        TextButton(onClick = { onNavigateToDoorSource(connectionIndex) }) { Text("Door data ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+                    } else if (doorDefinitionAddress != null && asmLink != null) {
                         AsmNavigationLink(
                             snesAddress = doorDefinitionAddress,
                             onNavigateToAsm = asmLink,
@@ -612,7 +639,7 @@ internal fun TilePropertiesPanel(
                     }
                     val arrivalAddress = semanticAsmAddress(RomConstants.BANK_ROOM_DATA, currentDoor.entryCode)
                     if (arrivalBinding != null && onNavigateToDoorArrival != null) {
-                        TextButton(onClick = { onNavigateToDoorArrival(propsBts, false) }) {
+                        TextButton(onClick = { onNavigateToDoorArrival(connectionIndex, false, declarationIdentity) }) {
                             Text("Arrival ASM · ${arrivalBinding.label}", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                         }
                         Text("Managed in ASM · address resolved on build. Connection fields remain editable.",
@@ -622,7 +649,7 @@ internal fun TilePropertiesPanel(
                     }
                     if (editorState.asmNavigationEnabled && editorState.doorPreviewProblem == null &&
                         arrivalBinding?.label?.startsWith("SmeditArrival_") != true && onNavigateToDoorArrival != null) {
-                        TextButton(onClick = { onNavigateToDoorArrival(propsBts, true) }) {
+                        TextButton(onClick = { onNavigateToDoorArrival(connectionIndex, true, declarationIdentity) }) {
                             Text("Create managed arrival ASM…", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                         }
                     }
@@ -685,7 +712,7 @@ internal fun TilePropertiesPanel(
                             rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
                             romParser = romParser,
                             editorState = editorState,
-                            enabled = !connectionSharedOutsideDoorway || projectRoom == null || allDoors.size < 16,
+                            enabled = !connectionSharedOutsideDoorway || !canGrowConnections || allDoors.size < 16,
                             onDoorwaySelected = { opening ->
                                 doorConnectionError = runCatching {
                                     selectDoorway(opening)
@@ -751,10 +778,10 @@ internal fun TilePropertiesPanel(
                                                     romParser, currentDoor.destRoomPtr, newDir,
                                                     currentDoor.screenX, currentDoor.screenY,
                                                 )
-                                                editorState.updateDoor(propsBts, currentDoor.copy(
+                                                editorState.updateDoor(connectionIndex, currentDoor.copy(
                                                     bitflag = newBitflag,
                                                     doorCapCode = derivedCap ?: currentDoor.doorCapCode
-                                                ))
+                                                ), expectedIdentity = declarationIdentity)
                                             },
                                             modifier = Modifier.height(26.dp)
                                         )
@@ -776,12 +803,12 @@ internal fun TilePropertiesPanel(
                                 currentDoor.bitflag,
                                 match?.orientation
                             )
-                            editorState.updateDoor(propsBts, currentDoor.copy(
+                            editorState.updateDoor(connectionIndex, currentDoor.copy(
                                 screenX = v,
                                 bitflag = newBitflag,
                                 entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
                                 doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
-                            ))
+                            ), expectedIdentity = declarationIdentity)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
 
@@ -794,12 +821,12 @@ internal fun TilePropertiesPanel(
                                 currentDoor.bitflag,
                                 match?.orientation
                             )
-                            editorState.updateDoor(propsBts, currentDoor.copy(
+                            editorState.updateDoor(connectionIndex, currentDoor.copy(
                                 screenY = v,
                                 bitflag = newBitflag,
                                 entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
                                 doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
-                            ))
+                            ), expectedIdentity = declarationIdentity)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
 
@@ -823,7 +850,7 @@ internal fun TilePropertiesPanel(
                                     onValueChange = { v ->
                                         distText = v
                                         v.removePrefix("0x").removePrefix("0X").toIntOrNull(16)?.let {
-                                            editorState.updateDoor(propsBts, currentDoor.copy(distFromDoor = it))
+                                            editorState.updateDoor(connectionIndex, currentDoor.copy(distFromDoor = it), declarationIdentity)
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
@@ -838,7 +865,7 @@ internal fun TilePropertiesPanel(
                                     checked = currentDoor.isElevator,
                                     onCheckedChange = { checked ->
                                         val newFlags = editedDoorBitflag(currentDoor.bitflag, elevator = checked)
-                                        editorState.updateDoor(propsBts, currentDoor.copy(bitflag = newFlags))
+                                        editorState.updateDoor(connectionIndex, currentDoor.copy(bitflag = newFlags), declarationIdentity)
                                     },
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -854,7 +881,7 @@ internal fun TilePropertiesPanel(
                                         closures.forEachIndexed { kind, name ->
                                             DropdownMenuItem(text = { Text(name, fontSize = LocalEditorTheme.current.fontSize.value.body) }, onClick = {
                                                 closureExpanded = false
-                                                editorState.updateDoor(propsBts, currentDoor.copy(bitflag = editedDoorBitflag(currentDoor.bitflag, closure = kind)))
+                                                editorState.updateDoor(connectionIndex, currentDoor.copy(bitflag = editedDoorBitflag(currentDoor.bitflag, closure = kind)), declarationIdentity)
                                             })
                                         }
                                     }
@@ -885,7 +912,7 @@ internal fun TilePropertiesPanel(
                                     onValueChange = { v ->
                                         capText = v
                                         v.removePrefix("0x").removePrefix("0X").toIntOrNull(16)?.let {
-                                            editorState.updateDoor(propsBts, currentDoor.copy(doorCapCode = it))
+                                            editorState.updateDoor(connectionIndex, currentDoor.copy(doorCapCode = it), declarationIdentity)
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
@@ -896,7 +923,7 @@ internal fun TilePropertiesPanel(
                                     Surface(
                                         modifier = Modifier.height(20.dp)
                                             .clickable {
-                                                editorState.updateDoor(propsBts, currentDoor.copy(doorCapCode = autoCap))
+                                                editorState.updateDoor(connectionIndex, currentDoor.copy(doorCapCode = autoCap), declarationIdentity)
                                             },
                                         shape = MaterialTheme.shapes.small,
                                         color = if (currentDoor.doorCapCode == autoCap) MaterialTheme.colorScheme.primaryContainer
@@ -929,7 +956,7 @@ internal fun TilePropertiesPanel(
                                     onValueChange = { v ->
                                         asmText = v
                                         v.removePrefix("0x").removePrefix("0X").toIntOrNull(16)?.let {
-                                            editorState.updateDoor(propsBts, currentDoor.copy(entryCode = it))
+                                            editorState.updateDoor(connectionIndex, currentDoor.copy(entryCode = it), declarationIdentity)
                                         }
                                     },
                                     modifier = Modifier.weight(1f),
@@ -2010,7 +2037,7 @@ internal fun TilePropertiesPanel(
 }
 
 @Composable
-private fun DoorDestinationPicker(
+internal fun DoorDestinationPicker(
     currentDoor: RomParser.DoorEntry?,
     sourceRoomId: Int,
     requiredDirection: Int,

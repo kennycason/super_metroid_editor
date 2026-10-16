@@ -10,6 +10,7 @@ internal class AsmRoomAreaMoveHistory(
     private val workspace: AsmWorkspaceState,
     private val replacements: Map<String, Pair<String, String>>,
     private val head: AsmSourceTextChange,
+    private val action: String = "room move",
 ) {
     var beforeTransition: (() -> Unit)? = null
     var onTransition: ((Boolean) -> Unit)? = null
@@ -17,13 +18,13 @@ internal class AsmRoomAreaMoveHistory(
     fun redo(): Boolean = move(false)
     private fun move(undo: Boolean): Boolean {
         val currentHead = if (undo) workspace.sourceUndoHead(PLM_SOURCE_FILE) else workspace.sourceRedoHead(PLM_SOURCE_FILE)
-        check(currentHead === head) { "Undo newer ASM edits before restoring this room move." }
+        check(currentHead === head) { "Undo newer ASM edits before restoring this $action." }
         check(replacements.all { (file, texts) -> workspace.projectSourceText(file) == if (undo) texts.second else texts.first }) {
-            "The room move's source changed; undo newer source edits first."
+            "The $action's source changed; undo newer source edits first."
         }
         val moved = if (undo) workspace.undoSourceEdit(PLM_SOURCE_FILE, fromRoomEditor = true)
         else workspace.redoSourceEdit(PLM_SOURCE_FILE, fromRoomEditor = true)
-        check(moved) { workspace.error ?: "Undo newer source/model edits before restoring this room move." }
+        check(moved) { workspace.error ?: "Undo newer source/model edits before restoring this $action." }
         return true
     }
 }
@@ -54,7 +55,7 @@ internal class AsmRoomAreaMove(
     private fun encode(room: RoomEdits) = Json.encodeToString(RoomEdits.serializer(), room)
 
     /** Geometry, connections and slot consumers matter; unrelated tile/actor/FX edits do not. */
-    private fun dependencies(owner: SmEditProject): Map<String, String> = owner.rooms.mapNotNull { (key, room) ->
+    internal fun dependencies(owner: SmEditProject): Map<String, String> = owner.rooms.mapNotNull { (key, room) ->
         val relevant = room.roomHeaderChange != null || room.doorChanges.isNotEmpty() || room.plmChanges.isNotEmpty() ||
             room.saveStationSpawns.isNotEmpty() || room.stateGraphChanged || room.asmRoomPropertiesSourceVersion != 0 ||
             room.asmDoorSourceVersion != 0 || room.asmPlmSourceVersion != 0 || room.states.any { it.plmChanges.isNotEmpty() }
@@ -79,10 +80,14 @@ internal class AsmRoomAreaMove(
         fun room(id: Int) = staged.getOrPut(owner.roomKey(id)) {
             snapshotRoomForResize(owner.rooms[owner.roomKey(id)] ?: RoomEdits(id)).also { it.ensureStateManifest(catalog.parser) }
         }
+        fun dimensions(id: Int): Pair<Int, Int>? = catalog.parser.readRoomHeader(id)?.let { native ->
+            val edits = staged[owner.roomKey(id)] ?: owner.rooms[owner.roomKey(id)]
+            (edits?.roomHeaderChange?.width ?: native.width) to (edits?.roomHeaderChange?.height ?: native.height)
+        }
         val before8F = workspace.projectSourceText(PLM_SOURCE_FILE)
-        val before83 = workspace.projectSourceText(DOOR_SOURCE_FILE)
+        val before83 = if (doors.isNotEmpty()) workspace.projectSourceText(DOOR_SOURCE_FILE) else null
         var text8F = before8F
-        var text83 = before83
+        var text83 = before83.orEmpty()
         fun append(text: String, addition: String): String {
             val newline = if (text.contains("\r\n")) "\r\n" else "\n"
             return text + newline + addition.replace("\r\n", "\n").replace("\n", newline)
@@ -128,11 +133,11 @@ internal class AsmRoomAreaMove(
             }
             for (change in changes) {
                 val source = AsmDoorSource(text83, text8F, catalog.symbols)
-                val current = source.resource(target, catalog.parser)
+                val current = source.resource(target, catalog.parser, ::dimensions)
                 val entry = current.entries[change.doorIndex].entry()
-                text83 = source.edit(target, catalog.parser, change.doorIndex, entry.copy(bitflag = change.bitflag))
+                text83 = source.edit(target, catalog.parser, change.doorIndex, entry.copy(bitflag = change.bitflag), ::dimensions)
             }
-            target.asmDoorProjection = AsmDoorSource(text83, text8F, catalog.symbols).resource(target, catalog.parser).entries.map { it.change }
+            target.asmDoorProjection = AsmDoorSource(text83, text8F, catalog.symbols).resource(target, catalog.parser, ::dimensions).entries.map { it.change }
         }
 
         val macros = if (saves.sourceRecords.isEmpty()) null else workspace.projectSourceText("macros.asm")
@@ -175,7 +180,7 @@ internal class AsmRoomAreaMove(
         val prospective = owner.copy(rooms = owner.rooms.toMutableMap().apply { putAll(staged) })
         val replacements = linkedMapOf(PLM_SOURCE_FILE to (before8F to text8F))
         // A same-area map move has no DoorDef dependency. Do not anchor an unrelated bank's history.
-        if (header.area != oldProperties.header.area || doors.isNotEmpty()) replacements[DOOR_SOURCE_FILE] = before83 to text83
+        if (before83 != null) replacements[DOOR_SOURCE_FILE] = before83 to text83
         return AsmRoomAreaMovePlan(owner, changes,
             replacements,
             owner.minimapEdits.mapValues { it.value.toList() }, maps.mapValues { it.value.toList() },
@@ -183,27 +188,27 @@ internal class AsmRoomAreaMove(
             dependencies(owner), dependencies(prospective), macros)
     }
 
-    fun apply(plan: AsmRoomAreaMovePlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit): AsmRoomAreaMoveHistory {
-        var history: AsmRoomAreaMoveHistory? = null
-        fun checkCurrent(undo: Boolean) {
-            val owner = project()
-            require(owner === plan.owner && owner.newRooms.isEmpty() && owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
-                "The ASM project or build mode changed; no part of the room move was restored."
-            }
-            require(dependencies(owner) == if (undo) plan.dependenciesAfter else plan.dependenciesBefore) {
-                "Room geometry, door or save consumers changed; undo newer edits before restoring this room move."
-            }
-            require(owner.minimapEdits == if (undo) plan.mapsAfter else plan.mapsBefore) { "Undo newer map edits before restoring this room move." }
-            require(owner.mapStationEdits == if (undo) plan.stationsAfter else plan.stationsBefore) { "Undo newer map-reveal edits before restoring this room move." }
-            if (plan.macros != null) require(workspace.projectSourceText("macros.asm") == plan.macros) { "Restore the PLM macro definitions before this room move." }
-            for ((key, change) in plan.rooms) {
-                val expected = if (undo) change.after else change.before
-                require(owner.rooms[key] === (if (undo || change.before != null) change.live else null) &&
-                    (expected == null || encode(change.live) == encode(expected))) { "Room data changed; undo newer room edits before this room move." }
-            }
-            history?.beforeTransition?.invoke()
-            beforeTransition()
+    /** Also used by Reset: one preflight for all dependent rooms and map cells. */
+    internal fun requireCurrent(plan: AsmRoomAreaMovePlan, undo: Boolean, exceptRoomId: Int? = null, action: String = "room move") {
+        val owner = project()
+        require(owner === plan.owner && owner.newRooms.isEmpty() && owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+            "The ASM project or build mode changed; no part of the $action was restored."
         }
+        require(dependencies(owner) == if (undo) plan.dependenciesAfter else plan.dependenciesBefore) {
+            "Room geometry, door or save consumers changed; undo newer edits before restoring this $action."
+        }
+        require(owner.minimapEdits == if (undo) plan.mapsAfter else plan.mapsBefore) { "Undo newer map edits before restoring this $action." }
+        require(owner.mapStationEdits == if (undo) plan.stationsAfter else plan.stationsBefore) { "Undo newer map-reveal edits before restoring this $action." }
+        if (plan.macros != null) require(workspace.projectSourceText("macros.asm") == plan.macros) { "Restore the PLM macro definitions before this $action." }
+        for ((key, change) in plan.rooms) {
+            if (change.live.roomId == exceptRoomId) continue
+            val expected = if (undo) change.after else change.before
+            require(owner.rooms[key] === (if (undo || change.before != null) change.live else null) &&
+                (expected == null || encode(change.live) == encode(expected))) { "Room data changed; undo newer room edits before this $action." }
+        }
+    }
+
+    internal fun setModel(plan: AsmRoomAreaMovePlan, undo: Boolean, exceptRoomId: Int? = null) {
         fun setRoom(live: RoomEdits, target: RoomEdits) {
             if (live.states.map { it.id } != target.states.map { it.id }) {
                 live.states.clear(); live.states.addAll(snapshotRoomForResize(target).states)
@@ -217,24 +222,32 @@ internal class AsmRoomAreaMove(
                 state.stateDataChange = saved.stateDataChange; state.asmStatePropertiesProjection = saved.asmStatePropertiesProjection
             }
         }
-        fun setModel(undo: Boolean) {
-            for ((key, change) in plan.rooms) {
-                val target = if (undo) change.before else change.after
-                if (target == null) { setRoom(change.live, RoomEdits(change.live.roomId)); plan.owner.rooms.remove(key) }
-                else { setRoom(change.live, target); plan.owner.rooms[key] = change.live }
-            }
-            plan.owner.minimapEdits.clear()
-            (if (undo) plan.mapsBefore else plan.mapsAfter).forEach { (key, value) -> plan.owner.minimapEdits[key] = value.toMutableList() }
-            plan.owner.mapStationEdits.clear()
-            (if (undo) plan.stationsBefore else plan.stationsAfter).forEach { (key, value) -> plan.owner.mapStationEdits[key] = value.toMutableList() }
-            plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        for ((key, change) in plan.rooms) {
+            if (change.live.roomId == exceptRoomId) continue
+            val target = if (undo) change.before else change.after
+            if (target == null) { setRoom(change.live, RoomEdits(change.live.roomId)); plan.owner.rooms.remove(key) }
+            else { setRoom(change.live, target); plan.owner.rooms[key] = change.live }
+        }
+        plan.owner.minimapEdits.clear()
+        (if (undo) plan.mapsBefore else plan.mapsAfter).forEach { (key, value) -> plan.owner.minimapEdits[key] = value.toMutableList() }
+        plan.owner.mapStationEdits.clear()
+        (if (undo) plan.stationsBefore else plan.stationsAfter).forEach { (key, value) -> plan.owner.mapStationEdits[key] = value.toMutableList() }
+        plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+    }
+
+    fun apply(plan: AsmRoomAreaMovePlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit): AsmRoomAreaMoveHistory {
+        var history: AsmRoomAreaMoveHistory? = null
+        fun checkCurrent(undo: Boolean) {
+            requireCurrent(plan, undo)
+            history?.beforeTransition?.invoke()
+            beforeTransition()
         }
         fun notify(undo: Boolean) { changed(); afterTransition(undo); history?.onTransition?.invoke(undo) }
         checkCurrent(false)
         workspace.replaceProjectSources(plan.replacements,
-            beforeApply = { setModel(false) }, afterApply = { notify(false) },
-            beforeUndo = { checkCurrent(true); setModel(true) }, afterUndo = { notify(true) },
-            beforeRedo = { checkCurrent(false); setModel(false) }, afterRedo = { notify(false) })
+            beforeApply = { setModel(plan, false) }, afterApply = { notify(false) },
+            beforeUndo = { checkCurrent(true); setModel(plan, true) }, afterUndo = { notify(true) },
+            beforeRedo = { checkCurrent(false); setModel(plan, false) }, afterRedo = { notify(false) })
         return AsmRoomAreaMoveHistory(workspace, plan.replacements, requireNotNull(workspace.sourceUndoHead(PLM_SOURCE_FILE))).also { history = it }
     }
 }

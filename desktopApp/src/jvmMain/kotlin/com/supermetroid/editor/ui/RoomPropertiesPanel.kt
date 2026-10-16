@@ -124,6 +124,7 @@ fun RoomPropertiesPanel(
     onNavigateToSelectors: ((String?) -> Unit)? = null,
     onNavigateToFx: ((String, Int?) -> Unit)? = null,
     onNavigateToEnemies: ((String, Boolean) -> Unit)? = null,
+    onNavigateToDoors: ((Int) -> Unit)? = null,
     onWorkspaceChanged: (() -> Unit)? = null,
     onReassignRoomArea: ((Int, Int) -> Unit)? = null,
     scrollState: ScrollState = rememberScrollState(),
@@ -224,6 +225,8 @@ fun RoomPropertiesPanel(
     var showConditionBuilder by remember(room.roomId) { mutableStateOf(false) }
     var showStateSimulator by remember(room.roomId) { mutableStateOf(false) }
     var doorManagerError by remember(room.roomId) { mutableStateOf<String?>(null) }
+    var addingDoor by remember(room.roomId) { mutableStateOf(false) }
+    var newDoorDirection by remember(room.roomId) { mutableStateOf(0) }
     val selectedSourceStateIndex = selectedStateItem?.baseSourceStateIndex ?: -1
     val currentState = stateInspection.states.getOrNull(selectedSourceStateIndex)
     val allStateData = states.map { state ->
@@ -461,22 +464,47 @@ fun RoomPropertiesPanel(
         ) { editCreBitflag = it; syncHeaderToState() }
         PropertyRow(
             "Door Out Ptr",
-            "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)",
-            asmLinkCallback?.takeIf { room.doorOut != 0 }?.let { navigate ->
+            if (editorState.hasStructuralDoors()) "Symbolic · placed at build" else "0x${room.doorOut.toString(16).uppercase().padStart(4, '0')} (\$8F)",
+            if (editorState.hasStructuralDoors()) onNavigateToDoors?.let { { it(-1) } } else asmLinkCallback?.takeIf { room.doorOut != 0 }?.let { navigate ->
                 { navigate(RomConstants.BANK_ROOM_DATA or room.doorOut) }
             },
         )
 
         val projectRoom = editorState.project.newRoomForPreviewId(room.roomId)
-        if (projectRoom != null) {
+        if (editorState.canEditDoorStructure(room.roomId)) {
             Spacer(modifier = Modifier.height(4.dp))
             SectionHeader("Door Connections (${editorState.doorEntries.size})")
+            if (projectRoom == null) TextButton(onClick = {
+                addingDoor = !addingDoor
+                doorManagerError = null
+            }, enabled = editorState.doorEntries.size < 16 && editorState.doorPreviewProblem == null) {
+                Text(if (addingDoor) "Cancel add" else "Add connection", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
+            }
+            if (addingDoor && projectRoom == null) {
+                Row {
+                    listOf("Right", "Left", "Down", "Up").forEachIndexed { direction, title ->
+                        TextButton(onClick = { newDoorDirection = direction }) {
+                            Text(if (direction == newDoorDirection) "[$title]" else title, fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
+                        }
+                    }
+                }
+                DoorDestinationPicker(null, room.roomId, newDoorDirection, roomInfos, romParser, editorState,
+                    editorState.doorPreviewProblem == null) { opening ->
+                    doorManagerError = runCatching {
+                        editorState.addProjectRoomDoor(room.roomId, opening.roomId, opening.direction, opening.screenX, opening.screenY, romParser, opening.doorCapCode)
+                        addingDoor = false
+                    }.exceptionOrNull()?.message
+                }
+            }
             Text(
                 "Connections are numbered from 1. SMEDIT manages their stored tile indices.",
                 fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (projectRoom == null) Text("Link a source doorway through the tile inspector’s Use existing connection menu.",
+                fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
             editorState.doorEntries.forEachIndexed { index, door ->
+                val identity = editorState.doorSourceIdentities[index]
                 val destinationName = roomInfos.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name
                     ?: "Room 0x${door.destRoomPtr.toString(16).uppercase()}"
                 Surface(
@@ -497,12 +525,15 @@ fun RoomPropertiesPanel(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        if (onNavigateToDoors != null && editorState.asmNavigationEnabled) TextButton(onClick = { onNavigateToDoors(index) }) {
+                            Text("ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
+                        }
                         TextButton(onClick = {
                             doorManagerError = runCatching {
-                                editorState.removeProjectRoomDoor(room.roomId, index)
-                                onWorkspaceChanged?.invoke()
+                                editorState.removeProjectRoomDoor(room.roomId, index, identity)
+                                if (projectRoom != null) onWorkspaceChanged?.invoke()
                             }.exceptionOrNull()?.message
-                        }) { Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                        }, enabled = editorState.doorPreviewProblem == null) { Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
                     }
                 }
             }
@@ -626,6 +657,7 @@ fun RoomPropertiesPanel(
                 area = room.area,
                 itemPickupOptions = itemPickupOptions,
                 onDismiss = { showStateSimulator = false },
+                incomingDoorOptions = editorState.incomingDoorConditionOptions(room.roomId, romParser),
             )
         }
 
@@ -642,9 +674,7 @@ fun RoomPropertiesPanel(
                 templateName = projectConditionLabel(selectedStateItem.condition, room.area),
                 initialCondition = initialCondition,
                 area = room.area,
-                incomingDoorPointers = remember(room.roomId, romParser) {
-                    romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
-                },
+                incomingDoors = editorState.incomingDoorConditionOptions(room.roomId, romParser),
                 itemPickupOptions = itemPickupOptions,
                 existingConditions = states.map { it.condition },
                 onDismiss = { showAddStateDialog = false },
@@ -785,9 +815,7 @@ fun RoomPropertiesPanel(
             StateConditionEditor(
                 condition = editableCondition,
                 area = room.area,
-                incomingDoorPointers = remember(room.roomId, romParser) {
-                    romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
-                },
+                incomingDoors = editorState.incomingDoorConditionOptions(room.roomId, romParser),
                 itemPickupOptions = itemPickupOptions,
                 onChange = { updated ->
                     editorState.setRoomStateCondition(selectedStateItem.id, updated, romParser)
@@ -803,9 +831,7 @@ fun RoomPropertiesPanel(
             ConditionBuilderDialog(
                 initialCondition = editableCondition,
                 area = room.area,
-                incomingDoorPointers = remember(room.roomId, romParser) {
-                    romParser.findDoorsLeadingTo(room.roomId).map { it.doorDefPtr }.filter { it != 0 }.distinct()
-                },
+                incomingDoors = editorState.incomingDoorConditionOptions(room.roomId, romParser),
                 itemPickupOptions = itemPickupOptions,
                 onDismiss = { showConditionBuilder = false },
                 onApply = { updated ->

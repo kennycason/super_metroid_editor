@@ -76,6 +76,48 @@ class AsmRoomSelectorsSourceTest {
         return Fixture(workspace, bridge, project, editor, file)
     }
 
+    @Test fun `symbolic door codec preserves nested flags comments CRLF and literal spellings without evaluating expressions`() = runBlocking {
+        val f = fixture(); f.adopt()
+        val id = f.conditional()
+        val reference = ProjectSourceDoorReference(0x91F8, 12)
+        val incoming = projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, negated = true, sourceDoor = reference)
+        val tree = projectRoomStateCondition(ProjectRoomStateConditionKind.ANY_OF, children = listOf(incoming,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7)))
+        val original = AsmRoomSelectorsSource(f.bridge.sourceText()).editCondition(f.room, id, tree)
+            .replace("dw ${reference.entryLabel}", "dw ${reference.entryLabel} ; user note").replace("\n", "\r\n")
+        assertEquals(tree, AsmRoomSelectorsSource(original).resource(f.room).conditions.getValue(id))
+        assertEquals(original, AsmRoomSelectorsSource(original).editCondition(f.room, id, tree))
+        val other = tree.copy(children = listOf(incoming.copy(sourceDoor = reference.copy(identity = 13)), tree.children[1]))
+        val changed = AsmRoomSelectorsSource(original).editCondition(f.room, id, other)
+        assertEquals(original.replace(reference.entryLabel, reference.copy(identity = 13).entryLabel), changed)
+        for (token in listOf("${reference.entryLabel}+2", "OtherLabel", "\$830000", "SmeditDoors_91F8_Door_999999999999_Entry")) {
+            assertFails { AsmRoomSelectorsSource(original.replace(reference.entryLabel, token)).resource(f.room) }
+        }
+        val literal = AsmRoomSelectorsSource(original).editCondition(f.room, id,
+            tree.copy(children = listOf(projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, 0x8000, true), tree.children[1])))
+        assertContains(literal, "dw \$8000 ; user note")
+        val eventToken = AsmRoomSelectorsSource(f.bridge.sourceText()).editCondition(f.room, id,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7)).replace("dw \$0007", "dw ${reference.entryLabel}")
+        assertContains(assertFails { AsmRoomSelectorsSource(eventToken).resource(f.room) }.message.orEmpty(), "only valid")
+    }
+
+    @Test fun `negated native leaf selectors retain the compiled expression pointer rather than overwriting it with an argument`() = runBlocking {
+        val f = fixture(); f.adopt()
+        for ((kind, argument) in listOf(ProjectRoomStateConditionKind.INCOMING_DOOR to 0x8000,
+            ProjectRoomStateConditionKind.EVENT_SET to 7, ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET to 1)) {
+            val condition = projectRoomStateCondition(kind, argument, negated = true)
+            val before = f.bridge.sourceText()
+            f.workspace.replaceProjectSource(PLM_SOURCE_FILE, before, AsmRoomSelectorsSource(before).editCondition(f.room, f.conditional(), condition))
+            val target = f.parser.copyRomData()
+            ProjectRoomExporter(f.project, f.parser, target, sourceSelectors = mapOf(0x91F8 to f.input())).exportRooms()
+            val states = RomParser(target).inspectRoomStates(0x91F8)
+            assertTrue(states.isComplete, states.issues.joinToString { it.message })
+            assertEquals(RoomStateConditionKind.valueOf(kind.name), states.states.first().condition.kind)
+            assertEquals(argument, states.states.first().condition.argument)
+            assertTrue(states.states.first().condition.negated)
+        }
+    }
+
     @Test fun `adoption preserves legacy condition edits and undo retires only source-owned current values`() = runBlocking {
         val f = fixture()
         val c = projectRoomStateCondition(ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST, 25, negated = true)

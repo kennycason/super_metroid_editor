@@ -27,6 +27,7 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
     fun isManaged(roomId: Int) = (project().rooms[project().roomKey(roomId)]?.asmStateSelectorsSourceVersion ?: 0) != 0
     fun view(roomId: Int): AsmRoomSelectorsView = try {
         val value = source().resource(project().rooms.getValue(project().roomKey(roomId)))
+        validateSelectorDoorReferences(value, roomId, project(), catalog, workspace)
         lastGood[roomId] = value
         AsmRoomSelectorsView(value, null)
     } catch (error: Exception) {
@@ -59,6 +60,7 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
         val beforeModel = snapshotRoomForResize(room)
         val staged = snapshotRoomForResize(room)
         val resource = SourceRoomSelectors(room.effectiveStates.map { it.id }, room.states.associate { it.id to it.effectiveCondition })
+        validateSelectorDoorReferences(resource, roomId, owner, catalog, workspace)
         staged.states.forEach { it.condition = AsmRoomSelectorsSource.baseline(it); it.conditionChanged = false }
         staged.asmStateSelectorsSourceVersion = 1
         resource.projectInto(staged)
@@ -85,7 +87,9 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
         val room = project().rooms.getValue(project().roomKey(roomId))
         require(view(roomId).problem == null) { view(roomId).problem ?: "Invalid selectors." }
         val current = source()
-        workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, current.editCondition(room, id, condition))
+        val after = current.editCondition(room, id, condition)
+        validateSelectorDoorReferences(AsmRoomSelectorsSource(after).resource(room), roomId, project(), catalog, workspace, after)
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, after)
         refreshAll()
     }
     fun convert(roomId: Int, preview: AsmSelectorConversionPreview, afterTransition: (Boolean) -> Unit = {}) {

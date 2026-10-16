@@ -1495,17 +1495,21 @@ internal class AsmWorkspaceState(
     }
 
     /** Generated entry symbols navigate to their current authored body, even before Save/Build. */
-    internal fun managedCodeLine(token: String): Int? {
+    private fun managedReference(token: String): Pair<String, Int>? {
         if (workspaceKind != AsmWorkspaceKind.PROJECT || projectWorkspace == null) return null
-        val macro = managedBank8FMacroName(token) ?: return null
-        val text = projectSourceText(PLM_SOURCE_FILE)
+        val door = Regex("(SmeditDoors_[0-9A-F]{4}_Door_[0-9]+)_Entry").matchEntire(token)?.groupValues?.get(1)
+        val macro = door ?: managedBank8FMacroName(token) ?: return null
+        val file = if (door == null) PLM_SOURCE_FILE else DOOR_SOURCE_FILE
+        val text = projectSourceText(file)
         val match = Regex("(?m)^[ \\t]*macro[ \\t]+${Regex.escape(macro)}\\(\\)").findAll(text).singleOrNull() ?: return null
-        return text.take(match.range.first).count { it == '\n' }
+        return file to text.take(match.range.first).count { it == '\n' }
     }
 
+    internal fun managedCodeLine(token: String): Int? = managedReference(token)?.second
+
     internal fun openManagedCodeReference(token: String): Boolean {
-        val line = managedCodeLine(token) ?: return false
-        openSource(PLM_SOURCE_FILE, line)
+        val (file, line) = managedReference(token) ?: return false
+        openSource(file, line)
         return true
     }
 

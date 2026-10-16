@@ -10,6 +10,7 @@ internal data class AsmRoomResetPlan(
     val restored: RoomEdits,
     val replacements: Map<String, Pair<String, String>>,
     val externalReferences: Set<String>,
+    val relocation: AsmRoomAreaMovePlan? = null,
 )
 
 /** Remove only generated declarations belonging to this room. Custom code, comments and
@@ -22,7 +23,7 @@ internal fun resetRoomSource(
 ): Map<String, String> {
     data class Definition(val file: String, val name: String, val range: IntRange, val body: String)
     val ownedNames = buildList {
-        if (room.asmDoorSourceVersion != 0) add(Regex(AsmDoorSource.prefix(room.roomId) + "Door_[0-9]+"))
+        if (room.asmDoorSourceVersion != 0) add(Regex(AsmDoorSource.prefix(room.roomId) + "(?:Door_[0-9]+|List)"))
         if (room.asmDoorSourceVersion != 0) add(Regex("SmeditArrival_${room.roomId.toString(16).uppercase().padStart(4, '0')}_Door_[0-9]+"))
         if (room.asmPlmSourceVersion != 0) add(Regex(AsmRoomObjectSource.prefix(room.roomId) + "(?:(?:List|Common|Scroll)_[0-9]+|State_[0-9a-f]+|Save_[0-5]_[0-7])"))
         if (room.asmInitialScrollSourceVersion != 0) add(Regex(AsmInitialScrollSource.prefix(room.roomId) + "(?:Table_[0-9]+|State_[0-9a-f]+)"))
@@ -81,4 +82,4 @@ internal fun resetRoomSource(
 internal fun resetSourceReferences(text: String): Set<String> =
     Regex("\\bSmedit(?:Objects|Scrolls|Fx|Enemies|Layout|RoomInfo|Selectors|Doors|Arrival)_[A-Za-z0-9_]+\\b")
         .findAll(text.lineSequence().joinToString("\n") { it.substringBefore(';') })
-        .map { if (it.value.startsWith("SmeditArrival_")) it.value.removeSuffix("_End").removeSuffix("_Entry") else it.value }.toSet()
+        .map { if (it.value.startsWith("SmeditArrival_") || it.value.startsWith("SmeditDoors_")) it.value.removeSuffix("_End").removeSuffix("_Entry") else it.value }.toSet()

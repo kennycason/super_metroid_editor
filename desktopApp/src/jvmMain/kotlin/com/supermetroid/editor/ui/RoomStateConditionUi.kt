@@ -77,6 +77,24 @@ internal data class ItemPickupConditionOption(
     val label: String,
 )
 
+internal data class IncomingDoorConditionOption(
+    val pointer: Int? = null,
+    val sourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference? = null,
+    val label: String,
+) {
+    fun matches(condition: ProjectRoomStateCondition) = if (condition.sourceDoor != null) condition.sourceDoor == sourceDoor
+        else condition.argument != null && condition.argument == pointer
+    fun condition(negated: Boolean = false) = projectRoomStateCondition(
+        ProjectRoomStateConditionKind.INCOMING_DOOR, pointer.takeIf { sourceDoor == null }, negated, sourceDoor = sourceDoor)
+    companion object {
+        fun native(pointer: Int, label: String = "Door $${pointer.toString(16).uppercase().padStart(4, '0')}") =
+            IncomingDoorConditionOption(pointer = pointer, label = label)
+        fun fromCondition(condition: ProjectRoomStateCondition) = condition.sourceDoor?.let {
+            IncomingDoorConditionOption(sourceDoor = it, label = it.caption)
+        } ?: native(requireNotNull(condition.argument))
+    }
+}
+
 internal data class StateConditionKindPickerGroup(
     val title: String,
     val kinds: List<ProjectRoomStateConditionKind>,
@@ -189,6 +207,7 @@ internal fun RoomStateSimulatorDialog(
     area: Int,
     itemPickupOptions: List<ItemPickupConditionOption>,
     onDismiss: () -> Unit,
+    incomingDoorOptions: List<IncomingDoorConditionOption> = emptyList(),
 ) {
     var context by remember(states, area) {
         mutableStateOf(RoomStateSimulationContext(area = area, maxEnergy = 99, currentEnergy = 99))
@@ -250,7 +269,8 @@ internal fun RoomStateSimulatorDialog(
                 Text("Inputs", fontWeight = FontWeight.SemiBold)
 
                 val incomingDoors = leaves.filter { it.kind == ProjectRoomStateConditionKind.INCOMING_DOOR }
-                    .mapNotNull { it.argument }.distinct()
+                    .map { condition -> incomingDoorOptions.firstOrNull { it.matches(condition) }
+                        ?: IncomingDoorConditionOption.fromCondition(condition) }.distinct()
                 if (incomingDoors.isNotEmpty()) {
                     var expanded by remember { mutableStateOf(false) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -266,9 +286,8 @@ internal fun RoomStateSimulatorDialog(
                                 shape = MaterialTheme.shapes.extraSmall,
                             ) {
                                 Text(
-                                    context.incomingDoorPointer?.let {
-                                        "Door \$${it.toString(16).uppercase().padStart(4, '0')}"
-                                    } ?: "None / another door",
+                                    incomingDoors.firstOrNull { it.pointer == context.incomingDoorPointer && it.sourceDoor == context.incomingSourceDoor }?.label
+                                        ?: "None / another door",
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                                     fontSize = ROOM_INFO_BODY_FONT_SIZE,
                                 )
@@ -276,13 +295,13 @@ internal fun RoomStateSimulatorDialog(
                             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                                 DropdownMenuItem(
                                     text = { Text("None / another door") },
-                                    onClick = { context = context.copy(incomingDoorPointer = null); expanded = false },
+                                    onClick = { context = context.copy(incomingDoorPointer = null, incomingSourceDoor = null); expanded = false },
                                 )
                                 incomingDoors.forEach { door ->
                                     DropdownMenuItem(
-                                        text = { Text("Door \$${door.toString(16).uppercase().padStart(4, '0')}") },
+                                        text = { Text(door.label) },
                                         onClick = {
-                                            context = context.copy(incomingDoorPointer = door)
+                                            context = context.copy(incomingDoorPointer = door.pointer, incomingSourceDoor = door.sourceDoor)
                                             expanded = false
                                         },
                                     )
@@ -492,7 +511,7 @@ internal fun projectConditionLabel(condition: ProjectRoomStateCondition, area: I
 internal fun StateConditionEditor(
     condition: ProjectRoomStateCondition,
     area: Int,
-    incomingDoorPointers: List<Int>,
+    incomingDoors: List<IncomingDoorConditionOption>,
     itemPickupOptions: List<ItemPickupConditionOption>,
     onChange: (ProjectRoomStateCondition) -> Unit,
     onOpenBuilder: (() -> Unit)? = null,
@@ -521,7 +540,7 @@ internal fun StateConditionEditor(
     val availableGroups = STATE_CONDITION_KIND_PICKER_GROUPS.mapNotNull { group ->
         val kinds = group.kinds.filter { kind ->
             kind != ProjectRoomStateConditionKind.INCOMING_DOOR ||
-                incomingDoorPointers.isNotEmpty() || condition.kind == kind
+                incomingDoors.isNotEmpty() || condition.kind == kind
         }
         group.copy(kinds = kinds).takeIf { kinds.isNotEmpty() }
     }
@@ -575,7 +594,7 @@ internal fun StateConditionEditor(
                             ProjectRoomStateConditionKind.EVENT_SET -> 0
                             ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET ->
                                 RoomStateCondition.BOSS_NAMES.keys.firstOrNull { it.first == area }?.second ?: 1
-                            ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.firstOrNull() ?: 0
+                            ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoors.firstOrNull()?.pointer
                             ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
                                 RoomStateCondition.EQUIPMENT_NAMES.keys.first()
                             ProjectRoomStateConditionKind.BEAM_COLLECTED ->
@@ -592,7 +611,9 @@ internal fun StateConditionEditor(
                             }
                             else -> null
                         }
-                        val option = projectRoomStateCondition(kind, argument)
+                        val option = if (kind == ProjectRoomStateConditionKind.INCOMING_DOOR) {
+                            if (condition.kind == kind) condition else incomingDoors.first().condition()
+                        } else projectRoomStateCondition(kind, argument)
                         DropdownMenuItem(
                             text = { Text(stateConditionKindPickerLabel(kind), fontSize = ROOM_INFO_BODY_FONT_SIZE) },
                             onClick = { kindExpanded = false; onChange(option) },
@@ -612,9 +633,7 @@ internal fun StateConditionEditor(
             mask to (RoomStateCondition.BOSS_NAMES[area to mask]
                 ?: "Custom boss flag \$${mask.toString(16).uppercase().padStart(2, '0')}")
         }
-        ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoorPointers.map {
-            it to "Door \$${it.toString(16).uppercase().padStart(4, '0')}"
-        }
+        ProjectRoomStateConditionKind.INCOMING_DOOR -> incomingDoors.mapIndexed { index, door -> index to door.label }
         ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED ->
             RoomStateCondition.EQUIPMENT_NAMES.map { it.key to it.value }
         ProjectRoomStateConditionKind.BEAM_COLLECTED ->
@@ -635,7 +654,10 @@ internal fun StateConditionEditor(
     }
     if (arguments.isNotEmpty()) {
         var argumentExpanded by remember(condition.kind, condition.argument) { mutableStateOf(false) }
-        val selectedLabel = arguments.firstOrNull { it.first == condition.argument }?.second
+        val selectedLabel = if (condition.kind == ProjectRoomStateConditionKind.INCOMING_DOOR)
+            incomingDoors.firstOrNull { it.matches(condition) }?.label ?: condition.sourceDoor?.caption
+                ?: "Door $${(condition.argument ?: 0).toString(16).uppercase()} (not currently incoming)"
+        else arguments.firstOrNull { it.first == condition.argument }?.second
             ?: "Custom \$${(condition.argument ?: 0).toString(16).uppercase()}"
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
@@ -701,7 +723,9 @@ internal fun StateConditionEditor(
                             text = { Text(menuLabel, fontSize = ROOM_INFO_BODY_FONT_SIZE) },
                             onClick = {
                                 argumentExpanded = false
-                                onChange(projectRoomStateCondition(condition.kind, value, condition.negated))
+                                onChange(if (condition.kind == ProjectRoomStateConditionKind.INCOMING_DOOR)
+                                    incomingDoors[value].condition(condition.negated)
+                                else projectRoomStateCondition(condition.kind, value, condition.negated))
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                             modifier = Modifier.height(32.dp),
@@ -805,7 +829,7 @@ internal fun StateConditionEditor(
             Checkbox(
                 checked = condition.negated,
                 onCheckedChange = { inverted ->
-                    onChange(projectRoomStateCondition(condition.kind, condition.argument, inverted))
+                    onChange(projectRoomStateCondition(condition.kind, condition.argument, inverted, sourceDoor = condition.sourceDoor))
                 },
                 modifier = Modifier.size(24.dp),
             )
@@ -827,7 +851,7 @@ internal fun StateConditionEditor(
 internal fun ConditionBuilderDialog(
     initialCondition: ProjectRoomStateCondition,
     area: Int,
-    incomingDoorPointers: List<Int>,
+    incomingDoors: List<IncomingDoorConditionOption>,
     itemPickupOptions: List<ItemPickupConditionOption>,
     onDismiss: () -> Unit,
     onApply: (ProjectRoomStateCondition) -> Unit,
@@ -875,7 +899,7 @@ internal fun ConditionBuilderDialog(
                 ConditionExpressionNodeEditor(
                     condition = condition,
                     area = area,
-                    incomingDoorPointers = incomingDoorPointers,
+                    incomingDoors = incomingDoors,
                     itemPickupOptions = itemPickupOptions,
                     depth = 0,
                     onChange = { condition = it },
@@ -898,7 +922,7 @@ internal fun ConditionBuilderDialog(
 private fun ConditionExpressionNodeEditor(
     condition: ProjectRoomStateCondition,
     area: Int,
-    incomingDoorPointers: List<Int>,
+    incomingDoors: List<IncomingDoorConditionOption>,
     itemPickupOptions: List<ItemPickupConditionOption>,
     depth: Int,
     onChange: (ProjectRoomStateCondition) -> Unit,
@@ -909,7 +933,7 @@ private fun ConditionExpressionNodeEditor(
         StateConditionEditor(
             condition = condition,
             area = area,
-            incomingDoorPointers = incomingDoorPointers,
+            incomingDoors = incomingDoors,
             itemPickupOptions = itemPickupOptions,
             onChange = onChange,
         )
@@ -983,7 +1007,7 @@ private fun ConditionExpressionNodeEditor(
                         ConditionExpressionNodeEditor(
                             condition = child,
                             area = area,
-                            incomingDoorPointers = incomingDoorPointers,
+                            incomingDoors = incomingDoors,
                             itemPickupOptions = itemPickupOptions,
                             depth = depth + 1,
                             onChange = { updated ->
@@ -1032,7 +1056,7 @@ internal fun AddRoomStateDialog(
     templateName: String,
     initialCondition: ProjectRoomStateCondition,
     area: Int,
-    incomingDoorPointers: List<Int>,
+    incomingDoors: List<IncomingDoorConditionOption>,
     itemPickupOptions: List<ItemPickupConditionOption>,
     existingConditions: List<ProjectRoomStateCondition>,
     onDismiss: () -> Unit,
@@ -1062,7 +1086,7 @@ internal fun AddRoomStateDialog(
                 StateConditionEditor(
                     condition = condition,
                     area = area,
-                    incomingDoorPointers = incomingDoorPointers,
+                    incomingDoors = incomingDoors,
                     itemPickupOptions = itemPickupOptions,
                     onChange = { condition = it },
                     onOpenBuilder = { showBuilder = true },
@@ -1089,7 +1113,7 @@ internal fun AddRoomStateDialog(
         ConditionBuilderDialog(
             initialCondition = condition,
             area = area,
-            incomingDoorPointers = incomingDoorPointers,
+            incomingDoors = incomingDoors,
             itemPickupOptions = itemPickupOptions,
             onDismiss = { showBuilder = false },
             onApply = {

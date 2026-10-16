@@ -55,6 +55,7 @@ fun analyzeDoorScrollAsm(
     val accumulatorWidths = mutableListOf<Boolean>()
     var accumulator8Bit = false
     var accumulatorValue: Int? = null
+    var accumulatorHighByteKnown = false
     var accumulatorUsedForScroll = false
     var hasOtherEffects = false
     var decodedCompletely = false
@@ -89,8 +90,10 @@ fun analyzeDoorScrollAsm(
                 finishAccumulator()
                 val operandBytes = if (accumulator8Bit) 1 else 2
                 if (i + operandBytes >= maxBytes) break
-                accumulatorValue = romParser.readByteAt(pc + i + 1) or
+                val immediate = romParser.readByteAt(pc + i + 1) or
                     (if (operandBytes == 2) romParser.readByteAt(pc + i + 2) shl 8 else 0)
+                accumulatorValue = if (accumulator8Bit && accumulatorHighByteKnown) (requireNotNull(accumulatorValue) and 0xFF00) or immediate else immediate
+                if (!accumulator8Bit) accumulatorHighByteKnown = true
                 accumulatorUsedForScroll = false
                 i += 1 + operandBytes
             }
@@ -104,7 +107,8 @@ fun analyzeDoorScrollAsm(
                     val lowByte = address and 0xFF
                     if (lowByte in SCROLLS_LOW_BYTE..LAST_SUPPORTED_SCROLL_LOW_BYTE) {
                         writes.add(DoorScrollWrite(value and 0xFF, lowByte))
-                        if (!accumulator8Bit && lowByte < LAST_SUPPORTED_SCROLL_LOW_BYTE) {
+                        if (!accumulator8Bit && !accumulatorHighByteKnown) hasOtherEffects = true
+                        else if (!accumulator8Bit && lowByte < LAST_SUPPORTED_SCROLL_LOW_BYTE) {
                             writes.add(DoorScrollWrite((value shr 8) and 0xFF, lowByte + 1))
                         }
                         accumulatorUsedForScroll = true

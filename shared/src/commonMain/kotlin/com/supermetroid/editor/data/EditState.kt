@@ -329,7 +329,27 @@ data class ProjectRoomStateCondition(
     val negated: Boolean = false,
     /** Child predicates for [ProjectRoomStateConditionKind.ALL_OF] and [ProjectRoomStateConditionKind.ANY_OF]. */
     val children: List<ProjectRoomStateCondition> = emptyList(),
+    /** Stable authored DoorDef identity, mutually exclusive with a numeric [argument]. */
+    val sourceDoor: ProjectSourceDoorReference? = null,
 )
+
+/** A declaration identity, NOT the door's current BTS index or allocated ROM pointer. */
+@Serializable
+data class ProjectSourceDoorReference(val roomId: Int, val identity: Int) {
+    init {
+        require(roomId in 0x8000..0xFFFF && identity in 0..65535) { "Invalid source DoorDef identity." }
+    }
+    val entryLabel: String get() = "SmeditDoors_${roomId.toString(16).uppercase().padStart(4, '0')}_Door_${identity}_Entry"
+    val caption: String get() = "Room $${roomId.toString(16).uppercase().padStart(4, '0')} · door ID $identity"
+    companion object {
+        fun fromEntryLabel(label: String): ProjectSourceDoorReference? {
+            val match = Regex("SmeditDoors_([0-9A-F]{4})_Door_(0|[1-9][0-9]*)_Entry").matchEntire(label) ?: return null
+            val roomId = match.groupValues[1].toInt(16)
+            val identity = match.groupValues[2].toIntOrNull() ?: return null
+            return if (roomId in 0x8000..0xFFFF && identity in 0..65535) ProjectSourceDoorReference(roomId, identity) else null
+        }
+    }
+}
 
 @Serializable
 enum class ProjectRoomStateConditionKind {
@@ -511,7 +531,7 @@ data class RoomEdits(
     @kotlinx.serialization.Transient var asmHeaderPropertiesProjection: RoomHeaderChange? = null,
     var asmStateSelectorsSourceVersion: Int = 0,
     @kotlinx.serialization.Transient var asmSelectorOrderProjection: List<String>? = null,
-    /** Existing DoorDef fields are authored in bank_83.asm; list identities remain native. */
+    /** Door fields and optional structural list are authored in bank_83.asm. */
     var asmDoorSourceVersion: Int = 0,
     @kotlinx.serialization.Transient var asmDoorProjection: List<DoorChange>? = null,
 ) {
@@ -963,7 +983,7 @@ data class SmEditProject(
 ) {
     companion object {
         // Source ownership cannot be silently ignored by older editors.
-        const val CURRENT_PROJECT_FORMAT_VERSION = 19
+        const val CURRENT_PROJECT_FORMAT_VERSION = 21
     }
     fun roomKey(roomId: Int): String = roomId.toString(16).uppercase().padStart(4, '0')
 

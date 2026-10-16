@@ -34,7 +34,7 @@ class AsmRoomAreaMoveTest {
         }
     }
 
-    private suspend fun fixture(hasSave: Boolean = true, sharedDoor: Boolean = false): Fixture {
+    private suspend fun fixture(hasSave: Boolean = true, sharedDoor: Boolean = false, nestedRoom: Boolean = false): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }
         val macros = "macro PLMPopEntry(ID,X,Y,Param)\n dw <ID>\n db <X>,<Y>\n dw <Param>\nendmacro\n"
@@ -84,6 +84,11 @@ class AsmRoomAreaMoveTest {
         door(0x8000, 0xA000, 0x0081); door(0x8010, 0xA100, 0x00C1)
         door(0x8020, 0x91F8, 0x0081); door(0x8030, 0xA100, 0x00C1)
         door(0x8040, 0x91F8, 0x00C1); door(0x8050, 0xA000, 0x00C1)
+        if (nestedRoom) {
+            otherRoom(0xA200, 0, 0x8140, 2, 3)
+            rom[0x7A204] = 1; rom[0x7A205] = 1
+            door(0x8050, 0xA200, 0x00C1)
+        }
         val missile = RomParser.PlmEntry(0xEEDB, 2, 3, 5)
         val save = RomParser.PlmEntry(0xB76F, 8, 8, 0x8001)
         RomParser.serializePlmSet(if (hasSave) listOf(missile, save) else listOf(missile)).forEachIndexed { i, value -> rom[0x78000 + i] = value.toByte() }
@@ -96,7 +101,8 @@ class AsmRoomAreaMoveTest {
         word(0x44C5 + 28 + 4, 0) // saveSourceTestRom has an unrelated demo field here.
         word(0x45CF + 14, 0xA100) // Source index 1 is unavailable in the target area; use 0 instead.
         val parser = RomParser(rom)
-        assertEquals(setOf(0x91F8, 0xA000, 0xA100), parser.roomCatalog.rooms.map { it.getRoomIdAsInt() }.toSet())
+        assertEquals(setOf(0x91F8, 0xA000, 0xA100) + if (nestedRoom) setOf(0xA200) else emptySet(),
+            parser.roomCatalog.rooms.map { it.getRoomIdAsInt() }.toSet())
         val project = SmEditProject(File(directory, "base.sfc").apply { writeBytes(rom) }.path).apply {
             asmWorkspace.enabled = true; asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
         }
@@ -423,15 +429,223 @@ class AsmRoomAreaMoveTest {
         }
     }
 
-    @Test fun `reset after relocation explains the joint dependency and undo restores reset availability`() = runBlocking {
+    @Test fun `reset after relocation returns native headers maps saves and flags with reciprocal exact undo redo`() = runBlocking {
         val f = fixture(); assertTrue(f.move().success, f.editor.statusMessage)
+        // Edits made after the move are not rewound by Reset.
+        val other = f.project.getOrCreateRoom(0xA000)
+        other.stateDataChange = StateDataChange(musicTrack = 7)
+        persistMinimapData(f.parser, f.project, effectiveMinimapData(f.parser, f.project, 1).withTile(50, 20, 0x0F))
+        persistMapStationData(f.parser, f.project, effectiveMapStationData(f.parser, f.project, 1).withValue(50, 20, true))
         val moved = f.model(); val source = f.sources()
-        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser))
-        assertContains(f.editor.statusMessage, "area/map move")
-        assertEquals(moved, f.model()); assertEquals(source, f.sources())
-        f.map.undo(f.editor)
-        assertFalse(f.editor.hasManagedRoomProperties())
+        val original = f.project.rooms.getValue("91F8")
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        val reset = f.model(); val resetSource = f.sources()
+        assertFalse(f.project.rooms.getValue("91F8").hasEdits)
+        assertSame(other, f.project.rooms["A000"]); assertEquals(7, other.stateDataChange?.musicTrack)
         assertEquals(0, f.editor.activeRoomAreaForEditing())
+        assertEquals(f.parser.parsePlmSet(f.parser.parseRoomStatesWithData(0x91F8)[f.editor.currentStateIndex].plmSetPtr), f.editor.workingPlms)
+        val built = f.coldExport()
+        assertEquals(f.parser.readRoomHeader(0x91F8), built.readRoomHeader(0x91F8))
+        for (id in listOf(0x91F8, 0xA000, 0xA100)) assertEquals(f.parser.parseDoorList(f.parser.readRoomHeader(id)!!.doorOut), f.entries(id))
+        for (area in 0..1) for (slot in 0 until f.parser.saveStationSlotCount(area)) {
+            assertEquals(f.parser.readSaveEntry(area, slot)!!.words(), built.readSaveEntry(area, slot)!!.words())
+        }
+        assertEquals(0x0F, effectiveMinimapData(f.parser, f.project, 1).getTile(50, 20))
+        assertTrue(effectiveMapStationData(f.parser, f.project, 1).isRevealed(50, 20))
+        for (area in 0..1) {
+            val map = effectiveMinimapData(f.parser, f.project, area)
+            val reveal = effectiveMapStationData(f.parser, f.project, area)
+            for (y in 0 until MinimapData.MAP_HEIGHT) for (x in 0 until MinimapData.MAP_WIDTH) {
+                if (area == 1 && x == 50 && y == 20) continue
+                assertEquals(f.parser.readMinimapTiles(area).getTile(x, y), map.getTile(x, y))
+                assertEquals(f.parser.readMapStationData(area).isRevealed(x, y), reveal.isRevealed(x, y))
+            }
+        }
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(moved, f.model()); assertEquals(source, f.sources())
+        assertSame(original, f.project.rooms["91F8"])
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertEquals(reset, f.model()); assertEquals(resetSource, f.sources())
+        f.map.undo(f.editor)
+        assertEquals(moved, f.model()); assertEquals(source, f.sources())
+        f.map.redo(f.editor)
+        assertEquals(reset, f.model()); assertEquals(resetSource, f.sources())
+        f.map.initIfNeeded(f.parser, f.editor)
+        assertTrue(f.map.undoStack.isNotEmpty(), "A source reset must remain part of map history after recomposition")
+    }
+
+    @Test fun `reset handles overlapping same area moves without adopting doors and preserves later map strokes`() = runBlocking {
+        val f = fixture()
+        f.map.moveRoom(1, 0, f.editor)
+        assertTrue(f.map.applyMove(f.editor), f.editor.statusMessage)
+        persistMinimapData(f.parser, f.project, effectiveMinimapData(f.parser, f.project, 0).withTile(50, 20, 0x0F))
+        val moved = f.model(); val source = f.sources()
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertFalse(f.project.rooms.getValue("91F8").hasEdits)
+        assertNull(f.workspace.sourceUndoHead(DOOR_SOURCE_FILE))
+        assertEquals(0x0F, effectiveMinimapData(f.parser, f.project, 0).getTile(50, 20))
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(moved, f.model()); assertEquals(source, f.sources())
+        assertFalse(f.editor.undo(), "The later independent map stroke must not be rewound by the earlier move")
+    }
+
+    @Test fun `reset relocation conflicts publish no source metadata map or history changes`() = runBlocking {
+        val cases = listOf<Pair<String, (Fixture) -> Unit>>(
+            "original map location" to { f -> f.project.getOrCreateRoom(0xA000).roomHeaderChange = RoomHeaderChange(mapX = 2, mapY = 3) },
+            "new map art" to { f -> persistMinimapData(f.parser, f.project, effectiveMinimapData(f.parser, f.project, 0).withTile(2, 3, 0x12)) },
+            "new reveal data" to { f -> persistMapStationData(f.parser, f.project, effectiveMapStationData(f.parser, f.project, 0).withValue(2, 3, true)) },
+            "save slot" to { f -> f.project.getOrCreateRoom(0xA100).saveStationSpawns += SaveStationSpawnChange(1, 0, 0xA100, 0x8020, 0, 0, 0, 0) },
+            "save slot" to { f -> f.project.getOrCreateRoom(0xA100).plmChanges += PlmChange("add", 0xB76F, 1, 1, 0) })
+        for ((message, mutate) in cases) {
+            val f = fixture(); assertTrue(f.move().success, f.editor.statusMessage); mutate(f)
+            val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
+            val history = f.editor.undoStack.toList()
+            assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser), message)
+            assertContains(f.editor.statusMessage, message)
+            assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
+            assertEquals(history, f.editor.undoStack)
+        }
+    }
+
+    @Test fun `newer dependencies and build mode changes block whole relocation reset undo`() = runBlocking {
+        val f = fixture(); assertTrue(f.move().success, f.editor.statusMessage)
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        val source = f.sources()
+        persistMinimapData(f.parser, f.project, effectiveMinimapData(f.parser, f.project, 0).withTile(50, 20, 0x0F))
+        val model = f.model()
+        assertFalse(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE)); assertEquals(model, f.model()); assertEquals(source, f.sources())
+        persistMinimapData(f.parser, f.project, f.parser.readMinimapTiles(0))
+        f.project.asmWorkspace.buildMode = ProjectRomBuildMode.PATCHED_ROM
+        val wrongMode = f.model()
+        assertFalse(f.workspace.undoSourceEdit(PLM_SOURCE_FILE)); assertEquals(wrongMode, f.model()); assertEquals(source, f.sources())
+        f.project.asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+    }
+
+    @Test fun `reset retains only necessary native outgoing area corrections when a neighbor remains moved and is idempotent`() = runBlocking {
+        val f = fixture(hasSave = false)
+        assertTrue(f.move().success, f.editor.statusMessage)
+        f.project.getOrCreateRoom(0xA000).roomHeaderChange = RoomHeaderChange(area = 1)
+        val model = f.model(); val source = f.sources()
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        val room = f.project.rooms.getValue("91F8")
+        assertEquals(1, room.asmDoorSourceVersion); assertEquals(0, room.asmRoomPropertiesSourceVersion)
+        assertEquals(0xC1, f.entries(0x91F8).first().bitflag)
+        assertEquals(0xC1, f.entries(0xA000).first().bitflag)
+        assertEquals(1, f.project.rooms.getValue("A000").effectiveHeaderChange?.area)
+        val reset = f.model(); val resetSource = f.sources(); val head = f.workspace.sourceUndoHead(PLM_SOURCE_FILE)
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertSame(head, f.workspace.sourceUndoHead(PLM_SOURCE_FILE)); assertEquals(reset, f.model()); assertEquals(resetSource, f.sources())
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
+    }
+
+    @Test fun `repeated moves can be reset with historical save releases after a cold reopen`() = runBlocking {
+        val f = fixture()
+        assertTrue(f.move().success, f.editor.statusMessage)
+        assertTrue(f.move(2).success, f.editor.statusMessage)
+        assertTrue(f.workspace.saveAllSources(), f.workspace.error)
+        val cold = Json.decodeFromString<SmEditProject>(f.model())
+        val workspace = AsmWorkspaceState(projectRepository = AsmProjectWorkspaceRepository(emptyList(), emptyList()))
+        workspace.bindProject(f.file.path, true, progressive = true)
+        val editor = EditorState().apply { testMode = true; initForProject(f.file, cold) }
+        editor.bindRoomSources(f.bridge.catalog, workspace)
+        editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
+        val before = Json.encodeToString(SmEditProject.serializer(), cold)
+        assertTrue(editor.resetCurrentRoomToOriginal(f.parser), editor.statusMessage)
+        assertFalse(cold.rooms.getValue("91F8").hasEdits)
+        assertFalse(Regex("(?m)^macro SmeditObjects_91F8_Save_").containsMatchIn(workspace.projectSourceText(PLM_SOURCE_FILE)))
+        assertTrue(editor.undo(), editor.statusMessage)
+        assertEquals(before, Json.encodeToString(SmEditProject.serializer(), cold))
+    }
+
+    @Test fun `pending map gestures block reset and its source undo without losing the gesture`() = runBlocking {
+        val f = fixture()
+        assertTrue(f.move().success, f.editor.statusMessage)
+        val model = f.model(); val source = f.sources(); val history = f.map.undoStack.toList()
+        val stroke = f.map.mapData.withTile(50, 20, 0x0F)
+        f.map.pendingStroke = stroke
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser)); assertContains(f.editor.statusMessage, "map stroke")
+        assertSame(stroke, f.map.pendingStroke); assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(history, f.map.undoStack)
+        f.map.pendingStroke = null
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        val resetModel = f.model(); val resetSource = f.sources()
+        f.map.pendingStroke = stroke
+        assertFalse(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE))
+        assertSame(stroke, f.map.pendingStroke); assertEquals(resetModel, f.model()); assertEquals(resetSource, f.sources())
+        f.map.pendingStroke = null
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
+    }
+
+    @Test fun `position only reset leaves neighboring manually authored flags and arrival code exact`() = runBlocking {
+        val f = fixture()
+        val neighbor = f.project.getOrCreateRoom(0xA000).also { it.ensureStateManifest(f.parser) }
+        f.bridge.doors.migrate(neighbor.roomId, "Neighbor")
+        f.bridge.doors.edit(neighbor.roomId, 0, f.entries(neighbor.roomId).first().copy(bitflag = 0xC1, distFromDoor = 0x1234))
+        val source83 = f.bridge.doors.sourceText(); val doors = f.entries(neighbor.roomId)
+        f.map.moveRoom(1, 0, f.editor)
+        assertTrue(f.map.applyMove(f.editor), f.editor.statusMessage)
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertEquals(source83, f.bridge.doors.sourceText()); assertEquals(doors, f.entries(neighbor.roomId))
+        assertSame(neighbor, f.project.rooms["A000"])
+    }
+
+    @Test fun `relocation reset preserves native nested room map art and reveal edits`() = runBlocking {
+        val f = fixture(nestedRoom = true)
+        assertTrue(f.move().success, f.editor.statusMessage)
+        persistMinimapData(f.parser, f.project, effectiveMinimapData(f.parser, f.project, 0).withTile(2, 3, 0x1C))
+        persistMapStationData(f.parser, f.project, effectiveMapStationData(f.parser, f.project, 0).withValue(2, 3, true))
+        val moved = f.model(); val source = f.sources()
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertEquals(0x1C, effectiveMinimapData(f.parser, f.project, 0).getTile(2, 3))
+        assertTrue(effectiveMapStationData(f.parser, f.project, 0).isRevealed(2, 3))
+        assertEquals(0, f.project.rooms.getValue("91F8").effectiveHeaderChange?.area ?: f.parser.readRoomHeader(0x91F8)!!.area)
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(moved, f.model()); assertEquals(source, f.sources())
+    }
+
+    @Test fun `final native geometry preflight protects authored closing door caps even when the arrival screen fits`() = runBlocking {
+        val f = fixture()
+        assertTrue(f.move().success, f.editor.statusMessage)
+        f.project.rooms.getValue("91F8").roomHeaderChange = RoomHeaderChange(width = 3)
+        f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
+        val door = f.entries(0xA000).first()
+        f.bridge.doors.edit(0xA000, 0, door.copy(bitflag = (4 shl 8) or (door.bitflag and 255), doorCapCode = 32))
+        val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser))
+        assertContains(f.editor.statusMessage, "closing-door cap")
+        assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
+    }
+
+    @Test fun `externally retained DoorDefs block replacement rather than creating duplicate native correction macros`() = runBlocking {
+        val f = fixture(hasSave = false)
+        assertTrue(f.move().success, f.editor.statusMessage)
+        f.project.getOrCreateRoom(0xA000).roomHeaderChange = RoomHeaderChange(area = 1)
+        val text = f.bridge.sourceText()
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text,
+            text + "\nmacro CustomDoorData()\n %SmeditDoors_91F8_Door_0()\nendmacro\n")
+        val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser))
+        assertContains(f.editor.statusMessage, "external source reference")
+        assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
+    }
+
+    @Test fun `ordinary source reset also protects an open map gesture and shares reset history without changing map art`() = runBlocking {
+        val f = fixture()
+        assertTrue(f.editor.ensureCurrentPlmSource("Room"), f.editor.statusMessage)
+        val model = f.model(); val source = f.sources()
+        val stroke = f.map.mapData.withTile(50, 20, 0x0F)
+        f.map.pendingStroke = stroke
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser)); assertSame(stroke, f.map.pendingStroke)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
+        f.map.pendingStroke = null
+        val map = f.map.mapData; val reveal = f.map.stationData
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertEquals(map, f.map.mapData); assertEquals(reveal, f.map.stationData)
+        f.map.undo(f.editor)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
+        assertEquals(map, f.map.mapData); assertEquals(reveal, f.map.stationData)
     }
 
     @Test fun `shared native DoorDefs fail the entire area move without acquiring any owners`() = runBlocking {

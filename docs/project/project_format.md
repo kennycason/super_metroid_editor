@@ -198,6 +198,26 @@ resolve exported doors or treated as persistent identity.
 
 ## Version Fields
 
+Schema 21 adds stable incoming-door selector references. `INCOMING_DOOR` may use
+`dw SmeditDoors_ROOM_Door_ID_Entry` instead of a literal bank-$83 pointer in typed
+selector source, including inside AND/OR/NOT trees. The semantic condition's
+optional `sourceDoor: { roomId, identity }` is mutually exclusive with `argument`;
+normal source-owned projects persist the authored token, not the transient GUI
+projection or resolved address. Only active connections leading to the selected
+room qualify. DoorDefs are allocated before selectors are encoded; missing,
+retired, wrong-destination and unresolved references block builds. Existing
+numeric references retain their original meaning. The normal schema-upgrade
+backup applies. See [symbolic incoming-door conditions](../asm/reference_workspace.md#symbolic-incoming-door-conditions).
+
+Schema 20 supports optional structural door-list macros alongside the existing
+`asmDoorSourceVersion = 1` fields. Order and stable Door_N identities live only in
+source; new DoorDef/list addresses are build results, never project JSON fields.
+The schema bump prevents older editors from silently ignoring authored list order.
+Completed GUI structure edits adopt door/layout source atomically; ASM-first list
+edits are validated against all final runtime layouts without requiring layout
+adoption. Existing schema-upgrade backups apply. See
+[structural door lists](../asm/reference_workspace.md#structural-door-lists).
+
 Schema 14 adds `RoomEdits.asmLayoutSourceVersion` (default 0, supported value 1).
 Decoded L1 tile words, BTS bytes, embedded L2 and retained allocation/tail bytes
 live in `SmeditLayout_*` macros in project `bank_8F.asm`. Stable state wrappers

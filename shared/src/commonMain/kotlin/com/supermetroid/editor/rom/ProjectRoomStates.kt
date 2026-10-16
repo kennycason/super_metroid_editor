@@ -77,8 +77,17 @@ fun RoomStateEdits.baseSourceStateIndex(): Int? = sourceStateIndex ?: templateSo
  * future non-Compose client. Keeping this beside the semantic model prevents
  * each view from maintaining its own condition-name switch.
  */
-fun ProjectRoomStateCondition.displaySummary(area: Int): String =
-    asRuntimeCondition().shortSummary(area)
+fun ProjectRoomStateCondition.displaySummary(area: Int): String = when {
+    sourceDoor != null -> (if (negated) "Not entered through " else "Entered through ") + sourceDoor.caption
+    children.any { child -> child.flattened().any { it.sourceDoor != null } } -> {
+        val group = children.joinToString(if (kind == ProjectRoomStateConditionKind.ALL_OF) " AND " else " OR ") {
+            val text = it.displaySummary(area)
+            if (it.kind in setOf(ProjectRoomStateConditionKind.ALL_OF, ProjectRoomStateConditionKind.ANY_OF)) "($text)" else text
+        }
+        if (negated) "NOT ($group)" else group
+    }
+    else -> asRuntimeCondition().shortSummary(area)
+}
 
 private fun ProjectRoomStateCondition.asRuntimeCondition(): RoomStateCondition =
     RoomStateCondition(
@@ -91,33 +100,15 @@ private fun ProjectRoomStateCondition.asRuntimeCondition(): RoomStateCondition =
         children = children.map { it.asRuntimeCondition() },
     )
 
-fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when (kind) {
-    ProjectRoomStateConditionKind.ALL_OF,
-    ProjectRoomStateConditionKind.ANY_OF,
-    ProjectRoomStateConditionKind.EQUIPMENT_EQUIPPED,
-    ProjectRoomStateConditionKind.BEAM_EQUIPPED,
-    ProjectRoomStateConditionKind.CURRENT_ENERGY_AT_LEAST,
-    ProjectRoomStateConditionKind.CURRENT_MISSILES_AT_LEAST,
-    ProjectRoomStateConditionKind.CURRENT_SUPER_MISSILES_AT_LEAST,
-    ProjectRoomStateConditionKind.CURRENT_POWER_BOMBS_AT_LEAST,
-    ProjectRoomStateConditionKind.CURRENT_RESERVE_ENERGY_AT_LEAST,
-    ProjectRoomStateConditionKind.DOOR_BIT_SET,
-    ProjectRoomStateConditionKind.CHOZO_BLOCK_DESTROYED,
-    ProjectRoomStateConditionKind.ESCAPE_ACTIVE -> SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES
-    ProjectRoomStateConditionKind.DEFAULT -> 2
-    ProjectRoomStateConditionKind.INCOMING_DOOR -> 6
-    ProjectRoomStateConditionKind.EVENT_SET,
-    ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET -> 5
-    ProjectRoomStateConditionKind.EQUIPMENT_COLLECTED,
-    ProjectRoomStateConditionKind.BEAM_COLLECTED,
-    ProjectRoomStateConditionKind.MISSILE_CAPACITY_AT_LEAST,
-    ProjectRoomStateConditionKind.SUPER_MISSILE_CAPACITY_AT_LEAST,
-    ProjectRoomStateConditionKind.POWER_BOMB_CAPACITY_AT_LEAST,
-    ProjectRoomStateConditionKind.ENERGY_CAPACITY_AT_LEAST,
-    ProjectRoomStateConditionKind.RESERVE_CAPACITY_AT_LEAST,
-    ProjectRoomStateConditionKind.ITEM_PICKUP_COLLECTED,
-    ProjectRoomStateConditionKind.BOSS_DEFEATED -> SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES
-    else -> if (requiresCompiledExpression()) SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES else 4
+fun ProjectRoomStateCondition.encodedSizeBytes(): Int = when {
+    // The ABI is chosen before the original kind: NOT event/boss tests are
+    // six-byte expression entries, not five-byte native literal entries.
+    requiresCompiledExpression() -> SmEditCompiledRoomStateConditionFormat.ENTRY_SIZE_BYTES
+    kind == ProjectRoomStateConditionKind.DEFAULT -> 2
+    kind == ProjectRoomStateConditionKind.INCOMING_DOOR -> 6
+    kind in setOf(ProjectRoomStateConditionKind.EVENT_SET, ProjectRoomStateConditionKind.AREA_BOSS_BIT_SET) -> 5
+    kind.isSmEditGeneratedPredicate() -> SmEditRoomStatePredicateFormat.ENTRY_SIZE_BYTES
+    else -> 4
 }
 
 fun ProjectRoomStateConditionKind.isSmEditGeneratedPredicate(): Boolean = when (this) {
@@ -161,13 +152,17 @@ fun projectRoomStateCondition(
     argument: Int? = null,
     negated: Boolean = false,
     children: List<ProjectRoomStateCondition> = emptyList(),
+    sourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference? = null,
 ): ProjectRoomStateCondition {
+    require(sourceDoor == null || kind == ProjectRoomStateConditionKind.INCOMING_DOOR && argument == null) {
+        "A symbolic DoorDef is only valid for an incoming-door condition, without a numeric argument."
+    }
     val base = when (kind) {
     ProjectRoomStateConditionKind.DEFAULT -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE5E6,
     )
     ProjectRoomStateConditionKind.INCOMING_DOOR -> ProjectRoomStateCondition(
-        kind, ProjectRoomStateConditionArgumentKind.DOOR_POINTER, argument ?: 0, 0xE5EB,
+        kind, ProjectRoomStateConditionArgumentKind.DOOR_POINTER, if (sourceDoor == null) argument ?: 0 else null, 0xE5EB,
     )
     ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD -> ProjectRoomStateCondition(
         kind, ProjectRoomStateConditionArgumentKind.NONE, null, 0xE5FF,
@@ -266,5 +261,6 @@ fun projectRoomStateCondition(
         routineCode = if (compiled) 0 else base.routineCode,
         negated = negated,
         children = children,
+        sourceDoor = sourceDoor,
     )
 }

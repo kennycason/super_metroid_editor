@@ -188,13 +188,13 @@ internal class AsmDoorSourceBridge(private val catalog: AsmPlmSourceCatalog, pri
             }
         val before83 = sourceText()
         val before8F = arrivalText()
-        val name = AsmDoorArrivalsSource.name(roomId, index)
+        val name = AsmDoorArrivalsSource.name(roomId, door.identity)
         require(!Regex("(?m)^[ \\t]*macro[ \\t]+${name}\\b").containsMatchIn(before8F)) { "Retained arrival declaration $name needs review; no source was changed." }
         if (originalLabel != null) require(Regex("(?m)^${Regex.escape(originalLabel)}:").containsMatchIn(before8F)) {
             "The original arrival label is missing from bank_8F.asm; no behavior-preserving scaffold can be created."
         }
         val newline = if (before8F.contains("\r\n")) "\r\n" else "\n"
-        val after8F = before8F.trimEnd() + newline + newline + AsmDoorArrivalsSource.render(roomId, index, originalLabel).replace("\n", newline)
+        val after8F = before8F.trimEnd() + newline + newline + AsmDoorArrivalsSource.render(roomId, door.identity, originalLabel).replace("\n", newline)
         val after83 = document(planned83, after8F).withArrival(roomId, index, "${name}_Entry")
         AsmDoorArrivalsSource(after8F).routine("${name}_Entry")
         staged.doorChanges.clear(); staged.asmDoorSourceVersion = 1

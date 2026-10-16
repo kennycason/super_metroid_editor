@@ -21,6 +21,7 @@ internal fun snapshotRoomForResize(room: RoomEdits): RoomEdits =
 internal data class AsmRoomResizePlan(
     val owner: SmEditProject,
     val room: RoomEdits,
+    val wasPresent: Boolean,
     val beforeModel: RoomEdits,
     val afterModel: RoomEdits,
     val sourceRevision: Long,
@@ -30,6 +31,8 @@ internal data class AsmRoomResizePlan(
     val gridsBefore: Map<String, List<Int>>,
     val gridsAfter: Map<String, List<Int>>,
     val objectsAfter: Map<String, List<RomParser.PlmEntry>>,
+    val doors: AsmResizeDoorPlan,
+    val externalReferences: Set<String>,
 )
 
 /** Screen indices encode coordinates using the old row stride. Cropped screens have no new index. */
@@ -44,6 +47,9 @@ internal fun applyRoomResizeModel(room: RoomEdits, snapshot: RoomEdits) {
     AsmRoomBank8FMetadata.capture(snapshot).applyTo(room)
     room.roomHeaderChange = snapshot.roomHeaderChange
     room.asmHeaderPropertiesProjection = snapshot.asmHeaderPropertiesProjection
+    room.asmDoorSourceVersion = snapshot.asmDoorSourceVersion
+    room.asmDoorProjection = snapshot.asmDoorProjection
+    room.doorChanges.clear(); room.doorChanges.addAll(snapshot.doorChanges)
     room.operations.clear(); room.operations.addAll(snapshot.operations)
     room.levelResourceOperations.clear()
     snapshot.levelResourceOperations.forEach { (id, operations) -> room.levelResourceOperations[id] = operations.toMutableList() }

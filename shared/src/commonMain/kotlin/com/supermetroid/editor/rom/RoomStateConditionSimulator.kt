@@ -27,6 +27,7 @@ data class RoomStateSimulationContext(
     val collectedItemPickupIds: Set<Int> = emptySet(),
     val openedDoorIds: Set<Int> = emptySet(),
     val destroyedChozoBlockIds: Set<Int> = emptySet(),
+    val incomingSourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference? = null,
 )
 
 data class RoomStateSimulationBranch(
@@ -40,7 +41,8 @@ fun ProjectRoomStateCondition.matches(context: RoomStateSimulationContext): Bool
     val argumentValue = argument ?: 0
     val raw = when (kind) {
         ProjectRoomStateConditionKind.DEFAULT -> true
-        ProjectRoomStateConditionKind.INCOMING_DOOR -> context.incomingDoorPointer == argument
+        ProjectRoomStateConditionKind.INCOMING_DOOR -> if (sourceDoor != null) context.incomingSourceDoor == sourceDoor
+            else argument != null && context.incomingDoorPointer == argument
         ProjectRoomStateConditionKind.AREA_MAIN_BOSS_DEAD ->
             (context.bossBitsByArea[context.area] ?: 0) and 0x01 != 0
         ProjectRoomStateConditionKind.NEVER -> false

@@ -84,6 +84,7 @@ import com.supermetroid.editor.rom.NspcSequence
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomFreeSpaceAllocator
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.flattened
 import com.supermetroid.editor.rom.RomRoomCatalog
 import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.ProjectNewRoomMaterializer
@@ -485,20 +486,7 @@ class EditorState(
                     .mapNotNull { index -> romParser.readSaveEntry(currentArea, index)?.let { index to it } }
                     .toMap()
 
-                val effectiveDoors = romParser.parseDoorList(baseRoom.doorOut).toMutableList()
-                for (change in project.rooms[project.roomKey(currentRoomId)]?.effectiveDoorChanges.orEmpty()) {
-                    val romDoor = effectiveDoors.getOrNull(change.doorIndex) ?: continue
-                    effectiveDoors[change.doorIndex] = RomParser.DoorEntry(
-                        destRoomPtr = change.destRoomPtr,
-                        bitflag = change.bitflag,
-                        doorCapCode = change.doorCapCode,
-                        screenX = change.screenX,
-                        screenY = change.screenY,
-                        distFromDoor = change.distFromDoor,
-                        entryCode = change.entryCode,
-                        doorDefPtr = romDoor.doorDefPtr,
-                    )
-                }
+                val effectiveDoors = effectiveDoorsForRoom(currentRoomId, romParser)
                 _workingDoors.clear()
                 _workingDoors.addAll(effectiveDoors)
                 _workingPlms.clear()
@@ -699,12 +687,18 @@ class EditorState(
     internal fun hasManagedRoomProperties(roomId: Int = currentRoomId) = (project.rooms[project.roomKey(roomId)]?.asmRoomPropertiesSourceVersion ?: 0) != 0
     internal fun hasManagedSelectors(roomId: Int = currentRoomId) = (project.rooms[project.roomKey(roomId)]?.asmStateSelectorsSourceVersion ?: 0) != 0
     internal fun hasManagedDoors(roomId: Int = currentRoomId) = (project.rooms[project.roomKey(roomId)]?.asmDoorSourceVersion ?: 0) != 0
+    internal fun hasStructuralDoors(roomId: Int = currentRoomId) = hasManagedDoors(roomId) && asmPlmSourceBridge?.doors?.view(roomId)?.resource?.structural == true
     internal var doorPreviewProblem by mutableStateOf<String?>(null)
         private set
     internal var doorArrivalBindings by mutableStateOf<Map<Int, com.supermetroid.editor.rom.SourceDoorArrival>>(emptyMap())
         private set
+    internal var doorSourceIdentities by mutableStateOf<Map<Int, Int>>(emptyMap())
+        private set
 
-    internal fun createManagedDoorArrival(index: Int): Boolean = runCatching {
+    internal fun createManagedDoorArrival(index: Int, expectedIdentity: Int? = null): Boolean = runCatching {
+        if (expectedIdentity != null) require(asmPlmSourceBridge?.doors?.view(currentRoomId)?.resource?.entries?.getOrNull(index)?.identity == expectedIdentity) {
+            "Door order changed in ASM; review the current connection before creating arrival code."
+        }
         require(pendingEdits.isEmpty() && pendingSourcePattern == null && floatingSelection == null) {
             "Finish the current tile stroke or selection before creating arrival ASM."
         }
@@ -793,13 +787,14 @@ class EditorState(
 
     private fun refreshDoorSource() {
         asmPlmSourceBridge?.doors?.refreshAll()
-        if (!hasManagedDoors()) { doorPreviewProblem = null; doorArrivalBindings = emptyMap(); return }
+        if (!hasManagedDoors()) { doorPreviewProblem = null; doorArrivalBindings = emptyMap(); doorSourceIdentities = emptyMap(); return }
         val view = asmPlmSourceBridge?.doors?.view(currentRoomId)
         doorPreviewProblem = view?.problem ?: if (view == null) "Wait for the door source." else null
         val entries = view?.resource?.entries?.map { it.entry() }.orEmpty()
         val bindings = view?.resource?.entries.orEmpty().mapNotNull { door -> door.arrival?.let { door.change.doorIndex to it } }.toMap()
-        if (_workingDoors != entries || doorArrivalBindings != bindings) {
-            _workingDoors.clear(); _workingDoors.addAll(entries); doorArrivalBindings = bindings; _editVersionState.value++
+        val identities = view?.resource?.entries.orEmpty().associate { it.change.doorIndex to it.identity }
+        if (_workingDoors != entries || doorArrivalBindings != bindings || doorSourceIdentities != identities) {
+            _workingDoors.clear(); _workingDoors.addAll(entries); doorArrivalBindings = bindings; doorSourceIdentities = identities; _editVersionState.value++
         }
     }
     internal fun roomPropertiesPreviewAvailable() = (!hasManagedRoomProperties() ||
@@ -1383,6 +1378,7 @@ class EditorState(
         val room = romParser.readRoomHeader(roomId) ?: return emptyList()
         val doors = romParser.parseDoorList(room.doorOut).toMutableList()
         val edits = project.rooms[project.roomKey(roomId)]
+        if (edits != null && edits.asmDoorSourceVersion != 0) return asmPlmSourceBridge?.doors?.view(roomId)?.resource?.entries?.map { it.entry() }.orEmpty()
         if (edits != null && edits.asmDoorSourceVersion != 0 && edits.asmDoorProjection == null) return emptyList()
         val changes = edits?.effectiveDoorChanges.orEmpty()
         for (change in changes) {
@@ -4196,6 +4192,7 @@ class EditorState(
         roomPropertiesPreviewProblem = null
         doorPreviewProblem = null
         doorArrivalBindings = emptyMap()
+        doorSourceIdentities = emptyMap()
         selectorPreviewProblem = null
         selectorPreviewRevision = emptyMap()
         layoutPreviewProblem = null
@@ -6183,8 +6180,23 @@ class EditorState(
      * blocks; treating them as one edit avoids a doorway whose blocks point at
      * different DoorDefs.
      */
-    fun linkDoorwayTilesToConnection(startX: Int, startY: Int, doorIndex: Int): Int {
-        if (!allowOrQueueLayoutEdit { linkDoorwayTilesToConnection(startX, startY, doorIndex) }) return 0
+    fun linkDoorwayTilesToConnection(startX: Int, startY: Int, doorIndex: Int, expectedIdentity: Int? = null, onLinked: (Int) -> Unit = {}): Int {
+        val roomId = currentRoomId; val stateId = currentStateId
+        if (!allowOrQueueLayoutEdit {
+                if (currentRoomId == roomId && currentStateId == stateId) runCatching {
+                    linkDoorwayTilesToConnection(startX, startY, doorIndex, expectedIdentity, onLinked)
+                }.onFailure { postStatus("Doorway link blocked: ${it.message}") }
+                else postStatus("The selected room/state changed; choose the doorway again.")
+            }) return 0
+        val doorView = if (hasManagedDoors()) asmPlmSourceBridge?.doors?.view(currentRoomId) else null
+        if (hasManagedDoors() && (doorView == null || doorView.problem != null)) {
+            postStatus("Doorway link blocked: ${doorView?.problem ?: "Wait for the door source."}")
+            return 0
+        }
+        if (expectedIdentity != null && doorView?.resource?.entries?.getOrNull(doorIndex)?.identity != expectedIdentity) {
+            postStatus("Door order changed in ASM; choose its current connection before linking tiles.")
+            return 0
+        }
         require(doorIndex in 0..0xFF) { "Door connection index is outside the BTS byte range" }
         val doorway = connectedDoorwayTiles(startX, startY)
         if (doorway.isEmpty()) return 0
@@ -6192,23 +6204,18 @@ class EditorState(
         val edits = mutableListOf<TileEdit>()
         for ((x, y) in doorway) {
             val word = readBlockWord(x, y)
-            if (sourceBts != doorIndex) {
-                writeBts(x, y, doorIndex)
-                edits += TileEdit(x, y, word, word, sourceBts, doorIndex)
+            val newBts = (sourceBts and 0x80) or doorIndex
+            if (sourceBts != newBts) {
+                writeBts(x, y, newBts)
+                edits += TileEdit(x, y, word, word, sourceBts, newBts)
             }
         }
-        if (edits.isEmpty()) return doorway.size
+        if (edits.isEmpty()) { onLinked(sourceBts); return doorway.size }
         val operation = EditOperation(
             "Link doorway to connection ${doorIndex + 1}",
             edits,
         )
-        undoStack += operation
-        currentOperations() += operation
-        redoStack.clear()
-        undoVersion++
-        dirty = true
-        editVersion++
-        return edits.size
+        return if (pushEditOperation(operation)) { onLinked(readBts(startX, startY)); edits.size } else 0
     }
 
     /** Whether the same BTS connection is also used by another disconnected doorway. */
@@ -6217,7 +6224,7 @@ class EditorState(
         if (selectedDoorway.isEmpty()) return false
         for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
             if (x to y in selectedDoorway) continue
-            if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && readBts(x, y) == doorIndex) {
+            if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && (readBts(x, y) and 0x7F) == doorIndex) {
                 return true
             }
         }
@@ -7158,13 +7165,78 @@ class EditorState(
 
     // ─── Door editing ──────────────────────────────────────────
 
-    fun updateDoor(index: Int, entry: RomParser.DoorEntry) {
+    internal fun canEditDoorStructure(roomId: Int = currentRoomId): Boolean = project.newRoomForPreviewId(roomId) != null ||
+        (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && project.newRooms.isEmpty())
+
+    /** Existing layout-scope choices still apply; the connection and doorway publish in one step. */
+    internal fun addSourceDoorwayConnection(roomId: Int, opening: DoorwayOpening, x: Int, y: Int, onCreated: (Int) -> Unit) {
+        require(currentRoomId == roomId) { "Reopen the source doorway." }
+        if (!allowOrQueueLayoutEdit {
+                runCatching { addSourceDoorwayConnection(roomId, opening, x, y, onCreated) }
+                    .onFailure { postStatus("Door connection blocked: ${it.message}") }
+            }) return
+        val parser = requireNotNull(currentRomParser)
+        val destination = requireNotNull(parser.readRoomHeader(opening.roomId)).let(::applyHeaderChanges)
+        val sourceArea = parser.readRoomHeader(roomId)?.let(::applyHeaderChanges)?.area
+        val match = parser.findVanillaDoorMatch(opening.roomId, opening.direction, opening.screenX, opening.screenY)
+        val flag = mergeDoorBitflagWithMatchedOrientation(opening.direction shl 8, match?.orientation, sourceArea != destination.area)
+        val entry = RomParser.DoorEntry(opening.roomId, flag, opening.doorCapCode, opening.screenX, opening.screenY, 0x8000, match?.entryCode ?: 0)
+        onCreated(editSourceDoorStructure(entry, null, x to y))
+    }
+
+    private fun editSourceDoorStructure(addition: RomParser.DoorEntry?, removeIndex: Int?, doorway: Pair<Int, Int>? = null): Int {
+        val parser = requireNotNull(currentRomParser)
+        val bridge = requireNotNull(asmPlmSourceBridge) { "Wait for the ASM workspace." }
+        val roomId = currentRoomId
+        fun idle() {
+            require(pendingEdits.isEmpty() && pendingSourcePattern == null && floatingSelection == null && pendingPlmAdds.isEmpty() &&
+                pendingPlmRemoves.isEmpty() && pendingLayoutEditScope == null) { "Finish the active stroke, selection or layout-scope choice before changing door structure." }
+            require(currentRomParser === parser && asmPlmSourceBridge === bridge) { "The room ROM or ASM link changed; reopen the workspace." }
+        }
+        idle()
+        refreshLinkedPlms()
+        val room = project.rooms[project.roomKey(roomId)] ?: RoomEdits(roomId).also { it.ensureStateManifest(parser) }
+        val staged = com.supermetroid.editor.asm.snapshotRoomForResize(room).also { it.ensureStateManifest(parser) }
+        val selected = requireNotNull(selectedStateEdits(staged)) { "Select a readable room state." }
+        val levels = staged.states.associate { it.id to requireNotNull(effectiveLevelDataForState(staged, it, parser)) { "Read every state before changing doors." } }
+        require(levels.getValue(selected.id).contentEquals(workingLevelData)) { "The layout preview changed; review it before changing doors." }
+        val index = if (addition != null) doorEntries.size else requireNotNull(removeIndex)
+        val linkEdits = doorway?.let { (x, y) -> connectedDoorwayTiles(x, y).map { (bx, by) ->
+            val word = readBlockWord(bx, by); val bts = readBts(bx, by)
+            TileEdit(bx, by, word, word, bts, (bts and 0x80) or index)
+        } }.orEmpty()
+        if (doorway != null) require(linkEdits.isNotEmpty()) { "Select a doorway tile first." }
+        val plan = bridge.doorStructure.plan(room, levels, addition, removeIndex, selected.id, linkEdits)
+        val native = requireNotNull(parser.readRoomHeader(roomId))
+        val afterLevels = com.supermetroid.editor.asm.AsmRoomLayoutSource(plan.replacements.getValue(PLM_SOURCE_FILE).second)
+            .resources(plan.after, (plan.after.effectiveHeaderChange?.width ?: native.width) * 16, (plan.after.effectiveHeaderChange?.height ?: native.height) * 16)
+        val recordMapTransaction = prepareSourceMapTransaction?.invoke(parser)
+        var history: com.supermetroid.editor.asm.AsmRoomAreaMoveHistory? = null
+        recordRoomSourceOperation(roomId, if (addition != null) "Add door connection" else "Remove door connection", fileId = PLM_SOURCE_FILE) { _, undo, redo ->
+            history = bridge.doorStructure.apply(plan, ::idle) { restoring ->
+                if (currentRoomId == roomId) {
+                    val id = currentPlmStateId() ?: selectedStateEdits(staged)?.id
+                    workingLevelData = if (restoring) levels[id]?.copyOf() else afterLevels[id]?.bytes()
+                    doorEntries = effectiveDoorsForRoom(roomId, parser)
+                }
+                if (restoring) undo() else redo()
+                dirty = true; editVersion++
+            }
+        }
+        refreshLinkedPlms()
+        recordMapTransaction?.invoke(requireNotNull(history))
+        postStatus(if (addition != null) "Added connection ${index + 1}. Door data and layout are editable in ASM and the editor." else "Removed connection ${index + 1}; doorway indices were updated in all states. Surviving DoorDefs retain their identities.")
+        return index
+    }
+
+    fun updateDoor(index: Int, entry: RomParser.DoorEntry, expectedIdentity: Int? = null) {
         if (index < 0 || index >= _workingDoors.size) return
         if (_workingDoors[index] == entry) return
         if (hasManagedDoors() || project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && project.newRooms.isEmpty()) {
             val source = asmPlmSourceBridge
             if (source == null) { postStatus("Door edit blocked: wait for the ASM workspace."); return }
-            if (hasManagedDoors() && source.doors.view(currentRoomId).resource?.entries?.getOrNull(index)?.entry() != _workingDoors[index]) {
+            val current = if (hasManagedDoors()) source.doors.view(currentRoomId).resource?.entries?.getOrNull(index) else null
+            if (hasManagedDoors() && (current?.entry() != _workingDoors[index] || current?.identity != (expectedIdentity ?: doorSourceIdentities[index]))) {
                 refreshDoorSource()
                 postStatus("Door source changed; review the refreshed connection before applying this edit.")
                 return
@@ -7178,6 +7250,7 @@ class EditorState(
                 bridge.doors.edit(currentRoomId, index, entry)
                 if (before != bridge.doors.sourceText()) recordManagedRoomOperation(EditOperation("Edit door ${index + 1}"), before, bridge, FX_SOURCE_FILE)
                 refreshDoorSource()
+                refreshSelectors() // A retargeted DoorDef may invalidate an incoming-door condition.
                 dirty = true; editVersion++
             }.onFailure { postStatus("Door edit blocked: ${it.message}") }
             return
@@ -7210,7 +7283,17 @@ class EditorState(
         doorCapCode: Int? = null,
     ): Int {
         val projectRoom = project.newRoomForPreviewId(roomId)
-            ?: error("Door-list growth is currently available for project-owned rooms")
+        if (projectRoom == null) {
+            require(roomId == currentRoomId && canEditDoorStructure(roomId)) { "Load an existing room in ASM mode before adding a connection." }
+            val destination = requireNotNull(romParser.readRoomHeader(destinationRoomId)).let(::applyHeaderChanges)
+            require(direction in 0..3 && screenX in 0 until destination.width && screenY in 0 until destination.height) { "Invalid door direction or destination screen." }
+            val sourceArea = requireNotNull(romParser.readRoomHeader(roomId)).let(::applyHeaderChanges).area
+            val match = romParser.findVanillaDoorMatch(destinationRoomId, direction, screenX, screenY)
+            val flags = mergeDoorBitflagWithMatchedOrientation(direction shl 8, match?.orientation, sourceArea != destination.area)
+            val cap = doorCapCode ?: deriveEffectiveDoorCapPosition(romParser, destinationRoomId, direction, screenX, screenY)
+                ?: romParser.deriveDoorCapPosition(destinationRoomId, direction, screenX, screenY) ?: match?.doorCapCode ?: 0
+            return editSourceDoorStructure(RomParser.DoorEntry(destinationRoomId, flags, cap, screenX, screenY, 0x8000, match?.entryCode ?: 0), null)
+        }
         require(projectRoom.doors.size < 16) { "SMEDIT currently supports at most 16 door connections per room" }
         val destination = romParser.readRoomHeader(destinationRoomId)?.let(::applyHeaderChanges)
             ?: error("Destination room could not be read")
@@ -7278,9 +7361,16 @@ class EditorState(
      * Remove a project-room connection. Door tiles referencing the removed
      * index must be erased first; higher BTS indices are shifted with the list.
      */
-    fun removeProjectRoomDoor(roomId: Int, doorIndex: Int) {
+    fun removeProjectRoomDoor(roomId: Int, doorIndex: Int, expectedIdentity: Int? = null) {
         val projectRoom = project.newRoomForPreviewId(roomId)
-            ?: error("Door-list removal is currently available for project-owned rooms")
+        if (projectRoom == null) {
+            require(roomId == currentRoomId && canEditDoorStructure(roomId)) { "Load an existing room in ASM mode before removing a connection." }
+            if (expectedIdentity != null) require(asmPlmSourceBridge?.doors?.view(roomId)?.resource?.entries?.getOrNull(doorIndex)?.identity == expectedIdentity) {
+                "Door order changed in ASM; review the current list before removing a connection."
+            }
+            editSourceDoorStructure(null, doorIndex)
+            return
+        }
         require(doorIndex in projectRoom.doors.indices) { "Door ${doorIndex + 1} does not exist" }
         require(currentRoomId == roomId && workingLevelData != null) { "Load the room before removing a door" }
         val removedDoorPtr = projectRoom.previewDoorDefPtrs.getOrNull(doorIndex)
@@ -7316,7 +7406,7 @@ class EditorState(
         }
         val exactReferences = buildList {
             for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
-                if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && readBts(x, y) == doorIndex) add(x to y)
+                if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9 && (readBts(x, y) and 0x7F) == doorIndex) add(x to y)
             }
         }
         require(exactReferences.isEmpty()) {
@@ -7325,7 +7415,7 @@ class EditorState(
         for (y in 0 until workingBlocksTall) for (x in 0 until workingBlocksWide) {
             if (((readBlockWord(x, y) ushr 12) and 0xF) == 0x9) {
                 val bts = readBts(x, y)
-                if (bts > doorIndex) setTileProperties(x, y, 0x9, bts - 1)
+                if ((bts and 0x7F) > doorIndex) setTileProperties(x, y, 0x9, (bts and 0x80) or ((bts and 0x7F) - 1))
             }
         }
         projectRoom.doors.removeAt(doorIndex)
@@ -7415,17 +7505,12 @@ class EditorState(
         val data = workingLevelData ?: return false
         if (newWidth == oldWidth && newHeight == oldHeight) return false
         if (newWidth !in 1..15 || newHeight !in 1..15) return false
-        val parser = currentRomParser
         if (project.rooms.values.any { it.asmDoorSourceVersion != 0 && asmPlmSourceBridge?.doors?.view(it.roomId)?.let { view -> view.problem != null } != false }) {
             postStatus("Resize blocked: repair or load the authored door sources first so incoming connections can be checked.")
             return false
         }
-        if (parser != null && project.rooms.values.any { it.asmDoorSourceVersion != 0 &&
-                effectiveDoorsForRoom(it.roomId, parser).any { door -> door.destRoomPtr == currentRoomId } }) {
-            postStatus("Resize blocked: an incoming connection is source-owned. Coordinated DoorDef/arrival-ASM resizing is not supported yet.")
-            return false
-        }
-        if (project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE || hasManagedPlms() || hasManagedInitialScrolls() || hasManagedLayouts() || hasManagedRoomProperties()) {
+        if (project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE || hasManagedPlms() || hasManagedInitialScrolls() || hasManagedLayouts() || hasManagedRoomProperties() ||
+            project.rooms.values.any { it.asmDoorSourceVersion != 0 }) {
             return resizeSourceRoom(oldWidth, oldHeight, newWidth, newHeight)
         }
 
@@ -7467,6 +7552,12 @@ class EditorState(
         for (sourceId in sourceRooms.distinct()) {
             val header = parser.readRoomHeader(sourceId) ?: continue
             val edits = project.rooms[project.roomKey(sourceId)]
+            if (edits?.asmDoorSourceVersion != 0 && edits != null) {
+                val view = requireNotNull(asmPlmSourceBridge?.doors?.view(sourceId)) { "Wait for authored door sources." }
+                require(view.problem == null) { view.problem ?: "Repair the door source." }
+                requireNotNull(view.resource).entries.filter { it.change.destRoomPtr == roomId }.forEach { add(sourceId to it.change) }
+                continue
+            }
             val pointer = edits?.effectiveHeaderChange?.doorOut ?: header.doorOut
             val doors = if (pointer in 0x8000..0xFFFE) parser.parseDoorList(pointer) else emptyList()
             val changes = edits?.effectiveDoorChanges.orEmpty().associateBy { it.doorIndex }
@@ -7485,8 +7576,8 @@ class EditorState(
         require(workingBlocksWide == oldWidth * 16 && workingBlocksTall == oldHeight * 16) { "The room dimensions changed; reopen Resize." }
         val parser = requireNotNull(currentRomParser)
         val bridge = requireNotNull(asmPlmSourceBridge) { "Wait for the project ASM workspace." }
-        val room = project.rooms.getValue(project.roomKey(currentRoomId))
-        val selected = requireNotNull(currentPlmStateId())
+        val room = project.rooms[project.roomKey(currentRoomId)] ?: RoomEdits(currentRoomId).also { it.ensureStateManifest(parser) }
+        val selected = requireNotNull(currentPlmStateId() ?: selectedStateEdits(room)?.id)
         val native = requireNotNull(parser.readRoomHeader(room.roomId))
         require((room.effectiveHeaderChange?.width ?: native.width) == oldWidth && (room.effectiveHeaderChange?.height ?: native.height) == oldHeight) {
             "The room dimensions changed; reopen Resize."
@@ -7513,26 +7604,11 @@ class EditorState(
                 "Actors in state ${state.id} would be outside the resized room. Move or remove them before shrinking."
             }
         }
-        val incomingDoors = resizeIncomingDoors(room.roomId, parser)
-        for ((_, door) in incomingDoors) {
-            require(!newlyCropped(door.screenX, door.screenY, 1)) {
-                "An incoming door leads to a removed screen. Move its destination before shrinking."
-            }
-            if (door.entryCode in 0x8000..0xFFFE) {
-                val analysis = com.supermetroid.editor.rom.analyzeDoorScrollAsm(parser, door.entryCode)
-                require(analysis.writes.none { newlyCropped(it.screenIndex % native.width, it.screenIndex / native.width, 1) }) {
-                    "Incoming door ASM writes a removed screen. Update that routine before shrinking."
-                }
-                require(width == native.width || analysis.writes.isEmpty() || analysis.isPureScrollRoutine) {
-                    "Incoming door ASM mixes scroll writes with other behavior and cannot be remapped safely."
-                }
-            }
-        }
         val beforeLevels = room.states.associate { it.id to requireNotNull(effectiveLevelDataForState(room, it, parser)) }
         require(beforeLevels.getValue(selected).contentEquals(workingLevelData) && objectsBefore.getValue(selected) == _workingPlms) {
             "The room preview changed; wait for the source preview, then resize again."
         }
-        val plan = bridge.planResize(room.roomId, native.name, width, height, ::isEditorItemPlm)
+        val plan = bridge.planResize(room.roomId, native.name, width, height, ::isEditorItemPlm, roomSnapshot = room)
         require(plan.gridsBefore.getValue(selected) == _workingScrolls.toList()) { "The scroll grid changed; wait for the source preview, then resize again." }
         val saves = com.supermetroid.editor.asm.AsmRoomObjectSource(plan.after, bridge.catalog.symbols).saveResources(room.roomId)
         for (save in saves.filterNot { it.cleared }) require(!newlyCropped(save.words[3], save.words[4], 256)) {
@@ -7583,12 +7659,14 @@ class EditorState(
         }
         val beforeNativeGrids = nativeGrids(oldWidth, oldHeight)
         val afterNativeGrids = nativeGrids(width, height)
-        bridge.applyResize(plan, beforeTransition = {
-            require(pendingEdits.isEmpty() && pendingSourcePattern == null && floatingSelection == null) { "Finish the active tile edit before undoing resize." }
-            require(resizeIncomingDoors(room.roomId, parser) == incomingDoors) { "Incoming doors changed; undo newer door edits before undoing resize." }
+        val recordMapTransaction = prepareSourceMapTransaction?.invoke(parser)
+        val history = bridge.applyResize(plan, beforeTransition = {
+            require(pendingEdits.isEmpty() && pendingSourcePattern == null && floatingSelection == null &&
+                pendingPlmAdds.isEmpty() && pendingPlmRemoves.isEmpty() && pendingLayoutEditScope == null) { "Finish the active tile edit before restoring resize." }
+            require(asmPlmSourceBridge === bridge && currentRomParser === parser) { "The room ROM or ASM link changed; reopen the current workspace." }
         }, onTransition = { undo ->
             if (currentRoomId == room.roomId) {
-                val id = currentPlmStateId()
+                val id = currentPlmStateId() ?: selectedStateEdits(room)?.id
                 val levels = if (undo) beforeLevels else afterLevels
                 if (id != null) levels[id]?.let { data ->
                     workingLevelData = data.copyOf()
@@ -7610,6 +7688,7 @@ class EditorState(
         })
         recordManagedRoomOperation(operation, plan.before, bridge)
         refreshLinkedPlms()
+        recordMapTransaction?.invoke(history)
         postStatus("Resized all ${room.states.size} state(s) to ${width}×${height} screens.")
         true
     }.getOrElse { postStatus("Resize blocked: ${it.message ?: "No changes applied."}"); false }
@@ -7730,12 +7809,8 @@ class EditorState(
     private fun effectiveIncomingDoorPtr(roomId: Int, romParser: RomParser): Int? {
         for (info in romParser.roomCatalog.rooms) {
             val sourceRoomId = info.getRoomIdAsInt()
-            val sourceRoom = romParser.readRoomHeader(sourceRoomId) ?: continue
-            val changesByIndex = project.rooms[project.roomKey(sourceRoomId)]?.effectiveDoorChanges.orEmpty()
-                .associateBy { it.doorIndex }
-            for ((doorIndex, romDoor) in romParser.parseDoorList(sourceRoom.doorOut).withIndex()) {
-                val destinationRoomId = changesByIndex[doorIndex]?.destRoomPtr ?: romDoor.destRoomPtr
-                if (destinationRoomId == roomId && romDoor.doorDefPtr != 0) return romDoor.doorDefPtr
+            for (door in effectiveDoorsForRoom(sourceRoomId, romParser)) {
+                if (door.destRoomPtr == roomId && door.doorDefPtr != 0) return door.doorDefPtr
             }
         }
         return null
@@ -8023,8 +8098,10 @@ class EditorState(
             return RoomAreaReassignmentResult(true, "${baseRoom.name} is already in ${MinimapData.AREA_NAMES[targetArea]}.", sourceArea, targetArea)
         }
 
-        val effectiveRooms = romParser.roomCatalog.rooms.mapNotNull { info ->
-            val id = info.getRoomIdAsInt()
+        val linkedRoomIds = project.rooms.values.filter { it.asmDoorSourceVersion != 0 }.flatMap { edits ->
+            asmPlmSourceBridge?.doors?.view(edits.roomId)?.resource?.entries.orEmpty().map { it.change.destRoomPtr }
+        }
+        val effectiveRooms = (romParser.roomCatalog.rooms.map { it.getRoomIdAsInt() } + project.rooms.values.map { it.roomId } + linkedRoomIds + roomId).distinct().mapNotNull { id ->
             romParser.readRoomHeader(id)?.let(::applyHeaderChanges)
         }
         val areaSavePlanning = runCatching { planAreaSaveMigration(roomId, sourceArea, targetArea, effectiveRooms, romParser) }
@@ -8132,23 +8209,9 @@ class EditorState(
         var updatedDoors = 0
         for (sourceRoom in effectiveRooms) {
             val sourceId = sourceRoom.roomId
-            val sourceBase = romParser.readRoomHeader(sourceId) ?: continue
             val effectiveSourceArea = if (sourceId == roomId) targetArea else sourceRoom.area
-            val savedDoorChanges = project.rooms[project.roomKey(sourceId)]?.effectiveDoorChanges.orEmpty()
-                .associateBy { it.doorIndex }
-            val doors = romParser.parseDoorList(sourceBase.doorOut)
-            for ((doorIndex, romDoor) in doors.withIndex()) {
-                val saved = savedDoorChanges[doorIndex]
-                val door = if (saved == null) romDoor else RomParser.DoorEntry(
-                    destRoomPtr = saved.destRoomPtr,
-                    bitflag = saved.bitflag,
-                    doorCapCode = saved.doorCapCode,
-                    screenX = saved.screenX,
-                    screenY = saved.screenY,
-                    distFromDoor = saved.distFromDoor,
-                    entryCode = saved.entryCode,
-                    doorDefPtr = romDoor.doorDefPtr,
-                )
+            val doors = effectiveDoorsForRoom(sourceId, romParser)
+            for ((doorIndex, door) in doors.withIndex()) {
                 val destination = effectiveRooms.firstOrNull { it.roomId == door.destRoomPtr } ?: continue
                 if (sourceId != roomId && destination.roomId != roomId) continue
                 val effectiveDestinationArea = if (destination.roomId == roomId) targetArea else destination.area
@@ -8399,7 +8462,8 @@ class EditorState(
         condition: ProjectRoomStateCondition,
         romParser: RomParser,
     ): String {
-        if (usesSourceStateLifecycle()) return addSourceRoomState(templateStateId, condition, romParser)
+        if (usesSourceStateLifecycle() || condition.flattened().any { it.sourceDoor != null })
+            return addSourceRoomState(templateStateId, condition, romParser)
         require(condition.kind != com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT) {
             "A room may contain only one mandatory default state"
         }
@@ -9748,7 +9812,10 @@ class EditorState(
         return true
     }
 
-    /** Reset only this room's authored resources, never global palettes, patches or other rooms. */
+    /** An open map can preflight pending gestures and join a structural source transaction's history. */
+    internal var prepareSourceMapTransaction: ((RomParser) -> ((com.supermetroid.editor.asm.AsmRoomAreaMoveHistory) -> Unit))? = null
+
+    /** Reset this room and its relocation dependencies, never global assets or unrelated edits. */
     private fun resetSourceRoom(parser: RomParser): Boolean = runCatching {
         val roomId = currentRoomId
         val native = requireNotNull(parser.readRoomHeader(roomId)) { "Load an existing room before resetting." }
@@ -9761,6 +9828,8 @@ class EditorState(
             }
         }
         requireIdle()
+        refreshRoomMapHeaders(parser)
+        bridge.doors.refreshAll()
         val room = project.rooms[project.roomKey(roomId)]
         if (room == null || !room.hasEdits) {
             postStatus("No room-editor changes to reset. Handwritten ASM is unchanged.")
@@ -9773,19 +9842,28 @@ class EditorState(
             door.screenX in 0 until oldWidth && door.screenY in 0 until oldHeight &&
                 (door.screenX >= native.width || door.screenY >= native.height)
         }) { "An incoming door leads to a screen removed by reset. Move its destination before resetting." }
-        val plan = bridge.planReset(roomId)
+        val plan = bridge.planReset(roomId) ?: run {
+            postStatus("Room is already reset. Required connection flags for moved neighbors are unchanged.")
+            return@runCatching true
+        }
+        val recordMapTransaction = prepareSourceMapTransaction?.invoke(parser)
         val selectedBefore = currentPlmStateId()
         val previousUndo = undoStack.toList()
         val previousManaged = java.util.IdentityHashMap(managedPlmUndo)
         val previousItemScopes = java.util.IdentityHashMap(itemScopeSnapshots)
         val operation = EditOperation("Reset room to original")
         var sourceChange: AsmSourceTextChange? = null
-        bridge.applyReset(plan, beforeTransition = {
+        val history = bridge.applyReset(plan, beforeTransition = {
             requireIdle()
-            require(resizeIncomingDoors(roomId, parser).filter { it.first != roomId } == incoming) {
+            require(asmPlmSourceBridge === bridge && currentRomParser === parser) {
+                "The room ROM or ASM link changed; reopen the current workspace before restoring this reset."
+            }
+            fun geometry(doors: List<Pair<Int, DoorChange>>) = doors.map { (id, door) -> id to door.copy(bitflag = door.bitflag and 0x40.inv()) }
+            require(geometry(resizeIncomingDoors(roomId, parser).filter { it.first != roomId }) == geometry(incoming)) {
                 "Incoming doors changed; undo newer door edits before restoring this reset."
             }
         }, afterTransition = { undo ->
+            bridge.properties.refreshAll(); bridge.doors.refreshAll()
             if (currentRoomId == roomId) {
                 // Source and ownership are already committed, so all four lenses see one state.
                 loadRoom(roomId, parser, native)
@@ -9805,8 +9883,11 @@ class EditorState(
             }
             dirty = true; undoVersion++; editVersion++
         })
+        recordMapTransaction?.invoke(history)
         _roomEditOrder.remove(roomId)
-        postStatus("Reset room to original ROM state. Undo restores its authored source and edits.")
+        val dependencies = if (plan.relocation != null) " Map, save and connection dependencies were restored together." else ""
+        val neighbors = if (plan.restored.asmDoorSourceVersion != 0) " Required area flags remain for moved neighbors." else ""
+        postStatus("Reset room to original ROM state.$dependencies$neighbors Undo restores its authored source and edits.")
         true
     }.getOrElse { postStatus("Reset blocked: ${it.message ?: "No changes applied."}"); false }
 

@@ -263,7 +263,8 @@ fun MapCanvas(
     onRoomSelected: ((RoomInfo) -> Unit)? = null,
     onWorkspaceChanged: (() -> Unit)? = null,
     onNavigateToAsm: ((Int) -> Unit)? = null,
-    onNavigateToDoorArrival: ((Int, Boolean) -> Unit)? = null,
+    onNavigateToDoorArrival: ((Int, Boolean, Int?) -> Unit)? = null,
+    onNavigateToDoorSource: ((Int) -> Unit)? = null,
     onNavigateToPlmPlacement: ((RomParser.PlmEntry) -> Unit)? = null,
     onNavigateToScrollCommands: ((RomParser.PlmEntry) -> Unit)? = null,
     onNavigateToSaveSpawn: ((RomParser.PlmEntry) -> Unit)? = null,
@@ -1280,7 +1281,7 @@ fun MapCanvas(
                                                 val blockType = (word shr 12) and 0xF
                                                 if (blockType == 0x9) {
                                                     val bts = editorState.readBts(bx, by)
-                                                    val door = editorState.doorEntries.getOrNull(bts)
+                                                    val door = editorState.doorEntries.getOrNull(bts and 0x7F)
                                                     if (door != null) {
                                                         val destRoom = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }
                                                         if (destRoom != null) {
@@ -1928,6 +1929,7 @@ fun MapCanvas(
                                     onWorkspaceChanged = onWorkspaceChanged,
                                     onNavigateToAsm = onNavigateToAsm,
                                     onNavigateToDoorArrival = onNavigateToDoorArrival,
+                                    onNavigateToDoorSource = onNavigateToDoorSource,
                                     onNavigateToPlmPlacement = onNavigateToPlmPlacement,
                                     onNavigateToScrollCommands = onNavigateToScrollCommands,
                                     onNavigateToSaveSpawn = onNavigateToSaveSpawn,

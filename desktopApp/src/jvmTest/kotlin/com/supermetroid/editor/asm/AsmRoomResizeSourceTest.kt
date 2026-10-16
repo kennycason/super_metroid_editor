@@ -16,13 +16,15 @@ class AsmRoomResizeSourceTest {
     private data class Fixture(val workspace: AsmWorkspaceState, val bridge: AsmPlmSourceBridge,
                                val project: SmEditProject, val editor: EditorState, val file: File)
     private suspend fun fixture(adopt: Boolean = true, nativeTrigger: Boolean = false, incoming: Boolean = false,
-                                withSave: Boolean = false, mixedIncoming: Boolean = false): Fixture {
+                                withSave: Boolean = false, mixedIncoming: Boolean = false, secondDestination: Int? = null): Fixture {
         val root = File(directory, "reference")
         val src = File(root, "src").apply { mkdirs() }
         val data = File(root, "data").apply { mkdirs() }
         val macros = "macro PLMPopEntry(ID, X, Y, Param)\n dw <ID>\n db <X>, <Y>\n dw <Param>\nendmacro\n"
-        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\n")
-        File(src, PLM_SOURCE_FILE).writeText("; Keep original source and custom notes.\n")
+        File(src, "main.asm").writeText("incsrc macros.asm\nincsrc bank_8F.asm\n" + if (incoming) "incsrc bank_83.asm\n" else "")
+        if (incoming) File(src, DOOR_SOURCE_FILE).writeText("; Keep original DoorDefs.\n")
+        File(src, PLM_SOURCE_FILE).writeText("; Keep original source and custom notes.\n" + if (incoming)
+            "DoorASM_Test:\n php\n sep #\$20\n lda.b #\$02\n sta.l \$7ECD23\n plp\n rts\n" else "")
         File(src, "macros.asm").writeText(macros)
         val reference = AsmReferenceWorkspace(root,
             AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "test.sfc", "ab".repeat(32), 0x300000, 0),
@@ -55,6 +57,10 @@ class AsmRoomResizeSourceTest {
             word(0x18000, 0x91F8); word(0x18000 + 8, 0x8000); word(0x18000 + 10, 0x9500)
             val writes = listOf(DoorScrollWrite(2, 0x23))
             (if (mixedIncoming) buildDoorAsmClearingEnemyBg2Transfer(writes) else buildDoorScrollAsm(writes)).copyInto(rom, 0x79500)
+            if (secondDestination != null) {
+                word(0x79802, 0x8010); word(0x18010, secondDestination)
+                word(0x18018, 0x8000); word(0x1801A, 0x9500)
+            }
         }
         if (nativeTrigger) {
             val entries = listOf(RomParser.PlmEntry(0xEEDB, 2, 3, 5), RomParser.PlmEntry(0xB703, 4, 4, 0x9000))
@@ -77,7 +83,8 @@ class AsmRoomResizeSourceTest {
             room.plmChanges += PlmChange("add", 0xB76F, 8, 8, 0x8002)
             room.saveStationSpawns += SaveStationSpawnChange(0, 2, room.roomId, 0x8000, 256, 0, 128, 128)
         }
-        val catalog = AsmPlmSourceCatalog(File(src, PLM_SOURCE_FILE).readText(), macros, emptyMap(), parser, emptyMap())
+        val catalog = AsmPlmSourceCatalog(File(src, PLM_SOURCE_FILE).readText(), macros,
+            if (incoming) mapOf("DoorASM_Test" to 0x9500) else emptyMap(), parser, emptyMap())
         val bridge = AsmPlmSourceBridge(catalog, workspace) { project }
         if (adopt) { bridge.migrateRoom(room.roomId, "Landing Site"); bridge.initialScrolls.migrate(room.roomId, "Landing Site") }
         val editor = EditorState().apply {
@@ -86,6 +93,234 @@ class AsmRoomResizeSourceTest {
             setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
         }
         return Fixture(workspace, bridge, project, editor, file)
+    }
+
+    private fun Fixture.model() = Json.encodeToString(SmEditProject.serializer(), project)
+    private fun Fixture.sources() = listOf(PLM_SOURCE_FILE, DOOR_SOURCE_FILE).associateWith(workspace::projectSourceText)
+    private fun Fixture.program(index: Int = 0): AsmArrivalScrollProgram {
+        val label = bridge.doors.view(0x9C89).resource!!.entries[index].arrival!!.label
+        return assertNotNull(AsmArrivalScrollProgram.parse(authoredMacroBody(bridge.sourceText(), label.removeSuffix("_Entry"))))
+    }
+
+    @Test fun `untouched rooms stage their native manifest without attaching it on failure and undo removes the first edit record`() = runBlocking {
+        val f = fixture(adopt = false)
+        val parser = f.bridge.catalog.parser
+        f.project.rooms.remove("91F8")
+        f.editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        assertFalse(f.project.rooms.containsKey("91F8"))
+        val model = f.model(); val source = f.bridge.sourceText(); val pixels = f.editor.workingLevelData!!.copyOf()
+        assertFalse(f.editor.resizeRoom(2, 2, 15, 15))
+        assertEquals(model, f.model()); assertEquals(source, f.bridge.sourceText())
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val room = f.project.rooms.getValue("91F8")
+        assertEquals(1, room.asmPlmSourceVersion); assertEquals(48, f.editor.workingBlocksWide)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(model, f.model()); assertEquals(source, f.bridge.sourceText())
+        assertContentEquals(pixels, f.editor.workingLevelData); assertEquals(32, f.editor.workingBlocksWide)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertSame(room, f.project.rooms["91F8"]); assertEquals(48, f.editor.workingBlocksWide)
+    }
+
+    @Test fun `native scroll arrivals adopt atomically preserve native bytes and repeat resizes with reciprocal cross bank history`() = runBlocking {
+        val f = fixture(incoming = true)
+        val model = f.model(); val sources = f.sources(); val native = f.bridge.catalog.parser.copyRomData()
+        assertFalse(f.project.rooms.containsKey("9C89"))
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val neighbor = f.project.rooms.getValue("9C89")
+        assertEquals(1, neighbor.asmDoorSourceVersion); assertTrue(neighbor.doorChanges.isEmpty())
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), f.program().writes)
+        assertContains(f.bridge.sourceText(), "DoorASM_Test:\n php")
+        assertContentEquals(native, f.bridge.catalog.parser.copyRomData())
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources()); assertEquals(32, f.editor.workingBlocksWide)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertSame(neighbor, f.project.rooms["9C89"])
+        val text = f.bridge.sourceText()
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replace("sta.l \$7ECD24", "sta.l \$7ECD24 ; user camera note"))
+        val first = f.model(); val firstSources = f.sources()
+        assertTrue(f.editor.resizeRoom(3, 2, 4, 2), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(2, 0x25)), f.program().writes)
+        assertEquals(1, f.bridge.sourceText().windowed("user camera note".length).count { it == "user camera note" })
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(first, f.model()); assertEquals(firstSources, f.sources()); assertEquals(48, f.editor.workingBlocksWide)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(2, 0x25)), f.program().writes)
+    }
+
+    @Test fun `managed native scaffolds become inline scroll programs without losing notes or other door fields`() = runBlocking {
+        val f = fixture(incoming = true)
+        f.bridge.doors.createManagedArrival(0x9C89, 0, "Neighbor")
+        val before = f.bridge.sourceText()
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, before,
+            before.replace("jmp.w DoorASM_Test", "jmp.w DoorASM_Test ; keep my intent").replace("\n", "\r\n"))
+        val door = f.bridge.doors.view(0x9C89).resource!!.entries.single().entry()
+        f.bridge.doors.edit(0x9C89, 0, door.copy(bitflag = 0x81, distFromDoor = 0x1234))
+        val model = f.model(); val sources = f.sources()
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val program = f.program()
+        assertFalse(program.delegatesToNative); assertEquals("DoorASM_Test", program.nativeContext)
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), program.writes)
+        assertContains(f.bridge.sourceText(), "; keep my intent")
+        val changed = f.bridge.doors.view(0x9C89).resource!!.entries.single().entry()
+        assertEquals(door.copy(bitflag = 0x81, distFromDoor = 0x1234), changed)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources())
+    }
+
+    @Test fun `shared arrival copies only the resized consumer and preserves the other destination`() = runBlocking {
+        val f = fixture(incoming = true, secondDestination = 0x9C89)
+        f.bridge.doors.createManagedArrival(0x9C89, 1, "Neighbor")
+        val original = f.bridge.doors.sourceText()
+        val label = f.bridge.doors.view(0x9C89).resource!!.entries[1].arrival!!.label
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, original,
+            AsmDoorSource(original, f.bridge.sourceText(), f.bridge.catalog.symbols).withArrival(0x9C89, 0, label))
+        val sources = f.sources(); val model = f.model()
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val doors = f.bridge.doors.view(0x9C89).resource!!.entries
+        assertNotEquals(doors[0].arrival!!.label, doors[1].arrival!!.label)
+        assertEquals(label, doors[1].arrival!!.label)
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), f.program(0).writes)
+        assertTrue(f.program(1).delegatesToNative)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources())
+    }
+
+    @Test fun `one arrival shared only by affected entrances updates once and keeps its identity`() = runBlocking {
+        val f = fixture(incoming = true, secondDestination = 0x91F8)
+        f.bridge.doors.createManagedArrival(0x9C89, 0, "Neighbor")
+        val original = f.bridge.doors.sourceText()
+        val label = f.bridge.doors.view(0x9C89).resource!!.entries[0].arrival!!.label
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, original,
+            AsmDoorSource(original, f.bridge.sourceText(), f.bridge.catalog.symbols).withArrival(0x9C89, 1, label))
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertTrue(f.bridge.doors.view(0x9C89).resource!!.entries.all { it.arrival!!.label == label })
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), f.program().writes)
+    }
+
+    @Test fun `a word scroll store crossing the old row boundary becomes two correctly mapped byte stores`() = runBlocking {
+        val f = fixture(incoming = true)
+        f.bridge.doors.createManagedArrival(0x9C89, 0, "Neighbor")
+        val text = f.bridge.sourceText()
+        val body = authoredMacroBody(text, "SmeditArrival_9C89_Door_0")
+        val replacement = "    ${AsmDoorArrivalsSource.MARKER}\n    php\n    lda.w #\$0201\n    sta.l \$7ECD21\n    plp\n    rts\n"
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body, replacement))
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(1, 0x21), DoorScrollWrite(2, 0x23)), f.program().writes)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(replacement, authoredMacroBody(f.bridge.sourceText(), "SmeditArrival_9C89_Door_0"))
+    }
+
+    @Test fun `opaque edited native code shared references and cropped closing caps block without adopting any partial resource`() = runBlocking {
+        val cases: List<Pair<String, (Fixture) -> Unit>> = listOf(
+            "cannot be proven" to { f -> val text = f.bridge.sourceText(); f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replace("sta.l \$7ECD23", "sta.l \$7ECD24")) },
+            "shared outside" to { f ->
+                f.bridge.doors.createManagedArrival(0x9C89, 0, "Neighbor")
+                val text = f.bridge.sourceText()
+                f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text + "\nmacro ExternalArrival()\n jsr.w SmeditArrival_9C89_Door_0_Entry\nendmacro\n")
+            },
+            "closing-door cap" to { f -> f.project.getOrCreateRoom(0x9C89).doorChanges += DoorChange(0, 0x91F8, 0x0481, 24, 0, 0, 0x8000, 0x9500) })
+        for ((message, change) in cases) {
+            val f = fixture(incoming = true); change(f)
+            val model = f.model(); val sources = f.sources(); val revision = f.workspace.sourceBufferRevision
+            val history = f.editor.undoStack.toList()
+            assertFalse(f.editor.resizeRoom(2, 2, if (message == "closing-door cap") 1 else 3, 2))
+            assertContains(f.editor.statusMessage, message)
+            assertEquals(model, f.model()); assertEquals(sources, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
+            assertEquals(history, f.editor.undoStack)
+        }
+    }
+
+    @Test fun `opaque managed code survives height growth but blocks stride changes without disabling other editing`() = runBlocking {
+        val f = fixture(incoming = true)
+        f.bridge.doors.createManagedArrival(0x9C89, 0, "Neighbor")
+        val text = f.bridge.sourceText()
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replace("jmp.w DoorASM_Test", "jsr.w DoorASM_Test\n    rts"))
+        val body = authoredMacroBody(f.bridge.sourceText(), "SmeditArrival_9C89_Door_0")
+        assertTrue(f.editor.resizeRoom(2, 2, 2, 3), f.editor.statusMessage)
+        assertEquals(body, authoredMacroBody(f.bridge.sourceText(), "SmeditArrival_9C89_Door_0"))
+        val model = f.model(); val sources = f.sources()
+        assertFalse(f.editor.resizeRoom(2, 3, 3, 3)); assertContains(f.editor.statusMessage, "managed in ASM")
+        assertEquals(model, f.model()); assertEquals(sources, f.sources())
+        val word = f.editor.readBlockWord(8, 8)
+        f.editor.setTileProperties(8, 8, 1, 3)
+        assertNotEquals(word, f.editor.readBlockWord(8, 8))
+    }
+
+    @Test fun `external arrival references added after resize prevent undo from deleting live code`() = runBlocking {
+        val f = fixture(incoming = true)
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val macros = f.workspace.projectSourceText("macros.asm")
+        f.workspace.replaceProjectSource("macros.asm", macros, macros + "\nmacro ExternalArrival()\n jsr.w SmeditArrival_9C89_Door_0_Entry\nendmacro\n")
+        val model = f.model(); val sources = f.sources()
+        assertFalse(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE))
+        assertEquals(model, f.model()); assertEquals(sources, f.sources())
+        assertTrue(f.workspace.undoSourceEdit("macros.asm"), f.workspace.error)
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertFalse(f.project.rooms.containsKey("9C89"))
+    }
+
+    @Test fun `reset reuses coordinated geometry for neighboring arrivals and preserves their newer authored values`() = runBlocking {
+        val f = fixture(incoming = true)
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val text = f.bridge.sourceText()
+        val body = authoredMacroBody(text, "SmeditArrival_9C89_Door_0")
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body,
+            body.replaceFirst("lda.b #\$02", "lda.b #\$01 ; newer neighboring edit")))
+        val model = f.model(); val sources = f.sources()
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.bridge.catalog.parser), f.editor.statusMessage)
+        assertFalse(f.project.rooms.getValue("91F8").hasEdits)
+        assertEquals(listOf(DoorScrollWrite(1, 0x23)), f.program().writes)
+        assertContains(f.bridge.sourceText(), "; newer neighboring edit")
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources()); assertEquals(48, f.editor.workingBlocksWide)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(1, 0x23)), f.program().writes)
+    }
+
+    @Test fun `reset refuses unknown neighboring geometry just as resize does without retiring room data`() = runBlocking {
+        val f = fixture(incoming = true)
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        val text = f.bridge.sourceText()
+        val body = authoredMacroBody(text, "SmeditArrival_9C89_Door_0")
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body, body.replace("    rts", "    jsr.w DoorASM_Test\n    rts")))
+        val model = f.model(); val sources = f.sources()
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.bridge.catalog.parser))
+        assertContains(f.editor.statusMessage, "managed in ASM")
+        assertEquals(model, f.model()); assertEquals(sources, f.sources()); assertEquals(48, f.editor.workingBlocksWide)
+    }
+
+    @Test fun `cold reopened arrivals resize from the saved authored stride instead of native width`() = runBlocking {
+        val f = fixture(incoming = true)
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertTrue(f.workspace.saveAllSources(), f.workspace.error)
+        val owner = Json.decodeFromString<SmEditProject>(f.model())
+        val workspace = AsmWorkspaceState(projectRepository = AsmProjectWorkspaceRepository(emptyList(), emptyList()))
+        workspace.bindProject(f.file.path, true)
+        val editor = EditorState().apply { testMode = true; initForProject(f.file, owner) }
+        val bridge = editor.bindRoomSources(f.bridge.catalog, workspace)
+        editor.loadRoom(0x91F8, f.bridge.catalog.parser, f.bridge.catalog.parser.readRoomHeader(0x91F8)!!)
+        assertTrue(editor.resizeRoom(3, 2, 4, 2), editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(2, 0x25)), AsmArrivalScrollProgram.parse(authoredMacroBody(bridge.sourceText(), "SmeditArrival_9C89_Door_0"))!!.writes)
+    }
+
+    @Test fun `open map protects gestures and shares resize undo without moving or repainting cells`() = runBlocking {
+        val f = fixture(incoming = true)
+        val map = com.supermetroid.editor.ui.MinimapEditorState().apply { loadArea(f.bridge.catalog.parser, 0, f.editor) }
+        val stroke = map.mapData.withTile(50, 20, 0x0F)
+        map.pendingStroke = stroke
+        val model = f.model(); val sources = f.sources()
+        assertFalse(f.editor.resizeRoom(2, 2, 3, 2)); assertSame(stroke, map.pendingStroke)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources())
+        map.pendingStroke = null
+        val art = map.mapData; val reveal = map.stationData
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        map.initIfNeeded(f.bridge.catalog.parser, f.editor)
+        assertTrue(map.undoStack.isNotEmpty()); assertEquals(art, map.mapData); assertEquals(reveal, map.stationData)
+        map.undo(f.editor)
+        assertEquals(model, f.model()); assertEquals(sources, f.sources()); assertEquals(32, f.editor.workingBlocksWide)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        map.pendingStroke = stroke
+        assertFalse(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE)); assertSame(stroke, map.pendingStroke)
     }
 
     @Test fun `resize grows geometry BTS layer two and shared authored grids in one reciprocal undo step`() = runBlocking {
@@ -331,18 +566,25 @@ class AsmRoomResizeSourceTest {
         val room = f.project.rooms.getValue("91F8")
         val text = f.bridge.sourceText()
         val target = f.bridge.catalog.parser.copyRomData()
+        val resource = AsmDoorSource(f.workspace.projectSourceText(DOOR_SOURCE_FILE), text, f.bridge.catalog.symbols)
+            .resource(entrance, f.bridge.catalog.parser)
+        val binding = resource.entries.single().arrival!!
+        val program = AsmArrivalScrollProgram.parse(authoredMacroBody(text, binding.label.removeSuffix("_Entry")))!!
+        buildDoorScrollAsm(program.writes).copyInto(target, 0x7F000)
+        val resolved = resource.copy(entries = resource.entries.map { it.copy(change = it.change.copy(entryCode = 0xF000), arrival = binding.copy(snesAddress = 0x8FF000)) })
         ProjectRoomExporter(f.project, f.bridge.catalog.parser, target,
             sourcePlmSets = mapOf(room.roomId to AsmRoomObjectSource(text).resources(room, 6)),
-            sourceInitialScrolls = mapOf(room.roomId to AsmInitialScrollSource(text).resources(room, 3, 2))).exportRooms()
+            sourceInitialScrolls = mapOf(room.roomId to AsmInitialScrollSource(text).resources(room, 3, 2)),
+            sourceDoors = mapOf(entrance.roomId to resolved)).exportRooms()
         val built = RomParser(target)
         val door = built.parseDoorList(0x9800).single()
         assertNotEquals(0x9500, door.entryCode)
         assertEquals(listOf(DoorScrollWrite(2, 0x24)), analyzeDoorScrollAsm(built, door.entryCode).writes)
-        val original = entrance.doorChanges.single()
-        entrance.doorChanges[0] = original.copy(screenX = 2)
+        val original = f.bridge.doors.view(entrance.roomId).resource!!.entries.single().entry()
+        f.bridge.doors.edit(entrance.roomId, 0, original.copy(screenX = 2))
         assertFalse(f.workspace.undoSourceEdit(PLM_SOURCE_FILE))
         assertEquals(48, f.editor.workingBlocksWide)
-        entrance.doorChanges[0] = original
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
         assertTrue(f.editor.undo(), f.editor.statusMessage)
     }
 

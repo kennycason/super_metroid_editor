@@ -1,6 +1,7 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.data.SmEditProject
+import com.supermetroid.editor.rom.flattened
 import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.ProjectPaths
 import com.supermetroid.editor.rom.RomParser
@@ -43,6 +44,7 @@ internal class AsmPlmSourceBridge(
     val layouts = AsmRoomLayoutBridge(catalog, workspace, project) { onMetadataChanged() }
     val properties = AsmRoomPropertiesBridge(catalog, workspace, project) { onMetadataChanged() }
     val doors = AsmDoorSourceBridge(catalog, workspace, project) { onMetadataChanged() }
+    val doorStructure = AsmDoorStructure(catalog, workspace, project, doors, layouts) { onMetadataChanged() }
     val areaMoves = AsmRoomAreaMove(catalog, workspace, project, properties, ::requireObjectAdoptionAvailable) { onMetadataChanged() }
     var describePlm: (RomParser.PlmEntry) -> String = { AsmRoomObjectSource.defaultDescription(it) }
     private val lastValid = mutableMapOf<Int, AsmPlmDocument>()
@@ -517,28 +519,99 @@ internal class AsmPlmSourceBridge(
         }
     }
 
-    fun planReset(roomId: Int): AsmRoomResetPlan {
+    fun planReset(roomId: Int): AsmRoomResetPlan? {
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Room source requires ASM mode." }
         require(owner.newRooms.isEmpty()) { "Source-aware reset for projects with added rooms needs stable source identities first." }
         val room = owner.rooms.getValue(owner.roomKey(roomId))
-        val native = requireNotNull(catalog.parser.readRoomHeader(roomId))
-        val header = if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(sourceText()).resource(room).header else room.effectiveHeaderChange
-        val effectiveArea = header?.area ?: native.area
-        require(effectiveArea == native.area &&
-            ((header?.mapX ?: native.mapX) == native.mapX && (header?.mapY ?: native.mapY) == native.mapY ||
-                owner.minimapEdits[effectiveArea.toString()].isNullOrEmpty() && owner.mapStationEdits[effectiveArea.toString()].isNullOrEmpty())) {
-            "Undo the room's area/map move before resetting it. Reset cannot restore its old header while leaving migrated map, incoming doors or save slots behind."
-        }
+        requireNoExternalModelDoorReferences(owner, roomId)
+        val returning = AsmRoomRelocationReset(catalog, workspace, areaMoves).plan(owner, room, describePlm)
         val sources = linkedMapOf(PLM_SOURCE_FILE to sourceText())
+        returning?.dependencies?.replacements?.forEach { (id, pair) -> sources[id] = pair.first }
         if (room.asmDoorSourceVersion != 0 || room.asmFxSourceVersion != 0) sources[FX_SOURCE_FILE] = workspace.projectSourceText(FX_SOURCE_FILE)
         if (room.asmEnemySourceVersion != 0) sources[ENEMY_SOURCE_FILE] = workspace.projectSourceText(ENEMY_SOURCE_FILE)
+        if (returning?.outgoing?.isNotEmpty() == true) sources[DOOR_SOURCE_FILE] = workspace.projectSourceText(DOOR_SOURCE_FILE)
         val external = workspace.projectSourceReadersExcept(sources.keys).asSequence().map { it() }
-        val after = resetRoomSource(room, sources, external)
+        val stagedSources = sources.mapValues { (id, before) -> returning?.dependencies?.replacements?.get(id)?.second ?: before }
+        val cleanupOwner = returning?.dependencies?.rooms?.get(owner.roomKey(roomId))?.after ?: room
+        val after = resetRoomSource(cleanupOwner, stagedSources, external).toMutableMap()
         // Keep stable native state identities, not a duplicate of authored resource values.
         val restored = com.supermetroid.editor.data.RoomEdits(roomId).also { it.ensureStateManifest(catalog.parser) }
+        if (returning?.outgoing?.isNotEmpty() == true) {
+            val native = requireNotNull(catalog.parser.readRoomHeader(roomId))
+            val corrections = returning.outgoing.associateBy { it.doorIndex }
+            val doors = com.supermetroid.editor.rom.SourceRoomDoors(native.doorOut,
+                catalog.parser.parseDoorList(native.doorOut).mapIndexed { index, entry ->
+                    com.supermetroid.editor.rom.SourceRoomDoor(entry.doorDefPtr, corrections[index] ?:
+                        com.supermetroid.editor.data.DoorChange(index, entry.destRoomPtr, entry.bitflag, entry.doorCapCode,
+                            entry.screenX, entry.screenY, entry.distFromDoor, entry.entryCode))
+                })
+            com.supermetroid.editor.rom.validateSourceDoorOwnership(roomId, doors, catalog.parser)
+            require(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmDoorSource.prefix(roomId)}Door_[0-9]+\\b").containsMatchIn(after.getValue(DOOR_SOURCE_FILE))) {
+                "An external source reference retains this room's DoorDefs. Review that reference before resetting its connection data."
+            }
+            val newline = if (after.getValue(DOOR_SOURCE_FILE).contains("\r\n")) "\r\n" else "\n"
+            after[DOOR_SOURCE_FILE] = after.getValue(DOOR_SOURCE_FILE) + newline + AsmDoorSource.render(roomId, native.name, doors).replace("\n", newline)
+            restored.asmDoorSourceVersion = 1
+            restored.asmDoorProjection = doors.entries.map { it.change }
+        }
+        val native = requireNotNull(catalog.parser.readRoomHeader(roomId))
+        val oldWidth = room.effectiveHeaderChange?.width ?: native.width
+        val oldHeight = room.effectiveHeaderChange?.height ?: native.height
+        val geometry = if (oldWidth != native.width || oldHeight != native.height)
+            AsmRoomResizeDoors(catalog, workspace, areaMoves).plan(owner, restored, sourceText(), after.getValue(PLM_SOURCE_FILE),
+                oldWidth, oldHeight, native.width, native.height,
+                stagedRooms = returning?.dependencies?.rooms?.mapValues { it.value.after }.orEmpty(),
+                staged83 = after[DOOR_SOURCE_FILE], restoreNative = true)
+        else null
+        if (geometry != null) {
+            geometry.transaction.replacements.forEach { (id, pair) -> sources.putIfAbsent(id, pair.first); after[id] = pair.second }
+            // A room-owned arrival that was previously pinned by a neighbor may now have
+            // become unreachable after copy-on-write. Retire it without dropping the new
+            // native DoorDefs required for moved neighbors.
+            val roots = if (restored.asmDoorSourceVersion != 0) catalog.parser.parseDoorList(native.doorOut).indices
+                .map { AsmDoorSource.name(roomId, it) }.toSet() else emptySet()
+            val cleaned = resetRoomSource(room, after, workspace.projectSourceReadersExcept(sources.keys).asSequence().map { it() }, roots)
+            after.putAll(cleaned)
+        }
+        val dependencyPlan = geometry?.transaction?.let { plan -> returning?.dependencies?.let { movement ->
+            plan.copy(mapsAfter = movement.mapsAfter, stationsAfter = movement.stationsAfter)
+        } ?: plan } ?: returning?.dependencies
+        if (room.asmDoorSourceVersion != 0) {
+            val references = Regex("\\b${AsmDoorSource.prefix(roomId)}Door_[0-9]+_Entry\\b")
+            require((after.values.asSequence() + workspace.projectSourceReadersExcept(sources.keys).asSequence().map { it() })
+                .none { text -> references.containsMatchIn(text.lineSequence().joinToString("\n") { asmCodeBeforeComment(it) }) }) {
+                "This room's DoorDef symbols still have explicit ASM references. Retarget those references before resetting door ownership."
+            }
+        }
+        val relocation = dependencyPlan?.let { dependencies ->
+            val prospective = owner.copy(rooms = owner.rooms.toMutableMap().apply {
+                dependencies.rooms.forEach { (key, change) -> put(key, change.after) }
+                put(owner.roomKey(roomId), restored)
+            })
+            // Reset can shrink back to native geometry. Validate final DoorDefs against
+            // that final model, not the temporary pre-reset header used for staging.
+            val affected = dependencies.rooms.filterKeys { it != owner.roomKey(roomId) }.values.map { it.after } + restored
+            val authored = affected.filter { it.asmDoorSourceVersion != 0 }
+            if (authored.isNotEmpty()) {
+                val doorSource = AsmDoorSource(after.getValue(DOOR_SOURCE_FILE), after.getValue(PLM_SOURCE_FILE), catalog.symbols)
+                for (target in authored) doorSource.resource(target, catalog.parser) { id ->
+                    catalog.parser.readRoomHeader(id)?.let { native ->
+                        val edits = prospective.rooms[owner.roomKey(id)]
+                        (edits?.roomHeaderChange?.width ?: native.width) to (edits?.roomHeaderChange?.height ?: native.height)
+                    }
+                }
+            }
+            dependencies.copy(dependenciesAfter = areaMoves.dependencies(prospective))
+        }
+        // A reset room can still need an authored cross-area bit because its neighbor moved.
+        // Repeating Reset must not repeatedly retire/recreate that required declaration.
+        if (room == restored && relocation != null && relocation.dependenciesBefore == relocation.dependenciesAfter &&
+            relocation.mapsBefore == relocation.mapsAfter && relocation.stationsBefore == relocation.stationsAfter &&
+            AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), sourceText(), catalog.symbols).resource(room, catalog.parser) ==
+            AsmDoorSource(after.getValue(DOOR_SOURCE_FILE), after.getValue(PLM_SOURCE_FILE), catalog.symbols).resource(restored, catalog.parser)) return null
         return AsmRoomResetPlan(owner, room, snapshotRoomForResize(room), restored,
-            sources.mapValues { (id, before) -> before to after.getValue(id) }, resetExternalReferences(sources.keys))
+            sources.mapValues { (id, before) -> before to after.getValue(id) }, resetExternalReferences(sources.keys), relocation)
     }
 
     fun planTheme(roomId: Int, name: String, stateIds: Set<String>, tileset: Int?, change: com.supermetroid.editor.data.FxChange?,
@@ -620,9 +693,19 @@ internal class AsmPlmSourceBridge(
     private fun resetExternalReferences(participants: Set<String>): Set<String> =
         workspace.projectSourceReadersExcept(participants).asSequence().flatMap { resetSourceReferences(it()).asSequence() }.toSet()
 
-    fun applyReset(plan: AsmRoomResetPlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit) {
+    private fun requireNoExternalModelDoorReferences(owner: SmEditProject, roomId: Int) {
+        require(owner.rooms.values.filter { it.roomId != roomId }.none { other -> other.states.any { state ->
+            state.effectiveCondition.flattened().any { it.sourceDoor?.roomId == roomId }
+        } }) { "Another room's state condition uses this room's DoorDef identity. Retarget it before resetting door ownership." }
+    }
+
+    fun applyReset(plan: AsmRoomResetPlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit): AsmRoomAreaMoveHistory {
+        var history: AsmRoomAreaMoveHistory? = null
         val cleanSnapshot = snapshotRoomForResize(plan.restored)
         fun validate(undo: Boolean) {
+            require(project().asmWorkspace.enabled && project().asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && project().newRooms.isEmpty()) {
+                "Restore the existing-room ASM workspace before restoring this reset."
+            }
             val expected = if (undo) plan.restored else plan.room
             val snapshot = if (undo) cleanSnapshot else plan.original
             require(project() === plan.owner && plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] === expected && expected == snapshot) {
@@ -631,14 +714,19 @@ internal class AsmPlmSourceBridge(
             require(resetExternalReferences(plan.replacements.keys) == plan.externalReferences) {
                 "Custom source references changed; undo those edits before restoring this reset."
             }
+            if (!undo) requireNoExternalModelDoorReferences(plan.owner, plan.room.roomId)
+            plan.relocation?.let { areaMoves.requireCurrent(it, undo, exceptRoomId = plan.room.roomId, action = "room reset") }
+            history?.beforeTransition?.invoke()
             beforeTransition()
         }
         fun setRoom(undo: Boolean) {
+            plan.relocation?.let { areaMoves.setModel(it, undo, exceptRoomId = plan.room.roomId) }
             plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] = if (undo) plan.room else plan.restored
         }
         fun notify(undo: Boolean) {
             onMetadataChanged()
             afterTransition(undo)
+            history?.onTransition?.invoke(undo)
         }
         validate(false)
         workspace.replaceProjectSources(plan.replacements,
@@ -646,16 +734,21 @@ internal class AsmPlmSourceBridge(
             beforeRedo = { validate(false); setRoom(false) },
             afterUndo = { notify(true) }, afterRedo = { notify(false) },
             beforeApply = { setRoom(false) }, afterApply = { notify(false) })
+        return AsmRoomAreaMoveHistory(workspace, plan.replacements, requireNotNull(workspace.sourceUndoHead(PLM_SOURCE_FILE)), "room reset")
+            .also { history = it }
     }
 
     /** Stage complete room inputs before changing shared dimensions or publishing ownership. */
-    fun planResize(roomId: Int, name: String, width: Int, height: Int, isItem: (Int) -> Boolean): AsmRoomResizePlan {
+    fun planResize(roomId: Int, name: String, width: Int, height: Int, isItem: (Int) -> Boolean,
+                   roomSnapshot: com.supermetroid.editor.data.RoomEdits? = null): AsmRoomResizePlan {
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Room source requires ASM mode." }
         require(owner.newRooms.isEmpty()) { "Source-aware resize for projects with added rooms needs stable source identities first." }
         require(width in 1..15 && height in 1..15 && width * height <= 50) { "Room scroll grids support 1–15 dimensions and at most 50 screens." }
         catalog.requireStandardMacro(workspace.projectSourceText("macros.asm"))
-        val room = owner.rooms.getValue(owner.roomKey(roomId))
+        val existing = owner.rooms[owner.roomKey(roomId)]
+        val room = existing ?: roomSnapshot ?: com.supermetroid.editor.data.RoomEdits(roomId).also { it.ensureStateManifest(catalog.parser) }
+        require(room.roomId == roomId) { "The resize room identity changed; reopen Resize." }
         require(room.states.isNotEmpty()) { "Load the room's states before resizing." }
         val beforeModel = snapshotRoomForResize(room)
         val staged = snapshotRoomForResize(room)
@@ -694,34 +787,57 @@ internal class AsmPlmSourceBridge(
             inputs.values.flatMap { it.entries }, saves, staged.saveStationSpawns, catalog.parser)
         text = objects.withScrollComments(staged, width, height)
         val resizedGrids = AsmInitialScrollSource(text, catalog.symbols).resources(staged, width, height)
-        return AsmRoomResizePlan(owner, room, beforeModel, staged, workspace.sourceBufferRevision, before, text,
+        val doors = AsmRoomResizeDoors(catalog, workspace, areaMoves).plan(owner, staged, before, text, oldWidth, oldHeight, width, height)
+        text = doors.transaction.replacements.getValue(PLM_SOURCE_FILE).second
+        return AsmRoomResizePlan(owner, room, existing != null, beforeModel, staged, workspace.sourceBufferRevision, before, text,
             if (room.asmEnemySourceVersion != 0) workspace.projectSourceText(ENEMY_SOURCE_FILE) else null,
-            grids.mapValues { it.value.values }, resizedGrids.mapValues { it.value.values }, inputs.mapValues { it.value.entries })
+            grids.mapValues { it.value.values }, resizedGrids.mapValues { it.value.values }, inputs.mapValues { it.value.entries },
+            doors, resetExternalReferences(doors.transaction.replacements.keys))
     }
 
-    fun applyResize(plan: AsmRoomResizePlan, beforeTransition: () -> Unit, onTransition: (Boolean) -> Unit) {
-        fun validate(expected: com.supermetroid.editor.data.RoomEdits) {
-            require(project() === plan.owner && project().rooms[project().roomKey(plan.room.roomId)] === plan.room && plan.room == expected) {
+    fun applyResize(plan: AsmRoomResizePlan, beforeTransition: () -> Unit, onTransition: (Boolean) -> Unit): AsmRoomAreaMoveHistory {
+        var history: AsmRoomAreaMoveHistory? = null
+        fun validate(undo: Boolean) {
+            val expected = if (undo) plan.afterModel else plan.beforeModel
+            require(project() === plan.owner && project().rooms[project().roomKey(plan.room.roomId)] ===
+                (if (undo || plan.wasPresent) plan.room else null) && plan.room == expected) {
                 "Room data changed; undo newer room/state edits before resizing."
+            }
+            areaMoves.requireCurrent(plan.doors.transaction, undo, exceptRoomId = plan.room.roomId, action = "room resize")
+            val incoming = AsmRoomResizeDoors(catalog, workspace, areaMoves).incoming(project(), plan.room.roomId, sourceText())
+            require(incoming == if (undo) plan.doors.incomingAfter else plan.doors.incomingBefore) {
+                "Incoming doors changed; undo newer door edits before restoring this resize."
+            }
+            require(resetExternalReferences(plan.doors.transaction.replacements.keys) == plan.externalReferences) {
+                "Arrival references changed; undo newer source references before restoring this resize."
             }
             require(plan.actorSource == null || workspace.projectSourceText(ENEMY_SOURCE_FILE) == plan.actorSource) {
                 "Actor source changed; undo newer actor edits before resizing."
             }
+            history?.beforeTransition?.invoke()
             beforeTransition()
         }
         fun apply(snapshot: com.supermetroid.editor.data.RoomEdits, undo: Boolean) {
+            areaMoves.setModel(plan.doors.transaction, undo, exceptRoomId = plan.room.roomId)
             applyRoomResizeModel(plan.room, snapshot)
-            onTransition(undo)
-            onMetadataChanged()
+            if (undo && !plan.wasPresent) plan.owner.rooms.remove(plan.owner.roomKey(plan.room.roomId))
+            else plan.owner.rooms[plan.owner.roomKey(plan.room.roomId)] = plan.room
+            plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
         }
-        validate(plan.beforeModel)
+        fun notify(undo: Boolean) {
+            onMetadataChanged()
+            onTransition(undo)
+            history?.onTransition?.invoke(undo)
+        }
+        validate(false)
         require(sourceText() == plan.before && workspace.sourceBufferRevision == plan.sourceRevision) { "Project source changed while resize was planned; try again." }
         require(plan.before != plan.after) { "Resize did not produce an authored grid change." }
-        workspace.replaceProjectSource(PLM_SOURCE_FILE, plan.before, plan.after,
-            beforeUndo = { validate(plan.afterModel); apply(plan.beforeModel, true) },
-            beforeRedo = { validate(plan.beforeModel); apply(plan.afterModel, false) })
-        apply(plan.afterModel, false)
-        plan.owner.projectFormatVersion = SmEditProject.CURRENT_PROJECT_FORMAT_VERSION
+        workspace.replaceProjectSources(plan.doors.transaction.replacements,
+            beforeUndo = { validate(true); apply(plan.beforeModel, true) }, afterUndo = { notify(true) },
+            beforeRedo = { validate(false); apply(plan.afterModel, false) }, afterRedo = { notify(false) },
+            beforeApply = { apply(plan.afterModel, false) }, afterApply = { notify(false) })
+        return AsmRoomAreaMoveHistory(workspace, plan.doors.transaction.replacements,
+            requireNotNull(workspace.sourceUndoHead(PLM_SOURCE_FILE)), "room resize").also { history = it }
     }
 
     /** Stage source and retire only its GUI object streams. No ROM/build/filesystem writes. */

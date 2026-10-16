@@ -5,6 +5,7 @@ import com.supermetroid.editor.rom.*
 import com.supermetroid.editor.ui.EditorState
 import com.supermetroid.editor.ui.MinimapEditorState
 import com.supermetroid.editor.ui.RoomAsmNavigation
+import com.supermetroid.editor.ui.incomingDoorConditionOptions
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.io.TempDir
@@ -21,7 +22,7 @@ class AsmDoorSourceTest {
         fun adopt() = assertTrue(editor.ensureDoorSource("Landing Site"), editor.statusMessage)
     }
     private suspend fun fixture(shared: Boolean = false, nativeOutside: Boolean = false, nativeArrival: Int = 0, knownArrival: Boolean = true,
-                                built: Boolean = false): Fixture {
+                                built: Boolean = false, nativeDoors: Int = 1, withLoadStation: Boolean = true): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }
         val macros = "macro PLMPopEntry(ID,X,Y,Param)\n dw <ID>\n db <X>,<Y>\n dw <Param>\nendmacro\n"
@@ -39,6 +40,14 @@ class AsmDoorSourceTest {
         val workspace = AsmWorkspaceState(projectRepository = repository)
         workspace.bindProject(file.path, true)
         val rom = saveSourceTestRom()
+        if (nativeDoors == 0) { rom[0x791F8 + 9] = 0; rom[0x791F8 + 10] = 0 }
+        if (!withLoadStation) { rom[0x44C5] = 0; rom[0x44C6] = 0 }
+        for (index in 1 until nativeDoors) {
+            val pointer = 0x8000 + index * 16
+            rom[0x78060 + index * 2] = pointer.toByte(); rom[0x78061 + index * 2] = (pointer ushr 8).toByte()
+            val pc = 0x18000 + index * 16
+            rom[pc] = 0xF8.toByte(); rom[pc + 1] = 0x91.toByte(); rom[pc + 9] = 0x80.toByte()
+        }
         rom[0x1800A] = nativeArrival.toByte(); rom[0x1800B] = (nativeArrival ushr 8).toByte()
         if (nativeOutside) rom[0x18006] = 2 // A retained native/special entrance outside this 2x2 room.
         val level = ByteArray(2 + 32 * 32 * 3).also { it[1] = 8 }
@@ -60,6 +69,112 @@ class AsmDoorSourceTest {
         val bridge = editor.bindRoomSources(AsmPlmSourceCatalog("", macros, symbols, parser, emptyMap()), workspace)
         editor.loadRoom(0x91F8, parser, assertNotNull(parser.readRoomHeader(0x91F8)))
         return Fixture(workspace, project, editor, bridge, file)
+    }
+
+    @Test fun `incoming door conditions use stable source identities through GUI ASM reorder remove build and undo`() = runBlocking {
+        val f = fixture()
+        repeat(2) { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        val id = f.room.states.first().id
+        val reference = ProjectSourceDoorReference(0x91F8, 2)
+        val options = f.editor.incomingDoorConditionOptions(0x91F8, f.parser)
+        val choice = options.single { it.sourceDoor == reference }
+        assertNull(choice.pointer); assertContains(choice.label, "connection 3")
+        assertTrue(options.single { it.pointer == 0x8000 }.matches(f.room.states.first().condition.copy(argument = 0x8000)))
+        val condition = projectRoomStateCondition(ProjectRoomStateConditionKind.ALL_OF, children = listOf(
+            choice.condition(), projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7, negated = true)))
+        f.editor.setRoomStateCondition(id, condition, f.parser)
+        fun selectors() = AsmRoomSelectorsSource(f.bridge.sourceText()).resource(f.room)
+        assertEquals(condition, selectors().conditions.getValue(id))
+        assertEquals(condition, f.room.states.first().effectiveCondition)
+        assertContains(f.bridge.sourceText(), "dw ${reference.entryLabel}")
+        assertFalse(Json.encodeToString(SmEditProject.serializer(), f.project).contains("sourceDoor"), "Source projections never become a second authority")
+        assertTrue(condition.matches(RoomStateSimulationContext(0, incomingSourceDoor = reference)))
+        assertFalse(condition.matches(RoomStateSimulationContext(0, incomingDoorPointer = 0)))
+        assertFalse(condition.matches(RoomStateSimulationContext(0, incomingSourceDoor = ProjectSourceDoorReference(0x91F8, 1))))
+        val notes = f.bridge.sourceText().replace("dw ${reference.entryLabel}", "dw ${reference.entryLabel} ; keep symbolic note")
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, f.bridge.sourceText(), notes)
+        f.editor.refreshLinkedPlms()
+        f.editor.setRoomStateCondition(id, choice.condition(negated = true), f.parser)
+        assertContains(f.bridge.sourceText(), "keep symbolic note")
+        assertEquals(choice.condition(true), selectors().conditions.getValue(id))
+        assertTrue(f.editor.undo(), f.editor.statusMessage); assertEquals(condition, selectors().conditions.getValue(id))
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        f.editor.removeProjectRoomDoor(0x91F8, 1)
+        assertEquals(listOf(0, 2), f.input().entries.map { it.identity })
+        assertEquals(reference, selectors().conditions.getValue(id).sourceDoor)
+        assertContains(f.editor.incomingDoorConditionOptions(0x91F8, f.parser).single { it.sourceDoor == reference }.label, "connection 2")
+        val before = f.bridge.doors.sourceText(); val revision = f.workspace.sourceBufferRevision
+        assertContains(assertFails { f.editor.removeProjectRoomDoor(0x91F8, 1) }.message.orEmpty(), "reference")
+        assertEquals(before, f.bridge.doors.sourceText()); assertEquals(revision, f.workspace.sourceBufferRevision)
+        val baseline = f.parser.copyRomData().also {
+            it.fill(0xFF.toByte(), 0x1F000, 0x20000); it.fill(0xFF.toByte(), 0x7F000, 0x80000)
+            it.fill(0xFF.toByte(), 0x207000, 0x208000)
+        }
+        val output = baseline.copyOf()
+        ProjectRoomExporter(f.project, RomParser(baseline), output, sourceDoors = mapOf(0x91F8 to f.input()),
+            sourceSelectors = mapOf(0x91F8 to selectors()), sourceLayouts = mapOf(0x91F8 to AsmRoomLayoutSource(f.bridge.sourceText()).resources(f.room, 32, 32))).exportRooms()
+        val built = RomParser(output)
+        val actual = built.parseDoorList(built.readRoomHeader(0x91F8)!!.doorOut).last().doorDefPtr
+        assertTrue(actual in 0x8000..0xFFFF)
+        assertEquals(actual, built.inspectRoomStates(0x91F8).states.first().condition.argument)
+        assertTrue(built.inspectRoomStates(0x91F8).states.first().condition.negated)
+        assertEquals(reference, selectors().conditions.getValue(id).sourceDoor, "Build must not persist allocations")
+    }
+
+    @Test fun `dangling retired and retargeted symbolic incoming conditions lock only selectors and never publish GUI edits`() = runBlocking {
+        val f = fixture()
+        f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser)
+        val id = f.room.states.first().id
+        val reference = ProjectSourceDoorReference(0x91F8, 1)
+        f.editor.setRoomStateCondition(id, projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, sourceDoor = reference), f.parser)
+        val source = f.bridge.doors.sourceText()
+        val retired = AsmDoorSource(source).withOrder(0x91F8, listOf(0))
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, source, retired); f.editor.refreshLinkedPlms()
+        assertContains(f.editor.selectorPreviewProblem.orEmpty(), "not an active")
+        assertFalse(f.editor.selectorEditingAvailable())
+        assertTrue(f.editor.incomingDoorConditionOptions(0x91F8, f.parser).none { it.sourceDoor == reference })
+        val revision = f.workspace.sourceBufferRevision
+        f.editor.setRoomStateCondition(id, projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 2), f.parser)
+        assertEquals(revision, f.workspace.sourceBufferRevision)
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error); f.editor.refreshLinkedPlms()
+        assertNull(f.editor.selectorPreviewProblem); assertTrue(f.editor.selectorEditingAvailable())
+        f.editor.updateDoor(1, f.editor.doorEntries[1].copy(destRoomPtr = 0xA000), expectedIdentity = 1)
+        assertContains(f.editor.selectorPreviewProblem.orEmpty(), "does not lead")
+        assertNotNull(f.bridge.layouts.view(0x91F8, assertNotNull(f.editor.currentPlmStateId())).resource)
+        assertTrue(f.editor.undo(), f.editor.statusMessage); assertNull(f.editor.selectorPreviewProblem)
+    }
+
+    @Test fun `cross room state lifecycle resolves forward DoorDef references and guards referenced owner reset`() = runBlocking {
+        val f = fixture()
+        f.editor.addProjectRoomDoor(0x91F8, 0xA000, 0, 0, 0, f.parser)
+        val sourceRoom = f.room
+        val reference = ProjectSourceDoorReference(0x91F8, 1)
+        f.editor.loadRoom(0xA000, f.parser, assertNotNull(f.parser.readRoomHeader(0xA000)))
+        val destination = f.project.getOrCreateRoom(0xA000).also { it.ensureStateManifest(f.parser) }
+        val default = destination.states.last().id
+        val id = f.editor.addRoomState(default,
+            projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, sourceDoor = reference), f.parser)
+        assertEquals(reference, destination.effectiveStates.single { it.id == id }.effectiveCondition.sourceDoor)
+        assertTrue(f.editor.undo(), f.editor.statusMessage); assertTrue(destination.states.none { it.id == id })
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        // Deliberately process the destination first: all DoorDef allocations must
+        // exist before selector projection, independent of project insertion order.
+        f.project.rooms.clear(); f.project.rooms["A000"] = destination; f.project.rooms["91F8"] = sourceRoom
+        val baseline = f.parser.copyRomData().also {
+            it.fill(0xFF.toByte(), 0x1F000, 0x20000); it.fill(0xFF.toByte(), 0x207000, 0x208000)
+        }
+        val output = baseline.copyOf()
+        ProjectRoomExporter(f.project, RomParser(baseline), output, sourceDoors = mapOf(0x91F8 to f.input()),
+            sourceSelectors = mapOf(0xA000 to AsmRoomSelectorsSource(f.bridge.sourceText()).resource(destination)),
+            sourceLayouts = mapOf(0x91F8 to AsmRoomLayoutSource(f.bridge.sourceText()).resources(sourceRoom, 32, 32))).exportRooms()
+        val built = RomParser(output)
+        val actual = built.parseDoorList(built.readRoomHeader(0x91F8)!!.doorOut).last().doorDefPtr
+        assertEquals(actual, built.inspectRoomStates(0xA000).states.single { it.condition.kind == RoomStateConditionKind.INCOMING_DOOR }.condition.argument)
+        f.editor.loadRoom(0x91F8, f.parser, assertNotNull(f.parser.readRoomHeader(0x91F8)))
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser)); assertContains(f.editor.statusMessage, "state condition")
+        val before = f.bridge.sourceText(); val doorBefore = f.bridge.doors.sourceText()
+        assertFails { f.editor.removeProjectRoomDoor(0x91F8, 1) }
+        assertEquals(before, f.bridge.sourceText()); assertEquals(doorBefore, f.bridge.doors.sourceText())
     }
 
     @Test fun `automatic door editor is a pure navigable overlay never included in saves searches or build input`() = runBlocking {
@@ -95,6 +210,259 @@ class AsmDoorSourceTest {
         assertNotNull(f.workspace.roomSourceInspection?.automaticEdit)
         assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
         assertEquals(revision, f.workspace.sourceBufferRevision)
+    }
+
+    @Test fun `first structural add automatically authors doors and all layouts as one reciprocal transaction`() = runBlocking {
+        val f = fixture()
+        val before = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        val level = f.editor.workingLevelData!!.copyOf()
+        val index = f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser)
+        assertEquals(1, index); assertEquals(2, f.editor.doorEntries.size)
+        assertEquals(1, f.room.asmDoorSourceVersion); assertEquals(1, f.room.asmLayoutSourceVersion)
+        val source = f.input(); assertTrue(source.structural)
+        assertEquals(listOf(0, 1), source.entries.map { it.identity })
+        assertEquals(listOf(0x8000, 0), source.entries.map { it.doorDefPtr }, "A preview must not guess an allocation address")
+        assertEquals(1, f.editor.undoStack.size)
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+        assertContentEquals(level, f.editor.workingLevelData); assertEquals(1, f.editor.doorEntries.size)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertEquals(source, f.input()); assertEquals(2, f.editor.doorEntries.size)
+        f.editor.notifyProjectMutation(f.parser)
+        assertEquals(2, f.editor.effectiveDoorsForRoom(0x91F8, f.parser).size)
+    }
+
+    @Test fun `middle removal preserves identities notes arrivals and elevator bits across all shared states`() = runBlocking {
+        val f = fixture()
+        repeat(2) { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        f.editor.setCurrentLayoutEditScope(com.supermetroid.editor.ui.LayoutEditScope.ALL_SHARING_STATES)
+        f.editor.setTileProperties(8, 8, 9, 0x82)
+        assertEquals(0x82, f.editor.readBts(8, 8))
+        assertTrue(f.editor.createManagedDoorArrival(2), f.editor.statusMessage)
+        val before = f.bridge.doors.sourceText()
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, before, before.replace("macro SmeditDoors_91F8_List()", "macro SmeditDoors_91F8_List()\n ; keep order note"))
+        f.editor.refreshLinkedPlms()
+        val source8F = f.bridge.sourceText(); val source83 = f.bridge.doors.sourceText()
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        f.editor.removeProjectRoomDoor(0x91F8, 1)
+        assertEquals(listOf(0, 2), f.input().entries.map { it.identity })
+        assertEquals(0x81, f.editor.readBts(8, 8))
+        assertEquals("SmeditArrival_91F8_Door_2_Entry", f.input().entries[1].arrival!!.label)
+        assertContains(f.bridge.doors.sourceText(), "; keep order note")
+        assertContains(f.bridge.doors.sourceText(), "macro SmeditDoors_91F8_Door_1()", message = "Retired identities must not be reused")
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(source8F, f.bridge.sourceText()); assertEquals(source83, f.bridge.doors.sourceText())
+        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project)); assertEquals(0x82, f.editor.readBts(8, 8))
+        assertTrue(f.workspace.redoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser)
+        assertEquals(listOf(0, 2, 3), f.input().entries.map { it.identity })
+        f.editor.updateDoor(1, f.editor.doorEntries[1].copy(distFromDoor = 0x1234))
+        assertEquals(0x1234, f.input().entries[1].change.distFromDoor)
+        assertContains(f.bridge.doors.sourceText().substringAfter("macro SmeditDoors_91F8_Door_2()"), "dw \$1234")
+    }
+
+    @Test fun `hidden private state doorway and new external references block without partial publication`() = runBlocking {
+        val f = fixture()
+        f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser)
+        val hidden = f.room.states.first { it.id != f.editor.currentPlmStateId() }.id
+        f.bridge.layouts.changeLink(0x91F8, hidden, "private-hidden", clone = true)
+        assertTrue(f.bridge.layouts.edit(0x91F8, hidden, listOf(TileEdit(6, 7, 0, 0x9000, 0, 1))))
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val source8F = f.bridge.sourceText(); val source83 = f.bridge.doors.sourceText()
+        val revision = f.workspace.sourceBufferRevision
+        assertContains(assertFails { f.editor.removeProjectRoomDoor(0x91F8, 1) }.message.orEmpty(), hidden)
+        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project)); assertEquals(revision, f.workspace.sourceBufferRevision)
+        assertEquals(source8F, f.bridge.sourceText()); assertEquals(source83, f.bridge.doors.sourceText())
+        val macros = f.workspace.projectSourceText("macros.asm")
+        f.workspace.replaceProjectSource("macros.asm", macros, macros + "\nmacro UsesDoor()\n dw SmeditDoors_91F8_Door_1_Entry\nendmacro\n")
+        assertContains(assertFails { f.editor.removeProjectRoomDoor(0x91F8, 1) }.message.orEmpty(), "ASM DoorDef reference")
+        assertFalse(f.editor.resetCurrentRoomToOriginal(f.parser))
+        assertContains(f.editor.statusMessage, "explicit ASM references")
+    }
+
+    @Test fun `structural source order is authoritative and invalid drafts retain last good reciprocal data`() = runBlocking {
+        val f = fixture()
+        f.editor.addProjectRoomDoor(0x91F8, 0xA000, 0, 0, 0, f.parser)
+        val before = f.bridge.doors.sourceText()
+        val after = AsmDoorSource(before).withOrder(0x91F8, listOf(1, 0))
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, before, after); f.editor.refreshLinkedPlms()
+        assertEquals(listOf(0xA000, 0x91F8), f.editor.doorEntries.map { it.destRoomPtr })
+        assertEquals(listOf(1, 0), f.input().entries.map { it.identity })
+        assertTrue(f.workspace.openManagedCodeReference("SmeditDoors_91F8_Door_1_Entry"))
+        assertEquals(DOOR_SOURCE_FILE, f.workspace.selectedFileId)
+        assertEquals("macro SmeditDoors_91F8_Door_1()", f.bridge.doors.sourceText().lines()[f.workspace.selectedLineIndex])
+        assertTrue(RoomAsmNavigation(f.editor, f.workspace, { "Landing Site" }).openFromAsm(
+            AsmRoomSourceLink(0x91F8, "Landing Site", RoomAsmSourceKind.DOORS, doorIndex = 0)))
+        assertEquals("macro SmeditDoors_91F8_Door_0()", f.bridge.doors.sourceText().lines()[f.workspace.selectedLineIndex])
+        f.editor.updateDoor(1, f.editor.doorEntries[1].copy(distFromDoor = 0x1234))
+        assertEquals(0x8000, f.input().entries[1].doorDefPtr)
+        val good = f.bridge.doors.sourceText(); val preview = f.editor.doorEntries.toList()
+        val invalid = good.replaceFirst("dw SmeditDoors_91F8_Door_0_Entry", "dw SmeditDoors_91F8_Door_1_Entry")
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, good, invalid); f.editor.refreshLinkedPlms()
+        assertNotNull(f.editor.doorPreviewProblem); assertEquals(preview, f.editor.doorEntries)
+        assertTrue(f.workspace.saveAllSources(), f.workspace.error)
+        assertFails { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        assertEquals(invalid, f.bridge.doors.sourceText())
+    }
+
+    @Test fun `removing a native middle identity retains higher native pointers and source navigation`() = runBlocking {
+        val f = fixture(nativeDoors = 3)
+        f.editor.removeProjectRoomDoor(0x91F8, 1)
+        assertEquals(listOf(0, 2), f.input().entries.map { it.identity })
+        assertEquals(listOf(0x8000, 0x8020), f.editor.effectiveDoorsForRoom(0x91F8, f.parser).map { it.doorDefPtr })
+        assertTrue(f.editor.createManagedDoorArrival(1), f.editor.statusMessage)
+        assertEquals("SmeditArrival_91F8_Door_2_Entry", f.input().entries[1].arrival!!.label)
+        val line = f.bridge.doors.line(0x91F8, 1)
+        assertEquals("macro SmeditDoors_91F8_Door_2()", f.bridge.doors.sourceText().lines()[line])
+        val before = f.bridge.doors.sourceText(); val revision = f.workspace.sourceBufferRevision
+        assertContains(assertFails { f.editor.removeProjectRoomDoor(0x91F8, 0) }.message.orEmpty(), "Load station")
+        assertEquals(before, f.bridge.doors.sourceText()); assertEquals(revision, f.workspace.sourceBufferRevision)
+    }
+
+    @Test fun `ASM first structural lists build without layout adoption and validate final runtime doorway indices`() = runBlocking {
+        val f = fixture(); f.adopt()
+        val original = f.input()
+        val extra = original.entries.single().copy(doorDefPtr = 0, change = original.entries.single().change.copy(doorIndex = 0), identity = 1)
+        val addition = AsmDoorSource.render(0x91F8, "Added in ASM", SourceRoomDoors(original.doorOutPtr, listOf(extra), true))
+            .substringBefore("macro SmeditDoors_91F8_List()")
+        val text = f.bridge.doors.sourceText()
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, text, AsmDoorSource(text + addition).withOrder(0x91F8, listOf(0, 1)))
+        val source = f.input()
+        assertTrue(source.structural); assertEquals(0, f.room.asmLayoutSourceVersion)
+        val baseline = f.parser.copyRomData().also { it.fill(0xFF.toByte(), 0x1F000, 0x20000) }
+        val target = baseline.copyOf()
+        ProjectRoomExporter(f.project, RomParser(baseline), target, sourceDoors = mapOf(0x91F8 to source)).exportRooms()
+        val built = RomParser(target)
+        val entries = built.parseDoorList(built.readRoomHeader(0x91F8)!!.doorOut)
+        assertEquals(2, entries.size); assertEquals(0x8000, entries.first().doorDefPtr); assertNotEquals(0, entries.last().doorDefPtr)
+        val invalid = baseline.copyOf()
+        val level = f.editor.workingLevelData!!.copyOf()
+        level[3] = 0x90.toByte(); level[2 + 2048] = 2
+        LZ5Compressor.compress(level).copyInto(invalid, 0x200000)
+        assertContains(assertFails {
+            ProjectRoomExporter(f.project, RomParser(invalid.copyOf()), invalid, sourceDoors = mapOf(0x91F8 to source)).exportRooms()
+        }.message.orEmpty(), "missing connection 3")
+        assertEquals(0, f.room.asmLayoutSourceVersion)
+    }
+
+    @Test fun `structural identities compose with incoming resize cross area moves and native reset`() = runBlocking {
+        val f = fixture(nativeDoors = 3, withLoadStation = false)
+        f.editor.removeProjectRoomDoor(0x91F8, 1)
+        f.editor.addProjectRoomDoor(0x91F8, 0xA000, 0, 0, 0, f.parser)
+        assertTrue(f.editor.createManagedDoorArrival(1), f.editor.statusMessage)
+        val text = f.bridge.sourceText(); val body = authoredMacroBody(text, "SmeditArrival_91F8_Door_2")
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body,
+            "    ${AsmDoorArrivalsSource.MARKER}\n    php\n    sep #\$20\n    lda.b #\$02\n    sta.l \$7ECD23\n    plp\n    rts\n"))
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertEquals(listOf(0, 2, 3), f.input().entries.map { it.identity })
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), AsmArrivalScrollProgram.parse(authoredMacroBody(f.bridge.sourceText(), "SmeditArrival_91F8_Door_2"))!!.writes)
+        val wide8F = f.bridge.sourceText(); val wide83 = f.bridge.doors.sourceText()
+        f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 2, 0, f.parser)
+        assertEquals(2, f.editor.doorEntries.last().screenX)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(wide8F, f.bridge.sourceText()); assertEquals(wide83, f.bridge.doors.sourceText())
+        val map = MinimapEditorState().apply { loadArea(f.parser, 0, f.editor, selectRoomId = 0x91F8) }
+        val moved = assertNotNull(map.reassignRoomArea(0x91F8, 1, f.editor))
+        assertTrue(moved.success, moved.message)
+        assertEquals(0, f.input().entries.last().change.bitflag and 0x40, "New non-native connections must participate in area flags too")
+        assertEquals(listOf(0, 2, 3), f.input().entries.map { it.identity })
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertEquals(listOf(0x8000, 0x8010, 0x8020), f.editor.doorEntries.map { it.doorDefPtr })
+        assertFalse(f.bridge.doors.sourceText().contains("macro SmeditDoors_91F8_List()"))
+    }
+
+    @Test fun `structural lists enforce sixteen connections and invalid destinations publish nothing`() = runBlocking {
+        val f = fixture()
+        val original = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val revision = f.workspace.sourceBufferRevision
+        assertFails { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 2, 0, f.parser) }
+        assertEquals(original, Json.encodeToString(SmEditProject.serializer(), f.project)); assertEquals(revision, f.workspace.sourceBufferRevision)
+        repeat(15) { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        assertEquals(16, f.input().entries.size)
+        val before = f.bridge.doors.sourceText(); val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        assertFails { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        assertEquals(before, f.bridge.doors.sourceText()); assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+    }
+
+    @Test fun `empty native rooms can add their first door and author a terminated zero connection list`() = runBlocking {
+        val f = fixture(nativeDoors = 0, withLoadStation = false)
+        assertEquals(0, f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser))
+        assertEquals(0, f.input().entries.single().identity)
+        f.editor.removeProjectRoomDoor(0x91F8, 0)
+        assertTrue(f.input().entries.isEmpty())
+        assertEquals(emptyList(), AsmDoorSource(f.bridge.doors.sourceText()).order(0x91F8))
+        assertEquals("macro SmeditDoors_91F8_List()", f.bridge.doors.sourceText().lines()[f.bridge.doors.line(0x91F8)])
+        val baseline = f.parser.copyRomData().also { it.fill(0xFF.toByte(), 0x217000, 0x218000) }
+        val target = baseline.copyOf()
+        ProjectRoomExporter(f.project, RomParser(baseline), target, sourceDoors = mapOf(0x91F8 to f.input()),
+            sourceLayouts = mapOf(0x91F8 to AsmRoomLayoutSource(f.bridge.sourceText()).resources(f.room, 32, 32))).exportRooms()
+        val parser = RomParser(target); val list = parser.readRoomHeader(0x91F8)!!.doorOut
+        assertTrue(list in 0x8000..0xFFFE); assertTrue(parser.parseDoorList(list).isEmpty())
+        assertEquals(0, parser.readUInt16At(parser.snesToPc(0x8F0000 or list)))
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(1, f.input().entries.size)
+    }
+
+    @Test fun `identical unresolved records cannot conceal a newer ASM identity reorder from stale GUI edits`() = runBlocking {
+        val f = fixture()
+        repeat(2) { f.editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, f.parser) }
+        assertEquals(f.editor.doorEntries[1], f.editor.doorEntries[2])
+        val captured = f.editor.doorEntries[1].copy(distFromDoor = 0x1234)
+        val before = f.bridge.doors.sourceText()
+        val reordered = AsmDoorSource(before).withOrder(0x91F8, listOf(0, 2, 1))
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, before, reordered)
+        f.editor.refreshLinkedPlms()
+        f.editor.updateDoor(1, captured, expectedIdentity = 1)
+        assertEquals(reordered, f.bridge.doors.sourceText()); assertContains(f.editor.statusMessage, "source changed")
+        assertFails { f.editor.removeProjectRoomDoor(0x91F8, 1, expectedIdentity = 1) }
+        assertEquals(reordered, f.bridge.doors.sourceText())
+        assertFalse(f.editor.createManagedDoorArrival(1, expectedIdentity = 1))
+        assertEquals(reordered, f.bridge.doors.sourceText())
+        f.editor.updateDoor(1, captured, expectedIdentity = 2)
+        assertEquals(0x1234, f.input().entries[1].change.distFromDoor)
+        assertEquals(0x8000, f.input().entries[2].change.distFromDoor)
+    }
+
+    @Test fun `doorway creation adopts and links a whole opening with one undo and preserves earlier tile history`() = runBlocking {
+        val f = fixture()
+        f.editor.setCurrentLayoutEditScope(com.supermetroid.editor.ui.LayoutEditScope.ALL_SHARING_STATES)
+        f.editor.setTileProperties(4, 4, 9, 0x80); f.editor.setTileProperties(4, 5, 9, 0x80)
+        f.editor.setTileProperties(10, 10, 9, 0)
+        val before = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val source8F = f.bridge.sourceText(); val source83 = f.bridge.doors.sourceText()
+        val historySize = f.editor.undoStack.size
+        val opening = com.supermetroid.editor.ui.DoorwayOpening(0xA000, 0, 0, 0, 0, 0, 4, 0, 0)
+        var created = -1
+        f.editor.addSourceDoorwayConnection(0x91F8, opening, 4, 4) { created = it }
+        assertEquals(1, created); assertEquals(2, f.editor.doorEntries.size)
+        assertEquals(historySize + 1, f.editor.undoStack.size)
+        assertEquals(0x81, f.editor.readBts(4, 4)); assertEquals(0x81, f.editor.readBts(4, 5)); assertEquals(0, f.editor.readBts(10, 10))
+        var linked = -1
+        assertEquals(2, f.editor.linkDoorwayTilesToConnection(4, 4, 0, expectedIdentity = 0) { linked = it })
+        assertEquals(0x80, linked); assertEquals(0x80, f.editor.readBts(4, 5))
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(0x81, f.editor.readBts(4, 4))
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(source8F, f.bridge.sourceText()); assertEquals(source83, f.bridge.doors.sourceText())
+        assertEquals(0x80, f.editor.readBts(4, 4)); assertEquals(1, f.editor.doorEntries.size)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(0, f.editor.readBlockWord(10, 10) ushr 12)
+    }
+
+    @Test fun `new unallocated definitions still protect numeric native arrival anchors from source relocation`() = runBlocking {
+        val f = fixture(nativeArrival = 0x9000)
+        val source = SourceRoomDoors(0x8060, listOf(SourceRoomDoor(0,
+            DoorChange(0, 0x91F8, 0, 0, 0, 0, 0x8000, 0x9000), identity = 1)), structural = true)
+        val original = f.parser.copyRomData()
+        fun compiled(address: String) = AsmCompiledBuildBase(original, original, "fixture", emptyList(), assemblerVersion = "test",
+            compilerOutput = emptyList(), compilerSymbols = "[labels]\n8F:$address DoorASM_Test\n".toByteArray())
+        protectDoorSourceBaseline(mapOf(0x91F8 to source), f.parser, compiled("9000"), mapOf("DoorASM_Test" to 0x9000))
+        assertContains(assertFails {
+            protectDoorSourceBaseline(mapOf(0x91F8 to source), f.parser, compiled("9001"), mapOf("DoorASM_Test" to 0x9000))
+        }.message.orEmpty(), "moved or was removed")
     }
 
     @Test fun `first door keystroke adopts existing GUI values atomically with reciprocal undo redo and no caret relocation`() = runBlocking {
@@ -408,13 +776,38 @@ class AsmDoorSourceTest {
         assertContentEquals(target.copyOfRange(0x18000, 0x1800C), table.claim().bytes)
         assertContains(table.renderSource(), "%SmeditDoors_91F8_Door_0()")
         assertEquals(AsmEditorTarget.Room(0x91F8), AsmDoorSource.targetAt(f.bridge.doors.sourceText().lines(), f.bridge.doors.line(0x91F8) + 3))
-        assertFalse(f.editor.resizeRoom(2, 2, 3, 2), "An owned self/incoming door needs a joint resize transaction")
+        val beforeResize = f.bridge.doors.sourceText()
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertEquals(entry, f.editor.doorEntries.single())
+        assertEquals(beforeResize, f.bridge.doors.sourceText(), "A retained self-door with no arrival code needs no data rewrite")
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
         assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
         assertEquals(0, f.project.rooms.getValue("91F8").asmDoorSourceVersion)
         assertFalse(f.bridge.doors.sourceText().contains("macro SmeditDoors_91F8_"))
         assertTrue(f.editor.undo(), f.editor.statusMessage)
         assertEquals(1, f.project.rooms.getValue("91F8").asmDoorSourceVersion)
         assertEquals(entry, f.editor.doorEntries.single())
+    }
+
+    @Test fun `self door scroll code resizes with its owner and native reset retires rather than remaps the discarded binding`() = runBlocking {
+        val f = fixture()
+        assertTrue(f.editor.createManagedDoorArrival(0), f.editor.statusMessage)
+        val text = f.bridge.sourceText()
+        val body = authoredMacroBody(text, "SmeditArrival_91F8_Door_0")
+        val authored = "    ${AsmDoorArrivalsSource.MARKER}\n    php\n    sep #\$20\n    lda.b #\$02\n    sta.l \$7ECD23\n    plp\n    rts\n"
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body, authored))
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), AsmArrivalScrollProgram.parse(authoredMacroBody(f.bridge.sourceText(), "SmeditArrival_91F8_Door_0"))!!.writes)
+        val beforeReset = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertFalse(f.project.rooms.getValue("91F8").hasEdits)
+        assertFalse(f.bridge.sourceText().contains("macro SmeditArrival_91F8_Door_0()"))
+        assertEquals(0, f.editor.doorEntries.single().entryCode)
+        assertTrue(f.workspace.undoSourceEdit(DOOR_SOURCE_FILE), f.workspace.error)
+        assertEquals(beforeReset, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+        assertEquals(48, f.editor.workingBlocksWide)
     }
 
     @Test fun `native connection identities and known arrival anchors must survive the initial assembly`() = runBlocking {

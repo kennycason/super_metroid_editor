@@ -139,7 +139,8 @@ internal class AsmRoomStateLifecycle(
         val width = room.effectiveHeaderChange?.width ?: header.width
         val height = room.effectiveHeaderChange?.height ?: header.height
         val bank = texts.getValue(PLM_SOURCE_FILE)
-        if (room.asmStateSelectorsSourceVersion != 0) AsmRoomSelectorsSource(bank).resource(room)
+        if (room.asmStateSelectorsSourceVersion != 0) validateSelectorDoorReferences(
+            AsmRoomSelectorsSource(bank).resource(room), room.roomId, project(), catalog, workspace, bank)
         if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(bank).resource(room)
         if (room.asmLayoutSourceVersion != 0) AsmRoomLayoutSource(bank).resources(room, width * 16, height * 16)
         if (room.asmInitialScrollSourceVersion != 0) AsmInitialScrollSource(bank, catalog.symbols).resources(room, width, height)

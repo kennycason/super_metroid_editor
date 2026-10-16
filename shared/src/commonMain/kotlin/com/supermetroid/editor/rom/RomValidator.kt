@@ -369,6 +369,7 @@ object RomValidator {
                     state.condition.argument,
                     state.condition.negated,
                     state.condition.children,
+                    state.condition.sourceDoor,
                 )
                 if (state.condition.routineCode != canonical.routineCode ||
                     state.condition.argumentKind != canonical.argumentKind
@@ -386,7 +387,13 @@ object RomValidator {
                     }
                     com.supermetroid.editor.data.ProjectRoomStateConditionArgumentKind.DOOR_POINTER -> {
                         val argument = state.condition.argument
-                        if (argument == null || argument !in 0x8000..0xFFFF) {
+                        val reference = state.condition.sourceDoor
+                        if (reference != null) {
+                            if (argument != null || !project.asmWorkspace.enabled || project.asmWorkspace.buildMode !=
+                                com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE || project.newRooms.isNotEmpty()) {
+                                error("State '${state.id}' symbolic DoorDef requires existing-room ASM source mode without a numeric argument")
+                            }
+                        } else if (argument == null || argument !in 0x8000..0xFFFF) {
                             error("State '${state.id}' incoming-door argument must be a bank \$83 pointer")
                         }
                     }

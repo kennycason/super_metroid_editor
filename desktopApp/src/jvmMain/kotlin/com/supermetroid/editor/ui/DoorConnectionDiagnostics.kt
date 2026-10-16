@@ -103,7 +103,7 @@ internal fun doorwayOpenings(
                         blockY = blockY,
                         tileCount = tileCount,
                         doorCapCode = (capY shl 8) or capX,
-                        connectionIndex = grids.bts[blockY * grids.width + blockX],
+                        connectionIndex = grids.bts[blockY * grids.width + blockX] and 0x7F,
                     )
                     runStart = -1
                 }

@@ -623,6 +623,7 @@ fun main() = application {
             }
             val editorEnemyPlacementLink = editorState.projectAsmNavigation<(RomParser.EnemyEntry) -> Unit> { openEnemySource(it) }
             val editorEnemiesLink = editorState.projectAsmNavigation<(String, Boolean) -> Unit> { state, graphics -> openEnemySource(null, graphics, state) }
+            val editorDoorsLink = editorState.projectAsmNavigation<(Int) -> Unit> { index -> roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.DOORS, door = index)) }
 
             fun openAsmEditorTarget(target: AsmEditorTarget) {
                 navigate {
@@ -1335,6 +1336,7 @@ fun main() = application {
                                             onNavigateToSelectors = editorSelectorsLink,
                                             onNavigateToFx = editorFxLink,
                                             onNavigateToEnemies = editorEnemiesLink,
+                                            onNavigateToDoors = editorDoorsLink,
                                             onReassignRoomArea = { roomId, targetArea ->
                                                 romParser?.let { parser ->
                                                     minimapEditorState.initIfNeeded(parser, editorState)
@@ -1483,7 +1485,8 @@ fun main() = application {
                                                     ?: selectedRoom
                                             },
                                             onNavigateToAsm = editorAsmAddressLink,
-                                            onNavigateToDoorArrival = editorState.projectAsmNavigation<(Int, Boolean) -> Unit> { index, create -> roomAsmNavigation.openArrival(index, create) },
+                                            onNavigateToDoorArrival = editorState.projectAsmNavigation<(Int, Boolean, Int?) -> Unit> { index, create, identity -> roomAsmNavigation.openArrival(index, create, identity) },
+                                            onNavigateToDoorSource = editorDoorsLink,
                                             roomKeyboardNavigationEnabled = leftTab == TAB_ROOMS,
                                             onNavigateToPlmPlacement = editorPlmPlacementLink,
                                             onNavigateToScrollCommands = editorScrollCommandsLink,
