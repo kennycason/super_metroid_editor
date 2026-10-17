@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v16-beam-damage"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v17-boss-stats"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -220,6 +220,7 @@ internal object ProjectFileService {
         if (project.asmWorkspace.buildMode == ProjectRomBuildMode.PATCHED_ROM) {
             require(project.asmWorkspace.enemyTuningSourceKeys.isEmpty()) { "Authored enemy tuning requires ASM source mode." }
             require(project.asmWorkspace.beamDamageSourceKeys.isEmpty()) { "Authored beam damage requires ASM source mode." }
+            require(project.asmWorkspace.bossStatsSourceKeys.isEmpty()) { "Authored boss stats require ASM source mode." }
             require(project.rooms.values.none { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmLayoutSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmFxSourceVersion != 0 || it.asmEnemySourceVersion != 0 }) { "Authored room data requires ASM source mode." }
             require(project.asmWorkspace.plmSourceBindings.isEmpty()) { "Linked room objects require ASM source mode." }
             val sourceEdits = if (project.asmWorkspace.enabled && projectFilePath.isNotBlank()) {
@@ -276,12 +277,14 @@ internal object ProjectFileService {
         val linkedSource = File(linkedWorkspace.workingDirectory, "src/$PLM_SOURCE_FILE").readText()
         val linkedMacros = File(linkedWorkspace.workingDirectory, "src/macros.asm").readText()
         val enemyTuning = com.supermetroid.editor.asm.AsmEnemyTuningSource.load(linkedWorkspace.originalDirectory)
-        val tuningHeaders = if (enemyTuning == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_A0.asm").readText()
+        val tuningHeaders = File(linkedWorkspace.workingDirectory, "src/bank_A0.asm").takeIf { it.isFile }?.readText().orEmpty()
         val tuningDrops = if (enemyTuning == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_B4.asm").readText()
         val beamDamage = com.supermetroid.editor.asm.AsmBeamDamageSource.load(linkedWorkspace.originalDirectory)
         val beamSource = if (beamDamage == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_93.asm").readText()
-        fun protectTuning(base: AsmCompiledBuildBase) = com.supermetroid.editor.asm.protectBeamDamageSource(beamDamage, beamSource, project,
-            com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base))
+        val bossStats = com.supermetroid.editor.asm.AsmBossStatsSource.load(linkedWorkspace.originalDirectory)
+        fun protectTuning(base: AsmCompiledBuildBase) = com.supermetroid.editor.asm.protectBossStatsSource(bossStats, tuningHeaders, project,
+            com.supermetroid.editor.asm.protectBeamDamageSource(beamDamage, beamSource, project,
+                com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base)))
         val managedRooms = project.rooms.values.filter { it.asmPlmSourceVersion != 0 }
         if (managedRooms.isNotEmpty()) linkedCatalog.requireStandardMacro(linkedMacros)
         val projectRoomSourceIds = com.supermetroid.editor.asm.AsmProjectRoomLabels.identities(project)

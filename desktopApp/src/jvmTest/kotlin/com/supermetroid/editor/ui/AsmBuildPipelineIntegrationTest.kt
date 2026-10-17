@@ -524,6 +524,72 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(before.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
     }
 
+    @Test fun `boss stats preserve every native part cold ownership headered exports and reject competing or moved records`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val bridge = assertNotNull(editor.bossStatsBridge)
+        for (field in ALL_BOSS_FIELDS) for (word in bridge.catalog.original(field.key).words) {
+            assertEquals(parser.readUInt16At(parser.snesToPc(0xA00000 or word.speciesId) + word.offset), word.value, "${field.key}: ${word.header}")
+        }
+        val logs = mutableListOf<String>()
+        suspend fun build(candidate: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(candidate, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        assertContentEquals(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val patch = editor.findOrCreateConfigPatch("boss_stats").apply { enabled = true; configData = mutableMapOf("kraid_hp" to 5000) }
+        val bodyPc = parser.snesToPc(0xA0E2BF) + 4
+        val armPc = parser.snesToPc(0xA0E2FF) + 4
+        val pending = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertEquals(5000, pending.readUInt16At(bodyPc)); assertEquals(5000, pending.readUInt16At(armPc))
+        editor.setPatchConfigData(patch.id, "kraid_hp", 2000)
+        assertNull(patch.configData)
+        val source = workspace.projectSourceText("bank_A0.asm")
+        val arm = bridge.catalog.field("kraid_hp", source).words.last()
+        assertTrue(workspace.updateSourceEditText("bank_A0.asm", source.replaceRange(arm.span, "2001")))
+        assertContains(assertNotNull(bridge.view("kraid_hp").problem), "managed in ASM")
+        val compiled = assertNotNull(build(), logs.joinToString("\n"))
+        val compiledParser = RomParser(compiled.resultRom)
+        assertEquals(2000, compiledParser.readUInt16At(bodyPc)); assertEquals(2001, compiledParser.readUInt16At(armPc))
+        assertTrue(compiled.writeReport.writes.any { it.offset == armPc && it.bytes.size == 2 && "bank_A0.asm" in it.label })
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(compiled.resultRom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        val header = ByteArray(512) { 0x5A }
+        val headeredFile = File(tempDirectory, "HeaderedBoss.smc").apply { writeBytes(header + fixture.rom) }
+        logs.clear()
+        val headered = assertNotNull(ProjectFileService.buildRom(cold.copy(romPath = headeredFile.path), RomParser(header + fixture.rom),
+            logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        assertContentEquals(header, headered.resultRom.copyOfRange(0, 512))
+        assertContentEquals(compiled.resultRom, headered.resultRom.copyOfRange(512, headered.resultRom.size))
+        assertNull(RomExporter(project, parser, logs::add).build(), "A ROM-only export must not silently drop authored boss source")
+        val conflict = SmPatch("boss-high-byte", "Unchanged secondary byte", enabled = true,
+            writes = mutableListOf(PatchWrite((armPc + 1).toLong(), listOf(7), expectedBytes = listOf(7))))
+        project.patches.add(conflict)
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        patch.configData = mutableMapOf("kraid_hp" to 3000)
+        assertNull(build()); assertTrue(logs.any { "both authored ASM" in it }, logs.joinToString("\n"))
+        bridge.useSourceValues("kraid_hp")
+        assertContentEquals(compiled.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val valid = workspace.projectSourceText("bank_A0.asm")
+        assertTrue(workspace.updateSourceEditText("bank_A0.asm", valid.replaceFirst("EnemyHeaders_KraidArm:", "db ${'$'}00\nEnemyHeaders_KraidArm:")))
+        assertNull(build()); assertTrue(logs.any { "moved or was removed" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_A0.asm", valid))
+        val currentArm = bridge.catalog.field("kraid_hp", valid).words.last()
+        assertTrue(workspace.updateSourceEditText("bank_A0.asm", valid.replaceRange(currentArm.span, "2001+1")))
+        assertNull(build()); assertTrue(logs.any { "16-bit literal" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_A0.asm", valid))
+        project.asmWorkspace.buildMode = ProjectRomBuildMode.PATCHED_ROM
+        assertNull(build()); assertTrue(logs.any { "boss stats requires ASM source mode" in it || "boss stats require ASM source mode" in it }, logs.joinToString("\n"))
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `beam damage follows symbolic relocation preserves independent charged values and rejects competing patches after cold builds`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)

@@ -224,9 +224,10 @@ internal class RomExporter(
 ) {
 
     fun build(): RomBuildResult? {
-        if ((project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() || project.asmWorkspace.beamDamageSourceKeys.isNotEmpty()) && compiledAsmBase == null) {
-            onStatus("Authored enemy/beam tuning requires its validated ASM build.")
-            onLog("ERROR: Authored enemy/beam tuning requires its validated ASM build.")
+        if ((project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() || project.asmWorkspace.beamDamageSourceKeys.isNotEmpty() ||
+                project.asmWorkspace.bossStatsSourceKeys.isNotEmpty()) && compiledAsmBase == null) {
+            onStatus("Authored enemy/beam/boss tuning requires its validated ASM build.")
+            onLog("ERROR: Authored enemy/beam/boss tuning requires its validated ASM build.")
             return null
         }
         fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
@@ -941,6 +942,7 @@ internal class RomExporter(
             } else if (patch.configType == "boss_stats") {
                 val data = patch.configData ?: continue
                 validateConfigKeys(data, ALL_BOSS_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)
+                require(data.values.all { it in 0..65535 }) { "Boss stats must fit a 16-bit word (0–65535)." }
                 var fieldCount = 0
                 for (field in ALL_BOSS_FIELDS) {
                     val value = data[field.key] ?: continue

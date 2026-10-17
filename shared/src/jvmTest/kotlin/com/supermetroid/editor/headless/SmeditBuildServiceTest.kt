@@ -483,6 +483,14 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `headless builds cannot silently omit authored boss source`() {
+        val project = SmEditProject("source.sfc").apply { asmWorkspace.bossStatsSourceKeys.add("kraid_hp") }
+        val request = SmeditBuildRequest()
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(request, project) }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(ByteArray(0x300000), request, project) }
+    }
+
+    @Test
     fun `rom build applies enemy drops and vulnerabilities from rom pointers`() {
         val original = ByteArray(0x300000)
         val parser = RomParser(original)

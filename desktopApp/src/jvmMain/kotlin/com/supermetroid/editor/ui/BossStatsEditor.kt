@@ -1,6 +1,7 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -20,14 +23,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -133,6 +139,9 @@ val BOSS_DEFS = listOf(
 
 val ALL_BOSS_FIELDS: List<BossStatField> = BOSS_DEFS.flatMap { it.fields }
 
+private var selectedBossStatsKey by mutableStateOf<String?>(null)
+internal fun selectBossStats(key: String?) { selectedBossStatsKey = key }
+
 // ─── Main composable ────────────────────────────────────────────
 
 @Composable
@@ -140,20 +149,23 @@ fun BossStatsEditor(
     patch: SmPatch,
     editorState: EditorState,
     romParser: RomParser?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: (() -> Unit)? = null,
 ) {
-    val values = remember(patch.id, editorState.patchVersion) {
-        val map = mutableStateMapOf<String, Int>()
-        val stored = patch.configData
-        for (field in ALL_BOSS_FIELDS) {
-            map[field.key] = stored?.get(field.key) ?: readStatFromRom(romParser, field) ?: field.defaultValue
-        }
-        map
-    }
+    val sourceMode = editorState.asmNavigationEnabled
+    val bridge = editorState.bossStatsBridge.takeIf { sourceMode }
+    @Suppress("UNUSED_VARIABLE") val revision = bridge?.revision
+    @Suppress("UNUSED_VARIABLE") val patchRevision = editorState.patchVersion
+    val views = ALL_BOSS_FIELDS.associate { field -> field.key to if (sourceMode) bridge?.value(patch, field.key)
+        ?: com.supermetroid.editor.asm.AsmBossStatsView(field.defaultValue, "Wait for boss stats source indexing.") else null }
+    val values = ALL_BOSS_FIELDS.associate { field -> field.key to if (sourceMode) views[field.key]?.value ?: field.defaultValue
+        else patch.configData?.get(field.key) ?: readStatFromRom(romParser, field) ?: field.defaultValue }
 
     fun apply(field: BossStatField, value: Int) {
-        values[field.key] = value
         editorState.setPatchConfigData(patch.id, field.key, value)
+    }
+    fun openSource(key: String? = null) {
+        if (editorState.openBossStatsSource(key)) onNavigateToAsm?.invoke()
     }
 
     Column(
@@ -162,31 +174,46 @@ fun BossStatsEditor(
             .verticalScroll(rememberScrollState())
             .padding(20.dp)
     ) {
-        Text("Boss Stats Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Boss Stats Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            if (sourceMode) {
+                TextButton(
+                    onClick = { openSource() },
+                    modifier = Modifier.testTag("boss-stats-asm"),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                ) { Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.body, maxLines = 1, softWrap = false) }
+            }
+        }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Edit HP and damage values for all major and mini-bosses. Changes apply on ROM export.",
+            if (sourceMode) "ASM edits use source Undo, not patch toggles. Matching sub-species edit together; independent sub-species values are managed in ASM."
+            else "Edit HP and damage values for all major and mini-bosses. Changes apply on ROM export.",
             fontSize = LocalEditorTheme.current.fontSize.value.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(16.dp))
 
         for (boss in BOSS_DEFS) {
-            BossCard(boss, values, ::apply)
+            BossCard(boss, values, ::apply, sourceMode, views, bridge, editorState, ::openSource)
             Spacer(Modifier.height(12.dp))
         }
 
         Spacer(Modifier.height(12.dp))
         OutlinedButton(
             onClick = {
-                for (field in ALL_BOSS_FIELDS) {
-                    val rom = readStatFromRom(romParser, field) ?: field.defaultValue
-                    apply(field, rom)
+                if (sourceMode) {
+                    runCatching { requireNotNull(bridge).resetToOriginal() }
+                        .onFailure { editorState.postStatus(it.message ?: "Cannot reset boss stats source.") }
+                } else {
+                    for (field in ALL_BOSS_FIELDS) {
+                        val rom = readStatFromRom(romParser, field) ?: field.defaultValue
+                        apply(field, rom)
+                    }
                 }
             },
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
+            Text(if (sourceMode) "Reset All to Original ASM" else "Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
         }
     }
 }
@@ -195,7 +222,12 @@ fun BossStatsEditor(
 private fun BossCard(
     boss: BossDef,
     values: Map<String, Int>,
-    onApply: (BossStatField, Int) -> Unit
+    onApply: (BossStatField, Int) -> Unit,
+    sourceMode: Boolean = false,
+    views: Map<String, com.supermetroid.editor.asm.AsmBossStatsView?> = emptyMap(),
+    bridge: com.supermetroid.editor.asm.AsmBossStatsBridge? = null,
+    editorState: EditorState? = null,
+    onOpenSource: ((String?) -> Unit)? = null,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -218,7 +250,7 @@ private fun BossCard(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
-                Text(boss.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold)
+                Text(boss.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(8.dp))
 
@@ -236,27 +268,58 @@ private fun BossCard(
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (field in boss.fields) {
+                val view = views[field.key]
+                val problem = view?.problem
                 StatRow(
                     field = field,
                     value = values[field.key] ?: field.defaultValue,
-                    onChange = { onApply(field, it) }
+                    onChange = { onApply(field, it) },
+                    enabled = problem == null,
+                    onAsm = if (sourceMode && onOpenSource != null) ({ onOpenSource(field.key) }) else null,
                 )
+                if (problem != null) {
+                    Text(
+                        "Last-good / read-only: $problem",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                        modifier = Modifier.padding(start = 24.dp),
+                    )
+                    if (view.conflict && bridge != null && editorState != null) {
+                        OutlinedButton(
+                            onClick = {
+                                runCatching { bridge.useSourceValues(field.key) }
+                                    .onFailure { editorState.postStatus(it.message ?: "Cannot use source values.") }
+                            },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                            modifier = Modifier.padding(start = 24.dp),
+                        ) { Text("Use ASM values", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+                    }
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun StatRow(
     field: BossStatField,
     value: Int,
-    onChange: (Int) -> Unit
+    onChange: (Int) -> Unit,
+    enabled: Boolean = true,
+    onAsm: (() -> Unit)? = null,
 ) {
     val isModified = value != field.defaultValue
     val isHp = field.offset == 4
+    val selected = selectedBossStatsKey == field.key
+    val requester = remember { BringIntoViewRequester() }
+    LaunchedEffect(selectedBossStatsKey) { if (selected) requester.bringIntoView() }
     Row(
         modifier = Modifier
+            .bringIntoViewRequester(requester)
+            .testTag("boss-row-${field.key}")
             .fillMaxWidth()
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent, RoundedCornerShape(4.dp))
             .padding(vertical = 3.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -273,7 +336,12 @@ private fun StatRow(
             color = if (isModified) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurface
         )
-        StatInput(value, onChange, Modifier.width(72.dp))
+        if (onAsm != null) TextButton(onClick = onAsm, modifier = Modifier.width(64.dp).testTag("boss-asm-${field.key}"),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+            Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail, maxLines = 1, softWrap = false)
+        }
+        StatInput(value, onChange, Modifier.width(72.dp).testTag("boss-stat-${field.key}")
+            .onFocusChanged { if (it.isFocused) selectBossStats(field.key) }, enabled)
     }
 }
 
@@ -281,28 +349,33 @@ private fun StatRow(
 private fun StatInput(
     value: Int,
     onChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    var text by remember(value, enabled) { mutableStateOf(value.toString()) }
 
     BasicTextField(
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it.isDigit() }.take(5)
-            text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
+            val number = filtered.toIntOrNull()
+            if (filtered.isEmpty() || number != null && number in 0..65535) {
+                text = filtered
+                number?.let(onChange)
+            }
         },
+        enabled = enabled,
         singleLine = true,
         textStyle = TextStyle(
             fontSize = LocalEditorTheme.current.fontSize.value.heading,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.45f),
             textAlign = TextAlign.Center
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         modifier = modifier
-            .height(28.dp)
+            .height(32.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 4.dp)
     )

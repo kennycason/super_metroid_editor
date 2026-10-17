@@ -9,6 +9,16 @@ import org.junit.jupiter.api.Test
 
 class AsmSemanticBridgeTest {
     @Test
+    fun `boss HP and contact words return to their exact control including secondary parts`() {
+        val index = AsmSemanticBridge.buildIndex(TestRomHelper.requireRomParser())
+        for (field in com.supermetroid.editor.ui.ALL_BOSS_FIELDS) for (species in field.writeSpeciesIds) {
+            val links = index.linksFor((RomConstants.BANK_ENEMY_AI or species) + field.offset)
+                .filter { it.target is AsmEditorTarget.BossStats }
+            assertTrue(links.size == 1 && links.single().target == AsmEditorTarget.BossStats(field.key), field.key)
+        }
+    }
+
+    @Test
     fun `beam pointers and records return to their normal or charged damage editor`() {
         val parser = TestRomHelper.requireRomParser()
         val index = AsmSemanticBridge.buildIndex(parser)

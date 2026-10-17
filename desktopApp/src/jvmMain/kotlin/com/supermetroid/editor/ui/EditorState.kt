@@ -15,6 +15,7 @@ import com.supermetroid.editor.asm.RoomAsmSourceRequest
 import com.supermetroid.editor.asm.RoomAsmSourceKind
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmWorkspaceState
+import com.supermetroid.editor.asm.publishSourceModelChanges
 import com.supermetroid.editor.rom.withFxChange
 import com.supermetroid.editor.rom.emptyDefaultFxEntry
 import com.supermetroid.editor.data.CustomItemDef
@@ -1119,11 +1120,14 @@ class EditorState(
         private set
     internal var beamDamageBridge by mutableStateOf<com.supermetroid.editor.asm.AsmBeamDamageBridge?>(null)
         private set
+    internal var bossStatsBridge by mutableStateOf<com.supermetroid.editor.asm.AsmBossStatsBridge?>(null)
+        private set
 
     internal fun detachRoomSourceBridges() {
         asmPlmSourceBridge = null
         enemyTuningBridge = null
         beamDamageBridge = null
+        bossStatsBridge = null
     }
 
     internal fun openEnemyTuningSource(key: String): Boolean = runCatching {
@@ -1143,6 +1147,15 @@ class EditorState(
         bridge.workspace.openSource(com.supermetroid.editor.asm.BEAM_DAMAGE_SOURCE_FILE, line)
         true
     }.getOrElse { postStatus("Beam source unavailable: ${it.message}"); false }
+
+    internal fun openBossStatsSource(key: String? = null): Boolean = runCatching {
+        require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
+        val bridge = requireNotNull(bossStatsBridge) { "Wait for boss stats source indexing." }
+        val line = bridge.line(key)
+        bridge.workspace.showProjectWorkspace()
+        bridge.workspace.openSource(com.supermetroid.editor.asm.ENEMY_HEADER_SOURCE_FILE, line)
+        true
+    }.getOrElse { postStatus("Boss stats source unavailable: ${it.message}"); false }
 
     internal fun bindRoomSources(catalog: AsmPlmSourceCatalog,
                                  workspace: AsmWorkspaceState): AsmPlmSourceBridge {
@@ -1185,12 +1198,28 @@ class EditorState(
                 owner
             }) { dirty = true; patchVersion++ }
         }
+        bossStatsBridge = root?.let { com.supermetroid.editor.asm.AsmBossStatsSource.load(workspace.projectWorkspace!!.originalDirectory) }?.let { stats ->
+            com.supermetroid.editor.asm.AsmBossStatsBridge(stats, workspace, {
+                check(project === owner && workspace.projectWorkspace?.root == root &&
+                    (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The boss stats ROM or ASM workspace changed." }
+                owner
+            }) { dirty = true; patchVersion++ }
+        }
         workspace.sourceEditorInterceptor = { file, before, after ->
             if (!asmNavigationEnabled) null else runCatching {
-                enemyTuningBridge?.intercept(file, before, after) ?: beamDamageBridge?.intercept(file, before, after)
+                val changes = listOfNotNull(enemyTuningBridge?.prepareIntercept(file, before, after),
+                    bossStatsBridge?.prepareIntercept(file, before, after))
+                if (changes.isNotEmpty()) {
+                    workspace.publishSourceModelChanges(mapOf(file to (before to after)), changes)
+                    true
+                } else beamDamageBridge?.intercept(file, before, after)
             }.getOrElse { postStatus("Source edit blocked: ${it.message}"); false }
         }
-        workspace.sourceEditorLinks = { file, line -> enemyTuningBridge?.editorLinks(file, line).orEmpty() + beamDamageBridge?.editorLinks(file, line).orEmpty() }
+        workspace.sourceEditorLinks = { file, line ->
+            enemyTuningBridge?.editorLinks(file, line).orEmpty() +
+                bossStatsBridge?.editorLinks(file, line).orEmpty() +
+                beamDamageBridge?.editorLinks(file, line).orEmpty()
+        }
         return bridge
     }
 
@@ -2746,6 +2775,11 @@ class EditorState(
             patch.configType in com.supermetroid.editor.asm.ENEMY_TUNING_CONFIG_TYPES) {
             runCatching { requireNotNull(enemyTuningBridge) { "Wait for the enemy ASM workspace." }.edit(key, value) }
                 .onFailure { postStatus("Enemy edit blocked: ${it.message}") }
+            return
+        }
+        if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && patch.configType == "boss_stats") {
+            runCatching { requireNotNull(bossStatsBridge) { "Wait for the boss stats ASM workspace." }.edit(key, value) }
+                .onFailure { postStatus("Boss stats edit blocked: ${it.message}") }
             return
         }
         val data = patch.configData ?: mutableMapOf()
@@ -4440,6 +4474,7 @@ class EditorState(
         asmPlmSourceBridge = null
         enemyTuningBridge = null
         beamDamageBridge = null
+        bossStatsBridge = null
         objectPreviewLoading = false
         objectPreviewProblem = null
         initialScrollPreviewProblem = null

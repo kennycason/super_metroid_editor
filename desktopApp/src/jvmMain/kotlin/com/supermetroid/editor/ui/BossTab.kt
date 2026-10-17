@@ -66,13 +66,14 @@ fun BossTabCanvas(
     editorState: EditorState,
     romParser: RomParser?,
     modifier: Modifier = Modifier,
+    onNavigateToAsm: (() -> Unit)? = null,
 ) {
     val subTab by bossSubTab
 
     when (subTab) {
         0 -> {
             val patch = editorState.findOrCreateConfigPatch("boss_stats")
-            BossStatsEditor(patch, editorState, romParser, modifier)
+            BossStatsEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
         }
         1 -> {
             val patch = editorState.findOrCreateConfigPatch("boss_defeated")

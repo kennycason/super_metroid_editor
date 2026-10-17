@@ -957,6 +957,8 @@ data class ProjectAsmWorkspaceSettings(
     val enemyTuningSourceKeys: MutableSet<String> = mutableSetOf(),
     /** Beam normal/charged word identities only; values remain in bank 93 source. */
     val beamDamageSourceKeys: MutableSet<String> = mutableSetOf(),
+    /** Boss stat identities only; values remain in the authored bank A0 source. */
+    val bossStatsSourceKeys: MutableSet<String> = mutableSetOf(),
 )
 
 @Serializable

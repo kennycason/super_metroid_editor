@@ -109,6 +109,8 @@ build authority. Source/Assets expose direct layout editing, not an enable promp
 
 - Reciprocal beam damage — Base/combo normal and charged words have first-edit adoption, atomic legacy-config retirement, shared aliases, source Undo, navigation and field-scoped invalid drafts. Checked pointer/record layouts and compiler-resolved patch destinations protect relocation and unchanged bytes; real Asar, cold-build, canvas and headless-export tests cover the workflow. Remaining patch families still need an explicit ROM/ASM compatibility audit.
 
+- Reciprocal boss stats — Native HP/contact-damage arguments support automatic first edits, grouped sub-species, exact-row navigation and source Undo. Independent ASM sub-part values lock only the grouped GUI control and remain buildable. Every configured part has checked compiler identity, emitted-word parity and full-word ownership; mixed enemy/boss edits adopt and undo atomically. Regression coverage includes real Asar, cold/headered builds, conflict rejection, invalid/missing parts, rendered GUI refresh and ROM/headless omission guards. Specialized boss behavior tables remain separate work.
+
 - Context-aware source navigation — The caret-driven link bar and right-click **Visual Editor** share live/structured mappings for beams, enemies and room resources, explicit shared-resource choices and independent panes. Navigation preserves source ownership, history and Find Usages; interaction and viewport regressions cover editable and read-only source.
 
 ## Remaining — Prioritized

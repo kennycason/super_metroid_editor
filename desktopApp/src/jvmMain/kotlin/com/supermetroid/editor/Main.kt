@@ -679,6 +679,11 @@ fun main() = application {
                             editorState.selectPatch(editorState.findOrCreateConfigPatch("beam_damage").id)
                             leftTab = TAB_PATCHES
                         }
+                        is AsmEditorTarget.BossStats -> {
+                            com.supermetroid.editor.ui.selectBossStats(target.key)
+                            editorState.selectPatch(editorState.findOrCreateConfigPatch("boss_stats").id)
+                            leftTab = TAB_PATCHES
+                        }
                         is AsmEditorTarget.Sound -> {
                             SpcData.KNOWN_TRACKS.firstOrNull { it.songSet == target.songSet }
                                 ?.let(soundEditorState::selectTrack)
@@ -1578,7 +1583,8 @@ fun main() = application {
                                         onNavigateToAsm = editorAsmAddressLink,
                                         modifier = Modifier.fillMaxSize(),
                                     )
-                                    TAB_BOSS -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize())
+                                    TAB_BOSS -> BossTabCanvas(editorState = editorState, romParser = romParser, modifier = Modifier.fillMaxSize(),
+                                        onNavigateToAsm = editorState.projectAsmNavigation { navigate { leftTab = TAB_ASM } })
                                     TAB_ASM -> AsmWorkspaceCanvas(
                                         state = asmWorkspaceState,
                                         romParser = romParser,

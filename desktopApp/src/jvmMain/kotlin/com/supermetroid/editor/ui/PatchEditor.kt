@@ -321,7 +321,7 @@ fun PatchListPanel(
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.togglePatchFavorite(patch.id)
                     },
-                    sourceManaged = patch.configType == "beam_damage" && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty(),
+                    sourceManaged = patch.configType in setOf("beam_damage", "boss_stats") && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty(),
                     onDelete = if (isSystemPatch(patch.id)) null
                                else {{
                                    requestVerticalSelectionFocus(navigationFocusRequester)
@@ -449,7 +449,7 @@ fun PatchEditorCanvas(
             ZEBES_ESCAPE_CONFIG_TYPE -> ZebesEscapeTimeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             SHORT_CHARGE_CONFIG_TYPE -> ShortChargeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
-            "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             KRAID_CONFIG_TYPE -> KraidEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             RIDLEY_CONFIG_TYPE -> BossBehaviorEditor(RIDLEY_BEHAVIOR, patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
@@ -523,21 +523,21 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f).clickable { editingName = true }
                 )
-                val sourceBeam = patch.configType == "beam_damage" && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty()
+                val sourceManaged = patch.configType in setOf("beam_damage", "boss_stats") && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty()
                 // Source-authored values do not follow the legacy patch toggle.
                 Surface(
-                    color = if (sourceBeam) MaterialTheme.colorScheme.primary else if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
+                    color = if (sourceManaged) MaterialTheme.colorScheme.primary else if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        if (sourceBeam) "ASM SOURCE" else if (patch.enabled) "ENABLED" else "DISABLED",
+                        if (sourceManaged) "ASM SOURCE" else if (patch.enabled) "ENABLED" else "DISABLED",
                         fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
-                if (!sourceBeam) Button(
+                if (!sourceManaged) Button(
                     onClick = { editorState.togglePatch(patch.id) },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
                     modifier = Modifier.height(28.dp),

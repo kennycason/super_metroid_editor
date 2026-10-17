@@ -1,133 +1,163 @@
-# <img src="AppIcon.png" width="64" alt="App Icon" /> Super Metroid Editor (SMEDIT)
+# <img src="AppIcon.png" width="64" alt="SMEDIT icon" /> Super Metroid Editor (SMEDIT)
 
 The MS Paint of Super Metroid ROM hacking. A native cross-platform desktop editor built with Kotlin/Compose.
 
-<img src="screenshots/smedit_spike_olympics_dark_theme_and_emulator.png" width="100%" alt="Main Window">
-<p>
-  <img src="screenshots/smedit_spike_olympics_landing_site.png" width="49%" alt="Room Editor" />
-  <img src="screenshots/smedit_spike_olympics_landing_site_with_meta.png" width="49%" alt="Room Editor" />
-</p>
+Work visually, write ASM, or move between both. Two-way data sync connects the code
+and visual editors, with direct navigation between them. Build and playtest the same
+project without leaving the app.
 
-Exported Room Images
+<img src="screenshots/smedit_spike_olympics_dark_theme_and_emulator.png" width="100%" alt="SMEDIT room editor with an embedded emulator running the edited room" />
 
-<p>
-  <img src="screenshots/Landing_Site.png" width="49%" alt="Room Export" />
-  <img src="screenshots/Landing_Site_With_Meta.png" width="49%" alt="Room Export" />
-</p>
-
-Tile Editor
-
-<p>
-  <img src="screenshots/smedit_tile_editor.png" width="54%" alt="Tile Editor" />
-  <img src="screenshots/smedit_tile_pixel_editor.png" width="44%" alt="Tile Editor" />
-</p>
-
-<p>
-  <img src="screenshots/smedit_slopes_01.png" width="49%" alt="Slopes" />
- <img src="screenshots/smedit_slopes_02.png" width="49%" alt="Slopes" />
-</p>
-
-Layer 3 FX
-
-<p>
-  <img src="screenshots/smedit_layer3_fx_fog.png" width="49%" alt="Layer 3 FX Fog" />
-  <img src="screenshots/smedit_layer3_fx_water.png" width="49%" alt="Layer 3 FX Water" />
-</p>
-
-Sprite Editor
-
-<p>
-  <img src="screenshots/smedit_phantoon_sprite_editor.png" width="48%" alt="Sprite Editor" />
-  <img src="screenshots/smedit_phantoon_sprite_editor_edited.png" width="48%" alt="Sprite Editor" />
-</p>
-<p>
-  <img src="screenshots/smedit_phantoon_edited_01.png" width="48%" alt="Sprite Editor" />
-  <img src="screenshots/smedit_phantoon_edited_03.png" width="48%" alt="Sprite Editor" />
-</p>
-
-Minimap Editor
-
-<p>
-  <img src="screenshots/smedit_minimap.png" width="49%" alt="Minimap Editor" />
-  <img src="screenshots/smedit_minimap_kentroid.png" width="49%" alt="Minimap Editor - Kentroid" />
-</p>
-
-Patches
-
-<p>
-  <img src="screenshots/smedit_patches_samus_physics.png" width="49%" alt="Samus Physics" />
-  <img src="screenshots/smedit_patches_enemy_drop_rate.png" width="49%" alt="Enemy Drop Rates" />
-</p>
-<p>
-  <img src="screenshots/smedit_patches_enemy_vulnerabilities.png" width="49%" alt="Enemy Vulnerabilities" />
-  <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss Stats Override" />
-</p>
-<p>
-  <img src="screenshots/smedit_patches_beams.png" width="49%" alt="Beam Damage Override" />
-</p>
-
-Sound
-
-<p>
-  <img src="screenshots/smedit_sound_editor.png" width="49%" alt="Sound" />
-  <img src="screenshots/smedit_sound.png" width="49%" alt="Sound" />
-</p>
-
-
-
-## Features
-
-- **Room Editor** — Paint, fill, erase, and sample tiles with multi-tile brush support. Right-click any block to edit block type and BTS properties. Undo/redo with full history.
-- **Stateful Room Editor** — Inspect and author ordered `IF` / `ELSE IF` / `ELSE` room versions; edit state-scoped layouts, objects, enemies, scrolls, music, tilesets, and FX; build compound conditions; simulate first-match selection; and safely relocate/export changed state graphs.
-- **Project-Owned Rooms** — Create a blank room or clone the currently visible room state, receive pause-map tiles automatically, edit it immediately, add named door connections without entering ROM pointers, preview safe deletion, and export a complete native room graph.
-- **PLM Placement** — Place and remove doors, gates, items, save stations, refill stations, and other PLMs with correct IDs and parameters.
-- **Enemy Editor** — View, place, and edit enemy positions and properties per room.
-- **Tileset Browser** — Browse all 29 tilesets with palette visualization and per-tile defaults.
-- **Pattern System** — Save reusable tile patterns (doors, gates, platforms). Built-in patterns for all door/gate colors and directions.
-- **Patch Manager** — Apply, create, and manage IPS patches. Built-in editors cover beam and environmental damage, Samus physics, escape timers, Short Charge, and more.
-- **Sprite Editor** — View and edit boss/enemy sprite assemblies with per-frame animation preview.
-- **Community Samus Catalog** — Search and preview the attributed MapRandoSprites catalog, then browse downloaded sheets through SpriteSomething's 41 named animation groups or a visual 637-frame gallery. Keep a portable source in the project and export verified catalog selections as guarded 4 MiB ROM builds; local SpriteSomething PNGs can also be imported as source-only previews.
-- **Sound Editor** — Browse and preview all in-game music tracks with cycle-accurate SPC700 emulation via blargg's snes_spc.
-- **Minimap Editor** — Edit source-accurate pause-screen map tiles with pixel-perfect 4bpp rendering. Paint, fill, and eyedropper tools. Room position editing respects the engine's hidden padding row, with buffered move preview. Supports all 7 areas with grid, room outline, and station reveal overlays.
-- **Embedded Emulator** — In-process snes9x emulator with controller support, save states, and live ROM patching. Edit and play without leaving the editor.
-- **Block Overlays** — Toggleable overlays for solid, slope, door, spike, bomb, crumble, grapple, speed, shot blocks, items, and enemies.
-- **Room Browser** — Browse all 263 rooms organized by area (Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian, Ceres).
-- **Project Files** — Save/load projects as `.smedit` JSON files. Export patched ROMs and IPS patches.
-- **Expanded ROM Inspection** — Discover and inspect rooms in supported expanded-ROM layouts in read-only mode. Discovery operates only on ROM bytes; no foreign editor project data is loaded or stored.
-- **ASM Reference & Project Workspace** — Download the exact pinned annotated disassembly on demand, derive all 1,130 binary assets from the ROM already open in SMEDIT, and browse banks/functions with syntax coloring, full literal source search, clickable cross-bank labels, scope-aware Find Usages with caller/data-reference navigation, navigation history, selectable/copyable text, explicit two-axis scrollbars and panning, and a provenance-aware binary inspector. Its bidirectional Address Atlas searches SNES or PC coordinates, gives source an exact-address gutter, links full 24-bit operands, distinguishes exact locations from nearby context, and lets room/state, door, PLM, enemy, sprite, tileset/palette, map, text, and music tools jump into the reference. Exact source/assets link back into Rooms—including runtime-state and library-background ownership—Tiles, Sprites, Map, Text, and Sound, including intentional shared-resource aliases; application-level Back/Forward beside EMU preserves the exact resource on both sides of those jumps. Projects can explicitly opt into an isolated editable ASM sidecar with an immutable offline original, responsive bounded-buffer editing, automatic Enter indentation, selection-scoped Tab/Shift-Tab formatting, staged project-wide literal replace with before/after preview, saved/unsaved file state, delta-backed Undo/Redo, and confirmed byte-exact recovery from the source settings cog. A resizable two-column split can show two source locations—including the same bank twice—with independent caret, scroll, and navigation state over one synchronized document buffer. Editable symbols and `%macro` calls retain semantic coloring without persistent underlines and expose a hand cursor on hover; middle-click and Cmd/Ctrl-click navigate reliably. Asar's nested dotted labels, flattened local aliases, colonless struct fields, and indexed member expressions resolve to unified definitions/usages; a strict source-wide WLA audit protects more than 20,000 navigable references. The compact command set uses Cmd/Ctrl+D for definitions, Cmd/Ctrl+U for an immediately expanded usages list, Cmd/Ctrl+Tab for completion, Cmd/Ctrl+B for Build, Cmd/Ctrl+R for validated emulator Run, and Cmd/Ctrl+Left/Right for ASM Back/Forward. A compact scope-aware completion popup offers instructions, directives, defines, active global/local labels, and macro parameter signatures without reparsing large banks on each keystroke. Accepting a macro inserts `()` with the caret inside, and calls keep a caret-adjacent signature with the active argument highlighted through nested expressions and quoted commas. Conservative debounced checks surface oversized data literals and complete macro-call errors in Problems and directly on source rows before a full build, while incomplete calls stay quiet during typing and Asar remains authoritative. First-class project modules keep new routines and tables separate from pinned banks, compile through a stable generated gateway in an explicit reorderable sequence, can be disabled without deleting their source or position, and report module-specific ROM ownership; new workspaces include the complete Objectives pause-screen example disabled as a buildable reference. Source Save is a fast persistence operation; **Build*** separately identifies source that has not yet produced executable bytes, while Build, Run, preview, and export use the same validated compiler path. Asar's latest WLA symbol map and build log are retained locally; compiler warnings and errors appear in a compact collapsible source strip and jump to exact bank lines. The built-in Library teaches practical SNES ASM through selectable, syntax-highlighted examples with clickable mnemonics, indexes all 92 65C816 mnemonics, explains selected `.B`/`.W`/`.L` forms and LoROM addressing, links instruction pages to real usages in Super Metroid, and includes a complete Samus jump-physics project-edit walkthrough. Enabling Project ASM automatically selects the clean **ASM source** build; **Loaded ROM** remains available only while that workspace has no active source edits. Source mode assembles immutable/project trees with pinned Asar 1.81, records authored deltas as first-class ROM owners, and projects validated fixed-range visual-editor changes into their exact staged `data/` assets before assembly. Patches can expose separate ROM and ASM implementations; each build selects one, with unmigrated patches safely retaining the post-compile writer. Samus Physics is the first dual-backend patch and compiles a temporary GUI-owned source overlay in ASM mode. Existing-room edits can also use the atomic generated ASM bridge described below; other unsupported edits retain the established post-compile transaction. A parity guard compares every final ROM byte except the four derived SNES checksum/complement bytes. The same conflict checks, validation, and atomic export remain shared with patch mode. The non-writing ROM comparison uses that exact selected transaction to show **Loaded ROM**, **SMEDIT Result**, and an owner-aware **Diff**; see [the ASM workflow contract](docs/asm/reference_workspace.md).
-- **Generated Room ASM** — Existing-room edits can compile before export, including variable-sized allocations. The first typed resource is a readable, named PLM table with symbolic state pointers and explicit sharing/ownership checks. The established room exporter remains the placement/parity oracle; other room structures use byte overlays, and project-created rooms retain the ROM backend. Browse the read-only build snapshot under **ASM → Source → Project → Generated rooms**, with links back to the room editor and a compact explanation of format-check limits.
-- **Cross-Platform** — macOS (`.dmg`), Windows (`.msi`), and Linux (`.deb`) builds with bundled JRE.
+[Download](#download) · [Features](#features) · [Screenshots](#screenshots) · [Build from source](#building-from-source) · [Documentation](#documentation)
 
 ## Download
 
-Grab the latest release for your platform from [GitHub Releases](https://github.com/kennycason/super_metroid_editor/releases).
+Get the latest release from [GitHub Releases](https://github.com/kennycason/super_metroid_editor/releases):
+macOS (`.dmg`), Windows (`.msi`), or Linux (`.deb`). Releases include the Java runtime and Asar assembler.
 
-| Platform | Format |
-|----------|--------|
-| macOS    | `.dmg` |
-| Windows  | `.msi` |
-| Linux    | `.deb` |
+## Getting Started
+
+Bring your own Super Metroid ROM; no ROM is bundled.
+
+1. Choose **NEW** to create a named project from your ROM, or **OPEN** an existing `.smedit` project.
+2. Edit, then press **Run** to build and playtest. **EMU** shows or hides the emulator; **HEX** opens live memory inspection.
+3. Save your project and export a ROM or IPS patch to share your changes. Your base ROM stays unchanged.
+
+See [project setup](docs/project/project_format.md#project-root-and-opening-workflow) and
+[ROM compatibility](docs/project/project_format.md#rom-compatibility-is-separate) for details.
+
+<details>
+<summary>Emulator controls</summary>
+
+Focus the emulator for keyboard input, or use an SDL-compatible controller.
+
+- **Keyboard:** arrows for D-pad; Z/X/A/S for B/A/Y/X; Q/W for L/R; Enter for Start; Shift or Tab for Select.
+- **Controller save state:** R + Y + Select.
+- **Controller load state:** L + Y + Select.
+- **Controller change save slot:** L + R + Y + D-pad Up/Down.
+
+</details>
+
+## Features
+
+- **Rooms & States** — Paint layouts, place items and enemies, edit conditional room states, create or clone rooms, and connect doors.
+- **Room Generation** — Generate themed layouts and mazes, or remix existing rooms.
+- **Tiles & FX** — Edit tile pixels, slopes and BTS properties, save reusable patterns, and configure water, lava, fog, and other room effects.
+- **Sprites & Animations** — Edit Samus, enemies, bosses, projectiles, and title/intro/ending artwork with live previews.
+- **Community Sprites** — Browse the attributed MapRandoSprites catalog, preview characters and animations, and use them in your project.
+- **Minimap Editor** — Paint pause maps, position rooms, and edit station reveal data.
+- **Patches & Tuning** — Manage IPS patches and tune Samus physics, enemy/boss stats, drops, vulnerabilities, beam damage, and more.
+- **ASM Workspace** — Annotated disassembly, code completion, definitions and usages, split views, custom modules, an instruction library, and integrated Asar builds.
+- **Emulator & Hex Editor** — Play with controller support and save states; inspect and edit live game memory with named bookmarks.
+- **Sound & Text** — Browse and preview SPC music and edit in-game text.
+- **Projects & Export** — Non-destructive `.smedit` projects, Undo/Redo, validation, and ROM or IPS export.
+
+## Screenshots
+
+### Room Editing & Image Export
+
+<p>
+  <img src="screenshots/smedit_spike_olympics_landing_site.png" width="49%" alt="Painting a custom Landing Site room" />
+  <img src="screenshots/smedit_spike_olympics_landing_site_with_meta.png" width="49%" alt="The same room with block-type and object overlays" />
+</p>
+<p>
+  <img src="screenshots/Landing_Site.png" width="49%" alt="Exported Landing Site room image" />
+  <img src="screenshots/Landing_Site_With_Meta.png" width="49%" alt="Exported room image with metadata overlays" />
+</p>
+
+### ASM ↔ Visual Editor
+
+<img src="screenshots/smedit_asm_enemy_vulnerabilities.png" width="100%" alt="Editable enemy vulnerability ASM with project modules and links back to visual editors" />
+
+<p>
+  <img src="screenshots/smedit_asm_plm_data.png" width="49%" alt="Named room object and item data in editable ASM" />
+  <img src="screenshots/smedit_asm_auto_complete.png" width="49%" alt="ASM code completion offering matching symbols" />
+</p>
+
+### Emulator & Live Hex Editor
+
+<p>
+  <img src="screenshots/smedit_emulator_hex_editor.png" width="66%" alt="Room editing, live memory editing, and emulator playtesting together" />
+  <img src="screenshots/smedit_hex_editor.png" width="32%" alt="Live hex editor with game-state, energy, inventory, and position bookmarks" />
+</p>
+
+### Community Sprites
+
+Prime Series Samus by Mattroid and Kirby by Wandering Spider, from the community catalog.
+
+<p>
+  <img src="screenshots/smedit_sprites_samus_community_prime.png" width="49%" alt="Prime Series Samus sprite gallery with artist credits and project selection" />
+  <img src="screenshots/smedit_sprites_samus_community_kirby.png" width="49%" alt="Kirby community sprite sheet in the Samus catalog" />
+</p>
+
+### Tiles, Pixels & Slopes
+
+<p>
+  <img src="screenshots/smedit_tile_editor.png" width="54%" alt="Room tileset and metatile editor" />
+  <img src="screenshots/smedit_tile_pixel_editor.png" width="44%" alt="Painting individual tile pixels" />
+</p>
+<p>
+  <img src="screenshots/smedit_slopes_01.png" width="49%" alt="Room slope editing" />
+  <img src="screenshots/smedit_slopes_02.png" width="49%" alt="Slope shapes and block properties" />
+</p>
+
+### Layer 3 FX
+
+<p>
+  <img src="screenshots/smedit_layer3_fx_fog.png" width="49%" alt="Room fog effects" />
+  <img src="screenshots/smedit_layer3_fx_water.png" width="49%" alt="Room water effects" />
+</p>
+
+### Sprites & Artwork
+
+<p>
+  <img src="screenshots/smedit_phantoon_sprite_editor.png" width="49%" alt="Phantoon sprite composition and animation preview" />
+  <img src="screenshots/smedit_phantoon_sprite_editor_edited.png" width="49%" alt="Editing Phantoon sprite artwork" />
+</p>
+<p>
+  <img src="screenshots/smedit_phantoon_edited_01.png" width="49%" alt="Custom Phantoon artwork in-game" />
+  <img src="screenshots/smedit_phantoon_edited_03.png" width="49%" alt="Another in-game view of edited Phantoon sprites" />
+</p>
+<p>
+  <img src="screenshots/smedit_sprites_g4_edit.png" width="49%" alt="Golden Four statue pixel editing with an assembled preview" />
+  <img src="screenshots/smedit_sprites_title_screen_edit.png" width="49%" alt="Title-screen artwork editing with a live composition preview" />
+</p>
+
+### Minimap
+
+<p>
+  <img src="screenshots/smedit_minimap.png" width="49%" alt="Pause-map editor" />
+  <img src="screenshots/smedit_minimap_kentroid.png" width="49%" alt="Custom Kentroid pause map" />
+</p>
+
+### Patches & Tuning
+
+<p>
+  <img src="screenshots/smedit_patches_samus_physics.png" width="49%" alt="Samus physics tuning" />
+  <img src="screenshots/smedit_patches_enemy_drop_rate.png" width="49%" alt="Enemy drop-rate editing" />
+</p>
+<p>
+  <img src="screenshots/smedit_patches_enemy_vulnerabilities.png" width="49%" alt="Enemy weapon-vulnerability editing" />
+  <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss HP and contact-damage editing" />
+</p>
+<p>
+  <img src="screenshots/smedit_patches_beams.png" width="49%" alt="Beam damage tuning" />
+</p>
+
+### Sound
+
+<p>
+  <img src="screenshots/smedit_sound_editor.png" width="49%" alt="Music track browser and preview controls" />
+  <img src="screenshots/smedit_sound.png" width="49%" alt="SPC music playback" />
+</p>
 
 ## Building from Source
 
-Requires JDK 17+ and a C++ compiler (Xcode CLI tools on macOS, `g++` on Linux, MinGW on Windows).
-
-### Embedded Emulator (snes9x via libretro)
-
-The editor includes an embedded SNES emulator powered by snes9x, loaded in-process via JNA. The snes9x core is built from source as a git submodule (`tools/snes9x`).
-
-The emulator runs in a floating draggable/resizable window. **EMU** only toggles that window, while the global **Run** command builds the current project if needed, opens the emulator, and starts a fresh session. When Project ASM is enabled, a global **Build** button appears beside Run and carries the `*` indicator for source that has not produced executable bytes. Long ASM builds run off the UI thread and report their active phase in the toolbar, bottom status bar, and emulator viewport. Compiled ASM bases are content-cached for the session, so repeated Run/Restart actions—and edits limited to ROM-backed patches—skip Asar while still rerunning SMEDIT's write/conflict validation.
-
-**Controller support:** Bluetooth SNES controllers (and other SDL-compatible gamepads) are supported via Jamepad/SDL2. Save state combos follow the Super Metroid practice ROM pattern:
-- `R + Y + SELECT` — Save state to current slot
-- `L + Y + SELECT` — Load state from current slot
-- `L + R + Y + D-Pad Up/Down` — Cycle save slot number
-
-**Keyboard controls:** Arrow keys for D-pad, Z/X/A/S for B/A/Y/X, Q/W for L/R, Enter for Start, Tab for Select.
+Requires JDK 17, Git, CMake, and a C++ compiler (Xcode Command Line Tools on macOS,
+`g++` on Linux, or MinGW on Windows). Gradle builds the native audio and emulator libraries.
 
 ```bash
-# Clone with submodules (required for SPC audio)
-git clone --recurse-submodules git@github.com:kennycason/super_metroid_editor.git
+git clone --recurse-submodules https://github.com/kennycason/super_metroid_editor.git
 cd super_metroid_editor
 
 # Run the editor
@@ -136,260 +166,27 @@ cd super_metroid_editor
 # Run tests
 ./gradlew :shared:jvmTest :desktopApp:jvmTest
 
-# Package for your platform (.dmg / .msi / .deb)
+# Package for your platform
 ./gradlew :desktopApp:packageDistributionForCurrentOS
 ```
 
-If you already cloned without `--recurse-submodules`:
-```bash
-git submodule update --init --recursive
-```
+Already cloned? Run `git submodule update --init --recursive` to fetch the native dependencies.
 
-The native SPC library (`libspc`) is compiled automatically by Gradle from the `tools/snes_spc` submodule — no manual steps needed.
+Source-backed regression tests use private ROM fixtures. See the [parity setup](parity/README.md)
+and [validation matrix](docs/validation/README.md) for setup, focused checks, and reports.
 
-### ROM/disassembly parity development
+## Documentation
 
-The optional [parity harness](parity/README.md) provisions a pinned Super Metroid
-disassembly checkout and validates a user-supplied clean ROM for source-backed
-regression tests. It is developer tooling only; the editor and release builds have
-no build-time dependency on the ROM or a pre-existing disassembly checkout. The
-separate read-only [ASM workspace](docs/asm/reference_workspace.md) can download the
-same pinned source on demand at runtime and derive its assets from the ROM already
-open in the editor.
-
-After configuring `SMEDIT_TEST_ROM`, `./gradlew parityBuildReference` performs the
-complete pinned asset-extraction and assembly build, including a byte-identity check.
-Use `./gradlew parityReport` to run the complete strict regression and generate an
-ignored JSON/Markdown evidence bundle. The suite independently checks all extracted
-asset ranges, LZ5 streams, tileset/CRE pointers, tile and metatile decoding, animated
-tiles, item-PLM graphics, and all 164 enemy species headers plus their raw `GRAPHADR`
-ownership and aliases, plus all 2,312 named standard and 811 extended enemy OAM
-structures. It also inventories all 1,139 named enemy instruction lists and reports
-every frame the current best-effort preview scanner misses. These checks are
-deliberately source-backed: plausible-looking renders are not counted as parity
-unless named disassembly data, rebuilt-ROM bytes, and SMEDIT's production path agree.
-Samus now has the same source-backed foundation: all 253 pose IDs / 1,982 frame
-occurrences, 127 delay streams, 435 DMA payloads, 422 referenced spritemaps, and the
-three normal suit palettes are pinned. Every frame is checked through the production
-decoder for exact tilemap geometry and reconstructed VRAM; reviewed pose goldens,
-special palette programs, and community-sheet editing remain the next layer. The
-room/world graph is source-backed too: all 263 room headers, 324 state records, 250
-source level-data streams, and every referenced PLM, enemy, enemy-GFX, FX, static
-scroll, door-list, and DoorDef structure are checked through production parsers.
-Runtime scroll behavior is source-backed as well: 231 generic triggers, 173 command
-streams, 371 extension records, 75 active door scroll writers, and all 103 direct
-engine writer routines are inventoried with exact load precedence and production
-decoder checks. Mixed door routines now fail closed during resize instead of silently
-discarding unrelated ASM behavior.
-Background loading is source-backed too: all 79 named bank-`$8F` programs, 305
-commands, 200 state associations, 70 compressed assets, and 14 door-dependent
-transfers are pinned. Production reconstructs normal 32×32/64×32 and Kraid
-64×64 screen-block layouts, while all 124 embedded-Layer-2 states are detected from
-their real level payload rather than inferred from parallax motion factors.
-Pause maps are source-backed as well: all seven bank-`$B5` area tilemaps (14,336
-words), seven 256-byte reveal masks plus the debug alias, five vanilla map-station
-PLMs, 256 pause-map graphics tiles, and both two-page coordinate transforms are
-pinned. This pass corrected the reveal-bit order, hidden-row mapping, palette width,
-and graphics format/address; room moves and creation now stay within the engine's
-64×31 usable coordinate area while preserving the full 64×32 stored map.
-Load stations are source-backed too: all eight bank-`$80` lists / 151 entries
-and every 14-byte resume field are pinned, with the save/elevator/Ceres/debug/
-gunship partitions kept distinct. The editor now recognizes Crateria's PLM-less
-gunship slot as occupied and refuses cross-room overwrite or clear operations.
-Room/header/state export is also guarded by byte-exact empty/no-op checks and a
-whole-catalog header/state mutation allowlist. Dynamic resource mutation/relocation,
-and emulator traversal remain explicit follow-up work. The
-community path now has an exact non-mutating Kotlin decoder for SpriteSomething's
-876 x 2543 PNG contract: four pinned MapRandoSprites sheets, including Invisible
-Samus, match the upstream extractor across all 637 named regions. The Samus workspace
-now includes a searchable 126-entry on-demand catalog, attributed project-owned source
-round trips, and guarded ROM-ready catalog injection. Each compatible project embeds a
-pinned Map Randomizer IPS beside the original PNG, verifies the clean base-ROM hash,
-expands 3 MiB to 4 MiB, and participates in normal ROM-write conflict detection. Four
-catalog samples produce byte-exact pinned outputs; arbitrary local PNGs remain clearly
-source-only until the native image-to-ROM writer is implemented.
-Zoomer, Sidehopper, and the grey walking Space Pirate additionally have complete
-header → graphics/palette → instruction path → OAM composition → rendered-animation
-vertical slices. Puyo, Owtch, Choot, both Sbug/roach headers, the two-header Evir
-family, Magdollite, Beetom, the three Kihunter color bodies, and both Sidehopper corpse
-headers also have explicit
-source routes for init AI that selects animations through helpers or state tables:
-59 compact editor actions cover 255 guided frames without pretending the generic
-scanner emulates their AI.
-A separate source-complete ledger probes all 164 species through the
-production renderer and distinguishes assembled, composite, tile-sheet-only,
-nonvisual, and failed support without counting a raw tile sheet as a successful sprite.
-It also models all eight visual species with zero-byte header transfers through exact
-read-only shared/global VRAM providers, bringing the pinned ledger to zero failed
-species without granting those headers false tile edit/export ownership. Palette
-ownership is tracked separately because five of those headers still load and own
-their palette row. Every formerly tile-sheet-only header now has an assembled,
-composite, or explicitly non-drawing engine-helper classification.
-Kraid additionally has a dedicated complete-composition proof: the no-CRE tileset
-`$1A` graphics, active and unreferenced compressed BG2 maps, four custom-interpreter
-head frames, mouth hitboxes, every health/hurt/death palette state, and the eight
-headers linked to `$AB:CC00`. The production editor renders all four live 64×64 BG2
-body states and their exact head sequences, ten selectable runtime palette stages,
-and a representative full assembly with the linked arm/claw and front foot. Twelve
-bounded linked-OAM animations cover 173 frame occurrences. Mini Kraid separately
-uses its six exact action lists (24 frame occurrences / 14 unique poses), avoiding the
-old shared-bank scan that mixed in Ridley data. Deterministic pixel hashes cover every
-one of those frames, while head pixel edits save through the ordinary complete-tileset
-relocation path. `./gradlew parityKraid` runs that focused slice.
-Phantoon has the same complete-composition treatment: all four independently animated
-enemy slots, 22 active BG2 tilemaps and extended-spritemap wrappers, 19 instruction
-lists, three hitbox sets, the room-tileset pixel owner, separate raw OBJ payload, and
-all eight health palettes are pinned. The editor renders every component, nine gaze
-poses, and five bounded part animations as complete 80×112 compositions, with
-deterministic hashes and safe `varGfx["5"]` pixel ownership. `./gradlew parityPhantoon`
-runs that focused slice.
-Draygon now has a dedicated split-owner renderer instead of a hand-picked boss-pose
-scan. It combines tileset `$1C` BG2 graphics with the shared `$B0:C800` OBJ payload,
-assembles body/eye/tail/arms at runtime coordinates, exposes ten poses, all eight
-health stages plus hurt flash, and renders all 39 frame-bearing source lists (250
-complete frame occurrences). Its exact `$2000` OBJ owner is editable in Sources via
-`spriteTileBlocks["enemy:DE3F"]`; every named composition updates live while painting.
-BG2/OBJ placement and flattened composite editing remain read-only.
-`./gradlew parityDraygon` runs the focused proof. Sprite navigation presents one
-Draygon entry and one Phantoon entry; their eye/tail/arms and eye/tentacle/mouth slots
-live inside those complete boss editors instead of appearing as duplicate top-level
-rows.
-Ridley now follows the same model. Ceres `$E13F` and Norfair `$E17F` remain distinct
-ROM encounters but share one top-level Ridley workspace because their five-part
-`$B0:9400..B3FF` source, palette, body, wings, tail, and ribs/claws machinery are the
-same. Its forward turn also resolves the enemy set's read-only `$B0:B400` auxiliary
-payload at physical OBJ tiles `$E0..FF`, instead of misreading local tail art.
-Ceres-only lunge and baby-Metroid retrieval actions are labeled inside the animation
-browser. `./gradlew parityRidley` pins both headers, the exact two-page VRAM layout,
-11 body maps, 12 wing maps, 19 tail maps, six runtime DMA assets, four palettes, and
-deterministic complete composition/animation pixels.
-Mother Brain now has the same focused treatment. The editor keeps phase 1's enemy
-head distinct from its room-owned glass/machinery, while phase 2 assembles the
-tileset-$0E torso, staged head/limb OBJ, body supplement, five neck segments, and
-independent head. Four health pairs and all ten rainbow palette records are selectable;
-the exact head source is editable with live phase-1/2 references, while the combined
-four-owner body sheet is read-only. `./gradlew parityMotherBrain` pins both headers,
-all head/body/BG2 maps, 49 body/head lists / 243 timed frames, and deterministic
-composition/animation pixels.
-Crocomire now follows the same source-owned model across its entire visual lifecycle.
-The editor combines tileset `$1B` BG2 art with the editable `$AD:8000` living OBJ
-payload, then swaps in the exact two melting overlays and six skeleton DMA chunks for
-death frames. `./gradlew parityCrocomire` pins both body/tongue headers, all 179 active
-OAM/extended/BG2 structures, six palette rows, and all 36 active instruction lists /
-233 timed frames. The guided workspace exposes 20 full animations grouped by Fight,
-Tongue, Melting, and Skeleton while keeping each runtime pixel owner explicit.
-Spore Spawn now has a complete cross-bank renderer as well. It combines the bank-`$A5`
-extended-OAM body with the four bank-`$86` stalk projectiles using the exact runtime
-segment interpolation, and consolidates the spawner/spore components, four health
-palettes, and eight body death palettes. `./gradlew paritySporeSpawn` pins the shared
-`$AC:9C00` pixel owner, all body/projectile maps, nine boss lists, and all 27 related
-sprite/room palette rows.
-Botwoon now has a dedicated position-history renderer instead of the earlier rigid
-composite approximation. It combines the bank-`$B3` head with twelve animated body
-projectiles and one tail from banks `$86/$8D`, selects each link's orientation from
-its own history vector, preserves the independent body loop during spits, and exposes
-all eight health palettes. `./gradlew parityBotwoon` pins the shared `$B7:E300` pixel
-owner, active and unused head/projectile structures, critical history routines, and
-17 guided animations / 87 rendered frames.
-Bomb and Golden Torizo now share one source-accurate Torizo workspace rather than
-appearing as duplicate encounter/orb headers. It keeps the editable `$AF:C200` body
-distinct from eye/damage/egg-release DMA overlays, Golden egg pixels, and Bomb statue
-fragments; all eight Golden health-palette pairs are selectable. `./gradlew parityTorizo`
-pins 106 active full-body maps, 91 body-child maps, 70 bank-`$8D` projectile/effect
-maps, 16 runtime transfers, and 236 guided body/projectile animation frames.
-The normal Metroid now has an exact three-owner renderer instead of the earlier
-hand-made shell approximation. It synchronizes bank-`$A3` insides with bank-`$B4`
-shell and electricity sprite objects, including two source-labelled unused lists
-that are reached by live fallthrough. `./gradlew parityMetroid` pins the shared
-`$AE:9000` pixel owner, 31 total OAM maps, four independent companion tracks / 270
-ticks, and deterministic complete animations. See
-[the Metroid ownership note](docs/graphics/metroid.md).
-Dedicated Kraid, Phantoon, Draygon, Ridley, Mother Brain, Crocomire, Spore Spawn, Botwoon, Torizo, and Metroid workspaces open on Animations and
-follow the same top-level drill-down: Animations, Compositions, Components, and
-Sources. If a future complex workspace has no animations it falls back to
-Compositions. Component selection always renders the selected piece; edit buttons
-appear only where its pixels map unambiguously back to one source owner.
-Current coverage and the ordered expansion plan are tracked in
-[the parity validation matrix](docs/validation/README.md).
-
-## CLI
-
-The `cli` module provides headless ROM data export and patch building without a GUI dependency. See [CLI.md](CLI.md) for command usage, build JSON examples, IPS-only generation, and the shared headless API.
-
-An experimental masked categorical room generator can learn complete layer-1 tile words, block
-types, slopes/BTS metadata, and structural door tiles from the lossless CLI training export. The
-desktop editor can validate, repair, rank, preview, and apply its candidate bundles. See
-[room_model/README.md](room_model/README.md) for the workflow.
-
-## Editing Approach
-
-SMEDIT stores edits as native, non-destructive deltas in a `.smedit` JSON project. **Loaded ROM**
-mode applies them through binary ROM patching with safe data relocation. Enabling Project ASM
-automatically selects **ASM source** mode, which compiles project source and extracted assets first,
-incorporates supported source-stage edits, and then applies any remaining ROM-only patches. Both modes produce a binary ROM
-and use the same ownership, conflict, validation, and atomic-export transaction. `.smedit` is
-SMEDIT's own format; it is not a wrapper for another editor's project format.
-
-A clean Project ASM workspace may switch back to Loaded ROM. Once a saved or unsaved source edit
-exists, ASM source is required; SMEDIT disables the ROM choice and rejects any stale configuration
-that would omit a saved source override.
-
-An extracted `data/*.bin` file is a disassembly source asset consumed by `incbin`; it is distinct
-from an IPS or fixed-offset ROM-byte patch applied to an already compiled ROM. See the
-[ASM workflow contract](docs/asm/reference_workspace.md#authority-and-patch-backends) for the
-complete build order and terminology. The repository also includes three readable
-[ASM module examples](examples/asm/README.md), ranging from a tiny HUD/data override to a complete
-live Objectives pause screen.
-
-Packaged macOS, Windows, and Linux releases include a native build of SMEDIT's pinned Asar 1.81
-compiler; users do not need Git, CMake, or a C++ toolchain. Every release job installs that
-packaged-layout compiler into an isolated test home and uses it to assemble a copyright-free
-synthetic LoROM with symbols before building the installer.
-
-When data grows beyond its original size (e.g., adding more items or enemies to a room than vanilla), the export pipeline automatically relocates the data to free space in the appropriate ROM bank and updates all pointers — including across multiple room states.
-
-The Loaded ROM approach supports the vast majority of ROM hacking use cases. Its main constraints
-are finite free space in each ROM bank (solvable via ROM expansion) and changing engine data
-formats. ASM source mode provides the incremental path for those deeper changes while preserving
-ROM-patch fallback for features that have not migrated yet. For context, SMILE used the same binary
-patching model and powered 15+ years of community hacks.
-
-### ROM Compatibility
-
-Standard-layout 3 MiB Super Metroid ROMs are editable, including ROMs previously modified by tools
-that preserve that layout. Expanded or relocated ROMs can currently be opened for read-only
-inspection when discovery succeeds, including rooms, rendered room data, pause-map data, text,
-sprites, and sound where SMEDIT can locate them. Editing/export stays disabled because relocated
-allocation and write-safety rules are not yet proven. The discovered catalog is derived in memory
-from ROM bytes and is not serialized as foreign project metadata.
-
-Use **NEW** to create a named project from your own ROM, or **OPEN** to open a `.smedit`
-project (a ROM beside a project opens that project too). The original ROM keeps its
-filename; exported builds use the project name. Projects store a relative base-ROM
-reference and fingerprint, and prompt you to locate a matching ROM if it is missing.
-Authored ASM lives in `asm/`, generated caches in `smedit/`, and emulator saves in
-`states/`—see the [project layout and manual reorganization guide](docs/project/project_format.md#project-root-and-opening-workflow).
-
-See [docs/project/project_format.md](docs/project/project_format.md) for the native project boundary
-and [docs/project/room_model.md](docs/project/room_model.md) for the room/state model.
-
-See [docs/project/plan.md](docs/project/plan.md) for the full roadmap, including new-room workflow follow-ups and managed ROM expansion.
-
-## Roadmap
-
-See [open issues](https://github.com/kennycason/super_metroid_editor/issues) for planned features and known bugs.
-
-Planned:
-- Room Runtime Inspector and a unified Problems panel for state, PLM, ASM, FX, scroll, door, and save diagnostics
-- Semantic room import and generator output into project-owned rooms
-- Tileset/metatile composition and richer custom tileset workflows
-- Room JSON import into native SMEDIT projects
-- Managed ROM expansion and a shared ownership-aware allocator
-- Advanced Layer 2/background transfer workflows
+- [ASM workflow guide](docs/asm/reference_workspace.md) and [example ASM modules](examples/asm/README.md).
+- [Project files, folder layout, and ROM compatibility](docs/project/project_format.md).
+- [CLI and headless patch building](CLI.md).
+- [Learned room-generation workflow](room_model/README.md).
+- [ROM write safety](docs/rom/write_safety.md).
+- [Development roadmap](docs/project/roadmap.md) and [open issues](https://github.com/kennycason/super_metroid_editor/issues).
 
 ## Contributing
 
-Pull requests welcome. Run `./gradlew :shared:jvmTest :desktopApp:jvmTest` before submitting to make sure all tests pass.
+Pull requests welcome. Run `./gradlew :shared:jvmTest :desktopApp:jvmTest` before submitting.
 
 ## License
 
@@ -406,6 +203,7 @@ non-commercial license.
 This project would not be possible without the incredible Super Metroid ROM hacking community and the resources they've built over the years.
 
 ### Documentation & Research
+
 - **[Metroid Construction Wiki](https://wiki.metroidconstruction.com/)** — the central hub for Super Metroid ROM hacking knowledge
 - **[Patrick Johnston's Annotated Disassembly](https://patrickjohnston.org/bank/)** — per-bank disassembly with full annotations, critical for understanding door systems, PLM sets, and boss AI
 - **[Kejardon's SM Documentation](https://patrickjohnston.org/ASM/ROM%20data/Super%20Metroid/Kejardon's%20docs/)** — authoritative sources for room headers, state data, and PLM structures
@@ -415,8 +213,11 @@ This project would not be possible without the incredible Super Metroid ROM hack
 - **[W65C816S documentation](https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf)** (Western Design Center) — authoritative processor reference linked by the ASM Library
 
 ### Projects & Tools
+
 - **[SMILE Editor](https://wiki.metroidconstruction.com/doku.php?id=sm:editor_utility_guides:smile2.5)** — the original Super Metroid level editor that powered 15+ years of community hacks and served as the architectural reference for binary ROM patching
 - **[MapRandomizer](https://github.com/blkerby/MapRandomizer)** (maddo, kyleb) — door handling, room geometry, and ASM patch references
+- **[MapRandoSprites](https://github.com/blkerby/MapRandoSprites)** and its artists — community sprite catalog and artwork
+- **[SpriteSomething](https://github.com/Artheau/SpriteSomething)** — community sprite-sheet and animation schemas
 - **[Super Metroid Decompilation](https://github.com/snesrev/sm)** (snesrev) — full C reimplementation with struct definitions and per-bank implementations
 - **[SM-SPC](https://github.com/PJBoy/SM-SPC)** (PJBoy) — fully symbolic, assemblable source code for Super Metroid's SPC audio engine
 - **[SM Mod 3.0.80](https://metroidconstruction.com/SMMM/)** — community reference for species IDs and PLM editing conventions
@@ -424,7 +225,9 @@ This project would not be possible without the incredible Super Metroid ROM hack
 - **[Super Metroid disassembly](https://github.com/InsaneFirebat/sm_disassembly)** (InsaneFirebat and contributors) — pinned annotated source used by the ASM reference and project build workspace
 
 ### Bundled Patches
+
 Many built-in patches are sourced from or inspired by community work:
+
 - Respin (Kejardon, P.JBoy)
 - Fast Doors (NobodyNada)
 - Momentum Conservation (Scyzer, Nodever2, OmegaDragnet7)
@@ -433,6 +236,7 @@ Many built-in patches are sourced from or inspired by community work:
 - Skip Intro / New Game (theonlydude - RandomMetroidSolver, maddo)
 
 ### Embedded Libraries
+
 - **[snes9x](https://github.com/snes9xgit/snes9x/)** — SNES emulator by Gary Henderson, Jeremy Koot, and many others, loaded via libretro
 - **[snes_spc](http://www.slack.net/~ant/libs/audio.html#snes_spc)** (Shay Green / blargg) — cycle-accurate SPC700 APU emulator for music playback
 - **Jamepad** — SDL2-based gamepad support for controller input

@@ -137,6 +137,12 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
 
     /** Called only by actual text editing. Opening/searching/unchanged Save never adopts anything. */
     fun intercept(fileId: String, before: String, after: String): Boolean? {
+        val change = prepareIntercept(fileId, before, after) ?: return null
+        workspace.publishSourceModelChanges(mapOf(fileId to (before to after)), listOf(change))
+        return true
+    }
+
+    fun prepareIntercept(fileId: String, before: String, after: String): AsmSourceModelChange? {
         if (fileId !in setOf(ENEMY_HEADER_SOURCE_FILE, ENEMY_DROP_SOURCE_FILE) || before == after) return null
         val (a, b) = texts()
         val nextA = if (fileId == ENEMY_HEADER_SOURCE_FILE) after else a
@@ -158,11 +164,14 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         if (project().asmWorkspace.enemyTuningSourceKeys.containsAll(keys) && project().patches.none { patch ->
                 patch.configType in ENEMY_TUNING_CONFIG_TYPES && keys.any { it in patch.configData.orEmpty() }
             }) return null // Ordinary typing keeps the editor's normal text-undo granularity.
-        publish(keys, mapOf(fileId to (before to after)))
-        return true
+        return preparePublish(keys)
     }
 
     private fun publish(keys: Set<String>, sources: Map<String, Pair<String, String>>) {
+        workspace.publishSourceModelChanges(sources, listOf(preparePublish(keys)))
+    }
+
+    private fun preparePublish(keys: Set<String>): AsmSourceModelChange {
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) { "Enemy source editing requires the active ASM source build." }
         val ownershipBefore = keys.intersect(owner.asmWorkspace.enemyTuningSourceKeys)
@@ -188,9 +197,6 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
                 patch.configData = data.takeIf { it.isNotEmpty() }
             }
         }
-        check(false)
-        workspace.replaceProjectSources(sources, beforeApply = { set(false) }, afterApply = changed,
-            beforeUndo = { check(true); set(true) }, afterUndo = changed,
-            beforeRedo = { check(false); set(false) }, afterRedo = changed)
+        return AsmSourceModelChange(::check, ::set, changed)
     }
 }

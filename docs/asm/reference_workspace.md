@@ -2183,6 +2183,31 @@ patch conflicts, including copier-header preservation and headerless ownership P
 The same header-offset coverage protects enemy HP/drop/vulnerability claims.
 ROM-only/headless builds cannot silently drop authored tuning.
 
+## Reciprocal boss HP and contact damage
+
+**Boss Stats** (in the Boss tab or patch editor) reads native `%health` / `%damage`
+arguments in `bank_A0.asm`. Section and per-field **ASM** links are inspection-only;
+the first actual GUI/text edit adopts just the affected control. Return links on
+health/damage arguments select and reveal the matching GUI row, including Kraid's
+secondary headers. Native source values use source Undo, not the patch toggle.
+
+Grouped controls update all configured sub-species together, but never silently
+skip a missing or unsupported argument. If ASM gives those parts different literal
+values, only that grouped GUI input becomes **managed in ASM**; the individual words
+remain intact and build normally. Invalid drafts preserve the last-good display and
+repair links. A competing legacy config offers **Use ASM values** without flattening
+independent parts. One source Undo restores source, ownership and retired configs;
+a paste affecting ordinary enemies and bosses is also one atomic transaction.
+
+Builds validate every participating header's native compiler identity and every
+emitted word, then protect full words, including unchanged secondary bytes. This
+also applies to saved external edits and pending legacy configs. Boss headers are
+not relocation-capable: moved/missing records fail safely instead of accepting a
+fixed-address patch. Real-Asar coverage includes native parity, grouped and independent
+parts, cold builds, headered ROMs, patch conflicts and invalid/moved records. ROM-only
+and headless builds cannot silently omit authored boss stats. Specialized boss AI,
+timing and behavior tables are separate from this HP/contact-damage integration.
+
 ## Project-created room ASM builds and navigation
 
 Project-created rooms now use the atomic generated-ASM graph backend. The existing
@@ -3091,7 +3116,7 @@ Follow-up work can now be incremental:
    state lifecycle and compound operations now share those identities. Independent
    shared-native connections and coordinated area/geometry transactions are supported.
    Enemy HP/contact damage, drop weights, all raw vulnerability bytes and normal/charged
-   beam damage now have reciprocal native-source lenses; other weapon and specialized
+   beam damage and boss HP/contact damage now have reciprocal native-source lenses; other weapon and specialized
    boss tuning tables are subsequent candidates.
    Asset-owned tileset/palette/separate-background
    authoring follows those room workflows.

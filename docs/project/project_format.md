@@ -65,6 +65,11 @@ half in source and retires its implicit override atomically. New explicit charge
 keys are independent in desktop and headless ROM patches. ASM builds validate live
 symbolic pointer bindings and resolve legacy patch destinations from compiler symbols,
 never fixed native damage offsets. Headless builds cannot omit authored tuning source.
+`asmWorkspace.bossStatsSourceKeys` stores boss HP/contact-damage identities, with
+values only in native bank-A0 source. A grouped control owns every configured
+sub-species word, including unchanged bytes. Independent sub-species values remain
+authorable in ASM and make only that grouped GUI control read-only. Mixed enemy/boss
+text edits retire their config keys and restore them on Undo as one transaction.
 Both build modes end in a binary ROM—the ASM choice changes the order and ownership
 of inputs, not the output format.
 
