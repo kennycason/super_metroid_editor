@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v15-doors-enemy-tuning"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v16-beam-damage"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -219,6 +219,7 @@ internal object ProjectFileService {
     ): AsmCompiledBuildBase? {
         if (project.asmWorkspace.buildMode == ProjectRomBuildMode.PATCHED_ROM) {
             require(project.asmWorkspace.enemyTuningSourceKeys.isEmpty()) { "Authored enemy tuning requires ASM source mode." }
+            require(project.asmWorkspace.beamDamageSourceKeys.isEmpty()) { "Authored beam damage requires ASM source mode." }
             require(project.rooms.values.none { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmLayoutSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmFxSourceVersion != 0 || it.asmEnemySourceVersion != 0 }) { "Authored room data requires ASM source mode." }
             require(project.asmWorkspace.plmSourceBindings.isEmpty()) { "Linked room objects require ASM source mode." }
             val sourceEdits = if (project.asmWorkspace.enabled && projectFilePath.isNotBlank()) {
@@ -245,7 +246,7 @@ internal object ProjectFileService {
         val linkedWorkspace = requireNotNull(AsmProjectWorkspaceRepository().loadForBuild(projectFilePath))
         linkedWorkspace.let { tree ->
             val files = listOf(PLM_SOURCE_FILE, "macros.asm") +
-                listOf("bank_A0.asm", "bank_B4.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
+                listOf("bank_A0.asm", "bank_B4.asm", "bank_93.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
                 (if (project.rooms.values.any { it.asmDoorSourceVersion != 0 || it.asmFxSourceVersion != 0 }) listOf(FX_SOURCE_FILE) else emptyList()) +
                 (if (project.rooms.values.any { it.asmEnemySourceVersion != 0 }) listOf(ENEMY_SOURCE_FILE) else emptyList())
             for (fileId in files) {
@@ -277,6 +278,10 @@ internal object ProjectFileService {
         val enemyTuning = com.supermetroid.editor.asm.AsmEnemyTuningSource.load(linkedWorkspace.originalDirectory)
         val tuningHeaders = if (enemyTuning == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_A0.asm").readText()
         val tuningDrops = if (enemyTuning == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_B4.asm").readText()
+        val beamDamage = com.supermetroid.editor.asm.AsmBeamDamageSource.load(linkedWorkspace.originalDirectory)
+        val beamSource = if (beamDamage == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_93.asm").readText()
+        fun protectTuning(base: AsmCompiledBuildBase) = com.supermetroid.editor.asm.protectBeamDamageSource(beamDamage, beamSource, project,
+            com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base))
         val managedRooms = project.rooms.values.filter { it.asmPlmSourceVersion != 0 }
         if (managedRooms.isNotEmpty()) linkedCatalog.requireStandardMacro(linkedMacros)
         val projectRoomSourceIds = com.supermetroid.editor.asm.AsmProjectRoomLabels.identities(project)
@@ -398,7 +403,7 @@ internal object ProjectFileService {
             com.supermetroid.editor.asm.validateNativeDoorArrivalAnchor(door.entryCode, arrivalLabels, linkedCatalog.symbols)
         }
         val sharedDoorSource = com.supermetroid.editor.asm.AsmDoorSource(File(linkedWorkspace.workingDirectory, "src/$FX_SOURCE_FILE").readText(), linkedSource, linkedCatalog.symbols)
-        val initial = com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project,
+        val initial = protectTuning(
             com.supermetroid.editor.asm.protectDoorSourceBaseline(sourceDoors, romParser,
                 com.supermetroid.editor.asm.protectSharedDoorSource(sharedDoorSource, project, romParser, resolvedSelectors.compiled, linkedCatalog.symbols), linkedCatalog.symbols))
         val compiledSaveParser = RomParser(initial.romBytes)
@@ -567,7 +572,7 @@ internal object ProjectFileService {
                 onStatus(progress)
             }))
             require(resolvedMaterialized.selectors == sourceSelectors) { "Executable predicate labels moved during generated-room compilation; no ROM was produced." }
-            val materializedCompile = com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project,
+            val materializedCompile = protectTuning(
                 com.supermetroid.editor.asm.protectSharedDoorSource(sharedDoorSource, project, romParser, resolvedMaterialized.compiled, linkedCatalog.symbols))
             require(com.supermetroid.editor.asm.resolveDoorArrivals(doorDeclarations, materializedCompile) == sourceDoors) {
                 "Arrival ASM symbols moved during generated-room compilation; no ROM was produced."

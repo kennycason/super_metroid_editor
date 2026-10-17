@@ -60,6 +60,8 @@ internal data class AsmCompiledBuildBase(
     val roomValidationRomBytes: ByteArray? = null,
     /** Shared predicate/arrival code pool, pinned across this build's generated-input passes. */
     val managedBank8FStart: Int? = null,
+    /** Checked headerless compiler-resolved damage-word PCs, never guessed native addresses. */
+    val beamDamageLocations: Map<String, Int> = emptyMap(),
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -73,6 +75,7 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     generatedPatchClaims = generatedPatchClaims.map { it.copy(bytes = it.bytes.copyOf()) },
     compilerOutput = compilerOutput.toList(),
     compilerSymbols = compilerSymbols.copyOf(),
+    beamDamageLocations = beamDamageLocations.toMap(),
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )

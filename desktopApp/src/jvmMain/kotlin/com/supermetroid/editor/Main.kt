@@ -674,6 +674,11 @@ fun main() = application {
                             com.supermetroid.editor.ui.selectEnemyTuning(target.speciesId, target.section)
                             leftTab = TAB_ENEMY
                         }
+                        is AsmEditorTarget.BeamDamage -> {
+                            com.supermetroid.editor.ui.selectBeamDamage(target.key)
+                            editorState.selectPatch(editorState.findOrCreateConfigPatch("beam_damage").id)
+                            leftTab = TAB_PATCHES
+                        }
                         is AsmEditorTarget.Sound -> {
                             SpcData.KNOWN_TRACKS.firstOrNull { it.songSet == target.songSet }
                                 ?.let(soundEditorState::selectTrack)
@@ -1539,6 +1544,7 @@ fun main() = application {
                                     TAB_PATCHES -> PatchEditorCanvas(
                                         editorState = editorState,
                                         romParser = romParser,
+                                        onNavigateToAsm = editorState.projectAsmNavigation { navigate { leftTab = TAB_ASM } },
                                         modifier = Modifier.fillMaxSize()
                                     )
                                     TAB_SOUND -> SoundEditorCanvas(

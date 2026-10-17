@@ -478,7 +478,7 @@ object SmeditPatchCatalog {
         SmPatch(
             id = "config_beam_damage",
             name = "Beam Damage",
-            description = "Set uncharged beam damage values. Charged values are written as 3x the configured damage.",
+            description = "Set normal and charged beam damage independently. Normal-only legacy overrides retain their 3x charged value.",
             enabled = false,
             configType = BEAM_DAMAGE_CONFIG_TYPE,
         ),
@@ -672,12 +672,13 @@ object SmeditPatchCatalog {
             configType = BEAM_DAMAGE_CONFIG_TYPE,
             patchId = "config_beam_damage",
             name = "Beam Damage",
-            description = "Sets uncharged beam damage. Charged beam damage is written as 3x the configured value.",
+            description = "Sets normal and charged beam damage independently. A normal-only override implies 3x charged damage.",
             headlessSupported = true,
             supportsPatchOnly = true,
             requiresRom = false,
-            fields = HEADLESS_BEAMS.map { beam ->
-                intField(beam.key, beam.label, min = 0, max = 0xFFFF, defaultValue = beam.defaultDamage)
+            fields = HEADLESS_BEAMS.flatMap { beam ->
+                listOf(intField(beam.key, beam.label, min = 0, max = 0xFFFF, defaultValue = beam.defaultDamage),
+                    intField("${beam.key}_charged", "${beam.label} (Charged)", min = 0, max = 0xFFFF, defaultValue = beam.defaultDamage * 3))
             },
         )
 

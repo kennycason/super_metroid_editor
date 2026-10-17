@@ -464,6 +464,25 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `beam charged overrides are independent and legacy multiplication cannot silently overflow`() {
+        val request = SmeditBuildRequest(patches = mapOf(BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(
+            config = mapOf("power" to 65535, "power_charged" to 97, "ice_charged" to 0))))
+        val result = SmeditBuildService().buildPatch(request)
+        val rom = ByteArray(0x300000)
+        for (write in PatchRepository.parseIps(result.ipsPatchBytes)) for (i in write.bytes.indices) rom[write.offset.toInt() + i] = write.bytes[i].toByte()
+        val parser = RomParser(rom)
+        assertEquals(65535, rom.readWord(parser.snesToPc(0x938431)))
+        assertEquals(97, rom.readWord(parser.snesToPc(0x938431 + 12 * 22)))
+        assertEquals(0, rom.readWord(parser.snesToPc(0x938431 + 17 * 22)))
+        assertFailsWith<IllegalArgumentException> {
+            SmeditBuildService().buildPatch(SmeditBuildRequest(patches = mapOf(BEAM_DAMAGE_CONFIG_TYPE to SmeditPatchRequest(config = mapOf("power" to 65535)))))
+        }
+        val project = SmEditProject("source.sfc").apply { asmWorkspace.beamDamageSourceKeys.add("power") }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(request, project) }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(ByteArray(0x300000), request, project) }
+    }
+
+    @Test
     fun `rom build applies enemy drops and vulnerabilities from rom pointers`() {
         val original = ByteArray(0x300000)
         val parser = RomParser(original)

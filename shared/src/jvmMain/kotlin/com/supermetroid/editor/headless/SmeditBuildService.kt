@@ -165,6 +165,9 @@ class SmeditBuildService(
         project: SmEditProject?,
         context: ApplyContext,
     ): List<SmeditAppliedPatchReport> {
+        require(project == null || project.asmWorkspace.beamDamageSourceKeys.isEmpty() && project.asmWorkspace.enemyTuningSourceKeys.isEmpty()) {
+            "Authored enemy/beam tuning requires its validated desktop ASM source build; headless ROM/IPS builds cannot omit it."
+        }
         require(request.schemaVersion == 1) {
             "Unsupported build schemaVersion ${request.schemaVersion}; expected 1"
         }
@@ -1461,10 +1464,12 @@ class SmeditBuildService(
     ) {
         val data = patch.configData ?: return
         for (beam in HEADLESS_BEAMS) {
-            val damage = data[beam.key]?.coerceIn(0, 0xFFFF) ?: continue
-            val chargedDamage = (damage * 3).coerceIn(0, 0xFFFF)
-            writeWord(context, context.snesToPc(beam.snesAddress), damage, "Beam damage ${beam.key}")
-            writeWord(context, context.snesToPc(beam.chargedSnesAddress), chargedDamage, "Charged beam damage ${beam.key}")
+            val damage = data[beam.key]?.coerceIn(0, 0xFFFF)
+            val charged = data["${beam.key}_charged"] ?: damage?.let { it * 3 }
+            if (charged != null && charged !in 0..0xFFFF) reportConfigValidationIssue(context,
+                "${beam.key}: charged damage exceeds a 16-bit word; specify ${beam.key}_charged explicitly. Lenient builds clamp it.")
+            if (damage != null) writeWord(context, context.snesToPc(beam.snesAddress), damage, "Beam damage ${beam.key}")
+            if (charged != null) writeWord(context, context.snesToPc(beam.chargedSnesAddress), charged.coerceIn(0, 0xFFFF), "Charged beam damage ${beam.key}")
         }
     }
 

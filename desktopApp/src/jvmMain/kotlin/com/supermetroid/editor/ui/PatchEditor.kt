@@ -321,6 +321,7 @@ fun PatchListPanel(
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.togglePatchFavorite(patch.id)
                     },
+                    sourceManaged = patch.configType == "beam_damage" && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty(),
                     onDelete = if (isSystemPatch(patch.id)) null
                                else {{
                                    requestVerticalSelectionFocus(navigationFocusRequester)
@@ -340,7 +341,8 @@ private fun PatchListItem(
     onSelect: () -> Unit,
     onToggle: () -> Unit,
     onToggleFavorite: () -> Unit,
-    onDelete: (() -> Unit)?
+    onDelete: (() -> Unit)?,
+    sourceManaged: Boolean = false,
 ) {
     val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer
              else Color.Transparent
@@ -358,7 +360,8 @@ private fun PatchListItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Checkbox(
+            if (sourceManaged) Text("ASM", color = MaterialTheme.colorScheme.primary, fontSize = LocalEditorTheme.current.fontSize.value.detail)
+            else Checkbox(
                 checked = patch.enabled,
                 onCheckedChange = { onToggle() },
                 modifier = Modifier.size(16.dp),
@@ -377,7 +380,7 @@ private fun PatchListItem(
                     lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (patch.enabled) MaterialTheme.colorScheme.onSurface
+                    color = if (patch.enabled || sourceManaged) MaterialTheme.colorScheme.onSurface
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
             }
@@ -418,7 +421,8 @@ private fun PatchListItem(
 fun PatchEditorCanvas(
     editorState: EditorState,
     romParser: RomParser? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: (() -> Unit)? = null,
 ) {
     @Suppress("UNUSED_VARIABLE") val pv = editorState.patchVersion
     val patch = editorState.getSelectedPatch()
@@ -444,7 +448,7 @@ fun PatchEditorCanvas(
             "ceres_escape_seconds" -> CeresEscapeTimeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             ZEBES_ESCAPE_CONFIG_TYPE -> ZebesEscapeTimeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             SHORT_CHARGE_CONFIG_TYPE -> ShortChargeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
-            "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
+            "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             KRAID_CONFIG_TYPE -> KraidEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
@@ -519,20 +523,21 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f).clickable { editingName = true }
                 )
-                // Enabled badge
+                val sourceBeam = patch.configType == "beam_damage" && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty()
+                // Source-authored values do not follow the legacy patch toggle.
                 Surface(
-                    color = if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
+                    color = if (sourceBeam) MaterialTheme.colorScheme.primary else if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        if (patch.enabled) "ENABLED" else "DISABLED",
+                        if (sourceBeam) "ASM SOURCE" else if (patch.enabled) "ENABLED" else "DISABLED",
                         fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
-                Button(
+                if (!sourceBeam) Button(
                     onClick = { editorState.togglePatch(patch.id) },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
                     modifier = Modifier.height(28.dp),

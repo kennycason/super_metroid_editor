@@ -224,9 +224,9 @@ internal class RomExporter(
 ) {
 
     fun build(): RomBuildResult? {
-        if (project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() && compiledAsmBase == null) {
-            onStatus("Authored enemy tuning requires its validated ASM build.")
-            onLog("ERROR: Authored enemy tuning requires its validated ASM build.")
+        if ((project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() || project.asmWorkspace.beamDamageSourceKeys.isNotEmpty()) && compiledAsmBase == null) {
+            onStatus("Authored enemy/beam tuning requires its validated ASM build.")
+            onLog("ERROR: Authored enemy/beam tuning requires its validated ASM build.")
             return null
         }
         fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
@@ -930,18 +930,14 @@ internal class RomExporter(
                 onLog("[EXPORT]   Short charge: $stages stage(s), initial counter=$initialCounter")
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
-                validateConfigKeys(data, ALL_BEAMS.mapTo(mutableSetOf()) { it.key }, patch)
-                var beamCount = 0
-                for (beam in ALL_BEAMS) {
-                    val dmg = requireConfigRange(patch, beam.key, data[beam.key] ?: continue, 0..9999)
-                    val charged = dmg * 3
-                    val pcUncharged = romParser.snesToPc(beam.snesAddress)
-                    writeU16(romData, pcUncharged, dmg)
-                    val pcCharged = romParser.snesToPc(beam.chargedSnesAddress)
-                    writeU16(romData, pcCharged, charged)
-                    beamCount++
+                val values = beamDamageConfigValues(data)
+                for ((key, damage) in values) {
+                    val beam = ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }
+                    val pc = if (compiledAsmBase == null) romParser.snesToPc(if (key.endsWith("_charged")) beam.chargedSnesAddress else beam.snesAddress)
+                        else writePlan.headerSize + requireNotNull(compiledAsmBase.beamDamageLocations[key]) { "$key has no validated ASM damage destination; no fixed-address patch was applied." }
+                    writeU16(romData, pc, damage)
                 }
-                onLog("[EXPORT]   Beam damage: $beamCount beams modified")
+                onLog("[EXPORT]   Beam damage: ${values.size} damage words modified")
             } else if (patch.configType == "boss_stats") {
                 val data = patch.configData ?: continue
                 validateConfigKeys(data, ALL_BOSS_FIELDS.mapTo(mutableSetOf()) { it.key }, patch)

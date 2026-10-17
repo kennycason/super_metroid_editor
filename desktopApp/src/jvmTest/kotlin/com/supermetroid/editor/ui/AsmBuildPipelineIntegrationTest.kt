@@ -524,6 +524,89 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(before.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
     }
 
+    @Test fun `beam damage follows symbolic relocation preserves independent charged values and rejects competing patches after cold builds`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val bridge = assertNotNull(editor.beamDamageBridge)
+        for (beam in ALL_BEAMS) {
+            assertEquals(parser.readUInt16At(parser.snesToPc(beam.snesAddress)), bridge.catalog.original(beam.key).value, beam.key)
+            assertEquals(parser.readUInt16At(parser.snesToPc(beam.chargedSnesAddress)), bridge.catalog.original(beam.chargedKey).value, beam.chargedKey)
+        }
+        val romProject = SmEditProject(fixture.romFile.path).apply {
+            patches.add(SmPatch("beams", "Beams", enabled = true, configType = "beam_damage",
+                configData = mutableMapOf("power" to 65535, "power_charged" to 97, "ice_charged" to 0)))
+        }
+        val romOnly = RomParser(assertNotNull(RomExporter(romProject, parser).build()).resultRom)
+        assertEquals(65535, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS.first().snesAddress)))
+        assertEquals(97, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+        assertEquals(0, romOnly.readUInt16At(parser.snesToPc(BASE_BEAMS[1].chargedSnesAddress)))
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        assertContentEquals(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val patch = editor.findOrCreateConfigPatch("beam_damage").apply { enabled = true; configData = mutableMapOf("power" to 40) }
+        val legacy = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertEquals(40, legacy.readUInt16At(parser.snesToPc(BASE_BEAMS.first().snesAddress)))
+        assertEquals(120, legacy.readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+
+        // Move a whole native projectile record, not its instruction lists. The
+        // existing legacy config must follow the pointer, not patch the old word.
+        val source = workspace.projectSourceText("bank_93.asm")
+        val field = bridge.catalog.original("power")
+        val record = assertNotNull(Regex("(?m)^${Regex.escape(field.table)}:[^\\r\\n]*\\r?\\n(?:[ \\t]*dw[^\\r\\n]*\\r?\\n){11}").find(source))
+        val movedPc = parser.snesToPc(0x93FF00)
+        assertTrue(fixture.rom.copyOfRange(movedPc, movedPc + 22).all { it == 0xFF.toByte() })
+        workspace.replaceProjectSource("bank_93.asm", source, source.replaceRange(record.range,
+            "org ${'$'}93FF00\n${record.value}org ${'$'}938447\n"))
+        val movedLegacy = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertEquals(0xFF00, movedLegacy.readUInt16At(parser.snesToPc(0x9383C1)))
+        assertEquals(40, movedLegacy.readUInt16At(movedPc))
+        assertEquals(65535, movedLegacy.readUInt16At(parser.snesToPc(0x938431)), "Old location is erased, not a damage-patch target anymore")
+        editor.setPatchConfigData(patch.id, "power", 41)
+        assertEquals(120, bridge.view("power_charged").value)
+        editor.setPatchConfigData(patch.id, "power_charged", 97)
+        val compiled = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(41, RomParser(compiled.resultRom).readUInt16At(movedPc))
+        assertEquals(97, RomParser(compiled.resultRom).readUInt16At(parser.snesToPc(BASE_BEAMS.first().chargedSnesAddress)))
+        assertTrue(com.supermetroid.editor.asm.AsmSemanticBridge.linksFor(0x93FF00, romParser = RomParser(compiled.resultRom))
+            .any { it.target == com.supermetroid.editor.asm.AsmEditorTarget.BeamDamage("power") })
+        assertTrue(compiled.writeReport.writes.any { it.offset == movedPc && it.bytes.size == 2 && "bank_93.asm" in it.label }, "Protect the unchanged upper damage byte too")
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(compiled.resultRom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        val copierHeader = ByteArray(512) { 0x5A }
+        val headeredRom = copierHeader + fixture.rom
+        val headeredFile = File(tempDirectory, "Headered.smc").apply { writeBytes(headeredRom) }
+        logs.clear()
+        val headeredBuild = assertNotNull(ProjectFileService.buildRom(cold.copy(romPath = headeredFile.path), RomParser(headeredRom),
+            logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        assertContentEquals(copierHeader, headeredBuild.resultRom.copyOfRange(0, 512))
+        assertContentEquals(compiled.resultRom, headeredBuild.resultRom.copyOfRange(512, headeredBuild.resultRom.size))
+        assertNull(RomExporter(project, parser, logs::add).build(), "ROM-only export cannot omit owned beam source")
+        val conflict = SmPatch("beam-high-byte", "Cannot overwrite unchanged high byte", enabled = true,
+            writes = mutableListOf(PatchWrite((movedPc + 1).toLong(), listOf(0), expectedBytes = listOf(0))))
+        project.patches.add(conflict)
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        val pointerConflict = SmPatch("beam-binding", "Cannot retarget owned beam", enabled = true,
+            writes = mutableListOf(PatchWrite(parser.snesToPc(0x9383C1).toLong(), listOf(0, 255), expectedBytes = listOf(0, 255))))
+        project.patches.add(pointerConflict)
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        pointerConflict.enabled = false
+        val fieldNow = bridge.catalog.field("power", workspace.projectSourceText("bank_93.asm"))
+        assertTrue(workspace.updateSourceEditText("bank_93.asm", workspace.projectSourceText("bank_93.asm").replaceRange(fieldNow.span, "41+1")))
+        assertNotNull(bridge.view("power").problem)
+        assertNull(build()); assertTrue(logs.any { "16-bit literal" in it }, logs.joinToString("\n"))
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `enemy tuning uses native source fields follows relocated drop symbols and protects cold ownership from patches and moved headers`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)

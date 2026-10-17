@@ -9,6 +9,18 @@ import org.junit.jupiter.api.Test
 
 class AsmSemanticBridgeTest {
     @Test
+    fun `beam pointers and records return to their normal or charged damage editor`() {
+        val parser = TestRomHelper.requireRomParser()
+        val index = AsmSemanticBridge.buildIndex(parser)
+        for (beam in com.supermetroid.editor.ui.ALL_BEAMS) for (charged in listOf(false, true)) {
+            val binding = (if (charged) 0x9383D9 else 0x9383C1) + BEAM_POINTER_KEYS.indexOf(beam.key) * 2
+            val key = if (charged) beam.chargedKey else beam.key
+            val address = 0x930000 or parser.readUInt16At(parser.snesToPc(binding))
+            for (source in listOf(binding, address)) assertTrue(index.linksFor(source).any { it.target == AsmEditorTarget.BeamDamage(key) })
+        }
+    }
+
+    @Test
     fun `enemy tuning tables and native binding words return to the correct enemy tab`() {
         val parser = TestRomHelper.requireRomParser()
         val address = 0xA0DCFF

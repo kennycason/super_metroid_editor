@@ -13,7 +13,7 @@ never be silently omitted from an export.
 
 Editor-to-source **ASM** shortcuts appear only when **Project ASM** is enabled
 and **ASM source** is the active build mode. This rule covers Room Info, selected
-objects/doors/saves, scrolls, FX, tilesets, sprites, enemy stats, minimap, text and
+objects/doors/saves, scrolls, FX, tilesets, sprites, enemy stats, beam damage, minimap, text and
 sound. Downloading the reference alone does not enable these links; returning a
 clean workspace to **Loaded ROM** hides them again. ROM edits can relocate data
 without updating reference source, so those shortcuts must not imply a mapping in
@@ -2133,6 +2133,40 @@ with an undoable action. A fixture-backed Asar regression checks every listed na
 species, reciprocal edits, real drop/vulnerability relocation, cold rebuild parity, moved
 header rejection and unchanged-byte patch conflicts. No project-format bump is needed.
 
+## Reciprocal normal and charged beam damage
+
+The **Beam Damage** patch editor exposes independent normal/charged words for all
+five base beams and seven combinations. In active ASM source mode its section and
+per-beam **ASM** links open `bank_93.asm` without adopting or dirtying anything.
+Live damage words and their native pointer bindings offer **Edit … damage** return
+links; the returned row is highlighted and revealed. Focus a charged input before
+using its row link to open that charged word.
+
+First GUI/text edits adopt literal words automatically. Values live only in source;
+`asmWorkspace.beamDamageSourceKeys` stores identities. Existing normal-only config
+patches retain their established 3× charged meaning until adopted. Adoption writes
+the untouched effective half into source before retiring its implicit patch value,
+and one source Undo restores text, ownership and old config together. New charged
+overrides are independent in ROM mode and the headless exporter too. Source-owned
+values use source Undo, not the patch checkbox; an empty source-backed beam panel
+is marked **ASM SOURCE** instead of offering a misleading patch toggle.
+
+The lens follows each live symbolic pointer, including shared/aliased records.
+Shared GUI changes adopt all matching words together; bulk reset rejects incompatible
+defaults atomically. Unsupported drafts show marked last-good values, lock only the
+affected field and retain a repair link. Conflicting external source/config edits
+offer **Use ASM values**. Owned unsupported literals must be repaired before build.
+
+Build checks verify actual compiler symbols, bank-93 bounds, 12-word pointer lists,
+11-word projectile records and the emitted pointer/damage values. Full two-byte
+damage words and their pointer bindings are protected, including unchanged bytes.
+Existing pending ROM configs resolve checked compiler locations, so relocating a
+record cannot make a legacy override write to the old address. Real-Asar tests cover
+native parity, relocated overrides, independent charged damage, cold rebuilds and
+patch conflicts, including copier-header preservation and headerless ownership PCs.
+The same header-offset coverage protects enemy HP/drop/vulnerability claims.
+ROM-only/headless builds cannot silently drop authored tuning.
+
 ## Project-created room ASM builds and navigation
 
 Project-created rooms now use the atomic generated-ASM graph backend. The existing
@@ -3040,8 +3074,9 @@ Follow-up work can now be incremental:
    have checked build/navigation layers. Reciprocal new-room resource authoring,
    state lifecycle and compound operations now share those identities. Independent
    shared-native connections and coordinated area/geometry transactions are supported.
-   Enemy HP/contact damage and drop weights now have reciprocal native-source lenses;
-   weapon, vulnerability and specialized boss tuning tables are subsequent candidates.
+   Enemy HP/contact damage, drop weights, all raw vulnerability bytes and normal/charged
+   beam damage now have reciprocal native-source lenses; other weapon and specialized
+   boss tuning tables are subsequent candidates.
    Asset-owned tileset/palette/separate-background
    authoring follows those room workflows.
    Graphics, map, text, and sound encoders should follow the same

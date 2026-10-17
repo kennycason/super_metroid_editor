@@ -184,6 +184,7 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
     require(advanced.isEmpty()) { "Advanced enemy AI/GFX patch fields are ROM-only (${advanced.joinToString()}). In ASM mode, edit the symbolic EnemyHeader arguments or remove those overrides." }
     val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
     val parser = RomParser(compiled.romBytes)
+    val headerSize = if (compiled.romBytes.size % 0x8000 == 512) 512 else 0
     val originalParser = RomParser(compiled.referenceRomBody)
     val claims = linkedMapOf<Pair<Int, Int>, String>()
     val boundTables = mutableSetOf<Pair<AsmEnemyTuningSection, Int>>()
@@ -203,7 +204,7 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
         if (field.table == null) {
             val pc = headerPc + field.offset
             require(parser.readUInt16At(pc) == field.value) { "$key: EnemyHeader layout differs from the supported HP/contact-damage format." }
-            if (authored) claims[pc to 2] = ENEMY_HEADER_SOURCE_FILE
+            if (authored) claims[(pc - headerSize) to 2] = ENEMY_HEADER_SOURCE_FILE
         } else {
             val address = requireNotNull(labels[field.table]) { "Missing enemy ${field.section.title} table ${field.table}." }
             require(address in 0xB48000..(0xB50000 - field.section.tableSize) &&
@@ -212,7 +213,7 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
             }
             val pc = parser.snesToPc(address) + field.offset
             require((compiled.romBytes[pc].toInt() and 255) == field.value) { "$key: assembled drop data differs from its typed source." }
-            if (authored || relocated && config.isEmpty()) claims[pc to 1] = ENEMY_DROP_SOURCE_FILE
+            if (authored || relocated && config.isEmpty()) claims[(pc - headerSize) to 1] = ENEMY_DROP_SOURCE_FILE
             if ((authored || relocated) && boundTables.add(field.section to address)) {
                 // A table may also serve species outside the tuning picker. Protect every
                 // active pointer binding, not only the first visible consumer's word.
@@ -222,7 +223,7 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
                     require(labels[label] == (0xA00000 or species)) { "$label moved or was removed; its shared ${field.section.title} binding cannot be guessed." }
                     val bindingPc = parser.snesToPc(0xA00000 or species) + field.section.pointerOffset
                     require(parser.readUInt16At(bindingPc) == (address and 65535)) { "$label has a competing ${field.section.title} table binding." }
-                    claims[bindingPc to 2] = ENEMY_HEADER_SOURCE_FILE
+                    claims[(bindingPc - headerSize) to 2] = ENEMY_HEADER_SOURCE_FILE
                 }
             }
         }

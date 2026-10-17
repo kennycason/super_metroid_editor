@@ -58,6 +58,13 @@ field identities, never their values or compiled addresses. First edits retire t
 corresponding legacy patch-config keys in the same source/model undo transaction.
 Authored values stay in the native bank source; builds validate header identities,
 symbolic drop pointers and byte ownership. ROM-only builds cannot ignore these keys.
+`asmWorkspace.beamDamageSourceKeys` likewise stores normal/charged beam word identities
+(`power`, `power_charged`, etc.), with values only in native bank-93 source. A legacy
+normal-only patch still implies 3× charged damage; adoption preserves the untouched
+half in source and retires its implicit override atomically. New explicit charged
+keys are independent in desktop and headless ROM patches. ASM builds validate live
+symbolic pointer bindings and resolve legacy patch destinations from compiler symbols,
+never fixed native damage offsets. Headless builds cannot omit authored tuning source.
 Both build modes end in a binary ROM—the ASM choice changes the order and ownership
 of inputs, not the output format.
 

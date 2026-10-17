@@ -18,6 +18,7 @@ internal sealed interface AsmEditorTarget {
     data class Tileset(val tilesetId: Int?, val palette: Boolean = false) : AsmEditorTarget
     data class Sprite(val speciesId: Int?) : AsmEditorTarget // null = Samus
     data class EnemyTuning(val speciesId: Int, val section: AsmEnemyTuningSection = AsmEnemyTuningSection.STATS) : AsmEditorTarget
+    data class BeamDamage(val key: String) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget
@@ -217,6 +218,17 @@ internal object AsmSemanticBridge {
             ),
         )
 
+        for (beam in com.supermetroid.editor.ui.ALL_BEAMS) {
+            for (charged in listOf(false, true)) {
+                val slot = BEAM_POINTER_KEYS.indexOf(beam.key)
+                val binding = (if (charged) 0x9383D9 else 0x9383C1) + slot * 2
+                val key = if (charged) beam.chargedKey else beam.key
+                val link = AsmEditorLink("Edit ${beam.name} ${if (charged) "charged " else ""}damage", "Beam damage", AsmEditorTarget.BeamDamage(key))
+                add(binding, link)
+                runCatching { romParser.readUInt16At(romParser.snesToPc(binding)) }.getOrNull()
+                    ?.takeIf { it in 0x8000..0xFFEA }?.let { add(0x930000 or it, link) }
+            }
+        }
         for (enemy in com.supermetroid.editor.ui.ENEMY_DEFS) {
             val address = RomConstants.BANK_ENEMY_AI or enemy.speciesId
             val link = AsmEditorLink("Edit ${enemy.name} stats", "HP / contact damage", AsmEditorTarget.EnemyTuning(enemy.speciesId))

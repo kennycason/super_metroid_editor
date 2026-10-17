@@ -955,6 +955,8 @@ data class ProjectAsmWorkspaceSettings(
     val plmSourceBindings: MutableList<ProjectPlmSourceBinding> = mutableListOf(),
     /** Enemy tuning identities only; values remain in the authored bank source. */
     val enemyTuningSourceKeys: MutableSet<String> = mutableSetOf(),
+    /** Beam normal/charged word identities only; values remain in bank 93 source. */
+    val beamDamageSourceKeys: MutableSet<String> = mutableSetOf(),
 )
 
 @Serializable

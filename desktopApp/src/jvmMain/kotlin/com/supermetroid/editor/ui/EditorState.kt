@@ -598,6 +598,8 @@ class EditorState(
         statusMessage.startsWith("Export blocked", ignoreCase = true) ||
         statusMessage.startsWith("Save failed", ignoreCase = true) ||
         statusMessage.startsWith("Enemy edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Beam edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Source edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Object edit blocked", ignoreCase = true)
 
     /** Long-running ROM build state stays visible instead of expiring like a transient status. */
@@ -1115,10 +1117,13 @@ class EditorState(
     /** Production wiring is shared with the workflow tests, including late-bound metadata notifications. */
     internal var enemyTuningBridge by mutableStateOf<com.supermetroid.editor.asm.AsmEnemyTuningBridge?>(null)
         private set
+    internal var beamDamageBridge by mutableStateOf<com.supermetroid.editor.asm.AsmBeamDamageBridge?>(null)
+        private set
 
     internal fun detachRoomSourceBridges() {
         asmPlmSourceBridge = null
         enemyTuningBridge = null
+        beamDamageBridge = null
     }
 
     internal fun openEnemyTuningSource(key: String): Boolean = runCatching {
@@ -1129,6 +1134,15 @@ class EditorState(
         bridge.workspace.openSource(file, line)
         true
     }.getOrElse { postStatus("Enemy source unavailable: ${it.message}"); false }
+
+    internal fun openBeamDamageSource(key: String? = null): Boolean = runCatching {
+        require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
+        val bridge = requireNotNull(beamDamageBridge) { "Wait for beam source indexing." }
+        val line = bridge.line(key)
+        bridge.workspace.showProjectWorkspace()
+        bridge.workspace.openSource(com.supermetroid.editor.asm.BEAM_DAMAGE_SOURCE_FILE, line)
+        true
+    }.getOrElse { postStatus("Beam source unavailable: ${it.message}"); false }
 
     internal fun bindRoomSources(catalog: AsmPlmSourceCatalog,
                                  workspace: AsmWorkspaceState): AsmPlmSourceBridge {
@@ -1164,11 +1178,19 @@ class EditorState(
                 owner
             }) { dirty = true; patchVersion++ }
         }
-        workspace.sourceEditorInterceptor = { file, before, after ->
-            if (!asmNavigationEnabled) null else runCatching { enemyTuningBridge?.intercept(file, before, after) }
-                .getOrElse { postStatus("Enemy source edit blocked: ${it.message}"); false }
+        beamDamageBridge = root?.let { com.supermetroid.editor.asm.AsmBeamDamageSource.load(workspace.projectWorkspace!!.originalDirectory) }?.let { damage ->
+            com.supermetroid.editor.asm.AsmBeamDamageBridge(damage, workspace, {
+                check(project === owner && workspace.projectWorkspace?.root == root &&
+                    (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The beam ROM or ASM workspace changed." }
+                owner
+            }) { dirty = true; patchVersion++ }
         }
-        workspace.sourceEditorLinks = { file, line -> enemyTuningBridge?.editorLinks(file, line).orEmpty() }
+        workspace.sourceEditorInterceptor = { file, before, after ->
+            if (!asmNavigationEnabled) null else runCatching {
+                enemyTuningBridge?.intercept(file, before, after) ?: beamDamageBridge?.intercept(file, before, after)
+            }.getOrElse { postStatus("Source edit blocked: ${it.message}"); false }
+        }
+        workspace.sourceEditorLinks = { file, line -> enemyTuningBridge?.editorLinks(file, line).orEmpty() + beamDamageBridge?.editorLinks(file, line).orEmpty() }
         return bridge
     }
 
@@ -2715,6 +2737,11 @@ class EditorState(
 
     fun setPatchConfigData(id: String, key: String, value: Int) {
         val patch = project.patches.find { it.id == id } ?: return
+        if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && patch.configType == "beam_damage") {
+            runCatching { requireNotNull(beamDamageBridge) { "Wait for the beam ASM workspace." }.edit(key, value) }
+                .onFailure { postStatus("Beam edit blocked: ${it.message}") }
+            return
+        }
         if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
             patch.configType in com.supermetroid.editor.asm.ENEMY_TUNING_CONFIG_TYPES) {
             runCatching { requireNotNull(enemyTuningBridge) { "Wait for the enemy ASM workspace." }.edit(key, value) }
@@ -4412,6 +4439,7 @@ class EditorState(
         armedSharedDoors.clear()
         asmPlmSourceBridge = null
         enemyTuningBridge = null
+        beamDamageBridge = null
         objectPreviewLoading = false
         objectPreviewProblem = null
         initialScrollPreviewProblem = null

@@ -574,6 +574,9 @@ class AsmEnemyTuningSourceTest {
         fun compiled(header: String = "A0:DCFF", table: String = "B4:F900") = AsmCompiledBuildBase(rom.copyOf(), rom.copyOf(), "test", emptyList(),
             assemblerVersion = "test", compilerOutput = emptyList(), compilerSymbols = "[labels]\n$header EnemyHeaders_TestZoomer\n$table EnemyDropChances_Test\n".toByteArray())
         val checked = protectEnemyTuningSource(source, headers, drops, project, compiled())
+        val headeredInput = compiled().let { it.copy(romBytes = ByteArray(512) { 0x5A } + it.romBytes) }
+        assertEquals(checked.sourceOwnedRanges, protectEnemyTuningSource(source, headers, drops, project, headeredInput).sourceOwnedRanges,
+            "HP words, drop bytes and pointer claims must stay headerless")
         assertTrue(checked.sourceOwnedRanges.any { it.pcOffset == hp && it.length == 2 }, "The whole word is claimed even though it equals native source")
         assertTrue(checked.sourceOwnedRanges.any { it.pcOffset == parser.snesToPc(0xB4F900) && it.length == 1 })
         assertFails { protectEnemyTuningSource(source, headers, drops, project, compiled("A0:DD00")) }
@@ -603,6 +606,8 @@ class AsmEnemyTuningSourceTest {
             compilerSymbols = ("[labels]\n$header EnemyHeaders_TestZoomer\nA0:D47F EnemyHeaders_TestRipper\n" +
                 "A0:8000 EnemyHeaders_OutsidePicker\n$table EnemyVulnerabilities_Test\n$table EnemyVulnerabilities_Alias\n").toByteArray())
         val checked = protectEnemyTuningSource(source, a, drops, project, compiled())
+        val headered = protectEnemyTuningSource(source, a, drops, project, compiled(ByteArray(512) { 0x5A } + rom))
+        assertEquals(checked.sourceOwnedRanges, headered.sourceOwnedRanges, "Copier headers must not shift typed ownership claims")
         for (id in species) assertTrue(checked.sourceOwnedRanges.any {
             it.pcOffset == parser.snesToPc(0xA00000 or id) + 0x3C && it.length == 2
         }, "Protect the full pointer word, including species outside the picker: $id")
