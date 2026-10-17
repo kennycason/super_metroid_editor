@@ -281,7 +281,7 @@ internal class AsmWorkspaceState(
     private val sourceRedoStacks = mutableMapOf<String, MutableList<AsmSourceTextChange>>()
     var sourceSaveParticipant: AsmSourceSaveParticipant? = null
     var sourceEditorInterceptor: ((String, String, String) -> Boolean?)? = null
-    var sourceEditorLinks: ((String, Int) -> List<AsmEditorLink>)? = null
+    var sourceEditorLinks by mutableStateOf<((String, Int) -> List<AsmEditorLink>)?>(null)
     var roomSourceInspection by mutableStateOf<AsmRoomSourceInspection?>(null)
         private set
     var sourceIndexingInProgress by mutableStateOf(false)

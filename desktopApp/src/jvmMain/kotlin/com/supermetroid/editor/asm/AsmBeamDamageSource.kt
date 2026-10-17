@@ -16,7 +16,9 @@ internal data class AsmBeamDamageField(val key: String, val table: String, val s
 internal class AsmBeamDamageSource(val originalText: String) {
     val keys = ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) }.toSet()
     private data class Document(val text: String, val labels: List<MatchResult>,
-        val words: MutableMap<Pair<String, Int>, List<Pair<IntRange, String>>> = mutableMapOf())
+        val words: MutableMap<Pair<String, Int>, List<Pair<IntRange, String>>> = mutableMapOf()) {
+        val sections by lazy { AsmSourceSections(text) }
+    }
     private val documents = mutableListOf<Document>()
     private fun document(text: String): Document {
         documents.firstOrNull { it.text === text }?.let { return it }
@@ -73,6 +75,18 @@ internal class AsmBeamDamageSource(val originalText: String) {
         return AsmBeamDamageField(key, table, word.first, value, pointer, slot, binding.first)
     }
     fun original(key: String) = field(key, originalText)
+    /** Navigation needs a proven binding/section, not a valid numeric draft or a prior build. */
+    fun navigationKeysAt(text: String, line: Int): List<String> {
+        val sections = document(text).sections
+        val section = sections.at(line) ?: return emptyList()
+        return keys.filter { key -> runCatching {
+            val pointer = beamPointerLabel(key.endsWith("_charged"))
+            val binding = words(text, pointer, 12)[BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))]
+            val atBinding = sections.unique(pointer) == section &&
+                (sections.lineAt(binding.first.first) == line || line in section.labelLines)
+            atBinding || sections.unique(binding.second) == section
+        }.getOrDefault(false) }
+    }
     fun sectionLine(text: String): Int = labelLine(text, beamPointerLabel(false))
     private fun labelLine(text: String, name: String): Int {
         val label = document(text).labels.filter { it.groupValues[1] == name }

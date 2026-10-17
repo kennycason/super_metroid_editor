@@ -33,18 +33,9 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
     fun editorLinks(fileId: String, line: Int): List<AsmEditorLink> {
         if (fileId !in setOf(ENEMY_HEADER_SOURCE_FILE, ENEMY_DROP_SOURCE_FILE)) return emptyList()
         val (a, b) = texts()
-        val text = if (fileId == ENEMY_HEADER_SOURCE_FILE) a else b
-        var start = 0
-        repeat(line.coerceAtLeast(0)) { start = text.indexOf('\n', start).takeIf { it >= 0 }?.plus(1) ?: text.length }
-        val end = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
-        return catalog.keys.mapNotNull { key ->
-            val field = runCatching { catalog.field(key, a, b) }.getOrNull() ?: return@mapNotNull null
-            val atField = field.fileId == fileId && field.span.first in start..end
-            val atBinding = fileId == ENEMY_HEADER_SOURCE_FILE && field.bindingSpan?.first?.let { it in start..end } == true
-            if (!atField && !atBinding) return@mapNotNull null
-            val enemy = com.supermetroid.editor.ui.ENEMY_DEFS.single { it.speciesId == field.speciesId }
-            AsmEditorLink("Edit ${enemy.name} ${field.section.title}", "Reciprocal enemy data",
-                AsmEditorTarget.EnemyTuning(field.speciesId, field.section))
+        return catalog.navigationTargetsAt(a, b, fileId, line).map { target ->
+            val enemy = com.supermetroid.editor.ui.ENEMY_DEFS.single { it.speciesId == target.speciesId }
+            AsmEditorLink("Edit ${enemy.name} ${target.section.title}", "Reciprocal enemy data", target)
         }.distinctBy { it.target }
     }
     fun value(patch: SmPatch, key: String): AsmEnemyTuningView {

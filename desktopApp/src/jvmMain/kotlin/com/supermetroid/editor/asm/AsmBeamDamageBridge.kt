@@ -43,12 +43,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     fun editorLinks(file: String, line: Int): List<AsmEditorLink> {
         if (file != BEAM_DAMAGE_SOURCE_FILE) return emptyList()
         val text = text()
-        var start = 0
-        repeat(line.coerceAtLeast(0)) { start = text.indexOf('\n', start).takeIf { it >= 0 }?.plus(1) ?: text.length }
-        val end = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
-        return catalog.keys.mapNotNull { key ->
-            val field = runCatching { catalog.field(key, text) }.getOrNull() ?: return@mapNotNull null
-            if (field.span.first !in start..end && field.bindingSpan.first !in start..end) return@mapNotNull null
+        return catalog.navigationKeysAt(text, line).map { key ->
             val name = com.supermetroid.editor.ui.ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }.name
             AsmEditorLink("Edit $name ${if (key.endsWith("_charged")) "charged " else ""}damage",
                 "Reciprocal beam damage", AsmEditorTarget.BeamDamage(key))

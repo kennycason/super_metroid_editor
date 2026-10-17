@@ -109,6 +109,8 @@ build authority. Source/Assets expose direct layout editing, not an enable promp
 
 - Reciprocal beam damage — Base/combo normal and charged words have first-edit adoption, atomic legacy-config retirement, shared aliases, source Undo, navigation and field-scoped invalid drafts. Checked pointer/record layouts and compiler-resolved patch destinations protect relocation and unchanged bytes; real Asar, cold-build, canvas and headless-export tests cover the workflow. Remaining patch families still need an explicit ROM/ASM compatibility audit.
 
+- Context-aware source navigation — The caret-driven link bar and right-click **Visual Editor** share live/structured mappings for beams, enemies and room resources, explicit shared-resource choices and independent panes. Navigation preserves source ownership, history and Find Usages; interaction and viewport regressions cover editable and read-only source.
+
 ## Remaining — Prioritized
 
 ### Tier 1: High Impact, Next Up

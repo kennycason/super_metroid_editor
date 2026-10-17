@@ -2075,6 +2075,22 @@ Native routines remain untouched; opaque width/shrink behavior still fails prefl
 Tests cover nested negation, stale/invalid drafts, native checkpoints, unchanged BTS,
 history, compiled symbolic references, moved allocations and byte-identical cold builds.
 
+## Context-aware visual editor navigation
+
+The source link bar follows the editable caret or clicked read-only line, separately
+from navigation history and Find Usages. Right-click recognized code and choose
+**Visual Editor** to open its existing GUI. Shared resources offer an explicit,
+scrollable destination chooser instead of selecting a consumer silently. Split views
+keep independent contexts even when both display the same file.
+
+Beam labels/data blocks and enemy headers, HP/contact damage, drop and vulnerability
+tables use live symbolic bindings, including aliases and repairable invalid drafts.
+Structured room layouts, headers/states, selectors, doors, arrivals and project-room
+resources use their existing source identities. Unchanged reference sections can
+also reuse known semantic address mappings; shifted unsaved text never reuses stale
+indexed line addresses. Unknown code has no visual-editor action. These links are
+navigation only: they never adopt source, edit values or dirty the build.
+
 ## Reciprocal enemy HP, contact damage, drops and vulnerabilities
 
 In ASM source mode, the Enemy tabs edit the actual `%health(...)` / `%damage(...)`

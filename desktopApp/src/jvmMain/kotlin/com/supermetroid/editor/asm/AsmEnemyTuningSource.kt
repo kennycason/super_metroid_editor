@@ -28,7 +28,9 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
     private data class Document(val text: String, val labels: List<MatchResult>, val byName: Map<String, List<Int>>,
         val blocks: MutableMap<String, Pair<Int, String>> = mutableMapOf(),
         val arguments: MutableMap<Pair<String, String>, Pair<IntRange, String>> = mutableMapOf(),
-        val tables: MutableMap<Pair<String, AsmEnemyTuningSection>, List<Pair<IntRange, Int>>> = mutableMapOf())
+        val tables: MutableMap<Pair<String, AsmEnemyTuningSection>, List<Pair<IntRange, Int>>> = mutableMapOf()) {
+        val sections by lazy { AsmSourceSections(text) }
+    }
     private val documents = mutableListOf<Document>()
     private fun document(text: String): Document {
         documents.firstOrNull { it.text === text }?.let { return it }
@@ -129,6 +131,24 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
         return fields.also { document.tables[table to section] = it }
     }
     fun original(key: String) = originalFields.getOrPut(key) { runCatching { field(key, originalHeaders, originalDrops) } }.getOrThrow()
+    fun navigationTargetsAt(headerText: String, tableText: String, fileId: String, line: Int): List<AsmEditorTarget.EnemyTuning> {
+        val doc = document(if (fileId == ENEMY_HEADER_SOURCE_FILE) headerText else tableText)
+        val selected = doc.sections.at(line) ?: return emptyList()
+        return enemiesByKey.values.flatMap { enemy ->
+            val header = headers.getValue(enemy.speciesId)
+            if (fileId == ENEMY_HEADER_SOURCE_FILE) {
+                if (doc.sections.unique(header) != selected) emptyList() else {
+                    val sections = listOf(AsmEnemyTuningSection.DROPS, AsmEnemyTuningSection.VULNERABILITIES).filter { section ->
+                        runCatching { doc.sections.lineAt(argument(headerText, header, section.macro).first.first) == line }.getOrDefault(false)
+                    }.ifEmpty { listOf(AsmEnemyTuningSection.STATS) }
+                    sections.map { AsmEditorTarget.EnemyTuning(enemy.speciesId, it) }
+                }
+            } else listOf(AsmEnemyTuningSection.DROPS, AsmEnemyTuningSection.VULNERABILITIES).mapNotNull { section ->
+                val table = runCatching { argument(headerText, header, section.macro).second }.getOrNull()
+                if (table != null && doc.sections.unique(table) == selected) AsmEditorTarget.EnemyTuning(enemy.speciesId, section) else null
+            }
+        }
+    }
     /** A broken literal/table still has a useful repair destination; never guess among duplicate labels. */
     fun line(key: String, headers: String, tables: String): Pair<String, Int> {
         val field = runCatching { field(key, headers, tables) }.getOrNull()

@@ -111,6 +111,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.isBackPressed
 import androidx.compose.ui.input.pointer.isForwardPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -187,6 +189,7 @@ import com.supermetroid.editor.asm.AsmSourceLinter
 import com.supermetroid.editor.asm.AsmSourceUsage
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.AsmWorkspaceKind
+import com.supermetroid.editor.asm.AsmVisualEditorResolver
 import com.supermetroid.editor.asm.formatPcOffset
 import com.supermetroid.editor.asm.formatSnesAddress
 import com.supermetroid.editor.asm.parseAsmAddressQuery
@@ -267,6 +270,13 @@ private val ASM_CONTEXT_MENU_REPRESENTATION = object : ContextMenuRepresentation
             }
         }
     }
+}
+
+internal fun asmVisualEditorContextMenuItems(links: List<AsmEditorLink>, onOpen: (List<AsmEditorLink>) -> Unit): List<ContextMenuItem> {
+    val destinations = links.distinctBy { it.target }
+    return if (destinations.isEmpty()) emptyList() else listOf(
+        ContextMenuItem(if (destinations.size == 1) "Visual Editor" else "Visual Editor…") { onOpen(destinations) },
+    )
 }
 
 @Composable
@@ -2730,10 +2740,12 @@ private fun AsmSourceCanvas(
             index.addressAtlas.exactAt(source.id, lineIndex).firstOrNull()?.let { lineIndex to it }
         }.toMap()
     }
-    val compiledAddressesByLine = remember(state.buildReport?.generatedAt, source.id, state.workspaceKind) {
-        if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
-            state.buildReport?.takeIf { it.succeeded }?.symbols?.addressesFor(source.id).orEmpty()
-        } else emptyMap()
+    val currentCompiledAddresses = state.workspaceKind == AsmWorkspaceKind.PROJECT && !state.sourceBuildRequired
+    val compiledAddressesByLine = remember(currentCompiledAddresses, state.buildReport?.generatedAt, source.id) {
+        if (currentCompiledAddresses) state.buildReport?.symbols?.addressesFor(source.id).orEmpty() else emptyMap()
+    }
+    val visualEditorAddresses = remember(addressAnchorsByLine, compiledAddressesByLine) {
+        addressAnchorsByLine.mapValues { it.value.snesAddress } + compiledAddressesByLine
     }
     val minimumContentWidth = remember(source.id, fs.body, numberWidth, addressWidth) {
         val longestLine = source.lines.maxOfOrNull(String::length)?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
@@ -2743,27 +2755,36 @@ private fun AsmSourceCanvas(
     LaunchedEffect(pane.navigationSerial, source.id) {
         if (source.lines.isNotEmpty()) listState.scrollToItem(pane.lineIndex.coerceIn(source.lines.indices))
     }
-    val indexedExactAddress = addressAnchorsByLine[pane.lineIndex]
-    val compiledExactAddress = compiledAddressesByLine[pane.lineIndex]
-    val exactSnesAddress = compiledExactAddress ?: indexedExactAddress?.snesAddress
     val editorLines = remember(source, state.workspaceKind, state.sourceBufferRevision, state.roomSourceInspection) {
         if (state.workspaceKind == AsmWorkspaceKind.PROJECT) state.sourceEditorText(source.id).lines() else source.lines
     }
-    val editorLinks = remember(semanticIndex, exactSnesAddress, source, pane.lineIndex, editorLines) {
-        val address = exactSnesAddress
-        val layoutTarget = com.supermetroid.editor.asm.AsmRoomLayoutSource.targetAt(editorLines, pane.lineIndex)
-        val propertiesTarget = com.supermetroid.editor.asm.AsmRoomPropertiesSource.targetAt(editorLines, pane.lineIndex)
-        val selectorsTarget = com.supermetroid.editor.asm.AsmRoomSelectorsSource.targetAt(editorLines, pane.lineIndex)
-        val doorsTarget = com.supermetroid.editor.asm.AsmDoorSource.targetAt(editorLines, pane.lineIndex)
-        val arrivalTarget = com.supermetroid.editor.asm.AsmDoorArrivalsSource.targetAt(editorLines, pane.lineIndex)
-        val projectTarget = com.supermetroid.editor.asm.AsmProjectRoomLabels.sourceTarget(editorLines, pane.lineIndex)
-        if (layoutTarget != null || propertiesTarget != null || selectorsTarget != null || doorsTarget != null || arrivalTarget != null || projectTarget != null) listOf(com.supermetroid.editor.asm.AsmEditorLink(
-            "Edit room", if (layoutTarget != null) "Decoded layout · tile/BTS source" else if (propertiesTarget != null) "Room header / state fields" else if (doorsTarget != null) "Door connections" else if (arrivalTarget != null) "Arrival ASM" else if (projectTarget != null) "Project room source" else "State selectors / branch order", layoutTarget ?: propertiesTarget ?: selectorsTarget ?: doorsTarget ?: arrivalTarget ?: projectTarget!!))
-        else ((if (state.workspaceKind == AsmWorkspaceKind.PROJECT) state.sourceEditorLinks?.invoke(source.id, pane.lineIndex).orEmpty() else emptyList()) +
-            if (semanticIndex == null || address == null) emptyList() else semanticIndex.linksFor(address)).distinctBy { it.target }
+    var visualEditorLine by remember(pane.id, source.id, pane.navigationSerial, state.editSessionSerial, state.workspaceKind) {
+        mutableStateOf(pane.lineIndex)
     }
-    val roomSourceLinks = remember(index, semanticIndex, source, pane.lineIndex, state.workspaceKind, state.sourceBufferRevision, state.roomSourceInspection) {
-        asmRoomSourceLinksAt(index, source, pane.lineIndex, semanticIndex,
+    val visualEditors = remember(source, editorLines, semanticIndex, visualEditorAddresses, state.workspaceKind, state.sourceEditorLinks) {
+        AsmVisualEditorResolver(source, editorLines, semanticIndex, visualEditorAddresses,
+            if (state.workspaceKind == AsmWorkspaceKind.PROJECT) ({ line -> state.sourceEditorLinks?.invoke(source.id, line).orEmpty() }) else null)
+    }
+    val editorLinks = visualEditors.linksAt(visualEditorLine)
+    var visualEditorChoices by remember(pane.id, source.id, pane.navigationSerial) { mutableStateOf(emptyList<AsmEditorLink>()) }
+    fun openVisualEditors(links: List<AsmEditorLink>) {
+        if (links.size == 1) onOpenInEditor(links.single().target) else visualEditorChoices = links
+    }
+    if (visualEditorChoices.isNotEmpty()) {
+        AlertDialog(onDismissRequest = { visualEditorChoices = emptyList() }, title = { Text("Visual Editor") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(visualEditorChoices.size) { position ->
+                        val link = visualEditorChoices[position]
+                        TextButton(onClick = { visualEditorChoices = emptyList(); onOpenInEditor(link.target) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth()) { Text(link.title); Text(link.detail, fontSize = fs.detail) }
+                        }
+                    }
+                }
+            }, confirmButton = { TextButton(onClick = { visualEditorChoices = emptyList() }) { Text("Close") } })
+    }
+    val roomSourceLinks = remember(index, semanticIndex, source, visualEditorLine, state.workspaceKind, state.sourceBufferRevision, state.roomSourceInspection) {
+        asmRoomSourceLinksAt(index, source, visualEditorLine, semanticIndex,
             if (state.workspaceKind == AsmWorkspaceKind.PROJECT) state.sourceEditorText(source.id) else null)
     }
     val referenceLabel = remember(index, source.id, pane.lineIndex, pane.referenceSymbol) {
@@ -2927,7 +2948,7 @@ private fun AsmSourceCanvas(
                     fontSize = fs.detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
             }
-            AsmEditorLinkBar(editorLinks, onOpenInEditor)
+            AsmEditorLinkBar(editorLinks, onOpenInEditor, Modifier.testTag("asm-visual-editor-links-${pane.id}"))
             AsmRoomSourceActions(roomSourceLinks, onOpenRoomSource)
             when {
                 referenceLabel != null -> AsmReferencesBar(state, index, referenceLabel, labelUsages)
@@ -2941,84 +2962,92 @@ private fun AsmSourceCanvas(
                 onRun = onRunInEmulator,
                 find = find,
                 editorFocusRequester = textFocus,
+                onContextLineChanged = { visualEditorLine = it },
+                visualEditorLinksAt = visualEditors::linksAt,
+                onOpenVisualEditors = ::openVisualEditors,
                 modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
             )
         } else {
             if (state.hasProjectWorkspace) {
                 AsmReadOnlySourceNotice(onOpenProjectSource = state::showProjectWorkspace)
             }
-            AsmEditorLinkBar(editorLinks, onOpenInEditor)
+            AsmEditorLinkBar(editorLinks, onOpenInEditor, Modifier.testTag("asm-visual-editor-links-${pane.id}"))
             AsmRoomSourceActions(roomSourceLinks, onOpenRoomSource)
             when {
                 referenceLabel != null -> AsmReferencesBar(state, index, referenceLabel, labelUsages)
                 referenceMacro != null -> AsmMacroReferencesBar(state, index, referenceMacro, macroUsages)
             }
-            AsmScrollableTextPane(
-                listState = listState,
-                horizontalState = horizontal,
-                minimumContentWidth = minimumContentWidth,
-                focusKey = source.id,
-                onFind = find::show,
-                onBack = state::goBack,
-                onForward = state::goForward,
-                modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
-                externalFocusRequester = textFocus,
-            ) {
-                items(source.lines.size, key = { it }) { lineIndex ->
-                    val selected = lineIndex == pane.lineIndex
-                    Row(
-                        Modifier.fillMaxWidth()
-                            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
-                            .padding(vertical = 1.dp),
-                        verticalAlignment = Alignment.Top,
+            CompositionLocalProvider(LocalContextMenuRepresentation provides ASM_CONTEXT_MENU_REPRESENTATION) {
+                ContextMenuDataProvider(items = { asmVisualEditorContextMenuItems(visualEditors.linksAt(visualEditorLine), ::openVisualEditors) }) {
+                    AsmScrollableTextPane(
+                        listState = listState,
+                        horizontalState = horizontal,
+                        minimumContentWidth = minimumContentWidth,
+                        focusKey = source.id,
+                        onFind = find::show,
+                        onBack = state::goBack,
+                        onForward = state::goForward,
+                        modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
+                        externalFocusRequester = textFocus,
                     ) {
-                        DisableSelection {
-                            Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
-                                Text(
-                                    (lineIndex + 1).toString(),
-                                    fontSize = fs.detail,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                    softWrap = false,
-                                    maxLines = 1,
-                                    modifier = Modifier.width(numberWidth).padding(end = 10.dp),
-                                )
-                                Text(
-                                    addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
-                                    fontSize = fs.detail,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                    softWrap = false,
-                                    maxLines = 1,
-                                    modifier = Modifier.width(addressWidth).padding(end = 10.dp),
-                                )
-                            }
-                        }
-                        val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
-                        Box(Modifier.weight(1f)) {
-                            AsmSelectableLinkedText(
-                                text = asmHighlightDocumentMatches(annotated, lineOffsets[lineIndex], find, Color(0xFFFFC857)),
-                                style = TextStyle(
-                                    fontSize = fs.body,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = codeForeground(),
-                                ),
-                                onAnnotationClick = { annotation ->
-                                    when (annotation.tag) {
-                                        "label" -> state.openLabel(source.id, lineIndex, annotation.item)
-                                        "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
-                                        "asset" -> state.openAssetReference(annotation.item)
-                                        "source" -> state.openSource(annotation.item)
-                                        "instruction" -> state.showInstruction(annotation.item)
-                                        "macro" -> index.resolveMacro(annotation.item)?.let { macro ->
-                                            state.openMacro(macro)
-                                        }
-                                        "macroDefinition" -> index.resolveMacro(annotation.item)
-                                            ?.let(state::showMacroReferences)
-                                        "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
+                        items(source.lines.size, key = { it }) { lineIndex ->
+                            val selected = lineIndex == pane.lineIndex
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { visualEditorLine = lineIndex }
+                                    .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
+                                    .padding(vertical = 1.dp),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                DisableSelection {
+                                    Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
+                                        Text(
+                                            (lineIndex + 1).toString(),
+                                            fontSize = fs.detail,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                            softWrap = false,
+                                            maxLines = 1,
+                                            modifier = Modifier.width(numberWidth).padding(end = 10.dp),
+                                        )
+                                        Text(
+                                            addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
+                                            fontSize = fs.detail,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                            softWrap = false,
+                                            maxLines = 1,
+                                            modifier = Modifier.width(addressWidth).padding(end = 10.dp),
+                                        )
                                     }
                                 }
-                            )
+                                val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
+                                Box(Modifier.weight(1f)) {
+                                    AsmSelectableLinkedText(
+                                        text = asmHighlightDocumentMatches(annotated, lineOffsets[lineIndex], find, Color(0xFFFFC857)),
+                                        style = TextStyle(
+                                            fontSize = fs.body,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = codeForeground(),
+                                        ),
+                                        onAnnotationClick = { annotation ->
+                                            when (annotation.tag) {
+                                                "label" -> state.openLabel(source.id, lineIndex, annotation.item)
+                                                "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
+                                                "asset" -> state.openAssetReference(annotation.item)
+                                                "source" -> state.openSource(annotation.item)
+                                                "instruction" -> state.showInstruction(annotation.item)
+                                                "macro" -> index.resolveMacro(annotation.item)?.let { macro ->
+                                                    state.openMacro(macro)
+                                                }
+                                                "macroDefinition" -> index.resolveMacro(annotation.item)
+                                                    ?.let(state::showMacroReferences)
+                                                "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -3262,6 +3291,9 @@ private fun AsmEditableSourcePane(
     onRun: (() -> Unit)?,
     find: AsmDocumentFindState,
     editorFocusRequester: FocusRequester,
+    onContextLineChanged: (Int) -> Unit,
+    visualEditorLinksAt: (Int) -> List<AsmEditorLink>,
+    onOpenVisualEditors: (List<AsmEditorLink>) -> Unit,
     modifier: Modifier,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -3312,6 +3344,9 @@ private fun AsmEditableSourcePane(
     var completionFromTyping by remember(pageKey) { mutableStateOf(false) }
     var selectedCompletionIndex by remember(pageKey) { mutableStateOf(0) }
     var dismissedCompletionSignature by remember(pageKey) { mutableStateOf<String?>(null) }
+    LaunchedEffect(fieldValue.selection, fieldValue.text, pageKey) {
+        onContextLineChanged(page.startLine + asmLineIndexAtOffset(fieldValue.text, fieldValue.selection.end.coerceIn(0, fieldValue.text.length)))
+    }
     LaunchedEffect(source.id, page.startLine, state.sourceBufferRevision, state.roomSourceInspection) {
         val latest = asmSourceEditPage(state.sourceEditorText(source.id), page.startLine, ASM_EDIT_PAGE_LINES)
         if (latest.text != fieldValue.text) {
@@ -3670,6 +3705,9 @@ private fun AsmEditableSourcePane(
                     ContextMenuDataProvider(
                         items = {
                             buildList {
+                                val contextLine = page.startLine + asmLineIndexAtOffset(fieldValue.text,
+                                    (contextMenuOffset ?: fieldValue.selection.end).coerceIn(0, fieldValue.text.length))
+                                addAll(asmVisualEditorContextMenuItems(visualEditorLinksAt(contextLine), onOpenVisualEditors))
                                 add(ContextMenuItem("Undo\t$ASM_MODIFIER_LABEL+Z") {
                                     state.activateSourcePane(pane.id)
                                     state.undoSourceEdit(source.id)
@@ -3729,11 +3767,12 @@ private fun AsmEditableSourcePane(
                         BasicTextField(
                         value = fieldValue,
                         onValueChange = { updated ->
+                            if (updated.selection != fieldValue.selection || updated.text != fieldValue.text) contextMenuOffset = null
                             completionFromTyping = asmAutomaticCompletionRequested(fieldValue, updated)
                             completionExplicit = false
                             applyEditorValue(asmApplyAutomaticIndentation(fieldValue, updated))
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).testTag("asm-source-editor-${pane.id}")
                         .focusRequester(editorFocusRequester)
                         .onFocusChanged { focus ->
                             if (focus.isFocused) state.activateSourcePane(pane.id)
@@ -3841,8 +3880,9 @@ private fun AsmEditableSourcePane(
                             completionFromTyping = false
                             completionExplicit = false
                             val change = event.changes.firstOrNull() ?: return@onPointerEvent
-                            if (mouse?.button == MouseEvent.BUTTON3) {
+                            if (mouse?.button == MouseEvent.BUTTON3 || event.buttons.isSecondaryPressed) {
                                 contextMenuOffset = fieldLayout?.getOffsetForPosition(change.position)
+                                contextMenuOffset?.let { offset -> onContextLineChanged(page.startLine + asmLineIndexAtOffset(fieldValue.text, offset)) }
                                 return@onPointerEvent
                             }
                             // Resolve definition gestures on press. AWT release events can report
@@ -4639,6 +4679,7 @@ private fun AsmSelectableLinkedText(
                         pass = PointerEventPass.Initial,
                     )
                     val pressMouseEvent = currentEvent.nativeEvent as? MouseEvent
+                    val secondaryPress = currentEvent.buttons.isSecondaryPressed || pressMouseEvent?.button == MouseEvent.BUTTON3
                     var releasePosition = down.position
                     var releaseMouseEvent: MouseEvent? = null
                     var released = false
@@ -4661,8 +4702,8 @@ private fun AsmSelectableLinkedText(
                     val releasedButton = releaseMouseEvent?.button
                         ?.takeUnless { it == MouseEvent.NOBUTTON }
                         ?: pressMouseEvent?.button
-                    val isLinkRelease = releasedButton == null ||
-                        releasedButton == MouseEvent.BUTTON1 || releasedButton == MouseEvent.BUTTON2
+                    val isLinkRelease = !secondaryPress && (releasedButton == null ||
+                        releasedButton == MouseEvent.BUTTON1 || releasedButton == MouseEvent.BUTTON2)
                     if (released && !movedBeyondClick && isLinkRelease) {
                         val offset = layoutResult?.getOffsetForPosition(releasePosition) ?: return@awaitEachGesture
                         asmStringAnnotationAt(text, offset)?.let(onAnnotationClick)
@@ -4973,6 +5014,7 @@ internal fun AsmRoomSourceActions(links: List<AsmRoomSourceLink>, onOpen: ((AsmR
 private fun AsmEditorLinkBar(
     links: List<AsmEditorLink>,
     onOpenInEditor: (AsmEditorTarget) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     if (links.isEmpty()) return
     val fs = LocalEditorTheme.current.fontSize.value
@@ -4980,7 +5022,7 @@ private fun AsmEditorLinkBar(
     val roomLinks = links.all { it.target is AsmEditorTarget.Room }
     Surface(
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Text(

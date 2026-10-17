@@ -5,6 +5,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ComposeScene
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -44,12 +47,12 @@ class AsmBeamDamageSourceTest {
         val bridge get() = assertNotNull(editor.beamDamageBridge)
         fun text() = workspace.projectSourceText(BEAM_DAMAGE_SOURCE_FILE)
     }
-    private suspend fun fixture(): Fixture {
+    private suspend fun fixture(roomSourceText: String = "; Unrelated room source\n"): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }
         File(src, "main.asm").writeText("incsrc bank_93.asm\nincsrc bank_8F.asm\n")
         File(src, BEAM_DAMAGE_SOURCE_FILE).writeText(source)
-        File(src, PLM_SOURCE_FILE).writeText("; Unrelated room source\n")
+        File(src, PLM_SOURCE_FILE).writeText(roomSourceText)
         val reference = AsmReferenceWorkspace(src.parentFile,
             AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "base.sfc", "ab".repeat(32), 0x300000, 0),
             AsmSourceParser().parse(src, data, emptyList()))
@@ -83,6 +86,8 @@ class AsmBeamDamageSourceTest {
         val project = Json.encodeToString(SmEditProject.serializer(), f.project)
         val dirty = f.editor.dirty
         bridge.view("power"); bridge.line("power"); bridge.line(null)
+        val labelLine = f.text().take(f.text().indexOf("${table("power")}:" )).count { it == '\n' }
+        assertTrue(bridge.editorLinks(BEAM_DAMAGE_SOURCE_FILE, labelLine).any { it.target == AsmEditorTarget.BeamDamage("power") })
         assertTrue(bridge.editorLinks(BEAM_DAMAGE_SOURCE_FILE, bridge.line("power")).any { it.target == AsmEditorTarget.BeamDamage("power") })
         assertTrue(f.editor.openBeamDamageSource("power"))
         assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text()))
@@ -131,6 +136,7 @@ class AsmBeamDamageSourceTest {
         val normal = f.bridge.catalog.field("power", f.text())
         assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(normal.span, "40+1")))
         assertNotNull(f.bridge.view("power").problem); assertEquals(40, f.bridge.view("power").value)
+        assertTrue(f.bridge.editorLinks(BEAM_DAMAGE_SOURCE_FILE, f.bridge.line("power")).any { it.target == AsmEditorTarget.BeamDamage("power") })
         assertNull(f.bridge.view("power_charged").problem); assertNull(f.bridge.view("ice").problem)
         assertTrue(f.bridge.line("power") >= 0)
         f.bridge.edit("ice", 57)
@@ -241,6 +247,151 @@ class AsmBeamDamageSourceTest {
         assertEquals(movedPc, relocated.beamDamageLocations["power"])
         assertTrue(relocated.sourceOwnedRanges.none { movedPc in it.pcOffset until it.pcOffset + it.length })
         assertTrue(relocated.sourceOwnedRanges.any { it.pcOffset == movedPc + 2 && it.length == 20 })
+    }
+
+    private suspend fun withSourceCanvas(f: Fixture, width: Int = 1400,
+        check: suspend (ComposeScene, suspend () -> Unit, MutableList<AsmEditorTarget>) -> Unit) {
+        val scene = ComposeScene()
+        val surface = Surface.makeRasterN32Premul(width, 1000)
+        val opened = mutableListOf<AsmEditorTarget>()
+        try {
+            scene.constraints = Constraints(maxWidth = width, maxHeight = 1000)
+            scene.setContent { MaterialTheme { AsmWorkspaceCanvas(f.workspace, onOpenInEditor = opened::add) } }
+            var time = System.nanoTime()
+            val render: suspend () -> Unit = { repeat(10) { Snapshot.sendApplyNotifications(); yield(); time += 16_666_667; scene.render(surface.canvas, time); yield() }; Unit }
+            render(); check(scene, render, opened)
+        } finally { scene.close(); surface.close() }
+    }
+    private fun sourceNodes(scene: ComposeScene): List<SemanticsNode> {
+        fun walk(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::walk)
+        return scene.roots.flatMap { walk(it.semanticsOwner.unmergedRootSemanticsNode) }
+    }
+    private fun sourceField(scene: ComposeScene, pane: Long) = sourceNodes(scene).single {
+        it.config.getOrNull(SemanticsProperties.TestTag) == "asm-source-editor-$pane"
+    }
+    private fun fieldOffset(node: SemanticsNode, key: String): Int {
+        val text = node.config[SemanticsProperties.EditableText].text
+        val label = text.indexOf("${table(key)}:")
+        assertTrue(label >= 0, "$key must be in the current source page")
+        return text.indexOf("dw ", label) + 3
+    }
+    private fun sourceText(scene: ComposeScene, text: String) = sourceNodes(scene).single {
+        it.config.getOrNull(SemanticsProperties.Text)?.singleOrNull()?.text == text
+    }
+    private fun clickSourceAction(scene: ComposeScene, text: String) {
+        fun contains(node: SemanticsNode): Boolean = node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == text } || node.children.any(::contains)
+        val action = sourceNodes(scene).lastOrNull { it.config.getOrNull(SemanticsActions.OnClick)?.action != null && contains(it) }
+        assertTrue(assertNotNull(action, "Missing action: $text").config[SemanticsActions.OnClick].action!!.invoke())
+    }
+    private fun selectField(scene: ComposeScene, pane: Long, key: String) {
+        val node = sourceField(scene, pane); val at = fieldOffset(node, key)
+        assertTrue(node.config[SemanticsActions.SetSelection].action!!.invoke(at, at, false))
+    }
+    private fun rightClickField(scene: ComposeScene, pane: Long, key: String) {
+        val node = sourceField(scene, pane)
+        val layouts = mutableListOf<TextLayoutResult>()
+        assertTrue(node.config[SemanticsActions.GetTextLayoutResult].action!!.invoke(layouts))
+        val rect = layouts.single().getCursorRect(fieldOffset(node, key))
+        val point = node.positionInRoot + Offset(rect.left + 3f, rect.center.y)
+        assertTrue(point.y in 0f..1000f, "Right-click target must be visible: $point")
+        scene.sendPointerEvent(PointerEventType.Press, point, button = PointerButton.Secondary)
+        scene.sendPointerEvent(PointerEventType.Release, point, button = PointerButton.Secondary)
+    }
+
+    @Test fun `source caret follows beam fields without changing text history or Find Usages`() = runBlocking {
+        val f = fixture()
+        val labelLine = f.text().take(f.text().indexOf("${table("ice")}:" )).count { it == '\n' }
+        f.workspace.openSource(BEAM_DAMAGE_SOURCE_FILE, labelLine)
+        assertTrue(f.workspace.findLabelUsages(BEAM_DAMAGE_SOURCE_FILE, labelLine, table("ice")))
+        val pane = f.workspace.activeSourcePaneId
+        val before = f.text(); val revision = f.workspace.sourceBufferRevision
+        val navigation = f.workspace.navigationSerial; val references = f.workspace.activeReferenceSymbol
+        val back = f.workspace.canGoBack; val forward = f.workspace.canGoForward
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        withSourceCanvas(f) { scene, render, opened ->
+            selectField(scene, pane, "wave"); render()
+            assertTrue(sourceText(scene, "Edit Wave Beam damage").config[SemanticsActions.OnClick].action!!.invoke())
+            assertEquals(AsmEditorTarget.BeamDamage("wave"), opened.single())
+            selectField(scene, pane, "wave_charged"); render()
+            sourceText(scene, "Edit Wave Beam charged damage")
+            assertEquals(navigation, f.workspace.navigationSerial)
+            assertEquals(references, f.workspace.activeReferenceSymbol)
+            assertEquals(back, f.workspace.canGoBack); assertEquals(forward, f.workspace.canGoForward)
+            assertEquals(revision, f.workspace.sourceBufferRevision); assertEquals(before, f.text())
+            assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        }
+    }
+
+    @Test fun `right click uses clicked wave field rather than ice caret and offers shared destinations explicitly`() = runBlocking {
+        val f = fixture()
+        f.workspace.openSource(BEAM_DAMAGE_SOURCE_FILE, f.bridge.line("ice"))
+        val pane = f.workspace.activeSourcePaneId
+        withSourceCanvas(f) { scene, render, opened ->
+            selectField(scene, pane, "ice"); render()
+            sourceText(scene, "Edit Ice Beam damage")
+            val before = f.text(); val revision = f.workspace.sourceBufferRevision; val navigation = f.workspace.navigationSerial
+            rightClickField(scene, pane, "wave"); render()
+            clickSourceAction(scene, "Visual Editor"); render()
+            assertEquals<List<AsmEditorTarget>>(listOf(AsmEditorTarget.BeamDamage("wave")), opened.toList())
+            // Desktop text selection may select the right-clicked word; it must not navigate or edit source.
+            assertEquals(before, f.text()); assertEquals(revision, f.workspace.sourceBufferRevision); assertEquals(navigation, f.workspace.navigationSerial)
+            // A live rebinding creates two consumers. Neither the menu nor the link bar may choose one silently.
+            val binding = f.bridge.catalog.field("power", f.text()).bindingSpan
+            assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(binding, table("wave"))))
+            render()
+            rightClickField(scene, pane, "wave"); render()
+            clickSourceAction(scene, "Visual Editor…"); render()
+            assertEquals(1, opened.size)
+            clickSourceAction(scene, "Edit Wave Beam damage"); render()
+            assertEquals<List<AsmEditorTarget>>(listOf(AsmEditorTarget.BeamDamage("wave"), AsmEditorTarget.BeamDamage("wave")), opened.toList())
+        }
+    }
+
+    @Test fun `split panes keep independent visual editor caret contexts`() = runBlocking {
+        val f = fixture()
+        f.workspace.openSource(BEAM_DAMAGE_SOURCE_FILE, f.bridge.line("ice"))
+        val left = f.workspace.activeSourcePaneId
+        f.workspace.splitActiveSource()
+        val right = f.workspace.activeSourcePaneId
+        assertNotEquals(left, right)
+        withSourceCanvas(f, width = 1800) { scene, render, _ ->
+            selectField(scene, left, "wave"); render()
+            selectField(scene, right, "power"); render()
+            fun textInBar(pane: Long): List<String> {
+                val bar = sourceNodes(scene).single { it.config.getOrNull(SemanticsProperties.TestTag) == "asm-visual-editor-links-$pane" }
+                fun walk(node: SemanticsNode): List<String> = node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } + node.children.flatMap(::walk)
+                return walk(bar)
+            }
+            assertContains(textInBar(left), "Edit Wave Beam damage")
+            assertContains(textInBar(right), "Edit Power Beam damage")
+            assertTrue(f.project.asmWorkspace.beamDamageSourceKeys.isEmpty())
+        }
+    }
+
+    @Test fun `read only source menu follows the clicked room and leaves unrelated code without a visual action`() = runBlocking {
+        val f = fixture("macro SmeditRoomInfo_91F8_Header()\n    dw ${'$'}0001\nendmacro\n" +
+            "macro SmeditRoomInfo_9879_Header()\n    dw ${'$'}0002\nendmacro\n    nop\n")
+        val reference = assertNotNull(f.workspace.projectWorkspace).referenceWorkspace
+        val readonly = AsmWorkspaceState(installedReferenceLoader = { reference })
+        readonly.loadInstalled(); readonly.openSource(PLM_SOURCE_FILE, 0)
+        val navigation = readonly.navigationSerial
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        withSourceCanvas(Fixture(f.editor, readonly)) { scene, render, opened ->
+            fun rightClick(text: String) {
+                val point = sourceText(scene, text).boundsInRoot.center
+                scene.sendPointerEvent(PointerEventType.Press, point, button = PointerButton.Secondary)
+                scene.sendPointerEvent(PointerEventType.Release, point, button = PointerButton.Secondary)
+            }
+            rightClick("    dw ${'$'}0002"); render()
+            clickSourceAction(scene, "Visual Editor"); render()
+            assertEquals(AsmEditorTarget.Room(0x9879), opened.single())
+            rightClick("    nop"); render()
+            assertFalse(sourceNodes(scene).any { it.config.getOrNull(SemanticsProperties.Text).orEmpty().any { text -> text.text.startsWith("Visual Editor") } })
+            assertEquals(AsmBrowserMode.SOURCE, readonly.browserMode)
+            assertEquals(navigation, readonly.navigationSerial)
+            assertFalse(readonly.hasProjectWorkspace)
+            assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        }
     }
 
     @Test fun `beam ASM links fit one line at every font size in both panel layouts`() = runBlocking {

@@ -545,6 +545,29 @@ class AsmEnemyTuningSourceTest {
         assertEquals(10, patch.configData!!["zoomer_drop0"]); assertEquals(20, patch.configData!!["ripper_drop0"])
     }
 
+    @Test fun `visual navigation recognizes headers bindings shared table labels and invalid drafts without adopting source`() = runBlocking {
+        val f = fixture()
+        fun line(text: String, token: String) = text.take(text.indexOf(token).also { assertTrue(it >= 0) }).count { it == '\n' }
+        fun links(file: String, token: String) = f.bridge.editorLinks(file, line(if (file == ENEMY_HEADER_SOURCE_FILE) f.a() else f.b(), token)).map { it.target }
+        assertEquals(listOf(AsmEditorTarget.EnemyTuning(0xDCFF)), links(ENEMY_HEADER_SOURCE_FILE, "EnemyHeaders_TestZoomer:"))
+        assertEquals(listOf(AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.DROPS)), links(ENEMY_HEADER_SOURCE_FILE, "%drops("))
+        assertEquals(listOf(AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.VULNERABILITIES)), links(ENEMY_HEADER_SOURCE_FILE, "%vulnerabilities("))
+        val drops = listOf(AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.DROPS), AsmEditorTarget.EnemyTuning(0xD47F, AsmEnemyTuningSection.DROPS))
+        for (token in listOf("EnemyDropChances_Test:", "EnemyDropChances_Alias:", "db ${'$'}37")) assertEquals(drops, links(ENEMY_DROP_SOURCE_FILE, token))
+        assertTrue(links(ENEMY_DROP_SOURCE_FILE, "Next_Table:").isEmpty())
+        val b = f.b()
+        assertTrue(f.workspace.updateSourceEditText(ENEMY_DROP_SOURCE_FILE, "; inserted\n" + b.replace("${'$'}37", "broken_draft")))
+        val revision = f.workspace.sourceBufferRevision
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        assertEquals(drops, links(ENEMY_DROP_SOURCE_FILE, "broken_draft"))
+        assertNotNull(f.bridge.view("zoomer_drop0").problem)
+        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(revision, f.workspace.sourceBufferRevision)
+        val vulnerabilities = links(ENEMY_DROP_SOURCE_FILE, "EnemyVulnerabilities_Alias:")
+        assertTrue(vulnerabilities.containsAll(listOf(AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.VULNERABILITIES),
+            AsmEditorTarget.EnemyTuning(0xD47F, AsmEnemyTuningSection.VULNERABILITIES))))
+    }
+
     @Test fun `raw source edits migrate just touched scalar config and unchanged inspection never dirties ownership`() = runBlocking {
         val f = fixture()
         val patch = SmPatch("stats", "Stats", enabled = true, configType = "enemy_stats", configData = mutableMapOf("zoomer_hp" to 40))
