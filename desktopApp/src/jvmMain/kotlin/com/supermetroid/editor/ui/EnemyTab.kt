@@ -29,18 +29,23 @@ import com.supermetroid.editor.asm.AsmEnemyTuningSection
 // Shared sub-tab state (survives recomposition across sidebar/canvas)
 private var enemySubTab = mutableStateOf(0)
 private val tuningSelection = mutableStateOf(0 to 0)
-internal fun selectEnemyTuning(speciesId: Int, drops: Boolean) {
-    enemySubTab.value = if (drops) 1 else 0
+internal fun selectEnemyTuning(speciesId: Int, section: AsmEnemyTuningSection) {
+    enemySubTab.value = when (section) {
+        AsmEnemyTuningSection.STATS -> 0
+        AsmEnemyTuningSection.DROPS -> 1
+        AsmEnemyTuningSection.VULNERABILITIES -> 2
+    }
     tuningSelection.value = speciesId to (tuningSelection.value.second + 1)
 }
+internal fun selectedEnemyTuningSpecies(): Int = tuningSelection.value.first
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun enemyTuningFocus(speciesId: Int): Modifier {
+internal fun enemyTuningFocus(speciesId: Int, highlighted: Boolean? = null): Modifier {
     val selection = tuningSelection.value
     val requester = remember(speciesId) { BringIntoViewRequester() }
     LaunchedEffect(selection) { if (selection.first == speciesId) requester.bringIntoView() }
-    return Modifier.bringIntoViewRequester(requester).then(if (selection.first == speciesId)
+    return Modifier.bringIntoViewRequester(requester).then(if (highlighted ?: (selection.first == speciesId))
         Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)) else Modifier)
 }
 
@@ -100,6 +105,6 @@ fun EnemyTabCanvas(
     when (subTab) {
         0 -> EnemyStatsEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
         1 -> EnemyDropRateEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
-        2 -> EnemyVulnerabilityEditor(patch, editorState, romParser, modifier)
+        2 -> EnemyVulnerabilityEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
     }
 }

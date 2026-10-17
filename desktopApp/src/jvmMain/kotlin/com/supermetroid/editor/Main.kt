@@ -671,7 +671,7 @@ fun main() = application {
                             leftTab = TAB_SPRITES
                         }
                         is AsmEditorTarget.EnemyTuning -> {
-                            com.supermetroid.editor.ui.selectEnemyTuning(target.speciesId, target.drops)
+                            com.supermetroid.editor.ui.selectEnemyTuning(target.speciesId, target.section)
                             leftTab = TAB_ENEMY
                         }
                         is AsmEditorTarget.Sound -> {

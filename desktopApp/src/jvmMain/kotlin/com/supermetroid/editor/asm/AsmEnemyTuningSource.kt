@@ -11,13 +11,24 @@ internal enum class AsmEnemyTuningSection(val fileId: String, val labelPrefix: S
     STATS(ENEMY_HEADER_SOURCE_FILE, "EnemyHeaders_"),
     DROPS(ENEMY_DROP_SOURCE_FILE, "EnemyDropChances_"),
     VULNERABILITIES(ENEMY_DROP_SOURCE_FILE, "EnemyVulnerabilities_"),
-}
-internal data class AsmEnemyTuningField(val key: String, val speciesId: Int, val header: String, val offset: Int,
-    val fileId: String, val span: IntRange, val value: Int, val table: String? = null, val bindingSpan: IntRange? = null)
+    ;
 
-/** Strict lenses into native EnemyHeader arguments and six-byte drop tables, not an Asar evaluator. */
+    val tableSize: Int get() = when (this) { STATS -> 0; DROPS -> 6; VULNERABILITIES -> 22 }
+    val pointerOffset: Int get() = when (this) { STATS -> error("Stats are inline."); DROPS -> 0x3A; VULNERABILITIES -> 0x3C }
+    val macro: String get() = when (this) { STATS -> error("Stats have individual arguments."); DROPS -> "drops"; VULNERABILITIES -> "vulnerabilities" }
+    val title: String get() = when (this) { STATS -> "stats"; DROPS -> "drops"; VULNERABILITIES -> "vulnerabilities" }
+}
+internal val ENEMY_TUNING_CONFIG_TYPES = setOf("enemy_stats", "enemy_drops", "enemy_vuln")
+internal data class AsmEnemyTuningField(val key: String, val speciesId: Int, val header: String, val offset: Int,
+    val fileId: String, val span: IntRange, val value: Int, val table: String? = null, val bindingSpan: IntRange? = null,
+    val section: AsmEnemyTuningSection = AsmEnemyTuningSection.STATS)
+
+/** Strict lenses into native EnemyHeader arguments and drop/vulnerability tables, not an Asar evaluator. */
 internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDrops: String) {
-    private data class Document(val text: String, val labels: List<MatchResult>, val byName: Map<String, List<Int>>)
+    private data class Document(val text: String, val labels: List<MatchResult>, val byName: Map<String, List<Int>>,
+        val blocks: MutableMap<String, Pair<Int, String>> = mutableMapOf(),
+        val arguments: MutableMap<Pair<String, String>, Pair<IntRange, String>> = mutableMapOf(),
+        val tables: MutableMap<Pair<String, AsmEnemyTuningSection>, List<Pair<IntRange, Int>>> = mutableMapOf())
     private val documents = mutableListOf<Document>()
     private fun document(text: String): Document {
         documents.firstOrNull { it.text === text }?.let { return it }
@@ -36,11 +47,15 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
     }
     val headers: Map<Int, String> = Regex("(?m)^(EnemyHeaders_[A-Za-z0-9_]+):[^\\r\\n]*;A0([0-9A-F]{4});")
         .findAll(originalHeaders).associate { it.groupValues[2].toInt(16) to it.groupValues[1] }
-    val keys = ENEMY_DEFS.filter { it.speciesId in headers }.flatMap { enemy ->
-        listOf("${enemy.key}_hp", "${enemy.key}_dmg") + (0..5).map { "${enemy.key}_drop$it" }
+    private val enemiesByKey = ENEMY_DEFS.filter { it.speciesId in headers }.associateBy { it.key }
+    private val originalFields = mutableMapOf<String, Result<AsmEnemyTuningField>>()
+    val keys = enemiesByKey.values.flatMap { enemy ->
+        listOf("${enemy.key}_hp", "${enemy.key}_dmg") + (0..5).map { "${enemy.key}_drop$it" } +
+            (0..21).map { "${enemy.key}_vuln$it" }
     }.toSet()
     private fun block(text: String, label: String): Pair<Int, String> {
         val document = document(text)
+        document.blocks[label]?.let { return it }
         val indices = document.byName[label].orEmpty()
         require(indices.size == 1) { "Expected exactly one $label declaration." }
         var index = indices.single()
@@ -52,20 +67,23 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
             start = document.labels[index].range.last + 1
         }
         val end = document.labels.getOrNull(index + 1)?.range?.first ?: text.length
-        return start to text.substring(start, end)
+        return (start to text.substring(start, end)).also { document.blocks[label] = it }
     }
     private fun argument(text: String, label: String, macro: String): Pair<IntRange, String> {
+        val document = document(text)
+        document.arguments[label to macro]?.let { return it }
         val (start, body) = block(text, label)
         val matches = Regex("(?m)^[ \\t]*%${macro}\\(([^\\r\\n]*)\\)[ \\t]*,?[ \\t]*(?:;[^\\r\\n]*)?\\r?$").findAll(body).toList()
         require(matches.size == 1) { "$label: expected one %$macro argument." }
         val group = matches.single().groups[1]!!
         val token = group.value.trim()
         val offset = group.value.indexOf(token)
-        return (start + group.range.first + offset until start + group.range.first + offset + token.length) to token
+        return ((start + group.range.first + offset until start + group.range.first + offset + token.length) to token)
+            .also { document.arguments[label to macro] = it }
     }
     fun field(key: String, headerText: String, dropText: String): AsmEnemyTuningField {
         require(key in keys) { "Unsupported enemy tuning field $key." }
-        val enemy = ENEMY_DEFS.single { key.substringBeforeLast('_') == it.key }
+        val enemy = enemiesByKey.getValue(key.substringBeforeLast('_'))
         val label = headers.getValue(enemy.speciesId)
         val suffix = key.removePrefix(enemy.key + "_")
         if (suffix == "hp" || suffix == "dmg") {
@@ -74,41 +92,69 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
             require(value != null && value in 0..65535) { "$label: %${if (suffix == "hp") "health" else "damage"} expects a 16-bit literal. This field is read-only until its ASM is repaired." }
             return AsmEnemyTuningField(key, enemy.speciesId, label, if (suffix == "hp") 4 else 6, ENEMY_HEADER_SOURCE_FILE, span, value)
         }
-        val (binding, table) = argument(headerText, label, "drops")
-        require(table.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "$label: drops must name an exact bank-B4 table label." }
-        val (start, body) = block(dropText, table)
+        val section = if (suffix.startsWith("drop")) AsmEnemyTuningSection.DROPS else AsmEnemyTuningSection.VULNERABILITIES
+        val (binding, table) = argument(headerText, label, section.macro)
+        require(table.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "$label: ${section.macro} must name an exact bank-B4 table label." }
+        val fields = tableBytes(dropText, table, section)
+        val slot = suffix.removePrefix(if (section == AsmEnemyTuningSection.DROPS) "drop" else "vuln").toInt()
+        return AsmEnemyTuningField(key, enemy.speciesId, label, slot, ENEMY_DROP_SOURCE_FILE, fields[slot].first, fields[slot].second, table, binding, section)
+    }
+    private fun tableBytes(text: String, table: String, section: AsmEnemyTuningSection): List<Pair<IntRange, Int>> {
+        val document = document(text)
+        document.tables[table to section]?.let { return it }
+        val (start, body) = block(text, table)
         val fields = mutableListOf<Pair<IntRange, Int>>()
         var offset = start
         for (line in body.split('\n')) {
             val code = asmCodeBeforeComment(line).trimEnd('\r')
             if (code.isNotBlank()) {
-                // The pinned bank surrounds some following unused tables with this
-                // feature guard. It is a section boundary, not part of our six bytes.
-                if (fields.size == 6 && (code.trim() in setOf("if !FEATURE_KEEP_UNREFERENCED", "endif") ||
+                // Native feature guards and explicit orgs are section boundaries,
+                // not bytes belonging to this fixed-size table.
+                if (fields.size == section.tableSize && (code.trim() in setOf("if !FEATURE_KEEP_UNREFERENCED", "endif") ||
                     Regex("org[ \\t]+\\$[0-9A-Fa-f]{6}", RegexOption.IGNORE_CASE).matches(code.trim()))) break
-                val directive = requireNotNull(Regex("^[ \\t]*db[ \\t]+", RegexOption.IGNORE_CASE).find(code)) { "$table: expected exactly six literal db bytes." }
+                val directive = requireNotNull(Regex("^[ \\t]*db[ \\t]+", RegexOption.IGNORE_CASE).find(code)) { "$table: expected exactly ${section.tableSize} literal db bytes." }
                 var local = directive.range.last + 1
                 for (part in code.substring(local).split(',')) {
                     val token = part.trim()
                     val at = local + part.indexOf(token)
                     val value = AsmPlmDocument.literal(token)
-                    require(value != null && value in 0..255) { "$table: drop weights must be byte literals (0–255)." }
+                    require(value != null && value in 0..255) { "$table: ${section.title} must be byte literals (0–255)." }
                     fields += (offset + at until offset + at + token.length) to value
                     local += part.length + 1
                 }
             }
             offset += line.length + 1
         }
-        require(fields.size == 6) { "$table: expected six drop weights, found ${fields.size}." }
-        val slot = suffix.removePrefix("drop").toInt()
-        return AsmEnemyTuningField(key, enemy.speciesId, label, slot, ENEMY_DROP_SOURCE_FILE, fields[slot].first, fields[slot].second, table, binding)
+        require(fields.size == section.tableSize) { "$table: expected ${section.tableSize} ${section.title} bytes, found ${fields.size}." }
+        return fields.also { document.tables[table to section] = it }
     }
-    fun original(key: String) = field(key, originalHeaders, originalDrops)
-    fun dropConsumers(key: String, headers: String, drops: String): List<Int> {
+    fun original(key: String) = originalFields.getOrPut(key) { runCatching { field(key, originalHeaders, originalDrops) } }.getOrThrow()
+    /** A broken literal/table still has a useful repair destination; never guess among duplicate labels. */
+    fun line(key: String, headers: String, tables: String): Pair<String, Int> {
+        val field = runCatching { field(key, headers, tables) }.getOrNull()
+        if (field != null) {
+            val text = if (field.fileId == ENEMY_HEADER_SOURCE_FILE) headers else tables
+            return field.fileId to text.take(field.span.first).count { it == '\n' }
+        }
+        require(key in keys) { "Unsupported enemy tuning field $key." }
+        val enemy = enemiesByKey.getValue(key.substringBeforeLast('_'))
+        val suffix = key.removePrefix(enemy.key + "_")
+        val macro = when {
+            suffix == "hp" -> "health"
+            suffix == "dmg" -> "damage"
+            suffix.startsWith("drop") -> "drops"
+            else -> "vulnerabilities"
+        }
+        val (binding, token) = argument(headers, this.headers.getValue(enemy.speciesId), macro)
+        val table = if (suffix in setOf("hp", "dmg")) null else runCatching { block(tables, token).first }.getOrNull()
+        return if (table != null) ENEMY_DROP_SOURCE_FILE to tables.take(table).count { it == '\n' }
+            else ENEMY_HEADER_SOURCE_FILE to headers.take(binding.first).count { it == '\n' }
+    }
+    fun tableConsumers(key: String, headers: String, drops: String): List<Int> {
         val selected = field(key, headers, drops)
         val start = block(drops, requireNotNull(selected.table)).first
         return this.headers.filter { (_, label) -> runCatching {
-            block(drops, argument(headers, label, "drops").second).first == start
+            block(drops, argument(headers, label, selected.section.macro).second).first == start
         }.getOrDefault(false) }.keys.toList()
     }
     fun edit(key: String, value: Int, headers: String, drops: String): Pair<String, String> {
@@ -140,15 +186,15 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
     val parser = RomParser(compiled.romBytes)
     val originalParser = RomParser(compiled.referenceRomBody)
     val claims = linkedMapOf<Pair<Int, Int>, String>()
-    val boundTables = mutableSetOf<Int>()
+    val boundTables = mutableSetOf<Pair<AsmEnemyTuningSection, Int>>()
     for (key in catalog.keys) {
         val original = runCatching { catalog.original(key) }.getOrNull()
         val input = runCatching { catalog.field(key, headers, drops) }
-        val config = project.patches.filter { it.enabled && it.configType in setOf("enemy_stats", "enemy_drops") }.mapNotNull { it.configData?.get(key) }
+        val config = project.patches.filter { it.enabled && it.configType in ENEMY_TUNING_CONFIG_TYPES }.mapNotNull { it.configData?.get(key) }
         val field = input.getOrNull()
         val authored = key in owned || field != null && (original == null || field.value != original.value || field.table != original.table)
         val tableAddress = field?.table?.let { labels[it] }
-        val relocated = field != null && tableAddress != null && originalParser.readUInt16At(originalParser.snesToPc(0xA00000 or field.speciesId) + 0x3A) != (tableAddress and 65535)
+        val relocated = field != null && tableAddress != null && originalParser.readUInt16At(originalParser.snesToPc(0xA00000 or field.speciesId) + field.section.pointerOffset) != (tableAddress and 65535)
         if (!authored && !relocated && config.isEmpty()) continue
         require(field != null) { "$key: ${input.exceptionOrNull()?.message}" }
         require(!authored || config.isEmpty()) { "$key has both authored ASM and a GUI patch value. Undo/remove the patch override before building." }
@@ -159,20 +205,23 @@ internal fun protectEnemyTuningSource(catalog: AsmEnemyTuningSource?, headers: S
             require(parser.readUInt16At(pc) == field.value) { "$key: EnemyHeader layout differs from the supported HP/contact-damage format." }
             if (authored) claims[pc to 2] = ENEMY_HEADER_SOURCE_FILE
         } else {
-            val address = requireNotNull(labels[field.table]) { "Missing enemy drop table ${field.table}." }
-            require(address in 0xB48000..0xB4FFFA && parser.readUInt16At(headerPc + 0x3A) == (address and 65535)) { "$key: the drop pointer does not resolve to its six-byte bank-B4 table." }
+            val address = requireNotNull(labels[field.table]) { "Missing enemy ${field.section.title} table ${field.table}." }
+            require(address in 0xB48000..(0xB50000 - field.section.tableSize) &&
+                parser.readUInt16At(headerPc + field.section.pointerOffset) == (address and 65535)) {
+                "$key: the ${field.section.title} pointer does not resolve to its ${field.section.tableSize}-byte bank-B4 table."
+            }
             val pc = parser.snesToPc(address) + field.offset
             require((compiled.romBytes[pc].toInt() and 255) == field.value) { "$key: assembled drop data differs from its typed source." }
             if (authored || relocated && config.isEmpty()) claims[pc to 1] = ENEMY_DROP_SOURCE_FILE
-            if ((authored || relocated) && boundTables.add(address)) {
+            if ((authored || relocated) && boundTables.add(field.section to address)) {
                 // A table may also serve species outside the tuning picker. Protect every
                 // active pointer binding, not only the first visible consumer's word.
-                for (species in catalog.dropConsumers(key, headers, drops)) {
+                for (species in catalog.tableConsumers(key, headers, drops)) {
                     val label = catalog.headers.getValue(species)
                     if (label !in labels) continue // Conditional/index-only, not an emitted header.
-                    require(labels[label] == (0xA00000 or species)) { "$label moved or was removed; its shared drop binding cannot be guessed." }
-                    val bindingPc = parser.snesToPc(0xA00000 or species) + 0x3A
-                    require(parser.readUInt16At(bindingPc) == (address and 65535)) { "$label has a competing drop-table binding." }
+                    require(labels[label] == (0xA00000 or species)) { "$label moved or was removed; its shared ${field.section.title} binding cannot be guessed." }
+                    val bindingPc = parser.snesToPc(0xA00000 or species) + field.section.pointerOffset
+                    require(parser.readUInt16At(bindingPc) == (address and 65535)) { "$label has a competing ${field.section.title} table binding." }
                     claims[bindingPc to 2] = ENEMY_HEADER_SOURCE_FILE
                 }
             }

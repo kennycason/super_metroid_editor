@@ -53,7 +53,7 @@ and are neither embedded in JSON nor written into `overrides/src/`.
 Here, `data/*.bin` means an extracted source asset consumed by the disassembly;
 it is distinct from an IPS or fixed-offset ROM-byte patch applied after compilation.
 
-`asmWorkspace.enemyTuningSourceKeys` records owned enemy HP/contact-damage/drop
+`asmWorkspace.enemyTuningSourceKeys` records owned enemy HP/contact-damage/drop/vulnerability
 field identities, never their values or compiled addresses. First edits retire the
 corresponding legacy patch-config keys in the same source/model undo transaction.
 Authored values stay in the native bank source; builds validate header identities,

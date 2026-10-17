@@ -2716,7 +2716,7 @@ class EditorState(
     fun setPatchConfigData(id: String, key: String, value: Int) {
         val patch = project.patches.find { it.id == id } ?: return
         if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE &&
-            patch.configType in setOf("enemy_stats", "enemy_drops")) {
+            patch.configType in com.supermetroid.editor.asm.ENEMY_TUNING_CONFIG_TYPES) {
             runCatching { requireNotNull(enemyTuningBridge) { "Wait for the enemy ASM workspace." }.edit(key, value) }
                 .onFailure { postStatus("Enemy edit blocked: ${it.message}") }
             return

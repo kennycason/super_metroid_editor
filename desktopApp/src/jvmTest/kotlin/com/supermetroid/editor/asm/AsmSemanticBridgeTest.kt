@@ -9,6 +9,23 @@ import org.junit.jupiter.api.Test
 
 class AsmSemanticBridgeTest {
     @Test
+    fun `enemy tuning tables and native binding words return to the correct enemy tab`() {
+        val parser = TestRomHelper.requireRomParser()
+        val address = 0xA0DCFF
+        val pc = parser.snesToPc(address)
+        val drop = parser.readUInt16At(pc + 0x3A)
+        val vulnerabilities = parser.readUInt16At(pc + 0x3C)
+        val dropTarget = AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.DROPS)
+        val vulnTarget = AsmEditorTarget.EnemyTuning(0xDCFF, AsmEnemyTuningSection.VULNERABILITIES)
+        for (source in listOf(address + 0x3A, 0xB40000 or drop))
+            assertTrue(AsmSemanticBridge.linksFor(source, romParser = parser).any { it.target == dropTarget })
+        for (source in listOf(address + 0x3C, 0xB40000 or vulnerabilities))
+            assertTrue(AsmSemanticBridge.linksFor(source, romParser = parser).any { it.target == vulnTarget })
+        assertTrue(AsmSemanticBridge.linksFor(0xB40000 or vulnerabilities, romParser = parser)
+            .any { it.target == AsmEditorTarget.EnemyTuning(0xDC3F, AsmEnemyTuningSection.VULNERABILITIES) })
+    }
+
+    @Test
     fun `room headers and level assets open the room editor`() {
         val parser = TestRomHelper.loadRomParser() ?: return
         val landingRoom = AsmEditorTarget.Room(0x91F8)

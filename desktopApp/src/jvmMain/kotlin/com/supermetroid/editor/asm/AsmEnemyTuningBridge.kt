@@ -18,19 +18,17 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         val baseline = runCatching { catalog.original(key) }.getOrNull()
         val field = catalog.field(key, headers, drops)
         val authored = key in project().asmWorkspace.enemyTuningSourceKeys || baseline == null || field.value != baseline.value || field.table != baseline.table
-        val conflicting = authored && project().patches.any { it.enabled && it.configType in setOf("enemy_stats", "enemy_drops") && key in it.configData.orEmpty() }
+        val conflicting = authored && project().patches.any { it.enabled && it.configType in ENEMY_TUNING_CONFIG_TYPES && key in it.configData.orEmpty() }
         AsmEnemyTuningView(value, if (conflicting) "$key has both authored ASM and a patch override. Undo/remove the patch override first." else null)
     } catch (error: Exception) {
         AsmEnemyTuningView(lastGood[key] ?: runCatching { catalog.original(key).value }.getOrNull(), error.message ?: "Enemy tuning source is unavailable.")
     }
-    fun consumers(key: String) = runCatching { val (a, b) = texts(); catalog.dropConsumers(key, a, b) }.getOrDefault(emptyList())
+    fun consumers(key: String) = runCatching { val (a, b) = texts(); catalog.tableConsumers(key, a, b) }.getOrDefault(emptyList())
     fun sectionLine(section: AsmEnemyTuningSection): Pair<String, Int> = section.fileId to
         catalog.sectionLine(section, workspace.projectSourceText(section.fileId))
     fun line(key: String): Pair<String, Int> {
         val (a, b) = texts()
-        val field = catalog.field(key, a, b)
-        val text = if (field.fileId == ENEMY_HEADER_SOURCE_FILE) a else b
-        return field.fileId to text.take(field.span.first).count { it == '\n' }
+        return catalog.line(key, a, b)
     }
     fun editorLinks(fileId: String, line: Int): List<AsmEditorLink> {
         if (fileId !in setOf(ENEMY_HEADER_SOURCE_FILE, ENEMY_DROP_SOURCE_FILE)) return emptyList()
@@ -41,10 +39,12 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         val end = text.indexOf('\n', start).takeIf { it >= 0 } ?: text.length
         return catalog.keys.mapNotNull { key ->
             val field = runCatching { catalog.field(key, a, b) }.getOrNull() ?: return@mapNotNull null
-            if (field.fileId != fileId || field.span.first !in start..end) return@mapNotNull null
+            val atField = field.fileId == fileId && field.span.first in start..end
+            val atBinding = fileId == ENEMY_HEADER_SOURCE_FILE && field.bindingSpan?.first?.let { it in start..end } == true
+            if (!atField && !atBinding) return@mapNotNull null
             val enemy = com.supermetroid.editor.ui.ENEMY_DEFS.single { it.speciesId == field.speciesId }
-            AsmEditorLink("Edit ${enemy.name} ${if (field.table == null) "stats" else "drops"}", "Reciprocal enemy data",
-                AsmEditorTarget.EnemyTuning(field.speciesId, field.table != null))
+            AsmEditorLink("Edit ${enemy.name} ${field.section.title}", "Reciprocal enemy data",
+                AsmEditorTarget.EnemyTuning(field.speciesId, field.section))
         }.distinctBy { it.target }
     }
     fun value(patch: SmPatch, key: String): AsmEnemyTuningView {
@@ -60,19 +60,47 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         else if (source.problem == null) AsmEnemyTuningView(override) else source
     }
     fun edit(key: String, value: Int) {
+        editValues(mapOf(key to value))
+    }
+
+    /** Stage a whole action before publishing; aliases must agree, and Undo restores it once. */
+    fun editValues(values: Map<String, Int>) {
+        if (values.isEmpty()) return
         val owner = project()
-        require(key in catalog.keys) { "This advanced enemy field is ROM-only; edit its symbolic ASM argument directly in ASM mode." }
+        require(catalog.keys.containsAll(values.keys)) { "This advanced enemy field is ROM-only; edit its symbolic ASM argument directly in ASM mode." }
         val (a, b) = texts()
-        require(view(key).problem == null) { view(key).problem ?: "Repair this enemy field first." }
-        val field = catalog.field(key, a, b)
-        val related = catalog.keys.filter { candidate ->
-            val other = runCatching { catalog.field(candidate, a, b) }.getOrNull()
-            other?.fileId == field.fileId && other.span == field.span
-        }.toSet()
-        val hasLegacy = owner.patches.any { patch -> related.any { it in patch.configData.orEmpty() } }
-        if (field.value == value && !hasLegacy) return
-        val (afterA, afterB) = catalog.edit(key, value, a, b)
-        publish(related, mapOf(field.fileId to (if (field.fileId == ENEMY_HEADER_SOURCE_FILE) a to afterA else b to afterB)))
+        val requested = values.map { (key, value) ->
+            val problem = view(key).problem
+            require(problem == null) { problem ?: "Repair this enemy field first." }
+            val field = catalog.field(key, a, b)
+            require(value in 0..if (field.table == null) 65535 else 255) { "Enemy tuning value is outside its field width." }
+            field to value
+        }.groupBy { (field, _) -> field.fileId to field.span }
+        require(requested.values.all { requests -> requests.map { it.second }.distinct().size == 1 }) {
+            "Shared enemy tables have different requested defaults. No changes were made; edit the shared bytes individually or give the species separate tables in ASM."
+        }
+        val related = catalog.keys.mapNotNull { key -> runCatching { catalog.field(key, a, b) }.getOrNull() }
+            .groupBy { it.fileId to it.span }
+        val changes = requested.filter { (location, requests) ->
+            requests.first().let { (field, value) -> field.value != value } ||
+                owner.patches.any { patch -> related[location].orEmpty().any { it.key in patch.configData.orEmpty() } }
+        }
+        if (changes.isEmpty()) return
+        val sources = changes.values.map { it.first() }.groupBy { it.first.fileId }.mapValues { (file, fields) ->
+            val before = if (file == ENEMY_HEADER_SOURCE_FILE) a else b
+            var after = before
+            for ((field, value) in fields.sortedByDescending { it.first.span.first }) {
+                val literal = "$" + value.toString(16).uppercase().padStart(if (field.table == null) 4 else 2, '0')
+                after = after.replaceRange(field.span, literal)
+            }
+            before to after
+        }
+        publish(changes.keys.flatMap { related[it].orEmpty().map { field -> field.key } }.toSet(), sources)
+    }
+
+    fun resetToOriginal(section: AsmEnemyTuningSection) {
+        editValues(catalog.keys.mapNotNull { key -> runCatching { catalog.original(key) }.getOrNull()
+            ?.takeIf { it.section == section }?.let { key to it.value } }.toMap())
     }
     /** Explicit repair for an old GUI override that competes with externally edited ASM. */
     fun useSourceValue(key: String) {
@@ -137,7 +165,7 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         }.toSet()
         if (keys.isEmpty()) return null
         if (project().asmWorkspace.enemyTuningSourceKeys.containsAll(keys) && project().patches.none { patch ->
-                patch.configType in setOf("enemy_stats", "enemy_drops") && keys.any { it in patch.configData.orEmpty() }
+                patch.configType in ENEMY_TUNING_CONFIG_TYPES && keys.any { it in patch.configData.orEmpty() }
             }) return null // Ordinary typing keeps the editor's normal text-undo granularity.
         publish(keys, mapOf(fileId to (before to after)))
         return true
@@ -147,14 +175,14 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) { "Enemy source editing requires the active ASM source build." }
         val ownershipBefore = keys.intersect(owner.asmWorkspace.enemyTuningSourceKeys)
-        val participants = owner.patches.filter { it.configType in setOf("enemy_stats", "enemy_drops") && keys.any { key -> key in it.configData.orEmpty() } }
+        val participants = owner.patches.filter { it.configType in ENEMY_TUNING_CONFIG_TYPES && keys.any { key -> key in it.configData.orEmpty() } }
         val before = participants.map { patch -> patch to keys.mapNotNull { key -> patch.configData?.get(key)?.let { key to it } }.toMap() }
         fun check(undo: Boolean) {
             require(project() === owner && owner.asmWorkspace.enemyTuningSourceKeys.intersect(keys) == if (undo) keys else ownershipBefore) { "Enemy tuning ownership changed; undo newer edits first." }
             for ((patch, values) in before) {
                 require(owner.patches.any { it === patch } && keys.mapNotNull { key -> patch.configData?.get(key)?.let { key to it } }.toMap() == if (undo) emptyMap() else values) { "Enemy patch values changed; undo newer tuning edits first." }
             }
-            require(owner.patches.none { patch -> patch.configType in setOf("enemy_stats", "enemy_drops") &&
+            require(owner.patches.none { patch -> patch.configType in ENEMY_TUNING_CONFIG_TYPES &&
                 participants.none { it === patch } && keys.any { it in patch.configData.orEmpty() } }) {
                 "A newer enemy patch uses these fields; undo it before restoring source ownership."
             }

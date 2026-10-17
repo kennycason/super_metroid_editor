@@ -597,6 +597,82 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(fixture.rom, fixture.romFile.readBytes())
     }
 
+    @Test fun `vulnerability source preserves native flags shared bindings relocation cold rebuilds and patch safety`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val tuning = assertNotNull(editor.enemyTuningBridge)
+        for (enemy in ENEMY_DEFS) {
+            val pc = parser.snesToPc(0xA00000 or enemy.speciesId)
+            val pointer = parser.readUInt16At(pc + 0x3C)
+            if (pointer in 0x8000..0xFFEA) for (slot in 0..21) {
+                assertEquals(fixture.rom[parser.snesToPc(0xB40000 or pointer) + slot].toInt() and 255,
+                    tuning.catalog.original("${enemy.key}_vuln$slot").value, "${enemy.name}, vulnerability $slot")
+            }
+        }
+        val patch = editor.findOrCreateConfigPatch("enemy_vuln")
+        patch.configData = mutableMapOf("zoomer_vuln0" to 4, "geemer_horiz_vuln0" to 6)
+        val original = workspace.projectSourceText("bank_B4.asm")
+        editor.setPatchConfigData(patch.id, "zoomer_vuln0", 255)
+        editor.setPatchConfigData(patch.id, "zoomer_vuln1", 128)
+        editor.setPatchConfigData(patch.id, "zoomer_vuln21", 130)
+        assertNull(patch.configData)
+        assertEquals(255, tuning.view("geemer_horiz_vuln0").value)
+        val consumers = tuning.catalog.tableConsumers("zoomer_vuln0", tuning.catalog.originalHeaders, original)
+        assertTrue(consumers.size > 2, "Include native species beyond the edited row")
+        val logs = mutableListOf<String>()
+        suspend fun build(candidate: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(candidate, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        val first = assertNotNull(build(), logs.joinToString("\n"))
+        val pointerPc = parser.snesToPc(0xA0DCFF) + 0x3C
+        val oldPointer = parser.readUInt16At(pointerPc)
+        val tablePc = parser.snesToPc(0xB40000 or oldPointer)
+        assertEquals(255, first.resultRom[tablePc].toInt() and 255)
+        assertEquals(128, first.resultRom[tablePc + 1].toInt() and 255)
+        assertEquals(130, first.resultRom[tablePc + 21].toInt() and 255)
+        val text = workspace.projectSourceText("bank_B4.asm")
+        val raw = tuning.catalog.edit("zoomer_vuln21", 129, workspace.projectSourceText("bank_A0.asm"), text).second
+        assertTrue(workspace.updateSourceEditText("bank_B4.asm", raw))
+        assertEquals(129, tuning.view("zoomer_vuln21").value)
+        assertTrue(workspace.undoSourceEdit("bank_B4.asm"), workspace.error)
+        assertEquals(130, tuning.view("zoomer_vuln21").value)
+        assertContentEquals(first.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+
+        // Move the complete shared table; all actual native pointer words must follow it.
+        val tableName = tuning.catalog.original("zoomer_vuln0").table!!
+        val table = assertNotNull(Regex("(?m)^${Regex.escape(tableName)}:[^\\r\\n]*\\r?\\n(?:[ \\t]*db[^\\r\\n]*\\r?\\n){2}").find(text))
+        val movedPc = parser.snesToPc(0xB4FF00)
+        assertTrue(fixture.rom.copyOfRange(movedPc, movedPc + 22).all { it == 0xFF.toByte() })
+        val relocated = text.replaceRange(table.range, "org ${'$'}B4FF00\n${table.value}org ${'$'}B4${(oldPointer + 22).toString(16).uppercase()}\n")
+        assertTrue(workspace.updateSourceEditText("bank_B4.asm", relocated))
+        val moved = assertNotNull(build(), logs.joinToString("\n"))
+        val movedParser = RomParser(moved.resultRom)
+        for (species in consumers) assertEquals(0xFF00, movedParser.readUInt16At(parser.snesToPc(0xA00000 or species) + 0x3C))
+        for (slot in 0..21) assertEquals(first.resultRom[tablePc + slot], moved.resultRom[movedPc + slot])
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(moved.resultRom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        assertNull(RomExporter(project, parser, logs::add).build(), "A ROM-only export cannot ignore authored vulnerability source")
+        val conflict = SmPatch("vulnerability-unchanged", "Cannot overwrite unchanged relocated bytes", enabled = true,
+            writes = mutableListOf(PatchWrite((movedPc + 2).toLong(), listOf(2), expectedBytes = listOf(2))))
+        project.patches.add(conflict)
+        assertTrue(build() == null, logs.joinToString("\n")); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        patch.enabled = true
+        patch.configData = mutableMapOf("zoomer_vuln1" to 128)
+        assertTrue(build() == null, logs.joinToString("\n")); assertTrue(logs.any { "both authored ASM" in it }, logs.joinToString("\n"))
+        patch.configData = null
+        assertTrue(workspace.undoSourceEdit("bank_B4.asm"), workspace.error)
+        assertContentEquals(first.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `shared native door records compile once update every consumer and protect unchanged bytes after reopen and reset`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val rom = com.supermetroid.editor.asm.saveSourceTestRom()

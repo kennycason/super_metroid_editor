@@ -2075,18 +2075,30 @@ Native routines remain untouched; opaque width/shrink behavior still fails prefl
 Tests cover nested negation, stale/invalid drafts, native checkpoints, unchanged BTS,
 history, compiled symbolic references, moved allocations and byte-identical cold builds.
 
-## Reciprocal enemy HP, contact damage and drop weights
+## Reciprocal enemy HP, contact damage, drops and vulnerabilities
 
 In ASM source mode, the Enemy tabs edit the actual `%health(...)` / `%damage(...)`
-arguments in `bank_A0.asm` and six literal `db` weights in `bank_B4.asm`. There is no
-Enable ASM step. Inspection, source links and unchanged edits stay non-mutating.
-Opening ASM and **Edit … stats/drops** links return to the matching tab/species;
-shared drop tables identify every native species affected by an edit.
+arguments in `bank_A0.asm`, six literal drop weights and 22 raw vulnerability bytes
+in `bank_B4.asm`. There is no Enable ASM step. Inspection, source links and unchanged
+edits stay non-mutating.
+Opening ASM and **Edit … stats/drops/vulnerabilities** links return to the matching
+tab/species. In Vulnerabilities, focusing a value highlights matching table rows
+across categories instead of repeating long consumer lists. A single note explains
+that edits affect every enemy using the table, including species outside the picker.
+Physical table identity (not matching values) determines the highlight; ASM rebinding
+updates the group immediately, and focus/scroll inspection never adopts source.
+ROM-mode edits keep visible aliases' patch values consistent too.
+
+Vulnerability headings use measured 45-degree single-line labels and compact numeric
+columns. Header height and end padding reserve the rotated text's full bounds at
+every font size. When the chart is wider than its viewport, a horizontal scrollbar
+stays at the panel bottom; vertical scrolling is independent of the fixed page note.
 
 Right-aligned sidebar **ASM** links open the start of the native Stats, Drop Rates
 or Vulnerabilities section, using live source lines without adopting or dirtying
-anything. Per-enemy links still open that species' exact field/table. Vulnerabilities
-has source navigation only for now; its GUI does not yet have reciprocal ASM editing.
+anything. Per-enemy links still open that species' exact field/table, and live native
+`%drops` / `%vulnerabilities` bindings link back before Save/Build too. Invalid table
+drafts keep their repair destination; missing table names navigate to the binding.
 
 First edits retire only the affected old patch-config keys. Source Undo/Redo restores
 those keys and ownership together, preserving unrelated overrides. Ownership stores
@@ -2094,22 +2106,31 @@ field identities in `asmWorkspace.enemyTuningSourceKeys`, never duplicate values
 compiled addresses. Source edits are active source, not a toggleable byte patch;
 disabling the old config patch does not undo them. Conflicting external ASM/config
 edits have an explicit **Use ASM value** repair. Incomplete drafts remain saveable
-with marked last-good values; only the affected scalar or drop table is read-only.
+with marked last-good values; only the affected scalar or table is read-only.
 Weights are not silently normalized, including unusual sums.
 
+Vulnerabilities preserve all 256 raw byte values, including `$80` freeze-prevention
+flags, `$FF` freeze-without-damage and the 22nd unused slot. Editing a shared slot
+updates every alias, while retiring only that slot's legacy overrides. **Reset All
+to Source Defaults** uses the immutable source baseline, not a previously built
+preview ROM, and is one atomic Undo/Redo operation. If manually rebound shared
+species have incompatible original defaults, reset fails without publishing any
+edits; edit individual shared bytes or separate their tables explicitly in ASM.
+
 Build decodes saved source and validates actual compiler symbols/bytes. Species
-header identities must stay fixed; drop tables may relocate within bank B4 and their
-header pointers follow the symbol. Typed word/byte claims include unchanged bytes,
-and shared pointer bindings are protected. Missing/moved headers, malformed tables,
+header identities must stay fixed; drop/vulnerability tables may relocate within
+bank B4 and their header pointers follow the symbol. Typed word/byte claims include
+unchanged bytes, and shared pointer bindings (including species outside the picker)
+are protected. Missing/moved headers, malformed tables,
 wrong banks, dual authority and overlapping patches fail without exporting a ROM.
 Cold builds cannot substitute preview caches, and ROM-only export cannot ignore
 authored tuning. Standard native feature guards and explicit `org` boundaries after
-the six bytes are recognized without interpreting arbitrary Asar expressions.
+the fixed-size tables are recognized without interpreting arbitrary Asar expressions.
 
 Advanced AI/GFX pointer config fields remain ROM-only in the GUI. In ASM mode use
 the symbolic native header arguments; existing advanced overrides can be removed
 with an undoable action. A fixture-backed Asar regression checks every listed native
-species, reciprocal edits, real drop-table relocation, cold rebuild parity, moved
+species, reciprocal edits, real drop/vulnerability relocation, cold rebuild parity, moved
 header rejection and unchanged-byte patch conflicts. No project-format bump is needed.
 
 ## Project-created room ASM builds and navigation

@@ -17,7 +17,7 @@ internal sealed interface AsmEditorTarget {
     }
     data class Tileset(val tilesetId: Int?, val palette: Boolean = false) : AsmEditorTarget
     data class Sprite(val speciesId: Int?) : AsmEditorTarget // null = Samus
-    data class EnemyTuning(val speciesId: Int, val drops: Boolean = false) : AsmEditorTarget
+    data class EnemyTuning(val speciesId: Int, val section: AsmEnemyTuningSection = AsmEnemyTuningSection.STATS) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget
@@ -222,7 +222,14 @@ internal object AsmSemanticBridge {
             val link = AsmEditorLink("Edit ${enemy.name} stats", "HP / contact damage", AsmEditorTarget.EnemyTuning(enemy.speciesId))
             listOf(address, address + 4, address + 6).forEach { add(it, link) }
             runCatching { romParser.readUInt16At(romParser.snesToPc(address) + 0x3A) }.getOrNull()?.takeIf { it in 0x8000..0xFFFA }?.let { pointer ->
-                add(0xB40000 or pointer, AsmEditorLink("Edit ${enemy.name} drops", "Shared six-byte table", AsmEditorTarget.EnemyTuning(enemy.speciesId, true)))
+                val drops = AsmEditorLink("Edit ${enemy.name} drops", "Shared six-byte table", AsmEditorTarget.EnemyTuning(enemy.speciesId, AsmEnemyTuningSection.DROPS))
+                add(address + 0x3A, drops)
+                add(0xB40000 or pointer, drops)
+            }
+            runCatching { romParser.readUInt16At(romParser.snesToPc(address) + 0x3C) }.getOrNull()?.takeIf { it in 0x8000..0xFFEA }?.let { pointer ->
+                val vulnerabilities = AsmEditorLink("Edit ${enemy.name} vulnerabilities", "Shared 22-byte table", AsmEditorTarget.EnemyTuning(enemy.speciesId, AsmEnemyTuningSection.VULNERABILITIES))
+                add(address + 0x3C, vulnerabilities)
+                add(0xB40000 or pointer, vulnerabilities)
             }
         }
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES) {
