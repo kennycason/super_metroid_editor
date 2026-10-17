@@ -7,7 +7,7 @@ import com.supermetroid.editor.rom.SourceSaveResource
 internal data class AsmRoomSaveTable(val resource: SourceSaveResource, val pcOffset: Int) {
     fun claim(): AsmGeneratedRoomClaim {
         require(pcOffset in 0 until 0x8000 && pcOffset + 14 <= 0x8000) { "Save record must fit bank \$80." }
-        require(resource.identity == AsmSaveStationSource.name(resource.ownerRoomId, resource.area, resource.slot))
+        require(resource.identity == AsmSaveStationSource.name(resource.ownerRoomId, resource.area, resource.slot, resource.ownerProjectRoomId))
         return AsmGeneratedRoomClaim(ASM_ROOM_GRAPH_OWNER, resource.identity, pcOffset, resource.bytes())
     }
     fun renderSource(): String = buildString {

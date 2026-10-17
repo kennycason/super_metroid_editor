@@ -17,18 +17,21 @@ internal fun SourceRoomSelectors.projectInto(room: RoomEdits) {
 }
 
 internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, private val workspace: AsmWorkspaceState,
-                                      private val project: () -> SmEditProject, private val changed: () -> Unit) {
+                                      private val project: () -> SmEditProject, private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project), private val changed: () -> Unit) {
+    private var identities = emptyMap<Int, String>()
     private var revision: Pair<String, AsmRoomSelectorsSource>? = null
-    private val lastGood = mutableMapOf<Int, SourceRoomSelectors>()
+    private val lastGood = mutableMapOf<String, SourceRoomSelectors>()
     private fun source(): AsmRoomSelectorsSource {
         val text = workspace.projectSourceText(PLM_SOURCE_FILE)
-        return revision?.takeIf { it.first == text }?.second ?: AsmRoomSelectorsSource(text).also { revision = text to it }
+        val currentIds = context.identities()
+        if (identities != currentIds) { revision = null; identities = currentIds }
+        return revision?.takeIf { it.first == text }?.second ?: AsmRoomSelectorsSource(text, identities).also { revision = text to it }
     }
     fun isManaged(roomId: Int) = (project().rooms[project().roomKey(roomId)]?.asmStateSelectorsSourceVersion ?: 0) != 0
     fun view(roomId: Int): AsmRoomSelectorsView = try {
         val value = source().resource(project().rooms.getValue(project().roomKey(roomId)))
         validateSelectorDoorReferences(value, roomId, project(), catalog, workspace)
-        lastGood[roomId] = value
+        lastGood[context.identity(roomId)] = value
         AsmRoomSelectorsView(value, null)
     } catch (error: Exception) {
         val room = project().rooms[project().roomKey(roomId)]
@@ -38,7 +41,7 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
             "Handwritten predicates are recognized, but must be reviewed and converted before building or visual selector editing.", conversion)
         else {
             val ids = room?.states?.map { it.id }?.toSet()
-            AsmRoomSelectorsView(lastGood[roomId]?.takeIf { it.order.toSet() == ids },
+            AsmRoomSelectorsView(lastGood[context.identity(roomId)]?.takeIf { it.order.toSet() == ids },
                 recognized.exceptionOrNull()?.message ?: error.message ?: "Invalid selectors.")
         }
     }
@@ -50,13 +53,13 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
         }
     }
     fun preview(room: RoomEdits, name: String) = AsmRoomSelectorsSource.render(room.roomId, name,
-        SourceRoomSelectors(room.effectiveStates.map { it.id }, room.states.associate { it.id to it.effectiveCondition }))
+        SourceRoomSelectors(room.effectiveStates.map { it.id }, room.states.associate { it.id to it.effectiveCondition }), context.identities()[room.roomId])
     fun migrate(roomId: Int, name: String) {
         if (isManaged(roomId)) return
         val owner = project()
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRoomForPreviewId(roomId) == null) { "Selector source requires a native room in ASM mode." }
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Selector source requires ASM mode." }
         val room = owner.rooms.getValue(owner.roomKey(roomId))
-        require(catalog.parser.readRoomHeader(roomId)?.area in 0..6) { "The debug/unused area is not writable." }
+        require(context.parser.readRoomHeader(roomId)?.area in 0..6) { "The debug/unused area is not writable." }
         val beforeModel = snapshotRoomForResize(room)
         val staged = snapshotRoomForResize(room)
         val resource = SourceRoomSelectors(room.effectiveStates.map { it.id }, room.states.associate { it.id to it.effectiveCondition })
@@ -65,9 +68,14 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
         staged.asmStateSelectorsSourceVersion = 1
         resource.projectInto(staged)
         val before = source().text
-        require(!Regex("(?m)^macro ${AsmRoomSelectorsSource.prefix(roomId)}").containsMatchIn(before)) { "Existing selector declarations need review before adoption." }
-        val after = before.trimEnd() + "\n\n" + AsmRoomSelectorsSource.render(roomId, name, resource)
-        AsmRoomSelectorsSource(after).resource(staged)
+        require(!Regex("(?m)^macro ${AsmRoomSelectorsSource.prefix(roomId, context.identities()[roomId])}").containsMatchIn(before)) { "Existing selector declarations need review before adoption." }
+        val after = before.trimEnd() + "\n\n" + AsmRoomSelectorsSource.render(roomId, name, resource, context.identities()[roomId])
+        AsmRoomSelectorsSource(after, context.identities()).resource(staged)
+        if (owner.newRoomForPreviewId(roomId) != null) {
+            context.replace(workspace, roomId, beforeModel, staged, mapOf(PLM_SOURCE_FILE to (before to after)), changed)
+            refreshAll()
+            return
+        }
         fun transition(expected: RoomEdits, target: RoomEdits) {
             require(project() === owner && owner.rooms[owner.roomKey(roomId)] === room && room == expected) { "Undo newer room/state changes before restoring selector ownership." }
             room.asmStateSelectorsSourceVersion = target.asmStateSelectorsSourceVersion
@@ -87,7 +95,7 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
         require(view(roomId).problem == null) { view(roomId).problem ?: "Invalid selectors." }
         val current = source()
         val after = current.editCondition(room, id, condition)
-        validateSelectorDoorReferences(AsmRoomSelectorsSource(after).resource(room), roomId, project(), catalog, workspace, after)
+        validateSelectorDoorReferences(AsmRoomSelectorsSource(after, context.identities()).resource(room), roomId, project(), catalog, workspace, after)
         workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, after)
         refreshAll()
     }

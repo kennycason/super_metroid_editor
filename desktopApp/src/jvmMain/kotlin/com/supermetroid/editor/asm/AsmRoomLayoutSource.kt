@@ -115,7 +115,7 @@ internal class AsmRoomLayoutSource(val text: String, private val projectRoomIds:
         return replacements.sortedByDescending { it.first.first }.fold(text) { result, (range, body) -> result.replaceRange(range, body) }
     }
     companion object {
-        fun prefix(roomId: Int) = "SmeditLayout_${roomId.toString(16).uppercase().padStart(4, '0')}_"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditLayout", roomId, projectId)
         fun projectPrefix(id: String) = "SmeditLayout_Project_${AsmProjectRoomLabels.encoded(id)}_"
         private fun encoded(value: String) = value.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
         fun dataName(roomId: Int, levelId: String, projectRoomId: String? = null) = (projectRoomId?.let(::projectPrefix) ?: prefix(roomId)) + "Data_" + encoded(levelId)

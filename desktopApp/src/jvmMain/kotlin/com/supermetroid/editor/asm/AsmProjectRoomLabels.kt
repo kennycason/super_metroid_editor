@@ -22,4 +22,24 @@ internal object AsmProjectRoomLabels {
     fun prefix(id: String) = "SmeditProjectRoom_${encoded(id)}"
     fun entry(id: String) = prefix(id) + "_Entry"
     fun identity(label: String): String? = Regex("SmeditProjectRoom_([0-9A-F]+)_.+").matchEntire(label)?.groupValues?.get(1)?.let(::decode)
+
+    /** Semantic navigation works before compilation and never trusts a recycled preview address. */
+    fun sourceTarget(lines: List<String>, line: Int): AsmEditorTarget.Room? {
+        for (index in line.coerceAtMost(lines.lastIndex) downTo 0) {
+            val code = asmCodeBeforeComment(lines[index]).trim()
+            if (code.startsWith("endmacro") && index != line) return null
+            val declaration = Regex("^macro Smedit(?:Objects|Scrolls|Fx|Enemies|Selectors|Doors|Arrival)_Project_([0-9A-F]+)_(.+)\\(\\)").find(code)
+            if (declaration != null) {
+                val id = decode(declaration.groupValues[1]) ?: return null
+                val state = Regex("(?:State|Condition)_([0-9a-f]+)").matchEntire(declaration.groupValues[2])?.groupValues?.get(1)?.let { hex ->
+                    if (hex.length % 2 != 0) return null
+                    val bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                    bytes.toString(Charsets.UTF_8).takeIf { it.toByteArray(Charsets.UTF_8).contentEquals(bytes) } ?: return null
+                }
+                return AsmEditorTarget.Room(0, stateId = state, projectRoomId = id)
+            }
+            if (code.startsWith("macro ")) return null
+        }
+        return null
+    }
 }

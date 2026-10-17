@@ -15,7 +15,8 @@ data class SourceDoorArrival(val label: String, val snesAddress: Int? = null) {
 data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arrival: SourceDoorArrival? = null,
                           val identity: Int = change.doorIndex,
                           /** One canonical authored record, deliberately shared by its native list consumers. */
-                          val shared: Boolean = false) {
+                          val shared: Boolean = false,
+                          val destinationProjectId: String? = null) {
     init {
         require((doorDefPtr == 0 || doorDefPtr in 0x8000..0xFFF4) && change.doorIndex in 0..15 && identity in 0..65535) { "Invalid DoorDef identity." }
         // Direction 0..3: no closure, 4..7: blue door, 8..11: escape gate (bank $82:E8EB).
@@ -37,7 +38,8 @@ data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arriv
     }.toByteArray()
 }
 
-data class SourceRoomDoors(val doorOutPtr: Int, val entries: List<SourceRoomDoor>, val structural: Boolean = false) {
+data class SourceRoomDoors(val doorOutPtr: Int, val entries: List<SourceRoomDoor>, val structural: Boolean = false,
+                           val projectRoomId: String? = null) {
     init {
         require((doorOutPtr in 0x8000..0xFFFE || structural && doorOutPtr == 0) && entries.size in (if (structural) 0 else 1)..16 &&
             (structural || doorOutPtr + entries.size * 2 <= 0x10000) && entries.map { it.change.doorIndex } == entries.indices.toList() &&
@@ -54,12 +56,14 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
     require(room.asmDoorSourceVersion == 1 && room.doorChanges.isEmpty()) { "Door fields have unsupported or competing ASM/GUI ownership." }
     val header = requireNotNull(parser.readRoomHeader(room.roomId)) { "Missing door source room." }
     require(header.area in 0..6) { "The debug/unused area's door data is not writable." }
-    require(source.doorOutPtr == header.doorOut && (room.roomHeaderChange?.doorOut ?: header.doorOut) == header.doorOut) {
+    require((source.doorOutPtr == header.doorOut || source.projectRoomId != null && source.doorOutPtr == 0) &&
+        (room.roomHeaderChange?.doorOut ?: header.doorOut) == header.doorOut) {
         "Door-list relocation is not supported by the fixed DoorDef source format."
     }
     val native = parser.parseDoorList(header.doorOut)
     require(if (source.structural) source.entries.all { door ->
-        door.doorDefPtr == (native.getOrNull(door.identity)?.doorDefPtr ?: 0)
+        if (source.projectRoomId != null) door.doorDefPtr == 0
+        else door.doorDefPtr == 0 || door.doorDefPtr == (native.getOrNull(door.identity)?.doorDefPtr ?: 0)
     } else native.map { it.doorDefPtr } == source.entries.map { it.doorDefPtr }) { "Door count/order/identities changed; repair the native list before building." }
     for (door in source.entries) {
         val target = requireNotNull(dimensions(door.change.destRoomPtr)) { "Door ${door.change.doorIndex + 1}: destination has no readable room header." }
@@ -68,7 +72,7 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
         // normalize them. Only the original geometry in the original-sized destination is exempt.
         val baseline = native.getOrNull(door.identity)
         val nativeTarget = parser.readRoomHeader(door.change.destRoomPtr)?.let { it.width to it.height }
-        if (baseline != null && target == nativeTarget && door.entry() == baseline.copy(
+        if (baseline != null && target == nativeTarget && door.entry().copy(doorDefPtr = baseline.doorDefPtr) == baseline.copy(
                 bitflag = (baseline.bitflag and 0x40.inv()) or (door.change.bitflag and 0x40),
                 distFromDoor = door.change.distFromDoor, entryCode = door.change.entryCode)) continue
         require(door.change.screenX < target.first && door.change.screenY < target.second) { "Door ${door.change.doorIndex + 1}: arrival screen is outside the destination room." }

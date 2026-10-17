@@ -280,6 +280,8 @@ internal class AsmWorkspaceState(
     private val sourceUndoStacks = mutableMapOf<String, MutableList<AsmSourceTextChange>>()
     private val sourceRedoStacks = mutableMapOf<String, MutableList<AsmSourceTextChange>>()
     var sourceSaveParticipant: AsmSourceSaveParticipant? = null
+    var sourceEditorInterceptor: ((String, String, String) -> Boolean?)? = null
+    var sourceEditorLinks: ((String, Int) -> List<AsmEditorLink>)? = null
     var roomSourceInspection by mutableStateOf<AsmRoomSourceInspection?>(null)
         private set
     var sourceIndexingInProgress by mutableStateOf(false)
@@ -867,6 +869,7 @@ internal class AsmWorkspaceState(
         if (workspaceKind != AsmWorkspaceKind.PROJECT || workspace?.index?.file(fileId) == null) return false
         val previous = sourceEditText(fileId)
         if (previous == text) return true
+        sourceEditorInterceptor?.invoke(fileId, previous, text)?.let { return it }
         if (sourceBuffers[fileId] == null) {
             val diskText = workspace?.index?.file(fileId)?.file?.readText() ?: return false
             savedSourceTexts[fileId] = diskText
@@ -1497,7 +1500,7 @@ internal class AsmWorkspaceState(
     /** Generated entry symbols navigate to their current authored body, even before Save/Build. */
     private fun managedReference(token: String): Pair<String, Int>? {
         if (workspaceKind != AsmWorkspaceKind.PROJECT || projectWorkspace == null) return null
-        val door = Regex("(SmeditDoors_[0-9A-F]{4}_Door_[0-9]+)_Entry").matchEntire(token)?.groupValues?.get(1)
+        val door = Regex("(SmeditDoors_(?:[0-9A-F]{4}|Project_[0-9A-F]+)_Door_[0-9]+)_Entry").matchEntire(token)?.groupValues?.get(1)
         val macro = door ?: managedBank8FMacroName(token) ?: return null
         val file = if (door == null) PLM_SOURCE_FILE else DOOR_SOURCE_FILE
         val text = projectSourceText(file)
@@ -1731,6 +1734,8 @@ internal class AsmWorkspaceState(
         roomSourceInspection = null
         cancelSourceIndexing()
         sourceSaveParticipant = null
+        sourceEditorInterceptor = null
+        sourceEditorLinks = null
         sourceBuffers.clear()
         savedSourceTexts.clear()
         dirtySourceFileIds.clear()

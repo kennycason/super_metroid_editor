@@ -11,7 +11,7 @@ internal data class AsmInitialScrollMigration(val text: String, val states: List
 
 /** Pure adoption plan, shared by individual grid edits and compound room transactions. */
 internal fun planInitialScrollMigration(text: String, room: RoomEdits, parser: RomParser, roomName: String,
-                                       symbols: Map<String, Int>): AsmInitialScrollMigration {
+                                       symbols: Map<String, Int>, projectRoomIds: Map<Int, String> = emptyMap()): AsmInitialScrollMigration {
     require(room.asmInitialScrollSourceVersion == 0) { "Initial scrolls already have source ownership." }
     val staged = room.copy(states = room.states.toMutableList())
     staged.ensureStateManifest(parser)
@@ -20,7 +20,7 @@ internal fun planInitialScrollMigration(text: String, room: RoomEdits, parser: R
     val height = room.effectiveHeaderChange?.height ?: header.height
     val inspected = parser.inspectRoomStates(room.roomId).states
     val tables = linkedMapOf<Pair<Int, List<Int>>, SourceInitialScrollResource>()
-    val prefix = AsmInitialScrollSource.prefix(room.roomId)
+    val prefix = AsmInitialScrollSource.prefix(room.roomId, projectRoomIds[room.roomId])
     require(!Regex("(?m)^macro ${prefix}").containsMatchIn(text)) { "Existing initial scroll declarations need review before adoption." }
     val addition = buildString {
         appendLine("; SMEDIT initial screen scrolls · ${roomName.replace('\n', ' ').replace('\r', ' ')}")
@@ -45,11 +45,11 @@ internal fun planInitialScrollMigration(text: String, room: RoomEdits, parser: R
                     appendLine(AsmInitialScrollSource.renderTable(it))
                 }
             }
-            appendLine(AsmInitialScrollSource.renderState(room.roomId, state.id, table.identity))
+            appendLine(AsmInitialScrollSource.renderState(room.roomId, state.id, table.identity, projectRoomIds[room.roomId]))
         }
     }
     val after = text.trimEnd() + "\n\n" + addition
-    AsmInitialScrollSource(after, symbols).resources(staged.copy(asmInitialScrollSourceVersion = 1,
+    AsmInitialScrollSource(after, symbols, projectRoomIds).resources(staged.copy(asmInitialScrollSourceVersion = 1,
         scrollChanges = mutableListOf(), states = staged.states.map { it.copy(scrollChanges = mutableListOf()) }.toMutableList()), width, height)
     return AsmInitialScrollMigration(after, staged.states.toList())
 }

@@ -52,6 +52,12 @@ their post-compile ROM writer. GUI-generated ASM modules are temporary build inp
 and are neither embedded in JSON nor written into `overrides/src/`.
 Here, `data/*.bin` means an extracted source asset consumed by the disassembly;
 it is distinct from an IPS or fixed-offset ROM-byte patch applied after compilation.
+
+`asmWorkspace.enemyTuningSourceKeys` records owned enemy HP/contact-damage/drop
+field identities, never their values or compiled addresses. First edits retire the
+corresponding legacy patch-config keys in the same source/model undo transaction.
+Authored values stay in the native bank source; builds validate header identities,
+symbolic drop pointers and byte ownership. ROM-only builds cannot ignore these keys.
 Both build modes end in a binary ROM—the ASM choice changes the order and ownership
 of inputs, not the output format.
 

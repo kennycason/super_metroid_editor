@@ -23,6 +23,10 @@ internal fun protectDoorSourceBaseline(sources: Map<Int, SourceRoomDoors>, origi
     val built = RomParser(compiled.romBytes)
     val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
     for ((roomId, source) in sources) {
+        if (source.projectRoomId != null) {
+            source.entries.forEach { validateNativeDoorArrivalAnchor(it, labels, nativeSymbols) }
+            continue
+        }
         val native = original.parseDoorList(source.doorOutPtr)
         require(built.readRoomHeader(roomId)?.doorOut == source.doorOutPtr &&
             built.parseDoorList(source.doorOutPtr).map { it.doorDefPtr } == native.map { it.doorDefPtr }) {
@@ -76,15 +80,15 @@ internal fun validateNativeDoorArrivalAnchor(entryCode: Int, labels: Map<String,
     }
 }
 
-internal data class AsmRoomDoorListTable(val roomId: Int, val pointer: Int, val doors: List<SourceRoomDoor>) {
+internal data class AsmRoomDoorListTable(val roomId: Int, val pointer: Int, val doors: List<SourceRoomDoor>, val projectId: String? = null) {
     private val label = "SmeditRoom_${roomId.toString(16).uppercase()}_DoorList"
     fun claim() = AsmGeneratedRoomClaim(ASM_ROOM_GRAPH_OWNER, label, requireNotNull(snesLoRomToPc(0x8F0000 or pointer)),
         (doors.flatMap { listOf(it.doorDefPtr.toByte(), (it.doorDefPtr ushr 8).toByte()) } + listOf(0.toByte(), 0.toByte())).toByteArray())
     fun renderSource() = buildString {
         appendLine("org \$8F${pointer.toString(16).uppercase().padStart(4, '0')}")
         appendLine("$label:")
-        doors.forEach { appendLine("assert (${AsmDoorSource.entryLabel(roomId, it.identity)}>>16) == \$83") }
-        appendLine("    %${AsmDoorSource.listName(roomId)}()")
+        doors.forEach { appendLine("assert (${AsmDoorSource.entryLabel(roomId, it.identity, projectId)}>>16) == \$83") }
+        appendLine("    %${AsmDoorSource.listName(roomId, projectId)}()")
         appendLine("${label}_End:")
         appendLine("assert ${label}_End-$label == ${doors.size * 2 + 2}")
     }

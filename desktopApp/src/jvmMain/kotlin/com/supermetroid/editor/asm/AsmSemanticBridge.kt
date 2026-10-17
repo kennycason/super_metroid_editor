@@ -17,6 +17,7 @@ internal sealed interface AsmEditorTarget {
     }
     data class Tileset(val tilesetId: Int?, val palette: Boolean = false) : AsmEditorTarget
     data class Sprite(val speciesId: Int?) : AsmEditorTarget // null = Samus
+    data class EnemyTuning(val speciesId: Int, val drops: Boolean = false) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget
@@ -216,6 +217,14 @@ internal object AsmSemanticBridge {
             ),
         )
 
+        for (enemy in com.supermetroid.editor.ui.ENEMY_DEFS) {
+            val address = RomConstants.BANK_ENEMY_AI or enemy.speciesId
+            val link = AsmEditorLink("Edit ${enemy.name} stats", "HP / contact damage", AsmEditorTarget.EnemyTuning(enemy.speciesId))
+            listOf(address, address + 4, address + 6).forEach { add(it, link) }
+            runCatching { romParser.readUInt16At(romParser.snesToPc(address) + 0x3A) }.getOrNull()?.takeIf { it in 0x8000..0xFFFA }?.let { pointer ->
+                add(0xB40000 or pointer, AsmEditorLink("Edit ${enemy.name} drops", "Shared six-byte table", AsmEditorTarget.EnemyTuning(enemy.speciesId, true)))
+            }
+        }
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES) {
             val target = AsmEditorTarget.Sprite(entry.speciesId)
             val headerAddress = RomConstants.BANK_ENEMY_AI or entry.speciesId

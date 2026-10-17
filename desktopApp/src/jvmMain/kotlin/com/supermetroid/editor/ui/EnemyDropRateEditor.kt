@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -98,23 +99,24 @@ fun EnemyDropRateEditor(
     patch: SmPatch,
     editorState: EditorState,
     romParser: RomParser?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: ((Int) -> Unit)? = null,
 ) {
-    val values = remember(patch.id, editorState.patchVersion) {
+    val tuning = editorState.enemyTuningBridge.takeIf { editorState.asmNavigationEnabled }
+    val values = remember(editorState.project.projectId, patch.id, editorState.patchVersion, tuning, tuning?.revision) {
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (e in ENEMY_DEFS) {
             val romDrops = readDropTable(romParser, e.speciesId)
             for (slot in DROP_SLOTS) {
                 val key = "${e.key}_drop${slot.index}"
-                map[key] = stored?.get(key) ?: romDrops?.get(slot.index) ?: 0
+                map[key] = tuning?.value(patch, key)?.value ?: stored?.get(key) ?: romDrops?.get(slot.index) ?: 0
             }
         }
         map
     }
 
     fun apply(key: String, value: Int) {
-        values[key] = value
         editorState.setPatchConfigData(patch.id, key, value)
     }
 
@@ -134,11 +136,13 @@ fun EnemyDropRateEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
+        if (editorState.asmNavigationEnabled) Text("Weights edit the actual ASM table. Shared-table edits affect every listed species; source Undo restores them. Patch toggles do not undo source edits.",
+            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         val grouped = ENEMY_DEFS.groupBy { it.category }
         for (cat in listOf("Crawler", "Hopper", "Flyer", "Spawner", "Aquatic", "Pirate", "Special")) {
             val enemies = grouped[cat] ?: continue
-            DropCategorySection(cat, enemies, values, ::apply, romParser)
+            DropCategorySection(cat, enemies, values, ::apply, editorState, onNavigateToAsm)
             Spacer(Modifier.height(12.dp))
         }
 
@@ -165,7 +169,8 @@ private fun DropCategorySection(
     enemies: List<EnemyDef>,
     values: Map<String, Int>,
     onApply: (String, Int) -> Unit,
-    romParser: RomParser?
+    editorState: EditorState,
+    onNavigateToAsm: ((Int) -> Unit)?,
 ) {
     val catColor = when (category) {
         "Crawler" -> Color(0xFF8BC34A)
@@ -208,7 +213,7 @@ private fun DropCategorySection(
             Divider(modifier = Modifier.padding(vertical = 4.dp))
 
             for (e in enemies) {
-                DropRow(e, values, onApply)
+                DropRow(e, values, onApply, editorState, onNavigateToAsm)
             }
         }
     }
@@ -218,26 +223,42 @@ private fun DropCategorySection(
 private fun DropRow(
     enemy: EnemyDef,
     values: Map<String, Int>,
-    onApply: (String, Int) -> Unit
+    onApply: (String, Int) -> Unit,
+    editorState: EditorState,
+    onNavigateToAsm: ((Int) -> Unit)?,
 ) {
+    val tuning = editorState.enemyTuningBridge.takeIf { editorState.asmNavigationEnabled }
+    val problems = DROP_SLOTS.mapNotNull { tuning?.view("${enemy.key}_drop${it.index}")?.problem }.distinct()
     val dropValues = DROP_SLOTS.map { slot -> values["${enemy.key}_drop${slot.index}"] ?: 0 }
     val sum = dropValues.sum()
     val sumOk = sum in 254..256 // allow +-1 rounding
 
     Row(
-        modifier = Modifier
-            .padding(vertical = 2.dp, horizontal = 4.dp),
+        modifier = enemyTuningFocus(enemy.speciesId).padding(vertical = 2.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
-            enemy.name,
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            modifier = Modifier.width(220.dp),
-            color = MaterialTheme.colorScheme.onSurface
-        )
+        Column(Modifier.width(220.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(enemy.name, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                if (editorState.asmNavigationEnabled && onNavigateToAsm != null) TextButton(onClick = {
+                    onNavigateToAsm(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
+                    editorState.openEnemyTuningSource("${enemy.key}_drop0")
+                }) { Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+            }
+            val shared = tuning?.consumers("${enemy.key}_drop0").orEmpty()
+            if (shared.size > 1) Text("Shared table: ${shared.joinToString { RomParser.enemyName(it) }}. Edits affect all.",
+                fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.tertiary)
+            problems.forEach { Text("Last-good / read-only: $it", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error) }
+            if (problems.any { it.contains("patch override") }) TextButton(onClick = {
+                runCatching { tuning?.useSourceValues(DROP_SLOTS.mapNotNull { slot ->
+                    val key = "${enemy.key}_drop${slot.index}"
+                    key.takeIf { tuning.view(key).problem?.contains("patch override") == true }
+                }.toSet()) }.onFailure { editorState.postStatus(it.message ?: "Cannot use this source table.") }
+            }) { Text("Use ASM weights", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+        }
         for (slot in DROP_SLOTS) {
             val key = "${enemy.key}_drop${slot.index}"
-            DropInput(values[key] ?: 0, { onApply(key, it) }, Modifier.width(42.dp))
+            DropInput(values[key] ?: 0, { onApply(key, it) }, Modifier.width(42.dp), enabled = !editorState.asmNavigationEnabled || tuning != null && problems.isEmpty())
         }
         Text(
             sum.toString(),
@@ -255,22 +276,26 @@ private fun DropRow(
 private fun DropInput(
     value: Int,
     onChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var text by remember(value) { mutableStateOf(value.toString()) }
+    var lastExternal by remember { mutableStateOf(value) }
+    if (value != lastExternal) { text = value.toString(); lastExternal = value }
     BasicTextField(
+        enabled = enabled,
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it.isDigit() }.take(3)
             text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 255)) }
+            filtered.toIntOrNull()?.let { lastExternal = it.coerceIn(0, 255); onChange(lastExternal) }
         },
         singleLine = true,
         textStyle = TextStyle(
             fontSize = LocalEditorTheme.current.fontSize.value.detail,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f),
             textAlign = TextAlign.Center
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),

@@ -19,10 +19,11 @@ internal class AsmRoomStateLifecycle(
     private val catalog: AsmPlmSourceCatalog,
     private val workspace: AsmWorkspaceState,
     private val project: () -> SmEditProject,
+    private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project),
     private val changed: () -> Unit,
 ) {
     private fun sources(room: RoomEdits) = linkedMapOf(PLM_SOURCE_FILE to workspace.projectSourceText(PLM_SOURCE_FILE)).apply {
-        if (room.asmFxSourceVersion != 0) put(FX_SOURCE_FILE, workspace.projectSourceText(FX_SOURCE_FILE))
+        if (room.asmFxSourceVersion != 0 || room.asmDoorSourceVersion != 0) put(FX_SOURCE_FILE, workspace.projectSourceText(FX_SOURCE_FILE))
         if (room.asmEnemySourceVersion != 0) put(ENEMY_SOURCE_FILE, workspace.projectSourceText(ENEMY_SOURCE_FILE))
     }
 
@@ -41,9 +42,8 @@ internal class AsmRoomStateLifecycle(
     fun plan(roomId: Int, name: String, added: Pair<String, String>? = null,
              condition: ProjectRoomStateCondition? = null, changeModel: (RoomEdits) -> Unit): AsmRoomStatePlan {
         val owner = project()
-        if (owner.newRoomForPreviewId(roomId) != null) return planProjectResources(roomId, added, changeModel)
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRooms.isEmpty()) {
-            "Source state editing requires existing-room ASM source mode."
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+            "Source state editing requires ASM source mode."
         }
         val room = owner.rooms.getValue(owner.roomKey(roomId))
         val before = snapshotRoomForResize(room)
@@ -52,12 +52,12 @@ internal class AsmRoomStateLifecycle(
         val texts = originalSources.toMutableMap()
         val macros = workspace.projectSourceText("macros.asm")
         validate(staged, texts, macros)
-        val selectors = if (staged.asmStateSelectorsSourceVersion != 0) AsmRoomSelectorsSource(texts.getValue(PLM_SOURCE_FILE)).resource(staged)
+        val selectors = if (staged.asmStateSelectorsSourceVersion != 0) AsmRoomSelectorsSource(texts.getValue(PLM_SOURCE_FILE), context.identities()).resource(staged)
             else SourceRoomSelectors(staged.effectiveStates.map { it.id }, staged.states.associate { it.id to it.effectiveCondition }).also { input ->
-                require(!Regex("(?m)^macro ${AsmRoomSelectorsSource.prefix(roomId)}").containsMatchIn(texts.getValue(PLM_SOURCE_FILE))) {
+                require(!Regex("(?m)^macro ${AsmRoomSelectorsSource.prefix(roomId, context.identities()[roomId])}").containsMatchIn(texts.getValue(PLM_SOURCE_FILE))) {
                     "Existing selector declarations need review before adoption."
                 }
-                texts[PLM_SOURCE_FILE] = texts.getValue(PLM_SOURCE_FILE).trimEnd() + "\n\n" + AsmRoomSelectorsSource.render(roomId, name, input)
+                texts[PLM_SOURCE_FILE] = texts.getValue(PLM_SOURCE_FILE).trimEnd() + "\n\n" + AsmRoomSelectorsSource.render(roomId, name, input, context.identities()[roomId])
                 staged.states.forEach { it.condition = AsmRoomSelectorsSource.baseline(it); it.conditionChanged = false }
                 staged.asmStateSelectorsSourceVersion = 1
                 input.projectInto(staged)
@@ -79,22 +79,22 @@ internal class AsmRoomStateLifecycle(
             val state = staged.states.single { it.id == id }
             state.condition = AsmRoomSelectorsSource.baseline(state); state.conditionChanged = false
             var bank = texts.getValue(PLM_SOURCE_FILE)
-            if (staged.asmPlmSourceVersion != 0) bank = AsmRoomObjectSource(bank, catalog.symbols).cloneState(roomId, template, id)
-            if (staged.asmInitialScrollSourceVersion != 0) bank = AsmInitialScrollSource(bank, catalog.symbols).cloneState(roomId, template, id)
-            if (staged.asmLayoutSourceVersion != 0) bank = AsmRoomLayoutSource(bank).appendState(roomId, id, state.resources.level)
-            if (staged.asmRoomPropertiesSourceVersion != 0) bank = AsmRoomPropertiesSource(bank).cloneState(oldMembership, template, id)
+            if (staged.asmPlmSourceVersion != 0) bank = AsmRoomObjectSource(bank, catalog.symbols, context.identities()).cloneState(roomId, template, id)
+            if (staged.asmInitialScrollSourceVersion != 0) bank = AsmInitialScrollSource(bank, catalog.symbols, context.identities()).cloneState(roomId, template, id)
+            if (staged.asmLayoutSourceVersion != 0) bank = AsmRoomLayoutSource(bank, context.identities()).appendState(roomId, id, state.resources.level)
+            if (staged.asmRoomPropertiesSourceVersion != 0) bank = AsmRoomPropertiesSource(bank, context.identities()).cloneState(oldMembership, template, id)
             texts[PLM_SOURCE_FILE] = bank
-            if (staged.asmFxSourceVersion != 0) texts[FX_SOURCE_FILE] = AsmFxSource(texts.getValue(FX_SOURCE_FILE)).cloneState(roomId, template, id)
-            if (staged.asmEnemySourceVersion != 0) texts[ENEMY_SOURCE_FILE] = AsmEnemySource(texts.getValue(ENEMY_SOURCE_FILE), catalog.symbols).cloneState(roomId, template, id)
+            if (staged.asmFxSourceVersion != 0) texts[FX_SOURCE_FILE] = AsmFxSource(texts.getValue(FX_SOURCE_FILE), context.identities()).cloneState(roomId, template, id)
+            if (staged.asmEnemySourceVersion != 0) texts[ENEMY_SOURCE_FILE] = AsmEnemySource(texts.getValue(ENEMY_SOURCE_FILE), catalog.symbols, context.identities()).cloneState(roomId, template, id)
         } else require(removed.size == 1 && staged.states.size == oldMembership.states.size - 1)
         val next = SourceRoomSelectors(nextOrder, nextConditions)
-        texts[PLM_SOURCE_FILE] = AsmRoomSelectorsSource(texts.getValue(PLM_SOURCE_FILE)).changeStates(oldMembership, next)
+        texts[PLM_SOURCE_FILE] = AsmRoomSelectorsSource(texts.getValue(PLM_SOURCE_FILE), context.identities()).changeStates(oldMembership, next)
         next.projectInto(staged)
         staged.stateGraphChanged = true
 
         val savesToRelease = mutableListOf<Pair<SourceSaveResource, List<String>>>()
         if (removed.isNotEmpty() && staged.asmPlmSourceVersion != 0) {
-            val source = AsmRoomObjectSource(texts.getValue(PLM_SOURCE_FILE), catalog.symbols)
+            val source = AsmRoomObjectSource(texts.getValue(PLM_SOURCE_FILE), catalog.symbols, context.identities())
             val removedSlots = removed.flatMap { source.table(roomId, it).document.entries }.filter { it.id == 0xB76F }.map { it.param and 255 }.toSet()
             val activeSlots = staged.states.flatMap { source.table(roomId, it.id).document.entries }.filter { it.id == 0xB76F }.map { it.param and 255 }.toSet()
             for (save in source.saveResources(roomId).filter { it.slot in removedSlots - activeSlots && !it.cleared }) {
@@ -107,110 +107,71 @@ internal class AsmRoomStateLifecycle(
 
         // Active wrappers are roots; preserve helpers pinned by any other bank or custom module.
         val roots = buildSet {
-            add(AsmRoomSelectorsSource.orderName(roomId))
-            if (staged.asmRoomPropertiesSourceVersion != 0) add(AsmRoomPropertiesSource.headerName(roomId))
-            if (staged.asmPlmSourceVersion != 0) addAll(AsmRoomObjectSource(texts.getValue(PLM_SOURCE_FILE), catalog.symbols).saveResources(roomId).map { it.identity })
+            if (staged.asmDoorSourceVersion != 0) {
+                val doors = AsmDoorSource(texts.getValue(DOOR_SOURCE_FILE), texts.getValue(PLM_SOURCE_FILE),
+                    catalog.symbols, context.identities(), owner.newRooms).resource(staged, context.parser) { id ->
+                    sourceRoomDimensions(owner, context.parser, id)
+                }
+                if (doors.structural) add(AsmDoorSource.listName(roomId, context.identities()[roomId]))
+                doors.entries.forEach { add(AsmDoorSource.name(roomId, it.identity, context.identities()[roomId])) }
+            }
+            add(AsmRoomSelectorsSource.orderName(roomId, context.identities()[roomId]))
+            if (staged.asmRoomPropertiesSourceVersion != 0) add(AsmRoomPropertiesSource.headerName(roomId, context.identities()[roomId]))
+            if (staged.asmPlmSourceVersion != 0) addAll(AsmRoomObjectSource(texts.getValue(PLM_SOURCE_FILE), catalog.symbols, context.identities()).saveResources(roomId).map { it.identity })
             for (state in staged.states) {
-                add(AsmRoomSelectorsSource.conditionName(roomId, state.id))
-                if (staged.asmPlmSourceVersion != 0) add(AsmRoomObjectSource.stateMacro(roomId, state.id))
-                if (staged.asmInitialScrollSourceVersion != 0) add(AsmInitialScrollSource.stateName(roomId, state.id))
-                if (staged.asmLayoutSourceVersion != 0) add(AsmRoomLayoutSource.stateName(roomId, state.id))
-                if (staged.asmRoomPropertiesSourceVersion != 0) add(AsmRoomPropertiesSource.stateName(roomId, state.id))
-                if (staged.asmFxSourceVersion != 0) add(AsmFxSource.stateName(roomId, state.id))
-                if (staged.asmEnemySourceVersion != 0) add(AsmEnemySource.stateName(roomId, state.id))
+                add(AsmRoomSelectorsSource.conditionName(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmPlmSourceVersion != 0) add(AsmRoomObjectSource.stateMacro(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmInitialScrollSourceVersion != 0) add(AsmInitialScrollSource.stateName(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmLayoutSourceVersion != 0) add(AsmRoomLayoutSource.stateName(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmRoomPropertiesSourceVersion != 0) add(AsmRoomPropertiesSource.stateName(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmFxSourceVersion != 0) add(AsmFxSource.stateName(roomId, state.id, context.identities()[roomId]))
+                if (staged.asmEnemySourceVersion != 0) add(AsmEnemySource.stateName(roomId, state.id, context.identities()[roomId]))
             }
         }
-        val external = workspace.projectSourceReadersExcept(texts.keys).map { it() }
-        val cleaned = resetRoomSource(staged, texts, external.asSequence(), roots).toMutableMap()
+        val external = workspace.projectSourceReadersExcept(texts.keys).map { it() } +
+            owner.newRooms.flatMap { it.doors.mapNotNull { door -> door.arrivalAsmLabel } }
+        val cleaned = resetRoomSource(staged, texts, external.asSequence(), roots, context.identities()[roomId]).toMutableMap()
         for ((save, oldLists) in savesToRelease) {
-            val source = AsmRoomObjectSource(cleaned.getValue(PLM_SOURCE_FILE), catalog.symbols)
+            val source = AsmRoomObjectSource(cleaned.getValue(PLM_SOURCE_FILE), catalog.symbols, context.identities())
             require(oldLists.none(source::contains)) { "The final save station is still referenced by retained custom source. Resolve that reference before deleting its state." }
             cleaned[PLM_SOURCE_FILE] = source.withSave(save.copy(words = List(7) { 0 }, sourceDoor = null))
         }
         validate(staged, cleaned, macros)
-        AsmRoomSelectorsSource(cleaned.getValue(PLM_SOURCE_FILE)).resource(staged).projectInto(staged)
-        if (staged.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(cleaned.getValue(PLM_SOURCE_FILE)).resource(staged).projectInto(staged)
+        AsmRoomSelectorsSource(cleaned.getValue(PLM_SOURCE_FILE), context.identities()).resource(staged).projectInto(staged)
+        if (staged.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(cleaned.getValue(PLM_SOURCE_FILE), context.identities()).resource(staged).projectInto(staged)
         return AsmRoomStatePlan(owner, room, before, staged, workspace.sourceBufferRevision,
             originalSources.mapValues { (file, text) -> text to cleaned.getValue(file) },
             external.flatMap(::resetSourceReferences).toSet(), macros)
     }
 
-    /** New-room conditions remain semantic project data; owned resource wrappers join the same history. */
-    private fun planProjectResources(roomId: Int, added: Pair<String, String>?, changeModel: (RoomEdits) -> Unit): AsmRoomStatePlan {
-        val owner = project()
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Project room source requires ASM mode." }
-        val room = owner.rooms.getValue(owner.roomKey(roomId))
-        val before = snapshotRoomForResize(room)
-        val staged = snapshotRoomForResize(room)
-        val texts = sources(room)
-        val macros = workspace.projectSourceText("macros.asm")
-        validate(staged, texts, macros)
-        val bank = texts.getValue(PLM_SOURCE_FILE)
-        val identities = AsmRoomPropertiesSource.projectIdentities(owner)
-        changeModel(staged)
-        var updated = bank
-        if (added != null) {
-            if (staged.asmRoomPropertiesSourceVersion != 0)
-                updated = AsmRoomPropertiesSource(updated, identities).cloneState(before, added.first, added.second)
-            if (staged.asmLayoutSourceVersion != 0) updated = AsmRoomLayoutSource(updated, identities)
-                .appendState(roomId, added.second, staged.states.single { it.id == added.second }.resources.level)
-        }
-        staged.stateGraphChanged = true
-        val replacements = texts + (PLM_SOURCE_FILE to updated)
-        validate(staged, replacements, macros)
-        if (staged.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(updated, identities).resource(staged).projectInto(staged)
-        val external = workspace.projectSourceReadersExcept(texts.keys).flatMap { resetSourceReferences(it()) }.toSet()
-        return AsmRoomStatePlan(owner, room, before, staged, workspace.sourceBufferRevision,
-            texts.mapValues { (file, text) -> text to replacements.getValue(file) }, external, macros)
-    }
-
     private fun validate(room: RoomEdits, texts: Map<String, String>, macros: String) {
-        if (project().newRoomForPreviewId(room.roomId) != null) {
-            require(room.asmRoomPropertiesSourceVersion in 0..1 && room.asmLayoutSourceVersion in 0..1 &&
-                (room.asmRoomPropertiesSourceVersion != 0 || room.asmLayoutSourceVersion != 0) &&
-                room.asmStateSelectorsSourceVersion == 0 && room.asmDoorSourceVersion == 0 &&
-                room.asmPlmSourceVersion == 0 && room.asmInitialScrollSourceVersion == 0 &&
-                room.asmFxSourceVersion == 0 && room.asmEnemySourceVersion == 0) { "This project-room state resource needs its reciprocal source workflow first." }
-            require(room.states.map { it.id }.distinct().size == room.states.size &&
-                room.states.count { it.condition.kind == ProjectRoomStateConditionKind.DEFAULT } == 1 &&
-                room.states.last().condition.kind == ProjectRoomStateConditionKind.DEFAULT) { "Project-room state identities/default order changed." }
-            val identities = AsmProjectRoomLabels.identities(project())
-            val bank = texts.getValue(PLM_SOURCE_FILE)
-            if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(bank, identities).resource(room)
-            if (room.asmLayoutSourceVersion != 0) {
-                val seed = project().newRoomForPreviewId(room.roomId)!!.header
-                AsmRoomLayoutSource(bank, identities).resources(room, (room.effectiveHeaderChange?.width ?: seed.width) * 16,
-                    (room.effectiveHeaderChange?.height ?: seed.height) * 16)
-            }
-            return
-        }
-        val header = requireNotNull(catalog.parser.readRoomHeader(room.roomId))
+        val header = requireNotNull(context.parser.readRoomHeader(room.roomId))
         val width = room.effectiveHeaderChange?.width ?: header.width
         val height = room.effectiveHeaderChange?.height ?: header.height
         val bank = texts.getValue(PLM_SOURCE_FILE)
         if (room.asmStateSelectorsSourceVersion != 0) validateSelectorDoorReferences(
-            AsmRoomSelectorsSource(bank).resource(room), room.roomId, project(), catalog, workspace, bank)
-        if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(bank).resource(room)
-        if (room.asmLayoutSourceVersion != 0) AsmRoomLayoutSource(bank).resources(room, width * 16, height * 16)
-        if (room.asmInitialScrollSourceVersion != 0) AsmInitialScrollSource(bank, catalog.symbols).resources(room, width, height)
+            AsmRoomSelectorsSource(bank, context.identities()).resource(room), room.roomId, project(), catalog, workspace, bank)
+        if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(bank, context.identities()).resource(room)
+        if (room.asmLayoutSourceVersion != 0) AsmRoomLayoutSource(bank, context.identities()).resources(room, width * 16, height * 16)
+        if (room.asmInitialScrollSourceVersion != 0) AsmInitialScrollSource(bank, catalog.symbols, context.identities()).resources(room, width, height)
         if (room.asmPlmSourceVersion != 0) {
             catalog.requireStandardMacro(macros)
-            AsmRoomObjectSource(bank, catalog.symbols).resources(room, width * height)
+            AsmRoomObjectSource(bank, catalog.symbols, context.identities()).resources(room, width * height)
         }
-        if (room.asmFxSourceVersion != 0) AsmFxSource(texts.getValue(FX_SOURCE_FILE)).resources(room).values.forEach {
-            validateSourceFxDoors(room.roomId, it, catalog.parser, liveSourceDoors(it.entries.mapNotNull { entry -> entry.sourceDoor },
+        if (room.asmFxSourceVersion != 0) AsmFxSource(texts.getValue(FX_SOURCE_FILE), context.identities()).resources(room).values.forEach {
+            validateSourceFxDoors(room.roomId, it, context.parser, liveSourceDoors(it.entries.mapNotNull { entry -> entry.sourceDoor },
                 project(), catalog, workspace, bank, it.entries.map { entry -> entry.doorSelect }))
         }
         if (room.asmEnemySourceVersion != 0) {
             catalog.requireStandardEnemyMacros(macros)
-            val nativeStates = catalog.parser.inspectRoomStates(room.roomId).states
-            AsmEnemySource(texts.getValue(ENEMY_SOURCE_FILE), catalog.symbols).resources(room).forEach { (id, input) ->
+            val nativeStates = context.parser.inspectRoomStates(room.roomId).states
+            AsmEnemySource(texts.getValue(ENEMY_SOURCE_FILE), catalog.symbols, context.identities()).resources(room).forEach { (id, input) ->
                 val state = room.states.single { it.id == id }
                 val native = requireNotNull(nativeStates.getOrNull(requireNotNull(state.baseSourceStateIndex()))?.stateDataPcOffset)
-                val fields = catalog.parser.readStateData(native)
-                val population = readSourceEnemyPopulation(catalog.parser, fields.getValue("enemySetPtr"), "Original population")
-                val graphics = readSourceEnemyGraphics(catalog.parser, fields.getValue("enemyGfxPtr"), "Original GFX")
-                require(completeEnemyGraphics(catalog.parser, input.population.entries, population.entries, input.graphics, graphics) == input.graphics) {
+                val fields = context.parser.readStateData(native)
+                val population = readSourceEnemyPopulation(context.parser, fields.getValue("enemySetPtr"), "Original population")
+                val graphics = readSourceEnemyGraphics(context.parser, fields.getValue("enemyGfxPtr"), "Original GFX")
+                require(completeEnemyGraphics(context.parser, input.population.entries, population.entries, input.graphics, graphics) == input.graphics) {
                     "State $id has actors without their required graphics transfers; repair the paired source before changing states."
                 }
             }
@@ -231,7 +192,8 @@ internal class AsmRoomStateLifecycle(
             require(project() === plan.owner && (projectId != null || plan.owner.rooms[plan.owner.roomKey(plan.original.roomId)] === plan.original) &&
                 metadata(active) == metadata(if (undo) afterSnapshot else plan.before)) { "Room/state data changed; undo newer edits before restoring this state operation." }
             require(workspace.projectSourceText("macros.asm") == plan.macros) { "Macro definitions changed; restore them before this state operation." }
-            val references = workspace.projectSourceReadersExcept(plan.replacements.keys).flatMap { resetSourceReferences(it()) }.toSet()
+            val references = (workspace.projectSourceReadersExcept(plan.replacements.keys).flatMap { resetSourceReferences(it()) } +
+                plan.owner.newRooms.flatMap { it.doors.mapNotNull { door -> door.arrivalAsmLabel } }.flatMap(::resetSourceReferences)).toSet()
             require(references == plan.externalReferences) { "Custom source references changed; undo them before restoring this state operation." }
             beforeTransition()
         }

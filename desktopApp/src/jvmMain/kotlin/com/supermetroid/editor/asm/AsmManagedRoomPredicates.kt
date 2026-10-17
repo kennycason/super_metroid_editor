@@ -5,7 +5,7 @@ internal data class AsmManagedRoomPredicate(override val macroName: String) : As
     override val label = "${macroName}_Predicate"
 
     init {
-        require(macroName.matches(Regex("SmeditSelectors_[0-9A-F]{4}_Condition_[0-9a-f]+"))) {
+        require(macroName.matches(Regex("SmeditSelectors_(?:[0-9A-F]{4}|Project_[0-9A-F]+)_Condition_[0-9a-f]+"))) {
             "Managed predicates belong in a room's condition macro, not its order or another declaration."
         }
     }

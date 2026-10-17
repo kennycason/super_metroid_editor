@@ -7,25 +7,29 @@ internal data class AsmEnemyView(val resource: SourceEnemyResources?, val proble
 
 /** Paired actor/GFX transactions, independently shared tables, and last-valid live projections. */
 internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private val workspace: AsmWorkspaceState,
-                             private val project: () -> SmEditProject, private val metadataChanged: () -> Unit) {
+                             private val project: () -> SmEditProject, private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project),
+    private val metadataChanged: () -> Unit) {
     private var revision: Pair<String, AsmEnemySource>? = null
-    private val lastGood = mutableMapOf<Pair<Int, String>, SourceEnemyResources>()
+    private val lastGood = mutableMapOf<Pair<String, String>, SourceEnemyResources>()
+    private var identityRevision = emptyMap<Int, String>()
     fun sourceText() = workspace.projectSourceText(ENEMY_SOURCE_FILE)
     private fun source(): AsmEnemySource {
+        val identities = context.identities()
+        if (identityRevision != identities) { revision = null; identityRevision = identities }
         val text = sourceText()
-        return revision?.takeIf { it.first == text }?.second ?: AsmEnemySource(text, catalog.symbols).also { revision = text to it }
+        return revision?.takeIf { it.first == text }?.second ?: AsmEnemySource(text, catalog.symbols, context.identities()).also { revision = text to it }
     }
     fun isManaged(roomId: Int) = (project().rooms[project().roomKey(roomId)]?.asmEnemySourceVersion ?: 0) != 0
     private fun original(roomId: Int, state: RoomStateEdits): SourceEnemyResources {
-        val native = catalog.parser.inspectRoomStates(roomId).states
+        val native = context.parser.inspectRoomStates(roomId).states
         val pc = requireNotNull(native.getOrNull(requireNotNull(state.baseSourceStateIndex()))?.stateDataPcOffset) { "Enemy state has no source/template." }
-        val fields = catalog.parser.readStateData(pc)
-        return SourceEnemyResources(readSourceEnemyPopulation(catalog.parser, fields.getValue("enemySetPtr"), "Original population"),
-            readSourceEnemyGraphics(catalog.parser, fields.getValue("enemyGfxPtr"), "Original GFX"))
+        val fields = context.parser.readStateData(pc)
+        return SourceEnemyResources(readSourceEnemyPopulation(context.parser, fields.getValue("enemySetPtr"), "Original population"),
+            readSourceEnemyGraphics(context.parser, fields.getValue("enemyGfxPtr"), "Original GFX"))
     }
     private fun validate(room: RoomEdits, stateId: String, input: SourceEnemyResources) {
         val baseline = original(room.roomId, room.states.single { it.id == stateId })
-        require(completeEnemyGraphics(catalog.parser, input.population.entries, baseline.population.entries, input.graphics, baseline.graphics) == input.graphics) {
+        require(completeEnemyGraphics(context.parser, input.population.entries, baseline.population.entries, input.graphics, baseline.graphics) == input.graphics) {
             "${input.population.identity}: a new actor needs a GFX entry. Add its transfer to the paired Graphics macro; no data was replaced."
         }
     }
@@ -34,23 +38,29 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
         val room = project().rooms.getValue(project().roomKey(roomId))
         val resource = source().resources(room).getValue(stateId)
         validate(room, stateId, resource)
-        lastGood[roomId to stateId] = resource
+        lastGood[context.identity(roomId) to stateId] = resource
         AsmEnemyView(resource, null)
-    } catch (error: Exception) { AsmEnemyView(lastGood[roomId to stateId], error.message ?: "Invalid enemy source.") }
+    } catch (error: Exception) { AsmEnemyView(lastGood[context.identity(roomId) to stateId], error.message ?: "Invalid enemy source.") }
     fun migrate(roomId: Int, roomName: String) {
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Enemy source requires ASM mode." }
         if (isManaged(roomId)) return
-        require(owner.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room enemy source is not supported yet." }
         catalog.requireStandardEnemyMacros(workspace.projectSourceText("macros.asm"))
         val room = owner.rooms[owner.roomKey(roomId)] ?: RoomEdits(roomId)
-        val staged = room.copy(states = room.states.toMutableList())
-        staged.ensureStateManifest(catalog.parser)
+        val staged = snapshotRoomForResize(room)
+        staged.ensureStateManifest(context.parser)
         val before = sourceText()
         val after = migrationText(before, staged, roomName)
         val oldStates = room.states.toList()
         val common = room.enemyChanges.toList()
         val scoped = staged.states.associate { it.id to it.enemyChanges.toList() }
+        if (owner.newRoomForPreviewId(roomId) != null) {
+            staged.enemyChanges.clear(); staged.states.forEach { it.enemyChanges.clear() }
+            staged.asmEnemySourceVersion = 1
+            context.replace(workspace, roomId, owner.rooms[owner.roomKey(roomId)]?.let(::snapshotRoomForResize), staged,
+                mapOf(ENEMY_SOURCE_FILE to (before to after)), metadataChanged)
+            return
+        }
         fun adopt() {
             require(room.asmEnemySourceVersion == 0 && room.states == oldStates && room.enemyChanges == common &&
                 staged.states.all { it.enemyChanges == scoped[it.id] }) { "Enemy metadata changed; adopt again." }
@@ -74,15 +84,15 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
 
     fun preview(room: RoomEdits, name: String): String {
         catalog.requireStandardEnemyMacros(workspace.projectSourceText("macros.asm"))
-        room.ensureStateManifest(catalog.parser)
+        room.ensureStateManifest(context.parser)
         val before = sourceText()
         return roomSourceAddition(before, migrationText(before, room, name))
     }
 
     /** The preview and adoption deliberately run the same planner and validation. */
-    private fun migrationText(before: String, staged: RoomEdits, roomName: String): String {
+    internal fun migrationText(before: String, staged: RoomEdits, roomName: String): String {
         val roomId = staged.roomId
-        val prefix = AsmEnemySource.prefix(roomId)
+        val prefix = AsmEnemySource.prefix(roomId, context.identities()[roomId])
         require(!Regex("(?m)^macro $prefix").containsMatchIn(before)) { "Existing enemy declarations need review before adoption." }
         val populations = linkedMapOf<Pair<String?, SourceEnemyPopulation>, SourceEnemyPopulation>()
         val graphics = linkedMapOf<Pair<String?, SourceEnemyGraphics>, SourceEnemyGraphics>()
@@ -94,21 +104,21 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
             appendLine("; State wrappers are planner recipes, not records to emit inline; placement invokes each table in its bank.")
             for (state in staged.states) {
                 val baseline = original(roomId, state)
-                val pc = requireNotNull(catalog.parser.inspectRoomStates(roomId).states[requireNotNull(state.baseSourceStateIndex())].stateDataPcOffset)
-                val pointers = catalog.parser.readStateData(pc)
+                val pc = requireNotNull(context.parser.inspectRoomStates(roomId).states[requireNotNull(state.baseSourceStateIndex())].stateDataPcOffset)
+                val pointers = context.parser.readStateData(pc)
                 val entries = applyEnemyChanges(baseline.population.entries, staged.enemyChanges + state.enemyChanges)
                 val population = populations.getOrPut(pointers["enemySetPtr"].toString() to baseline.population.copy(entries = entries)) {
                     baseline.population.copy(identity = prefix + "Population_${populations.size + 1}", entries = entries).also { appendLine(AsmEnemySource.renderPopulation(it)) }
                 }
-                val completed = completeEnemyGraphics(catalog.parser, entries, baseline.population.entries, baseline.graphics, baseline.graphics)
+                val completed = completeEnemyGraphics(context.parser, entries, baseline.population.entries, baseline.graphics, baseline.graphics)
                 val gfx = graphics.getOrPut(pointers["enemyGfxPtr"].toString() to completed) {
                     completed.copy(identity = prefix + "Graphics_${graphics.size + 1}").also { appendLine(AsmEnemySource.renderGraphics(it)) }
                 }
-                appendLine(AsmEnemySource.renderState(roomId, state.id, population.identity, gfx.identity))
+                appendLine(AsmEnemySource.renderState(roomId, state.id, population.identity, gfx.identity, context.identities()[roomId]))
             }
         }
         val after = before + (if (before.endsWith('\n')) "\n" else "\n\n") + addition
-        AsmEnemySource(after, catalog.symbols).resources(staged.copy(asmEnemySourceVersion = 1, enemyChanges = mutableListOf(),
+        AsmEnemySource(after, catalog.symbols, context.identities()).resources(staged.copy(asmEnemySourceVersion = 1, enemyChanges = mutableListOf(),
             states = staged.states.map { it.copy(enemyChanges = mutableListOf()) }.toMutableList()))
         return after
     }
@@ -120,13 +130,13 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
         val entries = transform(input.population.entries)
         SourceEnemyPopulation(input.population.identity, entries, input.population.killCount)
         val baseline = original(roomId, room.states.single { it.id == stateId })
-        val completed = completeEnemyGraphics(catalog.parser, entries, baseline.population.entries, input.graphics, baseline.graphics)
+        val completed = completeEnemyGraphics(context.parser, entries, baseline.population.entries, input.graphics, baseline.graphics)
         val source = source()
         val changed = source.replace(room, stateId, entries, completed.entries)
         val outside = workspace.projectSourceTextsExcept(ENEMY_SOURCE_FILE).flatMap { AsmEnemySource.references(it) }.toSet()
-        val tidy = AsmEnemySource(changed, catalog.symbols).tidy(room, outside)
-        val after = AsmEnemySource(tidy, catalog.symbols).withComments(room)
-        AsmEnemySource(after, catalog.symbols).resources(room).forEach { (state, resource) -> validate(room, state, resource) }
+        val tidy = AsmEnemySource(changed, catalog.symbols, context.identities()).tidy(room, outside)
+        val after = AsmEnemySource(tidy, catalog.symbols, context.identities()).withComments(room)
+        AsmEnemySource(after, catalog.symbols, context.identities()).resources(room).forEach { (state, resource) -> validate(room, state, resource) }
         workspace.replaceProjectSource(ENEMY_SOURCE_FILE, source.text, after)
     }
     fun line(roomId: Int, stateId: String, index: Int? = null, graphics: Boolean = false) = source().line(roomId, stateId, index, graphics)
@@ -142,13 +152,19 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
         val rooms = project().rooms.values.filter { it.asmEnemySourceVersion != 0 }.map { it.copy(enemyChanges = it.enemyChanges.toMutableList(),
             states = it.states.map { state -> state.copy(enemyChanges = state.enemyChanges.toMutableList()) }.toMutableList()) }
         val readers = workspace.projectSourceReadersExcept(ENEMY_SOURCE_FILE)
+        val identities = context.identities()
         return {
             val external = readers.flatMap { AsmEnemySource.references(it()) }.toSet()
             rooms.fold(text) { current, room -> runCatching {
-                val source = AsmEnemySource(current, catalog.symbols)
+                val source = AsmEnemySource(current, catalog.symbols, identities)
                 source.resources(room)
-                AsmEnemySource(source.tidy(room, external), catalog.symbols).withComments(room)
+                AsmEnemySource(source.tidy(room, external), catalog.symbols, identities).withComments(room)
             }.getOrDefault(current) }
+        }
+    }
+    internal fun remember(room: RoomEdits, text: String) {
+        AsmEnemySource(text, catalog.symbols, context.identities()).resources(room).forEach { (state, resource) ->
+            lastGood[context.identity(room.roomId) to state] = resource
         }
     }
 }

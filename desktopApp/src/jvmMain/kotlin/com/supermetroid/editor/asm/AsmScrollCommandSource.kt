@@ -7,7 +7,7 @@ import com.supermetroid.editor.rom.validateScrollCommands
 
 /** Bounded byte-stream lens. Unsupported expressions stay in ASM, never guessed by the GUI. */
 internal object AsmScrollCommandSource {
-    private val reference = Regex("(SmeditObjects_[A-Za-z0-9]+_Scroll_[0-9]+)(?:\\s*&\\s*\\${'$'}FFFF)?", RegexOption.IGNORE_CASE)
+    private val reference = Regex("(SmeditObjects_[A-Za-z0-9_]+_Scroll_[0-9]+)(?:\\s*&\\s*\\${'$'}FFFF)?", RegexOption.IGNORE_CASE)
     fun reference(token: String): String? = reference.matchEntire(token)?.groupValues?.get(1)
 
     fun fromText(text: String, name: String, screenCount: Int): SourceScrollResource {

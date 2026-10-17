@@ -5,7 +5,7 @@ import com.supermetroid.editor.rom.*
 
 internal data class AsmRoomEnemyTable(val identity: String, val bytes: ByteArray, val bank: Int, val pcOffset: Int, val pointerOffsets: List<Int>) {
     fun claims(): List<AsmGeneratedRoomClaim> {
-        require(identity.matches(Regex("SmeditEnemies_[A-F0-9]+_(Population|Graphics)_[0-9]+"))) { "Invalid enemy source identity." }
+        require(identity.matches(Regex("SmeditEnemies_[A-Za-z0-9_]+_(Population|Graphics)_[0-9]+"))) { "Invalid enemy source identity." }
         require(bank in listOf(0xA1, 0xB4) && pcToSnesLoRom(pcOffset)?.ushr(16) == bank &&
             pcToSnesLoRom(pcOffset + bytes.size - 1)?.ushr(16) == bank) { "Enemy source placement crosses its bank." }
         require(pointerOffsets.isNotEmpty() && pointerOffsets.distinct().size == pointerOffsets.size)
@@ -74,6 +74,7 @@ internal fun protectEnemyBaseline(project: SmEditProject, baseline: RomParser, c
         "The enemy population/GFX loader changed in ASM. A custom layout needs a matching editor codec."
     }
     for (room in rooms) {
+        if (project.newRoomForPreviewId(room.roomId) != null) continue
         val states = baseline.inspectRoomStates(room.roomId).states
         require(compiled.inspectRoomStates(room.roomId).states.map { it.stateDataPcOffset to it.condition } ==
             states.map { it.stateDataPcOffset to it.condition }) {

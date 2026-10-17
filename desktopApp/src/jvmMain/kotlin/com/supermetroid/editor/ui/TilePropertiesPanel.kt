@@ -628,6 +628,11 @@ internal fun TilePropertiesPanel(
                         if (!editorState.canEditSharedDoor(currentDoor.doorDefPtr)) TextButton(onClick = { editorState.enableSharedDoorEditing(currentDoor.doorDefPtr) }) {
                             Text("Edit shared record", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                         }
+                        TextButton(enabled = editorState.doorPreviewProblem == null, onClick = {
+                            editorState.makeDoorIndependent(connectionIndex, declarationIdentity)
+                        }) {
+                            Text("Make this connection independent", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                        }
                     }
                     val connectionDiagnostic = remember(
                         roomId,

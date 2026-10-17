@@ -20,18 +20,19 @@ internal fun resetRoomSource(
     sources: Map<String, String>,
     externalTexts: Sequence<String>,
     retainedRoots: Set<String> = emptySet(),
+    projectId: String? = null,
 ): Map<String, String> {
     data class Definition(val file: String, val name: String, val range: IntRange, val body: String)
     val ownedNames = buildList {
-        if (room.asmDoorSourceVersion != 0) add(Regex(AsmDoorSource.prefix(room.roomId) + "(?:Door_[0-9]+|List)"))
-        if (room.asmDoorSourceVersion != 0) add(Regex("SmeditArrival_${room.roomId.toString(16).uppercase().padStart(4, '0')}_Door_[0-9]+"))
-        if (room.asmPlmSourceVersion != 0) add(Regex(AsmRoomObjectSource.prefix(room.roomId) + "(?:(?:List|Common|Scroll)_[0-9]+|State_[0-9a-f]+|Save_[0-5]_[0-7])"))
-        if (room.asmInitialScrollSourceVersion != 0) add(Regex(AsmInitialScrollSource.prefix(room.roomId) + "(?:Table_[0-9]+|State_[0-9a-f]+)"))
-        if (room.asmLayoutSourceVersion != 0) add(Regex(AsmRoomLayoutSource.prefix(room.roomId) + "(?:Data|State)_[0-9a-f]+"))
-        if (room.asmRoomPropertiesSourceVersion != 0) add(Regex(AsmRoomPropertiesSource.prefix(room.roomId) + "(?:Header|State_[0-9a-f]+)"))
-        if (room.asmStateSelectorsSourceVersion != 0) add(Regex(AsmRoomSelectorsSource.prefix(room.roomId) + "(?:Order|Condition_[0-9a-f]+)"))
-        if (room.asmFxSourceVersion != 0) add(Regex(AsmFxSource.prefix(room.roomId) + "(?:Table_[0-9]+|State_[0-9a-f]+)"))
-        if (room.asmEnemySourceVersion != 0) add(Regex(AsmEnemySource.prefix(room.roomId) + "(?:(?:Population|Graphics)_[0-9]+|State_[0-9a-f]+)"))
+        if (room.asmDoorSourceVersion != 0) add(Regex(AsmDoorSource.prefix(room.roomId, projectId) + "(?:Door_[0-9]+|List)"))
+        if (room.asmDoorSourceVersion != 0) add(Regex(AsmRoomSourceContext.prefix("SmeditArrival", room.roomId, projectId) + "Door_[0-9]+"))
+        if (room.asmPlmSourceVersion != 0) add(Regex(AsmRoomObjectSource.prefix(room.roomId, projectId) + "(?:(?:List|Common|Scroll)_[0-9]+|State_[0-9a-f]+|Save_[0-5]_[0-7])"))
+        if (room.asmInitialScrollSourceVersion != 0) add(Regex(AsmInitialScrollSource.prefix(room.roomId, projectId) + "(?:Table_[0-9]+|State_[0-9a-f]+)"))
+        if (room.asmLayoutSourceVersion != 0) add(Regex(AsmRoomLayoutSource.prefix(room.roomId, projectId) + "(?:Data|State)_[0-9a-f]+"))
+        if (room.asmRoomPropertiesSourceVersion != 0) add(Regex(AsmRoomPropertiesSource.prefix(room.roomId, projectId) + "(?:Header|State_[0-9a-f]+)"))
+        if (room.asmStateSelectorsSourceVersion != 0) add(Regex(AsmRoomSelectorsSource.prefix(room.roomId, projectId) + "(?:Order|Condition_[0-9a-f]+)"))
+        if (room.asmFxSourceVersion != 0) add(Regex(AsmFxSource.prefix(room.roomId, projectId) + "(?:Table_[0-9]+|State_[0-9a-f]+)"))
+        if (room.asmEnemySourceVersion != 0) add(Regex(AsmEnemySource.prefix(room.roomId, projectId) + "(?:(?:Population|Graphics)_[0-9]+|State_[0-9a-f]+)"))
     }
     val definitions = mutableListOf<Definition>()
     val starts = Regex("(?m)^[ \\t]*macro[ \\t]+([A-Za-z0-9_]+)([^\\r\\n]*)(?:\\r?\\n|$)")

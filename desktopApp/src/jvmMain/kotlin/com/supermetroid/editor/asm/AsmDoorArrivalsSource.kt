@@ -3,7 +3,7 @@ package com.supermetroid.editor.asm
 /** Arrival code stays opaque to the connection-data lens, with an explicit engine ABI. */
 internal data class AsmManagedDoorArrival(override val macroName: String) : AsmManagedBank8FRoutine {
     override val label = "${macroName}_Entry"
-    init { require(macroName.matches(Regex("SmeditArrival_[0-9A-F]{4}_Door_[0-9]+"))) { "Invalid managed arrival identity." } }
+    init { require(macroName.matches(Regex("SmeditArrival_(?:[0-9A-F]{4}|Project_[0-9A-F]+)_Door_[0-9]+"))) { "Invalid managed arrival identity." } }
     fun validateBody(body: String) = validateManagedBank8FBody(macroName, body, AsmDoorArrivalsSource.MARKER,
         setOf(AsmRoomSelectorsSource.MANAGED_PREDICATE_MARKER, AsmRoomSelectorsSource.ASM_PREDICATE_MARKER,
             AsmSelectorPredicateRecognizer.MARKER), allowAssert = true)
@@ -31,11 +31,11 @@ internal class AsmDoorArrivalsSource(val text: String) {
     }
     companion object {
         const val MARKER = "; SMEDIT managed arrival v1"
-        fun name(roomId: Int, door: Int) = "SmeditArrival_${roomId.toString(16).uppercase().padStart(4, '0')}_Door_$door"
-        fun render(roomId: Int, door: Int, originalLabel: String?): String = buildString {
+        fun name(roomId: Int, door: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditArrival", roomId, projectId) + "Door_$door"
+        fun render(roomId: Int, door: Int, originalLabel: String?, projectId: String? = null): String = buildString {
             appendLine("; Arrival code enters in bank \$8F with 16-bit A/X/Y and DB=\$8F; return with RTS, balance your stack.")
             appendLine("; The editor manages placement and entry/end labels, not this code's behavior.")
-            appendLine("macro ${name(roomId, door)}()")
+            appendLine("macro ${name(roomId, door, projectId)}()")
             appendLine("    $MARKER")
             if (originalLabel == null) appendLine("    rts ; No previous arrival behavior.") else {
                 appendLine("    assert ($originalLabel>>16) == \$8F")

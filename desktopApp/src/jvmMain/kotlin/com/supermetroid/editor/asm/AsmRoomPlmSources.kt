@@ -95,7 +95,8 @@ internal fun discoverAsmRoomPlmTables(
             val state = if (edits.stateGraphChanged) edits.states.getOrNull(index)
                 else edits.states.singleOrNull { it.sourceStateIndex == index }
             val authored = if (edits.asmPlmSourceVersion != 0) {
-                AsmRoomObjectSource.stateMacro(roomId, requireNotNull(state) { "Missing authored state for room $roomKey" }.id)
+                AsmRoomObjectSource.stateMacro(roomId, requireNotNull(state) { "Missing authored state for room $roomKey" }.id,
+                    project.newRoomForPreviewId(roomId)?.id)
             } else null
             val label = if (authored != null) "${authored}_Plms"
                 else "SmeditRoom_${roomId.toString(16).uppercase()}_State${stateIdentity}_Plms"

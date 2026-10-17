@@ -4,11 +4,12 @@ import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.rom.*
 
 /** Pure adoption planner shared by scalar FX editing and compound room themes. */
-internal fun planFxMigration(before: String, room: RoomEdits, parser: RomParser, name: String): String {
+internal fun planFxMigration(before: String, room: RoomEdits, parser: RomParser, name: String,
+                             projectRoomIds: Map<Int, String> = emptyMap()): String {
     require(room.asmFxSourceVersion == 0 && room.states.isNotEmpty()) { "Select native room states before adopting FX." }
     requireDoorRoutedFxOwnership(room, parser)
     val states = parser.inspectRoomStates(room.roomId).states
-    val prefix = AsmFxSource.prefix(room.roomId)
+    val prefix = AsmFxSource.prefix(room.roomId, projectRoomIds[room.roomId])
     require(!Regex("(?m)^macro $prefix").containsMatchIn(before)) { "Existing FX declarations need review before adoption." }
     val tables = linkedMapOf<Pair<Int, List<RomParser.FxEntry>>, SourceFxResource>()
     val addition = buildString {
@@ -40,7 +41,7 @@ internal fun planFxMigration(before: String, room: RoomEdits, parser: RomParser,
                     appendLine(AsmFxSource.renderTable(it))
                 }
             }
-            appendLine(AsmFxSource.renderState(room.roomId, state.id, resource.identity))
+            appendLine(AsmFxSource.renderState(room.roomId, state.id, resource.identity, projectRoomIds[room.roomId]))
         }
     }
     return before.trimEnd() + "\n\n" + addition

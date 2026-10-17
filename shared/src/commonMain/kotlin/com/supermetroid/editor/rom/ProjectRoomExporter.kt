@@ -59,6 +59,7 @@ class ProjectRoomExporter(
     private val sourceRoomProperties: Map<Int, SourceRoomProperties> = emptyMap(),
     private val sourceSelectors: Map<Int, SourceRoomSelectors> = emptyMap(),
     private val sourceDoors: Map<Int, SourceRoomDoors> = emptyMap(),
+    private val projectArrivalSymbols: Map<String, Int> = emptyMap(),
 ) {
     companion object {
         fun hasRoomEdits(project: SmEditProject): Boolean =
@@ -70,6 +71,10 @@ class ProjectRoomExporter(
     private var placedSourceFx = sourceFx
     private var placedSourcePlmSets = sourcePlmSets
     private var placedSourceLayouts = sourceLayouts
+    private var placedSourceInitialScrolls = sourceInitialScrolls
+    private var placedSourceEnemies = sourceEnemies
+    private var placedSourceRoomDoors = emptyMap<Int, SourceRoomDoors>()
+    private var placedDoorRecords = emptyMap<Int, List<SourceRoomDoor>>()
     private val sourceDoorClaims = mutableListOf<Pair<Int, Int>>()
     private val sourceRoomPropertyClaims = mutableListOf<Pair<Int, Int>>()
     private var stateGraphRedirectRoutinePtr: Int? = null
@@ -117,12 +122,16 @@ class ProjectRoomExporter(
             romData = romData,
             freeSpaceAllocator = allocationSession,
             onLog = onLog,
+            arrivalSymbols = projectArrivalSymbols,
             roomAreaOverrides = effectiveRoomAreaOverrides,
         ).materialize()
         val previewToPhysical = project.newRooms.mapNotNull { room ->
             materialized.roomIdsByProjectId[room.id]?.let { room.previewRoomId to it }
         }.toMap()
+        val physicalToPreview = previewToPhysical.entries.associate { it.value to it.key }
         placedSourceLayouts = sourceLayouts.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
+        placedSourceInitialScrolls = sourceInitialScrolls.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
+        placedSourceEnemies = sourceEnemies.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
         val previewDoorToPhysical = buildMap {
             for (room in project.newRooms) {
                 val physical = materialized.doorDefPtrsByProjectId[room.id].orEmpty()
@@ -134,15 +143,24 @@ class ProjectRoomExporter(
         // Resolve the complete DoorDef graph before any room's selectors are encoded.
         // A destination may sort before the source room; map iteration order must not
         // decide whether a symbolic incoming-door condition can build.
-        val placedSourceDoors = sourceDoors.mapValues { (roomId, doors) ->
+        val resolvedDoorInputs = sourceDoors.mapValues { (_, doors) ->
+            doors.copy(entries = doors.entries.map { door ->
+                val target = door.destinationProjectId?.let { projectId ->
+                    requireNotNull(materialized.roomIdsByProjectId[projectId]) { "Missing destination project room $projectId." }
+                } ?: (previewToPhysical[door.change.destRoomPtr] ?: door.change.destRoomPtr)
+                door.copy(change = door.change.copy(destRoomPtr = target))
+            })
+        }
+        val placedSourceDoors = resolvedDoorInputs.mapValues { (roomId, doors) ->
             val edits = requireNotNull(project.rooms[project.roomKey(roomId)]) { "Source doors have no project owner." }
+            require(doors.projectRoomId == project.newRoomForPreviewId(roomId)?.id) { "Door source has a different durable room owner." }
             require(edits.asmDoorSourceVersion == 1 && project.asmWorkspace.enabled &&
                 project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) {
                 "Authored doors require ASM source mode."
             }
-            validateSourceRoomDoors(edits, doors, romParser) { destination ->
+            validateSourceRoomDoors(edits.copy(roomId = previewToPhysical[roomId] ?: roomId), doors, romParser) { destination ->
                 romParser.readRoomHeader(destination)?.let { header ->
-                    val override = project.rooms[project.roomKey(destination)]?.effectiveHeaderChange
+                    val override = project.rooms[project.roomKey(physicalToPreview[destination] ?: destination)]?.effectiveHeaderChange
                     (override?.width ?: header.width) to (override?.height ?: header.height)
                 }
             }
@@ -156,16 +174,23 @@ class ProjectRoomExporter(
                 }
             }
         }
+        placedDoorRecords = placedSourceDoors.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
+        placedSourceRoomDoors = resolvedDoorInputs.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
         val sourceDoorPointers = placedSourceDoors.flatMap { (roomId, doors) -> doors.map { door ->
-            com.supermetroid.editor.data.ProjectSourceDoorReference(roomId, door.identity) to door.doorDefPtr
+            val projectId = sourceDoors.getValue(roomId).projectRoomId
+            com.supermetroid.editor.data.ProjectSourceDoorReference(if (projectId == null) roomId else 0, door.identity, projectId) to door.doorDefPtr
         } }.toMap()
         placedSourceFx = sourceFx.mapValues { (roomId, states) -> states.mapValues { (_, resource) ->
             validateSourceFxDoors(roomId, resource, romParser, sourceDoors)
             resource.resolveSourceDoors(roomId, sourceDoors, sourceDoorPointers)
-        } }
+        } }.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
         placedSourcePlmSets = sourcePlmSets.mapValues { (_, states) -> states.mapValues { (_, resource) ->
-            resource.copy(saves = resource.saves.map { it.resolveSourceDoors(sourceDoors, sourceDoorPointers) })
-        } }
+            resource.copy(saves = resource.saves.map { save ->
+                val resolved = save.resolveSourceDoors(sourceDoors, sourceDoorPointers)
+                val physical = previewToPhysical[resolved.ownerRoomId] ?: resolved.ownerRoomId
+                resolved.copy(ownerRoomId = physical, words = resolved.words.mapIndexed { index, word -> if (index == 0 && !resolved.cleared) physical else word })
+            })
+        } }.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
         fun remapCondition(
             condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
         ): com.supermetroid.editor.data.ProjectRoomStateCondition = condition.copy(
@@ -255,18 +280,18 @@ class ProjectRoomExporter(
                     roomEdits.states.all { state -> state.operations.all { it.edits.isEmpty() } }) { "Room $roomKey has both authored layout and GUI tile deltas." }
             }
             if (roomEdits.asmEnemySourceVersion != 0) {
-                require(roomEdits.asmEnemySourceVersion == 1 && roomEdits.roomId in sourceEnemies) { "Room $roomKey requires its decoded enemy source." }
+                require(roomEdits.asmEnemySourceVersion == 1 && roomEdits.roomId in placedSourceEnemies) { "Room $roomKey requires its decoded enemy source." }
                 require(roomEdits.enemyChanges.isEmpty() && roomEdits.states.all { it.enemyChanges.isEmpty() }) { "Room $roomKey has both authored enemies and GUI deltas." }
             }
             if (roomEdits.asmFxSourceVersion != 0) {
                 requireDoorRoutedFxOwnership(roomEdits, romParser)
-                require(roomEdits.asmFxSourceVersion == 1 && roomEdits.roomId in sourceFx) { "Room $roomKey requires its decoded FX source." }
+                require(roomEdits.asmFxSourceVersion == 1 && roomEdits.roomId in placedSourceFx) { "Room $roomKey requires its decoded FX source." }
                 require(roomEdits.fxChange == null && roomEdits.states.all { it.fxChange == null && it.doorFxChanges.isEmpty() }) {
                     "Room $roomKey has both authored FX and GUI effect overrides."
                 }
             }
             if (roomEdits.asmInitialScrollSourceVersion != 0) {
-                require(roomEdits.asmInitialScrollSourceVersion == 1 && roomEdits.roomId in sourceInitialScrolls) {
+                require(roomEdits.asmInitialScrollSourceVersion == 1 && roomEdits.roomId in placedSourceInitialScrolls) {
                     "Room $roomKey requires its decoded initial scroll source."
                 }
                 require(roomEdits.scrollChanges.isEmpty() && roomEdits.states.all { it.scrollChanges.isEmpty() }) {
@@ -274,7 +299,7 @@ class ProjectRoomExporter(
                 }
             }
             if (roomEdits.asmPlmSourceVersion != 0) {
-                require(roomEdits.asmPlmSourceVersion == 1 && roomEdits.roomId in sourcePlmSets) {
+                require(roomEdits.asmPlmSourceVersion == 1 && roomEdits.roomId in placedSourcePlmSets) {
                     "Room $roomKey requires its decoded project ASM object source; ROM-only export cannot ignore it."
                 }
                 require(roomEdits.plmChanges.isEmpty() && roomEdits.states.all { it.plmChanges.isEmpty() }) {
@@ -293,22 +318,22 @@ class ProjectRoomExporter(
                 require(project.asmWorkspace.enabled && project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) {
                     "Authored doors require ASM source mode."
                 }
-                val doors = requireNotNull(sourceDoors[roomId]) { "Room $roomKey requires its validated door source." }
+                val doors = requireNotNull(placedSourceRoomDoors[roomId]) { "Room $roomKey requires its validated door source." }
                 require(doors.entries.all { it.arrival == null || it.arrival.snesAddress != null }) {
                     "Resolve symbolic arrival ASM through the checked ASM build before exporting DoorDefs."
                 }
                 validateSourceRoomDoors(roomEdits, doors, romParser) { destination ->
                     romParser.readRoomHeader(destination)?.let { header ->
-                        val overrides = project.rooms[project.roomKey(destination)]?.effectiveHeaderChange
+                        val overrides = project.rooms[project.roomKey(physicalToPreview[destination] ?: destination)]?.effectiveHeaderChange
                         (overrides?.width ?: header.width) to (overrides?.height ?: header.height)
                     }
                 }
                 validateSourceDoorOwnership(roomId, doors, romParser)
                 sourceDoorClaims += (romParser.snesToPc(0x8F0000 or roomId) + 9) to 2
                 if (doors.structural) {
-                    sourceLayouts[roomId]?.values?.forEach { validateStructuralDoorLayout(it, doors.entries.size) }
+                    placedSourceLayouts[roomId]?.values?.forEach { validateStructuralDoorLayout(it, doors.entries.size) }
                 } else sourceDoorClaims += romParser.snesToPc(0x8F0000 or doors.doorOutPtr) to (doors.entries.size * 2)
-                val placed = placedSourceDoors.getValue(roomId)
+                val placed = placedDoorRecords.getValue(roomId)
                 if (doors.structural) {
                     val bytes = (placed.flatMap { listOf((it.doorDefPtr and 255).toByte(), (it.doorDefPtr ushr 8).toByte()) } + listOf(0.toByte(), 0.toByte())).toByteArray()
                     val allocation = roomDataAllocator.allocate(bytes, listOf(0x8F), "Room $roomKey structural door list")
@@ -508,7 +533,7 @@ class ProjectRoomExporter(
         // ASM-first structural edits need no layout-adoption ceremony. Validate every
         // final runtime state, including legacy GUI deltas, rather than trusting a preview.
         val finalParser = RomParser(romData)
-        for ((roomId, doors) in sourceDoors.filterValues { it.structural }) {
+        for ((roomId, doors) in placedSourceRoomDoors.filterValues { it.structural }) {
             val header = requireNotNull(finalParser.readRoomHeader(roomId))
             val states = finalParser.inspectRoomStates(roomId)
             require(states.isComplete && states.states.isNotEmpty()) {
@@ -534,7 +559,7 @@ class ProjectRoomExporter(
     }
 
     private fun applySourcePlms(roomKey: String, roomId: Int, edits: RoomEdits, rewritten: Map<String, Int>) {
-        val inputs = sourcePlmSets.getValue(roomId)
+        val inputs = placedSourcePlmSets.getValue(roomId)
         require(inputs.keys == edits.states.map { it.id }.toSet()) { "Room $roomKey source state membership changed." }
         val states = romParser.inspectRoomStates(roomId).states
         val pointers = mutableMapOf<String, Pair<Int, List<RomParser.PlmEntry>>>()
@@ -593,7 +618,7 @@ class ProjectRoomExporter(
     }
 
     private fun applySourceEnemies(roomKey: String, roomId: Int, edits: RoomEdits, rewritten: Map<String, Int>) {
-        val inputs = sourceEnemies.getValue(roomId)
+        val inputs = placedSourceEnemies.getValue(roomId)
         require(inputs.keys == edits.states.map { it.id }.toSet()) { "Enemy source state membership changed." }
         val states = romParser.inspectRoomStates(roomId).states
         if (rewritten.isEmpty()) require(edits.states.size == states.size &&
@@ -659,7 +684,7 @@ class ProjectRoomExporter(
     }
 
     private fun applySourceInitialScrolls(roomKey: String, roomId: Int, edits: RoomEdits, rewritten: Map<String, Int>, width: Int, height: Int) {
-        val inputs = sourceInitialScrolls.getValue(roomId)
+        val inputs = placedSourceInitialScrolls.getValue(roomId)
         require(inputs.keys == edits.states.map { it.id }.toSet()) { "Initial scroll state membership changed." }
         val states = romParser.inspectRoomStates(roomId).states
         if (rewritten.isEmpty()) require(edits.states.size == states.size &&
@@ -695,7 +720,7 @@ class ProjectRoomExporter(
         val effectiveParser = RomParser(romData)
         for (state in edits.states) {
             val resource = inputs.getValue(state.id)
-            validateSourceFxDoors(roomId, resource, effectiveParser, sourceDoors)
+            validateSourceFxDoors(roomId, resource, effectiveParser, placedSourceRoomDoors.mapValues { (id, doors) -> doors.copy(entries = placedDoorRecords.getValue(id)) })
             val existing = pointers[resource.identity]
             val pointer = if (existing != null) {
                 require(existing.second == resource) { "Shared FX source has inconsistent values." }
@@ -1779,7 +1804,7 @@ class ProjectRoomExporter(
         val current = RomParser(romData)
         val incomingDoors = current.findDoorsLeadingTo(roomId)
         val generatedAsmPtrs = mutableMapOf<Int, Int>()
-        val managedDoors = sourceDoors.values.flatMap { it.entries }.filter { it.arrival?.label?.startsWith("SmeditArrival_") == true }
+        val managedDoors = placedDoorRecords.values.flatten().filter { it.arrival?.label?.startsWith("SmeditArrival_") == true }
             .map { it.doorDefPtr }.toSet()
         for (door in incomingDoors) {
             if (door.doorDefPtr in managedDoors) continue // Source bodies already use the authored room's stride. Never remap them a second time.
@@ -1998,7 +2023,7 @@ class ProjectRoomExporter(
         headerChange.upScroller?.let { romData[headerPc + 6] = it.toByte() }
         headerChange.downScroller?.let { romData[headerPc + 7] = it.toByte() }
         headerChange.creBitflag?.let { romData[headerPc + 8] = it.toByte() }
-        if (sourceDoors[roomId]?.structural != true) headerChange.doorOut?.let { writeU16(romData, headerPc + 9, it) }
+        if (placedSourceRoomDoors[roomId]?.structural != true) headerChange.doorOut?.let { writeU16(romData, headerPc + 9, it) }
         onLog("Room 0x$roomKey: patched room header")
     }
 

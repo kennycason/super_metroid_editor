@@ -11,46 +11,56 @@ internal class AsmInitialScrollBridge(
     private val catalog: AsmPlmSourceCatalog,
     private val workspace: AsmWorkspaceState,
     private val project: () -> SmEditProject,
+    private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project),
     private val metadataChanged: () -> Unit,
 ) {
     private var revision: Pair<String, AsmInitialScrollSource>? = null
-    private val lastGood = mutableMapOf<Pair<Int, String>, SourceInitialScrollResource>()
+    private val lastGood = mutableMapOf<Pair<String, String>, SourceInitialScrollResource>()
+    private var identityRevision = emptyMap<Int, String>()
     private fun source(): AsmInitialScrollSource {
+        val identities = context.identities()
+        if (identityRevision != identities) { revision = null; identityRevision = identities }
         val text = workspace.projectSourceText(PLM_SOURCE_FILE)
-        return revision?.takeIf { it.first == text }?.second ?: AsmInitialScrollSource(text, catalog.symbols).also { revision = text to it }
+        return revision?.takeIf { it.first == text }?.second ?: AsmInitialScrollSource(text, catalog.symbols, context.identities()).also { revision = text to it }
     }
     fun isManaged(roomId: Int) = (project().rooms[project().roomKey(roomId)]?.asmInitialScrollSourceVersion ?: 0) != 0
     private fun dimensions(roomId: Int): Pair<Int, Int> {
         val room = project().rooms.getValue(project().roomKey(roomId))
-        val header = requireNotNull(catalog.parser.readRoomHeader(roomId))
+        val header = requireNotNull(context.parser.readRoomHeader(roomId))
         return (room.effectiveHeaderChange?.width ?: header.width) to (room.effectiveHeaderChange?.height ?: header.height)
     }
     fun view(roomId: Int, stateId: String): AsmInitialScrollView = try {
         val (width, height) = dimensions(roomId)
         val inputs = source().resources(project().rooms.getValue(project().roomKey(roomId)), width, height)
         val resource = inputs.getValue(stateId)
-        lastGood[roomId to stateId] = resource
+        lastGood[context.identity(roomId) to stateId] = resource
         AsmInitialScrollView(resource, null)
-    } catch (error: Exception) { AsmInitialScrollView(lastGood[roomId to stateId], error.message ?: "Invalid initial scroll source.") }
+    } catch (error: Exception) { AsmInitialScrollView(lastGood[context.identity(roomId) to stateId], error.message ?: "Invalid initial scroll source.") }
 
     fun preview(room: com.supermetroid.editor.data.RoomEdits, name: String): String {
         val before = source().text
-        return roomSourceAddition(before, planInitialScrollMigration(before, room, catalog.parser, name, catalog.symbols).text)
+        return roomSourceAddition(before, planInitialScrollMigration(before, room, context.parser, name, catalog.symbols, context.identities()).text)
     }
 
     fun migrate(roomId: Int, roomName: String) {
         if (isManaged(roomId)) return
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Initial scroll source requires ASM mode." }
-        require(owner.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room initial scroll source is not supported yet." }
         val room = owner.rooms[owner.roomKey(roomId)] ?: com.supermetroid.editor.data.RoomEdits(roomId)
         val before = source().text
-        val migration = planInitialScrollMigration(before, room, catalog.parser, roomName, catalog.symbols)
-        val staged = room.copy(states = migration.states.toMutableList())
+        val migration = planInitialScrollMigration(before, room, context.parser, roomName, catalog.symbols, context.identities())
+        val staged = snapshotRoomForResize(room.copy(states = migration.states.toMutableList()))
         val after = migration.text
         val oldStates = room.states.toList()
         val oldCommon = room.scrollChanges.toList()
         val oldScoped = staged.states.associate { it.id to it.scrollChanges.toList() }
+        if (owner.newRoomForPreviewId(roomId) != null) {
+            staged.scrollChanges.clear(); staged.states.forEach { it.scrollChanges.clear() }
+            staged.asmInitialScrollSourceVersion = 1
+            context.replace(workspace, roomId, owner.rooms[owner.roomKey(roomId)]?.let(::snapshotRoomForResize), staged,
+                mapOf(PLM_SOURCE_FILE to (before to after)), metadataChanged)
+            return
+        }
         fun adopt() {
             require(room.asmInitialScrollSourceVersion == 0 && room.states == oldStates && room.scrollChanges == oldCommon &&
                 staged.states.all { it.scrollChanges == oldScoped[it.id] }) { "Scroll metadata changed; adopt the current grid again." }
@@ -79,8 +89,8 @@ internal class AsmInitialScrollBridge(
         val current = source()
         val edited = current.edit(room, stateId, width, height, index, value)
         val external = workspace.projectSourceTextsExcept(PLM_SOURCE_FILE).flatMap { AsmInitialScrollSource.references(it).asSequence() }.toSet()
-        val tidy = AsmInitialScrollSource(edited, catalog.symbols).tidy(room, external)
-        val after = AsmInitialScrollSource(tidy, catalog.symbols).withComments(room, width, height)
+        val tidy = AsmInitialScrollSource(edited, catalog.symbols, context.identities()).tidy(room, external)
+        val after = AsmInitialScrollSource(tidy, catalog.symbols, context.identities()).withComments(room, width, height)
         workspace.replaceProjectSource(PLM_SOURCE_FILE, current.text, after)
     }
     fun cloneState(roomId: Int, templateId: String, newId: String) {
@@ -93,5 +103,12 @@ internal class AsmInitialScrollBridge(
     fun hasState(roomId: Int, stateId: String): Boolean = isManaged(roomId) && source().hasState(roomId, stateId)
     fun line(roomId: Int, stateId: String): Int {
         return source().line(roomId, stateId)
+    }
+    internal fun remember(room: com.supermetroid.editor.data.RoomEdits, text: String) {
+        val header = requireNotNull(context.parser.readRoomHeader(room.roomId))
+        AsmInitialScrollSource(text, catalog.symbols, context.identities()).resources(room,
+            room.effectiveHeaderChange?.width ?: header.width, room.effectiveHeaderChange?.height ?: header.height).forEach { (state, resource) ->
+            lastGood[context.identity(room.roomId) to state] = resource
+        }
     }
 }

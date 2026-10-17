@@ -7,7 +7,10 @@ import com.supermetroid.editor.rom.*
 internal const val FX_SOURCE_FILE = "bank_83.asm"
 
 /** Bounded native-header lens. No general Asar interpretation or duplicate persisted FX values. */
-internal class AsmFxSource(val text: String) {
+internal class AsmFxSource(val text: String, private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    private fun prefix(roomId: Int) = Companion.prefix(roomId, projectRoomIds[roomId])
+    private fun stateName(roomId: Int, id: String) = Companion.stateName(roomId, id, projectRoomIds[roomId])
+    private fun renderState(roomId: Int, id: String, table: String) = Companion.renderState(roomId, id, table, projectRoomIds[roomId])
     private data class Macro(val name: String, val range: IntRange, val bodyStart: Int, val body: String)
     private data class Field(val span: IntRange, val value: Int, val width: Int, val sourceDoor: ProjectSourceDoorReference? = null)
     private val macros: Map<String, Macro> by lazy {
@@ -182,13 +185,13 @@ internal class AsmFxSource(val text: String) {
         require(stateIds.isNotEmpty() && inputs.keys.containsAll(stateIds)) { "Unknown FX target states." }
         var result = text
         for ((identity, states) in inputs.entries.filter { it.key in stateIds }.groupBy { it.value.identity }) {
-            val source = AsmFxSource(result)
+            val source = AsmFxSource(result, projectRoomIds)
             val replacement = (states.first().value.entries.singleOrNull { it.isDefault }
                 ?: com.supermetroid.editor.rom.emptyDefaultFxEntry()).withFxChange(change)
             val detach = inputs.any { it.key !in stateIds && it.value.identity == identity }
             val first = states.first().key
             result = source.replaceEntry(room, first, 0, replacement, detach)
-            val updated = AsmFxSource(result)
+            val updated = AsmFxSource(result, projectRoomIds)
             val newIdentity = updated.reference(room.roomId, first)
             if (newIdentity != identity) {
                 result = states.drop(1).map { updated.macro(stateName(room.roomId, it.key)) }
@@ -231,9 +234,9 @@ internal class AsmFxSource(val text: String) {
         private val names = listOf("Incoming door (0000 = Default)", "Liquid Start (FFFF = none)", "Liquid Target", "Liquid Speed (signed 8.8)",
             "Liquid Delay (frames; 00 = stopped)", "FX Type", "FX A · default layer blend", "FX B · Layer 3 blend", "FX C · liquid options",
             "Palette FX bitset", "Animated tiles bitset", "Palette Blend (byte offset)")
-        fun prefix(roomId: Int) = "SmeditFx_${roomId.toString(16).uppercase().padStart(4, '0')}_"
-        fun stateName(roomId: Int, stateId: String) = prefix(roomId) + "State_" + stateId.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
-        fun renderState(roomId: Int, stateId: String, table: String) = "macro ${stateName(roomId, stateId)}()\n    %$table()\nendmacro\n"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditFx", roomId, projectId)
+        fun stateName(roomId: Int, stateId: String, projectId: String? = null) = prefix(roomId, projectId) + "State_" + stateId.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        fun renderState(roomId: Int, stateId: String, table: String, projectId: String? = null) = "macro ${stateName(roomId, stateId, projectId)}()\n    %$table()\nendmacro\n"
         private fun renderEntry(entry: RomParser.FxEntry): String = entry.fields().mapIndexed { index, value ->
             val description = if (index == 5) "FX Type - ${NativeFxTypes.commentName(value)}" else names[index]
             val field = if (index == 0) entry.sourceDoor?.entryLabel ?: hex(value, 2) else hex(value, if (index < 4) 2 else 1)

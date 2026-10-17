@@ -224,19 +224,24 @@ internal class RomExporter(
 ) {
 
     fun build(): RomBuildResult? {
+        if (project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() && compiledAsmBase == null) {
+            onStatus("Authored enemy tuning requires its validated ASM build.")
+            onLog("ERROR: Authored enemy tuning requires its validated ASM build.")
+            return null
+        }
+        fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
         val romPath = project.romPath
         if (romPath.isEmpty()) return null
-        if (project.rooms.values.any { it.asmDoorSourceVersion != 0 && it.roomId !in sourceDoors && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        if (project.rooms.values.any { it.asmDoorSourceVersion != 0 && it.roomId !in sourceDoors && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored doors require validated ASM build inputs.")
             onStatus("Authored doors require validated ASM build inputs.")
             return null
         }
-        if (project.rooms.values.any { it.asmStateSelectorsSourceVersion != 0 && it.roomId !in sourceSelectors && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        if (project.rooms.values.any { it.asmStateSelectorsSourceVersion != 0 && it.roomId !in sourceSelectors && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored selectors require validated ASM build inputs.")
             onStatus("Authored selectors require validated ASM build inputs.")
             return null
         }
-        fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
         if (project.rooms.values.any { it.asmRoomPropertiesSourceVersion != 0 && it.roomId !in sourceRoomProperties && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored room header/state properties require validated ASM build inputs.")
             onStatus("Authored room header/state properties require validated ASM build inputs.")
@@ -247,24 +252,24 @@ internal class RomExporter(
             onStatus("Authored room layouts require validated ASM build inputs.")
             return null
         }
-        if (project.rooms.values.any { it.asmEnemySourceVersion != 0 && it.roomId !in sourceEnemies && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        if (project.rooms.values.any { it.asmEnemySourceVersion != 0 && it.roomId !in sourceEnemies && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored enemy populations/GFX require validated ASM build inputs.")
             onStatus("Authored enemy populations/GFX require validated ASM build inputs.")
             return null
         }
-        if (project.rooms.values.any { it.asmFxSourceVersion != 0 && it.roomId !in sourceFx && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        if (project.rooms.values.any { it.asmFxSourceVersion != 0 && it.roomId !in sourceFx && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored room effects require their validated ASM build inputs.")
             onStatus("Authored room effects require their validated ASM build inputs.")
             return null
         }
         if (project.rooms.values.any { it.asmInitialScrollSourceVersion != 0 && it.roomId !in sourceInitialScrolls &&
-                project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+                project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored initial scrolls require their validated ASM build inputs.")
             onStatus("Authored initial scrolls require their validated ASM build inputs.")
             return null
         }
         val missingObjects = project.rooms.values.filter { it.asmPlmSourceVersion != 0 && it.roomId !in sourcePlmSets &&
-            project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }
+            project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }
         if (missingObjects.isNotEmpty()) {
             val message = "Authored room objects require their validated ASM build inputs."
             onLog("ERROR: $message")
@@ -511,6 +516,7 @@ internal class RomExporter(
                                 sourceRoomProperties = sourceRoomProperties,
                                 sourceSelectors = sourceSelectors,
                                 sourceDoors = sourceDoors,
+                                projectArrivalSymbols = compiledAsmBase?.let { com.supermetroid.editor.asm.resolveProjectDoorArrivals(project, it) }.orEmpty(),
                             ).exportRooms()
                         }
                         roomsPatched.addAll(roomExportResult.roomsPatched)

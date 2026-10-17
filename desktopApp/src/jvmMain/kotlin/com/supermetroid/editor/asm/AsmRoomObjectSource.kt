@@ -16,7 +16,10 @@ import com.supermetroid.editor.rom.ensureStateManifest
 /** Authored, relocatable PLM macros. The planner owns addresses; these tokens own object values.
  * State wrappers preserve whole-list sharing; every object is readable directly in its list.
  * This bounded grammar is checked before Asar and again against its actual output. */
-internal class AsmRoomObjectSource(val text: String, private val symbols: Map<String, Int> = emptyMap()) {
+internal class AsmRoomObjectSource(val text: String, private val symbols: Map<String, Int> = emptyMap(), private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    private fun prefix(roomId: Int) = Companion.prefix(roomId, projectRoomIds[roomId])
+    private fun stateMacro(roomId: Int, id: String) = Companion.stateMacro(roomId, id, projectRoomIds[roomId])
+
     data class Macro(val name: String, val start: Int, val bodyStart: Int, val end: Int, val bodyEnd: Int)
     data class ObjectRecord(val record: AsmPlmDocument.Record, val lineRange: IntRange, val commonMacro: String?)
     data class Table(val root: Macro, val resource: Macro, val objects: List<ObjectRecord>, val document: AsmPlmDocument)
@@ -40,7 +43,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
     fun tidy(room: RoomEdits, externalReferences: Set<String> = emptySet()): String {
         val before = resources(room)
         val pruned = pruneHelpers(room, externalReferences)
-        val source = AsmRoomObjectSource(pruned, symbols)
+        val source = AsmRoomObjectSource(pruned, symbols, projectRoomIds)
         // Expand legacy per-object helpers once per physical list, even when several states use it.
         val uses = room.states.map { source.table(room.roomId, it.id) }
             .distinctBy { it.resource.name }.flatMap { it.objects }
@@ -57,8 +60,8 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         }
         val expanded = source.replaceRanges(inlines)
         // Keep definitions still called by custom ASM; do not duplicate notes already moved to rows.
-        val result = AsmRoomObjectSource(expanded, symbols).pruneHelpers(room, externalReferences, uses.keys)
-        check(AsmRoomObjectSource(result, symbols).resources(room) == before) {
+        val result = AsmRoomObjectSource(expanded, symbols, projectRoomIds).pruneHelpers(room, externalReferences, uses.keys)
+        check(AsmRoomObjectSource(result, symbols, projectRoomIds).resources(room) == before) {
             "Room-object cleanup changed values or resource sharing; no source was replaced."
         }
         return result
@@ -239,7 +242,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
             "Custom scroll commands cannot be mixed with authored object lists yet."
         }
         val saves = saveResources(room.roomId)
-        val activeArea = if (room.asmRoomPropertiesSourceVersion != 0 && saves.isNotEmpty()) AsmRoomPropertiesSource(text).area(room.roomId)
+        val activeArea = if (room.asmRoomPropertiesSourceVersion != 0 && saves.isNotEmpty()) AsmRoomPropertiesSource(text, projectRoomIds).area(room.roomId)
             else room.effectiveHeaderChange?.area
         require(saves.none { save -> room.saveStationSpawns.any { it.area == save.area && it.saveIndex == save.slot } }) {
             "Save records have both GUI overrides and authored source."
@@ -261,12 +264,12 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
     /** Save helpers are independent fixed-slot resources, not garbage-collected object-list helpers.
      * A released slot's explicit zero record must survive so the old ROM cannot restore it. */
     fun saveResources(roomId: Int): List<SourceSaveResource> = macros.values.filter { it.name.startsWith(prefix(roomId) + "Save_") }.map { macro ->
-        try { AsmSaveStationSource.parse(macro.name, text.substring(macro.bodyStart, macro.bodyEnd), symbols) }
+        try { AsmSaveStationSource.parse(macro.name, text.substring(macro.bodyStart, macro.bodyEnd), symbols, projectRoomIds) }
         catch (error: Exception) { throw IllegalArgumentException("$PLM_SOURCE_FILE:${text.take(macro.start).count { it == '\n' } + 1}: ${error.message}", error) }
     }
 
     fun withSave(resource: SourceSaveResource): String {
-        require(resource.identity == AsmSaveStationSource.name(resource.ownerRoomId, resource.area, resource.slot))
+        require(resource.identity == AsmSaveStationSource.name(resource.ownerRoomId, resource.area, resource.slot, resource.ownerProjectRoomId))
         val rendered = AsmSaveStationSource.render(resource)
         val old = macros[resource.identity]
         return if (old == null) text + "\n" + rendered else {
@@ -284,9 +287,11 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
             var result = text
             for (index in 6 downTo 0) if (before.words[index] != resource.words[index] || (index == 1 && before.sourceDoor != resource.sourceDoor)) {
                 val token = text.substring(spans[index])
-                require(AsmPlmDocument.literal(token) != null || (index == 1 && before.sourceDoor != null)) { "Save field '$token' is symbolic; edit that expression in ASM first." }
+                require(AsmPlmDocument.literal(token) != null || (index == 1 && before.sourceDoor != null) ||
+                    (index == 0 && before.ownerProjectRoomId?.let { AsmProjectRoomLabels.entry(it) == token } == true)) { "Save field '$token' is symbolic; edit that expression in ASM first." }
                 val value = resource.words[index]
                 val replacement = when {
+                    index == 0 && !resource.cleared && resource.ownerProjectRoomId != null -> AsmProjectRoomLabels.entry(requireNotNull(resource.ownerProjectRoomId))
                     index == 1 && resource.sourceDoor != null -> requireNotNull(resource.sourceDoor).entryLabel
                     index == 1 && before.sourceDoor != null -> "\$${value.toString(16).uppercase().padStart(4, '0')}"
                     token.startsWith('$') -> "\$${value.toString(16).uppercase().padStart(4, '0')}"
@@ -303,8 +308,8 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
                         add: RomParser.PlmEntry?, spawn: SourceSaveResource?, externalReferences: Set<String>,
                         allStates: Boolean = false): String {
         var result = edit(room, stateId, allStates, remove, add, externalReferences)
-        if (spawn != null) result = AsmRoomObjectSource(result, symbols).withSave(spawn)
-        val source = AsmRoomObjectSource(result, symbols)
+        if (spawn != null) result = AsmRoomObjectSource(result, symbols, projectRoomIds).withSave(spawn)
+        val source = AsmRoomObjectSource(result, symbols, projectRoomIds)
         val activeSlots = room.states.flatMap { source.table(room.roomId, it.id).document.entries }
             .filter { it.id == 0xB76F }.map { it.param and 255 }.toSet()
         // Only release slots explicitly removed by this operation, never arbitrary orphan records.
@@ -314,15 +319,15 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         for (slot in removedSlots) {
             val area = if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(result).area(room.roomId) else room.effectiveHeaderChange?.area
             val save = source.saveResources(room.roomId).singleOrNull { it.slot == slot && (area == null || it.area == area) }
-            if (save != null) result = AsmRoomObjectSource(result, symbols).withSave(save.copy(words = List(7) { 0 }, sourceDoor = null))
+            if (save != null) result = AsmRoomObjectSource(result, symbols, projectRoomIds).withSave(save.copy(words = List(7) { 0 }, sourceDoor = null))
         }
-        AsmRoomObjectSource(result, symbols).resources(room)
+        AsmRoomObjectSource(result, symbols, projectRoomIds).resources(room)
         return result
     }
 
     /** Change save indices in place across every state, preserving list sharing, row order and notes. */
     fun remapSaveParameters(room: RoomEdits, replacements: Map<RomParser.PlmEntry, Int>, externalReferences: Set<String>): String {
-        val source = AsmRoomObjectSource(tidy(room, externalReferences), symbols)
+        val source = AsmRoomObjectSource(tidy(room, externalReferences), symbols, projectRoomIds)
         val edits = linkedMapOf<IntRange, String>()
         for (table in room.states.map { source.table(room.roomId, it.id) }.distinctBy { it.resource.name }) {
             for (record in table.document.records.filter { it.entry.id == 0xB76F }) {
@@ -374,7 +379,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
             }
         }
         val updated = replaceRanges(edits) + if (additions.isEmpty()) "" else "\n$additions"
-        AsmRoomObjectSource(updated, symbols).resources(room, width * height)
+        AsmRoomObjectSource(updated, symbols, projectRoomIds).resources(room, width * height)
         return updated
     }
 
@@ -388,9 +393,9 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         }
         val name = uniqueName(prefix(room.roomId) + "Scroll_")
         val staged = text + "\n" + AsmScrollCommandSource.render(name, commands, width, height)
-        val result = AsmRoomObjectSource(staged, symbols).edit(room, stateId, allStates,
+        val result = AsmRoomObjectSource(staged, symbols, projectRoomIds).edit(room, stateId, allStates,
             { it.id == 0xB703 && it.x == x && it.y == y }, RomParser.PlmEntry(0xB703, x, y, 0), externalReferences, name)
-        AsmRoomObjectSource(result, symbols).resources(room, width * height)
+        AsmRoomObjectSource(result, symbols, projectRoomIds).resources(room, width * height)
         return result
     }
 
@@ -427,7 +432,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         var result = text
         val edited = mutableSetOf<String>()
         for (state in states) {
-            var source = AsmRoomObjectSource(result, symbols)
+            var source = AsmRoomObjectSource(result, symbols, projectRoomIds)
             var table = source.table(room.roomId, state)
             if (room.states.any { it.id !in states && source.table(room.roomId, it.id).resource.name == table.resource.name }) {
                 val name = source.uniqueName(prefix(room.roomId) + "List_")
@@ -437,7 +442,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
                     current.replaceRange(wrapper.bodyStart, wrapper.bodyEnd,
                         current.substring(wrapper.bodyStart, wrapper.bodyEnd).replace("%${table.resource.name}()", "%$name()"))
                 } + "\nmacro $name()\n${body}endmacro\n"
-                source = AsmRoomObjectSource(result, symbols)
+                source = AsmRoomObjectSource(result, symbols, projectRoomIds)
                 table = source.table(room.roomId, state)
             }
             if (!edited.add(table.resource.name)) continue
@@ -449,7 +454,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
             }
             for ((range, replacement) in replacements.sortedByDescending { it.first.first }) result = result.replaceRange(range, replacement)
         }
-        return AsmRoomObjectSource(result, symbols).tidy(room, externalReferences)
+        return AsmRoomObjectSource(result, symbols, projectRoomIds).tidy(room, externalReferences)
     }
 
     fun cloneState(roomId: Int, template: String, stateId: String): String {
@@ -476,9 +481,9 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         private val ENTRY = Regex("%PLMPopEntry\\(\\s*([^,()]+),\\s*([^,()]+),\\s*([^,()]+),\\s*([^,()]+)\\s*\\)")
         private val CALL = Regex("%(SmeditObjects_[A-Za-z0-9_]+)\\(\\)")
         private val TERMINATOR = Regex("dw\\s+(\\$0+|0+|%0+)", RegexOption.IGNORE_CASE)
-        fun prefix(roomId: Int): String = "SmeditObjects_${roomId.toString(16).uppercase()}_"
+        fun prefix(roomId: Int, projectId: String? = null): String = AsmRoomSourceContext.prefix("SmeditObjects", roomId, projectId)
         // Encode, do not sanitize: distinct state IDs must never become the same assembler identifier.
-        fun stateMacro(roomId: Int, stateId: String): String = prefix(roomId) + "State_" + stateId.toByteArray(Charsets.UTF_8)
+        fun stateMacro(roomId: Int, stateId: String, projectId: String? = null): String = prefix(roomId, projectId) + "State_" + stateId.toByteArray(Charsets.UTF_8)
             .joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
         fun renderEntry(entry: RomParser.PlmEntry, scrollReference: String? = null): String = "%PLMPopEntry(" +
             listOf(entry.id to 4, entry.x to 2, entry.y to 2, entry.param to 4)
@@ -494,9 +499,10 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         fun migrate(text: String, room: RoomEdits, parser: RomParser, name: String,
                     symbols: Map<String, Int>, isItem: (Int) -> Boolean = { RomParser.isItemPlm(it) },
                     describe: (RomParser.PlmEntry) -> String = ::defaultDescription,
-                    externalReferences: Set<String> = emptySet()): Migration {
+                    externalReferences: Set<String> = emptySet(), projectRoomIds: Map<Int, String> = emptyMap(),
+                    projectScrollCommands: Map<Int, List<ScrollCommand>> = emptyMap()): Migration {
             require(room.asmPlmSourceVersion == 0) { "Room already uses authored objects." }
-            require(!text.contains("macro ${prefix(room.roomId)}")) { "Existing authored object declarations need review; none were overwritten." }
+            require(!text.contains("macro ${prefix(room.roomId, projectRoomIds[room.roomId])}")) { "Existing authored object declarations need review; none were overwritten." }
             val states = room.copy(states = room.states.toMutableList()).ensureStateManifest(parser).toList()
             require(states.none { it.resourcesChanged }) { "Changed object resource links need review before migration." }
             fun apply(base: List<RomParser.PlmEntry>, changes: List<PlmChange>): List<RomParser.PlmEntry> {
@@ -526,22 +532,29 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
                 val base = requireNotNull(parser.readSaveEntry(spawn.area, spawn.saveIndex)) { "Save override has no base load-station record." }
                 val values = if (spawn.clearSlot) List(7) { 0 } else listOf(spawn.roomId, spawn.doorPtr, base.doorBts,
                     spawn.scrollX, spawn.scrollY, spawn.samusY, spawn.samusX)
-                body.appendLine(AsmSaveStationSource.render(SourceSaveResource(AsmSaveStationSource.name(room.roomId, spawn.area, spawn.saveIndex),
-                    room.roomId, spawn.area, spawn.saveIndex, values)))
+                body.appendLine(AsmSaveStationSource.render(SourceSaveResource(AsmSaveStationSource.name(room.roomId, spawn.area, spawn.saveIndex, projectRoomIds[room.roomId]),
+                    room.roomId, spawn.area, spawn.saveIndex, values, ownerProjectRoomId = projectRoomIds[room.roomId])))
             }
             for (state in states) {
                 val base = runtime.getOrNull(state.baseSourceStateIndex() ?: -1) ?: error("${state.id} has no supported source state.")
-                val entries = apply(apply(parser.parsePlmSet(base.plmSetPtr), room.plmChanges), state.plmChanges)
+                val baseline = parser.parsePlmSet(base.plmSetPtr)
+                val seedStreams = projectScrollCommands.entries.mapNotNull { (index, commands) ->
+                    baseline.getOrNull(index)?.let { it.param to (index to commands) }
+                }.toMap()
+                val entries = apply(apply(baseline, room.plmChanges), state.plmChanges)
                 entries.forEach(AsmPlmDocument::validateEntry)
                 val references = entries.mapIndexedNotNull { index, entry ->
-                    if (entry.id != 0xB703 || (entry.param and 0xFF00) != 0xCC00) return@mapIndexedNotNull null
-                    val id = "cmd_${entry.param and 255}"
-                    val local = state.customScrollCommands[id]
-                    val commands = local ?: room.customScrollCommands[id]
-                    if (commands == null) return@mapIndexedNotNull null // A real ROM pointer, not a legacy command ID.
+                    if (entry.id != 0xB703) return@mapIndexedNotNull null
+                    val legacyId = "cmd_${entry.param and 255}"
+                    val local = if ((entry.param and 0xFF00) == 0xCC00) state.customScrollCommands[legacyId] else null
+                    val common = if ((entry.param and 0xFF00) == 0xCC00) room.customScrollCommands[legacyId] else null
+                    val seed = seedStreams[entry.param]
+                    val commands = local ?: common ?: seed?.second
+                    if (commands == null) return@mapIndexedNotNull null // A verified native stream remains numeric until explicitly detached.
+                    val id = if (local != null || common != null) legacyId else "seed_${seed!!.first}"
                     val owner = if (local != null) state.id else "room"
                     val scrollName = scrollResources.getOrPut(("$owner:$id" to commands.toList())) {
-                        (prefix(room.roomId) + "Scroll_" + (scrollResources.size + 1)).also {
+                        (prefix(room.roomId, projectRoomIds[room.roomId]) + "Scroll_" + (scrollResources.size + 1)).also {
                             body.appendLine(AsmScrollCommandSource.render(it, commands, width, height))
                         }
                     }
@@ -552,18 +565,18 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
                 val lines = entries.mapIndexed { index, entry -> renderEntry(entry, references[index]?.identity) }
                 val key = base.plmSetPtr to lines
                 val resource = resources.getOrPut(key) {
-                    (prefix(room.roomId) + "List_" + (resources.size + 1)).also { macro ->
+                    (prefix(room.roomId, projectRoomIds[room.roomId]) + "List_" + (resources.size + 1)).also { macro ->
                         body.appendLine(renderMacro(macro, lines + "dw \$0000 ; End of PLM list"))
                     }
                 }
                 body.appendLine("; ${state.id} · ${state.condition.displaySummary(parser.readRoomHeader(room.roomId)?.area ?: 0)}")
-                body.appendLine(renderMacro(stateMacro(room.roomId, state.id), listOf("%$resource()")))
+                body.appendLine(renderMacro(stateMacro(room.roomId, state.id, projectRoomIds[room.roomId]), listOf("%$resource()")))
             }
             val authoredRoom = room.copy(asmPlmSourceVersion = 1, plmChanges = mutableListOf(), customScrollCommands = linkedMapOf(), saveStationSpawns = mutableListOf(),
                 states = states.map { it.copy(plmChanges = mutableListOf(), customScrollCommands = linkedMapOf()) }.toMutableList())
-            val tidy = AsmRoomObjectSource(text + "\n" + body, symbols).tidy(authoredRoom, externalReferences)
-            val updated = AsmRoomObjectSource(tidy, symbols).withComments(room.roomId, describe)
-            val decoded = AsmRoomObjectSource(updated, symbols)
+            val tidy = AsmRoomObjectSource(text + "\n" + body, symbols, projectRoomIds).tidy(authoredRoom, externalReferences)
+            val updated = AsmRoomObjectSource(tidy, symbols, projectRoomIds).withComments(room.roomId, describe)
+            val decoded = AsmRoomObjectSource(updated, symbols, projectRoomIds)
             require(states.all { decoded.table(room.roomId, it.id).document.entries == expected[it.id] }) { "Room-object migration changed values." }
             require(decoded.resources(authoredRoom, width * height).all { (state, resource) -> resource.scrollReferences == expectedReferences[state] }) {
                 "Scroll-command migration changed values or resource sharing."

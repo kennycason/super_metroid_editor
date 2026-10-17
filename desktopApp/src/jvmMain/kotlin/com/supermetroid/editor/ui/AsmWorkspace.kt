@@ -2756,10 +2756,11 @@ private fun AsmSourceCanvas(
         val selectorsTarget = com.supermetroid.editor.asm.AsmRoomSelectorsSource.targetAt(editorLines, pane.lineIndex)
         val doorsTarget = com.supermetroid.editor.asm.AsmDoorSource.targetAt(editorLines, pane.lineIndex)
         val arrivalTarget = com.supermetroid.editor.asm.AsmDoorArrivalsSource.targetAt(editorLines, pane.lineIndex)
-        if (layoutTarget != null || propertiesTarget != null || selectorsTarget != null || doorsTarget != null || arrivalTarget != null) listOf(com.supermetroid.editor.asm.AsmEditorLink(
-            "Edit room", if (layoutTarget != null) "Decoded layout · tile/BTS source" else if (propertiesTarget != null) "Room header / state fields" else if (doorsTarget != null) "Door connections" else if (arrivalTarget != null) "Arrival ASM" else "State selectors / branch order", layoutTarget ?: propertiesTarget ?: selectorsTarget ?: doorsTarget ?: arrivalTarget!!))
-        else if (semanticIndex == null || address == null) emptyList()
-        else semanticIndex.linksFor(address)
+        val projectTarget = com.supermetroid.editor.asm.AsmProjectRoomLabels.sourceTarget(editorLines, pane.lineIndex)
+        if (layoutTarget != null || propertiesTarget != null || selectorsTarget != null || doorsTarget != null || arrivalTarget != null || projectTarget != null) listOf(com.supermetroid.editor.asm.AsmEditorLink(
+            "Edit room", if (layoutTarget != null) "Decoded layout · tile/BTS source" else if (propertiesTarget != null) "Room header / state fields" else if (doorsTarget != null) "Door connections" else if (arrivalTarget != null) "Arrival ASM" else if (projectTarget != null) "Project room source" else "State selectors / branch order", layoutTarget ?: propertiesTarget ?: selectorsTarget ?: doorsTarget ?: arrivalTarget ?: projectTarget!!))
+        else ((if (state.workspaceKind == AsmWorkspaceKind.PROJECT) state.sourceEditorLinks?.invoke(source.id, pane.lineIndex).orEmpty() else emptyList()) +
+            if (semanticIndex == null || address == null) emptyList() else semanticIndex.linksFor(address)).distinctBy { it.target }
     }
     val roomSourceLinks = remember(index, semanticIndex, source, pane.lineIndex, state.workspaceKind, state.sourceBufferRevision, state.roomSourceInspection) {
         asmRoomSourceLinksAt(index, source, pane.lineIndex, semanticIndex,

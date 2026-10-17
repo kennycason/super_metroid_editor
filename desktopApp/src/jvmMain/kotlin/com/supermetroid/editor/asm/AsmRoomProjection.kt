@@ -32,7 +32,7 @@ internal data class AsmRoomProjection(val identity: String, val documents: Map<S
 /** Typed decoded views, verified against exact source/dependencies. Neither builds nor saves consume cache values. */
 internal class AsmRoomProjectionRepository(
     directory: File,
-    private val decode: (String, Map<String, Int>) -> AsmRoomObjectSource = ::AsmRoomObjectSource,
+    private val decode: (String, Map<String, Int>) -> AsmRoomObjectSource = { text, symbols -> AsmRoomObjectSource(text, symbols) },
 ) {
     private val cache = AsmVerifiedCache(directory)
     @Serializable private data class Span(val start: Int, val end: Int)

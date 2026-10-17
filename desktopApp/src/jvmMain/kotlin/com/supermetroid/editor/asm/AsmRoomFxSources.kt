@@ -6,7 +6,7 @@ import com.supermetroid.editor.rom.*
 /** FX values stay authored in bank_83.asm; only placement and symbolic pointers are generated. */
 internal data class AsmRoomFxTable(val resource: SourceFxResource, val pcOffset: Int, val pointerOffsets: List<Int>) {
     fun claims(): List<AsmGeneratedRoomClaim> {
-        require(resource.identity.matches(Regex("SmeditFx_[A-Za-z0-9]+_Table_[0-9]+")))
+        require(resource.identity.matches(Regex("SmeditFx_[A-Za-z0-9_]+_Table_[0-9]+")))
         val bytes = resource.bytes()
         require(pcOffset >= 0x18000 && pcOffset + bytes.size <= 0x20000) { "FX table must fit bank \$83." }
         require(pointerOffsets.isNotEmpty() && pointerOffsets.distinct().size == pointerOffsets.size)
@@ -69,6 +69,7 @@ internal fun protectFxBaseline(project: SmEditProject, baseline: RomParser, comp
     unchanged(0x83AC18, 0x2E, "The native FX dispatch changed in ASM; extended types need a matching editor codec.")
     val seen = mutableSetOf<Int>()
     for (room in rooms) {
+        if (project.newRoomForPreviewId(room.roomId) != null) continue
         requireDoorRoutedFxOwnership(room, baseline)
         val states = baseline.inspectRoomStates(room.roomId).states
         for (index in room.states.mapNotNull { it.baseSourceStateIndex() }.distinct()) {

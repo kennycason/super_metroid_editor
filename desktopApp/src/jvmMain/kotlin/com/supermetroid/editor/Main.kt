@@ -607,6 +607,17 @@ fun main() = application {
             }
 
             val editorAsmAddressLink = editorState.projectAsmNavigation(::openAsmAddress)
+            val editorEnemySectionLink = editorState.projectAsmNavigation<(com.supermetroid.editor.asm.AsmEnemyTuningSection) -> Unit> { section ->
+                if (editorState.asmNavigationEnabled) runCatching {
+                    val bridge = requireNotNull(editorState.enemyTuningBridge) { "Wait for enemy source indexing." }
+                    val (file, line) = bridge.sectionLine(section)
+                    navigate {
+                        asmWorkspaceState.showProjectWorkspace()
+                        asmWorkspaceState.openSource(file, line)
+                        leftTab = TAB_ASM
+                    }
+                }.onFailure { editorState.postStatus("Enemy source unavailable: ${it.message}") }
+            }
             val editorPlmPlacementLink = editorState.projectAsmNavigation(::openPlmPlacement)
             val editorScrollCommandsLink = editorState.projectAsmNavigation(::openScrollCommands)
             val editorInitialScrollsLink = editorState.projectAsmNavigation(::openInitialScrolls)
@@ -659,6 +670,10 @@ fun main() = application {
                             } ?: -1
                             leftTab = TAB_SPRITES
                         }
+                        is AsmEditorTarget.EnemyTuning -> {
+                            com.supermetroid.editor.ui.selectEnemyTuning(target.speciesId, target.drops)
+                            leftTab = TAB_ENEMY
+                        }
                         is AsmEditorTarget.Sound -> {
                             SpcData.KNOWN_TRACKS.firstOrNull { it.songSet == target.songSet }
                                 ?.let(soundEditorState::selectTrack)
@@ -710,7 +725,7 @@ fun main() = application {
                 val owner = editorState.project
                 val projectPath = editorState.projectFilePath
                 editorState.objectPreviewLoading = false
-                editorState.asmPlmSourceBridge = null
+                editorState.detachRoomSourceBridges()
                 asmWorkspaceState.sourceSaveParticipant = null
                 val projectWorkspace = asmWorkspaceState.projectWorkspace
                 val parser = romParser
@@ -1413,7 +1428,8 @@ fun main() = application {
                                         onNavigateToAsm = editorAsmAddressLink,
                                         modifier = Modifier.fillMaxSize()
                                     )
-                                    TAB_ENEMY -> EnemyTabSidebar(editorState = editorState, romParser = romParser)
+                                    TAB_ENEMY -> EnemyTabSidebar(editorState = editorState,
+                                        onNavigateToAsm = editorEnemySectionLink)
                                     TAB_BOSS -> BossTabSidebar(editorState = editorState, romParser = romParser)
                                     TAB_ASM -> AsmWorkspaceSidebar(
                                         state = asmWorkspaceState,

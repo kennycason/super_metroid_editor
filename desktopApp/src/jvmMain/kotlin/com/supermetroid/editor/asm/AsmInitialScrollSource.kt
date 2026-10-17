@@ -4,7 +4,10 @@ import com.supermetroid.editor.data.RoomEdits
 import com.supermetroid.editor.rom.SourceInitialScrollResource
 
 /** Small typed lens over authored db tables. Never interpret arbitrary Asar expressions. */
-internal class AsmInitialScrollSource(val text: String, private val symbols: Map<String, Int> = emptyMap()) {
+internal class AsmInitialScrollSource(val text: String, private val symbols: Map<String, Int> = emptyMap(), private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    private fun prefix(roomId: Int) = Companion.prefix(roomId, projectRoomIds[roomId])
+    private fun stateName(roomId: Int, id: String) = Companion.stateName(roomId, id, projectRoomIds[roomId])
+    private fun renderState(roomId: Int, id: String, table: String) = Companion.renderState(roomId, id, table, projectRoomIds[roomId])
     private data class Macro(val name: String, val range: IntRange, val bodyStart: Int, val body: String)
     private val fieldCache = mutableMapOf<String, List<Pair<IntRange, Int>>>()
     private val macros: Map<String, Macro> by lazy {
@@ -79,7 +82,7 @@ internal class AsmInitialScrollSource(val text: String, private val symbols: Map
         var result = text
         for ((identity, states) in inputs.entries.filter { it.key in stateIds }.groupBy { it.value.identity }) {
             if (states.first().value.values == values) continue
-            val source = AsmInitialScrollSource(result, symbols)
+            val source = AsmInitialScrollSource(result, symbols, projectRoomIds)
             val table = source.macro(identity)
             val changes = source.fields(identity).mapIndexedNotNull { index, (span, old) ->
                 if (old == values[index]) null else span to hex(values[index])
@@ -161,9 +164,9 @@ internal class AsmInitialScrollSource(val text: String, private val symbols: Map
     }
 
     companion object {
-        fun prefix(roomId: Int) = "SmeditScrolls_${roomId.toString(16).uppercase().padStart(4, '0')}_"
-        fun stateName(roomId: Int, stateId: String) = prefix(roomId) + "State_" + stateId.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
-        fun renderState(roomId: Int, stateId: String, table: String) = "macro ${stateName(roomId, stateId)}()\n    %$table()\nendmacro\n"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditScrolls", roomId, projectId)
+        fun stateName(roomId: Int, stateId: String, projectId: String? = null) = prefix(roomId, projectId) + "State_" + stateId.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        fun renderState(roomId: Int, stateId: String, table: String, projectId: String? = null) = "macro ${stateName(roomId, stateId, projectId)}()\n    %$table()\nendmacro\n"
         fun renderTable(resource: SourceInitialScrollResource): String = buildString {
             appendLine("macro ${resource.identity}()")
             resource.values.forEachIndexed { i, value ->

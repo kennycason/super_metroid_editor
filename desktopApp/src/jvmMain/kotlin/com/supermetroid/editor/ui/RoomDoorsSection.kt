@@ -55,10 +55,6 @@ internal fun RoomDoorsSection(
         Text("Read-only door preview: $it", fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
             color = MaterialTheme.colorScheme.error)
     }
-    if (projectRoom != null && (editorState.project.rooms[editorState.project.roomKey(roomId)]?.asmLayoutSourceVersion ?: 0) != 0) {
-        Text("Adding/removing doors needs joint layout/source support for this new room. Existing connection fields remain editable.",
-            fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
     if (canEditStructure && projectRoom == null) TextButton(onClick = {
         addingDoor = !addingDoor
         doorManagerError = null
@@ -107,6 +103,11 @@ internal fun RoomDoorsSection(
                     Text("Travels ${door.directionName.lowercase()} · destination screen " +
                         oneBasedRoomCoordinate(door.screenX, door.screenY),
                         fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (editorState.asmNavigationEnabled && editorState.sharedDoorRooms(door.doorDefPtr).size > 1) {
+                        TextButton(enabled = editorState.doorPreviewProblem == null, onClick = {
+                            if (!editorState.makeDoorIndependent(index, identity)) doorManagerError = editorState.statusMessage
+                        }) { Text("Make independent", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
+                    }
                 }
                 if (onNavigateToDoors != null && editorState.asmNavigationEnabled) TextButton(onClick = { onNavigateToDoors(index) }) {
                     Text("ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)

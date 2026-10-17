@@ -11,7 +11,7 @@ import com.supermetroid.editor.rom.baseSourceStateIndex
 internal data class AsmRoomInitialScrollTable(val resource: SourceInitialScrollResource, val pcOffset: Int, val pointerOffsets: List<Int>) {
     fun claims(): List<AsmGeneratedRoomClaim> {
         val bytes = resource.bytes()
-        require(resource.identity.matches(Regex("SmeditScrolls_[A-Za-z0-9]+_Table_[0-9]+"))) { "Invalid initial scroll source identity." }
+        require(resource.identity.matches(Regex("SmeditScrolls_[A-Za-z0-9_]+_Table_[0-9]+"))) { "Invalid initial scroll source identity." }
         require(pcOffset >= 0x78000 && pcOffset + bytes.size <= 0x80000)
         require(pointerOffsets.isNotEmpty() && pointerOffsets.distinct().size == pointerOffsets.size)
         val ptr = checkNotNull(pcToSnesLoRom(pcOffset)) and 0xFFFF
@@ -75,6 +75,7 @@ internal fun protectInitialScrollBaseline(project: SmEditProject, baseline: RomP
         "The initial scroll loader also changed in ASM. A custom scroll layout/preset needs a matching editor codec before using authored grids."
     }
     for (room in rooms) {
+        if (project.newRoomForPreviewId(room.roomId) != null) continue
         val header = requireNotNull(baseline.readRoomHeader(room.roomId))
         val compiledHeader = requireNotNull(compiled.readRoomHeader(room.roomId))
         require(header.width == compiledHeader.width && header.height == compiledHeader.height) { "Initial scroll room dimensions also changed in original ASM. Resolve ownership before building." }

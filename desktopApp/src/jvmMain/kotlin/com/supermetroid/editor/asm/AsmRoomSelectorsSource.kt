@@ -11,7 +11,10 @@ internal data class AsmSelectorConversionPreview(
 )
 
 /** A typed prefix-tree lens. Arguments may name stable DoorDefs, never arbitrary expressions. */
-internal class AsmRoomSelectorsSource(val text: String) {
+internal class AsmRoomSelectorsSource(val text: String, private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    private fun prefix(roomId: Int) = Companion.prefix(roomId, projectRoomIds[roomId])
+    private fun orderName(roomId: Int) = Companion.orderName(roomId, projectRoomIds[roomId])
+    private fun conditionName(roomId: Int, id: String) = Companion.conditionName(roomId, id, projectRoomIds[roomId])
     private data class Definition(val range: IntRange, val bodyStart: Int, val body: String)
     private data class Field(val range: IntRange, val size: Int, val value: Int?, val door: ProjectSourceDoorReference?) {
         val literal: Int get() = requireNotNull(value) { "A DoorDef symbol is only valid as an incoming-door argument." }
@@ -77,7 +80,7 @@ internal class AsmRoomSelectorsSource(val text: String) {
             (d.bodyStart until d.bodyStart + d.body.length) to
                 (notes + renderCondition(preview.selectors.conditions.getValue(id)).replace("\n", newline))
         }.sortedByDescending { it.first.first }.fold(text) { result, (range, replacement) -> result.replaceRange(range, replacement) }
-            .also { require(AsmRoomSelectorsSource(it).resource(room) == preview.selectors) { "Converted predicates do not match the reviewed proposal." } }
+            .also { require(AsmRoomSelectorsSource(it, projectRoomIds).resource(room) == preview.selectors) { "Converted predicates do not match the reviewed proposal." } }
     }
 
     private fun readResource(room: RoomEdits, recognizePredicates: Boolean): SourceRoomSelectors {
@@ -144,11 +147,11 @@ internal class AsmRoomSelectorsSource(val text: String) {
         require(result.order.last() == room.states.single { baseline(it).kind == ProjectRoomStateConditionKind.DEFAULT }.id) { "The mandatory default state's identity cannot change." }
         return result
     }
-    fun editCondition(room: RoomEdits, id: String, condition: ProjectRoomStateCondition): String {
+    fun editCondition(room: RoomEdits, id: String, condition: ProjectRoomStateCondition, preserveAsmSiblings: Boolean = false): String {
         val current = resource(room)
-        require(current.routines.isEmpty()) { "ASM-only selector logic must be edited in source." }
+        require(preserveAsmSiblings || current.routines.isEmpty()) { "ASM-only selector logic must be edited in source." }
         require(current.conditions.getValue(id).kind != ProjectRoomStateConditionKind.DEFAULT && condition.kind != ProjectRoomStateConditionKind.DEFAULT) { "The mandatory default cannot be changed." }
-        SourceRoomSelectors(current.order, current.conditions + (id to condition))
+        SourceRoomSelectors(current.order, current.conditions + (id to condition), current.routines)
         val name = conditionName(room.roomId, id)
         val replacements = nodeFields(condition)
         val existing = fields(name)
@@ -216,11 +219,11 @@ internal class AsmRoomSelectorsSource(val text: String) {
         // Explicit, versioned wire order: never derive these IDs from enum ordinals.
         val KINDS = "DEFAULT INCOMING_DOOR AREA_MAIN_BOSS_DEAD NEVER EVENT_SET AREA_BOSS_BIT_SET MORPH_BALL_COLLECTED MORPH_BALL_AND_MISSILES POWER_BOMBS_COLLECTED SPEED_BOOSTER_COLLECTED EQUIPMENT_COLLECTED BEAM_COLLECTED MISSILE_CAPACITY_AT_LEAST SUPER_MISSILE_CAPACITY_AT_LEAST POWER_BOMB_CAPACITY_AT_LEAST ENERGY_CAPACITY_AT_LEAST RESERVE_CAPACITY_AT_LEAST ITEM_PICKUP_COLLECTED BOSS_DEFEATED EQUIPMENT_EQUIPPED BEAM_EQUIPPED CURRENT_ENERGY_AT_LEAST CURRENT_MISSILES_AT_LEAST CURRENT_SUPER_MISSILES_AT_LEAST CURRENT_POWER_BOMBS_AT_LEAST CURRENT_RESERVE_ENERGY_AT_LEAST DOOR_BIT_SET CHOZO_BLOCK_DESTROYED ESCAPE_ACTIVE ALL_OF ANY_OF".split(' ').map(ProjectRoomStateConditionKind::valueOf)
         fun baseline(state: RoomStateEdits) = state.sourceCondition ?: projectRoomStateCondition(ProjectRoomStateConditionKind.NEVER)
-        fun prefix(roomId: Int) = "SmeditSelectors_${roomId.toString(16).uppercase().padStart(4, '0')}_"
-        fun orderName(roomId: Int) = prefix(roomId) + "Order"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditSelectors", roomId, projectId)
+        fun orderName(roomId: Int, projectId: String? = null) = prefix(roomId, projectId) + "Order"
         private fun idHex(id: String) = id.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
         private fun decodeId(hex: String): String { require(hex.length % 2 == 0); return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray().toString(Charsets.UTF_8) }
-        fun conditionName(roomId: Int, id: String) = prefix(roomId) + "Condition_" + idHex(id)
+        fun conditionName(roomId: Int, id: String, projectId: String? = null) = prefix(roomId, projectId) + "Condition_" + idHex(id)
         private fun hex(value: Int, width: Int) = "\$${value.toString(16).uppercase().padStart(width, '0')}"
         private fun argumentToken(c: ProjectRoomStateCondition) = c.sourceDoor?.entryLabel ?: hex(c.argument ?: 0, 4)
         private fun nodeFields(c: ProjectRoomStateCondition): List<Pair<Int, String>> = listOf(
@@ -231,7 +234,7 @@ internal class AsmRoomSelectorsSource(val text: String) {
             appendLine("    dw ${argumentToken(c)} ; argument (zero for NONE/compound)")
             c.children.forEach { append(renderCondition(it)) }
         }
-        fun render(roomId: Int, name: String, selectors: SourceRoomSelectors): String = buildString {
+        fun render(roomId: Int, name: String, selectors: SourceRoomSelectors, projectId: String? = null): String = buildString {
             require(selectors.routines.isEmpty()) { "Executable predicates must not be rendered as typed GUI data." }
             appendLine("; SMEDIT selectors v1 · ${name.replace('\n', ' ').replace('\r', ' ')} · typed input, not executable placement")
             appendLine("; INCOMING_DOOR arguments may name an active SmeditDoors_ROOM_Door_ID_Entry; its address is resolved at build.")
@@ -240,10 +243,10 @@ internal class AsmRoomSelectorsSource(val text: String) {
             appendLine("; Custom executable logic: replace a NON-default condition body with '; smedit:managed-predicate-v1' and instructions.")
             appendLine("; Managed bodies enter with 16-bit A/X/Y; return carry=match via RTS with a balanced stack. Placement/end labels are automatic.")
             KINDS.forEachIndexed { index, kind -> appendLine("; ${hex(index, 2)} = $kind") }
-            appendLine("macro ${orderName(roomId)}()")
-            selectors.order.forEach { appendLine("    %${conditionName(roomId, it)}()") }
+            appendLine("macro ${orderName(roomId, projectId)}()")
+            selectors.order.forEach { appendLine("    %${conditionName(roomId, it, projectId)}()") }
             appendLine("endmacro\n")
-            selectors.conditions.forEach { (id, c) -> appendLine("macro ${conditionName(roomId, id)}()"); append(renderCondition(c)); appendLine("endmacro\n") }
+            selectors.conditions.forEach { (id, c) -> appendLine("macro ${conditionName(roomId, id, projectId)}()"); append(renderCondition(c)); appendLine("endmacro\n") }
         }
         fun targetAt(lines: List<String>, line: Int): AsmEditorTarget.Room? {
             for (index in line.coerceAtMost(lines.lastIndex) downTo 0) {

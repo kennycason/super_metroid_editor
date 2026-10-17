@@ -16,10 +16,12 @@ internal class AsmRoomResizeDoors(
     private val catalog: AsmPlmSourceCatalog,
     private val workspace: AsmWorkspaceState,
     private val moves: AsmRoomAreaMove,
+    private val context: AsmRoomSourceContext? = null,
+    private val doorBridge: AsmDoorSourceBridge,
 ) {
     fun incoming(owner: SmEditProject, roomId: Int, text8F: String, includeTargetSource: Boolean = true): List<AsmResizeIncomingDoor> {
-        val parser = catalog.parser
-        val source83 by lazy { AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), text8F, catalog.symbols) }
+        val parser = if (owner.newRooms.isEmpty()) catalog.parser else requireNotNull(context) { "Project-room resize requires its verified source context." }.parser
+        val source83 by lazy { AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), text8F, catalog.symbols, AsmProjectRoomLabels.identities(owner), owner.newRooms) }
         val sharedPointers = nativeDoorConsumers(parser).filterValues { it.map { pair -> pair.first }.distinct().size > 1 }.keys
         val shared = if (sharedPointers.isEmpty()) emptyMap() else source83.sharedResources(parser)
         fun dimensions(id: Int) = parser.readRoomHeader(id)?.let { native ->
@@ -54,11 +56,8 @@ internal class AsmRoomResizeDoors(
              oldWidth: Int, oldHeight: Int, width: Int, height: Int,
              stagedRooms: Map<String, RoomEdits> = emptyMap(), staged83: String? = null,
              restoreNative: Boolean = false): AsmResizeDoorPlan {
-        val parser = catalog.parser
+        val parser = if (owner.newRooms.isEmpty()) catalog.parser else requireNotNull(context) { "Project-room resize requires its verified source context." }.parser
         val incoming = incoming(owner, target.roomId, before8F, includeTargetSource = !restoreNative)
-        require(width == oldWidth && height == oldHeight || incoming.none { it.door.shared }) {
-            "Shared native DoorDefs require a coordinated geometry operation. Resize is blocked; no room or source was changed."
-        }
         val nativeTarget = requireNotNull(parser.readRoomHeader(target.roomId))
         val models = linkedMapOf<String, RoomEdits>().apply { putAll(stagedRooms); put(owner.roomKey(target.roomId), target) }
         fun room(id: Int) = models.getOrPut(owner.roomKey(id)) {
@@ -76,6 +75,7 @@ internal class AsmRoomResizeDoors(
         val reference83 by lazy { staged83 ?: workspace.projectSourceText(DOOR_SOURCE_FILE) }
         val changed = mutableSetOf<String>()
         val plannedBindings = mutableMapOf<Pair<Int, Int>, String>()
+        val sharedBindings = mutableMapOf<Int, String>()
         fun append(text: String, addition: String): String {
             val newline = if (text.contains("\r\n")) "\r\n" else "\n"
             return text + newline + addition.replace("\r\n", "\n").replace("\n", newline)
@@ -89,6 +89,10 @@ internal class AsmRoomResizeDoors(
             check(d.screenX < width && d.screenY < height, "An incoming door leads to a removed screen. Move its destination before shrinking.")
             if (d.bitflag ushr 8 >= 4) check((d.doorCapCode and 255) < width * 16 && (d.doorCapCode ushr 8) < height * 16,
                 "The closing-door cap would be outside the resized room. Move it before shrinking.")
+            sharedBindings[door.doorDefPtr]?.takeIf { door.shared }?.let { binding ->
+                plannedBindings[input.roomId to d.doorIndex] = binding
+            }
+            if (door.shared && door.doorDefPtr in sharedBindings) continue
             if ((owner.rooms[owner.roomKey(input.roomId)]?.asmDoorSourceVersion ?: 0) != 0) bank83() // Unchanged participating authority is an undo anchor too.
             val label = door.arrival?.label
             val managed = label?.startsWith("SmeditArrival_") == true
@@ -128,14 +132,15 @@ internal class AsmRoomResizeDoors(
                 write.copy(addressLowByte = 0x20 + y * width + x)
             }
             if (writes == program.writes) continue
-            val canonicalName = AsmDoorArrivalsSource.name(input.roomId, door.identity)
+            val canonicalName = AsmDoorArrivalsSource.name(input.roomId, door.identity, AsmProjectRoomLabels.identities(owner)[input.roomId])
             val currentName = label?.removeSuffix("_Entry")
             var name = currentName ?: canonicalName
             if (managed) {
                 val reference = Regex("\\b${Regex.escape(requireNotNull(label))}(?:_End)?\\b")
                 fun count(text: String) = reference.findAll(text.lineSequence().joinToString("\n") { asmCodeBeforeComment(it) }).count()
                 val references = count(staged8F) + count(reference83) + otherTexts.sumOf(::count)
-                val consumers = incoming.count { it.door.arrival?.label == label }
+                val consumers = incoming.filter { it.door.arrival?.label == label }
+                    .map { if (it.door.shared) "shared:${it.door.doorDefPtr}" else "${it.roomId}:${it.door.identity}" }.distinct().size
                 if (references != consumers) {
                     check(currentName != canonicalName, "Arrival $label is shared outside this resize. Give this door a private arrival before changing its geometry.")
                     name = canonicalName // Copy-on-write; the old routine and its other references survive.
@@ -163,18 +168,13 @@ internal class AsmRoomResizeDoors(
             if (staged.asmDoorSourceVersion == 0) {
                 check((staged.roomHeaderChange?.doorOut ?: source.doorOut) == source.doorOut,
                     "A relocated door list needs a structural connection transaction before adopting its arrival.")
-                check(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmDoorSource.prefix(input.roomId)}").containsMatchIn(bank83()), "Retained DoorDefs need review before resizing.")
-                val native = parser.parseDoorList(source.doorOut)
-                val overrides = staged.doorChanges.associateBy { it.doorIndex }
-                check(overrides.keys.all { it in native.indices }, "A GUI door override has no native connection.")
-                val values = SourceRoomDoors(source.doorOut, native.mapIndexed { index, entry -> SourceRoomDoor(entry.doorDefPtr,
-                    overrides[index] ?: DoorChange(index, entry.destRoomPtr, entry.bitflag, entry.doorCapCode, entry.screenX, entry.screenY, entry.distFromDoor, entry.entryCode)) })
-                validateSourceDoorOwnership(input.roomId, values, parser)
-                text83 = append(bank83(), AsmDoorSource.render(input.roomId, source.name, values))
+                check(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmDoorSource.prefix(input.roomId, AsmProjectRoomLabels.identities(owner)[input.roomId])}").containsMatchIn(bank83()), "Retained DoorDefs need review before resizing.")
+                text83 = doorBridge.automaticSource(staged, source.name, bank83(), text8F)
                 staged.doorChanges.clear(); staged.asmDoorSourceVersion = 1
             }
-            text83 = AsmDoorSource(bank83(), text8F, catalog.symbols).withArrival(input.roomId, d.doorIndex, replacementLabel)
+            text83 = AsmDoorSource(bank83(), text8F, catalog.symbols, AsmProjectRoomLabels.identities(owner), owner.newRooms).withArrival(input.roomId, d.doorIndex, replacementLabel)
             plannedBindings[input.roomId to d.doorIndex] = replacementLabel
+            if (door.shared) sharedBindings[door.doorDefPtr] = replacementLabel
         }
         val prospective = owner.copy(rooms = owner.rooms.toMutableMap().apply { putAll(models) })
         // Validate against final dimensions and complete resource coverage before any adoption is published.
@@ -183,7 +183,7 @@ internal class AsmRoomResizeDoors(
             (edits?.roomHeaderChange?.width ?: header.width) to (edits?.roomHeaderChange?.height ?: header.height)
         }
         for (model in models.values.filter { it.asmDoorSourceVersion != 0 }) {
-            val value = AsmDoorSource(bank83(), text8F, catalog.symbols).resource(model, parser, ::dimensions)
+            val value = AsmDoorSource(bank83(), text8F, catalog.symbols, AsmProjectRoomLabels.identities(owner), owner.newRooms).resource(model, parser, ::dimensions)
             validateSourceDoorOwnership(model.roomId, value, parser)
             model.asmDoorProjection = value.entries.map { it.change }
         }

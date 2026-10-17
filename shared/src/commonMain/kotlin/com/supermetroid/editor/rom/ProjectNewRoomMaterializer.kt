@@ -25,6 +25,8 @@ class ProjectNewRoomMaterializer(
     private val romData: ByteArray,
     freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     private val onLog: (String) -> Unit = {},
+    private val arrivalSymbols: Map<String, Int> = emptyMap(),
+    private val allowUnresolvedArrivals: Boolean = false,
     private val roomAreaOverrides: Map<Int, Int> = project.rooms.values.mapNotNull { room ->
         room.effectiveHeaderChange?.area?.let { room.roomId to it }
     }.toMap(),
@@ -102,7 +104,11 @@ class ProjectNewRoomMaterializer(
                     ?: roomAreaOverrides[destination] ?: parser.readRoomHeader(destination)?.area
                     ?: fail("Project room '${room.definition.name}' door $index has no readable destination room")
                 val flags = if (sourceArea != destinationArea) door.bitflag or 0x40 else door.bitflag and 0x40.inv()
-                val bytes = encodeDoor(door.copy(bitflag = flags), destination)
+                val arrival = door.arrivalAsmLabel?.let { label ->
+                    arrivalSymbols[label]?.also { require(it in 0x8F8000..0x8FFFFE) { "Project arrival must be in bank \$8F." } }?.and(65535)
+                        ?: if (allowUnresolvedArrivals) 0 else fail("Resolve project arrival $label through the checked ASM build before exporting.")
+                } ?: door.entryCode
+                val bytes = encodeDoor(door.copy(bitflag = flags, entryCode = arrival), destination)
                 val allocation = allocate(
                     bytes,
                     listOf(0x83),
@@ -272,6 +278,9 @@ class ProjectNewRoomMaterializer(
     }
 
     private fun encodePlms(room: ProjectNewRoom): ByteArray {
+        require(room.initialState.scrollCommands.keys.all { it in room.initialState.plms.indices && room.initialState.plms[it].id == 0xB703 }) {
+            "Creation-seed scroll resources must belong to existing trigger rows."
+        }
         val out = ByteArray(room.initialState.plms.size * 6 + 2)
         room.initialState.plms.forEachIndexed { index, plm ->
             if (plm.id !in 0..0xFFFF || plm.x !in 0..0xFF || plm.y !in 0..0xFF || plm.param !in 0..0xFFFF) {
@@ -281,7 +290,11 @@ class ProjectNewRoomMaterializer(
             writeU16(out, offset, plm.id)
             out[offset + 2] = plm.x.toByte()
             out[offset + 3] = plm.y.toByte()
-            writeU16(out, offset + 4, plm.param)
+            val pointer = room.initialState.scrollCommands[index]?.let { commands ->
+                validateScrollCommands(commands, room.header.width * room.header.height)
+                allocate(serializeScrollCommands(commands), listOf(0x8F), "Project room '${room.name}' scroll trigger $index").snesAddress and 65535
+            } ?: plm.param
+            writeU16(out, offset + 4, pointer)
         }
         return out
     }

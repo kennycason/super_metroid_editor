@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -122,12 +123,13 @@ fun EnemyStatsEditor(
     val asmLink = editorState.projectAsmNavigation(onNavigateToAsm)
     // All enemy fields (HP, DMG, AI pointers, GFX) share this map.
     // Keys follow the pattern: "${enemyKey}_fieldName" (e.g., "zoomer_hp", "zoomer_touchAi")
-    val values = remember(patch.id, editorState.patchVersion) {
+    val tuning = editorState.enemyTuningBridge.takeIf { editorState.asmNavigationEnabled }
+    val values = remember(editorState.project.projectId, patch.id, editorState.patchVersion, tuning, tuning?.revision) {
         val map = mutableStateMapOf<String, Int>()
         val stored = patch.configData
         for (e in ENEMY_DEFS) {
-            map["${e.key}_hp"] = stored?.get("${e.key}_hp") ?: readEnemyStat(romParser, e.speciesId, 4) ?: e.defaultHp
-            map["${e.key}_dmg"] = stored?.get("${e.key}_dmg") ?: readEnemyStat(romParser, e.speciesId, 6) ?: e.defaultDamage
+            map["${e.key}_hp"] = tuning?.value(patch, "${e.key}_hp")?.value ?: stored?.get("${e.key}_hp") ?: readEnemyStat(romParser, e.speciesId, 4) ?: e.defaultHp
+            map["${e.key}_dmg"] = tuning?.value(patch, "${e.key}_dmg")?.value ?: stored?.get("${e.key}_dmg") ?: readEnemyStat(romParser, e.speciesId, 6) ?: e.defaultDamage
             // Restore any stored AI/GFX field overrides
             if (stored != null) {
                 for (suffix in listOf("initAi", "mainAi", "touchAi", "shotAi", "hurtAi", "frozenAi",
@@ -141,7 +143,6 @@ fun EnemyStatsEditor(
     }
 
     fun apply(key: String, value: Int) {
-        values[key] = value
         editorState.setPatchConfigData(patch.id, key, value)
     }
 
@@ -157,6 +158,12 @@ fun EnemyStatsEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(12.dp))
+        if (editorState.asmNavigationEnabled) Text(
+            "HP/contact damage edit the actual ASM fields. Source Undo restores values; patch toggles do not undo authored source. Advanced pointer fields remain ROM-only here.",
+            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (tuning != null && patch.configData.orEmpty().keys.any { it !in tuning.catalog.keys }) TextButton(onClick = {
+            runCatching { tuning.removeAdvancedOverrides() }.onFailure { editorState.postStatus(it.message ?: "Cannot remove these overrides.") }
+        }) { Text("Remove ROM-only AI/GFX overrides (undoable)", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
 
         val grouped = ENEMY_DEFS.groupBy { it.category }
         for (cat in CATEGORY_ORDER) {
@@ -252,7 +259,7 @@ private fun EnemyRow(
     val dmgModified = dmg != enemy.defaultDamage
     var expanded by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp, horizontal = 4.dp)) {
+    Column(modifier = enemyTuningFocus(enemy.speciesId).fillMaxWidth().padding(vertical = 2.dp, horizontal = 4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 enemy.name,
@@ -262,9 +269,27 @@ private fun EnemyRow(
                 color = if (hpModified || dmgModified) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurface
             )
-            EnemyStatInput(hp, { onApply("${enemy.key}_hp", it) }, Modifier.width(72.dp))
+            val tuning = editorState?.enemyTuningBridge.takeIf { editorState?.asmNavigationEnabled == true }
+            if (editorState?.asmNavigationEnabled == true && onNavigateToAsm != null) TextButton(onClick = {
+                onNavigateToAsm(RomConstants.BANK_ENEMY_AI or enemy.speciesId)
+                editorState.openEnemyTuningSource("${enemy.key}_hp")
+            }) { Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+            EnemyStatInput(hp, { onApply("${enemy.key}_hp", it) }, Modifier.width(72.dp),
+                enabled = editorState?.asmNavigationEnabled != true || tuning?.view("${enemy.key}_hp")?.problem == null && tuning != null)
             Spacer(Modifier.width(4.dp))
-            EnemyStatInput(dmg, { onApply("${enemy.key}_dmg", it) }, Modifier.width(72.dp))
+            EnemyStatInput(dmg, { onApply("${enemy.key}_dmg", it) }, Modifier.width(72.dp),
+                enabled = editorState?.asmNavigationEnabled != true || tuning?.view("${enemy.key}_dmg")?.problem == null && tuning != null)
+        }
+        if (editorState?.asmNavigationEnabled == true) {
+            listOf("hp", "dmg").forEach { suffix ->
+                val key = "${enemy.key}_$suffix"
+                editorState.enemyTuningBridge?.view(key)?.problem?.let { problem ->
+                    Text("Last-good / read-only field: $problem", color = MaterialTheme.colorScheme.error, fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                    if (problem.contains("patch override")) TextButton(onClick = {
+                        runCatching { editorState.enemyTuningBridge?.useSourceValue(key) }.onFailure { editorState.postStatus(it.message ?: "Cannot use this source value.") }
+                    }) { Text("Use ASM ${suffix.uppercase()} value", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
+                }
+            }
         }
         // Expandable AI/GFX detail section
         if (expanded && romParser != null) {
@@ -343,13 +368,13 @@ private fun EnemyDetailSection(
                                     color = if (isModified) Color(0xFFFFCC00) else detailColor,
                                     fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier.width(68.dp))
-                                EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
+                                EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp), enabled = editorState?.asmNavigationEnabled != true)
                                 val routineDesc = aiRoutineLabel(curVal)
                                 if (routineDesc.isNotEmpty()) {
                                     Text(routineDesc, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = Color(0xFF80C0FF),
                                         modifier = Modifier.padding(start = 4.dp))
                                 }
-                                if (isModified) {
+                                if (isModified && editorState?.asmNavigationEnabled != true) {
                                     Text("↩", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
                                 }
@@ -406,8 +431,8 @@ private fun EnemyDetailSection(
                             color = if (isModified) Color(0xFFFFCC00) else detailColor,
                             fontWeight = if (isModified) FontWeight.Bold else FontWeight.Normal,
                             modifier = Modifier.width(64.dp))
-                        EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp))
-                        if (isModified) {
+                        EnemyHexInput(curVal, { onApply(field.key, it) }, Modifier.width(56.dp), enabled = editorState?.asmNavigationEnabled != true)
+                        if (isModified && editorState?.asmNavigationEnabled != true) {
                             Text("↩", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(start = 4.dp).clickable { onApply(field.key, romVal) })
                         }
@@ -531,7 +556,8 @@ private fun aiRoutineLabel(value: Int): String = KNOWN_AI_ROUTINES[value] ?: ""
 private fun EnemyStatInput(
     value: Int,
     onChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var text by remember { mutableStateOf(value.toString()) }
     var lastExternalValue by remember { mutableStateOf(value) }
@@ -540,6 +566,7 @@ private fun EnemyStatInput(
         lastExternalValue = value
     }
     BasicTextField(
+        enabled = enabled,
         value = text,
         onValueChange = { raw ->
             val filtered = raw.filter { it.isDigit() }.take(5)
@@ -571,7 +598,8 @@ private fun EnemyStatInput(
 private fun EnemyHexInput(
     value: Int,
     onChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var text by remember { mutableStateOf(value.toString(16).uppercase().padStart(4, '0')) }
     // Sync from external value changes (e.g., reset button) without fighting the user's typing
@@ -581,6 +609,7 @@ private fun EnemyHexInput(
         lastExternalValue = value
     }
     BasicTextField(
+        enabled = enabled,
         value = text,
         onValueChange = { raw ->
             val filtered = raw.uppercase().filter { it in '0'..'9' || it in 'A'..'F' }.take(4)

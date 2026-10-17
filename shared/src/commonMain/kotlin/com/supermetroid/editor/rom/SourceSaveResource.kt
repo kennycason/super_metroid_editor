@@ -13,6 +13,7 @@ data class SourceSaveResource(
     val words: List<Int>,
     /** Authored identity; words[1] is zero until the checked build allocation resolves it. */
     val sourceDoor: ProjectSourceDoorReference? = null,
+    val ownerProjectRoomId: String? = null,
 ) {
     val cleared: Boolean get() = sourceDoor == null && words.all { it == 0 }
     fun validate() {

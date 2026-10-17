@@ -5,7 +5,8 @@ import com.supermetroid.editor.data.ProjectSourceDoorReference
 
 /** Only active declarations are linkable. A retained/retired macro is not a connection. */
 fun ProjectSourceDoorReference.requireIncomingDoor(targetRoomId: Int, doors: Map<Int, SourceRoomDoors>): SourceRoomDoor {
-    val door = requireNotNull(doors[roomId]?.entries?.singleOrNull { it.identity == identity }) {
+    val owner = if (projectRoomId == null) doors[roomId] else doors.values.singleOrNull { it.projectRoomId == projectRoomId }
+    val door = requireNotNull(owner?.entries?.singleOrNull { it.identity == identity }) {
         "$entryLabel is not an active source-owned connection. Restore or retarget this reference."
     }
     require(door.change.destRoomPtr == targetRoomId) {

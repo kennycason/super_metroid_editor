@@ -118,34 +118,41 @@ internal class AsmSourceRoomMaterializer {
         }
 
         val previewToBuilt = project.newRooms.associate { it.previewRoomId to newRoomIds.getValue(it.id) }
-        val placedProject = if (previewToBuilt.isEmpty()) project else project.copy(rooms = project.rooms.values.associateTo(linkedMapOf()) { room ->
+        val placedProject = if (previewToBuilt.isEmpty()) project else project.copy(newRooms = project.newRooms.map { room ->
+            room.copy(previewRoomId = newRoomIds.getValue(room.id))
+        }.toMutableList(), rooms = project.rooms.values.associateTo(linkedMapOf()) { room ->
             val placed = previewToBuilt[room.roomId] ?: room.roomId
             project.roomKey(placed) to room.copy(roomId = placed)
         })
+        fun <T> place(inputs: Map<Int, T>) = inputs.mapKeys { (id, _) -> previewToBuilt[id] ?: id }
         val plmTables = plannedRom?.let { discoverAsmRoomPlmTables(placedProject, report, it) }.orEmpty()
         val scrollTables = if (sourceScrolls.isEmpty()) emptyList() else discoverAsmRoomScrollTables(report, requireNotNull(plannedRom), sourceScrolls)
-        val initialScrollTables = if (sourceInitialScrolls.isEmpty()) emptyList() else discoverAsmInitialScrollTables(project, report, requireNotNull(plannedRom), sourceInitialScrolls)
-        val enemyTables = if (sourceEnemies.isEmpty()) emptyList() else discoverAsmEnemyTables(project, report, requireNotNull(plannedRom), sourceEnemies)
+        val initialScrollTables = if (sourceInitialScrolls.isEmpty()) emptyList() else discoverAsmInitialScrollTables(placedProject, report, requireNotNull(plannedRom), place(sourceInitialScrolls))
+        val enemyTables = if (sourceEnemies.isEmpty()) emptyList() else discoverAsmEnemyTables(placedProject, report, requireNotNull(plannedRom), place(sourceEnemies))
         val plannedParser = plannedRom?.let { com.supermetroid.editor.rom.RomParser(it) }
         val placedDoors = sourceDoors.mapValues { (roomId, doors) ->
-            val entries = requireNotNull(plannedParser).parseDoorList(requireNotNull(plannedParser.readRoomHeader(roomId)).doorOut)
+            val entries = requireNotNull(plannedParser).parseDoorList(requireNotNull(plannedParser.readRoomHeader(previewToBuilt[roomId] ?: roomId)).doorOut)
             require(entries.size == doors.entries.size) { "Planned structural door count differs from source." }
-            doors.entries.mapIndexed { index, door -> door.copy(doorDefPtr = entries[index].doorDefPtr) }
+            doors.entries.mapIndexed { index, door -> door.copy(doorDefPtr = entries[index].doorDefPtr, change = door.change.copy(destRoomPtr = entries[index].destRoomPtr)) }
         }
         val doorPointers = placedDoors.flatMap { (roomId, doors) -> doors.map { door ->
-            com.supermetroid.editor.data.ProjectSourceDoorReference(roomId, door.identity) to door.doorDefPtr
+            com.supermetroid.editor.data.ProjectSourceDoorReference(if (sourceDoors.getValue(roomId).projectRoomId == null) roomId else 0, door.identity, sourceDoors.getValue(roomId).projectRoomId) to door.doorDefPtr
         } }.toMap()
-        val resolvedSaves = sourceSaves.mapValues { (_, resource) -> resource.resolveSourceDoors(sourceDoors, doorPointers) }
+        val resolvedSaves = sourceSaves.mapValues { (_, resource) ->
+            val resolved = resource.resolveSourceDoors(sourceDoors, doorPointers)
+            val id = previewToBuilt[resolved.ownerRoomId] ?: resolved.ownerRoomId
+            resolved.copy(ownerRoomId = id, words = resolved.words.mapIndexed { i, word -> if (i == 0 && !resolved.cleared) id else word })
+        }
         val resolvedFx = sourceFx.mapValues { (roomId, states) -> states.mapValues { (_, resource) ->
             resource.resolveSourceDoors(roomId, sourceDoors, doorPointers)
         } }
         val saveTables = if (resolvedSaves.isEmpty()) emptyList() else discoverAsmRoomSaveTables(report, requireNotNull(plannedRom), resolvedSaves)
-        val fxTables = if (resolvedFx.isEmpty()) emptyList() else discoverAsmFxTables(project, report, requireNotNull(plannedRom), resolvedFx)
+        val fxTables = if (resolvedFx.isEmpty()) emptyList() else discoverAsmFxTables(placedProject, report, requireNotNull(plannedRom), place(resolvedFx))
         val doorListTables = sourceDoors.filterValues { it.structural }.map { (roomId, _) ->
-            AsmRoomDoorListTable(roomId, requireNotNull(plannedParser?.readRoomHeader(roomId)).doorOut, placedDoors.getValue(roomId))
+            AsmRoomDoorListTable(previewToBuilt[roomId] ?: roomId, requireNotNull(plannedParser?.readRoomHeader(previewToBuilt[roomId] ?: roomId)).doorOut, placedDoors.getValue(roomId), sourceDoors.getValue(roomId).projectRoomId)
         }
         val doorTables = placedDoors.toSortedMap().flatMap { (roomId, doors) -> doors.map { door ->
-            AsmRoomDoorTable(AsmDoorSource.name(roomId, door.identity), door)
+            AsmRoomDoorTable(AsmDoorSource.name(roomId, door.identity, sourceDoors.getValue(roomId).projectRoomId), door)
         } }.groupBy { it.door.doorDefPtr }.values.map { tables ->
             val first = tables.first()
             require(tables.all { it.door.entry() == first.door.entry() && it.door.arrival == first.door.arrival }) { "Conflicting source owners for one DoorDef." }

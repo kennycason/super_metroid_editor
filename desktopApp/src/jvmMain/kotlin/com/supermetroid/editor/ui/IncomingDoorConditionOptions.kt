@@ -15,7 +15,8 @@ internal fun EditorState.incomingDoorConditionOptions(targetRoomId: Int, parser:
             if (view.problem != null) return@flatMap emptyList()
             view.resource?.entries.orEmpty().filter { it.change.destRoomPtr == targetRoomId }.map { door ->
                 IncomingDoorConditionOption(pointer = door.doorDefPtr.takeIf { it != 0 },
-                    sourceDoor = ProjectSourceDoorReference(id, door.identity),
+                    sourceDoor = project.newRoomForPreviewId(id)?.let { ProjectSourceDoorReference(0, door.identity, it.id) }
+                        ?: ProjectSourceDoorReference(id, door.identity),
                     label = "$name · connection ${door.change.doorIndex + 1} (ID ${door.identity})")
             }
         } else effectiveDoorsForRoom(id, parser).mapIndexedNotNull { index, door ->

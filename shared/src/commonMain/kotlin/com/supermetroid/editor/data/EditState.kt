@@ -142,6 +142,8 @@ data class ProjectDoorDefinition(
     var entryCode: Int,
     /** Source DoorDef pointer, used only to preserve/remap cloned door-specific FX. */
     val sourceDoorDefPtr: Int = 0,
+    /** Checked bank-$8F symbol; no preview address is persisted for executable source. */
+    val arrivalAsmLabel: String? = null,
 )
 
 @Serializable
@@ -206,6 +208,8 @@ data class ProjectNewRoomState(
     var setupAsmPtr: Int = 0,
     /** Population terminator's kill quota, independent from the number of spawned actors. */
     val enemyKillCount: Int = 0,
+    /** Independent creation-seed command streams, keyed by PLM row rather than a ROM pointer. */
+    val scrollCommands: Map<Int, List<ScrollCommand>> = emptyMap(),
 )
 
 @Serializable
@@ -339,14 +343,25 @@ data class ProjectRoomStateCondition(
 
 /** A declaration identity, NOT the door's current BTS index or allocated ROM pointer. */
 @Serializable
-data class ProjectSourceDoorReference(val roomId: Int, val identity: Int) {
+data class ProjectSourceDoorReference(val roomId: Int, val identity: Int, val projectRoomId: String? = null) {
     init {
-        require(roomId in 0x8000..0xFFFF && identity in 0..65535) { "Invalid source DoorDef identity." }
+        require((if (projectRoomId == null) roomId in 0x8000..0xFFFF else roomId == 0 && projectRoomId.isNotBlank()) && identity in 0..65535) { "Invalid source DoorDef identity." }
     }
-    val entryLabel: String get() = "SmeditDoors_${roomId.toString(16).uppercase().padStart(4, '0')}_Door_${identity}_Entry"
-    val caption: String get() = "Room $${roomId.toString(16).uppercase().padStart(4, '0')} · door ID $identity"
+    val entryLabel: String get() = "SmeditDoors_${projectRoomId?.let { "Project_" + it.encodeToByteArray().joinToString("") { b -> (b.toInt() and 255).toString(16).uppercase().padStart(2, '0') } } ?: roomId.toString(16).uppercase().padStart(4, '0')}_Door_${identity}_Entry"
+    val caption: String get() = "${projectRoomId?.let { "Project room $it" } ?: "Room $" + roomId.toString(16).uppercase().padStart(4, '0')} · door ID $identity"
+    fun resolveRoomId(identities: Map<Int, String>): Int = if (projectRoomId == null) roomId else
+        requireNotNull(identities.entries.singleOrNull { it.value == projectRoomId }?.key) { "Referenced project room $projectRoomId is missing or ambiguous." }
     companion object {
         fun fromEntryLabel(label: String): ProjectSourceDoorReference? {
+            Regex("SmeditDoors_Project_([0-9A-F]+)_Door_(0|[1-9][0-9]*)_Entry").matchEntire(label)?.let { match ->
+                val encoded = match.groupValues[1]
+                if (encoded.length % 2 != 0) return null
+                val bytes = encoded.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                val id = bytes.decodeToString()
+                val identity = match.groupValues[2].toIntOrNull() ?: return null
+                return if (id.isNotBlank() && id.encodeToByteArray().contentEquals(bytes) && identity in 0..65535)
+                    ProjectSourceDoorReference(0, identity, id) else null
+            }
             val match = Regex("SmeditDoors_([0-9A-F]{4})_Door_(0|[1-9][0-9]*)_Entry").matchEntire(label) ?: return null
             val roomId = match.groupValues[1].toInt(16)
             val identity = match.groupValues[2].toIntOrNull() ?: return null
@@ -938,6 +953,8 @@ data class ProjectAsmWorkspaceSettings(
     var buildMode: ProjectRomBuildMode = ProjectRomBuildMode.PATCHED_ROM,
     /** Source-owned PLM pilot. Bindings contain identity/layout only, never a second list of objects. */
     val plmSourceBindings: MutableList<ProjectPlmSourceBinding> = mutableListOf(),
+    /** Enemy tuning identities only; values remain in the authored bank source. */
+    val enemyTuningSourceKeys: MutableSet<String> = mutableSetOf(),
 )
 
 @Serializable

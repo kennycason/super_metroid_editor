@@ -49,7 +49,9 @@ internal class AsmRoomAreaMove(
     private val workspace: AsmWorkspaceState,
     private val project: () -> SmEditProject,
     private val properties: AsmRoomPropertiesBridge,
+    private val doorBridge: AsmDoorSourceBridge,
     private val beforeObjectAdoption: (Int) -> Unit,
+    private val context: AsmRoomSourceContext = AsmRoomSourceContext(catalog, project),
     private val changed: () -> Unit,
 ) {
     private fun encode(room: RoomEdits) = Json.encodeToString(RoomEdits.serializer(), room)
@@ -73,14 +75,14 @@ internal class AsmRoomAreaMove(
              maps: Map<String, List<MinimapTileEdit>>, stations: Map<String, List<MapStationTileEdit>>,
              isItem: (Int) -> Boolean, describe: (RomParser.PlmEntry) -> String): AsmRoomAreaMovePlan {
         val owner = project()
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRooms.isEmpty()) {
-            "Room moves require the existing-room ASM workspace; added-room source identities are not supported yet."
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+            "Room moves require ASM source mode."
         }
         val staged = linkedMapOf<String, RoomEdits>()
         fun room(id: Int) = staged.getOrPut(owner.roomKey(id)) {
-            snapshotRoomForResize(owner.rooms[owner.roomKey(id)] ?: RoomEdits(id)).also { it.ensureStateManifest(catalog.parser) }
+            snapshotRoomForResize(owner.rooms[owner.roomKey(id)] ?: RoomEdits(id)).also { it.ensureStateManifest(context.parser) }
         }
-        fun dimensions(id: Int): Pair<Int, Int>? = catalog.parser.readRoomHeader(id)?.let { native ->
+        fun dimensions(id: Int): Pair<Int, Int>? = context.parser.readRoomHeader(id)?.let { native ->
             val edits = staged[owner.roomKey(id)] ?: owner.rooms[owner.roomKey(id)]
             (edits?.roomHeaderChange?.width ?: native.width) to (edits?.roomHeaderChange?.height ?: native.height)
         }
@@ -94,53 +96,49 @@ internal class AsmRoomAreaMove(
         }
         val moving = room(roomId)
         if (moving.asmRoomPropertiesSourceVersion == 0) {
-            require(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmRoomPropertiesSource.prefix(roomId)}").containsMatchIn(text8F)) {
+            require(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmRoomPropertiesSource.prefix(roomId, context.identities()[roomId])}").containsMatchIn(text8F)) {
                 "Retained room-header declarations need review before moving this room."
             }
-            text8F = append(text8F, properties.preview(moving, requireNotNull(catalog.parser.readRoomHeader(roomId)).name))
+            text8F = append(text8F, properties.preview(moving, requireNotNull(context.parser.readRoomHeader(roomId)).name))
             moving.roomHeaderChange = moving.roomHeaderChange?.let { RoomHeaderChange(width = it.width, height = it.height, doorOut = it.doorOut) }
                 ?.takeUnless { it == RoomHeaderChange() }
             moving.stateDataChange = null; moving.states.forEach { it.stateDataChange = null }
             moving.asmRoomPropertiesSourceVersion = 1
         }
-        val propertySource = AsmRoomPropertiesSource(text8F)
+        val propertySource = AsmRoomPropertiesSource(text8F, context.identities())
         val oldProperties = propertySource.resource(moving)
         oldProperties.projectInto(moving)
         var headerApplied = false
         fun updateHeader() {
-            text8F = AsmRoomPropertiesSource(text8F).editHeader(moving, oldProperties.header.copy(area = header.area, mapX = header.mapX, mapY = header.mapY))
-            AsmRoomPropertiesSource(text8F).resource(moving).projectInto(moving)
+            text8F = AsmRoomPropertiesSource(text8F, context.identities()).editHeader(moving, oldProperties.header.copy(area = header.area, mapX = header.mapX, mapY = header.mapY))
+            AsmRoomPropertiesSource(text8F, context.identities()).resource(moving).projectInto(moving)
             headerApplied = true
         }
 
         for ((id, changes) in doors) {
             val target = room(id)
             if (target.asmDoorSourceVersion == 0) {
-                require(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmDoorSource.prefix(id)}").containsMatchIn(text83)) {
+                require(!Regex("(?im)^[ \\t]*macro[ \\t]+${AsmDoorSource.prefix(id, context.identities()[id])}").containsMatchIn(text83)) {
                     "Retained DoorDef declarations for ${id.toString(16)} need review before moving."
                 }
-                val native = requireNotNull(catalog.parser.readRoomHeader(id))
-                val existing = target.doorChanges.associateBy { it.doorIndex }
-                val nativeDoors = catalog.parser.parseDoorList(native.doorOut)
-                require(existing.keys.all { it in nativeDoors.indices }) { "A GUI door override has no native connection." }
-                val source = SourceRoomDoors(native.doorOut, nativeDoors.mapIndexed { index, entry ->
-                    SourceRoomDoor(entry.doorDefPtr, existing[index] ?: DoorChange(index, entry.destRoomPtr, entry.bitflag,
-                        entry.doorCapCode, entry.screenX, entry.screenY, entry.distFromDoor, entry.entryCode))
-                })
-                validateSourceDoorOwnership(id, source, catalog.parser)
-                text83 = append(text83, AsmDoorSource.render(id, native.name, source))
+                text83 = doorBridge.automaticSource(target, requireNotNull(context.parser.readRoomHeader(id)).name, text83, text8F)
                 target.doorChanges.clear(); target.asmDoorSourceVersion = 1
             }
             for (change in changes) {
-                val source = AsmDoorSource(text83, text8F, catalog.symbols)
-                val current = source.resource(target, catalog.parser, ::dimensions)
-                require(!current.entries[change.doorIndex].shared) {
-                    "Shared native DoorDefs require coordinated cross-area flags. This move is blocked; no room or source was changed."
+                val source = AsmDoorSource(text83, text8F, catalog.symbols, context.identities(), owner.newRooms)
+                val current = source.resource(target, context.parser, ::dimensions)
+                if (current.entries[change.doorIndex].shared && current.entries[change.doorIndex].change.bitflag != change.bitflag) {
+                    // A room move changes this connection's area relationship, not the other
+                    // native consumers'. Split privately inside the same atomic transaction.
+                    val detached = AsmDoorIndependence(catalog, workspace, project, doorBridge, this, context)
+                        .stage(id, change.doorIndex, staged, text8F, text83)
+                    text8F = detached.first; text83 = detached.second
                 }
-                val entry = current.entries[change.doorIndex].entry()
-                text83 = source.edit(target, catalog.parser, change.doorIndex, entry.copy(bitflag = change.bitflag), ::dimensions)
+                val updated = AsmDoorSource(text83, text8F, catalog.symbols, context.identities(), owner.newRooms)
+                val entry = updated.resource(target, context.parser, ::dimensions).entries[change.doorIndex].entry()
+                text83 = updated.edit(target, context.parser, change.doorIndex, entry.copy(bitflag = change.bitflag), ::dimensions)
             }
-            target.asmDoorProjection = AsmDoorSource(text83, text8F, catalog.symbols).resource(target, catalog.parser, ::dimensions).entries.map { it.change }
+            target.asmDoorProjection = AsmDoorSource(text83, text8F, catalog.symbols, context.identities(), owner.newRooms).resource(target, context.parser, ::dimensions).entries.map { it.change }
         }
 
         val macros = if (saves.sourceRecords.isEmpty()) null else workspace.projectSourceText("macros.asm")
@@ -149,29 +147,29 @@ internal class AsmRoomAreaMove(
             val external = workspace.projectSourceTextsExcept(PLM_SOURCE_FILE).flatMap { AsmRoomObjectSource.referencedHelpers(it).asSequence() }.toSet()
             if (moving.asmPlmSourceVersion == 0) {
                 beforeObjectAdoption(roomId)
-                val migration = AsmRoomObjectSource.migrate(text8F, moving, catalog.parser,
-                    requireNotNull(catalog.parser.readRoomHeader(roomId)).name, catalog.symbols, isItem, describe, external)
+                val migration = AsmRoomObjectSource.migrate(text8F, moving, context.parser,
+                    requireNotNull(context.parser.readRoomHeader(roomId)).name, catalog.symbols, isItem, describe, external, context.identities(), context.seedScrollCommands(roomId))
                 text8F = migration.text
                 moving.plmChanges.clear(); moving.customScrollCommands.clear(); moving.saveStationSpawns.clear()
                 moving.states.forEach { it.plmChanges.clear(); it.customScrollCommands.clear() }
                 moving.asmPlmSourceVersion = 1
             }
-            var objects = AsmRoomObjectSource(text8F, catalog.symbols)
+            var objects = AsmRoomObjectSource(text8F, catalog.symbols, context.identities())
             text8F = objects.remapSaveParameters(moving, saves.plmReplacements.toMap(), external)
             for (save in saves.sourceRecords) {
-                validateSourceSaveOwnership(save, catalog.parser, liveSourceDoors(listOfNotNull(save.sourceDoor), owner, catalog, workspace, text8F,
+                validateSourceSaveOwnership(save, context.parser, liveSourceDoors(listOfNotNull(save.sourceDoor), owner, catalog, workspace, text8F,
                     listOf(save.words[1])))
-                text8F = AsmRoomObjectSource(text8F, catalog.symbols).withSave(save)
+                text8F = AsmRoomObjectSource(text8F, catalog.symbols, context.identities()).withSave(save)
             }
             // A slot cannot have a JSON override and a source declaration, even under another room key.
             for (candidate in owner.rooms.values) if (candidate.saveStationSpawns.any { old -> saves.sourceRecords.any { it.area == old.area && it.slot == old.saveIndex } }) {
                 room(candidate.roomId).saveStationSpawns.removeAll { old -> saves.sourceRecords.any { it.area == old.area && it.slot == old.saveIndex } }
             }
             updateHeader()
-            objects = AsmRoomObjectSource(text8F, catalog.symbols)
+            objects = AsmRoomObjectSource(text8F, catalog.symbols, context.identities())
             val inputs = objects.resources(moving)
             val saveRecords = objects.saveResources(roomId)
-            validateSourceSaveLinks(roomId, requireNotNull(header.area), inputs.values.flatMap { it.entries }, saveRecords, moving.saveStationSpawns, catalog.parser,
+            validateSourceSaveLinks(roomId, requireNotNull(header.area), inputs.values.flatMap { it.entries }, saveRecords, moving.saveStationSpawns, context.parser,
                 liveSourceDoors(saveRecords.mapNotNull { it.sourceDoor }, owner, catalog, workspace, text8F, saveRecords.map { it.words[1] }))
             val claims = owner.rooms.values.filter { it.asmPlmSourceVersion != 0 && it.roomId != roomId }
                 .flatMap { objects.saveResources(it.roomId) } + objects.saveResources(roomId)
@@ -197,7 +195,7 @@ internal class AsmRoomAreaMove(
     /** Also used by Reset: one preflight for all dependent rooms and map cells. */
     internal fun requireCurrent(plan: AsmRoomAreaMovePlan, undo: Boolean, exceptRoomId: Int? = null, action: String = "room move") {
         val owner = project()
-        require(owner === plan.owner && owner.newRooms.isEmpty() && owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+        require(owner === plan.owner && owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
             "The ASM project or build mode changed; no part of the $action was restored."
         }
         require(dependencies(owner) == if (undo) plan.dependenciesAfter else plan.dependenciesBefore) {
@@ -224,8 +222,12 @@ internal class AsmRoomAreaMove(
             live.asmHeaderPropertiesProjection = target.asmHeaderPropertiesProjection
             live.asmDoorSourceVersion = target.asmDoorSourceVersion; live.asmDoorProjection = target.asmDoorProjection
             live.doorChanges.clear(); live.doorChanges.addAll(target.doorChanges)
+            live.asmStateSelectorsSourceVersion = target.asmStateSelectorsSourceVersion; live.asmSelectorOrderProjection = target.asmSelectorOrderProjection
+            live.asmFxSourceVersion = target.asmFxSourceVersion; live.fxChange = target.fxChange
             live.states.zip(target.states).forEach { (state, saved) ->
                 state.stateDataChange = saved.stateDataChange; state.asmStatePropertiesProjection = saved.asmStatePropertiesProjection
+                state.condition = saved.condition; state.conditionChanged = saved.conditionChanged; state.asmConditionProjection = saved.asmConditionProjection
+                state.fxChange = saved.fxChange; state.doorFxChanges.clear(); state.doorFxChanges.putAll(saved.doorFxChanges)
             }
         }
         for ((key, change) in plan.rooms) {

@@ -20,7 +20,8 @@ internal fun liveSourceDoors(
     workspace: AsmWorkspaceState, bank8F: String = workspace.projectSourceText(PLM_SOURCE_FILE),
     nativePointers: Collection<Int> = emptyList(),
 ): Map<Int, SourceRoomDoors> {
-    val ids = (refs.map { it.roomId } + owner.rooms.values.filter { room -> room.asmDoorSourceVersion != 0 &&
+    val identities = AsmProjectRoomLabels.identities(owner)
+    val ids = (refs.map { it.resolveRoomId(identities) } + owner.rooms.values.filter { room -> room.asmDoorSourceVersion != 0 &&
         catalog.parser.readRoomHeader(room.roomId)?.let { catalog.parser.parseDoorList(it.doorOut).any { door -> door.doorDefPtr in nativePointers } } == true
     }.map { it.roomId }).distinct()
     // Literal references to ordinary unowned native doors need no semantic source
@@ -28,14 +29,11 @@ internal fun liveSourceDoors(
     val sharedConsumers = if (nativePointers.none { it != 0 }) emptyMap() else nativeDoorConsumers(catalog.parser)
         .filter { (pointer, consumers) -> pointer in nativePointers && consumers.map { it.first }.distinct().size > 1 }
     if (ids.isEmpty() && sharedConsumers.isEmpty()) return emptyMap()
-    val source = AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), bank8F, catalog.symbols)
+    val source = AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), bank8F, catalog.symbols, identities, owner.newRooms)
     val result = ids.associateWith { id ->
         val room = requireNotNull(owner.rooms[owner.roomKey(id)]) { "Referenced room has no source-owned doors." }
         require(room.asmDoorSourceVersion == 1) { "Referenced room has no source-owned doors." }
-        source.resource(room, catalog.parser) { destination -> catalog.parser.readRoomHeader(destination)?.let { header ->
-            val change = owner.rooms[owner.roomKey(destination)]?.effectiveHeaderChange
-            (change?.width ?: header.width) to (change?.height ?: header.height)
-        } }
+        source.resource(room, catalog.parser) { destination -> sourceRoomDimensions(owner, catalog.parser, destination) }
     }.toMutableMap()
     val shared = if (sharedConsumers.isEmpty()) emptyMap() else source.sharedResources(catalog.parser).filterKeys { it in sharedConsumers }
     if (shared.isNotEmpty()) {
@@ -49,4 +47,13 @@ internal fun liveSourceDoors(
         }
     }
     return result
+}
+
+internal fun sourceRoomDimensions(owner: SmEditProject, parser: RomParser, roomId: Int): Pair<Int, Int>? {
+    val seed = owner.newRoomForPreviewId(roomId)?.header
+    val native = if (seed == null) parser.readRoomHeader(roomId) else null
+    val change = owner.rooms[owner.roomKey(roomId)]?.effectiveHeaderChange
+    val width = change?.width ?: seed?.width ?: native?.width ?: return null
+    val height = change?.height ?: seed?.height ?: native?.height ?: return null
+    return width to height
 }

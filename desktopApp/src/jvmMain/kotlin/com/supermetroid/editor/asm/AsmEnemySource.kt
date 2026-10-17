@@ -6,7 +6,10 @@ import com.supermetroid.editor.rom.*
 internal const val ENEMY_SOURCE_FILE = "bank_A1.asm"
 
 /** One document owns the paired values; checked placements emit population in A1 and GFX in B4. */
-internal class AsmEnemySource(val text: String, private val symbols: Map<String, Int> = emptyMap()) {
+internal class AsmEnemySource(val text: String, private val symbols: Map<String, Int> = emptyMap(), private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    private fun prefix(roomId: Int) = Companion.prefix(roomId, projectRoomIds[roomId])
+    private fun stateName(roomId: Int, id: String) = Companion.stateName(roomId, id, projectRoomIds[roomId])
+    private fun renderState(roomId: Int, id: String, population: String, graphics: String) = Companion.renderState(roomId, id, population, graphics, projectRoomIds[roomId])
     private val resourceCache = mutableMapOf<Pair<Int, String>, SourceEnemyResources>()
     private data class Macro(val name: String, val range: IntRange, val start: Int, val body: String)
     private val macros by lazy {
@@ -130,7 +133,7 @@ internal class AsmEnemySource(val text: String, private val symbols: Map<String,
                 result = result.trimEnd() + "\n\n" + text.substring(originalMacro.range)
                     .replaceFirst("macro ${selected.population.identity}()", "macro $pop()")
             }
-            val current = AsmEnemySource(result, symbols)
+            val current = AsmEnemySource(result, symbols, projectRoomIds)
             result = current.replaceRows(pop, selected.population.entries.map { it.fields() }, population.map { it.fields() })
                 ?: result.replaceRange(current.macro(pop).range, renderPopulation(selected.population.copy(identity = pop, entries = population), current.macro(pop).body, selected.population.entries))
         }
@@ -141,11 +144,11 @@ internal class AsmEnemySource(val text: String, private val symbols: Map<String,
                 result = result.trimEnd() + "\n\n" + text.substring(originalMacro.range)
                     .replaceFirst("macro ${selected.graphics.identity}()", "macro $gfx()")
             }
-            val current = AsmEnemySource(result, symbols)
+            val current = AsmEnemySource(result, symbols, projectRoomIds)
             result = current.replaceRows(gfx, selected.graphics.entries.map { listOf(it.speciesId, it.paletteIndex) }, graphics.map { listOf(it.speciesId, it.paletteIndex) })
                 ?: result.replaceRange(current.macro(gfx).range, renderGraphics(selected.graphics.copy(identity = gfx, entries = graphics), current.macro(gfx).body, selected.graphics.entries))
         }
-        val current = AsmEnemySource(result, symbols)
+        val current = AsmEnemySource(result, symbols, projectRoomIds)
         val old = current.macro(stateName(room.roomId, stateId))
         return result.replaceRange(old.range, result.substring(old.range)
             .replace("%${selected.population.identity}()", "%$pop()")
@@ -183,9 +186,9 @@ internal class AsmEnemySource(val text: String, private val symbols: Map<String,
         return owned.filter { it.name !in live }.sortedByDescending { it.range.first }.fold(text) { t, m -> t.removeRange(m.range) }
     }
     companion object {
-        fun prefix(roomId: Int) = "SmeditEnemies_${roomId.toString(16).uppercase().padStart(4, '0')}_"
-        fun stateName(roomId: Int, id: String) = prefix(roomId) + "State_" + id.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
-        fun renderState(roomId: Int, id: String, population: String, graphics: String) = "macro ${stateName(roomId, id)}()\n    %$population()\n    %$graphics()\nendmacro\n"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditEnemies", roomId, projectId)
+        fun stateName(roomId: Int, id: String, projectId: String? = null) = prefix(roomId, projectId) + "State_" + id.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        fun renderState(roomId: Int, id: String, population: String, graphics: String, projectId: String? = null) = "macro ${stateName(roomId, id, projectId)}()\n    %$population()\n    %$graphics()\nendmacro\n"
         private fun codeLines(text: String) = text.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.toList()
         private fun hex(value: Int, digits: Int = 4) = "\$${value.toString(16).uppercase().padStart(digits, '0')}"
         private fun notes(body: String) = body.lineSequence().filter { it.trimStart().startsWith("dw ", true) }

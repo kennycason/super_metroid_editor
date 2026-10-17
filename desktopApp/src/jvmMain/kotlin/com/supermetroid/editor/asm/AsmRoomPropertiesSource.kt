@@ -89,12 +89,12 @@ internal class AsmRoomPropertiesSource(val text: String, private val projectRoom
     fun hasState(roomId: Int, stateId: String): Boolean = stateDeclaration(roomId, stateId) in macros
     fun line(roomId: Int, stateId: String? = null): Int = text.take(macro(if (stateId == null) header(roomId) else stateDeclaration(roomId, stateId)).range.first).count { it == '\n' }
     companion object {
-        fun prefix(roomId: Int) = "SmeditRoomInfo_${roomId.toString(16).uppercase().padStart(4, '0')}_"
+        fun prefix(roomId: Int, projectId: String? = null) = AsmRoomSourceContext.prefix("SmeditRoomInfo", roomId, projectId)
         fun projectPrefix(id: String) = "SmeditRoomInfo_Project_${AsmProjectRoomLabels.encoded(id)}_"
         fun projectIdentities(project: com.supermetroid.editor.data.SmEditProject) = AsmProjectRoomLabels.identities(project)
-        fun headerName(roomId: Int) = prefix(roomId) + "Header"
+        fun headerName(roomId: Int, projectId: String? = null) = prefix(roomId, projectId) + "Header"
         private fun encodeState(id: String) = id.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
-        fun stateName(roomId: Int, stateId: String) = prefix(roomId) + "State_" + encodeState(stateId)
+        fun stateName(roomId: Int, stateId: String, projectId: String? = null) = prefix(roomId, projectId) + "State_" + encodeState(stateId)
         fun render(room: RoomEdits, name: String, properties: SourceRoomProperties, projectRoomId: String? = null): String = buildString {
             val roomPrefix = projectRoomId?.let(::projectPrefix) ?: prefix(room.roomId)
             appendLine("; SMEDIT room properties · ${name.replace('\n', ' ').replace('\r', ' ')}")

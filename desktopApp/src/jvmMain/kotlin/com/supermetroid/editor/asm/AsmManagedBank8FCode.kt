@@ -8,7 +8,7 @@ internal interface AsmManagedBank8FRoutine {
 }
 
 internal fun managedBank8FMacroName(token: String): String? =
-    Regex("(SmeditArrival_[0-9A-F]{4}_Door_[0-9]+)_Entry(?:_End)?|(SmeditSelectors_[0-9A-F]{4}_Condition_[0-9a-f]+)_Predicate(?:_End)?")
+    Regex("(SmeditArrival_(?:[0-9A-F]{4}|Project_[0-9A-F]+)_Door_[0-9]+)_Entry(?:_End)?|(SmeditSelectors_(?:[0-9A-F]{4}|Project_[0-9A-F]+)_Condition_[0-9a-f]+)_Predicate(?:_End)?")
         .matchEntire(token)?.let { it.groupValues[1].ifEmpty { it.groupValues[2] } }
 
 internal fun validateManagedBank8FBody(macroName: String, body: String, marker: String, forbiddenMarkers: Set<String>, allowAssert: Boolean = false) {

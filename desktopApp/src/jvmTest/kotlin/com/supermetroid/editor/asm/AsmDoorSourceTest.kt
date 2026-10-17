@@ -939,8 +939,8 @@ class AsmDoorSourceTest {
         f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
         val beforeResize = Json.encodeToString(SmEditProject.serializer(), f.project)
         val sourceBeforeResize = f.bridge.doors.sourceText()
-        assertFalse(f.editor.resizeRoom(2, 2, 3, 2))
-        assertContains(f.editor.statusMessage, "Shared native DoorDefs")
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
         assertEquals(beforeResize, Json.encodeToString(SmEditProject.serializer(), f.project))
         assertEquals(sourceBeforeResize, f.bridge.doors.sourceText())
         f.editor.loadRoom(0x9879, f.parser, f.parser.readRoomHeader(0x9879)!!)
@@ -978,6 +978,113 @@ class AsmDoorSourceTest {
         assertContains(assertFails {
             protectSharedDoorSource(source, f.project, f.parser, compiled("8F:9000 DoorASM_Test\n", movedList), mapOf("DoorASM_Test" to 0x9000))
         }.message.orEmpty(), "native door-list pointer changed")
+    }
+
+    @Test fun `private shared door copies preserve identity BTS native checkpoints and other consumers with reciprocal undo`() = runBlocking {
+        val f = fixture(shared = true)
+        val before = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val before83 = f.bridge.doors.sourceText()
+        val layout = f.editor.workingLevelData!!.copyOf()
+        assertTrue(f.editor.makeDoorIndependent(0, 0), f.editor.statusMessage)
+        val private = f.input().entries.single()
+        assertEquals(0, private.identity); assertEquals(0, private.doorDefPtr); assertFalse(private.shared)
+        assertTrue(f.input().structural)
+        assertEquals(0, f.room.asmLayoutSourceVersion, "Unchanged list order/count must not adopt or rewrite tile data")
+        assertContentEquals(layout, f.editor.workingLevelData)
+        assertEquals(0x8000, f.editor.effectiveDoorsForRoom(0x9879, f.parser).single().doorDefPtr)
+        f.editor.updateDoor(0, private.entry().copy(distFromDoor = 0x1234))
+        assertEquals(0x1234, f.input().entries.single().change.distFromDoor, f.editor.statusMessage)
+        assertEquals(0, f.editor.effectiveDoorsForRoom(0x9879, f.parser).single().distFromDoor)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(before83, f.bridge.doors.sourceText())
+        assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        val baseline = f.parser.copyRomData().also { it.fill(-1, 0x1F000, 0x20000) }
+        val cold = Json.decodeFromString<SmEditProject>(Json.encodeToString(SmEditProject.serializer(), f.project))
+        val result = assertNotNull(com.supermetroid.editor.ui.RomExporter(cold, RomParser(baseline), sourceDoors = mapOf(0x91F8 to f.input())).build())
+        val built = RomParser(result.resultRom)
+        val newDoor = built.parseDoorList(built.readRoomHeader(0x91F8)!!.doorOut).single()
+        assertNotEquals(0x8000, newDoor.doorDefPtr)
+        assertEquals(0x8000, built.parseDoorList(built.readRoomHeader(0x9879)!!.doorOut).single().doorDefPtr)
+        assertEquals(0x8000, built.readSaveEntry(0, 0)!!.doorPtr, "Native checkpoint remains a valid unchanged entrance")
+        assertEquals(f.parser.parseDoorEntry(0x8060, 0), built.parseDoorEntry(0x8060, 0))
+    }
+
+    @Test fun `private copies preserve nested negated native pointer selectors and shared FX for both entrances`() = runBlocking {
+        val f = fixture(shared = true)
+        f.project.getOrCreateRoom(0x91F8).ensureStateManifest(f.parser)
+        val conditional = f.room.states.first { it.condition.kind != ProjectRoomStateConditionKind.DEFAULT }
+        conditional.condition = projectRoomStateCondition(ProjectRoomStateConditionKind.ALL_OF, children = listOf(
+            projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7),
+            projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, 0x8000, negated = true)))
+        conditional.conditionChanged = true
+        f.editor.setRoomStateDoorFxChange(conditional.id, 0x8000, FxChange(fxType = 4, liquidSurfaceStart = 0x120), f.parser)
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        assertTrue(f.editor.makeDoorIndependent(0), f.editor.statusMessage)
+        val reference = ProjectSourceDoorReference(0x91F8, 0)
+        val condition = AsmRoomSelectorsSource(f.bridge.sourceText()).resource(f.room).conditions.getValue(conditional.id)
+        val any = condition.children.last()
+        assertEquals(ProjectRoomStateConditionKind.ANY_OF, any.kind); assertTrue(any.negated)
+        assertEquals(0x8000, any.children.first().argument); assertFalse(any.children.first().negated)
+        assertEquals(reference, any.children.last().sourceDoor)
+        val fx = AsmFxSource(f.bridge.doors.sourceText()).resources(f.room).getValue(conditional.id)
+        assertEquals(2, fx.entries.size)
+        assertEquals(0x8000, fx.entries.first().doorSelect); assertEquals(reference, fx.entries.last().sourceDoor)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+        assertTrue(conditional.conditionChanged)
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertFalse(conditional.conditionChanged)
+        assertTrue(f.workspace.saveAllSources(), f.workspace.error)
+    }
+
+    @Test fun `private door preflight refuses invalid shared source and never publishes partial adoption`() = runBlocking {
+        val f = fixture(shared = true); f.adopt()
+        val text = f.bridge.doors.sourceText()
+        val body = authoredMacroBody(text, AsmDoorSource.sharedName(0x8000))
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, text, text.replaceFirst(body, body.replace("dw ${'$'}91F8", "dw missing")))
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        assertFalse(f.editor.makeDoorIndependent(0))
+        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+    }
+
+    @Test fun `first shared GUI retarget to an unbuilt room requires the explicit private choice before adopting source`() = runBlocking {
+        val f = fixture(shared = true)
+        f.project.newRooms += ProjectNewRoom(id = "target", name = "Target", handle = "target", origin = ProjectNewRoomOrigin.BLANK,
+            header = ProjectNewRoomHeader(0, 1, 40, 20, 2, 2), initialState = ProjectNewRoomState(
+                java.util.Base64.getEncoder().encodeToString(f.editor.workingLevelData!!), 0,
+                scrollData = MutableList(4) { 1 })).also { it.previewRoomId = 0xF000 }
+        f.editor.enableSharedDoorEditing(0x8000)
+        val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        f.editor.updateDoor(0, f.editor.doorEntries.single().copy(destRoomPtr = 0xF000))
+        assertContains(f.editor.statusMessage, "Make this connection independent", message = f.editor.statusMessage)
+        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+        assertTrue(f.editor.undoStack.isEmpty())
+    }
+
+    @Test fun `shared scroll arrivals resize once for every consumer and restore the same canonical binding on undo`() = runBlocking {
+        val f = fixture(shared = true)
+        f.editor.enableSharedDoorEditing(0x8000)
+        assertTrue(f.editor.createManagedDoorArrival(0), f.editor.statusMessage)
+        val name = "SmeditArrival_91F8_Door_0"
+        val text = f.bridge.sourceText()
+        val body = authoredMacroBody(text, name)
+        f.workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body,
+            "    ${AsmDoorArrivalsSource.MARKER}\n    php\n    sep #\$20\n    lda.b #\$02\n    sta.l \$7ECD23\n    plp\n    rts\n"))
+        val before8F = f.bridge.sourceText(); val before83 = f.bridge.doors.sourceText()
+        assertTrue(f.editor.resizeRoom(2, 2, 3, 2), f.editor.statusMessage)
+        assertEquals(listOf(DoorScrollWrite(2, 0x24)), AsmArrivalScrollProgram.parse(authoredMacroBody(f.bridge.sourceText(), name))!!.writes)
+        assertEquals(1, AsmDoorArrivalsSource(f.bridge.sourceText()).routines().size)
+        assertEquals("${name}_Entry", f.bridge.doors.sharedView().entries.getValue(0x8000).arrival!!.label)
+        assertEquals(0x8000, f.editor.effectiveDoorsForRoom(0x9879, f.parser).single().doorDefPtr)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(before8F, f.bridge.sourceText()); assertEquals(before83, f.bridge.doors.sourceText())
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
     }
 
     @Test fun `shared declarations reject missing canonical source alias cycles and independent competing owners`() = runBlocking {

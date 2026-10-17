@@ -120,13 +120,13 @@ class AsmProjectRoomPropertiesTest {
         assertEquals(authored, f.bridge.sourceText(), "An unrelated/stale parser must not acquire the project room's source authority")
     }
 
-    @Test fun `new room state membership keeps scalar declarations and reciprocal history without adopting native selectors`() = runBlocking {
+    @Test fun `new room state membership keeps scalar declarations typed selectors and reciprocal history`() = runBlocking {
         val f = fixture()
         val default = f.editor.roomSourceSnapshot().states.single().id
         f.editor.setRoomStateDataChange(default, StateDataChange(musicTrack = 7), f.preview)
         val added = f.editor.addRoomState(default, projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7), f.preview)
         assertEquals(2, f.room.states.size)
-        assertEquals(0, f.room.asmStateSelectorsSourceVersion)
+        assertEquals(1, f.room.asmStateSelectorsSourceVersion)
         assertEquals(7, f.input().states.getValue(added).musicTrack)
         f.editor.switchRoomState(added, f.preview)
         f.editor.setRoomStateDataChange(added, f.input().states.getValue(added).copy(musicTrack = 9), f.preview)
@@ -157,23 +157,28 @@ class AsmProjectRoomPropertiesTest {
         assertEquals(7, AsmRoomPropertiesSource(f.bridge.sourceText(), AsmRoomPropertiesSource.projectIdentities(cold)).resource(room).states.getValue(default).musicTrack)
     }
 
-    @Test fun `joint new room operations remain explicit no write guards after metadata adoption`() = runBlocking {
+    @Test fun `joint new room operations preserve scalar source and restore previous data through undo`() = runBlocking {
         val f = fixture()
         val state = f.editor.roomSourceSnapshot().states.single().id
         f.editor.setRoomStateDataChange(state, StateDataChange(musicTrack = 7), f.preview)
         val model = Json.encodeToString(SmEditProject.serializer(), f.project)
         val source = f.bridge.sourceText()
         val pixels = f.editor.workingLevelData!!.copyOf()
-        assertFalse(f.editor.resizeRoom(1, 1, 2, 1))
-        assertContains(f.editor.statusMessage, "Project-room Resize")
-        assertFalse(f.editor.resetCurrentRoomToOriginal(f.preview))
-        assertContains(f.editor.statusMessage, "Project-room Reset")
-        assertFalse(f.editor.applyBiomeTheme(com.supermetroid.editor.procgen.BiomeTheme.KEEP.copy(tilesetId = 1), f.preview))
-        assertContains(f.editor.statusMessage, "Project-room themes")
-        assertFalse(f.editor.applyGeneratedRoomOperation("Themed generation", listOf(TileEdit(2, 2, f.editor.readBlockWord(2, 2), 0x8123)),
-            emptyList(), emptyList(), com.supermetroid.editor.procgen.BiomeTheme.KEEP.copy(tilesetId = 1)))
-        assertContains(f.editor.statusMessage, "Project-room themes")
-        assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
-        assertEquals(source, f.bridge.sourceText()); assertContentEquals(pixels, f.editor.workingLevelData)
+        for (action in listOf("resize", "reset", "theme", "generation")) {
+            val changed = when (action) {
+                "resize" -> f.editor.resizeRoom(1, 1, 2, 1)
+                "reset" -> f.editor.resetCurrentRoomToOriginal(f.preview)
+                "theme" -> f.editor.applyBiomeTheme(com.supermetroid.editor.procgen.BiomeTheme.KEEP.copy(tilesetId = 1), f.preview)
+                else -> f.editor.applyGeneratedRoomOperation("Themed generation",
+                    listOf(TileEdit(2, 2, f.editor.readBlockWord(2, 2), 0x8123)), emptyList(), emptyList(),
+                    com.supermetroid.editor.procgen.BiomeTheme.KEEP.copy(tilesetId = 1))
+            }
+            assertTrue(changed, "$action: ${f.editor.statusMessage}")
+            assertTrue(f.editor.undo(), "$action: ${f.editor.statusMessage}")
+            assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project), action)
+            assertEquals(source, f.bridge.sourceText(), action)
+            assertContentEquals(pixels, f.editor.workingLevelData, action)
+        }
     }
+
 }

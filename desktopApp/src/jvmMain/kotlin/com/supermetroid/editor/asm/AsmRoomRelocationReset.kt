@@ -12,12 +12,13 @@ internal class AsmRoomRelocationReset(
     private val catalog: AsmPlmSourceCatalog,
     private val workspace: AsmWorkspaceState,
     private val moves: AsmRoomAreaMove,
+    private val context: AsmRoomSourceContext? = null,
 ) {
     fun plan(owner: SmEditProject, room: RoomEdits, describe: (RomParser.PlmEntry) -> String): AsmRoomReturnPlan? {
-        val parser = catalog.parser
+        val parser = context?.parser ?: catalog.parser
         val text = workspace.projectSourceText(PLM_SOURCE_FILE)
-        val properties = AsmRoomPropertiesSource(text)
-        val doorSource by lazy { AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), text, catalog.symbols) }
+        val properties = AsmRoomPropertiesSource(text, AsmProjectRoomLabels.identities(owner))
+        val doorSource by lazy { AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), text, catalog.symbols, AsmProjectRoomLabels.identities(owner), owner.newRooms) }
         val linked = owner.rooms.values.filter { it.asmDoorSourceVersion != 0 }.flatMap { edits ->
             doorSource.resource(edits, parser) { id -> parser.readRoomHeader(id)?.let { h ->
                 val change = owner.rooms[owner.roomKey(id)]?.effectiveHeaderChange
@@ -133,8 +134,8 @@ internal class AsmRoomRelocationReset(
     }
 
     private fun requireSaveConsumers(owner: SmEditProject, room: RoomEdits, effectiveRooms: List<Room>, text: String) {
-        val parser = catalog.parser
-        val objects = AsmRoomObjectSource(text, catalog.symbols)
+        val parser = context?.parser ?: catalog.parser
+        val objects = AsmRoomObjectSource(text, catalog.symbols, AsmProjectRoomLabels.identities(owner))
         val slots = buildSet {
             if (room.asmPlmSourceVersion != 0) objects.saveResources(room.roomId).forEach { add(it.area to it.slot) }
             room.saveStationSpawns.forEach { add(it.area to it.saveIndex) }

@@ -672,28 +672,36 @@ class AsmRoomAreaMoveTest {
         assertEquals(map, f.map.mapData); assertEquals(reveal, f.map.stationData)
     }
 
-    @Test fun `shared native DoorDefs fail the entire area move without acquiring any owners`() = runBlocking {
+    @Test fun `area moves privately split incompatible shared flags without changing other consumers`() = runBlocking {
         val f = fixture(sharedDoor = true)
         val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
         val result = f.move()
-        assertFalse(result.success); assertContains(result.message, "shared")
-        assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
-        assertTrue(f.editor.undoStack.isEmpty()); assertTrue(f.map.undoStack.isEmpty())
+        assertTrue(result.success, result.message)
+        val doorSource = AsmDoorSource(f.bridge.doors.sourceText(), f.bridge.sourceText(), f.bridge.catalog.symbols)
+        val private = doorSource.resource(f.project.rooms.getValue("A000"), f.parser).entries.first()
+        assertEquals(0, private.doorDefPtr); assertFalse(private.shared); assertEquals(0x40, private.change.bitflag and 0x40)
+        assertEquals(0x8020, f.editor.effectiveDoorsForRoom(0xA100, f.parser).first().doorDefPtr)
+        assertEquals(0, f.editor.effectiveDoorsForRoom(0xA100, f.parser).first().bitflag and 0x40)
+        assertTrue(f.workspace.sourceBufferRevision > revision)
+        f.map.undo(f.editor)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
     }
 
-    @Test fun `adopted canonical shared records cannot receive conflicting per room area flags`() = runBlocking {
+    @Test fun `adopted canonical shared flags remain unchanged when one consumer moves privately`() = runBlocking {
         val f = fixture(hasSave = false, sharedDoor = true)
         for (id in listOf(0xA000, 0xA100)) {
             f.editor.loadRoom(id, f.parser, f.parser.readRoomHeader(id)!!)
             assertTrue(f.editor.ensureDoorSource("Shared consumer"), f.editor.statusMessage)
         }
         f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
-        val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
-        val history = f.editor.undoStack.toList()
+        val model = f.model(); val source = f.sources()
         val result = f.move()
-        assertFalse(result.success); assertContains(result.message.lowercase(), "shared")
-        assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
-        assertEquals(history, f.editor.undoStack); assertTrue(f.map.undoStack.isEmpty())
+        assertTrue(result.success, result.message)
+        assertEquals(0, f.bridge.doors.sharedView().entries.getValue(0x8020).change.bitflag and 0x40)
+        assertEquals(0, f.editor.effectiveDoorsForRoom(0xA000, f.parser).first().doorDefPtr)
+        assertEquals(0x8020, f.editor.effectiveDoorsForRoom(0xA100, f.parser).first().doorDefPtr)
+        f.map.undo(f.editor)
+        assertEquals(model, f.model()); assertEquals(source, f.sources())
     }
 
     @Test fun `an invalid shared draft does not lock unrelated native door fields or get overwritten by adoption`() = runBlocking {
