@@ -16,6 +16,7 @@ internal data class RoomAsmSourceRequest(
     val plm: RomParser.PlmEntry? = null,
     val enemy: RomParser.EnemyEntry? = null,
     val door: Int? = null,
+    val sourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference? = null,
 )
 
 /** Show only the planned declarations, unless planning also changes existing source. */

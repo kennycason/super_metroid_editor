@@ -14,6 +14,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -216,7 +217,8 @@ class NewRoomCreationTest {
         val room = requireNotNull(workspace.readRoomHeader(definition.previewRoomId))
         editor.loadRoom(definition.previewRoomId, workspace, room)
 
-        assertEquals("room-1", definition.id)
+        assertTrue(definition.id.startsWith("room-"))
+        assertNotNull(java.util.UUID.fromString(definition.id.removePrefix("room-")))
         assertEquals(2, room.width)
         assertEquals(1, room.height)
         assertEquals(5, room.tileset)
@@ -242,7 +244,6 @@ class NewRoomCreationTest {
             NewRoomCreationRequest(
                 name = "Landing Site Variant",
                 cloneCurrentRoom = true,
-                copyDoors = true,
                 area = sourceRoom.area,
                 mapX = 1,
                 mapY = 1,
@@ -265,6 +266,12 @@ class NewRoomCreationTest {
             val clonedPtr = workspace.parseDoorList(clone.doorOut).first().doorDefPtr
             assertNotEquals(originalPtr, clonedPtr, "cloned rooms must own their DoorDefs")
         }
+        val originals = source.parseDoorList(sourceRoom.doorOut)
+        val copies = workspace.parseDoorList(clone.doorOut)
+        copies.forEachIndexed { index, copy ->
+            assertEquals(originals[index].copy(doorDefPtr = copy.doorDefPtr), copy)
+        }
+        assertEquals(originals, workspace.parseDoorList(sourceRoom.doorOut), "Original connections stay unchanged")
     }
 
     @Test

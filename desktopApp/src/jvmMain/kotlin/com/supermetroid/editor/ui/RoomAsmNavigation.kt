@@ -20,7 +20,7 @@ internal class RoomAsmNavigation(
         if (!editor.asmNavigationEnabled) return false
         return runCatching {
             val bridge = requireNotNull(editor.asmPlmSourceBridge) { "Wait for the project ASM workspace." }
-            require(editor.roomSourceParser === bridge.catalog.parser) { "Wait for the current room/ASM link." }
+            require(editor.matchesRoomSourceContext(bridge.catalog.parser)) { "Wait for the current room/ASM link." }
             if (create) require(editor.createManagedDoorArrival(doorIndex, expectedIdentity)) { editor.statusMessage }
             val binding = editor.doorArrivalBindings[doorIndex]
             val entry = requireNotNull(editor.doorEntries.getOrNull(doorIndex)) { "Reopen the current connection." }
@@ -54,9 +54,25 @@ internal class RoomAsmNavigation(
                          refreshView: Boolean = false, redoHead: AsmSourceTextChange? = null): Boolean {
         if (!editor.asmNavigationEnabled) return false
         return runCatching {
+            val projectRoom = editor.project.newRoomForPreviewId(roomId)
+            if (projectRoom != null && requested.kind !in setOf(RoomAsmSourceKind.PROPERTIES, RoomAsmSourceKind.LAYOUT)) {
+                val snapshot = requireNotNull(workspace.roomDataSnapshot) { "Build this project first to inspect the new room's checked ASM data." }
+                val section = requireNotNull(snapshot.sections.firstOrNull { it.projectRoomId == projectRoom.id && it.label.endsWith("_Header") }) {
+                    "This room is not in the last successful build. Build again to inspect its data."
+                }
+                navigate {
+                    workspace.showProjectWorkspace()
+                    workspace.openGeneratedRooms(section.lineIndex, buildWrites = false)
+                    showAsm()
+                }
+                editor.postStatus("Project room data · last successful build. This resource is generated; edit it visually and rebuild. Header/state metadata and layouts have separate editable ASM links.")
+                return@runCatching true
+            }
             val bridge = requireNotNull(editor.asmPlmSourceBridge) { "Wait for the project ASM workspace." }
-            val parser = bridge.catalog.parser
-            require(editor.roomSourceParser == null || editor.roomSourceParser === parser) { "Wait for the ASM workspace to finish linking the current ROM." }
+            val parser = if (projectRoom == null) bridge.catalog.parser else requireNotNull(editor.roomSourceParser) { "Load the project room workspace first." }
+            require(editor.roomSourceParser == null || editor.matchesRoomSourceContext(bridge.catalog.parser)) {
+                "Wait for the ASM workspace to finish linking the current ROM."
+            }
             val room = editor.roomSourceSnapshot(roomId)
             val isCurrentRoom = editor.currentRoomId == roomId
             val activeState = editor.currentPlmStateId().takeIf { isCurrentRoom }
@@ -86,7 +102,7 @@ internal class RoomAsmNavigation(
                 RoomAsmSourceKind.SELECTORS -> AsmPlmPlacementTarget.Source(bridge.selectors.line(roomId, request.stateId))
                 RoomAsmSourceKind.DOORS -> AsmPlmPlacementTarget.Source(bridge.doors.line(roomId, request.door ?: 0))
                 RoomAsmSourceKind.INITIAL_SCROLLS -> AsmPlmPlacementTarget.Source(bridge.initialScrolls.line(roomId, state))
-                RoomAsmSourceKind.FX -> AsmPlmPlacementTarget.Source(bridge.fx.line(roomId, state, request.door))
+                RoomAsmSourceKind.FX -> AsmPlmPlacementTarget.Source(bridge.fx.line(roomId, state, request.door, request.sourceDoor))
                 RoomAsmSourceKind.ENEMIES, RoomAsmSourceKind.ENEMY_GRAPHICS -> AsmPlmPlacementTarget.Source(
                     bridge.enemies.line(roomId, state, actorIndex, request.kind == RoomAsmSourceKind.ENEMY_GRAPHICS))
                 RoomAsmSourceKind.SAVE_SPAWN -> bridge.saveTarget(roomId, editor.activeRoomAreaForEditing(), requireNotNull(plm).param and 255)
@@ -129,7 +145,6 @@ internal class RoomAsmNavigation(
             }
             if (managed) openTarget() else {
                 require(editor.project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Editable room source requires ASM source mode." }
-                require(editor.project.newRooms.isEmpty()) { "Room source adoption for projects with added rooms is not supported yet." }
                 val owner = editor.project
                 val model = Json.encodeToString(SmEditProject.serializer(), owner)
                 val revision = workspace.sourceBufferRevision
@@ -138,14 +153,16 @@ internal class RoomAsmNavigation(
                 val originRoomId = editor.currentRoomId
                 val originParser = editor.roomSourceParser
                 val selectedState = editor.currentPlmStateId()
+                fun liveRoomId(): Int? = if (projectRoom == null) roomId else
+                    owner.newRooms.singleOrNull { it.id == projectRoom.id }?.previewRoomId?.takeIf { it != 0 }
                 val text = editor.inspectRoomSource(name, request, roomId)
                 // Validate requested sub-records against the planned document BEFORE any ownership transition.
                 when (request.kind) {
                     RoomAsmSourceKind.DOORS -> AsmDoorSource(text).line(roomId, request.door ?: 0)
-                    RoomAsmSourceKind.PROPERTIES -> AsmRoomPropertiesSource(text).line(roomId, request.stateId)
+                    RoomAsmSourceKind.PROPERTIES -> bridge.properties.document(text).line(roomId, request.stateId)
                     RoomAsmSourceKind.FX -> {
                         val fx = AsmFxSource(text).resource(roomId, state)
-                        require(request.door == null || fx.entries.any { it.doorSelect == request.door }) { "This incoming-door FX record changed; reopen its current link." }
+                        require(request.door == null || fx.entries.any { it.doorSelect == request.door && it.sourceDoor == request.sourceDoor }) { "This incoming-door FX record changed; reopen its current link." }
                     }
                     RoomAsmSourceKind.ENEMIES, RoomAsmSourceKind.ENEMY_GRAPHICS -> AsmEnemySource(text, bridge.catalog.symbols)
                         .line(roomId, state, actorIndex, request.kind == RoomAsmSourceKind.ENEMY_GRAPHICS)
@@ -156,15 +173,17 @@ internal class RoomAsmNavigation(
                         editor.currentRoomId == originRoomId && editor.currentPlmStateId() == selectedState && editor.romVersion == romVersion && editor.roomSourceParser === originParser &&
                         workspace.projectWorkspace?.root == root && workspace.roomSourceInspection === snapshot &&
                         workspace.sourceBufferRevision == revision && Json.encodeToString(SmEditProject.serializer(), owner) == model &&
-                        runCatching { editor.inspectRoomSource(name, request, roomId) == text }.getOrDefault(false)
-                val automatic = if (request.kind !in setOf(RoomAsmSourceKind.DOORS, RoomAsmSourceKind.PROPERTIES)) null else {
+                        liveRoomId() == roomId && runCatching { editor.inspectRoomSource(name, request, roomId) == text }.getOrDefault(false)
+                val automatic = if (request.kind !in setOf(RoomAsmSourceKind.DOORS, RoomAsmSourceKind.PROPERTIES, RoomAsmSourceKind.LAYOUT)) null else {
                     val planned = when (request.kind) {
                         RoomAsmSourceKind.DOORS -> bridge.doors.automaticSource(room, name)
+                        RoomAsmSourceKind.LAYOUT -> bridge.layouts.automaticSource(room, name, editor.roomLayoutSourceLevels(room))
                         else -> bridge.properties.automaticSource(room, name)
                     }
                     val lineIndex = when (request.kind) {
                         RoomAsmSourceKind.DOORS -> AsmDoorSource(planned).line(roomId, request.door ?: 0)
-                        else -> AsmRoomPropertiesSource(planned).line(roomId, request.stateId)
+                        RoomAsmSourceKind.LAYOUT -> bridge.layouts.document(planned).line(roomId, room.states.single { it.id == state }.resources.level)
+                        else -> bridge.properties.document(planned).line(roomId, request.stateId)
                     }
                     AsmRoomSourceAutomaticEdit(planned, lineIndex,
                         apply = { replacement ->
@@ -177,16 +196,17 @@ internal class RoomAsmNavigation(
                                     if (workspace.workspaceKind == AsmWorkspaceKind.PROJECT && workspace.browserMode == AsmBrowserMode.SOURCE &&
                                         workspace.selectedFileId == request.kind.fileId && workspace.roomSourceInspection == null) {
                                         val line = workspace.selectedLineIndex; val column = workspace.selectedColumnIndex
-                                        openRoom(roomId, name, request, refreshView = true, redoHead = workspace.sourceRedoHead(request.kind.fileId))
+                                        liveRoomId()?.let { openRoom(it, name, request, refreshView = true, redoHead = workspace.sourceRedoHead(request.kind.fileId)) }
                                         workspace.selectSourcePosition(line, column)
                                     }
                                 }
                                 val afterRedo = {
-                                    if (workspace.roomSourceInspection?.roomId == roomId && workspace.roomSourceInspection?.automaticEdit != null)
+                                    if (workspace.roomSourceInspection?.roomId == liveRoomId() && workspace.roomSourceInspection?.automaticEdit != null)
                                         workspace.finishRoomSourceInspection()
                                 }
                                 val applied = when (request.kind) {
                                     RoomAsmSourceKind.DOORS -> editor.editInspectedDoorSource(roomId, name, planned, replacement, afterUndo, afterRedo)
+                                    RoomAsmSourceKind.LAYOUT -> editor.editInspectedLayoutSource(roomId, name, planned, replacement, afterUndo, afterRedo)
                                     else -> editor.editInspectedRoomPropertiesSource(roomId, name, planned, replacement, afterUndo, afterRedo)
                                 }
                                 if (applied) { workspace.finishRoomSourceInspection(); workspace.dismissError() }
@@ -194,8 +214,8 @@ internal class RoomAsmNavigation(
                                 applied
                             }
                         },
-                        reopen = { openRoom(roomId, name, request, refreshView = true,
-                            redoHead = redoHead?.takeIf { workspace.sourceRedoHead(request.kind.fileId) === it }) },
+                        reopen = { liveRoomId()?.let { openRoom(it, name, request, refreshView = true,
+                            redoHead = redoHead?.takeIf { workspace.sourceRedoHead(request.kind.fileId) === it }) } },
                         redoHead = redoHead)
                 }
                 snapshot = AsmRoomSourceInspection(roomId, "$name · ${request.kind.title}", text, request.stateId ?: activeState, request.kind.fileId, automatic) {

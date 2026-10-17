@@ -45,7 +45,10 @@ class ProjectNewRoomMaterializerTest {
     @Test
     fun `blank room materializes as a parser-readable native room graph`() {
         val rom = TestRomHelper.loadRomBytes()?.copyOf() ?: return
-        val project = SmEditProject("base.smc").also { it.newRooms += blankRoom("room-1", "Blank Room", 2, 1) }
+        val project = SmEditProject("base.smc").also {
+            val room = blankRoom("room-1", "Blank Room", 2, 1)
+            it.newRooms += room.copy(initialState = room.initialState.copy(enemyKillCount = 7))
+        }
 
         val result = ProjectNewRoomMaterializer(project, RomParser(rom), rom).materialize()
         val roomId = result.roomIdsByProjectId.getValue("room-1")
@@ -60,6 +63,8 @@ class ProjectNewRoomMaterializerTest {
         assertContentEquals(blankLevel(2, 1), parser.decompressLZ2(requireNotNull(room).levelDataPtr))
         assertTrue(parser.parsePlmSet(room.plmSetPtr).isEmpty())
         assertTrue(parser.parseEnemyPopulation(room.enemySetPtr).isEmpty())
+        // The native reader returns early for empty populations; inspect the stored byte.
+        assertEquals(7, parser.readByteAt(parser.snesToPc(0xA10000 or room.enemySetPtr) + 2))
         assertTrue(parser.parseEnemyGfxSet(room.enemyGfxPtr).isEmpty())
         assertTrue(parser.parseDoorList(room.doorOut).isEmpty())
         assertEquals(0, parser.parseFxEntries(room.fxPtr).single().fxType)
@@ -84,6 +89,38 @@ class ProjectNewRoomMaterializerTest {
         assertNotEquals(a, b)
         assertEquals(b, parser.parseDoorList(requireNotNull(parser.readRoomHeader(a)).doorOut).single().destRoomPtr)
         assertEquals(a, parser.parseDoorList(requireNotNull(parser.readRoomHeader(b)).doorOut).single().destRoomPtr)
+    }
+
+    @Test
+    fun `copied door flags follow actual areas without changing destination rooms or saved definitions`() {
+        val base = TestRomHelper.loadRomBytes() ?: return
+        val first = blankRoom("room-a", "Room A", 1, 1).also {
+            it.previewRoomId = 0xF100
+            it.header.area = 0
+            it.doors += ProjectDoorDefinition("project:room-b", 0x0301, 0, 0, 0, 0x8000, 0)
+            it.doors += ProjectDoorDefinition("rom:91F8", 0x0441, 0, 0, 0, 0x8000, 0)
+        }
+        val second = blankRoom("room-b", "Room B", 1, 1).also {
+            it.previewRoomId = 0xF200
+            it.header.area = 1
+            it.doors += ProjectDoorDefinition("project:room-a", 0x0742, 0, 0, 0, 0x8000, 0)
+        }
+        val project = SmEditProject("base.smc", newRooms = mutableListOf(first, second))
+        val before = Json.encodeToString(SmEditProject.serializer(), project)
+        fun build(overrides: Map<Int, Int>): List<List<Int>> {
+            val bytes = base.copyOf()
+            val parser = RomParser(bytes)
+            val target = requireNotNull(parser.readRoomHeader(0x91F8))
+            val targetDoors = parser.parseDoorList(target.doorOut)
+            val result = ProjectNewRoomMaterializer(project, parser, bytes, roomAreaOverrides = overrides).materialize()
+            assertEquals(targetDoors, parser.parseDoorList(target.doorOut), "No reciprocal destination edits")
+            assertEquals(before, Json.encodeToString(SmEditProject.serializer(), project), "Placement does not rewrite seeds")
+            return listOf(first, second).map { room ->
+                parser.parseDoorList(requireNotNull(parser.readRoomHeader(result.roomIdsByProjectId.getValue(room.id))).doorOut).map { it.bitflag }
+            }
+        }
+        assertEquals(listOf(listOf(0x0341, 0x0401), listOf(0x0742)), build(emptyMap()))
+        assertEquals(listOf(listOf(0x0301, 0x0401), listOf(0x0702)), build(mapOf(0xF100 to 2, 0xF200 to 2, 0x91F8 to 2)))
     }
 
     @Test

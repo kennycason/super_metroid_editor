@@ -48,7 +48,7 @@ internal fun RoomsTabSidebar(
     onNavigateToLayoutSource: (() -> Unit)? = null,
     onNavigateToRoomProperties: ((String?) -> Unit)? = null,
     onNavigateToSelectors: ((String?) -> Unit)? = null,
-    onNavigateToFx: ((String, Int?) -> Unit)? = null,
+    onNavigateToFx: ((String, Int?, com.supermetroid.editor.data.ProjectSourceDoorReference?) -> Unit)? = null,
     onNavigateToEnemies: ((String, Boolean) -> Unit)? = null,
     onNavigateToDoors: ((Int) -> Unit)? = null,
     onReassignRoomArea: ((Int, Int) -> Unit)? = null,

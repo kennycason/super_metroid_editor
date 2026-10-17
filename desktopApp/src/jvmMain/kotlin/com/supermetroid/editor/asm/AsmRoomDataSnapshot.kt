@@ -10,7 +10,7 @@ internal object AsmRoomDataSnapshot {
     const val MARKER = "; SMEDIT room-data snapshot v1"
 
     // Use the input catalog's stable identities, not a heuristic rescan of edited output.
-    fun render(rom: ByteArray, rooms: List<RoomInfo>): String {
+    fun render(rom: ByteArray, rooms: List<RoomInfo>, projectRoomIds: Map<Int, String> = emptyMap()): String {
         val parser = RomParser(rom)
         fun hex(value: Int, width: Int = 4) = "\$" + value.toString(16).uppercase().padStart(width, '0')
         fun clean(text: String) = text.lineSequence().joinToString(" ")
@@ -22,10 +22,12 @@ internal object AsmRoomDataSnapshot {
             for (room in rooms.sortedBy { it.name.lowercase() }) {
                 val roomId = room.getRoomIdAsInt()
                 val id = roomId.toString(16).uppercase().padStart(4, '0')
-                val prefix = "SmeditRoom_$id"
+                val projectId = projectRoomIds[roomId]
+                val prefix = projectId?.let(AsmProjectRoomLabels::prefix) ?: "SmeditRoom_$id"
                 fun section(label: String, title: String, address: Int) {
                     appendLine()
                     appendLine("; @room $id ${clean(room.name)}")
+                    projectId?.let { appendLine("; @project-room ${AsmProjectRoomLabels.encoded(it)} $id") }
                     appendLine("; @section $label ${clean(title)}")
                     appendLine("; ${clean(room.name)} · ${clean(title)}")
                     appendLine("org ${hex(address, 6)}")

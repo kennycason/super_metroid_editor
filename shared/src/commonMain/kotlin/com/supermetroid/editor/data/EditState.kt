@@ -204,6 +204,8 @@ data class ProjectNewRoomState(
     val plms: MutableList<ProjectPlmEntry> = mutableListOf(),
     var bgDataPtr: Int = 0,
     var setupAsmPtr: Int = 0,
+    /** Population terminator's kill quota, independent from the number of spawned actors. */
+    val enemyKillCount: Int = 0,
 )
 
 @Serializable

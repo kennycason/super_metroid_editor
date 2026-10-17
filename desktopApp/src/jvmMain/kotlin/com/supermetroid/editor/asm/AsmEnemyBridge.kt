@@ -41,7 +41,7 @@ internal class AsmEnemyBridge(private val catalog: AsmPlmSourceCatalog, private 
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Enemy source requires ASM mode." }
         if (isManaged(roomId)) return
-        require(owner.newRooms.isEmpty()) { "Enemy source for projects with added rooms is not supported yet." }
+        require(owner.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room enemy source is not supported yet." }
         catalog.requireStandardEnemyMacros(workspace.projectSourceText("macros.asm"))
         val room = owner.rooms[owner.roomKey(roomId)] ?: RoomEdits(roomId)
         val staged = room.copy(states = room.states.toMutableList())

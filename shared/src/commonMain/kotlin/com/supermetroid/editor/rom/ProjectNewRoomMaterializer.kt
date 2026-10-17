@@ -25,6 +25,9 @@ class ProjectNewRoomMaterializer(
     private val romData: ByteArray,
     freeSpaceAllocator: RomFreeSpaceAllocator? = null,
     private val onLog: (String) -> Unit = {},
+    private val roomAreaOverrides: Map<Int, Int> = project.rooms.values.mapNotNull { room ->
+        room.effectiveHeaderChange?.area?.let { room.roomId to it }
+    }.toMap(),
 ) {
     private val allocations = mutableListOf<RomAllocation>()
     private val allocator = (
@@ -91,7 +94,15 @@ class ProjectNewRoomMaterializer(
             val sourceToNewDoorDef = linkedMapOf<Int, Int>()
             val doorPointers = room.definition.doors.mapIndexed { index, door ->
                 val destination = resolveDestination(door, roomIds)
-                val bytes = encodeDoor(door, destination)
+                val destinationDefinition = door.destination.removePrefix("project:")
+                    .takeIf { door.destination.startsWith("project:") }
+                    ?.let { id -> project.newRooms.single { it.id == id } }
+                val sourceArea = roomAreaOverrides[room.definition.previewRoomId] ?: room.definition.header.area
+                val destinationArea = destinationDefinition?.let { roomAreaOverrides[it.previewRoomId] ?: it.header.area }
+                    ?: roomAreaOverrides[destination] ?: parser.readRoomHeader(destination)?.area
+                    ?: fail("Project room '${room.definition.name}' door $index has no readable destination room")
+                val flags = if (sourceArea != destinationArea) door.bitflag or 0x40 else door.bitflag and 0x40.inv()
+                val bytes = encodeDoor(door.copy(bitflag = flags), destination)
                 val allocation = allocate(
                     bytes,
                     listOf(0x83),
@@ -242,7 +253,8 @@ class ProjectNewRoomMaterializer(
             offset += 16
         }
         writeU16(out, offset, 0xFFFF)
-        out[offset + 2] = 0
+        if (room.initialState.enemyKillCount !in 0..255) fail("Project room '${room.name}' has an invalid enemy kill quota")
+        out[offset + 2] = room.initialState.enemyKillCount.toByte()
         return out
     }
 

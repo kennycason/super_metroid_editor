@@ -53,6 +53,7 @@ import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.data.StateDataChange
 import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.rom.baseSourceStateIndex
 import com.supermetroid.editor.rom.projectRoomStateCondition
 import com.supermetroid.editor.rom.isSmEditGeneratedPredicate
@@ -122,7 +123,7 @@ fun RoomPropertiesPanel(
     onNavigateToLayoutSource: (() -> Unit)? = null,
     onNavigateToRoomProperties: ((String?) -> Unit)? = null,
     onNavigateToSelectors: ((String?) -> Unit)? = null,
-    onNavigateToFx: ((String, Int?) -> Unit)? = null,
+    onNavigateToFx: ((String, Int?, com.supermetroid.editor.data.ProjectSourceDoorReference?) -> Unit)? = null,
     onNavigateToEnemies: ((String, Boolean) -> Unit)? = null,
     onNavigateToDoors: ((Int) -> Unit)? = null,
     onWorkspaceChanged: (() -> Unit)? = null,
@@ -224,9 +225,6 @@ fun RoomPropertiesPanel(
         editorState.selectorProjectionStatus == com.supermetroid.editor.asm.AsmSelectorProjectionStatus.UNAVAILABLE
     var showConditionBuilder by remember(room.roomId) { mutableStateOf(false) }
     var showStateSimulator by remember(room.roomId) { mutableStateOf(false) }
-    var doorManagerError by remember(room.roomId) { mutableStateOf<String?>(null) }
-    var addingDoor by remember(room.roomId) { mutableStateOf(false) }
-    var newDoorDirection by remember(room.roomId) { mutableStateOf(0) }
     val selectedSourceStateIndex = selectedStateItem?.baseSourceStateIndex ?: -1
     val currentState = stateInspection.states.getOrNull(selectedSourceStateIndex)
     val allStateData = states.map { state ->
@@ -252,7 +250,7 @@ fun RoomPropertiesPanel(
     val fxEntries = if (sourceFxOwned) editorState.effectiveFxEntries(room.roomId, romParser, selectedStateItem?.id)
         else remember(fxPtr) { romParser.parseFxEntries(fxPtr) }
     val hasFxTable = fxEntries.isNotEmpty()
-    val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 } ?: RomParser.FxEntry(
+    val defaultFx = fxEntries.lastOrNull { it.isDefault } ?: RomParser.FxEntry(
         doorSelect = 0,
         liquidSurfaceStart = 0xFFFF,
         liquidSurfaceNew = 0xFFFF,
@@ -314,7 +312,7 @@ fun RoomPropertiesPanel(
     var editPaletteFxBits by remember(room.roomId, selectedStateItem?.id, defaultFx, savedFx) { mutableStateOf(savedFx?.paletteFxBitflags ?: defaultFx.paletteFxBitflags) }
     var editTileAnimBits by remember(room.roomId, selectedStateItem?.id, defaultFx, savedFx) { mutableStateOf(savedFx?.tileAnimBitflags ?: defaultFx.tileAnimBitflags) }
     var editPaletteBlend by remember(room.roomId, selectedStateItem?.id, defaultFx, savedFx) { mutableStateOf(savedFx?.paletteBlend ?: defaultFx.paletteBlend) }
-    var editingDoorFx by remember(room.roomId, selectedStateItem?.id) { mutableStateOf<Int?>(null) }
+    var editingDoorFx by remember(room.roomId, selectedStateItem?.id) { mutableStateOf<Pair<Int, com.supermetroid.editor.data.ProjectSourceDoorReference?>?>(null) }
 
     // State data edit state — keyed by (roomId, stateIdx) so fields reset on state switch
     val originalStateData = currentState?.stateDataPcOffset?.let(romParser::readStateData).orEmpty()
@@ -469,78 +467,6 @@ fun RoomPropertiesPanel(
                 { navigate(RomConstants.BANK_ROOM_DATA or room.doorOut) }
             },
         )
-
-        val projectRoom = editorState.project.newRoomForPreviewId(room.roomId)
-        if (editorState.canEditDoorStructure(room.roomId)) {
-            Spacer(modifier = Modifier.height(4.dp))
-            SectionHeader("Door Connections (${editorState.doorEntries.size})")
-            if (projectRoom == null) TextButton(onClick = {
-                addingDoor = !addingDoor
-                doorManagerError = null
-            }, enabled = editorState.doorEntries.size < 16 && editorState.doorPreviewProblem == null) {
-                Text(if (addingDoor) "Cancel add" else "Add connection", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
-            }
-            if (addingDoor && projectRoom == null) {
-                Row {
-                    listOf("Right", "Left", "Down", "Up").forEachIndexed { direction, title ->
-                        TextButton(onClick = { newDoorDirection = direction }) {
-                            Text(if (direction == newDoorDirection) "[$title]" else title, fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
-                        }
-                    }
-                }
-                DoorDestinationPicker(null, room.roomId, newDoorDirection, roomInfos, romParser, editorState,
-                    editorState.doorPreviewProblem == null) { opening ->
-                    doorManagerError = runCatching {
-                        editorState.addProjectRoomDoor(room.roomId, opening.roomId, opening.direction, opening.screenX, opening.screenY, romParser, opening.doorCapCode)
-                        addingDoor = false
-                    }.exceptionOrNull()?.message
-                }
-            }
-            Text(
-                "Connections are numbered from 1. SMEDIT manages their stored tile indices.",
-                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (projectRoom == null) Text("Link a source doorway through the tile inspector’s Use existing connection menu.",
-                fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            editorState.doorEntries.forEachIndexed { index, door ->
-                val identity = editorState.doorSourceIdentities[index]
-                val destinationName = roomInfos.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name
-                    ?: "Room 0x${door.destRoomPtr.toString(16).uppercase()}"
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                    shape = MaterialTheme.shapes.extraSmall,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("${index + 1}. $destinationName", fontSize = ROOM_INFO_BODY_FONT_SIZE)
-                            Text(
-                                "Travels ${door.directionName.lowercase()} · destination screen " +
-                                    oneBasedRoomCoordinate(door.screenX, door.screenY),
-                                fontSize = ROOM_INFO_CAPTION_FONT_SIZE,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (onNavigateToDoors != null && editorState.asmNavigationEnabled) TextButton(onClick = { onNavigateToDoors(index) }) {
-                            Text("ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
-                        }
-                        TextButton(onClick = {
-                            doorManagerError = runCatching {
-                                editorState.removeProjectRoomDoor(room.roomId, index, identity)
-                                if (projectRoom != null) onWorkspaceChanged?.invoke()
-                            }.exceptionOrNull()?.message
-                        }, enabled = editorState.doorPreviewProblem == null) { Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE) }
-                    }
-                }
-            }
-            doorManagerError?.let {
-                Text(it, fontSize = ROOM_INFO_CAPTION_FONT_SIZE, color = MaterialTheme.colorScheme.error)
-            }
-        }
 
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -958,7 +884,7 @@ fun RoomPropertiesPanel(
             "${FX_TYPE_OPTIONS.firstOrNull { it.first == editFxType }?.second ?: "Unknown (${hex8(editFxType)})"} · " +
                 sharingDescription("fxPtr", fxPtr),
             fxLink
-                ?.let { open -> { selectedStateItem?.id?.let { open(it, null) }; Unit } },
+                ?.let { open -> { selectedStateItem?.id?.let { open(it, null, null) }; Unit } },
         )
         PropertyRow("Placed Objects", "$plmCount objects · ${sharingDescription("plmSetPtr", plmSetPtr)}")
         if (selectedIsActive) {
@@ -1008,7 +934,7 @@ fun RoomPropertiesPanel(
             PropertyRow(
                 "FX Data",
                 if (fxPtr == 0) "None" else "\$83:${hex16(fxPtr).removePrefix("0x")}",
-                if (sourceFxOwned) fxLink?.let { open -> { selectedStateItem?.id?.let { open(it, null) }; Unit } }
+                if (sourceFxOwned) fxLink?.let { open -> { selectedStateItem?.id?.let { open(it, null, null) }; Unit } }
                 else asmLink(fxPtr.takeIf { it != 0 }?.let { RomConstants.BANK_FX or it }),
             )
             PropertyRow("Object Set", "\$8F:${hex16(plmSetPtr).removePrefix("0x")}", asmLink(RomConstants.BANK_ROOM_DATA or plmSetPtr))
@@ -1038,7 +964,7 @@ fun RoomPropertiesPanel(
         editorState.fxPreviewProblem?.let { Text(it, fontSize = ROOM_INFO_BODY_FONT_SIZE, color = MaterialTheme.colorScheme.error) }
         if (fxLink != null) {
             PropertyRow("Default FX", FX_TYPE_OPTIONS.firstOrNull { it.first == editFxType }?.second ?: defaultFx.fxTypeName) {
-                selectedStateItem?.id?.let { fxLink(it, 0) }
+                selectedStateItem?.id?.let { fxLink(it, 0, null) }
             }
         }
         if (!hasFxTable) {
@@ -1050,7 +976,7 @@ fun RoomPropertiesPanel(
         }
         // Door-routed entries override the default effect for one entrance.
         for (fx in fxEntries) {
-            if (fx.doorSelect != 0) {
+            if (!fx.isDefault) {
                 val saved = savedDoorFxChanges.entries
                     .firstOrNull { it.key.toIntOrNull(16) == fx.doorSelect }
                     ?.value
@@ -1066,7 +992,7 @@ fun RoomPropertiesPanel(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "Door \$${fx.doorSelect.toString(16).uppercase().padStart(4, '0')}",
+                                fx.sourceDoor?.caption ?: "Door \$${fx.doorSelect.toString(16).uppercase().padStart(4, '0')}",
                                 fontSize = ROOM_INFO_BODY_FONT_SIZE,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -1078,25 +1004,46 @@ fun RoomPropertiesPanel(
                             )
                         }
                         TextButton(
-                            onClick = { editingDoorFx = fx.doorSelect },
+                            onClick = { editingDoorFx = fx.doorSelect to fx.sourceDoor },
+                            enabled = editorState.fxPreviewProblem == null,
                             modifier = Modifier.height(26.dp),
                             contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
                         ) {
                             Text("Edit", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
                         }
                         if (fxLink != null) {
-                            TextButton(onClick = { selectedStateItem?.id?.let { fxLink(it, fx.doorSelect) } },
+                            TextButton(onClick = { selectedStateItem?.id?.let { fxLink(it, fx.doorSelect, fx.sourceDoor) } },
                                 modifier = Modifier.height(26.dp), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)) {
                                 Text("ASM", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
                             }
+                        }
+                        if (sourceFxOwned) TextButton(onClick = { selectedStateItem?.id?.let { editorState.removeSourceDoorFx(it, fx) } },
+                            modifier = Modifier.height(26.dp), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)) {
+                            Text("Remove", fontSize = ROOM_INFO_COMPACT_FONT_SIZE)
                         }
                     }
                 }
             }
         }
 
+        if (editorState.project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) {
+            val choices = editorState.incomingDoorConditionOptions(room.roomId, romParser).filter { option ->
+                fxEntries.none { fx -> if (fx.sourceDoor != null) fx.sourceDoor == option.sourceDoor
+                    else option.pointer != null && fx.doorSelect == option.pointer }
+            }
+            IncomingDoorPicker("Add entrance FX", choices, enabled = editorState.fxPreviewProblem == null && fxEntries.size < 16) { option ->
+                selectedStateItem?.id?.let { state -> editorState.setRoomStateDoorFxChange(state,
+                    if (option.sourceDoor != null) 0 else requireNotNull(option.pointer),
+                    FxChange(fxType = defaultFx.fxType, liquidSurfaceStart = defaultFx.liquidSurfaceStart,
+                        liquidSurfaceNew = defaultFx.liquidSurfaceNew, liquidSpeed = defaultFx.liquidSpeed,
+                        liquidDelay = defaultFx.liquidDelay, fxBitA = defaultFx.fxBitA, fxBitB = defaultFx.fxBitB,
+                        fxBitC = defaultFx.fxBitC, paletteFxBitflags = defaultFx.paletteFxBitflags,
+                        tileAnimBitflags = defaultFx.tileAnimBitflags, paletteBlend = defaultFx.paletteBlend), romParser, option.sourceDoor) }
+            }
+        }
+
         val doorFxEntry = editingDoorFx?.let { door ->
-            fxEntries.firstOrNull { it.doorSelect == door }
+            fxEntries.firstOrNull { it.doorSelect == door.first && it.sourceDoor == door.second }
         }
         if (doorFxEntry != null) {
             val saved = savedDoorFxChanges.entries
@@ -1112,6 +1059,7 @@ fun RoomPropertiesPanel(
                         doorSelect = doorFxEntry.doorSelect,
                         change = change,
                         romParser = romParser,
+                        sourceDoor = doorFxEntry.sourceDoor,
                     )
                     editingDoorFx = null
                 },
@@ -1159,19 +1107,9 @@ fun RoomPropertiesPanel(
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        // ── Space Usage ──
-        val spaceUsage = remember(room.roomId, currentState?.stateDataPcOffset, editorState.editVersion) {
-            romParser.readRoomSpaceUsage(room.roomId, currentState?.stateDataPcOffset)
-        }
-        if (spaceUsage != null) {
-            SectionHeader("Space Usage")
-            SpaceUsageBar("Level Data", spaceUsage.levelDataCompressed, "compressed")
-            SpaceUsageBar("PLMs", spaceUsage.plmBytes, "${spaceUsage.plmCount} entries")
-            SpaceUsageBar("Enemies", spaceUsage.enemyBytes, "${spaceUsage.enemyCount} entries")
-            SpaceUsageBar("Scrolls", spaceUsage.scrollBytes, "${room.width}×${room.height}")
-            SpaceUsageBar("Doors", spaceUsage.doorBytes, "${spaceUsage.doorCount} entries")
-            Spacer(modifier = Modifier.height(4.dp))
-        }
+        RoomDoorsSection(room.roomId, romParser, editorState, roomInfos, onNavigateToDoors, onWorkspaceChanged)
+
+        Spacer(modifier = Modifier.height(4.dp))
 
         // ── Screen scrolls (editable) ──
         SectionHeader(
@@ -1254,6 +1192,20 @@ fun RoomPropertiesPanel(
             EditableScrollGrid(scrollData, scrollW, scrollH, runtimeDiagnostics) { col, row, newVal ->
                 editorState.setScroll(col, row, newVal, scrollW)
             }
+        }
+
+        // ── Space Usage ──
+        val spaceUsage = remember(room.roomId, currentState?.stateDataPcOffset, editorState.editVersion) {
+            romParser.readRoomSpaceUsage(room.roomId, currentState?.stateDataPcOffset)
+        }
+        if (spaceUsage != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            SectionHeader("Space Usage")
+            SpaceUsageBar("Level Data", spaceUsage.levelDataCompressed, "compressed")
+            SpaceUsageBar("PLMs", spaceUsage.plmBytes, "${spaceUsage.plmCount} entries")
+            SpaceUsageBar("Enemies", spaceUsage.enemyBytes, "${spaceUsage.enemyCount} entries")
+            SpaceUsageBar("Scrolls", spaceUsage.scrollBytes, "${room.width}×${room.height}")
+            SpaceUsageBar("Doors", spaceUsage.doorBytes, "${spaceUsage.doorCount} entries")
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -1425,29 +1377,29 @@ private fun DoorFxEditorDialog(
     onDismiss: () -> Unit,
     onSave: (FxChange?) -> Unit,
 ) {
-    var fxType by remember(entry.doorSelect, savedChange) { mutableStateOf(savedChange?.fxType ?: entry.fxType) }
-    var liquidStart by remember(entry.doorSelect, savedChange) {
+    var fxType by remember(entry.doorSelect, entry.sourceDoor, savedChange) { mutableStateOf(savedChange?.fxType ?: entry.fxType) }
+    var liquidStart by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.liquidSurfaceStart ?: entry.liquidSurfaceStart)
     }
-    var liquidTarget by remember(entry.doorSelect, savedChange) {
+    var liquidTarget by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.liquidSurfaceNew ?: entry.liquidSurfaceNew)
     }
-    var liquidSpeed by remember(entry.doorSelect, savedChange) {
+    var liquidSpeed by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.liquidSpeed ?: entry.liquidSpeed)
     }
-    var liquidDelay by remember(entry.doorSelect, savedChange) {
+    var liquidDelay by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.liquidDelay ?: entry.liquidDelay)
     }
-    var fxBitA by remember(entry.doorSelect, savedChange) { mutableStateOf(savedChange?.fxBitA ?: entry.fxBitA) }
-    var fxBitB by remember(entry.doorSelect, savedChange) { mutableStateOf(savedChange?.fxBitB ?: entry.fxBitB) }
-    var fxBitC by remember(entry.doorSelect, savedChange) { mutableStateOf(savedChange?.fxBitC ?: entry.fxBitC) }
-    var paletteFxBits by remember(entry.doorSelect, savedChange) {
+    var fxBitA by remember(entry.doorSelect, entry.sourceDoor, savedChange) { mutableStateOf(savedChange?.fxBitA ?: entry.fxBitA) }
+    var fxBitB by remember(entry.doorSelect, entry.sourceDoor, savedChange) { mutableStateOf(savedChange?.fxBitB ?: entry.fxBitB) }
+    var fxBitC by remember(entry.doorSelect, entry.sourceDoor, savedChange) { mutableStateOf(savedChange?.fxBitC ?: entry.fxBitC) }
+    var paletteFxBits by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.paletteFxBitflags ?: entry.paletteFxBitflags)
     }
-    var tileAnimBits by remember(entry.doorSelect, savedChange) {
+    var tileAnimBits by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.tileAnimBitflags ?: entry.tileAnimBitflags)
     }
-    var paletteBlend by remember(entry.doorSelect, savedChange) {
+    var paletteBlend by remember(entry.doorSelect, entry.sourceDoor, savedChange) {
         mutableStateOf(savedChange?.paletteBlend ?: entry.paletteBlend)
     }
 
@@ -1468,7 +1420,7 @@ private fun DoorFxEditorDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Door \$${entry.doorSelect.toString(16).uppercase().padStart(4, '0')} effect")
+            Text("${entry.sourceDoor?.caption ?: "Door $${entry.doorSelect.toString(16).uppercase().padStart(4, '0')}"} effect")
         },
         text = {
             Column(

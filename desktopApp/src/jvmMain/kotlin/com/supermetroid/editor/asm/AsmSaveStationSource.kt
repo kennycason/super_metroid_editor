@@ -1,6 +1,7 @@
 package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.SourceSaveResource
+import com.supermetroid.editor.data.ProjectSourceDoorReference
 
 /** Same authored bank buffer as placements; the build supplies the fixed bank-$80 slot address. */
 internal object AsmSaveStationSource {
@@ -10,13 +11,18 @@ internal object AsmSaveStationSource {
 
     fun parse(name: String, body: String, symbols: Map<String, Int> = emptyMap()): SourceSaveResource {
         val match = requireNotNull(identity.matchEntire(name)) { "Unsupported save resource identity $name." }
-        val words = body.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.flatMap { line ->
+        val tokens = body.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.flatMap { line ->
             require(line.startsWith("dw ", true)) { "$name: expected seven dw fields for the load-station record." }
-            line.drop(3).split(',').map { token ->
-                AsmPlmDocument.literal(token.trim()) ?: symbols[token.trim()] ?: error("$name: unsupported save field '${token.trim()}'.")
-            }
+            line.drop(3).split(',').map { it.trim() }
         }.toList()
-        return SourceSaveResource(name, match.groupValues[1].toInt(16), match.groupValues[2].toInt(), match.groupValues[3].toInt(), words)
+        val reference = tokens.getOrNull(1)?.let(ProjectSourceDoorReference::fromEntryLabel)
+        val words = tokens.mapIndexed { index, token ->
+            if (index == 1 && reference != null) 0 else {
+                require(ProjectSourceDoorReference.fromEntryLabel(token) == null) { "$name: DoorDef labels are only valid in the incoming-door field." }
+                AsmPlmDocument.literal(token) ?: symbols[token] ?: error("$name: unsupported save field '$token'.")
+            }
+        }
+        return SourceSaveResource(name, match.groupValues[1].toInt(16), match.groupValues[2].toInt(), match.groupValues[3].toInt(), words, reference)
             .also(SourceSaveResource::validate)
     }
 
@@ -26,7 +32,11 @@ internal object AsmSaveStationSource {
         return buildString {
             appendLine("macro ${resource.identity}()")
             if (resource.cleared) appendLine("    ; Released save slot · area ${resource.area}, slot ${resource.slot}")
-            resource.words.forEachIndexed { index, word -> appendLine("    dw \$${word.toString(16).uppercase().padStart(4, '0')} ; ${notes[index]}") }
+            resource.words.forEachIndexed { index, word ->
+                val value = if (index == 1) resource.sourceDoor?.entryLabel ?: "\$${word.toString(16).uppercase().padStart(4, '0')}"
+                    else "\$${word.toString(16).uppercase().padStart(4, '0')}"
+                appendLine("    dw $value ; ${notes[index]}")
+            }
             appendLine("endmacro")
         }
     }

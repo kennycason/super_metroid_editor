@@ -19,6 +19,22 @@ class AsmSaveStationSourceTest {
     private val save = SourceSaveResource("SmeditObjects_91F8_Save_0_2", 0x91F8, 0, 2,
         listOf(0x91F8, 0x8000, 7, 256, 0, 144, 0xFFE0))
 
+    @Test fun `symbolic save selectors are semantic even with stale compiled symbols and preserve notes in both directions`() {
+        val reference = com.supermetroid.editor.data.ProjectSourceDoorReference(0x91F8, 4)
+        val symbolic = save.copy(words = save.words.toMutableList().also { it[1] = 0 }, sourceDoor = reference)
+        val text = AsmSaveStationSource.render(symbolic).replace("; Incoming door", "; keep entrance note · Incoming door").replace("\n", "\r\n")
+        assertEquals(symbolic, AsmSaveStationSource.parse(save.identity, authoredMacroBody(text, save.identity), mapOf(reference.entryLabel to 0xF000)))
+        val edited = AsmRoomObjectSource(text).withSave(symbolic.copy(words = symbolic.words.toMutableList().also { it[3] = 512 }))
+        assertEquals(text.replace("dw ${'$'}0100", "dw ${'$'}0200"), edited)
+        val native = AsmRoomObjectSource(text).withSave(save)
+        assertContains(native, "dw ${'$'}8000 ; keep entrance note")
+        assertEquals(text, AsmRoomObjectSource(native).withSave(symbolic))
+        val cleared = AsmRoomObjectSource(text).withSave(symbolic.copy(words = List(7) { 0 }, sourceDoor = null))
+        assertTrue(AsmRoomObjectSource(cleared).saveResources(0x91F8).single().cleared)
+        assertFails { AsmSaveStationSource.parse(save.identity, authoredMacroBody(text, save.identity).replace(reference.entryLabel, "${reference.entryLabel}+2")) }
+        assertFails { AsmSaveStationSource.parse(save.identity, authoredMacroBody(text, save.identity).replace("dw ${'$'}0100", "dw ${reference.entryLabel}"), mapOf(reference.entryLabel to 0xF000)) }
+    }
+
     @Test fun `seven source words round trip and preserve negative two complement offsets and door BTS`() {
         val text = AsmSaveStationSource.render(save)
         assertEquals(save, AsmSaveStationSource.parse(save.identity, authoredMacroBody(text, save.identity)))

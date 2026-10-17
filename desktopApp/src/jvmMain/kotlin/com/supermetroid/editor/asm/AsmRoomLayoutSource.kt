@@ -5,7 +5,11 @@ import com.supermetroid.editor.data.TileEdit
 import com.supermetroid.editor.rom.SourceRoomLayoutResource
 
 /** Readable, uncompressed Asar declarations; the build validates and LZ5-encodes these assets. */
-internal class AsmRoomLayoutSource(val text: String) {
+internal class AsmRoomLayoutSource(val text: String, private val projectRoomIds: Map<Int, String> = emptyMap()) {
+    fun roomPrefix(roomId: Int) = projectRoomIds[roomId]?.let(::projectPrefix) ?: prefix(roomId)
+    private fun dataDeclaration(roomId: Int, id: String) = roomPrefix(roomId) + "Data_" + encoded(id)
+    private fun stateDeclaration(roomId: Int, id: String) = roomPrefix(roomId) + "State_" + encoded(id)
+    private fun stateWrapper(roomId: Int, stateId: String, levelId: String) = renderState(roomId, stateId, levelId, projectRoomIds[roomId])
     private data class Macro(val name: String, val range: IntRange, val start: Int, val body: String)
     private data class Field(val range: IntRange, val offset: Int, val size: Int, val value: Int)
     private val macros by lazy {
@@ -42,7 +46,7 @@ internal class AsmRoomLayoutSource(val text: String) {
         }
     }
     fun resource(roomId: Int, levelId: String, width: Int, height: Int): SourceRoomLayoutResource {
-        val name = dataName(roomId, levelId)
+        val name = dataDeclaration(roomId, levelId)
         val bytes = fields(name).flatMap { field -> List(field.size) { (field.value ushr (it * 8)) and 255 } }
         return SourceRoomLayoutResource(name, width, height, bytes)
     }
@@ -51,8 +55,8 @@ internal class AsmRoomLayoutSource(val text: String) {
         require(room.operations.all { it.edits.isEmpty() } && room.levelResourceOperations.values.flatten().all { it.edits.isEmpty() } &&
             room.states.all { state -> state.operations.all { it.edits.isEmpty() } }) { "Room layout has both authored source and GUI tile deltas." }
         return room.states.associate { state ->
-            val expected = dataName(room.roomId, state.resources.level)
-            val code = macro(stateName(room.roomId, state.id)).body.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.toList()
+            val expected = dataDeclaration(room.roomId, state.resources.level)
+            val code = macro(stateDeclaration(room.roomId, state.id)).body.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.toList()
             require(code == listOf("%$expected()")) { "Layout state ${state.id} no longer matches its shared/private resource. Use the layout sharing controls." }
             state.id to resource(room.roomId, state.resources.level, width, height)
         }
@@ -66,25 +70,33 @@ internal class AsmRoomLayoutSource(val text: String) {
         }
         return changes.sortedByDescending { it.first.first }.fold(text) { result, (range, value) -> result.replaceRange(range, value) }
     }
-    fun line(roomId: Int, levelId: String): Int = text.take(macro(dataName(roomId, levelId)).range.first).count { it == '\n' }
-    fun hasLayout(roomId: Int, levelId: String) = dataName(roomId, levelId) in macros
+    fun line(roomId: Int, levelId: String): Int = text.take(macro(dataDeclaration(roomId, levelId)).range.first).count { it == '\n' }
+    fun hasLayout(roomId: Int, levelId: String) = dataDeclaration(roomId, levelId) in macros
     fun cloneLayout(room: RoomEdits, stateId: String, newLevel: String): String {
         val oldLevel = room.states.single { it.id == stateId }.resources.level
-        val old = dataName(room.roomId, oldLevel)
-        val name = dataName(room.roomId, newLevel)
+        val old = dataDeclaration(room.roomId, oldLevel)
+        val name = dataDeclaration(room.roomId, newLevel)
         require(name !in macros) { "Layout identity already exists." }
-        val wrapper = macro(stateName(room.roomId, stateId))
-        return text.replaceRange(wrapper.range, renderState(room.roomId, stateId, newLevel)).trimEnd() + "\n\n" +
+        return replaceStateLink(room.roomId, stateId, newLevel).trimEnd() + "\n\n" +
             text.substring(macro(old).range).replaceFirst("macro $old()", "macro $name()")
     }
     fun link(roomId: Int, stateId: String, levelId: String): String {
-        macro(dataName(roomId, levelId))
-        return text.replaceRange(macro(stateName(roomId, stateId)).range, renderState(roomId, stateId, levelId))
+        macro(dataDeclaration(roomId, levelId))
+        return replaceStateLink(roomId, stateId, levelId)
+    }
+    private fun replaceStateLink(roomId: Int, stateId: String, levelId: String): String {
+        val wrapper = macro(stateDeclaration(roomId, stateId))
+        val reference = Regex("(?m)^[ \\t]*(%SmeditLayout_[A-Za-z0-9_]+\\(\\))(?=[ \\t]*(?:;[^\\r\\n]*)?\\r?$)")
+            .findAll(wrapper.body).toList().singleOrNull()?.groups?.get(1)
+        val code = wrapper.body.lineSequence().map { it.substringBefore(';').trim() }.filter { it.isNotEmpty() }.toList()
+        require(reference != null && code == listOf(reference.value)) { "Layout state $stateId no longer has one typed resource reference." }
+        return text.replaceRange(wrapper.start + reference.range.first, wrapper.start + reference.range.last + 1,
+            "%${dataDeclaration(roomId, levelId)}()")
     }
     fun appendState(roomId: Int, stateId: String, levelId: String): String {
-        require(stateName(roomId, stateId) !in macros) { "Layout state already exists." }
-        macro(dataName(roomId, levelId))
-        return text.trimEnd() + "\n\n" + renderState(roomId, stateId, levelId)
+        require(stateDeclaration(roomId, stateId) !in macros) { "Layout state already exists." }
+        macro(dataDeclaration(roomId, levelId))
+        return text.trimEnd() + "\n\n" + stateWrapper(roomId, stateId, levelId)
     }
     fun resize(room: RoomEdits, oldWidth: Int, oldHeight: Int, width: Int, height: Int): String {
         val resources = resources(room, oldWidth * 16, oldHeight * 16).values.distinctBy { it.identity }
@@ -104,10 +116,11 @@ internal class AsmRoomLayoutSource(val text: String) {
     }
     companion object {
         fun prefix(roomId: Int) = "SmeditLayout_${roomId.toString(16).uppercase().padStart(4, '0')}_"
+        fun projectPrefix(id: String) = "SmeditLayout_Project_${AsmProjectRoomLabels.encoded(id)}_"
         private fun encoded(value: String) = value.toByteArray(Charsets.UTF_8).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
-        fun dataName(roomId: Int, levelId: String) = prefix(roomId) + "Data_" + encoded(levelId)
-        fun stateName(roomId: Int, stateId: String) = prefix(roomId) + "State_" + encoded(stateId)
-        fun renderState(roomId: Int, stateId: String, levelId: String) = "macro ${stateName(roomId, stateId)}()\n    %${dataName(roomId, levelId)}()\nendmacro\n"
+        fun dataName(roomId: Int, levelId: String, projectRoomId: String? = null) = (projectRoomId?.let(::projectPrefix) ?: prefix(roomId)) + "Data_" + encoded(levelId)
+        fun stateName(roomId: Int, stateId: String, projectRoomId: String? = null) = (projectRoomId?.let(::projectPrefix) ?: prefix(roomId)) + "State_" + encoded(stateId)
+        fun renderState(roomId: Int, stateId: String, levelId: String, projectRoomId: String? = null) = "macro ${stateName(roomId, stateId, projectRoomId)}()\n    %${dataName(roomId, levelId, projectRoomId)}()\nendmacro\n"
         fun render(resource: SourceRoomLayoutResource): String = buildString {
             appendLine("macro ${resource.identity}()")
             val layerBytes = resource.values[0] or (resource.values[1] shl 8)
@@ -139,6 +152,14 @@ internal class AsmRoomLayoutSource(val text: String) {
         fun targetAt(lines: List<String>, line: Int): AsmEditorTarget.Room? {
             for (index in line.coerceAtMost(lines.lastIndex) downTo 0) {
                 if (lines[index].trimStart().startsWith("endmacro") && index != line) return null
+                Regex("^macro SmeditLayout_Project_([0-9A-F]+)_(Data|State)_([0-9a-f]+)\\(\\)").find(lines[index])?.let {
+                    val projectId = AsmProjectRoomLabels.decode(it.groupValues[1]) ?: return null
+                    val encoded = it.groupValues[3]
+                    if (encoded.length % 2 != 0) return null
+                    val id = encoded.chunked(2).map { byte -> byte.toInt(16).toByte() }.toByteArray().toString(Charsets.UTF_8)
+                    return AsmEditorTarget.Room(0, projectRoomId = projectId,
+                        layoutId = id.takeIf { _ -> it.groupValues[2] == "Data" }, stateId = id.takeIf { _ -> it.groupValues[2] == "State" })
+                }
                 Regex("^macro SmeditLayout_([0-9A-F]{4})_(Data|State)_([0-9a-f]+)\\(\\)").find(lines[index])?.let {
                     val encoded = it.groupValues[3]
                     val identity = runCatching { encoded.chunked(2).map { byte -> byte.toInt(16).toByte() }.toByteArray().toString(Charsets.UTF_8) }.getOrNull()

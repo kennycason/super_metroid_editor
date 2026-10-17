@@ -1040,7 +1040,7 @@ fun MapCanvas(
                                 if (!activeOverlays.contains(TileOverlay.LAYER3) || roomHeader == null) null
                                 else {
                                     val fxEntries = editorState?.effectiveFxEntries(roomHeader.roomId, romParser) ?: romParser.parseFxEntries(roomHeader.fxPtr)
-                                    val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
+                                    val defaultFx = fxEntries.lastOrNull { it.isDefault }
                                     val fxType = defaultFx?.fxType ?: 0
                                     if (fxType == 0) null
                                     else {
@@ -1482,7 +1482,7 @@ fun MapCanvas(
                                         val fxEntries = remember(roomHeader.fxPtr, editVersion) {
                                             editorState?.effectiveFxEntries(roomHeader.roomId, romParser) ?: romParser.parseFxEntries(roomHeader.fxPtr)
                                         }
-                                        val defaultFx = fxEntries.lastOrNull { it.doorSelect == 0 }
+                                        val defaultFx = fxEntries.lastOrNull { it.isDefault }
                                         val effectiveFxType = defaultFx?.fxType ?: 0
                                         val effectiveLiquidStart = defaultFx?.liquidSurfaceStart ?: 0xFFFF
                                         if (effectiveLiquidStart != 0xFFFF) {

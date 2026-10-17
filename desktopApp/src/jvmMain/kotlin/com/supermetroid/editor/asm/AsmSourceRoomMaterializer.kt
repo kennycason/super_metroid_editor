@@ -5,6 +5,7 @@ import com.supermetroid.editor.rom.ProjectRoomExporter
 import com.supermetroid.editor.rom.RomWriteIntent
 import com.supermetroid.editor.rom.RomWriteKind
 import com.supermetroid.editor.rom.RomWritePlanReport
+import com.supermetroid.editor.rom.resolveSourceDoors
 
 internal const val ASM_ROOM_GRAPH_OWNER = "room-graph:project"
 
@@ -47,6 +48,7 @@ internal data class AsmRoomMaterialization(
     val enemyTables: List<AsmRoomEnemyTable> = emptyList(),
     val doorTables: List<AsmRoomDoorTable> = emptyList(),
     val doorListTables: List<AsmRoomDoorListTable> = emptyList(),
+    val newRoomIds: Map<String, Int> = emptyMap(),
 ) {
     val isEmpty: Boolean get() = claims.isEmpty()
 
@@ -56,7 +58,7 @@ internal data class AsmRoomMaterialization(
 }
 
 /**
- * Promotes the already validated existing-room graph into the ASM input stage.
+ * Promotes the already validated room graph into the ASM input stage.
  *
  * The established room exporter remains the allocation/pointer oracle for this
  * first source-native layer. Its complete final byte set is emitted atomically:
@@ -64,8 +66,8 @@ internal data class AsmRoomMaterialization(
  * graph remains on the post-compile backend. This gives later label/table based
  * emitters one guarded integration boundary without changing ROM output today.
  *
- * Project-created rooms deliberately remain on the ROM backend until they have
- * stable source identities independent from their preview and allocated IDs.
+ * Project-created rooms require explicit planner placements. Their durable
+ * project-ID labels never infer identity from preview or allocation addresses.
  */
 internal class AsmSourceRoomMaterializer {
     fun materialize(
@@ -79,12 +81,14 @@ internal class AsmSourceRoomMaterializer {
         sourceFx: Map<Int, Map<String, com.supermetroid.editor.rom.SourceFxResource>> = emptyMap(),
         sourceEnemies: Map<Int, Map<String, com.supermetroid.editor.rom.SourceEnemyResources>> = emptyMap(),
         sourceDoors: Map<Int, com.supermetroid.editor.rom.SourceRoomDoors> = emptyMap(),
+        newRoomIds: Map<String, Int> = emptyMap(),
     ): AsmRoomMaterialization {
         if (!ProjectRoomExporter.hasRoomEdits(project)) return AsmRoomMaterialization.EMPTY
 
         val writes = report.writes.filter { it.owner == ASM_ROOM_GRAPH_OWNER }
         if (writes.isEmpty()) return AsmRoomMaterialization.EMPTY
-        if (project.newRooms.isNotEmpty() || writes.any {
+        require(newRoomIds.keys == project.newRooms.map { it.id }.toSet()) { "New rooms require complete checked build placements." }
+        if (writes.any {
                 it.kind !in MATERIALIZABLE_KINDS || it.offset < 0 || it.endInclusive >= compiledRomSize
             }
         ) {
@@ -113,11 +117,14 @@ internal class AsmSourceRoomMaterializer {
             )
         }
 
-        val plmTables = plannedRom?.let { discoverAsmRoomPlmTables(project, report, it) }.orEmpty()
+        val previewToBuilt = project.newRooms.associate { it.previewRoomId to newRoomIds.getValue(it.id) }
+        val placedProject = if (previewToBuilt.isEmpty()) project else project.copy(rooms = project.rooms.values.associateTo(linkedMapOf()) { room ->
+            val placed = previewToBuilt[room.roomId] ?: room.roomId
+            project.roomKey(placed) to room.copy(roomId = placed)
+        })
+        val plmTables = plannedRom?.let { discoverAsmRoomPlmTables(placedProject, report, it) }.orEmpty()
         val scrollTables = if (sourceScrolls.isEmpty()) emptyList() else discoverAsmRoomScrollTables(report, requireNotNull(plannedRom), sourceScrolls)
-        val saveTables = if (sourceSaves.isEmpty()) emptyList() else discoverAsmRoomSaveTables(report, requireNotNull(plannedRom), sourceSaves)
         val initialScrollTables = if (sourceInitialScrolls.isEmpty()) emptyList() else discoverAsmInitialScrollTables(project, report, requireNotNull(plannedRom), sourceInitialScrolls)
-        val fxTables = if (sourceFx.isEmpty()) emptyList() else discoverAsmFxTables(project, report, requireNotNull(plannedRom), sourceFx)
         val enemyTables = if (sourceEnemies.isEmpty()) emptyList() else discoverAsmEnemyTables(project, report, requireNotNull(plannedRom), sourceEnemies)
         val plannedParser = plannedRom?.let { com.supermetroid.editor.rom.RomParser(it) }
         val placedDoors = sourceDoors.mapValues { (roomId, doors) ->
@@ -125,12 +132,26 @@ internal class AsmSourceRoomMaterializer {
             require(entries.size == doors.entries.size) { "Planned structural door count differs from source." }
             doors.entries.mapIndexed { index, door -> door.copy(doorDefPtr = entries[index].doorDefPtr) }
         }
+        val doorPointers = placedDoors.flatMap { (roomId, doors) -> doors.map { door ->
+            com.supermetroid.editor.data.ProjectSourceDoorReference(roomId, door.identity) to door.doorDefPtr
+        } }.toMap()
+        val resolvedSaves = sourceSaves.mapValues { (_, resource) -> resource.resolveSourceDoors(sourceDoors, doorPointers) }
+        val resolvedFx = sourceFx.mapValues { (roomId, states) -> states.mapValues { (_, resource) ->
+            resource.resolveSourceDoors(roomId, sourceDoors, doorPointers)
+        } }
+        val saveTables = if (resolvedSaves.isEmpty()) emptyList() else discoverAsmRoomSaveTables(report, requireNotNull(plannedRom), resolvedSaves)
+        val fxTables = if (resolvedFx.isEmpty()) emptyList() else discoverAsmFxTables(project, report, requireNotNull(plannedRom), resolvedFx)
         val doorListTables = sourceDoors.filterValues { it.structural }.map { (roomId, _) ->
             AsmRoomDoorListTable(roomId, requireNotNull(plannedParser?.readRoomHeader(roomId)).doorOut, placedDoors.getValue(roomId))
         }
         val doorTables = placedDoors.toSortedMap().flatMap { (roomId, doors) -> doors.map { door ->
             AsmRoomDoorTable(AsmDoorSource.name(roomId, door.identity), door)
-        } }
+        } }.groupBy { it.door.doorDefPtr }.values.map { tables ->
+            val first = tables.first()
+            require(tables.all { it.door.entry() == first.door.entry() && it.door.arrival == first.door.arrival }) { "Conflicting source owners for one DoorDef." }
+            require(tables.size == 1 || tables.all { it.door.shared }) { "Multiple owners need canonical shared door source." }
+            first.copy(aliases = tables.drop(1).map { it.macro })
+        }
         val typedClaims = plmTables.flatMap(AsmRoomPlmTable::claims) + scrollTables.map(AsmRoomScrollTable::claim) + saveTables.map(AsmRoomSaveTable::claim) + initialScrollTables.flatMap(AsmRoomInitialScrollTable::claims) + fxTables.flatMap(AsmRoomFxTable::claims) + enemyTables.flatMap(AsmRoomEnemyTable::claims) + doorTables.map(AsmRoomDoorTable::claim) + doorListTables.map(AsmRoomDoorListTable::claim)
         doorTables.forEach { table ->
             val claim = table.claim()
@@ -170,14 +191,30 @@ internal class AsmSourceRoomMaterializer {
                 },
             )
         }
-        val roomIds = project.rooms.entries.asSequence()
+        val roomIds = placedProject.rooms.entries.asSequence()
             .filter { it.value.hasEdits }
             .mapNotNull { (key, _) -> key.toIntOrNull(16) }
             .map { it.toString(16).uppercase().padStart(4, '0') }
             .toCollection(linkedSetOf())
+        roomIds.addAll(newRoomIds.values.map(project::roomKey))
+        val projectLabels = buildString {
+            for (room in project.newRooms) {
+                val pointer = newRoomIds.getValue(room.id)
+                require(pointer in 0x8000..0xFFFE && plannedParser?.readRoomHeader(pointer) != null) { "Project room placement has no readable header." }
+                appendLine("; Project room ${room.id.replace('\n', ' ').replace('\r', ' ')} · ${room.name.replace('\n', ' ').replace('\r', ' ')}")
+                appendLine("; @room ${pointer.toString(16).uppercase()} ${room.name.replace('\n', ' ').replace('\r', ' ')}")
+                appendLine("; @project-room ${AsmProjectRoomLabels.encoded(room.id)} ${pointer.toString(16).uppercase()}")
+                appendLine("; @section ${AsmProjectRoomLabels.entry(room.id)} Project room entry")
+                appendLine("; @section ${AsmProjectRoomLabels.prefix(room.id)}_Header Header")
+                appendLine("org \$8F${pointer.toString(16).uppercase().padStart(4, '0')}")
+                appendLine("${AsmProjectRoomLabels.entry(room.id)}:")
+                appendLine("${AsmProjectRoomLabels.prefix(room.id)}_Header:")
+                appendLine("assert (${AsmProjectRoomLabels.entry(room.id)}>>16) == \$8F")
+            }
+        }
 
         return AsmRoomMaterialization(
-            source = renderSource(rawClaims) + scrollTables.joinToString("\n", prefix = "\n") { it.renderSource() } +
+            source = projectLabels + renderSource(rawClaims) + scrollTables.joinToString("\n", prefix = "\n") { it.renderSource() } +
                 plmTables.joinToString("\n", prefix = "\n") { it.renderSource() } + saveTables.joinToString("\n", prefix = "\n") { it.renderSource() } +
                 initialScrollTables.joinToString("\n", prefix = "\n") { it.renderSource() } + fxTables.joinToString("\n", prefix = "\n") { it.renderSource() } + enemyTables.joinToString("\n", prefix = "\n") { it.renderSource() } + doorTables.joinToString("\n", prefix = "\n") { it.renderSource() } + doorListTables.joinToString("\n", prefix = "\n") { it.renderSource() },
             claims = rawClaims + typedClaims,
@@ -192,6 +229,7 @@ internal class AsmSourceRoomMaterializer {
             enemyTables = enemyTables,
             doorTables = doorTables,
             doorListTables = doorListTables,
+            newRoomIds = newRoomIds.toMap(),
         )
     }
 

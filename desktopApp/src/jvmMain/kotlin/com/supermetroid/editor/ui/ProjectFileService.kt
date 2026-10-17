@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v12-arrivals"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v13-new-room-cloning"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -139,12 +139,13 @@ internal object ProjectFileService {
     private fun publishRoomData(project: SmEditProject, projectFilePath: String, inputParser: RomParser, build: RomBuildResult, onLog: (String) -> Unit) {
         if (project.asmWorkspace.buildMode != ProjectRomBuildMode.ASM_SOURCE || projectFilePath.isBlank()) return
         runCatching {
-            // Keep new-room builds explicit until stable source identities are supported.
-            val source = if (project.newRooms.isEmpty()) {
-                // Headers retain their input identities. Rediscovering the built ROM can
-                // drop rooms with generated selector redirects from the heuristic scanner.
-                com.supermetroid.editor.asm.AsmRoomDataSnapshot.render(build.resultRom, inputParser.roomCatalog.rooms)
-            } else "; Room Data is not available for projects with added rooms yet. Room edits still use the ROM backend.\n"
+            val newRooms = project.newRooms.map { room ->
+                val placed = requireNotNull(build.newRoomIds[room.id]) { "Missing built project room identity." }
+                com.supermetroid.editor.data.RoomInfo("0x${placed.toString(16).uppercase()}", room.handle, room.name, "Project room ${room.id}")
+            }
+            // Native identities come from the input catalog; added rooms use this build's checked placements.
+            val source = com.supermetroid.editor.asm.AsmRoomDataSnapshot.render(build.resultRom,
+                inputParser.roomCatalog.rooms + newRooms, build.newRoomIds.entries.associate { it.value to it.key })
             AsmBuildArtifactRepository().publishRoomData(projectFilePath, source)
         }.onFailure { onLog("Could not retain Room Data snapshot: ${it.message}") }
     }
@@ -275,8 +276,10 @@ internal object ProjectFileService {
         if (managedRooms.isNotEmpty()) linkedCatalog.requireStandardMacro(linkedMacros)
         val managedSource = AsmRoomObjectSource(linkedSource, linkedCatalog.symbols)
         val initialScrollSource = AsmInitialScrollSource(linkedSource, linkedCatalog.symbols)
-        val layoutSource = com.supermetroid.editor.asm.AsmRoomLayoutSource(linkedSource)
-        val roomPropertiesSource = com.supermetroid.editor.asm.AsmRoomPropertiesSource(linkedSource)
+        val layoutSource = com.supermetroid.editor.asm.AsmRoomLayoutSource(linkedSource,
+            com.supermetroid.editor.asm.AsmProjectRoomLabels.identities(project))
+        val roomPropertiesSource = com.supermetroid.editor.asm.AsmRoomPropertiesSource(linkedSource,
+            com.supermetroid.editor.asm.AsmRoomPropertiesSource.projectIdentities(project))
         val sourceRoomProperties = project.rooms.values.filter { it.asmRoomPropertiesSourceVersion != 0 }.associate { room ->
             room.roomId to roomPropertiesSource.resource(room)
         }
@@ -293,8 +296,10 @@ internal object ProjectFileService {
             } }
         }
         val sourceLayouts = project.rooms.values.filter { it.asmLayoutSourceVersion != 0 }.associate { room ->
-            val header = requireNotNull(romParser.readRoomHeader(room.roomId))
-            room.roomId to layoutSource.resources(room, (room.effectiveHeaderChange?.width ?: header.width) * 16, (room.effectiveHeaderChange?.height ?: header.height) * 16)
+            val seed = project.newRoomForPreviewId(room.roomId)?.header
+            val header = if (seed == null) requireNotNull(romParser.readRoomHeader(room.roomId)) else null
+            room.roomId to layoutSource.resources(room, (room.effectiveHeaderChange?.width ?: seed?.width ?: header!!.width) * 16,
+                (room.effectiveHeaderChange?.height ?: seed?.height ?: header!!.height) * 16)
         }
         val fxRooms = project.rooms.values.filter { it.asmFxSourceVersion != 0 }
         val sourceFx = if (fxRooms.isEmpty()) emptyMap() else {
@@ -340,7 +345,7 @@ internal object ProjectFileService {
         val sourceSaves = sourcePlmSets.values.flatMap { states -> states.values.flatMap { it.saves } }.groupBy { it.identity }
             .mapValues { (_, references) ->
                 require(references.distinct().size == 1) { "Shared save source has inconsistent fields." }
-                references.first().also { com.supermetroid.editor.rom.validateSourceSaveOwnership(it, romParser) }
+                references.first().also { com.supermetroid.editor.rom.validateSourceSaveOwnership(it, romParser, doorDeclarations) }
             }
         // Numeric original pointers are fixed-layout references. Validate their current source too;
         // raw byte syntax alone would happily compile invalid colors or a shifted command stream.
@@ -374,7 +379,13 @@ internal object ProjectFileService {
         }))
         val sourceSelectors = resolvedSelectors.selectors
         val sourceDoors = com.supermetroid.editor.asm.resolveDoorArrivals(doorDeclarations, resolvedSelectors.compiled)
-        val initial = com.supermetroid.editor.asm.protectDoorSourceBaseline(sourceDoors, romParser, resolvedSelectors.compiled, linkedCatalog.symbols)
+        val arrivalLabels = AsmWlaSymbolParser.parse(resolvedSelectors.compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
+        project.newRooms.flatMap { it.doors }.forEach { door ->
+            com.supermetroid.editor.asm.validateNativeDoorArrivalAnchor(door.entryCode, arrivalLabels, linkedCatalog.symbols)
+        }
+        val sharedDoorSource = com.supermetroid.editor.asm.AsmDoorSource(File(linkedWorkspace.workingDirectory, "src/$FX_SOURCE_FILE").readText(), linkedSource, linkedCatalog.symbols)
+        val initial = com.supermetroid.editor.asm.protectDoorSourceBaseline(sourceDoors, romParser,
+            com.supermetroid.editor.asm.protectSharedDoorSource(sharedDoorSource, project, romParser, resolvedSelectors.compiled, linkedCatalog.symbols), linkedCatalog.symbols)
         val compiledSaveParser = RomParser(initial.romBytes)
         protectInitialScrollBaseline(project, romParser, compiledSaveParser)
         protectFxBaseline(project, romParser, compiledSaveParser)
@@ -438,15 +449,17 @@ internal object ProjectFileService {
         })
         val roomMaterialization = AsmSourceRoomMaterializer().materialize(
             placementProject, planned.writeReport, planned.resultRom, initial.referenceRomBody.size, sourceScrolls, sourceSaves, sourceInitialScrolls, sourceFx, sourceEnemies, sourceDoors,
+            newRoomIds = planned.newRoomIds,
         )
         require(sourceDoors.keys.all { project.roomKey(it) in roomMaterialization.roomIds } &&
-            roomMaterialization.doorTables.size == sourceDoors.values.sumOf { it.entries.size }) {
+            roomMaterialization.doorTables.sumOf { 1 + it.aliases.size } == sourceDoors.values.sumOf { it.entries.size }) {
             "Authored DoorDefs could not be included atomically; no ROM was produced."
         }
-        require(sourceLayouts.keys.all { project.roomKey(it) in roomMaterialization.roomIds }) {
+        val projectRoomPlacements = project.newRooms.associate { it.previewRoomId to planned.newRoomIds.getValue(it.id) }
+        require(sourceLayouts.keys.all { project.roomKey(projectRoomPlacements[it] ?: it) in roomMaterialization.roomIds }) {
             "Authored layouts could not be included atomically in the ASM build; no ROM was produced."
         }
-        require(sourceRoomProperties.keys.all { project.roomKey(it) in roomMaterialization.roomIds }) {
+        require(sourceRoomProperties.keys.all { project.roomKey(projectRoomPlacements[it] ?: it) in roomMaterialization.roomIds }) {
             "Authored room properties could not be included atomically in the ASM build; no ROM was produced."
         }
         require(sourceSelectors.keys.all { project.roomKey(it) in roomMaterialization.roomIds }) { "Selectors could not be included atomically; no ROM was produced." }
@@ -539,7 +552,7 @@ internal object ProjectFileService {
                 onStatus(progress)
             }))
             require(resolvedMaterialized.selectors == sourceSelectors) { "Executable predicate labels moved during generated-room compilation; no ROM was produced." }
-            val materializedCompile = resolvedMaterialized.compiled
+            val materializedCompile = com.supermetroid.editor.asm.protectSharedDoorSource(sharedDoorSource, project, romParser, resolvedMaterialized.compiled, linkedCatalog.symbols)
             require(com.supermetroid.editor.asm.resolveDoorArrivals(doorDeclarations, materializedCompile) == sourceDoors) {
                 "Arrival ASM symbols moved during generated-room compilation; no ROM was produced."
             }

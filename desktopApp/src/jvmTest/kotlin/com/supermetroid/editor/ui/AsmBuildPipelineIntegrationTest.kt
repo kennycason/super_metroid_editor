@@ -40,10 +40,435 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 import kotlin.test.assertContains
+import kotlin.test.assertFailsWith
 
 /** Explicit clean ROM/source fixtures; every project and compiler artifact lives in @TempDir. */
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
+
+    @Test fun `cloned rooms coexist with every native source family and preserve independent outgoing destinations through cold relocated builds`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val bridge = editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val native = assertNotNull(parser.readRoomHeader(0x9879))
+        editor.loadRoom(native.roomId, parser, native)
+        assertTrue(editor.ensureDoorSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureSelectorSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureRoomPropertiesSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureLayoutSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureCurrentPlmSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureInitialScrollSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureFxSource(native.name), editor.statusMessage)
+        assertTrue(editor.ensureEnemySource(native.name), editor.statusMessage)
+        editor.updateDoor(0, editor.doorEntries.first().copy(distFromDoor = 0x1234))
+        editor.addEnemy(0xD17F, 128, 160)
+        val actorsBefore = bridge.enemies.sourceText()
+        val population = assertNotNull(bridge.enemies.view(native.roomId, assertNotNull(editor.currentPlmStateId())).resource).population
+        val populationBody = authoredMacroBody(actorsBefore, population.identity)
+        workspace.replaceProjectSource(com.supermetroid.editor.asm.ENEMY_SOURCE_FILE, actorsBefore,
+            actorsBefore.replace(populationBody, populationBody.replace(Regex("db \\$[0-9A-Fa-f]{2} ; Required kills")) { "db ${'$'}07 ; Required kills" }))
+        editor.refreshLinkedPlms()
+        editor.setRoomStateFxChange(assertNotNull(editor.currentPlmStateId()), com.supermetroid.editor.data.FxChange(fxType = 2, liquidSurfaceStart = 0x100), parser)
+        editor.setCurrentLayoutEditScope(LayoutEditScope.ALL_SHARING_STATES)
+        editor.applyBulkEdits("Clone geometry", listOf(com.supermetroid.editor.data.TileEdit(2, 2, editor.readBlockWord(2, 2), 0x8123)))
+        assertEquals(0x8123, editor.readBlockWord(2, 2), editor.statusMessage)
+        val owner = project.rooms.getValue("9879")
+        val predicateState = owner.states.first().id
+        val predicateMacro = com.supermetroid.editor.asm.AsmRoomSelectorsSource.conditionName(native.roomId, predicateState)
+        val text = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, text,
+            text.replace(authoredMacroBody(text, predicateMacro), "    ; smedit:asm-predicate-v1\n    dw CloneTestPredicate\n") + """
+
+                pushpc
+                org Freespace_Bank8F_E99B
+                CloneTestPredicate:
+                    clc
+                    rts
+                    fillbyte ${'$'}FF
+                    fill 32
+                CloneTestPredicate_End:
+                pullpc
+            """.trimIndent() + "\n")
+        editor.refreshLinkedPlms()
+        val originalDoors = editor.doorEntries.toList()
+        val targetDoorLists = originalDoors.map { it.destRoomPtr }.distinct().associateWith { id ->
+            parser.parseDoorList(assertNotNull(parser.readRoomHeader(id)).doorOut)
+        }
+        val level = assertNotNull(editor.workingLevelData).copyOf()
+        val enemies = editor.workingEnemies.toList()
+        val graphics = editor.workingEnemyGraphics.toList()
+        assertTrue(enemies.any { it.id == 0xD17F }); assertTrue(graphics.any { it.speciesId == 0xD17F })
+        val sourceBefore = bridge.sourceText() to bridge.doors.sourceText()
+        val position = assertNotNull(findAvailableRoomMapPosition(effectiveMinimapData(parser, project, 1), effectiveMapStationData(parser, project, 1),
+            parser.roomCatalog.rooms.mapNotNull { parser.readRoomHeader(it.getRoomIdAsInt()) }.filter { it.area == 1 }, native.width, native.height, preferredX = 40, preferredY = 20))
+        val request = NewRoomCreationRequest("Flyway copy", true, area = 1, mapX = position.first, mapY = position.second,
+            width = native.width, height = native.height, tileset = native.tileset)
+        val beforeClone = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val valid = bridge.sourceText()
+        val layoutMacro = assertNotNull(bridge.layouts.view(native.roomId, assertNotNull(editor.currentPlmStateId())).resource).identity
+        val layoutBody = authoredMacroBody(valid, layoutMacro)
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, valid, valid.replace(layoutBody, layoutBody.replace("${'$'}8123", "unfinished_layout_literal")))
+        assertContains(assertFailsWith<IllegalArgumentException> { editor.createNewRoom(request, parser) }.message.orEmpty(), "Clone blocked")
+        assertEquals(beforeClone, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bridge.sourceText(), valid); editor.refreshLinkedPlms()
+        assertTrue(editor.createManagedDoorArrival(0), editor.statusMessage)
+        val withArrival = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        assertContains(assertFailsWith<IllegalArgumentException> { editor.createNewRoom(request, parser) }.message.orEmpty(), "symbolic arrival")
+        assertEquals(withArrival, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        assertTrue(editor.undo(), editor.statusMessage)
+        val definition = editor.createNewRoom(request, parser)
+        assertEquals(originalDoors.size, definition.doors.size, "Copy outgoing doors is the clone default")
+        assertEquals(originalDoors.map { project.romRoomDestination(it.destRoomPtr) }, definition.doors.map { it.destination })
+        assertEquals(sourceBefore, bridge.sourceText() to bridge.doors.sourceText(), "Cloning must not rewrite native source")
+        val preview = editor.prepareWorkspaceParser(parser)
+        val previewDoors = preview.parseDoorList(assertNotNull(preview.readRoomHeader(definition.previewRoomId)).doorOut)
+        assertTrue(previewDoors.none { copy -> originalDoors.any { it.doorDefPtr == copy.doorDefPtr } })
+        // The reverse order matters too: adding a room must not disable later native adoption,
+        // and navigation must accept our known preview parser without trusting a foreign ROM.
+        val secondNative = assertNotNull(preview.readRoomHeader(0x91F8))
+        editor.loadRoom(secondNative.roomId, preview, secondNative)
+        val navigation = RoomAsmNavigation(editor, workspace, { secondNative.name })
+        val beforeInspect = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        assertTrue(navigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.DOORS)), editor.statusMessage)
+        assertNotNull(workspace.roomSourceInspection?.automaticEdit)
+        assertEquals(beforeInspect, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        val proposed = workspace.sourceEditorText(FX_SOURCE_FILE)
+        assertTrue(workspace.updateSourceEditText(FX_SOURCE_FILE, proposed + "; Native adoption after adding a room.\n"), workspace.error)
+        assertTrue(editor.ensureSelectorSource(secondNative.name), editor.statusMessage)
+        assertTrue(editor.ensureCurrentPlmSource(secondNative.name), editor.statusMessage)
+        assertTrue(editor.ensureInitialScrollSource(secondNative.name), editor.statusMessage)
+        assertTrue(editor.ensureFxSource(secondNative.name), editor.statusMessage)
+        assertTrue(editor.ensureEnemySource(secondNative.name), editor.statusMessage)
+        // Editing the clone must not mutate the original or the destination's return doors.
+        definition.doors.first().distFromDoor = 0x2345
+        val json = kotlinx.serialization.json.Json
+        val saved = json.encodeToString(SmEditProject.serializer(), project)
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return assertNotNull(ProjectFileService.buildRom(json.decodeFromString<SmEditProject>(saved), parser,
+                logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        }
+        fun verify(result: RomBuildResult): Int {
+            val built = RomParser(result.resultRom)
+            val id = result.newRoomIds.getValue(definition.id)
+            val header = assertNotNull(built.readRoomHeader(id))
+            val doors = built.parseDoorList(header.doorOut)
+            assertEquals(originalDoors.map { it.destRoomPtr }, doors.map { it.destRoomPtr })
+            doors.forEachIndexed { index, copy ->
+                val original = originalDoors[index]
+                val targetArea = assertNotNull(built.readRoomHeader(copy.destRoomPtr)).area
+                val flags = if (targetArea == header.area) original.bitflag and 0x40.inv() else original.bitflag or 0x40
+                assertEquals(original.copy(doorDefPtr = copy.doorDefPtr, bitflag = flags, distFromDoor = if (index == 0) 0x2345 else original.distFromDoor), copy)
+                assertTrue(copy.doorDefPtr !in originalDoors.map { it.doorDefPtr })
+            }
+            assertEquals(originalDoors, built.parseDoorList(assertNotNull(built.readRoomHeader(native.roomId)).doorOut))
+            targetDoorLists.filterKeys { it != native.roomId }.forEach { (target, expected) ->
+                assertEquals(expected, built.parseDoorList(assertNotNull(built.readRoomHeader(target)).doorOut))
+            }
+            assertContentEquals(level, built.decompressLZ2(header.levelDataPtr))
+            assertEquals(enemies, built.parseEnemyPopulation(header.enemySetPtr))
+            assertEquals(7, com.supermetroid.editor.rom.readSourceEnemyPopulation(built, header.enemySetPtr, "Cloned quota").killCount)
+            assertEquals(graphics, built.parseEnemyGfxSet(header.enemyGfxPtr))
+            assertEquals(0x100, built.parseFxEntries(header.fxPtr).single().liquidSurfaceStart)
+            val predicate = built.inspectRoomStates(native.roomId).states.first().condition
+            assertEquals(com.supermetroid.editor.rom.RoomStateConditionKind.ASM_ONLY, predicate.kind)
+            assertEquals(0x8FE99B, predicate.asmPredicateAddress)
+            return id
+        }
+        val first = build(); val firstId = verify(first)
+        val bank = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bank, bank + "\norg ${'$'}8F${firstId.toString(16).uppercase()}\n db ${'$'}42\n")
+        val relocated = build(); assertNotEquals(firstId, verify(relocated))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(relocated.resultRom, build().resultRom)
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
+    @Test fun `project room layout source coexists with native layouts preserves private states and survives cold relocated Asar builds`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val bridge = editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        editor.loadRoom(0x9879, parser, parser.readRoomHeader(0x9879)!!)
+        assertTrue(editor.ensureLayoutSource("Flyway"), editor.statusMessage)
+        val nativeLayouts = parser.parseRoomStatesWithData(0x9879).map { parser.decompressLZ2(it.levelDataPtr) }
+        val position = assertNotNull(findAvailableRoomMapPosition(effectiveMinimapData(parser, project, 1), effectiveMapStationData(parser, project, 1),
+            parser.roomCatalog.rooms.mapNotNull { parser.readRoomHeader(it.getRoomIdAsInt()) }.filter { it.area == 1 }, 1, 1, preferredX = 40, preferredY = 20))
+        val definition = editor.createNewRoom(NewRoomCreationRequest("Layout chamber", false, area = 1, mapX = position.first, mapY = position.second,
+            width = 1, height = 1, tileset = 0), parser)
+        val preview = editor.prepareWorkspaceParser(parser)
+        editor.loadRoom(definition.previewRoomId, preview, preview.readRoomHeader(definition.previewRoomId)!!)
+        val default = editor.roomSourceSnapshot().states.single().id
+        editor.setRoomStateDataChange(default, com.supermetroid.editor.data.StateDataChange(musicTrack = 7), preview)
+        editor.applyBulkEdits("Before source", listOf(com.supermetroid.editor.data.TileEdit(2, 2, editor.readBlockWord(2, 2), 0x8123, editor.readBts(2, 2), 7)))
+        val layoutNavigation = RoomAsmNavigation(editor, workspace, { definition.name })
+        assertTrue(layoutNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.LAYOUT)), editor.statusMessage)
+        val layoutDraft = assertNotNull(workspace.roomSourceInspection?.automaticEdit)
+        assertTrue(workspace.updateSourceEditText(PLM_SOURCE_FILE, layoutDraft.text + "; First new-room layout typing\n"), editor.statusMessage)
+        val text = bridge.sourceText()
+        val layoutName = bridge.layouts.view(definition.previewRoomId, default).resource!!.identity
+        val body = authoredMacroBody(text, layoutName)
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body, body.replace("${'$'}8123", "${'$'}8456")))
+        editor.refreshLinkedPlms(); assertEquals(0x8456, editor.readBlockWord(2, 2))
+        editor.applyBulkEdits("After source", listOf(com.supermetroid.editor.data.TileEdit(3, 2, editor.readBlockWord(3, 2), 0x8124)))
+        val conditional = editor.addRoomState(default, projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7), preview)
+        editor.switchRoomState(conditional, preview)
+        assertTrue(editor.makeCurrentLayoutUnique(preview), editor.statusMessage)
+        editor.applyBulkEdits("Private layout", listOf(com.supermetroid.editor.data.TileEdit(2, 2, editor.readBlockWord(2, 2), 0x8678, 7, 0x22)))
+        editor.setRoomStateDataChange(conditional, com.supermetroid.editor.data.StateDataChange(musicTrack = 9), preview)
+        val before = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return assertNotNull(ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        }
+        fun verify(result: RomBuildResult): Int {
+            val id = result.newRoomIds.getValue(definition.id)
+            val built = RomParser(result.resultRom)
+            val states = built.parseRoomStatesWithData(id)
+            assertEquals(listOf(9, 7), states.map { it.musicTrack })
+            assertEquals(2, states.map { it.levelDataPtr }.distinct().size)
+            states.forEachIndexed { index, state ->
+                val bytes = built.decompressLZ2(state.levelDataPtr)
+                fun word(cell: Int) = (bytes[2 + cell * 2].toInt() and 255) or ((bytes[3 + cell * 2].toInt() and 255) shl 8)
+                val layerBytes = (bytes[0].toInt() and 255) or ((bytes[1].toInt() and 255) shl 8)
+                assertEquals(if (index == 0) 0x8678 else 0x8456, word(34))
+                assertEquals(0x8124, word(35))
+                assertEquals(if (index == 0) 0x22 else 7, bytes[2 + layerBytes + 34].toInt() and 255)
+            }
+            built.parseRoomStatesWithData(0x9879).forEachIndexed { index, state ->
+                assertContentEquals(nativeLayouts[index], built.decompressLZ2(state.levelDataPtr))
+            }
+            return id
+        }
+        val first = build(); val firstId = verify(first)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        val bank = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bank, bank + "\norg ${'$'}8F${firstId.toString(16).uppercase()}\n db ${'$'}42\n")
+        val relocated = build(); assertNotEquals(firstId, verify(relocated))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(before)
+        assertContentEquals(relocated.resultRom, build(cold).resultRom)
+        val good = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, good, good.replaceFirst("${'$'}8678", "missing_layout_literal"))
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        logs.clear()
+        assertNull(ProjectFileService.buildRom(cold, parser, logs::add, logs::add, fixture.projectFile.path),
+            "A cold build must reject the invalid source, not substitute the last-good canvas")
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
+    @Test fun `project room scalar source coexists with native ownership follows new states and relocates through cold Asar builds`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        val bridge = editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        val nativeState = editor.roomSourceSnapshot().states.last().id
+        editor.setRoomStateDataChange(nativeState, com.supermetroid.editor.data.StateDataChange(musicTrack = 6), parser)
+        assertEquals(1, project.rooms.getValue("91F8").asmRoomPropertiesSourceVersion)
+        val position = assertNotNull(findAvailableRoomMapPosition(effectiveMinimapData(parser, project, 1), effectiveMapStationData(parser, project, 1),
+            parser.roomCatalog.rooms.mapNotNull { parser.readRoomHeader(it.getRoomIdAsInt()) }.filter { it.area == 1 }, 1, 1, preferredX = 40, preferredY = 20))
+        val definition = editor.createNewRoom(NewRoomCreationRequest("Authored chamber", false, area = 1, mapX = position.first, mapY = position.second,
+            width = 1, height = 1, tileset = 0), parser)
+        val preview = editor.prepareWorkspaceParser(parser)
+        editor.loadRoom(definition.previewRoomId, preview, preview.readRoomHeader(definition.previewRoomId)!!)
+        val default = editor.roomSourceSnapshot().states.single().id
+        editor.setRoomStateDataChange(default, com.supermetroid.editor.data.StateDataChange(musicTrack = 7), preview)
+        editor.setRoomHeaderChange(com.supermetroid.editor.data.RoomHeaderChange(upScroller = 0x72, creBitflag = 3))
+        val text = bridge.sourceText()
+        val suffix = com.supermetroid.editor.asm.AsmRoomPropertiesSource.stateName(0, default)
+            .removePrefix(com.supermetroid.editor.asm.AsmRoomPropertiesSource.prefix(0))
+        val name = com.supermetroid.editor.asm.AsmRoomPropertiesSource.projectPrefix(definition.id) + suffix
+        val body = authoredMacroBody(text, name)
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, text, text.replaceFirst(body, body.replace("db ${'$'}07 ; Music track", "db ${'$'}08 ; Music track / ASM edit")))
+        editor.refreshLinkedPlms()
+        assertEquals(8, bridge.properties.view(definition.previewRoomId).resource!!.states.getValue(default).musicTrack)
+        val conditional = editor.addRoomState(default, projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7), preview)
+        editor.setRoomStateDataChange(conditional, com.supermetroid.editor.data.StateDataChange(musicTrack = 9), preview)
+        editor.addPlm(0xEEDB, 4, 4, 0x100, ItemStateScope.THIS_STATE)
+        val before = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return assertNotNull(ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        }
+        fun verify(result: RomBuildResult): Int {
+            val id = result.newRoomIds.getValue(definition.id)
+            val built = RomParser(result.resultRom)
+            val header = assertNotNull(built.readRoomHeader(id))
+            assertEquals(0x72, header.upScroller); assertEquals(3, header.creBitflag)
+            val states = built.parseRoomStatesWithData(id)
+            assertEquals(listOf(9, 8), states.map { it.musicTrack })
+            assertTrue(built.parsePlmSet(states.first().plmSetPtr).any { it.id == 0xEEDB && it.x == 4 && it.y == 4 })
+            assertEquals(6, built.parseRoomStatesWithData(0x91F8).last().musicTrack)
+            assertEquals(0x8F0000 or id, AsmBuildArtifactRepository().load(fixture.projectFile.path)!!.symbols.labels[com.supermetroid.editor.asm.AsmProjectRoomLabels.entry(definition.id)])
+            return id
+        }
+        val first = build(); val firstId = verify(first)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        val bank = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bank, bank + "\norg ${'$'}8F${firstId.toString(16).uppercase()}\n db ${'$'}42\n")
+        val second = build(); assertNotEquals(firstId, verify(second))
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(before)
+        assertContentEquals(second.resultRom, build(cold).resultRom)
+        val invalid = bridge.sourceText()
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, invalid, invalid.replace("db ${'$'}09 ; Music track", "db missing ; Music track"))
+        assertTrue(workspace.saveAllSources(), workspace.error)
+        assertNull(ProjectFileService.buildRom(cold, parser, logs::add, logs::add, fixture.projectFile.path), "A cold build must not use a last-good GUI projection")
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
+    @Test fun `new rooms compile as a complete ASM graph with durable labels GUI edits relocation and semantic data navigation`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val rom = fixture.rom
+        val parser = RomParser(rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val position = assertNotNull(findAvailableRoomMapPosition(effectiveMinimapData(parser, project, 1), effectiveMapStationData(parser, project, 1),
+            parser.roomCatalog.rooms.mapNotNull { parser.readRoomHeader(it.getRoomIdAsInt()) }.filter { it.area == 1 },
+            1, 1, preferredX = 40, preferredY = 20))
+        val definition = editor.createNewRoom(NewRoomCreationRequest("Project chamber", false, area = 1, mapX = position.first, mapY = position.second, width = 1, height = 1, tileset = 0), parser)
+        var preview = editor.prepareWorkspaceParser(parser)
+        editor.loadRoom(definition.previewRoomId, preview, preview.readRoomHeader(definition.previewRoomId)!!)
+        editor.addProjectRoomDoor(definition.previewRoomId, definition.previewRoomId, 0, 0, 0, preview)
+        preview = editor.prepareWorkspaceParser()
+        editor.loadRoom(definition.previewRoomId, preview, preview.readRoomHeader(definition.previewRoomId)!!)
+        editor.applyBulkEdits("Paint project room", listOf(com.supermetroid.editor.data.TileEdit(2, 2, editor.readBlockWord(2, 2), 0x8123)))
+        val state = editor.currentPlmStateId()!!
+        editor.setRoomStateDataChange(state, com.supermetroid.editor.data.StateDataChange(musicTrack = 7), preview)
+        editor.setRoomStateFxChange(state, com.supermetroid.editor.data.FxChange(fxType = 4, liquidSurfaceStart = 0x0120), preview)
+        editor.addPlm(0xEEDB, 4, 4, 0x100, ItemStateScope.THIS_STATE)
+        assertTrue(editor.workingPlms.any { it.id == 0xEEDB }, editor.statusMessage)
+        val before = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(project, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        fun verify(result: RomBuildResult): Int {
+            assertTrue(result.sourceRoomPatched > 0, "The graph must be assembled, not patched after Asar")
+            val id = result.newRoomIds.getValue(definition.id)
+            val built = RomParser(result.resultRom)
+            val header = assertNotNull(built.readRoomHeader(id))
+            val data = built.parseRoomStatesWithData(id).single()
+            assertEquals(7, data.musicTrack)
+            assertEquals(4, built.parseFxEntries(data.fxPtr).single().fxType)
+            assertEquals(0x0120, built.parseFxEntries(data.fxPtr).single().liquidSurfaceStart)
+            assertEquals(id, built.parseDoorList(header.doorOut).single().destRoomPtr)
+            assertTrue(built.parsePlmSet(data.plmSetPtr).any { it.id == 0xEEDB && it.x == 4 && it.y == 4 })
+            val layout = built.decompressLZ2(data.levelDataPtr)
+            val offset = 2 + (2 * 16 + 2) * 2
+            assertEquals(0x8123, (layout[offset].toInt() and 255) or ((layout[offset + 1].toInt() and 255) shl 8))
+            val labels = AsmBuildArtifactRepository().load(fixture.projectFile.path)!!.symbols.labels
+            assertEquals(0x8F0000 or id, labels[com.supermetroid.editor.asm.AsmProjectRoomLabels.entry(definition.id)])
+            return id
+        }
+        val first = assertNotNull(build(), logs.joinToString("\n")); val firstId = verify(first)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project), "Building must not persist physical placements")
+        workspace.refreshBuildReport(validateSources = false)
+        val section = assertNotNull(workspace.roomDataSnapshot).sections.first { it.projectRoomId == definition.id && it.label.endsWith("_Header") }
+        assertEquals(definition.previewRoomId, com.supermetroid.editor.asm.AsmEditorTarget.Room(firstId, projectRoomId = section.projectRoomId).resolveRoomId(project))
+        val revision = workspace.sourceBufferRevision
+        assertTrue(RoomAsmNavigation(editor, workspace, { definition.name }).open(RoomAsmSourceRequest(RoomAsmSourceKind.PROPERTIES)), editor.statusMessage)
+        assertEquals(revision, workspace.sourceBufferRevision, "Opening authored header/state source must not mutate it")
+        assertNull(workspace.roomSourceInspection)
+        val bank = workspace.projectSourceText(PLM_SOURCE_FILE)
+        workspace.replaceProjectSource(PLM_SOURCE_FILE, bank, bank + "\norg ${'$'}8F${firstId.toString(16).uppercase()}\n db ${'$'}42 ; occupy the old room placement\n")
+        val second = assertNotNull(build(), logs.joinToString("\n")); val secondId = verify(second)
+        assertNotEquals(firstId, secondId)
+        assertEquals(before, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(before)
+        val coldResult = assertNotNull(ProjectFileService.buildRom(cold, parser, logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        assertContentEquals(second.resultRom, coldResult.resultRom)
+        project.newRooms.remove(definition)
+        assertNull(com.supermetroid.editor.asm.AsmEditorTarget.Room(firstId, projectRoomId = definition.id).resolveRoomId(project))
+        assertContentEquals(rom, fixture.romFile.readBytes())
+    }
+
+    @Test fun `shared native door records compile once update every consumer and protect unchanged bytes after reopen and reset`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val rom = com.supermetroid.editor.asm.saveSourceTestRom()
+        com.supermetroid.editor.asm.DOOR_ARRIVAL_DISPATCH_BYTES.copyInto(rom, 0x7E8A3)
+        // Real erased bank tails for the structural list's new DoorDef/layout allocations.
+        rom.fill(0xFF.toByte(), 0x1F000, 0x20000)
+        rom.fill(0xFF.toByte(), 0x207000, 0x208000)
+        val level = ByteArray(2 + 32 * 32 * 3).also { it[1] = 8 }
+        com.supermetroid.editor.rom.LZ5Compressor.compress(level).copyInto(rom, 0x200000)
+        for (pc in listOf(0x791F8 + 18, 0x79300)) { rom[pc + 1] = 0x80.toByte(); rom[pc + 2] = 0xC0.toByte() }
+        rom.copyOfRange(0x791F8, 0x791F8 + 44).copyInto(rom, 0x79879)
+        val fixture = AsmProjectTestFixture.synthetic(tempDirectory, rom)
+        val parser = RomParser(rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val catalog = AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser)
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(catalog, workspace)
+        editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        editor.enableSharedDoorEditing(0x8000)
+        editor.updateDoor(0, editor.doorEntries.single().copy(distFromDoor = 0x1234))
+        assertEquals(0x1234, editor.doorEntries.single().distFromDoor, editor.statusMessage)
+        assertTrue(editor.createManagedDoorArrival(0), editor.statusMessage)
+        editor.loadRoom(0x9879, parser, parser.readRoomHeader(0x9879)!!)
+        assertEquals(0x1234, editor.doorEntries.single().distFromDoor)
+        assertTrue(editor.ensureDoorSource("Second shared consumer"), editor.statusMessage)
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(project, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        val built = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0x1234, RomParser(built.resultRom).parseDoorEntry(0x8060, 0)!!.distFromDoor)
+        val symbols = AsmBuildArtifactRepository().load(fixture.projectFile.path)!!.symbols.labels
+        for (label in listOf("SmeditDoors_91F8_Door_0_Entry", "SmeditDoors_9879_Door_0_Entry", "SmeditSharedDoors_8000_Entry")) assertEquals(0x838000, symbols[label])
+        assertEquals(symbols.getValue("SmeditArrival_91F8_Door_0_Entry") and 65535, RomParser(built.resultRom).parseDoorEntry(0x8060, 0)!!.entryCode)
+        val snapshot = kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project)
+        val cold = kotlinx.serialization.json.Json.decodeFromString<SmEditProject>(snapshot)
+        val coldWorkspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val coldBridge = AsmPlmSourceBridge(catalog, coldWorkspace, false) { cold }
+        assertEquals(0x1234, coldBridge.doors.view(0x9879).resource!!.entries.single().change.distFromDoor)
+        assertTrue(editor.resetCurrentRoomToOriginal(parser), editor.statusMessage)
+        val reset = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0x1234, RomParser(reset.resultRom).parseDoorEntry(0x8060, 0)!!.distFromDoor, "Room reset must not undo a globally shared record")
+        assertTrue(editor.undo(), editor.statusMessage)
+        assertContentEquals(built.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        editor.addProjectRoomDoor(0x91F8, 0x91F8, 0, 0, 0, parser)
+        assertEquals(2, editor.doorEntries.size, editor.statusMessage)
+        val grown = RomParser(assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val relocatedList = grown.readRoomHeader(0x91F8)!!.doorOut
+        assertNotEquals(0x8060, relocatedList)
+        assertEquals(0x8000, grown.parseDoorList(relocatedList).first().doorDefPtr)
+        assertEquals(0x8060, grown.readRoomHeader(0x9879)!!.doorOut)
+        assertEquals(0x1234, grown.parseDoorEntry(0x8060, 0)!!.distFromDoor)
+        assertTrue(editor.undo(), editor.statusMessage)
+        assertContentEquals(built.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        editor.loadRoom(0x9879, parser, parser.readRoomHeader(0x9879)!!)
+        assertTrue(editor.resetCurrentRoomToOriginal(parser), editor.statusMessage)
+        editor.loadRoom(0x91F8, parser, parser.readRoomHeader(0x91F8)!!)
+        assertTrue(editor.resetCurrentRoomToOriginal(parser), editor.statusMessage)
+        assertTrue(project.rooms.values.none { it.asmDoorSourceVersion != 0 })
+        assertContentEquals(built.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom,
+            "Global data and its managed arrival must survive resetting every room-local owner")
+        project.patches += SmPatch("shared-unchanged-byte", "Cannot overwrite a shared field", enabled = true,
+            writes = mutableListOf(PatchWrite(0x18004, listOf(0), expectedBytes = listOf(0))))
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        assertContentEquals(rom, fixture.romFile.readBytes())
+    }
 
     @Test fun `structural doors allocate symbolically preserve native identities and rebuild cold add remove reset histories`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
@@ -69,6 +494,15 @@ class AsmBuildPipelineIntegrationTest {
             projectRoomStateCondition(ProjectRoomStateConditionKind.EVENT_SET, 7, negated = true))), parser)
         editor.addRoomState(conditional, projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR,
             negated = true, sourceDoor = reference), parser)
+        val fxState = editor.currentPlmStateId()!!
+        editor.setRoomStateDoorFxChange(fxState, 0, com.supermetroid.editor.data.FxChange(fxType = 4, liquidSurfaceStart = 0x0120), parser, reference)
+        assertTrue(editor.ensureCurrentPlmSource(native.name), editor.statusMessage)
+        editor.addPlm(0xB76F, 8, 8, 0x8000, ItemStateScope.THIS_STATE)
+        val station = assertNotNull(editor.workingPlms.singleOrNull { it.id == 0xB76F }, editor.statusMessage)
+        val saveSlot = station.param and 255
+        assertTrue(editor.updateSaveStationIncomingDoor(station,
+            editor.incomingDoorConditionOptions(native.roomId, parser).single { it.sourceDoor == reference }), editor.statusMessage)
+        editor.updateSaveStationSpawnFields(0, saveSlot, -32, 104, 256, 0, parser)
         val json = kotlinx.serialization.json.Json
         assertTrue(workspace.saveAllSources(), workspace.error)
         val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
@@ -102,6 +536,13 @@ class AsmBuildPipelineIntegrationTest {
                 it.condition.kind == com.supermetroid.editor.rom.RoomStateConditionKind.INCOMING_DOOR && it.condition.negated
             }.condition
             assertEquals(entries.last().doorDefPtr, invertedDoor.argument)
+            val fx = built.parseRoomStatesWithData(native.roomId).flatMap { built.parseFxEntries(it.fxPtr) }
+                .filter { it.doorSelect == entries.last().doorDefPtr }
+            assertTrue(fx.isNotEmpty()); assertTrue(fx.all { it.fxType == 4 && it.liquidSurfaceStart == 0x0120 })
+            val save = assertNotNull(built.readSaveEntry(0, saveSlot))
+            assertEquals(entries.last().doorDefPtr, save.doorPtr)
+            assertEquals(0xFFE0, save.samusX); assertEquals(256, save.scrollX)
+            assertEquals(reference, cb.saveSpawn(native.roomId, 0, saveSlot)!!.sourceDoor)
             assertEquals(0, built.readUInt16At(built.snesToPc(0x8F0000 or h.doorOut) + count * 2))
             assertContentEquals(fixture.rom.copyOfRange(parser.snesToPc(0x8F0000 or native.doorOut), parser.snesToPc(0x8F0000 or native.doorOut) + nativeDoors.size * 2),
                 result.resultRom.copyOfRange(parser.snesToPc(0x8F0000 or native.doorOut), parser.snesToPc(0x8F0000 or native.doorOut) + nativeDoors.size * 2))
@@ -1160,7 +1601,7 @@ class AsmBuildPipelineIntegrationTest {
         assertContentEquals(fourStateRom, verify())
     }
 
-    @Test fun `ASM first layout adoption from native assets compiles and later joins the visual editor`() = runBlocking {
+    @Test fun `ASM first layout typing from native assets compiles without opt in and later joins the visual editor`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)
         val parser = RomParser(fixture.rom)
@@ -1180,19 +1621,19 @@ class AsmBuildPipelineIntegrationTest {
         assertTrue(navigation.openFromAsm(link), editor.statusMessage)
         assertEquals(model, kotlinx.serialization.json.Json.encodeToString(SmEditProject.serializer(), project))
         assertEquals(revision, workspace.sourceBufferRevision)
-        assertNotNull(workspace.roomSourceInspection).startEditing()
-        assertNull(workspace.roomSourceInspection, editor.statusMessage)
-        assertEquals(0, editor.currentRoomId); assertNull(editor.roomSourceParser)
-        val room = project.rooms.getValue("9879")
-        val selected = room.states.single { it.sourceStateIndex == 1 }.id
-        val original = bridge.sourceText()
-        val input = com.supermetroid.editor.asm.AsmRoomLayoutSource(original).resources(room, 48, 16).getValue(selected).bytes()
+        val draft = assertNotNull(workspace.roomSourceInspection?.automaticEdit)
+        val staged = editor.roomSourceSnapshot(native.roomId).also { it.asmLayoutSourceVersion = 1 }
+        val selected = staged.states.single { it.sourceStateIndex == 1 }.id
+        val input = com.supermetroid.editor.asm.AsmRoomLayoutSource(draft.text).resources(staged, 48, 16).getValue(selected).bytes()
         val wordOffset = 2 + (8 * 48 + 20) * 2
         val oldWord = (input[wordOffset].toInt() and 255) or ((input[wordOffset + 1].toInt() and 255) shl 8)
         val newWord = (oldWord and 0xFFF) or 0x8000
-        val raw = com.supermetroid.editor.asm.AsmRoomLayoutSource(original).edit(room, selected, 48, 16,
+        val raw = com.supermetroid.editor.asm.AsmRoomLayoutSource(draft.text).edit(staged, selected, 48, 16,
             listOf(com.supermetroid.editor.data.TileEdit(20, 8, oldWord, newWord, newBts = 7)))
-        workspace.replaceProjectSource(PLM_SOURCE_FILE, original, raw)
+        assertTrue(workspace.updateSourceEditText(PLM_SOURCE_FILE, raw), editor.statusMessage)
+        assertNull(workspace.roomSourceInspection, editor.statusMessage)
+        assertEquals(0, editor.currentRoomId); assertNull(editor.roomSourceParser)
+        val room = project.rooms.getValue("9879")
         suspend fun verifyBuild() {
             assertTrue(workspace.saveAllSources(), workspace.error)
             assertTrue(editor.saveProject())

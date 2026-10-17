@@ -15,11 +15,14 @@ internal class AsmFxBridge(private val catalog: AsmPlmSourceCatalog, private val
         val text = sourceText()
         return revision?.takeIf { it.first == text }?.second ?: AsmFxSource(text).also { revision = text to it }
     }
+    fun validate(roomId: Int, resource: SourceFxResource) = validateSourceFxDoors(roomId, resource, catalog.parser,
+        liveSourceDoors(resource.entries.mapNotNull { it.sourceDoor }, project(), catalog, workspace,
+            nativePointers = resource.entries.map { it.doorSelect }))
     fun isManaged(roomId: Int) = (project().rooms[project().roomKey(roomId)]?.asmFxSourceVersion ?: 0) != 0
     fun view(roomId: Int, stateId: String): AsmFxView = try {
         val inputs = source().resources(project().rooms.getValue(project().roomKey(roomId)))
         requireDoorRoutedFxOwnership(project().rooms.getValue(project().roomKey(roomId)), catalog.parser)
-        inputs.values.distinct().forEach { validateSourceFxDoors(roomId, it, catalog.parser) }
+        inputs.values.distinct().forEach { validate(roomId, it) }
         val resource = inputs.getValue(stateId)
         lastGood[roomId to stateId] = resource
         AsmFxView(resource, null)
@@ -35,7 +38,7 @@ internal class AsmFxBridge(private val catalog: AsmPlmSourceCatalog, private val
         if (isManaged(roomId)) return
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "FX source requires ASM mode." }
-        require(owner.newRooms.isEmpty()) { "FX source for projects with added rooms is not supported yet." }
+        require(owner.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room FX source is not supported yet." }
         val room = owner.rooms[owner.roomKey(roomId)] ?: RoomEdits(roomId)
         val staged = room.copy(states = room.states.toMutableList())
         staged.ensureStateManifest(catalog.parser)
@@ -69,7 +72,8 @@ internal class AsmFxBridge(private val catalog: AsmPlmSourceCatalog, private val
         workspace.replaceProjectSource(FX_SOURCE_FILE, before, after, ::restore, ::adopt)
         adopt()
     }
-    fun edit(roomId: Int, stateId: String, door: Int, change: FxChange, allStates: Boolean = false) {
+    fun edit(roomId: Int, stateId: String, door: Int, change: FxChange, allStates: Boolean = false,
+             sourceDoor: ProjectSourceDoorReference? = null) {
         val view = view(roomId, stateId)
         require(view.problem == null) { view.problem ?: "Invalid FX draft." }
         val current = source()
@@ -79,15 +83,24 @@ internal class AsmFxBridge(private val catalog: AsmPlmSourceCatalog, private val
         for (target in targets) {
             val staged = AsmFxSource(edited)
             val input = staged.resource(roomId, target)
-            val entry = input.entries.singleOrNull { it.doorSelect == door } ?: if (door == 0) emptyDefaultFxEntry() else error("No FX header for this door.")
+            val entry = input.entries.singleOrNull { it.doorSelect == door && it.sourceDoor == sourceDoor }
+                ?: emptyDefaultFxEntry().copy(doorSelect = door, sourceDoor = sourceDoor)
             edited = staged.replaceEntry(room, target, door, entry.withFxChange(change), detach = !allStates)
         }
         val external = workspace.projectSourceTextsExcept(FX_SOURCE_FILE).flatMap { AsmFxSource.references(it).asSequence() }.toSet()
         val result = AsmFxSource(AsmFxSource(edited).tidy(room, external)).withComments(room)
-        AsmFxSource(result).resources(room).values.forEach { validateSourceFxDoors(roomId, it, catalog.parser) }
+        AsmFxSource(result).resources(room).values.forEach { validate(roomId, it) }
         workspace.replaceProjectSource(FX_SOURCE_FILE, current.text, result)
     }
     fun hasState(roomId: Int, stateId: String) = isManaged(roomId) && source().hasState(roomId, stateId)
+    fun remove(roomId: Int, stateId: String, door: Int, sourceDoor: ProjectSourceDoorReference?) {
+        val current = source()
+        val room = project().rooms.getValue(project().roomKey(roomId))
+        // Removing a dangling selector is a repair operation; don't require the old target to resolve.
+        val edited = current.removeEntry(room, stateId, door, sourceDoor)
+        AsmFxSource(edited).resources(room).values.forEach { validate(roomId, it) }
+        workspace.replaceProjectSource(FX_SOURCE_FILE, current.text, edited)
+    }
     fun cloneState(roomId: Int, template: String, newId: String) {
         if (!isManaged(roomId)) return
         val current = source()
@@ -95,7 +108,7 @@ internal class AsmFxBridge(private val catalog: AsmPlmSourceCatalog, private val
             require(project().rooms[project().roomKey(roomId)]?.states?.none { it.id == newId } == true) { "Delete the new state before undoing its FX declaration." }
         })
     }
-    fun line(roomId: Int, stateId: String, door: Int? = null) = source().line(roomId, stateId, door)
+    fun line(roomId: Int, stateId: String, door: Int? = null, sourceDoor: ProjectSourceDoorReference? = null) = source().line(roomId, stateId, door, sourceDoor)
     fun prepare(text: String): () -> String {
         val rooms = project().rooms.values.filter { it.asmFxSourceVersion != 0 }.map { it.copy(states = it.states.map { state ->
             state.copy(doorFxChanges = state.doorFxChanges.toMutableMap()) }.toMutableList()) }

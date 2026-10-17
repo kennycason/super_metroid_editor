@@ -598,8 +598,8 @@ fun main() = application {
                 roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.SELECTORS, stateId))
             }
 
-            fun openFx(stateId: String, door: Int?) {
-                roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.FX, stateId, door = door))
+            fun openFx(stateId: String, door: Int?, sourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference?) {
+                roomAsmNavigation.open(RoomAsmSourceRequest(RoomAsmSourceKind.FX, stateId, door = door, sourceDoor = sourceDoor))
             }
 
             fun openSaveSpawn(entry: RomParser.PlmEntry) {
@@ -628,9 +628,13 @@ fun main() = application {
                 navigate {
                     when (target) {
                         is AsmEditorTarget.Room -> {
+                            val roomId = target.resolveRoomId(editorState.project) ?: run {
+                                editorState.postStatus("This project room is no longer available. No room was opened.")
+                                return@navigate
+                            }
                             if (target.layoutId != null || target.stateId != null)
-                                editorState.requestLayoutNavigation(target.roomId, target.layoutId, target.stateId)
-                            rooms.firstOrNull { it.getRoomIdAsInt() == target.roomId }?.let { room ->
+                                editorState.requestLayoutNavigation(roomId, target.layoutId, target.stateId)
+                            rooms.firstOrNull { it.getRoomIdAsInt() == roomId }?.let { room ->
                                 selectedRoom = room
                                 RomPreferences.getLastRomPath()?.let { saveLastRoom(it, room) }
                                 leftTab = TAB_ROOMS

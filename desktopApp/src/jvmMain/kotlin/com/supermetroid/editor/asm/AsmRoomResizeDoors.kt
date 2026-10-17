@@ -20,6 +20,8 @@ internal class AsmRoomResizeDoors(
     fun incoming(owner: SmEditProject, roomId: Int, text8F: String, includeTargetSource: Boolean = true): List<AsmResizeIncomingDoor> {
         val parser = catalog.parser
         val source83 by lazy { AsmDoorSource(workspace.projectSourceText(DOOR_SOURCE_FILE), text8F, catalog.symbols) }
+        val sharedPointers = nativeDoorConsumers(parser).filterValues { it.map { pair -> pair.first }.distinct().size > 1 }.keys
+        val shared = if (sharedPointers.isEmpty()) emptyMap() else source83.sharedResources(parser)
         fun dimensions(id: Int) = parser.readRoomHeader(id)?.let { native ->
             val edits = owner.rooms[owner.roomKey(id)]
             (edits?.roomHeaderChange?.width ?: native.width) to (edits?.roomHeaderChange?.height ?: native.height)
@@ -36,9 +38,12 @@ internal class AsmRoomResizeDoors(
                 val doors = if (pointer in 0x8000..0xFFFE) parser.parseDoorList(pointer) else emptyList()
                 require(changes.keys.all { it in doors.indices }) { "${native.name}: a GUI door override has no native connection." }
                 doors.mapIndexedNotNull { index, door ->
-                    val change = changes[index] ?: DoorChange(index, door.destRoomPtr, door.bitflag, door.doorCapCode,
+                    val canonical = shared[door.doorDefPtr]
+                    require(canonical == null || changes[index] == null) { "A shared DoorDef also has a competing GUI override." }
+                    val change = canonical?.change?.copy(doorIndex = index) ?: changes[index] ?: DoorChange(index, door.destRoomPtr, door.bitflag, door.doorCapCode,
                         door.screenX, door.screenY, door.distFromDoor, door.entryCode)
-                    if (change.destRoomPtr != roomId) null else SourceRoomDoor(door.doorDefPtr, change)
+                    if (change.destRoomPtr != roomId) null else SourceRoomDoor(door.doorDefPtr, change, canonical?.arrival,
+                        shared = door.doorDefPtr in sharedPointers)
                 }
             }
             entries.filter { it.change.destRoomPtr == roomId }.map { AsmResizeIncomingDoor(id, it) }
@@ -51,6 +56,9 @@ internal class AsmRoomResizeDoors(
              restoreNative: Boolean = false): AsmResizeDoorPlan {
         val parser = catalog.parser
         val incoming = incoming(owner, target.roomId, before8F, includeTargetSource = !restoreNative)
+        require(width == oldWidth && height == oldHeight || incoming.none { it.door.shared }) {
+            "Shared native DoorDefs require a coordinated geometry operation. Resize is blocked; no room or source was changed."
+        }
         val nativeTarget = requireNotNull(parser.readRoomHeader(target.roomId))
         val models = linkedMapOf<String, RoomEdits>().apply { putAll(stagedRooms); put(owner.roomKey(target.roomId), target) }
         fun room(id: Int) = models.getOrPut(owner.roomKey(id)) {

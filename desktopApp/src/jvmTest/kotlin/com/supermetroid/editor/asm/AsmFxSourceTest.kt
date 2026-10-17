@@ -14,6 +14,38 @@ class AsmFxSourceTest {
     private val doorFx = emptyDefaultFxEntry().copy(doorSelect = 0x9000, fxType = 4, liquidSurfaceStart = 0x0320, liquidSurfaceNew = 0x0100, liquidSpeed = 0xFFF0, liquidDelay = 30)
     private val defaultFx = emptyDefaultFxEntry().copy(fxType = 6, liquidSurfaceStart = 0x0200, paletteFxBitflags = 3, paletteBlend = 0x20)
     private data class Fixture(val workspace: AsmWorkspaceState, val bridge: AsmPlmSourceBridge, val project: SmEditProject)
+
+    @Test fun `symbolic FX scalar structural and shared edits preserve identities notes CRLF and native stop rules`() {
+        val room = RoomEdits(0x91F8, asmFxSourceVersion = 1).also { it.ensureStateManifest(RomParser(objectSourceTestRom())) }
+        val reference = ProjectSourceDoorReference(0xA000, 8)
+        val symbol = emptyDefaultFxEntry().copy(sourceDoor = reference, fxType = 4)
+        val name = "SmeditFx_91F8_Table_1"
+        for (tail in listOf(emptyList(), listOf(defaultFx))) {
+            val table = SourceFxResource(name, listOf(symbol) + tail)
+            val original = (AsmFxSource.renderTable(table) + room.states.joinToString("") {
+                AsmFxSource.renderState(room.roomId, it.id, name)
+            }).replace(reference.entryLabel + " ;", reference.entryLabel + " ; keep entrance note ;").replace("\n", "\r\n")
+            assertEquals(table, AsmFxSource(original).resources(room).values.first())
+            val state = room.states.first().id
+            val changed = AsmFxSource(original).replaceEntry(room, state, 0, symbol.copy(liquidSpeed = 0xFFF0))
+            assertEquals(0xFFF0, AsmFxSource(changed).resource(room.roomId, state).entries.first().liquidSpeed)
+            assertEquals(table, AsmFxSource(changed).resource(room.roomId, room.states.last().id))
+            assertContains(changed, reference.entryLabel + " ; keep entrance note ; Incoming door (0000 = Default)\r\n")
+            val removed = AsmFxSource(changed).removeEntry(room, state, 0, reference)
+            assertEquals(tail, AsmFxSource(removed).resource(room.roomId, state).entries)
+            assertEquals(table, AsmFxSource(removed).resource(room.roomId, room.states.last().id))
+            assertContains(removed, "keep entrance note")
+            val readded = AsmFxSource(removed).replaceEntry(room, state, 0, symbol)
+            assertEquals(listOf(symbol) + tail, AsmFxSource(readded).resource(room.roomId, state).entries)
+            val newBody = authoredMacroBody(readded, AsmFxSource(readded).resource(room.roomId, state).identity)
+            assertFalse(newBody.replace("\r\n", "").contains('\n'), "Inserted fields must keep CRLF")
+            if (tail.isNotEmpty()) assertTrue(newBody.indexOf(reference.entryLabel) < newBody.indexOf("; Default FX"), "Default heading stays with Default")
+            val symbolLine = AsmFxSource(readded).line(room.roomId, state, 0, reference)
+            assertContains(readded.lineSequence().elementAt(symbolLine), "dw ${reference.entryLabel}")
+            assertFails { AsmFxSource(original.replace(reference.entryLabel, "${reference.entryLabel}+2")).resources(room) }
+            assertFails { AsmFxSource(original.replace("dw ${'$'}FFFF ; Liquid Start", "dw ${reference.entryLabel} ; Liquid Start")).resources(room) }
+        }
+    }
     private suspend fun fixture(noFx: Boolean = false): Fixture {
         val root = File(directory, "reference")
         val src = File(root, "src").apply { mkdirs() }

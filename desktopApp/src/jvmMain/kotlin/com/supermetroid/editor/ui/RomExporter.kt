@@ -188,6 +188,8 @@ internal data class RomBuildResult(
     val sourceAssetPatched: Int = 0,
     val sourceRoomPatched: Int = 0,
     val sourcePatchPatched: Int = 0,
+    /** Actual build placements keyed by durable project room ID. Disposable, never written into project data. */
+    val newRoomIds: Map<String, Int> = emptyMap(),
 ) {
     val hasSemanticEdits: Boolean
         get() = roomsPatched > 0 || patchesApplied > 0 || musicPatched > 0 ||
@@ -234,12 +236,13 @@ internal class RomExporter(
             onStatus("Authored selectors require validated ASM build inputs.")
             return null
         }
-        if (project.rooms.values.any { it.asmRoomPropertiesSourceVersion != 0 && it.roomId !in sourceRoomProperties && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
+        if (project.rooms.values.any { it.asmRoomPropertiesSourceVersion != 0 && it.roomId !in sourceRoomProperties && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored room header/state properties require validated ASM build inputs.")
             onStatus("Authored room header/state properties require validated ASM build inputs.")
             return null
         }
-        if (project.rooms.values.any { it.asmLayoutSourceVersion != 0 && it.roomId !in sourceLayouts && project.roomKey(it.roomId) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
+        if (project.rooms.values.any { it.asmLayoutSourceVersion != 0 && it.roomId !in sourceLayouts && project.roomKey(compiledRoomId(it.roomId)) !in compiledAsmBase?.generatedRoomIds.orEmpty() }) {
             onLog("ERROR: Authored room layouts require validated ASM build inputs.")
             onStatus("Authored room layouts require validated ASM build inputs.")
             return null
@@ -383,6 +386,7 @@ internal class RomExporter(
             },
         )
         val roomsPatched = mutableSetOf<String>()
+        var newRoomIds = compiledAsmBase?.generatedNewRoomIds.orEmpty()
 
         val validationRoomIds = RoomRepository().getAllRooms().map { it.getRoomIdAsInt() }
         val baselineIssues = RomValidator.validate(
@@ -479,7 +483,7 @@ internal class RomExporter(
                         roomsPatched.addAll(compiledRoomIds)
                         onLog(
                             "[EXPORT] ASM backend supplied the complete room graph for " +
-                                "${compiledRoomIds.size} existing room(s)"
+                                "${compiledRoomIds.size} room(s)"
                         )
                     } else {
                         val owner = "room-graph:project"
@@ -510,6 +514,7 @@ internal class RomExporter(
                             ).exportRooms()
                         }
                         roomsPatched.addAll(roomExportResult.roomsPatched)
+                        newRoomIds = roomExportResult.newRoomIds
                         for (allocation in roomExportResult.allocations) {
                             writePlan.claimCurrentRange(
                                 owner = owner,
@@ -623,6 +628,7 @@ internal class RomExporter(
                 sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
                 sourceRoomPatched = compiledAsmBase?.generatedRoomClaims?.sumOf { it.length } ?: 0,
                 sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
+                newRoomIds = newRoomIds,
             )
         }
 
@@ -676,6 +682,7 @@ internal class RomExporter(
             sourceAssetPatched = compiledAsmBase?.generatedAssetClaims?.sumOf { it.length } ?: 0,
             sourceRoomPatched = compiledAsmBase?.generatedRoomClaims?.sumOf { it.length } ?: 0,
             sourcePatchPatched = compiledAsmBase?.generatedPatchClaims?.sumOf { it.length } ?: 0,
+            newRoomIds = newRoomIds,
         )
     }
 

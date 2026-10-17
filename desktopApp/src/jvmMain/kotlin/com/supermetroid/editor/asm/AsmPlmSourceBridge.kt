@@ -7,11 +7,9 @@ import com.supermetroid.editor.data.ProjectPaths
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.data.ScrollCommand
 import com.supermetroid.editor.rom.SourceSaveResource
-import com.supermetroid.editor.rom.validateSourceSaveOwnership
 import com.supermetroid.editor.rom.words
 import com.supermetroid.editor.rom.ensureStateManifest
 import com.supermetroid.editor.rom.baseSourceStateIndex
-import com.supermetroid.editor.rom.validateSourceSaveLinks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -59,6 +57,13 @@ internal class AsmPlmSourceBridge(
         AsmRoomProjectionRepository(File(ProjectPaths.asmCacheIn(it), "projections"))
     }
 
+    /** Capture typed cross-bank dependencies on the UI thread, never read live buffers from a worker. */
+    private fun projectionDoors(text: String, rooms: List<com.supermetroid.editor.data.RoomEdits>) = runCatching {
+        val source = AsmRoomObjectSource(text, catalog.symbols)
+        val saves = rooms.flatMap { source.saveResources(it.roomId) }
+        liveSourceDoors(saves.mapNotNull { it.sourceDoor }, project(), catalog, workspace, text, saves.map { it.words[1] })
+    }.getOrDefault(emptyMap())
+
     /** Capture on the UI thread; load/repair disposable projections on a worker, then publish only if still current. */
     suspend fun preloadProjections() {
         val owner = project()
@@ -66,8 +71,10 @@ internal class AsmPlmSourceBridge(
         val macros = workspace.projectSourceText("macros.asm")
         val rooms = owner.rooms.values.filter { it.asmPlmSourceVersion != 0 }.map(::snapshotRoomObjectMetadata)
         val repository = projectionRepository() ?: return
-        val loaded = withContext(Dispatchers.Default) { runCatching { repository.load(text, macros, rooms, catalog) }.getOrDefault(emptyMap()) }
-        if (project() !== owner || sourceText() != text || workspace.projectSourceText("macros.asm") != macros) return
+        val doors = projectionDoors(text, rooms)
+        val revision = workspace.sourceBufferRevision
+        val loaded = withContext(Dispatchers.Default) { runCatching { repository.load(text, macros, rooms, catalog, doors) }.getOrDefault(emptyMap()) }
+        if (project() !== owner || sourceText() != text || workspace.projectSourceText("macros.asm") != macros || workspace.sourceBufferRevision != revision) return
         projectedText = text
         projectedMacros = macros
         projections.clear()
@@ -84,7 +91,8 @@ internal class AsmPlmSourceBridge(
         val rooms = project().rooms.values.filter { it.asmPlmSourceVersion != 0 }.map(::snapshotRoomObjectMetadata)
         // Only publish durable saved text; unsaved buffers must never masquerade as a startup snapshot.
         if (workspace.hasUnsavedSourceChanges(PLM_SOURCE_FILE) || workspace.hasUnsavedSourceChanges("macros.asm")) return null
-        return { repository.load(source, macros, rooms, catalog); Unit }
+        val doors = projectionDoors(source, rooms)
+        return { repository.load(source, macros, rooms, catalog, doors); Unit }
     }
 
     init { if (registerSaveParticipant) workspace.sourceSaveParticipant = this }
@@ -186,8 +194,19 @@ internal class AsmPlmSourceBridge(
 
     fun saveResources(roomId: Int): List<SourceSaveResource> = managedSource().saveResources(roomId)
 
+    /** The shared codecs validate bytes; this live lens also validates symbolic/retargeted doors. */
+    private fun validateSourceSaveOwnership(resource: SourceSaveResource, parser: RomParser) =
+        com.supermetroid.editor.rom.validateSourceSaveOwnership(resource, parser,
+            liveSourceDoors(listOfNotNull(resource.sourceDoor), project(), catalog, workspace, nativePointers = listOf(resource.words[1])))
+
+    private fun validateSourceSaveLinks(roomId: Int, area: Int, entries: List<RomParser.PlmEntry>,
+                                      saves: List<SourceSaveResource>, legacy: List<com.supermetroid.editor.data.SaveStationSpawnChange>, parser: RomParser) =
+        com.supermetroid.editor.rom.validateSourceSaveLinks(roomId, area, entries, saves, legacy, parser,
+            liveSourceDoors(saves.mapNotNull { it.sourceDoor }, project(), catalog, workspace,
+                nativePointers = saves.map { it.words[1] } + legacy.map { it.doorPtr }))
+
     private fun saveArea(room: com.supermetroid.editor.data.RoomEdits): Int =
-        if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(sourceText()).area(room.roomId)
+        if (room.asmRoomPropertiesSourceVersion != 0) properties.document(sourceText()).area(room.roomId)
         else room.effectiveHeaderChange?.area ?: requireNotNull(catalog.parser.readRoomHeader(room.roomId)).area
 
     fun saveSpawn(roomId: Int, area: Int, slot: Int): SourceSaveResource? {
@@ -301,6 +320,9 @@ internal class AsmPlmSourceBridge(
         catalog.requireStandardMacro(macros)
         if (projectedText == text && projectedMacros == macros) {
             projections[roomId]?.takeIf { it.identity == identity }?.documents?.get(stateId)?.let { document ->
+                // Door targets live in a different bank; a valid cached object list is not a valid link cache.
+                validateSourceSaveLinks(roomId, saveArea(room), document.entries, managedSource().saveResources(roomId),
+                    room.saveStationSpawns, catalog.parser)
                 lastManaged[roomId to stateId] = document
                 return AsmPlmSourceView(document, null)
             }
@@ -657,7 +679,7 @@ internal class AsmPlmSourceBridge(
                 text = AsmFxSource(text).replaceDefaults(staged, stateIds, change)
                 val external = workspace.projectSourceTextsExcept(FX_SOURCE_FILE).flatMap { AsmFxSource.references(it).asSequence() }.toSet()
                 text = AsmFxSource(AsmFxSource(text).tidy(staged, external)).withComments(staged)
-                AsmFxSource(text).resources(staged).values.forEach { com.supermetroid.editor.rom.validateSourceFxDoors(roomId, it, catalog.parser) }
+                AsmFxSource(text).resources(staged).values.forEach { fx.validate(roomId, it) }
             }
             sources[FX_SOURCE_FILE] = before to text
         }
@@ -851,7 +873,7 @@ internal class AsmPlmSourceBridge(
         if (isManaged(roomId)) return
         val current = project()
         require(current.asmWorkspace.enabled && current.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Room source requires ASM mode." }
-        require(current.newRooms.isEmpty()) { "Object source migration is not supported in projects with added rooms yet; their room graph still uses the ROM backend." }
+        require(current.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room object source is not supported yet." }
         catalog.requireStandardMacro(workspace.projectSourceText("macros.asm"))
         val room = current.rooms[current.roomKey(roomId)] ?: com.supermetroid.editor.data.RoomEdits(roomId)
         requireObjectAdoptionAvailable(roomId)

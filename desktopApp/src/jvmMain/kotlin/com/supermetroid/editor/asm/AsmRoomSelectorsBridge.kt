@@ -54,7 +54,7 @@ internal class AsmRoomSelectorsBridge(private val catalog: AsmPlmSourceCatalog, 
     fun migrate(roomId: Int, name: String) {
         if (isManaged(roomId)) return
         val owner = project()
-        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRooms.isEmpty()) { "Selector source requires existing-room ASM source mode." }
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRoomForPreviewId(roomId) == null) { "Selector source requires a native room in ASM mode." }
         val room = owner.rooms.getValue(owner.roomKey(roomId))
         require(catalog.parser.readRoomHeader(roomId)?.area in 0..6) { "The debug/unused area is not writable." }
         val beforeModel = snapshotRoomForResize(room)

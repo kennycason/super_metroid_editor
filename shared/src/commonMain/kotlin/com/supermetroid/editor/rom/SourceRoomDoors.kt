@@ -13,7 +13,9 @@ data class SourceDoorArrival(val label: String, val snesAddress: Int? = null) {
 
 /** Stable declaration identity is independent from its current BTS/list position. Zero is an unallocated new DoorDef. */
 data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arrival: SourceDoorArrival? = null,
-                          val identity: Int = change.doorIndex) {
+                          val identity: Int = change.doorIndex,
+                          /** One canonical authored record, deliberately shared by its native list consumers. */
+                          val shared: Boolean = false) {
     init {
         require((doorDefPtr == 0 || doorDefPtr in 0x8000..0xFFF4) && change.doorIndex in 0..15 && identity in 0..65535) { "Invalid DoorDef identity." }
         // Direction 0..3: no closure, 4..7: blue door, 8..11: escape gate (bank $82:E8EB).
@@ -23,6 +25,7 @@ data class SourceRoomDoor(val doorDefPtr: Int, val change: DoorChange, val arriv
             "Door ${change.doorIndex + 1}: invalid destination, direction, byte/word field or arrival ASM pointer."
         }
         require(arrival == null || change.entryCode == (arrival.snesAddress?.and(65535) ?: 0)) { "Arrival ASM address does not match its resolved symbol." }
+        require(!shared || doorDefPtr != 0) { "A shared native record must have a native DoorDef identity." }
     }
     fun entry() = RomParser.DoorEntry(change.destRoomPtr, change.bitflag, change.doorCapCode, change.screenX,
         change.screenY, change.distFromDoor, change.entryCode, doorDefPtr)
@@ -77,9 +80,19 @@ fun validateSourceRoomDoors(room: RoomEdits, source: SourceRoomDoors, parser: Ro
 
 fun validateSourceDoorOwnership(roomId: Int, source: SourceRoomDoors, parser: RomParser) {
     val pointers = source.entries.map { it.doorDefPtr }.filter { it != 0 }.toSet()
-    require(parser.roomCatalog.rooms.none { info -> info.getRoomIdAsInt() != roomId &&
-        parser.readRoomHeader(info.getRoomIdAsInt())?.let { h -> parser.parseDoorList(h.doorOut).any { it.doorDefPtr in pointers } } == true }) {
-        "DoorDefs shared by multiple rooms need an explicit joint-owner workflow; no room was changed."
+    val shared = nativeDoorConsumers(parser).filter { (_, consumers) -> consumers.map { it.first }.distinct().size > 1 }.keys
+    require(source.entries.filter { it.doorDefPtr in pointers.intersect(shared) }.all { it.shared }) {
+        "Room ${roomId.toString(16)}: shared DoorDefs require their canonical SmeditSharedDoors record; independent declarations cannot own the same bytes."
+    }
+    require(source.entries.filter { it.shared }.all { it.doorDefPtr in shared }) { "Shared source refers to a DoorDef without multiple native room consumers." }
+}
+
+/** Source-room/index pairs, not destination rooms. Used for ownership and user-facing impact notices. */
+fun nativeDoorConsumers(parser: RomParser): Map<Int, List<Pair<Int, Int>>> = buildMap<Int, MutableList<Pair<Int, Int>>> {
+    for (info in parser.roomCatalog.rooms) {
+        val id = info.getRoomIdAsInt()
+        val header = parser.readRoomHeader(id) ?: continue
+        parser.parseDoorList(header.doorOut).forEachIndexed { index, door -> getOrPut(door.doorDefPtr) { mutableListOf() }.add(id to index) }
     }
 }
 

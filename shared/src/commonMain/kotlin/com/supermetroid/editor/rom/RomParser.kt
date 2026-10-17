@@ -253,8 +253,11 @@ class RomParser(
         val fxBitC: Int,            // +12: liquid options bitfield (1 byte)
         val paletteFxBitflags: Int, // +13: palette glow toggles (1 byte)
         val tileAnimBitflags: Int,  // +14: animated tile toggles (1 byte)
-        val paletteBlend: Int       // +15: palette blend index (1 byte)
+        val paletteBlend: Int,      // +15: palette blend index (1 byte)
+        /** Authored source only. Zero is a placeholder, never a compiled/default selector. */
+        val sourceDoor: com.supermetroid.editor.data.ProjectSourceDoorReference? = null,
     ) {
+        val isDefault: Boolean get() = doorSelect == 0 && sourceDoor == null
         val fxTypeName: String get() = FX_TYPE_NAMES[fxType] ?: "Unknown (0x${fxType.toString(16).uppercase().padStart(2, '0')})"
         val hasLiquid: Boolean get() = liquidSurfaceStart != 0xFFFF
 

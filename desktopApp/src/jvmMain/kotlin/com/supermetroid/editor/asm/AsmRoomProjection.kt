@@ -40,11 +40,13 @@ internal class AsmRoomProjectionRepository(
     @Serializable private data class Table(val stateId: String, val label: String, val line: Int, val rows: List<Row>)
     @Serializable private data class Snapshot(val roomId: Int, val identity: String, val tables: List<Table>)
 
-    fun load(text: String, macros: String, rooms: List<RoomEdits>, catalog: AsmPlmSourceCatalog): Map<Int, AsmRoomProjection> {
+    fun load(text: String, macros: String, rooms: List<RoomEdits>, catalog: AsmPlmSourceCatalog,
+             sourceDoors: Map<Int, com.supermetroid.editor.rom.SourceRoomDoors> = emptyMap()): Map<Int, AsmRoomProjection> {
         catalog.requireStandardMacro(macros)
         val dependencies = AsmVerifiedCache.fingerprint(mapOf(
-            "format" to "room-projection-v4-area-saves", "source" to text, "macros" to macros,
+            "format" to "room-projection-v5-symbolic-saves", "source" to text, "macros" to macros,
             "symbols" to catalog.sourceFingerprint, "base-rom" to catalog.romFingerprint,
+            "door-graph" to sourceDoors.toSortedMap().toString(),
         ))
         val source by lazy { decode(text, catalog.symbols) }
         return buildMap {
@@ -66,7 +68,7 @@ internal class AsmRoomProjectionRepository(
                         val save = AsmSaveStationSource.parse(name, body, catalog.symbols)
                         require(save.cleared || save.area == area)
                         require(room.saveStationSpawns.none { it.area == save.area && it.saveIndex == save.slot })
-                        com.supermetroid.editor.rom.validateSourceSaveOwnership(save, catalog.parser)
+                        com.supermetroid.editor.rom.validateSourceSaveOwnership(save, catalog.parser, sourceDoors)
                         save
                     }
                     return tables.associate { table ->
@@ -91,7 +93,7 @@ internal class AsmRoomProjectionRepository(
                             AsmPlmDocument.Record(entry, fields, row.scrollResource)
                         }
                         com.supermetroid.editor.rom.validateSourceSaveLinks(roomId, area,
-                            records.map { it.entry }, saves, room.saveStationSpawns, catalog.parser)
+                            records.map { it.entry }, saves, room.saveStationSpawns, catalog.parser, sourceDoors)
                         records.mapNotNull { it.scrollResource }.distinct().forEach { name ->
                             require(name.startsWith(AsmRoomObjectSource.prefix(roomId) + "Scroll_"))
                             AsmScrollCommandSource.fromText(text, name, screens)

@@ -41,6 +41,7 @@ internal class AsmRoomStateLifecycle(
     fun plan(roomId: Int, name: String, added: Pair<String, String>? = null,
              condition: ProjectRoomStateCondition? = null, changeModel: (RoomEdits) -> Unit): AsmRoomStatePlan {
         val owner = project()
+        if (owner.newRoomForPreviewId(roomId) != null) return planProjectResources(roomId, added, changeModel)
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && owner.newRooms.isEmpty()) {
             "Source state editing requires existing-room ASM source mode."
         }
@@ -124,7 +125,7 @@ internal class AsmRoomStateLifecycle(
         for ((save, oldLists) in savesToRelease) {
             val source = AsmRoomObjectSource(cleaned.getValue(PLM_SOURCE_FILE), catalog.symbols)
             require(oldLists.none(source::contains)) { "The final save station is still referenced by retained custom source. Resolve that reference before deleting its state." }
-            cleaned[PLM_SOURCE_FILE] = source.withSave(save.copy(words = List(7) { 0 }))
+            cleaned[PLM_SOURCE_FILE] = source.withSave(save.copy(words = List(7) { 0 }, sourceDoor = null))
         }
         validate(staged, cleaned, macros)
         AsmRoomSelectorsSource(cleaned.getValue(PLM_SOURCE_FILE)).resource(staged).projectInto(staged)
@@ -134,7 +135,55 @@ internal class AsmRoomStateLifecycle(
             external.flatMap(::resetSourceReferences).toSet(), macros)
     }
 
+    /** New-room conditions remain semantic project data; owned resource wrappers join the same history. */
+    private fun planProjectResources(roomId: Int, added: Pair<String, String>?, changeModel: (RoomEdits) -> Unit): AsmRoomStatePlan {
+        val owner = project()
+        require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Project room source requires ASM mode." }
+        val room = owner.rooms.getValue(owner.roomKey(roomId))
+        val before = snapshotRoomForResize(room)
+        val staged = snapshotRoomForResize(room)
+        val texts = sources(room)
+        val macros = workspace.projectSourceText("macros.asm")
+        validate(staged, texts, macros)
+        val bank = texts.getValue(PLM_SOURCE_FILE)
+        val identities = AsmRoomPropertiesSource.projectIdentities(owner)
+        changeModel(staged)
+        var updated = bank
+        if (added != null) {
+            if (staged.asmRoomPropertiesSourceVersion != 0)
+                updated = AsmRoomPropertiesSource(updated, identities).cloneState(before, added.first, added.second)
+            if (staged.asmLayoutSourceVersion != 0) updated = AsmRoomLayoutSource(updated, identities)
+                .appendState(roomId, added.second, staged.states.single { it.id == added.second }.resources.level)
+        }
+        staged.stateGraphChanged = true
+        val replacements = texts + (PLM_SOURCE_FILE to updated)
+        validate(staged, replacements, macros)
+        if (staged.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(updated, identities).resource(staged).projectInto(staged)
+        val external = workspace.projectSourceReadersExcept(texts.keys).flatMap { resetSourceReferences(it()) }.toSet()
+        return AsmRoomStatePlan(owner, room, before, staged, workspace.sourceBufferRevision,
+            texts.mapValues { (file, text) -> text to replacements.getValue(file) }, external, macros)
+    }
+
     private fun validate(room: RoomEdits, texts: Map<String, String>, macros: String) {
+        if (project().newRoomForPreviewId(room.roomId) != null) {
+            require(room.asmRoomPropertiesSourceVersion in 0..1 && room.asmLayoutSourceVersion in 0..1 &&
+                (room.asmRoomPropertiesSourceVersion != 0 || room.asmLayoutSourceVersion != 0) &&
+                room.asmStateSelectorsSourceVersion == 0 && room.asmDoorSourceVersion == 0 &&
+                room.asmPlmSourceVersion == 0 && room.asmInitialScrollSourceVersion == 0 &&
+                room.asmFxSourceVersion == 0 && room.asmEnemySourceVersion == 0) { "This project-room state resource needs its reciprocal source workflow first." }
+            require(room.states.map { it.id }.distinct().size == room.states.size &&
+                room.states.count { it.condition.kind == ProjectRoomStateConditionKind.DEFAULT } == 1 &&
+                room.states.last().condition.kind == ProjectRoomStateConditionKind.DEFAULT) { "Project-room state identities/default order changed." }
+            val identities = AsmProjectRoomLabels.identities(project())
+            val bank = texts.getValue(PLM_SOURCE_FILE)
+            if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(bank, identities).resource(room)
+            if (room.asmLayoutSourceVersion != 0) {
+                val seed = project().newRoomForPreviewId(room.roomId)!!.header
+                AsmRoomLayoutSource(bank, identities).resources(room, (room.effectiveHeaderChange?.width ?: seed.width) * 16,
+                    (room.effectiveHeaderChange?.height ?: seed.height) * 16)
+            }
+            return
+        }
         val header = requireNotNull(catalog.parser.readRoomHeader(room.roomId))
         val width = room.effectiveHeaderChange?.width ?: header.width
         val height = room.effectiveHeaderChange?.height ?: header.height
@@ -149,7 +198,8 @@ internal class AsmRoomStateLifecycle(
             AsmRoomObjectSource(bank, catalog.symbols).resources(room, width * height)
         }
         if (room.asmFxSourceVersion != 0) AsmFxSource(texts.getValue(FX_SOURCE_FILE)).resources(room).values.forEach {
-            validateSourceFxDoors(room.roomId, it, catalog.parser)
+            validateSourceFxDoors(room.roomId, it, catalog.parser, liveSourceDoors(it.entries.mapNotNull { entry -> entry.sourceDoor },
+                project(), catalog, workspace, bank, it.entries.map { entry -> entry.doorSelect }))
         }
         if (room.asmEnemySourceVersion != 0) {
             catalog.requireStandardEnemyMacros(macros)
@@ -169,11 +219,17 @@ internal class AsmRoomStateLifecycle(
 
     fun apply(plan: AsmRoomStatePlan, beforeTransition: () -> Unit, afterTransition: (Boolean) -> Unit) {
         val afterSnapshot = snapshotRoomForResize(plan.after)
-        fun metadata(room: RoomEdits) = room.copy(asmHeaderPropertiesProjection = null, asmSelectorOrderProjection = null,
+        val projectId = plan.owner.newRoomForPreviewId(plan.original.roomId)?.id
+        fun activeRoom(): RoomEdits = if (projectId == null) plan.original else {
+            val id = requireNotNull(plan.owner.newRooms.singleOrNull { it.id == projectId }?.previewRoomId) { "This project room no longer exists." }
+            requireNotNull(plan.owner.rooms[plan.owner.roomKey(id)]) { "This project's room-state ownership changed." }
+        }
+        fun metadata(room: RoomEdits) = room.copy(roomId = if (projectId == null) room.roomId else 0, asmHeaderPropertiesProjection = null, asmSelectorOrderProjection = null,
             states = room.states.map { it.copy(asmConditionProjection = null, asmStatePropertiesProjection = null) }.toMutableList())
         fun checkCurrent(undo: Boolean) {
-            require(project() === plan.owner && plan.owner.rooms[plan.owner.roomKey(plan.original.roomId)] === plan.original &&
-                metadata(plan.original) == metadata(if (undo) afterSnapshot else plan.before)) { "Room/state data changed; undo newer edits before restoring this state operation." }
+            val active = activeRoom()
+            require(project() === plan.owner && (projectId != null || plan.owner.rooms[plan.owner.roomKey(plan.original.roomId)] === plan.original) &&
+                metadata(active) == metadata(if (undo) afterSnapshot else plan.before)) { "Room/state data changed; undo newer edits before restoring this state operation." }
             require(workspace.projectSourceText("macros.asm") == plan.macros) { "Macro definitions changed; restore them before this state operation." }
             val references = workspace.projectSourceReadersExcept(plan.replacements.keys).flatMap { resetSourceReferences(it()) }.toSet()
             require(references == plan.externalReferences) { "Custom source references changed; undo them before restoring this state operation." }
@@ -183,12 +239,13 @@ internal class AsmRoomStateLifecycle(
             // Preserve the room identity held by earlier source undo callbacks. Never expose our
             // immutable history snapshots as the mutable live state list.
             val snapshot = snapshotRoomForResize(if (undo) plan.before else plan.after)
-            plan.original.states.clear(); plan.original.states.addAll(snapshot.states)
-            plan.original.stateGraphChanged = snapshot.stateGraphChanged
-            plan.original.asmStateSelectorsSourceVersion = snapshot.asmStateSelectorsSourceVersion
-            plan.original.asmSelectorOrderProjection = snapshot.asmSelectorOrderProjection
-            plan.original.levelResourceOperations.clear()
-            plan.original.levelResourceOperations.putAll(snapshot.levelResourceOperations)
+            val active = activeRoom()
+            active.states.clear(); active.states.addAll(snapshot.states)
+            active.stateGraphChanged = snapshot.stateGraphChanged
+            active.asmStateSelectorsSourceVersion = snapshot.asmStateSelectorsSourceVersion
+            active.asmSelectorOrderProjection = snapshot.asmSelectorOrderProjection
+            active.levelResourceOperations.clear()
+            active.levelResourceOperations.putAll(snapshot.levelResourceOperations)
         }
         fun notify(undo: Boolean) { changed(); afterTransition(undo) }
         checkCurrent(false)

@@ -52,6 +52,25 @@ class AsmRoomProjectionTest {
         }
     }
 
+    @Test fun `symbolic saves use warm projections but changed or missing door dependencies never reuse them`() {
+        val (room, original) = roomSource()
+        val reference = com.supermetroid.editor.data.ProjectSourceDoorReference(0x91F8, 9)
+        val save = com.supermetroid.editor.rom.SourceSaveResource(AsmSaveStationSource.name(0x91F8, 0, 2), 0x91F8, 0, 2,
+            listOf(0x91F8, 0, 7, 256, 0, 144, 0xFFE0), reference)
+        val text = AsmRoomObjectSource(original).withSave(save)
+        val catalog = AsmPlmSourceCatalog("", macros, emptyMap(), RomParser(saveSourceTestRom()), emptyMap())
+        val door = com.supermetroid.editor.rom.SourceRoomDoor(0, com.supermetroid.editor.data.DoorChange(0, 0x91F8, 0, 0, 0, 0, 0x8000, 0), identity = 9)
+        val doors = mapOf(0x91F8 to com.supermetroid.editor.rom.SourceRoomDoors(0x8060, listOf(door), structural = true))
+        val expected = AsmRoomProjectionRepository(directory).load(text, macros, listOf(room), catalog, doors)
+        assertTrue(expected.isNotEmpty())
+        val warm = AsmRoomProjectionRepository(directory) { _, _ -> error("Valid warm objects must not be decoded") }
+        assertEquals(expected, warm.load(text, macros, listOf(room), catalog, doors))
+        assertTrue(warm.load(text, macros, listOf(room), catalog).isEmpty())
+        val redirected = doors.mapValues { (_, value) -> value.copy(entries = listOf(door.copy(change = door.change.copy(destRoomPtr = 0xA000)))) }
+        assertTrue(AsmRoomProjectionRepository(directory).load(text, macros, listOf(room), catalog, redirected).isEmpty())
+        assertEquals(expected, warm.load(text, macros, listOf(room), catalog, doors))
+    }
+
     @Test fun `external source changes and corrupt payloads repair rather than reuse stale rows`() {
         val (room, text) = roomSource()
         val catalog = catalog()

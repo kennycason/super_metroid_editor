@@ -12,6 +12,24 @@ import kotlin.test.assertTrue
 class AsmRoomDataSnapshotTest {
     private val rooms = listOf(RoomInfo("0x91F8", "landing", "Landing Site"))
 
+    @Test fun `project data uses durable names and semantic navigation rather than the built address`() {
+        val id = "project room · é"
+        val encoded = AsmProjectRoomLabels.encoded(id)
+        assertEquals(id, AsmProjectRoomLabels.decode(encoded))
+        assertEquals(id, AsmProjectRoomLabels.identity(AsmProjectRoomLabels.entry(id)))
+        assertEquals(null, AsmProjectRoomLabels.decode("FF"))
+        assertEquals(null, AsmProjectRoomLabels.decode("A"))
+        val source = AsmRoomDataSnapshot.render(fixture(), rooms, mapOf(0x91F8 to id))
+        val data = assertNotNull(AsmGeneratedRoomSource.parse(source, "test"))
+        val header = data.sections.first()
+        assertEquals(id, header.projectRoomId)
+        assertEquals(0x91F8, header.roomId)
+        assertEquals(AsmProjectRoomLabels.prefix(id) + "_Header", header.label)
+        assertEquals("Landing Site", data.groups().single().title)
+        val project = com.supermetroid.editor.data.SmEditProject("test")
+        assertEquals(null, AsmEditorTarget.Room(0x91F8, projectRoomId = id).resolveRoomId(project), "A deleted project identity must not fall back to a stale address")
+    }
+
     @Test
     fun `known room catalog retains Landing Site when its state graph is redirected`() {
         val rom = fixture().copyOf(0x400000)

@@ -2576,8 +2576,8 @@ private fun AsmGeneratedRoomsCanvas(
             state, "Room Data", if (state.showRoomBuildWrites) "Build writes · last source compilation" else "Read-only · last successful build", "",
             actions = {
                 AsmDocumentFindButton(find::show)
-                section?.roomId?.let { roomId ->
-                    TextButton(onClick = { onOpenInEditor(AsmEditorTarget.Room(roomId)) }) {
+                section?.let { section ->
+                    TextButton(onClick = { onOpenInEditor(AsmEditorTarget.Room(section.roomId ?: 0, projectRoomId = section.projectRoomId)) }) {
                         Text("Edit room", fontSize = fs.body)
                     }
                 }
@@ -4945,8 +4945,11 @@ internal fun AsmRoomSourceActions(links: List<AsmRoomSourceLink>, onOpen: ((AsmR
                 Text(if (links.size == 1) links.single().title else "Room data · ${links.size} resource/state choices",
                     fontSize = fs.detail, modifier = Modifier.weight(1f))
                 TextButton(onClick = { if (links.size == 1) onOpen(links.single()) else expanded = !expanded }) {
-                    Text(if (links.all { it.kind == com.supermetroid.editor.asm.RoomAsmSourceKind.DOORS }) "Edit door data…"
-                        else "Preview / make editable…", fontSize = fs.detail)
+                    Text(when {
+                        links.all { it.kind == com.supermetroid.editor.asm.RoomAsmSourceKind.DOORS } -> "Edit door data…"
+                        links.all { it.kind == com.supermetroid.editor.asm.RoomAsmSourceKind.LAYOUT } -> "Edit layout ASM…"
+                        else -> "Preview / make editable…"
+                    }, fontSize = fs.detail)
                 }
             }
             if (expanded) {

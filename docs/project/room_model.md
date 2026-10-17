@@ -257,8 +257,13 @@ declarations. Explicit arrival creation also adopts DoorDefs in its single
 cross-bank action when necessary. Full record/list/header-pointer claims include
 unchanged bytes. Invalid drafts lock only door editing/building, not unrelated
 room resources. Native exceptional geometry is preserved, while new geometry is
-validated. Shared native DoorDefs and added-room source identities
-remain guarded. Incoming DoorDefs and proven scroll-only arrivals now participate
+validated. Shared native DoorDefs use one canonical global declaration with explicit
+GUI scope acknowledgement; all aliases remain at the same native address. A single
+room Reset deliberately leaves that global resource intact. Private copies and
+compound shared geometry still need review. Added rooms now have project-ID build
+symbols, read-only Room Data navigation and reciprocal header/state scalars under
+durable project-ID declarations. Other editable resource families and joint
+new-room Resize/Reset/themes remain guarded. Incoming DoorDefs and proven scroll-only arrivals now participate
 in compound resize/Reset, with symbolic private routines, checked byte/word
 remapping and preserved native code/CPU context. Opaque geometry and externally
 shared canonical arrivals require ASM review; unrelated editing stays available.
@@ -274,9 +279,8 @@ door/layout source and share source/canvas/map history. Removal checks every
 state and modeled pointer consumer, remaps higher BTS indices while preserving
 the elevator bit, and retains surviving identities/arrival names. ASM-first lists
 need no layout opt-in; builds inspect every final runtime state's doorway indices.
-Native Reset restores the original list. Symbolic state conditions are covered
-below; new DoorDef references in FX/save codecs and stable added-room source
-identities remain separate work.
+Native Reset restores the original list. Symbolic state conditions, FX and save
+spawns are covered below; stable added-room source identities remain separate work.
 See [structural door lists](../asm/reference_workspace.md#structural-door-lists).
 
 Symbolic incoming-door state conditions link to `(sourceRoomId, declarationId)`
@@ -290,7 +294,17 @@ to that room are accepted. Retired or retargeted references show a stale-selecto
 warning, disable selector writes and block building without locking unrelated
 room resources. GUI removal and external-owner Reset refuse referenced identities.
 No additional Enable ASM prompt or build is needed to choose a new connection.
-FX/save and arbitrary executable-code references remain separate work.
+Arbitrary executable-code references remain separate work.
+
+Entrance FX selectors and ordinary save spawns use the same stable entry labels.
+The FX Add entrance picker and save Change entrance picker accept live, unbuilt
+doors without an additional adoption prompt. FX edits/removal preserve independent
+state tables; spawn/camera edits, Reset Auto and cross-area save migration preserve
+the incoming identity. Zero placeholders cannot encode as Default FX or save doors.
+The build resolves private copies after all DoorDefs are allocated; cached previews
+revalidate cross-bank links, and missing/retired/retargeted bindings fail safely.
+Numeric native pointers remain supported, with duplicate FX aliases rejected.
+See [symbolic entrance data](../asm/reference_workspace.md#symbolic-entrance-fx-and-save-spawns).
 
 Checked symbolic arrival references use marked bank-$8F routine bodies
 and native `DoorASM_*` labels resolve through actual assembler symbols, never a
@@ -574,6 +588,18 @@ and the room header/default state, PLMs, scrolls, and door list in `$8F`. The ma
 reopened through `RomParser` in tests. Normal room deltas and relocatable multi-state authoring are
 then applied to the allocated room through the same exporter used for existing rooms.
 
+ASM-source projects can author a new room's header/state scalars and decoded layouts
+independently. Layout declarations use durable project IDs, not preview addresses;
+Layout ASM opens as an editor-only preview with no enable confirmation or build
+marker. First text editing atomically adopts all state layouts in memory; Save
+writes the source. This retires GUI tile deltas while retaining the creation seed as the revert/clone
+baseline. Painting, shared/private state layouts and source edits then use one authority.
+Build resolves source layouts to the checked physical graph without saving those
+placements or duplicating authored values in JSON. New-room compound generation,
+Resize/Reset/themes and structural door-list changes after layout adoption remain
+guarded until they can publish joint resource/source transactions. See the
+[editable new-room layout contract](../asm/reference_workspace.md#editable-new-room-layout-data).
+
 Creation also owns the room's pause-map footprint. Blank rooms receive an enclosed rectangle made
 from vanilla minimap tiles; clones copy the source footprint when it exists and otherwise receive
 the same generated outline. A requested footprint must be clear of room rectangles, map art, and
@@ -704,6 +730,10 @@ simulator, graph-allocation, semantic round-trip, and instruction-level predicat
 Core new-room coverage includes
 schema save/reopen, blank and cloned workspace editing, semantic and cyclic doors, surviving-door
 identity after deletion, normal delta/state export, and native ROM reparse.
+Reciprocal new-room layout coverage adds non-mutating inspection/unchanged saves,
+automatic first-edit ownership with reciprocal canvas/history restoration, raw/GUI
+edits, independent states, invalid drafts, source history after preview relocation,
+cold typed export, and mixed native/new real-Asar relocation parity.
 
 The following remain acceptance requirements for their corresponding future features, not for the
 completed state editor or core new-room creation:

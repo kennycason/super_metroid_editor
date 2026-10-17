@@ -134,6 +134,9 @@ internal class AsmRoomAreaMove(
             for (change in changes) {
                 val source = AsmDoorSource(text83, text8F, catalog.symbols)
                 val current = source.resource(target, catalog.parser, ::dimensions)
+                require(!current.entries[change.doorIndex].shared) {
+                    "Shared native DoorDefs require coordinated cross-area flags. This move is blocked; no room or source was changed."
+                }
                 val entry = current.entries[change.doorIndex].entry()
                 text83 = source.edit(target, catalog.parser, change.doorIndex, entry.copy(bitflag = change.bitflag), ::dimensions)
             }
@@ -156,7 +159,8 @@ internal class AsmRoomAreaMove(
             var objects = AsmRoomObjectSource(text8F, catalog.symbols)
             text8F = objects.remapSaveParameters(moving, saves.plmReplacements.toMap(), external)
             for (save in saves.sourceRecords) {
-                validateSourceSaveOwnership(save, catalog.parser)
+                validateSourceSaveOwnership(save, catalog.parser, liveSourceDoors(listOfNotNull(save.sourceDoor), owner, catalog, workspace, text8F,
+                    listOf(save.words[1])))
                 text8F = AsmRoomObjectSource(text8F, catalog.symbols).withSave(save)
             }
             // A slot cannot have a JSON override and a source declaration, even under another room key.
@@ -166,7 +170,9 @@ internal class AsmRoomAreaMove(
             updateHeader()
             objects = AsmRoomObjectSource(text8F, catalog.symbols)
             val inputs = objects.resources(moving)
-            validateSourceSaveLinks(roomId, requireNotNull(header.area), inputs.values.flatMap { it.entries }, objects.saveResources(roomId), moving.saveStationSpawns, catalog.parser)
+            val saveRecords = objects.saveResources(roomId)
+            validateSourceSaveLinks(roomId, requireNotNull(header.area), inputs.values.flatMap { it.entries }, saveRecords, moving.saveStationSpawns, catalog.parser,
+                liveSourceDoors(saveRecords.mapNotNull { it.sourceDoor }, owner, catalog, workspace, text8F, saveRecords.map { it.words[1] }))
             val claims = owner.rooms.values.filter { it.asmPlmSourceVersion != 0 && it.roomId != roomId }
                 .flatMap { objects.saveResources(it.roomId) } + objects.saveResources(roomId)
             require(claims.groupBy { it.area to it.slot }.values.all { it.distinct().size == 1 }) { "Another room already owns a migrated save slot." }

@@ -63,7 +63,7 @@ import com.supermetroid.editor.rom.RomConstants
 import com.supermetroid.editor.rom.RomParser
 
 @Composable
-private fun tilePropertiesLabelWidth() = when (LocalEditorTheme.current.fontSize.value) {
+internal fun tilePropertiesLabelWidth() = when (LocalEditorTheme.current.fontSize.value) {
     FontSize.SMALL -> 80.dp
     FontSize.MEDIUM -> 88.dp
     FontSize.LARGE -> 98.dp
@@ -140,6 +140,76 @@ internal fun TilePropertiesPanel(
         } else {
             editorState.setTileProperties(blockX, blockY, blockType, bts)
         }
+    }
+
+    @Composable
+    fun StoredConnectionPicker() {
+        Text("Stored connection (BTS)", fontSize = uiFont.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val doorConnections = remember(roomId, editorState.editVersion) {
+            editorState.doorEntries.toList()
+        }
+        var connectionDropExpanded by remember(roomId, blockX, blockY) { mutableStateOf(false) }
+        val connectionIndex = propsBts and 0x7F
+        val canChooseConnection = doorConnections.isNotEmpty() && editorState.doorPreviewProblem == null
+        val connectionLabel = if (propsBtsMixed) {
+            "Mixed connections — choose one"
+        } else doorConnections.getOrNull(connectionIndex)?.let { door ->
+            val destination = rooms.firstOrNull {
+                it.getRoomIdAsInt() == door.destRoomPtr
+            }?.name ?: "Unknown destination"
+            "Connection ${connectionIndex + 1} → $destination"
+        } ?: "Unlinked doorway"
+        Box {
+            Surface(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp)
+                    .clickable(enabled = canChooseConnection) {
+                        connectionDropExpanded = true
+                    },
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(connectionLabel, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                    if (canChooseConnection) Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                }
+            }
+            DropdownMenu(
+                expanded = connectionDropExpanded && canChooseConnection,
+                onDismissRequest = { connectionDropExpanded = false },
+                modifier = Modifier.width(panelWidth + 120.dp).heightIn(max = 420.dp),
+            ) {
+                doorConnections.forEachIndexed { index, door ->
+                    val identity = editorState.doorSourceIdentities[index]
+                    val destination = rooms.firstOrNull {
+                        it.getRoomIdAsInt() == door.destRoomPtr
+                    }?.name ?: "Unknown destination"
+                    DropdownMenuItem(
+                        text = { Text("Connection ${index + 1} → $destination", fontSize = LocalEditorTheme.current.fontSize.value.body,
+                            modifier = Modifier.padding(vertical = 4.dp)) },
+                        onClick = {
+                            connectionDropExpanded = false
+                            if (index != connectionIndex || propsBtsMixed) {
+                                if (selectionTileCount > 1) {
+                                    propsBts = index
+                                    propsBtsMixed = false
+                                    applyProperties(0x9, index)
+                                } else {
+                                    editorState.linkDoorwayTilesToConnection(blockX, blockY, index, identity) {
+                                        propsBts = it
+                                        propsBtsMixed = false
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.heightIn(min = 32.dp),
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(4.dp))
     }
 
     Card(
@@ -280,75 +350,18 @@ internal fun TilePropertiesPanel(
                 }
             }
 
-            // ── Door connection / block subtype ──
-            val btsLabel = if (selectedBlockType == 0x9) "Connection" else if (selectedBlockType == 0x1) {
+            // Door destinations are edited below; raw BTS assignment is an advanced operation.
+            val btsLabel = if (selectedBlockType == 0x1) {
                 "Slope Shape"
             } else {
                 "Sub Type (BTS)"
             }
-            if (selectedBlockType != null) {
+            if (selectedBlockType != null && selectedBlockType != 0x9) {
                 Text(btsLabel, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(2.dp))
             }
-
             if (selectedBlockType == 0x9) {
-                val doorConnections = remember(editorState.editVersion) {
-                    editorState.doorEntries.toList()
-                }
-                var connectionDropExpanded by remember { mutableStateOf(false) }
-                val connectionLabel = if (propsBtsMixed) {
-                    "Mixed connections — choose one"
-                } else doorConnections.getOrNull(propsBts)?.let { door ->
-                    val destination = rooms.firstOrNull {
-                        it.getRoomIdAsInt() == door.destRoomPtr
-                    }?.name ?: "Unknown destination"
-                    "Connection ${propsBts + 1} → $destination"
-                } ?: "Unlinked doorway"
-                Box {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().height(32.dp)
-                            .clickable(enabled = doorConnections.isNotEmpty()) {
-                                connectionDropExpanded = true
-                            },
-                        shape = MaterialTheme.shapes.small,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp).fillMaxHeight(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(connectionLabel, fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
-                            if (doorConnections.isNotEmpty()) Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = connectionDropExpanded,
-                        onDismissRequest = { connectionDropExpanded = false },
-                    ) {
-                        doorConnections.forEachIndexed { index, door ->
-                            val destination = rooms.firstOrNull {
-                                it.getRoomIdAsInt() == door.destRoomPtr
-                            }?.name ?: "Unknown destination"
-                            DropdownMenuItem(
-                                text = { Text("Connection ${index + 1} → $destination", fontSize = LocalEditorTheme.current.fontSize.value.body) },
-                                onClick = {
-                                    connectionDropExpanded = false
-                                    if (index != propsBts || propsBtsMixed) {
-                                        propsBts = index
-                                        propsBtsMixed = false
-                                        if (selectionTileCount > 1) {
-                                            applyProperties(0x9, index)
-                                        } else {
-                                            editorState.linkDoorwayTilesToConnection(blockX, blockY, index)
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.height(30.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
+                if (selectionTileCount > 1) StoredConnectionPicker()
             } else if (selectedBlockType == 0x1) {
                 SlopeGridPicker(
                     selectedBts = if (propsBtsMixed) -1 else propsBts,
@@ -459,30 +472,35 @@ internal fun TilePropertiesPanel(
                 Spacer(modifier = Modifier.height(8.dp))
                 Divider()
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("Door Connection", fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(modifier = Modifier.height(2.dp))
-
-                val allDoors = remember(editorState.editVersion) { editorState.doorEntries.toList() }
+                val allDoors = remember(roomId, editorState.editVersion) { editorState.doorEntries.toList() }
                 val connectionIndex = propsBts and 0x7F
                 val currentDoor = allDoors.getOrNull(connectionIndex)
-                val arrivalBinding = editorState.doorArrivalBindings[connectionIndex]
-                val declarationIdentity = editorState.doorSourceIdentities[connectionIndex]
-                var choosingConnection by remember(roomId, blockX, blockY) { mutableStateOf(false) }
-                if (allDoors.isNotEmpty()) Box {
-                    TextButton(onClick = { choosingConnection = true }, enabled = editorState.doorPreviewProblem == null) {
-                        Text("Use existing connection…", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                    }
-                    DropdownMenu(expanded = choosingConnection, onDismissRequest = { choosingConnection = false }) {
-                        allDoors.forEachIndexed { index, door ->
-                            val identity = editorState.doorSourceIdentities[index]
-                            val name = rooms.firstOrNull { it.getRoomIdAsInt() == door.destRoomPtr }?.name ?: "Room ${door.destRoomPtr.toString(16).uppercase()}"
-                            DropdownMenuItem(text = { Text("${index + 1}. $name", fontSize = LocalEditorTheme.current.fontSize.value.detail) }, onClick = {
-                                choosingConnection = false
-                                editorState.linkDoorwayTilesToConnection(blockX, blockY, index, identity) { propsBts = it }
-                            })
-                        }
+                var advancedDoorFields by remember(roomId, blockX, blockY, connectionIndex) { mutableStateOf(false) }
+                @Composable
+                fun AdvancedToggle() {
+                    TextButton(onClick = { advancedDoorFields = !advancedDoorFields },
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        modifier = Modifier.height(24.dp)) {
+                        Text(if (advancedDoorFields) "▾ Hide advanced" else "▸ Advanced", fontSize = uiFont.detail)
                     }
                 }
+                val arrivalBinding = editorState.doorArrivalBindings[connectionIndex]
+                val declarationIdentity = editorState.doorSourceIdentities[connectionIndex]
+                val doorDefinitionAddress = currentDoor?.let { semanticAsmAddress(RomConstants.BANK_FX, it.doorDefPtr) }
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Door Connection", fontSize = LocalEditorTheme.current.fontSize.value.body,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    if (currentDoor != null && onNavigateToDoorSource != null && editorState.asmNavigationEnabled) {
+                        TextButton(onClick = { onNavigateToDoorSource(connectionIndex) },
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            modifier = Modifier.height(24.dp)) {
+                            Text("ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                        }
+                    } else if (doorDefinitionAddress != null && asmLink != null) {
+                        AsmNavigationLink(doorDefinitionAddress, asmLink, label = "ASM")
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
                 if (currentDoor == null) editorState.doorPreviewProblem?.let {
                     Text("Door source unavailable: $it. Open bank_83.asm to repair its declaration.",
                         fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error)
@@ -565,47 +583,52 @@ internal fun TilePropertiesPanel(
                     )
                 }
 
-                if (currentDoor == null && editorState.doorPreviewProblem == null) {
-                    Text(
-                        if (allDoors.isEmpty()) {
-                            "This doorway has no connection yet."
-                        } else {
-                            "BTS ${propsBts.toString(16).uppercase().padStart(2, '0')} is not linked to a connection."
-                        },
-                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (canGrowConnections && roomHeader != null) {
-                        DoorDestinationPicker(
-                            currentDoor = null,
-                            sourceRoomId = roomId,
-                            requiredDirection = pickerDirection,
-                            rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
-                            romParser = romParser,
-                            editorState = editorState,
-                            enabled = allDoors.size < 16,
-                            onDoorwaySelected = { opening ->
-                                doorConnectionError = runCatching {
-                                    selectDoorway(opening)
-                                }.exceptionOrNull()?.message
-                            },
-                        )
-                    } else {
+                val sharedRooms = currentDoor?.let { editorState.sharedDoorRooms(it.doorDefPtr) }.orEmpty()
+                val connectionFieldsEditable = editorState.doorPreviewProblem == null &&
+                    (sharedRooms.size < 2 || !editorState.asmNavigationEnabled ||
+                        currentDoor?.let { editorState.canEditSharedDoor(it.doorDefPtr) } == true)
+                DoorDestinationPicker(
+                    currentDoor = currentDoor,
+                    sourceRoomId = roomId,
+                    requiredDirection = pickerDirection,
+                    rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
+                    romParser = romParser,
+                    editorState = editorState,
+                    enabled = connectionFieldsEditable && (currentDoor != null || (canGrowConnections && roomHeader != null)) &&
+                        ((currentDoor != null && !connectionSharedOutsideDoorway) || !canGrowConnections || allDoors.size < 16),
+                    selectionKey = Triple(blockX, blockY, declarationIdentity ?: connectionIndex),
+                    onDoorwaySelected = { opening ->
+                        doorConnectionError = runCatching { selectDoorway(opening) }.exceptionOrNull()?.message
+                    },
+                )
+                doorConnectionError?.let {
+                    Text(it, fontSize = uiFont.statusBar, color = MaterialTheme.colorScheme.error)
+                }
+                if (currentDoor == null) {
+                    if (editorState.doorPreviewProblem == null) {
                         Text(
-                            "This source-ROM room's door list cannot currently grow; select an existing connection BTS instead.",
-                            fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
+                            if (allDoors.isEmpty()) "This doorway has no connection yet."
+                            else "BTS ${propsBts.toString(16).uppercase().padStart(2, '0')} is not linked to a connection.",
+                            fontSize = uiFont.detail,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (!canGrowConnections) Text(
+                            "This room's door list cannot grow in this workflow. Reuse a stored connection under Advanced.",
+                            fontSize = uiFont.statusBar, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    doorConnectionError?.let {
-                        Text(it, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.error)
-                    }
-                } else if (currentDoor != null) {
+                    AdvancedToggle()
+                    if (advancedDoorFields) StoredConnectionPicker()
+                } else {
                     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    val doorDefinitionAddress = semanticAsmAddress(
-                        RomConstants.BANK_FX,
-                        currentDoor.doorDefPtr,
-                    )
+                    if (sharedRooms.size > 1 && editorState.asmNavigationEnabled) {
+                        Text("Shared native record · changes affect ${sharedRooms.joinToString()}",
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.tertiary)
+                        Text("Reset room keeps shared edits. Undo or edit this record to restore them.",
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor)
+                        if (!editorState.canEditSharedDoor(currentDoor.doorDefPtr)) TextButton(onClick = { editorState.enableSharedDoorEditing(currentDoor.doorDefPtr) }) {
+                            Text("Edit shared record", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                        }
+                    }
                     val connectionDiagnostic = remember(
                         roomId,
                         connectionIndex,
@@ -615,6 +638,11 @@ internal fun TilePropertiesPanel(
                     ) {
                         doorDiagnosticsForRoom(roomId, romParser, editorState, rooms)[connectionIndex]
                     }
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Travel:", fontSize = uiFont.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
+                        Text(currentDoor.directionName, fontSize = uiFont.detail, modifier = Modifier.weight(1f))
+                    }
+                    if (connectionDiagnostic?.needsAttention == true) DoorConnectionHealthCard(connectionDiagnostic)
                     if (connectionSharedOutsideDoorway) {
                         Text(
                             if (canGrowConnections) {
@@ -627,16 +655,6 @@ internal fun TilePropertiesPanel(
                         )
                     }
 
-                    if (onNavigateToDoorSource != null && editorState.asmNavigationEnabled) {
-                        TextButton(onClick = { onNavigateToDoorSource(connectionIndex) }) { Text("Door data ASM", fontSize = LocalEditorTheme.current.fontSize.value.detail) }
-                    } else if (doorDefinitionAddress != null && asmLink != null) {
-                        AsmNavigationLink(
-                            snesAddress = doorDefinitionAddress,
-                            onNavigateToAsm = asmLink,
-                            label = "DoorDef ASM ${'$'}83:${currentDoor.doorDefPtr.toString(16).uppercase().padStart(4, '0')}",
-                            modifier = Modifier.padding(bottom = 2.dp),
-                        )
-                    }
                     val arrivalAddress = semanticAsmAddress(RomConstants.BANK_ROOM_DATA, currentDoor.entryCode)
                     if (arrivalBinding != null && onNavigateToDoorArrival != null) {
                         TextButton(onClick = { onNavigateToDoorArrival(connectionIndex, false, declarationIdentity) }) {
@@ -647,198 +665,166 @@ internal fun TilePropertiesPanel(
                     } else if (arrivalAddress != null && asmLink != null) {
                         AsmNavigationLink(arrivalAddress, asmLink, label = "Arrival ASM ${'$'}8F:${currentDoor.entryCode.toString(16).uppercase().padStart(4, '0')}")
                     }
-                    if (editorState.asmNavigationEnabled && editorState.doorPreviewProblem == null &&
-                        arrivalBinding?.label?.startsWith("SmeditArrival_") != true && onNavigateToDoorArrival != null) {
-                        TextButton(onClick = { onNavigateToDoorArrival(connectionIndex, true, declarationIdentity) }) {
-                            Text("Create managed arrival ASM…", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                        }
-                    }
-                    if (editorState.doorPreviewProblem != null) {
+                    if (sharedRooms.size > 1 && editorState.asmNavigationEnabled && !editorState.canEditSharedDoor(currentDoor.doorDefPtr)) {
+                        Text("Review the shared scope above before changing connection fields.",
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor)
+                    } else if (editorState.doorPreviewProblem != null) {
                         Text("Read-only door preview: ${editorState.doorPreviewProblem} Repair the ASM declaration to resume visual editing.",
                             fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.error)
                         Text("Last valid: ${currentDoor.directionName} → ${'$'}${currentDoor.destRoomPtr.toString(16).uppercase()}, " +
                             "screen (${currentDoor.screenX + 1}, ${currentDoor.screenY + 1})",
                             fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        // Human-facing, one-based screen selector. ROM values stay zero-based internally.
-                        @Composable
-                        fun ScreenDropdown(label: String, value: Int, options: IntRange, onValueChange: (Int) -> Unit) {
-                            var expanded by remember { mutableStateOf(false) }
+                    }
+                    AdvancedToggle()
+                    if (advancedDoorFields) {
+                        StoredConnectionPicker()
+                        if (connectionFieldsEditable) {
+                            // Human-facing, one-based screen selector. ROM values stay zero-based internally.
+                            @Composable
+                            fun ScreenDropdown(label: String, value: Int, options: IntRange, onValueChange: (Int) -> Unit) {
+                                var expanded by remember { mutableStateOf(false) }
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth().height(28.dp)
+                                                .clickable { expanded = true },
+                                            shape = MaterialTheme.shapes.small,
+                                            color = MaterialTheme.colorScheme.surfaceVariant
+                                        ) {
+                                            Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
+                                                verticalAlignment = Alignment.CenterVertically) {
+                                                Text("${value + 1}", fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                                                Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                                            }
+                                        }
+                                        DropdownMenu(
+                                            expanded = expanded,
+                                            onDismissRequest = { expanded = false },
+                                            modifier = Modifier.requiredSizeIn(maxHeight = 300.dp)
+                                        ) {
+                                            for (v in options) {
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            "${v + 1}",
+                                                            fontSize = LocalEditorTheme.current.fontSize.value.body,
+                                                            fontWeight = if (v == value) FontWeight.Bold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        expanded = false
+                                                        if (v != value) onValueChange(v)
+                                                    },
+                                                    modifier = Modifier.height(24.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            val effectiveDestinationRoom = remember(currentDoor.destRoomPtr, editorState.editVersion) {
+                                romParser.readRoomHeader(currentDoor.destRoomPtr)?.let(editorState::applyHeaderChanges)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            val dirNames = listOf("Right", "Left", "Down", "Up")
+
+                            // Direction dropdown
+                            var dirDropExpanded by remember { mutableStateOf(false) }
+                            val currentDir = currentDoor.direction and 0x03
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                Text(label, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
+                                Text("Travel override:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
                                 Box(modifier = Modifier.weight(1f)) {
                                     Surface(
                                         modifier = Modifier.fillMaxWidth().height(28.dp)
-                                            .clickable { expanded = true },
+                                            .clickable { dirDropExpanded = true },
                                         shape = MaterialTheme.shapes.small,
                                         color = MaterialTheme.colorScheme.surfaceVariant
                                     ) {
                                         Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
                                             verticalAlignment = Alignment.CenterVertically) {
-                                            Text("${value + 1}", fontSize = LocalEditorTheme.current.fontSize.value.body, modifier = Modifier.weight(1f))
+                                            val bubbleTag = when (currentDoor.direction ushr 2) { 1 -> " (closing)"; 2 -> " (escape gate)"; else -> "" }
+                                            Text("${dirNames.getOrElse(currentDir) { "?" }}$bubbleTag", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.weight(1f))
                                             Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                                         }
                                     }
                                     DropdownMenu(
-                                        expanded = expanded,
-                                        onDismissRequest = { expanded = false },
-                                        modifier = Modifier.requiredSizeIn(maxHeight = 300.dp)
+                                        expanded = dirDropExpanded,
+                                        onDismissRequest = { dirDropExpanded = false }
                                     ) {
-                                        for (v in options) {
+                                        for ((di, dn) in dirNames.withIndex()) {
                                             DropdownMenuItem(
-                                                text = {
-                                                    Text(
-                                                        "${v + 1}",
-                                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
-                                                        fontWeight = if (v == value) FontWeight.Bold else FontWeight.Normal
-                                                    )
-                                                },
+                                                text = { Text(dn, fontSize = LocalEditorTheme.current.fontSize.value.body) },
                                                 onClick = {
-                                                    expanded = false
-                                                    if (v != value) onValueChange(v)
+                                                    dirDropExpanded = false
+                                                    val newBitflag = editedDoorBitflag(currentDoor.bitflag, travel = di)
+                                                    val newDir = newBitflag ushr 8
+                                                    val derivedCap = editorState.deriveEffectiveDoorCapPosition(
+                                                        romParser, currentDoor.destRoomPtr, newDir,
+                                                        currentDoor.screenX, currentDoor.screenY,
+                                                    )
+                                                    editorState.updateDoor(connectionIndex, currentDoor.copy(
+                                                        bitflag = newBitflag,
+                                                        doorCapCode = derivedCap ?: currentDoor.doorCapCode
+                                                    ), expectedIdentity = declarationIdentity)
                                                 },
-                                                modifier = Modifier.height(24.dp)
+                                                modifier = Modifier.height(26.dp)
                                             )
                                         }
                                     }
                                 }
                             }
-                        }
-
-                        DoorDestinationPicker(
-                            currentDoor = currentDoor,
-                            sourceRoomId = roomId,
-                            requiredDirection = pickerDirection,
-                            rooms = rooms.filter { it.getRoomIdAsInt() != roomId },
-                            romParser = romParser,
-                            editorState = editorState,
-                            enabled = !connectionSharedOutsideDoorway || !canGrowConnections || allDoors.size < 16,
-                            onDoorwaySelected = { opening ->
-                                doorConnectionError = runCatching {
-                                    selectDoorway(opening)
-                                }.exceptionOrNull()?.message
-                            },
-                        )
-                        doorConnectionError?.let {
-                            Text(it, fontSize = LocalEditorTheme.current.fontSize.value.statusBar, color = MaterialTheme.colorScheme.error)
-                        }
-                        val effectiveDestinationRoom = remember(currentDoor.destRoomPtr, editorState.editVersion) {
-                            romParser.readRoomHeader(currentDoor.destRoomPtr)?.let(editorState::applyHeaderChanges)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        if (connectionDiagnostic?.needsAttention == true) {
-                            DoorConnectionHealthCard(connectionDiagnostic)
                             Spacer(modifier = Modifier.height(4.dp))
-                        }
 
-                        val dirNames = listOf("Right", "Left", "Down", "Up")
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text("Entrance:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
-                            Text(
-                                "${incomingDoorEdgeName(currentDoor.direction).replaceFirstChar { it.uppercase() }} edge" +
-                                    " · screen ${oneBasedRoomCoordinate(currentDoor.screenX, currentDoor.screenY)}",
-                                fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
+                            val destinationColumns = 0 until (effectiveDestinationRoom?.width ?: 1).coerceAtLeast(1)
+                            val destinationRows = 0 until (effectiveDestinationRoom?.height ?: 1).coerceAtLeast(1)
 
-                        // Direction dropdown
-                        var dirDropExpanded by remember { mutableStateOf(false) }
-                        val currentDir = currentDoor.direction and 0x03
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text("Travel:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
-                            Box(modifier = Modifier.weight(1f)) {
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth().height(28.dp)
-                                        .clickable { dirDropExpanded = true },
-                                    shape = MaterialTheme.shapes.small,
-                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Row(modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
-                                        verticalAlignment = Alignment.CenterVertically) {
-                                        val bubbleTag = when (currentDoor.direction ushr 2) { 1 -> " (closing)"; 2 -> " (escape gate)"; else -> "" }
-                                        Text("${dirNames.getOrElse(currentDir) { "?" }}$bubbleTag", fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.weight(1f))
-                                        Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                                    }
-                                }
-                                DropdownMenu(
-                                    expanded = dirDropExpanded,
-                                    onDismissRequest = { dirDropExpanded = false }
-                                ) {
-                                    for ((di, dn) in dirNames.withIndex()) {
-                                        DropdownMenuItem(
-                                            text = { Text(dn, fontSize = LocalEditorTheme.current.fontSize.value.body) },
-                                            onClick = {
-                                                dirDropExpanded = false
-                                                val newBitflag = editedDoorBitflag(currentDoor.bitflag, travel = di)
-                                                val newDir = newBitflag ushr 8
-                                                val derivedCap = editorState.deriveEffectiveDoorCapPosition(
-                                                    romParser, currentDoor.destRoomPtr, newDir,
-                                                    currentDoor.screenX, currentDoor.screenY,
-                                                )
-                                                editorState.updateDoor(connectionIndex, currentDoor.copy(
-                                                    bitflag = newBitflag,
-                                                    doorCapCode = derivedCap ?: currentDoor.doorCapCode
-                                                ), expectedIdentity = declarationIdentity)
-                                            },
-                                            modifier = Modifier.height(26.dp)
-                                        )
-                                    }
+                            ScreenDropdown("Screen col:", currentDoor.screenX, destinationColumns) { v ->
+                                val derivedCap = editorState.deriveEffectiveDoorCapPosition(
+                                    romParser, currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
+                                val match = romParser.findVanillaDoorMatch(
+                                    currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
+                                val newBitflag = mergeDoorBitflagWithMatchedOrientation(
+                                    currentDoor.bitflag,
+                                    match?.orientation
+                                )
+                                editorState.updateDoor(connectionIndex, currentDoor.copy(
+                                    screenX = v,
+                                    bitflag = newBitflag,
+                                    entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
+                                    doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
+                                ), expectedIdentity = declarationIdentity)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            ScreenDropdown("Screen row:", currentDoor.screenY, destinationRows) { v ->
+                                val derivedCap = editorState.deriveEffectiveDoorCapPosition(
+                                    romParser, currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
+                                val match = romParser.findVanillaDoorMatch(
+                                    currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
+                                val newBitflag = mergeDoorBitflagWithMatchedOrientation(
+                                    currentDoor.bitflag,
+                                    match?.orientation
+                                )
+                                editorState.updateDoor(connectionIndex, currentDoor.copy(
+                                    screenY = v,
+                                    bitflag = newBitflag,
+                                    entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
+                                    doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
+                                ), expectedIdentity = declarationIdentity)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            if (editorState.asmNavigationEnabled && editorState.doorPreviewProblem == null &&
+                                arrivalBinding?.label?.startsWith("SmeditArrival_") != true && onNavigateToDoorArrival != null) {
+                                TextButton(onClick = { onNavigateToDoorArrival(connectionIndex, true, declarationIdentity) },
+                                    contentPadding = PaddingValues(horizontal = 0.dp),
+                                    enabled = sharedRooms.size < 2 || editorState.canEditSharedDoor(currentDoor.doorDefPtr)) {
+                                    Text("Create managed arrival ASM…", fontSize = LocalEditorTheme.current.fontSize.value.detail)
                                 }
                             }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        val destinationColumns = 0 until (effectiveDestinationRoom?.width ?: 1).coerceAtLeast(1)
-                        val destinationRows = 0 until (effectiveDestinationRoom?.height ?: 1).coerceAtLeast(1)
-
-                        ScreenDropdown("Screen col:", currentDoor.screenX, destinationColumns) { v ->
-                            val derivedCap = editorState.deriveEffectiveDoorCapPosition(
-                                romParser, currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
-                            val match = romParser.findVanillaDoorMatch(
-                                currentDoor.destRoomPtr, currentDoor.direction, v, currentDoor.screenY)
-                            val newBitflag = mergeDoorBitflagWithMatchedOrientation(
-                                currentDoor.bitflag,
-                                match?.orientation
-                            )
-                            editorState.updateDoor(connectionIndex, currentDoor.copy(
-                                screenX = v,
-                                bitflag = newBitflag,
-                                entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
-                                doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
-                            ), expectedIdentity = declarationIdentity)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        ScreenDropdown("Screen row:", currentDoor.screenY, destinationRows) { v ->
-                            val derivedCap = editorState.deriveEffectiveDoorCapPosition(
-                                romParser, currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
-                            val match = romParser.findVanillaDoorMatch(
-                                currentDoor.destRoomPtr, currentDoor.direction, currentDoor.screenX, v)
-                            val newBitflag = mergeDoorBitflagWithMatchedOrientation(
-                                currentDoor.bitflag,
-                                match?.orientation
-                            )
-                            editorState.updateDoor(connectionIndex, currentDoor.copy(
-                                screenY = v,
-                                bitflag = newBitflag,
-                                entryCode = if (arrivalBinding != null) currentDoor.entryCode else match?.entryCode ?: currentDoor.entryCode,
-                                doorCapCode = derivedCap ?: match?.doorCapCode ?: currentDoor.doorCapCode
-                            ), expectedIdentity = declarationIdentity)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        var advancedDoorFields by remember(roomId, propsBts) { mutableStateOf(false) }
-                        TextButton(
-                            onClick = { advancedDoorFields = !advancedDoorFields },
-                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                            modifier = Modifier.height(24.dp),
-                        ) {
-                            Text(if (advancedDoorFields) "▾ Hide advanced" else "▸ Advanced", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                        }
-                        if (advancedDoorFields) {
                             // Distance from door (16-bit, keep as text)
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Text("Distance:", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = labelColor, modifier = Modifier.width(tilePropertiesLabelWidth()))
@@ -963,8 +949,8 @@ internal fun TilePropertiesPanel(
                                     fontSize = LocalEditorTheme.current.fontSize.value.body, monospace = true
                                 )
                             }
-                        }
-                    } // Editable connection controls; invalid drafts retain only their last-valid preview.
+                        } // Editable connection controls; invalid drafts retain only their last-valid preview.
+                    }
                 }
             }
 
@@ -1093,9 +1079,13 @@ internal fun TilePropertiesPanel(
                                 }
                                 Row {
                                     Text("Door: ", fontSize = LocalEditorTheme.current.fontSize.value.detail, color = detailColor)
-                                    Text("\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                                    Text(saveEntry.sourceDoor?.caption ?: "\$${saveEntry.doorPtr.toString(16).uppercase().padStart(4, '0')}", fontSize = LocalEditorTheme.current.fontSize.value.detail,
                                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurface)
+                                }
+                                if (editorState.hasManagedPlms()) {
+                                    IncomingDoorPicker("Change entrance", editorState.incomingDoorConditionOptions(editorState.currentRoomId, romParser),
+                                        enabled = editorState.objectPreviewProblem == null) { option -> editorState.updateSaveStationIncomingDoor(plm, option) }
                                 }
                                 var spawnXText by remember(area, saveIdx, saveEntry.samusX, saveEntry.source) {
                                     mutableStateOf(saveEntry.samusXSigned.toString())
@@ -2036,205 +2026,6 @@ internal fun TilePropertiesPanel(
 
 }
 
-@Composable
-internal fun DoorDestinationPicker(
-    currentDoor: RomParser.DoorEntry?,
-    sourceRoomId: Int,
-    requiredDirection: Int,
-    rooms: List<RoomInfo>,
-    romParser: RomParser,
-    editorState: EditorState,
-    enabled: Boolean,
-    onDoorwaySelected: (DoorwayOpening) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    var search by remember { mutableStateOf("") }
-    var selectedRoomId by remember(requiredDirection) { mutableStateOf<Int?>(null) }
-    val roomOptions = remember(rooms, romParser, editorState.editVersion) {
-        rooms.mapNotNull { info ->
-            romParser.readRoomHeader(info.getRoomIdAsInt())
-                ?.let(editorState::applyHeaderChanges)
-                ?.let { header -> Triple(info, header.areaName, header.area) }
-        }.sortedWith(compareBy({ it.third }, { it.first.name.lowercase() }))
-    }
-    val selectedName = currentDoor?.let { door ->
-        roomOptions.firstOrNull { it.first.getRoomIdAsInt() == door.destRoomPtr }?.first?.name
-            ?: "Unknown destination"
-    } ?: "Choose destination…"
-    val filteredRooms = if (search.isBlank()) roomOptions else {
-        val query = search.trim()
-        roomOptions.filter { (info, areaName, _) ->
-            info.name.contains(query, ignoreCase = true) ||
-                info.id.contains(query, ignoreCase = true) ||
-                areaName.contains(query, ignoreCase = true)
-        }
-    }
-
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            "Destination:",
-            fontSize = LocalEditorTheme.current.fontSize.value.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(tilePropertiesLabelWidth()),
-        )
-        Box(modifier = Modifier.weight(1f)) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(28.dp).clickable(enabled = enabled) { expanded = true },
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceVariant,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp).fillMaxHeight(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        selectedName,
-                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                        color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (enabled) Text("▾", fontSize = LocalEditorTheme.current.fontSize.value.detail)
-                }
-            }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = {
-                    expanded = false
-                    search = ""
-                    selectedRoomId = null
-                },
-                modifier = Modifier.width(340.dp).requiredSizeIn(maxHeight = 420.dp),
-            ) {
-                if (selectedRoomId == null) {
-                    Text(
-                        "Choose a room",
-                        fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
-                    AppTextInput(
-                        value = search,
-                        onValueChange = { search = it },
-                        placeholder = "Search room or area…",
-                        fontSize = LocalEditorTheme.current.fontSize.value.body,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth(),
-                    )
-                    for ((info, areaName, _) in filteredRooms) {
-                        val optionRoomId = info.getRoomIdAsInt()
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        info.name,
-                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
-                                        fontWeight = if (optionRoomId == currentDoor?.destRoomPtr) {
-                                            FontWeight.Bold
-                                        } else FontWeight.Normal,
-                                    )
-                                    Text(
-                                        areaName,
-                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            },
-                            onClick = {
-                                selectedRoomId = optionRoomId
-                                search = ""
-                            },
-                            modifier = Modifier.height(38.dp),
-                        )
-                    }
-                    if (filteredRooms.isEmpty()) {
-                        Text(
-                            "No matching rooms",
-                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                            color = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.padding(8.dp),
-                        )
-                    }
-                } else {
-                    val destinationId = requireNotNull(selectedRoomId)
-                    val destination = roomOptions.firstOrNull {
-                        it.first.getRoomIdAsInt() == destinationId
-                    }
-                    val openings = editorState.effectiveDoorwayOpenings(
-                        destinationId, requiredDirection, romParser,
-                    )
-                    val destinationDoors = editorState.effectiveDoorsForRoom(destinationId, romParser)
-                    DropdownMenuItem(
-                        text = { Text("‹ Back to rooms", fontSize = LocalEditorTheme.current.fontSize.value.body) },
-                        onClick = { selectedRoomId = null },
-                        modifier = Modifier.height(30.dp),
-                    )
-                    Text(
-                        destination?.first?.name ?: "Destination room",
-                        fontSize = LocalEditorTheme.current.fontSize.value.body,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
-                    Text(
-                        "Source travels ${listOf("right", "left", "down", "up")[requiredDirection and 0x03]}; " +
-                            "choose a ${incomingDoorEdgeName(requiredDirection)}-edge doorway.",
-                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
-                    for (opening in openings) {
-                        val linkedDoor = destinationDoors.getOrNull(opening.connectionIndex)
-                        val connectionTarget = linkedDoor?.let { linked ->
-                            if (linked.destRoomPtr == sourceRoomId) {
-                                "this room"
-                            } else {
-                                roomOptions.firstOrNull {
-                                    it.first.getRoomIdAsInt() == linked.destRoomPtr
-                                }?.first?.name ?: "another room"
-                            }
-                        }
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        "${incomingDoorEdgeName(opening.direction).replaceFirstChar { it.uppercase() }} edge" +
-                                            " · screen ${oneBasedRoomCoordinate(opening.screenX, opening.screenY)}",
-                                        fontSize = LocalEditorTheme.current.fontSize.value.body,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                    Text(
-                                        "Door tile ${oneBasedRoomCoordinate(opening.blockX, opening.blockY)}" +
-                                            " · ${opening.tileCount} tile${if (opening.tileCount == 1) "" else "s"}" +
-                                            if (linkedDoor != null) {
-                                                " · connection ${opening.connectionIndex + 1} → $connectionTarget"
-                                            } else {
-                                                " · unlinked opening"
-                                            },
-                                        fontSize = LocalEditorTheme.current.fontSize.value.statusBar,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            },
-                            onClick = {
-                                expanded = false
-                                selectedRoomId = null
-                                onDoorwaySelected(opening)
-                            },
-                            modifier = Modifier.height(42.dp),
-                        )
-                    }
-                    if (openings.isEmpty()) {
-                        Text(
-                            "No compatible type-9 doorway tiles were found on this room's " +
-                                "${incomingDoorEdgeName(requiredDirection)} edge.",
-                            fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(10.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun PlmScopeActions(editor: EditorState, plm: RomParser.PlmEntry, canRemove: Boolean = true) {

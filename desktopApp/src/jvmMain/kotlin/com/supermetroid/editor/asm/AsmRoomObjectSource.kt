@@ -282,11 +282,13 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
             }.toList()
             require(spans.size == 7) { "Save source changed; no field was replaced." }
             var result = text
-            for (index in 6 downTo 0) if (before.words[index] != resource.words[index]) {
+            for (index in 6 downTo 0) if (before.words[index] != resource.words[index] || (index == 1 && before.sourceDoor != resource.sourceDoor)) {
                 val token = text.substring(spans[index])
-                require(AsmPlmDocument.literal(token) != null) { "Save field '$token' is symbolic; edit that expression in ASM first." }
+                require(AsmPlmDocument.literal(token) != null || (index == 1 && before.sourceDoor != null)) { "Save field '$token' is symbolic; edit that expression in ASM first." }
                 val value = resource.words[index]
                 val replacement = when {
+                    index == 1 && resource.sourceDoor != null -> requireNotNull(resource.sourceDoor).entryLabel
+                    index == 1 && before.sourceDoor != null -> "\$${value.toString(16).uppercase().padStart(4, '0')}"
                     token.startsWith('$') -> "\$${value.toString(16).uppercase().padStart(4, '0')}"
                     token.startsWith('%') -> "%${value.toString(2).padStart(16, '0')}"
                     else -> value.toString()
@@ -312,7 +314,7 @@ internal class AsmRoomObjectSource(val text: String, private val symbols: Map<St
         for (slot in removedSlots) {
             val area = if (room.asmRoomPropertiesSourceVersion != 0) AsmRoomPropertiesSource(result).area(room.roomId) else room.effectiveHeaderChange?.area
             val save = source.saveResources(room.roomId).singleOrNull { it.slot == slot && (area == null || it.area == area) }
-            if (save != null) result = AsmRoomObjectSource(result, symbols).withSave(save.copy(words = List(7) { 0 }))
+            if (save != null) result = AsmRoomObjectSource(result, symbols).withSave(save.copy(words = List(7) { 0 }, sourceDoor = null))
         }
         AsmRoomObjectSource(result, symbols).resources(room)
         return result

@@ -105,7 +105,7 @@ class AsmRoomPlmSourcesTest {
     }
 
     @Test
-    fun `projects with new rooms keep their complete room graph on the ROM backend`() {
+    fun `new room promotion requires complete checked placements and keeps stable project labels`() {
         val project = project()
         project.newRooms += com.supermetroid.editor.data.ProjectNewRoom(
             id = "new-room", name = "Fixture", handle = "fixture",
@@ -113,10 +113,20 @@ class AsmRoomPlmSourcesTest {
             header = com.supermetroid.editor.data.ProjectNewRoomHeader(0, 0, 0, 0, 1, 1),
             initialState = com.supermetroid.editor.data.ProjectNewRoomState("", 0),
         )
-        val result = AsmSourceRoomMaterializer().materialize(project, report(), fixture())
-        assertTrue(result.isEmpty)
-        assertTrue(result.plmTables.isEmpty())
-        assertEquals(1, result.skippedWrites)
+        val rom = fixture().also { it.copyInto(it, 0x7A000, 0x791F8, 0x7920A + 26) }
+        assertFailsWith<IllegalArgumentException> {
+            AsmSourceRoomMaterializer().materialize(project, report(), rom)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            AsmSourceRoomMaterializer().materialize(project, report(), rom, newRoomIds = mapOf("other-room" to 0xA000))
+        }
+        val result = AsmSourceRoomMaterializer().materialize(project, report(), rom, newRoomIds = mapOf("new-room" to 0xA000))
+        assertTrue(!result.isEmpty)
+        assertEquals(mapOf("new-room" to 0xA000), result.newRoomIds)
+        assertTrue("A000" in result.roomIds)
+        assertTrue(result.source.contains("${AsmProjectRoomLabels.entry("new-room")}:"))
+        assertTrue(result.source.contains("org \$8FA000"))
+        assertEquals(0, result.skippedWrites)
     }
 
     private fun project() = SmEditProject("fixture.sfc", rooms = mutableMapOf(

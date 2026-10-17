@@ -101,7 +101,7 @@ class AsmRoomSourceActionsTest {
         } finally { scene.close(); surface.close() }
     }
 
-    @Test fun `Source and Assets buttons open pure previews and adopt the selected room state without entering the visual editor`() = runBlocking {
+    @Test fun `Source and Assets layout buttons open normal editing and first typing adopts the selected state without entering the visual editor`() = runBlocking {
         for (fromAsset in listOf(false, true)) {
             val parent = File(directory, "asset-$fromAsset").apply { mkdirs() }
             val src = File(parent, "reference/src").apply { mkdirs() }
@@ -143,7 +143,7 @@ class AsmRoomSourceActionsTest {
                 var time = System.nanoTime()
                 fun render() { repeat(12) { time += 16_666_667; scene.render(surface.canvas, time) } }
                 render()
-                click(scene, "Preview / make editable…"); render()
+                click(scene, "Edit layout ASM…"); render()
                 click(scene, "Native state 2 · " + parser.parseRoomStatesWithData(0x9879)[1].stateInfo.conditionName); render()
                 val preview = assertNotNull(workspace.roomSourceInspection, editor.statusMessage)
                 assertEquals("state-2", preview.stateId)
@@ -151,13 +151,27 @@ class AsmRoomSourceActionsTest {
                 assertEquals(revision, workspace.sourceBufferRevision); assertFalse(editor.dirty)
                 assertEquals(buildRequired, workspace.sourceBuildRequired)
                 assertFalse(workspace.hasProjectSourceChanges)
-                assertFalse(workspace.isProjectSourceEditable)
-                assertTrue(nodes(scene).none { it.config.contains(SemanticsProperties.EditableText) })
-                click(scene, "Create editable source"); render()
+                assertTrue(workspace.isProjectSourceEditable)
+                assertTrue(nodes(scene).none { text(it) == "Create editable source" })
+                val draft = assertNotNull(preview.automaticEdit)
+                fun field() = nodes(scene).single { it.config.contains(SemanticsProperties.EditableText) }
+                assertEquals(draft.text, field().config[SemanticsProperties.EditableText].text)
+                val cursor = draft.text.length
+                assertTrue(field().config[SemanticsActions.SetSelection].action!!.invoke(cursor, cursor, false))
+                render()
+                assertTrue(field().config[SemanticsActions.InsertTextAtCursor].action!!.invoke(AnnotatedString("; My layout note\n")))
+                render()
                 assertNull(workspace.roomSourceInspection, editor.statusMessage)
                 assertEquals(1, project.rooms.getValue("9879").asmLayoutSourceVersion)
                 assertTrue(workspace.isProjectSourceEditable); assertTrue(workspace.sourceBuildRequired)
                 assertTrue(workspace.projectSourceText(PLM_SOURCE_FILE).contains("macro SmeditLayout_9879_"))
+                assertEquals(cursor + "; My layout note\n".length, nodes(scene).single { it.config.contains(SemanticsProperties.EditableText) }
+                    .config[SemanticsProperties.TextSelectionRange].start, "First-edit handoff preserves the caret")
+                assertTrue(workspace.undoSourceEdit(PLM_SOURCE_FILE), workspace.error); render()
+                assertEquals(before, Json.encodeToString(SmEditProject.serializer(), project))
+                assertEquals(draft.text, workspace.sourceEditorText(PLM_SOURCE_FILE))
+                assertTrue(workspace.redoSourceEdit(PLM_SOURCE_FILE), workspace.error); render()
+                assertNull(workspace.roomSourceInspection)
                 assertEquals(0, editor.currentRoomId); assertNull(editor.roomSourceParser)
                 assertTrue(editor.undoStack.isEmpty())
             } finally { scene.close(); surface.close() }
@@ -171,7 +185,7 @@ class AsmRoomSourceActionsTest {
             scene.constraints = Constraints.fixed(600, 200)
             scene.setContent { MaterialTheme { AsmRoomSourceActions(listOf(AsmRoomSourceLink(0x9879, "Flyway", RoomAsmSourceKind.LAYOUT)), null) } }
             repeat(3) { scene.render(surface.canvas, System.nanoTime() + it * 16_666_667) }
-            assertTrue(nodes(scene).none { text(it).contains("Preview / make editable") })
+            assertTrue(nodes(scene).none { text(it).contains("Preview / make editable") || text(it) == "Edit layout ASM…" })
         } finally { scene.close(); surface.close() }
     }
 

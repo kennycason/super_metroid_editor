@@ -6,13 +6,21 @@ import com.supermetroid.editor.data.FxChange
 data class SourceFxResource(val identity: String, val entries: List<RomParser.FxEntry>) {
     init {
         require(entries.size <= 16) { "$identity: more than 16 FX headers are not supported." }
-        require(entries.map { it.doorSelect }.distinct().size == entries.size) { "$identity: duplicate FX door selectors hide later records." }
-        require(entries.dropLast(1).none { it.doorSelect == 0 }) { "$identity: Default FX must be last." }
-        entries.forEach { fxEntryFromFields(it.fields()) }
+        require(entries.map { it.doorSelect to it.sourceDoor }.distinct().size == entries.size) { "$identity: duplicate FX door selectors hide later records." }
+        require(entries.dropLast(1).none { it.isDefault }) { "$identity: Default FX must be last." }
+        entries.forEach {
+            require(it.sourceDoor == null || it.doorSelect == 0) { "$identity: a symbolic FX selector cannot also have a numeric pointer." }
+            fxEntryFromFields(it.fields())
+        }
     }
-    fun bytes(): ByteArray = entries.flatMap { entry -> entry.fields().flatMapIndexed { index, value ->
-        if (index < 4) listOf(value.toByte(), (value ushr 8).toByte()) else listOf(value.toByte())
-    } }.toByteArray() + if (entries.lastOrNull()?.doorSelect == 0) ByteArray(0) else byteArrayOf(-1, -1)
+    fun bytes(): ByteArray {
+        require(entries.none { it.sourceDoor != null }) { "$identity: resolve symbolic FX doors before encoding." }
+        return entries.flatMap { entry ->
+            entry.fields().flatMapIndexed { index, value ->
+                if (index < 4) listOf(value.toByte(), (value ushr 8).toByte()) else listOf(value.toByte())
+            }
+        }.toByteArray() + if (entries.lastOrNull()?.isDefault == true) ByteArray(0) else byteArrayOf(-1, -1)
+    }
 }
 
 fun RomParser.FxEntry.fields(): List<Int> = listOf(doorSelect, liquidSurfaceStart, liquidSurfaceNew, liquidSpeed,
@@ -57,8 +65,19 @@ fun readSourceFxResource(parser: RomParser, pointer: Int, identity: String): Sou
     error("$identity: FX table crosses the bank boundary without a stop record.")
 }
 
-fun validateSourceFxDoors(roomId: Int, resource: SourceFxResource, parser: RomParser) {
-    for (entry in resource.entries.filter { it.doorSelect != 0 }) {
+fun validateSourceFxDoors(roomId: Int, resource: SourceFxResource, parser: RomParser,
+                          doors: Map<Int, SourceRoomDoors> = emptyMap()) {
+    val resolvedKeys = resource.entries.map { entry ->
+        entry.sourceDoor?.requireIncomingDoor(roomId, doors)?.doorDefPtr?.takeIf { it != 0 } ?: entry.sourceDoor ?: entry.doorSelect
+    }
+    require(resolvedKeys.distinct().size == resolvedKeys.size) { "${resource.identity}: duplicate FX door aliases hide later records." }
+    for (entry in resource.entries.filter { !it.isDefault && it.sourceDoor == null }) {
+        // Source-owned numeric native pointers must follow live destinations too.
+        val live = doors.values.flatMap { it.entries }.filter { it.doorDefPtr == entry.doorSelect }
+        if (live.isNotEmpty()) {
+            require(live.all { it.change.destRoomPtr == roomId }) { "${resource.identity}: FX door no longer enters this room." }
+            continue
+        }
         require(entry.doorSelect <= 0xFFF4) { "FX door record crosses bank \$83." }
         val pc = parser.snesToPc(0x830000 or entry.doorSelect)
         require(pc + 12 <= parser.getRomData().size && parser.readUInt16At(pc) == roomId) {
@@ -66,6 +85,12 @@ fun validateSourceFxDoors(roomId: Int, resource: SourceFxResource, parser: RomPa
         }
     }
 }
+
+fun SourceFxResource.resolveSourceDoors(roomId: Int, doors: Map<Int, SourceRoomDoors>,
+                                        placed: Map<com.supermetroid.editor.data.ProjectSourceDoorReference, Int>): SourceFxResource =
+    copy(entries = entries.map { entry -> entry.sourceDoor?.let {
+        entry.copy(doorSelect = it.resolveIncomingDoor(roomId, doors, placed), sourceDoor = null)
+    } ?: entry })
 
 /** $A9:86EE/$888F read slots 1/2 after the Default at $83:A0A4. Door lookup alone is not its owner. */
 fun requireDoorRoutedFxOwnership(room: com.supermetroid.editor.data.RoomEdits, parser: RomParser) {

@@ -5,6 +5,7 @@ import com.supermetroid.editor.rom.RomParser
 
 /** Read-only live choices. No source adoption, source writes or cached native-only lists. */
 internal fun EditorState.incomingDoorConditionOptions(targetRoomId: Int, parser: RomParser): List<IncomingDoorConditionOption> {
+    val shared = asmPlmSourceBridge?.doors?.sharedView()
     val ids = (parser.roomCatalog.rooms.map { it.getRoomIdAsInt() } + project.rooms.values.map { it.roomId }).distinct()
     return ids.flatMap { id ->
         val name = parser.readRoomHeader(id)?.name ?: return@flatMap emptyList()
@@ -18,6 +19,8 @@ internal fun EditorState.incomingDoorConditionOptions(targetRoomId: Int, parser:
                     label = "$name · connection ${door.change.doorIndex + 1} (ID ${door.identity})")
             }
         } else effectiveDoorsForRoom(id, parser).mapIndexedNotNull { index, door ->
+            if (shared?.problem != null && (door.doorDefPtr in shared.entries ||
+                    asmPlmSourceBridge?.doors?.sharedConsumers(door.doorDefPtr)?.isNotEmpty() == true)) return@mapIndexedNotNull null
             if (door.destRoomPtr != targetRoomId || door.doorDefPtr == 0) null else
                 IncomingDoorConditionOption.native(door.doorDefPtr,
                     "$name · connection ${index + 1} ($${door.doorDefPtr.toString(16).uppercase()})")

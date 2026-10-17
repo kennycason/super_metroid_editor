@@ -2,7 +2,7 @@ package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.*
 
-internal data class AsmRoomDoorTable(val macro: String, val door: SourceRoomDoor) {
+internal data class AsmRoomDoorTable(val macro: String, val door: SourceRoomDoor, val aliases: List<String> = emptyList()) {
     val label get() = macro.replaceFirst("SmeditDoors_", "SmeditRoom_") + "_DoorDef"
     fun claim() = AsmGeneratedRoomClaim(ASM_ROOM_GRAPH_OWNER, label,
         requireNotNull(snesLoRomToPc(0x830000 or door.doorDefPtr)), door.bytes())
@@ -11,6 +11,7 @@ internal data class AsmRoomDoorTable(val macro: String, val door: SourceRoomDoor
         appendLine("org \$83${door.doorDefPtr.toString(16).uppercase().padStart(4, '0')}")
         appendLine("$label:")
         appendLine("${macro}_Entry:")
+        aliases.forEach { alias -> appendLine("${alias.replaceFirst("SmeditDoors_", "SmeditRoom_")}_DoorDef:"); appendLine("${alias}_Entry:") }
         appendLine("    %$macro()")
         appendLine("${label}_End:")
         appendLine("assert ${label}_End-$label == 12")
@@ -38,13 +39,9 @@ internal fun protectDoorSourceBaseline(sources: Map<Int, SourceRoomDoors>, origi
                     labels[name]?.takeIf { name.startsWith("DoorASM_") && value == baseline.entryCode && it in 0x8F8000..0x8FFFFE }
                         ?.let { baseline.copy(entryCode = it and 65535) }?.takeIf { it == actual }
                 }
-                require(baseline == actual || relinked != null) { "DoorDef ${door.doorDefPtr.toString(16)} also changed in original bank_83.asm; edit its SmeditDoors declaration instead." }
+                require(if (door.shared) actual == door.entry() else baseline == actual || relinked != null) { "DoorDef ${door.doorDefPtr.toString(16)} also changed in original bank_83.asm; edit its SmeditDoors declaration instead." }
             }
-            nativeSymbols.entries.firstOrNull { door.arrival == null && door.change.entryCode != 0 && it.key.startsWith("DoorASM_") && it.value == door.change.entryCode }?.let { anchor ->
-                require(labels[anchor.key] == (0x8F0000 or door.change.entryCode)) {
-                    "Arrival ASM ${anchor.key} moved or was removed. Review the compiled target and update this DoorDef's entry word; stale numeric pointers cannot be used safely."
-                }
-            }
+            validateNativeDoorArrivalAnchor(door, labels, nativeSymbols)
         }
     }
     // After validation, the complete fixed DoorDef belongs to the typed room backend. A
@@ -63,6 +60,20 @@ internal fun protectDoorSourceBaseline(sources: Map<Int, SourceRoomDoors>, origi
         spans.map { range.copy(pcOffset = it.first, length = it.last - it.first + 1) }
     }
     return compiled.copy(sourceOwnedRanges = retained)
+}
+
+/** Global shared records retain this guard even after every room-local owner is reset. */
+internal fun validateNativeDoorArrivalAnchor(door: SourceRoomDoor, labels: Map<String, Int>, nativeSymbols: Map<String, Int>) {
+    if (door.arrival == null) validateNativeDoorArrivalAnchor(door.change.entryCode, labels, nativeSymbols)
+}
+
+/** Project-room seeds also retain numeric native arrivals, even without any adopted DoorDefs. */
+internal fun validateNativeDoorArrivalAnchor(entryCode: Int, labels: Map<String, Int>, nativeSymbols: Map<String, Int>) {
+    nativeSymbols.entries.firstOrNull { entryCode != 0 && it.key.startsWith("DoorASM_") && it.value == entryCode }?.let { anchor ->
+        require(labels[anchor.key] == (0x8F0000 or entryCode)) {
+            "Arrival ASM ${anchor.key} moved or was removed. Review the compiled target and update this DoorDef's entry word; stale numeric pointers cannot be used safely."
+        }
+    }
 }
 
 internal data class AsmRoomDoorListTable(val roomId: Int, val pointer: Int, val doors: List<SourceRoomDoor>) {

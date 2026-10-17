@@ -13,10 +13,14 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
         if (label.startsWith("SmeditArrival_")) AsmDoorArrivalsSource(arrivalSource).routine(label, validateBody = false)
         else require(label.startsWith("DoorASM_") && label in nativeSymbols) { "Unknown arrival label $label; use a managed arrival _Entry symbol or a verified native DoorASM label." }
     }
-    private fun fields(name: String): List<Field> {
+    private fun fields(name: String, visiting: Set<String> = emptySet()): List<Field> {
+        require(name !in visiting && visiting.size < 16) { "Cyclic/deep shared DoorDef alias." }
         val declarations = Regex("(?m)^macro ${Regex.escape(name)}\\(\\)[ \\t]*(?:;[^\\r\\n]*)?\\r?\\n([\\s\\S]*?)^endmacro[ \\t]*(?:;[^\\r\\n]*)?(?:\\r?\\n|$)").findAll(text).toList()
         require(declarations.size == 1) { "Expected exactly one door declaration $name." }
         val body = declarations.single().groups[1]!!
+        val statements = body.value.lineSequence().map { asmCodeBeforeComment(it).trim() }.filter { it.isNotEmpty() }.toList()
+        val alias = statements.singleOrNull()?.let { Regex("%(SmeditSharedDoors_[0-9A-F]{4})\\(\\)").matchEntire(it)?.groupValues?.get(1) }
+        if (alias != null) return fields(alias, visiting + name)
         var offset = body.range.first
         return buildList {
             for (line in body.value.split('\n')) {
@@ -44,6 +48,27 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
             }
         }
     }
+    private fun sharedPointer(name: String): Int? {
+        val code = authoredMacroBody(text, name).lineSequence().map { asmCodeBeforeComment(it).trim() }.filter { it.isNotEmpty() }.toList()
+        return code.singleOrNull()?.let { Regex("%SmeditSharedDoors_([0-9A-F]{4})\\(\\)").matchEntire(it)?.groupValues?.get(1)?.toInt(16) }
+    }
+    fun sharedResources(parser: RomParser): Map<Int, SourceRoomDoor> {
+        val consumers = nativeDoorConsumers(parser)
+        val names = Regex("(?m)^macro (SmeditSharedDoors_([0-9A-F]{4}))\\(\\)").findAll(text).toList()
+        require(names.map { it.groupValues[1] }.distinct().size == names.size) { "Duplicate canonical shared DoorDefs." }
+        val references = Regex("%(SmeditSharedDoors_[0-9A-F]{4})\\(\\)").findAll(text.lineSequence().joinToString("\n") { asmCodeBeforeComment(it) }).map { it.groupValues[1] }.toSet()
+        require(names.map { it.groupValues[1] }.containsAll(references)) { "Missing canonical shared DoorDef declaration." }
+        return names.associate { match ->
+            val pointer = match.groupValues[2].toInt(16)
+            require(sharedPointer(match.groupValues[1]) == null) { "Canonical shared records must contain their own fields, not another shared alias." }
+            require(consumers[pointer].orEmpty().map { it.first }.distinct().size > 1) { "${match.groupValues[1]} is not a shared native DoorDef." }
+            val fields = fields(match.groupValues[1])
+            require(fields.map { it.width } == listOf(2, 1, 1, 1, 1, 1, 1, 2, 2)) { "Shared DoorDef requires exactly twelve native bytes." }
+            val v = fields.map { it.value ?: 0 }
+            pointer to SourceRoomDoor(pointer, DoorChange(0, v[0], v[1] or (v[2] shl 8), v[3] or (v[4] shl 8), v[5], v[6], v[7], v[8]),
+                fields.last().symbol?.let { SourceDoorArrival(it) }, shared = true)
+        }
+    }
     fun resource(room: RoomEdits, parser: RomParser, dimensions: ((Int) -> Pair<Int, Int>?)? = null): SourceRoomDoors {
         val header = requireNotNull(parser.readRoomHeader(room.roomId))
         val native = parser.parseDoorList(header.doorOut)
@@ -58,8 +83,11 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
             val fields = fields(name)
             require(fields.map { it.width } == listOf(2, 1, 1, 1, 1, 1, 1, 2, 2)) { "$name: DoorDef field widths/order changed; expected 12 bytes." }
             val v = fields.map { it.value ?: 0 }
-            SourceRoomDoor(native.getOrNull(identity)?.doorDefPtr ?: 0, DoorChange(index, v[0], v[1] or (v[2] shl 8), v[3] or (v[4] shl 8), v[5], v[6], v[7], v[8]),
-                fields.last().symbol?.let { SourceDoorArrival(it) }, identity)
+            val pointer = native.getOrNull(identity)?.doorDefPtr ?: 0
+            val shared = sharedPointer(name)
+            require(shared == null || shared == pointer) { "$name aliases a different shared DoorDef identity." }
+            SourceRoomDoor(pointer, DoorChange(index, v[0], v[1] or (v[2] shl 8), v[3] or (v[4] shl 8), v[5], v[6], v[7], v[8]),
+                fields.last().symbol?.let { SourceDoorArrival(it) }, identity, shared != null)
         }
         return SourceRoomDoors(header.doorOut, entries, order != null).also { value ->
             if (dimensions == null) validateSourceRoomDoors(room, value, parser) else validateSourceRoomDoors(room, value, parser, dimensions)
@@ -120,6 +148,16 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
     fun nextIdentity(roomId: Int, nativeCount: Int): Int = maxOf(nativeCount - 1,
         Regex("(?m)^macro ${prefix(roomId)}Door_([0-9]+)\\(").findAll(text).maxOfOrNull { it.groupValues[1].toInt() } ?: -1) + 1
     companion object {
+        fun sharedName(pointer: Int) = "SmeditSharedDoors_${pointer.toString(16).uppercase().padStart(4, '0')}"
+        fun renderShared(door: SourceRoomDoor, consumers: List<String>) = buildString {
+            appendLine("; Shared native DoorDef · edits affect ${consumers.joinToString()}")
+            append(renderDoor(0, door.copy(shared = false)).replace(name(0, door.identity), sharedName(door.doorDefPtr)))
+            appendLine("org \$83${door.doorDefPtr.toString(16).uppercase().padStart(4, '0')}")
+            appendLine("${sharedName(door.doorDefPtr)}_Entry:")
+            appendLine("    %${sharedName(door.doorDefPtr)}()")
+            appendLine("${sharedName(door.doorDefPtr)}_End:")
+            appendLine("assert ${sharedName(door.doorDefPtr)}_End-${sharedName(door.doorDefPtr)}_Entry == 12")
+        }
         fun prefix(roomId: Int) = "SmeditDoors_${roomId.toString(16).uppercase().padStart(4, '0')}_"
         fun name(roomId: Int, index: Int) = prefix(roomId) + "Door_$index"
         fun listName(roomId: Int) = prefix(roomId) + "List"
@@ -141,6 +179,13 @@ internal class AsmDoorSource(val text: String, private val arrivalSource: String
             if (source.structural) appendLine(renderOrder(roomId, source.entries.map { it.identity }))
         }
         fun renderDoor(roomId: Int, door: SourceRoomDoor) = buildString {
+                if (door.shared) {
+                    appendLine("; Shared native record; edit its canonical declaration, not a private duplicate.")
+                    appendLine("macro ${name(roomId, door.identity)}()")
+                    appendLine("    %${sharedName(door.doorDefPtr)}()")
+                    appendLine("endmacro\n")
+                    return@buildString
+                }
                 val d = door.change
                 appendLine(if (door.doorDefPtr == 0) "; Door identity ${door.identity} · symbolic DoorDef, placed at build"
                     else "; Door identity ${door.identity} · DoorDef \$83:${hex(door.doorDefPtr, 4).drop(1)}")

@@ -135,6 +135,30 @@ class AsmRoomAreaMoveTest {
         assertEquals(dirty, f.editor.dirty); assertTrue(f.map.undoStack.isEmpty()); assertTrue(f.editor.undoStack.isEmpty())
     }
 
+    @Test fun `cross area save migration and reset preserve symbolic incoming door ownership through undo and cold export`() = runBlocking {
+        val f = fixture()
+        f.editor.loadRoom(0xA000, f.parser, f.parser.readRoomHeader(0xA000)!!)
+        assertTrue(f.editor.ensureDoorSource("Incoming room"))
+        f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
+        assertTrue(f.editor.ensureCurrentPlmSource("Save room"))
+        val reference = ProjectSourceDoorReference(0xA000, 0)
+        val station = f.editor.workingPlms.single { it.id == 0xB76F }
+        assertTrue(f.editor.updateSaveStationIncomingDoor(station, f.editor.incomingDoorConditionOptions(0x91F8, f.parser).single { it.sourceDoor == reference }), f.editor.statusMessage)
+        val before = f.sources(); val model = f.model()
+        f.move()
+        val save = f.bridge.saveResources(0x91F8).single { !it.cleared }
+        assertEquals(1, save.area); assertEquals(reference, save.sourceDoor)
+        assertEquals(0x8020, f.coldExport().readSaveEntry(save.area, save.slot)!!.doorPtr)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(before, f.sources()); assertEquals(model, f.model())
+        assertTrue(f.editor.redo(), f.editor.statusMessage)
+        assertEquals(reference, f.bridge.saveResources(0x91F8).single { !it.cleared }.sourceDoor)
+        assertTrue(f.editor.resetCurrentRoomToOriginal(f.parser), f.editor.statusMessage)
+        assertTrue(f.editor.undo(), f.editor.statusMessage)
+        assertEquals(reference, f.bridge.saveResources(0x91F8).single { !it.cleared }.sourceDoor)
+        assertEquals(0x8020, f.coldExport().readSaveEntry(save.area, save.slot)!!.doorPtr)
+    }
+
     @Test fun `same area arrow move adopts only the header and shares exact map reveal and canvas undo`() = runBlocking {
         val f = fixture()
         val model = f.model(); val source = f.sources(); val selected = f.editor.currentStateIndex
@@ -655,6 +679,41 @@ class AsmRoomAreaMoveTest {
         assertFalse(result.success); assertContains(result.message, "shared")
         assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
         assertTrue(f.editor.undoStack.isEmpty()); assertTrue(f.map.undoStack.isEmpty())
+    }
+
+    @Test fun `adopted canonical shared records cannot receive conflicting per room area flags`() = runBlocking {
+        val f = fixture(hasSave = false, sharedDoor = true)
+        for (id in listOf(0xA000, 0xA100)) {
+            f.editor.loadRoom(id, f.parser, f.parser.readRoomHeader(id)!!)
+            assertTrue(f.editor.ensureDoorSource("Shared consumer"), f.editor.statusMessage)
+        }
+        f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
+        val model = f.model(); val source = f.sources(); val revision = f.workspace.sourceBufferRevision
+        val history = f.editor.undoStack.toList()
+        val result = f.move()
+        assertFalse(result.success); assertContains(result.message.lowercase(), "shared")
+        assertEquals(model, f.model()); assertEquals(source, f.sources()); assertEquals(revision, f.workspace.sourceBufferRevision)
+        assertEquals(history, f.editor.undoStack); assertTrue(f.map.undoStack.isEmpty())
+    }
+
+    @Test fun `an invalid shared draft does not lock unrelated native door fields or get overwritten by adoption`() = runBlocking {
+        val f = fixture(hasSave = false, sharedDoor = true)
+        f.editor.loadRoom(0xA000, f.parser, f.parser.readRoomHeader(0xA000)!!)
+        assertTrue(f.editor.ensureDoorSource("Shared consumer"), f.editor.statusMessage)
+        val text = f.bridge.doors.sourceText()
+        val body = authoredMacroBody(text, AsmDoorSource.sharedName(0x8020))
+        val broken = text.replaceFirst(body, body.replace("dw ${'$'}8000", "dw missing"))
+        assertNotEquals(text, broken)
+        f.workspace.replaceProjectSource(DOOR_SOURCE_FILE, text, broken)
+        f.editor.refreshLinkedPlms()
+        assertNotNull(f.editor.doorPreviewProblem)
+        f.editor.loadRoom(0x91F8, f.parser, f.parser.readRoomHeader(0x91F8)!!)
+        assertNull(f.editor.doorPreviewProblem)
+        f.editor.updateDoor(0, f.editor.doorEntries[0].copy(distFromDoor = 0x1234))
+        assertEquals(0x1234, f.editor.doorEntries[0].distFromDoor, f.editor.statusMessage)
+        assertContains(f.bridge.doors.sourceText(), "dw missing")
+        assertNotNull(f.bridge.doors.sharedView().problem)
+        assertNull(f.bridge.doors.view(0x91F8).problem)
     }
 
     @Test fun `the current authored area and incoming targets are read before deciding whether to move`() = runBlocking {

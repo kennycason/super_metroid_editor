@@ -49,4 +49,37 @@ class SourceDoorReferencesTest {
         assertFalse(projectRoomStateCondition(ProjectRoomStateConditionKind.INCOMING_DOOR, 0x8000)
             .matches(RoomStateSimulationContext(0, incomingSourceDoor = reference)))
     }
+
+    @Test fun `FX and save references resolve only in build copies and never encode placeholder zero`() {
+        val fx = SourceFxResource("symbolic FX", listOf(emptyDefaultFxEntry().copy(sourceDoor = reference, fxType = 4), emptyDefaultFxEntry()))
+        val save = SourceSaveResource("symbolic save", 0xA000, 1, 2, listOf(0xA000, 0, 7, 256, 0, 144, 0xFFE0), reference)
+        assertFalse(fx.entries.first().isDefault)
+        assertFalse(save.cleared)
+        save.validate()
+        assertFails { fx.bytes() }; assertFails { save.bytes() }
+        val resolvedFx = fx.resolveSourceDoors(0xA000, doors(), mapOf(reference to 0xF000))
+        val resolvedSave = save.resolveSourceDoors(doors(), mapOf(reference to 0xF000))
+        assertEquals(0xF000, resolvedFx.entries.first().doorSelect)
+        assertEquals(0xF000, resolvedSave.words[1])
+        assertNull(resolvedFx.entries.first().sourceDoor); assertNull(resolvedSave.sourceDoor)
+        assertEquals(32, resolvedFx.bytes().size); assertEquals(14, resolvedSave.bytes().size)
+        assertEquals(reference, fx.entries.first().sourceDoor); assertEquals(reference, save.sourceDoor)
+        for (bad in listOf(emptyMap(), doors(0xB000))) {
+            assertFails { fx.resolveSourceDoors(0xA000, bad, mapOf(reference to 0xF000)) }
+            assertFails { save.resolveSourceDoors(bad, mapOf(reference to 0xF000)) }
+        }
+        assertFails { save.copy(words = List(7) { 0 }).validate() }
+        assertFails { fx.copy(entries = listOf(emptyDefaultFxEntry(), fx.entries.first())) }
+        assertFails { fx.copy(entries = listOf(fx.entries.first(), fx.entries.first())) }
+        assertFails { fx.copy(entries = listOf(fx.entries.first().copy(doorSelect = 0x8000))) }
+        assertFails { save.copy(words = save.words.toMutableList().also { it[1] = 0x8000 }).validate() }
+    }
+
+    @Test fun `FX numeric and symbolic aliases cannot shadow one another`() {
+        val source = doors().mapValues { (_, resource) -> resource.copy(entries = resource.entries.map { it.copy(doorDefPtr = 0x9000) }) }
+        val fx = SourceFxResource("alias", listOf(emptyDefaultFxEntry().copy(sourceDoor = reference),
+            emptyDefaultFxEntry().copy(doorSelect = 0x9000), emptyDefaultFxEntry()))
+        assertFails { validateSourceFxDoors(0xA000, fx, RomParser(ByteArray(0x300000)), source) }
+        assertFails { fx.resolveSourceDoors(0xA000, source, mapOf(reference to 0x9000)) }
+    }
 }

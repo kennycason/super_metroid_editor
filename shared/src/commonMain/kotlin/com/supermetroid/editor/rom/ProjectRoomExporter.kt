@@ -67,6 +67,9 @@ class ProjectRoomExporter(
 
     private val allocations = mutableListOf<RomAllocation>()
     private val sourceSaveClaims = mutableListOf<Pair<Int, String>>()
+    private var placedSourceFx = sourceFx
+    private var placedSourcePlmSets = sourcePlmSets
+    private var placedSourceLayouts = sourceLayouts
     private val sourceDoorClaims = mutableListOf<Pair<Int, Int>>()
     private val sourceRoomPropertyClaims = mutableListOf<Pair<Int, Int>>()
     private var stateGraphRedirectRoutinePtr: Int? = null
@@ -105,7 +108,7 @@ class ProjectRoomExporter(
         val saves = sourcePlmSets.values.flatMap { it.values.flatMap(SourcePlmResource::saves) }
         saves.groupBy { it.area to it.slot }.forEach { (_, references) ->
             require(references.distinct().size == 1) { "Two source owners claim the same save slot." }
-            validateSourceSaveOwnership(references.first(), romParser)
+            validateSourceSaveOwnership(references.first(), romParser, sourceDoors)
         }
         val roomsPatched = linkedSetOf<String>()
         val materialized = ProjectNewRoomMaterializer(
@@ -114,10 +117,12 @@ class ProjectRoomExporter(
             romData = romData,
             freeSpaceAllocator = allocationSession,
             onLog = onLog,
+            roomAreaOverrides = effectiveRoomAreaOverrides,
         ).materialize()
         val previewToPhysical = project.newRooms.mapNotNull { room ->
             materialized.roomIdsByProjectId[room.id]?.let { room.previewRoomId to it }
         }.toMap()
+        placedSourceLayouts = sourceLayouts.mapKeys { (id, _) -> previewToPhysical[id] ?: id }
         val previewDoorToPhysical = buildMap {
             for (room in project.newRooms) {
                 val physical = materialized.doorDefPtrsByProjectId[room.id].orEmpty()
@@ -132,8 +137,8 @@ class ProjectRoomExporter(
         val placedSourceDoors = sourceDoors.mapValues { (roomId, doors) ->
             val edits = requireNotNull(project.rooms[project.roomKey(roomId)]) { "Source doors have no project owner." }
             require(edits.asmDoorSourceVersion == 1 && project.asmWorkspace.enabled &&
-                project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE && project.newRooms.isEmpty()) {
-                "Authored doors require existing-room ASM source mode."
+                project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) {
+                "Authored doors require ASM source mode."
             }
             validateSourceRoomDoors(edits, doors, romParser) { destination ->
                 romParser.readRoomHeader(destination)?.let { header ->
@@ -154,6 +159,13 @@ class ProjectRoomExporter(
         val sourceDoorPointers = placedSourceDoors.flatMap { (roomId, doors) -> doors.map { door ->
             com.supermetroid.editor.data.ProjectSourceDoorReference(roomId, door.identity) to door.doorDefPtr
         } }.toMap()
+        placedSourceFx = sourceFx.mapValues { (roomId, states) -> states.mapValues { (_, resource) ->
+            validateSourceFxDoors(roomId, resource, romParser, sourceDoors)
+            resource.resolveSourceDoors(roomId, sourceDoors, sourceDoorPointers)
+        } }
+        placedSourcePlmSets = sourcePlmSets.mapValues { (_, states) -> states.mapValues { (_, resource) ->
+            resource.copy(saves = resource.saves.map { it.resolveSourceDoors(sourceDoors, sourceDoorPointers) })
+        } }
         fun remapCondition(
             condition: com.supermetroid.editor.data.ProjectRoomStateCondition,
         ): com.supermetroid.editor.data.ProjectRoomStateCondition = condition.copy(
@@ -164,7 +176,7 @@ class ProjectRoomExporter(
         )
         for (room in project.newRooms) {
             val physicalId = materialized.roomIdsByProjectId.getValue(room.id)
-            effectiveRoomAreaOverrides[physicalId] = room.header.area
+            effectiveRoomAreaOverrides[physicalId] = sourceRoomProperties[room.previewRoomId]?.header?.area ?: room.header.area
             roomsPatched.add(physicalId.toString(16).uppercase().padStart(4, '0'))
         }
 
@@ -177,7 +189,7 @@ class ProjectRoomExporter(
                 requireNotNull(sourceSelectors[storedId]) { "Room $storedKey requires its validated selector source." }.also {
                     require(it.conditions.keys + it.routines.keys == storedEdits.states.map { state -> state.id }.toSet()) { "Selector state coverage changed." }
                     if (it.routines.isNotEmpty()) {
-                        require(project.asmWorkspace.enabled && project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE && project.newRooms.isEmpty()) { "Executable predicates require existing-room ASM source mode." }
+                        require(project.asmWorkspace.enabled && project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) { "Executable predicates require ASM source mode." }
                         require(it.routines.values.all { routine -> routine.snesAddress != null && routine.sizeBytes != null }) { "Executable predicates require validated assembler symbol placements." }
                     }
                     require(it.order.last() == storedEdits.states.single { state -> state.sourceCondition?.kind == com.supermetroid.editor.data.ProjectRoomStateConditionKind.DEFAULT }.id) { "Default state identity changed." }
@@ -238,7 +250,7 @@ class ProjectRoomExporter(
         for ((roomKey, roomEdits) in effectiveEdits) {
             if (!roomEdits.hasEdits) continue
             if (roomEdits.asmLayoutSourceVersion != 0) {
-                require(roomEdits.asmLayoutSourceVersion == 1 && roomEdits.roomId in sourceLayouts) { "Room $roomKey requires its decoded layout source." }
+                require(roomEdits.asmLayoutSourceVersion == 1 && roomEdits.roomId in placedSourceLayouts) { "Room $roomKey requires its decoded layout source." }
                 require(roomEdits.operations.all { it.edits.isEmpty() } && roomEdits.levelResourceOperations.values.flatten().all { it.edits.isEmpty() } &&
                     roomEdits.states.all { state -> state.operations.all { it.edits.isEmpty() } }) { "Room $roomKey has both authored layout and GUI tile deltas." }
             }
@@ -278,8 +290,8 @@ class ProjectRoomExporter(
                 ?: failExport("Room 0x$roomKey has edits but its room header could not be read")
 
             if (roomEdits.asmDoorSourceVersion != 0) {
-                require(project.asmWorkspace.enabled && project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE && project.newRooms.isEmpty()) {
-                    "Authored doors require existing-room ASM source mode."
+                require(project.asmWorkspace.enabled && project.asmWorkspace.buildMode == com.supermetroid.editor.data.ProjectRomBuildMode.ASM_SOURCE) {
+                    "Authored doors require ASM source mode."
                 }
                 val doors = requireNotNull(sourceDoors[roomId]) { "Room $roomKey requires its validated door source." }
                 require(doors.entries.all { it.arrival == null || it.arrival.snesAddress != null }) {
@@ -432,7 +444,7 @@ class ProjectRoomExporter(
                 applyExistingStateEdits(roomKey, roomId, roomEdits, rewrittenStateOffsets)
                 roomsPatched.add(roomKey)
             }
-            if (roomId in sourceRoomProperties) {
+            if (sourceRoomProperties.keys.any { (previewToPhysical[it] ?: it) == roomId }) {
                 val headerPc = romParser.snesToPc(0x8F0000 or roomId)
                 sourceRoomPropertyClaims += headerPc to 4 // Index, area, Map X/Y.
                 sourceRoomPropertyClaims += headerPc + 6 to 3 // Scrollers and CRE; not dimensions/door pointer.
@@ -469,7 +481,7 @@ class ProjectRoomExporter(
                 }
             }
             if (roomEdits.asmPlmSourceVersion != 0) {
-                for (save in sourcePlmSets.getValue(roomId).values.flatMap(SourcePlmResource::saves).distinct()) {
+                for (save in placedSourcePlmSets.getValue(roomId).values.flatMap(SourcePlmResource::saves).distinct()) {
                     require(save.ownerRoomId == roomId && (save.cleared || save.area == (roomEdits.effectiveHeaderChange?.area ?: room.area))) {
                         "Live save source area/room ownership changed; use the compound area move."
                     }
@@ -616,7 +628,7 @@ class ProjectRoomExporter(
     }
 
     private fun applySourceLayouts(roomKey: String, roomId: Int, edits: RoomEdits, rewritten: Map<String, Int>, width: Int, height: Int) {
-        val inputs = sourceLayouts.getValue(roomId)
+        val inputs = placedSourceLayouts.getValue(roomId)
         require(inputs.keys == edits.states.map { it.id }.toSet()) { "Layout source state membership changed." }
         val states = romParser.inspectRoomStates(roomId).states
         if (rewritten.isEmpty()) require(edits.states.size == states.size && edits.states.mapNotNull { it.sourceStateIndex }.toSet() == states.indices.toSet()) {
@@ -674,7 +686,7 @@ class ProjectRoomExporter(
     }
 
     private fun applySourceFx(roomKey: String, roomId: Int, edits: RoomEdits, rewritten: Map<String, Int>) {
-        val inputs = sourceFx.getValue(roomId)
+        val inputs = placedSourceFx.getValue(roomId)
         require(inputs.keys == edits.states.map { it.id }.toSet()) { "FX source state membership changed." }
         val states = romParser.inspectRoomStates(roomId).states
         if (rewritten.isEmpty()) require(edits.states.size == states.size &&
@@ -683,7 +695,7 @@ class ProjectRoomExporter(
         val effectiveParser = RomParser(romData)
         for (state in edits.states) {
             val resource = inputs.getValue(state.id)
-            validateSourceFxDoors(roomId, resource, effectiveParser)
+            validateSourceFxDoors(roomId, resource, effectiveParser, sourceDoors)
             val existing = pointers[resource.identity]
             val pointer = if (existing != null) {
                 require(existing.second == resource) { "Shared FX source has inconsistent values." }

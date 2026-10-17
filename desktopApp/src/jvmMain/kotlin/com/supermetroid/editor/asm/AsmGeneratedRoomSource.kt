@@ -27,7 +27,7 @@ internal data class AsmGeneratedRoomSource(
 
     companion object {
         const val FILE_NAME = "generated-rooms.asm"
-        private val label = Regex("^((?:SmeditRoom|SmeditObjects_)[A-Za-z0-9_]+):$")
+        private val label = Regex("^((?:SmeditRoom|SmeditProjectRoom|SmeditObjects_)[A-Za-z0-9_]+):$")
         private val plm = Regex("SmeditRoom_([0-9A-F]+)_State([0-9]+)_Plms")
         private val roomLabel = Regex("SmeditRoom_([0-9A-F]+)_.*")
         private val authoredRoom = Regex("SmeditObjects_([0-9A-F]+)_.*")
@@ -43,14 +43,19 @@ internal data class AsmGeneratedRoomSource(
             if (definitions.isEmpty()) return null
             val names = lines.mapNotNull { roomMetadata.matchEntire(it)?.groupValues?.let { it[1].toInt(16) to it[2] } }.toMap()
             val titles = lines.mapNotNull { sectionMetadata.matchEntire(it)?.groupValues?.let { it[1] to it[2] } }.toMap()
+            val projectRooms = lines.mapNotNull { Regex("^; @project-room ([0-9A-F]+) ([0-9A-F]+)$").matchEntire(it)?.groupValues?.let { fields ->
+                AsmProjectRoomLabels.decode(fields[1])?.let { id -> id to fields[2].toInt(16) }
+            } }.toMap()
             val sections = definitions.filterKeys { !it.endsWith("_End") }.map { (name, line) ->
                 val match = plm.matchEntire(name)
-                val roomId = (roomLabel.matchEntire(name) ?: authoredRoom.matchEntire(name))?.groupValues?.get(1)?.toIntOrNull(16)
+                val projectId = AsmProjectRoomLabels.identity(name)
+                val roomId = projectId?.let(projectRooms::get) ?: (roomLabel.matchEntire(name) ?: authoredRoom.matchEntire(name))?.groupValues?.get(1)?.toIntOrNull(16)
                 val address = (line - 1 downTo 0).firstNotNullOfOrNull { origin.matchEntire(lines[it])?.groupValues?.get(1) }
                 AsmGeneratedRoomSection(
                     label = name,
                     lineIndex = line,
                     roomId = roomId,
+                    projectRoomId = projectId,
                     title = titles[name] ?: when {
                         match != null -> "Source state ${match.groupValues[2]} · Objects (PLMs)"
                         name.startsWith("SmeditObjects_") && name.contains("_Scroll_") -> "Scroll trigger commands"
@@ -71,6 +76,7 @@ internal data class AsmGeneratedRoomSection(
     val lineIndex: Int,
     val roomId: Int?,
     val title: String,
+    val projectRoomId: String? = null,
 )
 
 internal data class AsmRoomDataGroup(val roomId: Int?, val title: String, val sections: List<AsmGeneratedRoomSection>)

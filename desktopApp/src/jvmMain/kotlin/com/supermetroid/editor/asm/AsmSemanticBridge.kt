@@ -10,7 +10,11 @@ import com.supermetroid.editor.rom.parseLibraryBackground
 
 /** Existing visual editor that can explain or render a recognized ASM address. */
 internal sealed interface AsmEditorTarget {
-    data class Room(val roomId: Int, val layoutId: String? = null, val stateId: String? = null) : AsmEditorTarget
+    data class Room(val roomId: Int, val layoutId: String? = null, val stateId: String? = null,
+                    val projectRoomId: String? = null) : AsmEditorTarget {
+        fun resolveRoomId(project: com.supermetroid.editor.data.SmEditProject): Int? =
+            if (projectRoomId == null) roomId else project.newRooms.singleOrNull { it.id == projectRoomId }?.previewRoomId?.takeIf { it != 0 }
+    }
     data class Tileset(val tilesetId: Int?, val palette: Boolean = false) : AsmEditorTarget
     data class Sprite(val speciesId: Int?) : AsmEditorTarget // null = Samus
     data class Sound(val songSet: Int) : AsmEditorTarget

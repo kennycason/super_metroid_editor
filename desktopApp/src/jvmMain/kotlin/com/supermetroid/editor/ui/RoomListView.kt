@@ -514,7 +514,7 @@ private fun NewRoomDialog(
         )
     }
     var cloneCurrent by remember { mutableStateOf(selectedHeader != null) }
-    var copyDoors by remember { mutableStateOf(false) }
+    var copyDoors by remember { mutableStateOf(true) }
     var name by remember { mutableStateOf(selectedRoom?.name?.let { "$it Copy" } ?: "New Room") }
     var area by remember { mutableStateOf(initialArea) }
     var mapX by remember { mutableStateOf((suggestedPosition?.first ?: selectedHeader?.mapX ?: 0).toString()) }
@@ -542,7 +542,7 @@ private fun NewRoomDialog(
                 Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = !cloneCurrent,
-                        onClick = { cloneCurrent = false; copyDoors = false },
+                        onClick = { cloneCurrent = false },
                         label = { Text("Blank", fontSize = fs.detail) },
                     )
                     FilterChip(
@@ -592,7 +592,7 @@ private fun NewRoomDialog(
                         Column {
                             Text("Copy outgoing doors", fontSize = fs.body)
                             Text(
-                                "Off by default so the clone does not silently duplicate world links.",
+                                "Independent copies pointing to the same destinations. Return doors in other rooms stay unchanged.",
                                 fontSize = fs.detail,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

@@ -42,7 +42,7 @@ internal class AsmInitialScrollBridge(
         if (isManaged(roomId)) return
         val owner = project()
         require(owner.asmWorkspace.enabled && owner.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE) { "Initial scroll source requires ASM mode." }
-        require(owner.newRooms.isEmpty()) { "Initial scroll source for added rooms is not supported yet." }
+        require(owner.newRoomForPreviewId(roomId) == null) { "Reciprocal new-room initial scroll source is not supported yet." }
         val room = owner.rooms[owner.roomKey(roomId)] ?: com.supermetroid.editor.data.RoomEdits(roomId)
         val before = source().text
         val migration = planInitialScrollMigration(before, room, catalog.parser, roomName, catalog.symbols)
