@@ -65,15 +65,6 @@ Focus the emulator for keyboard input, or use an SDL-compatible controller.
   <img src="screenshots/Landing_Site_With_Meta.png" width="49%" alt="Exported room image with metadata overlays" />
 </p>
 
-### ASM ↔ Visual Editor
-
-<img src="screenshots/smedit_asm_enemy_vulnerabilities.png" width="100%" alt="Editable enemy vulnerability ASM with project modules and links back to visual editors" />
-
-<p>
-  <img src="screenshots/smedit_asm_plm_data.png" width="49%" alt="Named room object and item data in editable ASM" />
-  <img src="screenshots/smedit_asm_auto_complete.png" width="49%" alt="ASM code completion offering matching symbols" />
-</p>
-
 ### Emulator & Live Hex Editor
 
 <p>
@@ -101,13 +92,6 @@ Prime Series Samus by Mattroid and Kirby by Wandering Spider, from the community
   <img src="screenshots/smedit_slopes_02.png" width="49%" alt="Slope shapes and block properties" />
 </p>
 
-### Layer 3 FX
-
-<p>
-  <img src="screenshots/smedit_layer3_fx_fog.png" width="49%" alt="Room fog effects" />
-  <img src="screenshots/smedit_layer3_fx_water.png" width="49%" alt="Room water effects" />
-</p>
-
 ### Sprites & Artwork
 
 <p>
@@ -130,6 +114,24 @@ Prime Series Samus by Mattroid and Kirby by Wandering Spider, from the community
   <img src="screenshots/smedit_minimap_kentroid.png" width="49%" alt="Custom Kentroid pause map" />
 </p>
 
+
+### ASM ↔ Visual Editor
+
+<img src="screenshots/smedit_asm_enemy_vulnerabilities.png" width="100%" alt="Editable enemy vulnerability ASM with project modules and links back to visual editors" />
+
+<p>
+  <img src="screenshots/smedit_asm_plm_data.png" width="49%" alt="Named room object and item data in editable ASM" />
+  <img src="screenshots/smedit_asm_auto_complete.png" width="49%" alt="ASM code completion offering matching symbols" />
+</p>
+
+### Layer 3 FX
+
+<p>
+  <img src="screenshots/smedit_layer3_fx_fog.png" width="49%" alt="Room fog effects" />
+  <img src="screenshots/smedit_layer3_fx_water.png" width="49%" alt="Room water effects" />
+</p>
+
+
 ### Patches & Tuning
 
 <p>
@@ -137,7 +139,7 @@ Prime Series Samus by Mattroid and Kirby by Wandering Spider, from the community
   <img src="screenshots/smedit_patches_enemy_drop_rate.png" width="49%" alt="Enemy drop-rate editing" />
 </p>
 <p>
-  <img src="screenshots/smedit_patches_enemy_vulnerabilities.png" width="49%" alt="Enemy weapon-vulnerability editing" />
+  <img src="screenshots/smedit_enemy_vulnerability.png" width="49%" alt="Enemy weapon-vulnerability editor with shared-table highlighting and ASM links" />
   <img src="screenshots/smedit_patches_boss_stats.png" width="49%" alt="Boss HP and contact-damage editing" />
 </p>
 <p>
