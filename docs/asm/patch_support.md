@@ -31,6 +31,7 @@ source first. Reset-to-original discards the saved customization explicitly.
 | Bombs and item fanfares | Reciprocal native counts/timers | Bomb slot/cooldown edits and ten-site fanfare edits are atomic; consumers and complete words/bytes are protected. |
 | Controller configuration | Reciprocal new-game and Options-reset defaults | Occupied buttons swap actions. Protect the menu's decoder and action bindings; never patch its button-mask lookup table. |
 | Short Charge | Reciprocal packed counter/timer table | Preserve initial delay and all five words; check both initialization paths and stage-transition logic. |
+| Fast Doors | Editable curated ASM module, with reversible source/GUI gate | Check native hooks, symbolic relocation, complete consumers and helper allocations against the rest of the authored source. |
 | Other derived settings | ROM implementation | Model coupled values together; choose data ownership or a toggleable backend deliberately. |
 | Bundled QoL/IPS/hex patches | ROM writes and preconditions | Audit one at a time; use curated symbolic hooks/modules for code changes. |
 | Hyper Beam, pause-map room names, defeated flags | Bespoke ROM/runtime implementations | Review each generated-code/runtime dependency before choosing a source backend. |
@@ -60,6 +61,43 @@ promote a fixed-offset writer to ASM-safe or a generic IPS to editable source.
 `environmental_damage:heat_per_second`, never values or placed addresses. New patch
 families extend the checked source readers rather than adding schema migrations or
 inventing a general-purpose Asar evaluator.
+
+## Fast Doors code module
+
+In ASM source mode, enabling **Fast Doors** adds `asm/modules/fast_doors.asm`
+(`project/fast_doors.asm` in the source browser). The default module matches the
+bundled NobodyNada IPS, apart from Asar's ROM checksum metadata. **ASM** opens
+the helper routine; **Visual Editor** returns to the patch panel.
+
+The module's literal `!SMEDIT_FastDoorsEnabled = 0/1` and the patch Enable flag
+share source/model Undo. Disable conditionally assembles no hooks or helpers;
+it does not delete or regenerate the file, so custom code, comments and placements
+survive re-enable and reopen. The module browser's ON/OFF control edits the same
+gate, including with unsaved source. Invalid gate drafts remain editable with the
+last good GUI flag, but block building/toggling until repaired. Keep the outer
+gate intact, use one statement per line, and keep custom helper code between the
+documented start/end labels. The managed filename must remain `fast_doors.asm`.
+
+The two native routines and their local branches/pointer table are checked before
+hooking. Compiler symbols resolve all three hooks and both helpers; native routines
+can move within banks $80/$82, and helpers can move within verified free space in
+their respective banks. A separate compilation with Fast Doors gated off proves
+that other authored ASM does not already occupy a hook or helper allocation.
+All consumer, pointer-table and helper bytes are protected, including unchanged
+bytes. Customizing the hook ABI, crossing banks, overwriting native game data or
+emitting outside the declared spans fails closed. Arbitrary custom helper behavior
+still needs gameplay testing.
+
+ASM builds select this module instead of applying the bundled fixed-offset writes.
+Unmodified legacy enabled entries install it once; customized ROM records require
+explicit reconciliation, and missing owned source is never regenerated. The
+identity `code_patch:fast_doors` in `patchSourceKeys` prevents ROM-only/headless
+exports from silently omitting authored code, even while disabled. Other IPS/QoL
+patches retain their existing backends until audited separately.
+
+Manual check: enable Fast Doors, follow **ASM**, add a note or customize the helper,
+then disable/re-enable and Undo. Build and playtest horizontal/vertical doors in
+both directions, especially entrances requiring one-pixel screen alignment.
 
 ## Timers, bombs, fanfares and controllers
 

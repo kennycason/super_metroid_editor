@@ -46,6 +46,107 @@ import kotlin.test.assertFailsWith
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
 
+    @Test fun `fast doors curated module matches IPS preserves edits and follows checked symbols`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory)
+        val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val patch = com.supermetroid.editor.data.PatchRepository.loadBundledPatches().single { it.id == "bundled_fast_doors" }
+        project.patches += patch
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val file = com.supermetroid.editor.asm.AsmFastDoorsModule.FILE
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project, input: RomParser = parser): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(owner, input, logs::add, logs::add, fixture.projectFile.path)
+        }
+        fun same(a: ByteArray, b: ByteArray) = assertEquals(com.supermetroid.editor.asm.AsmVerifiedCache.hash(a), com.supermetroid.editor.asm.AsmVerifiedCache.hash(b))
+        same(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertFalse(editor.fastDoorsBridge!!.installed)
+        editor.togglePatch(patch.id)
+        assertTrue(patch.enabled, editor.statusMessage)
+        val first = assertNotNull(build(), logs.joinToString("\n"))
+        val oracleProject = SmEditProject(fixture.romFile.path).apply { patches += patch.copy() }
+        val oracle = assertNotNull(RomExporter(oracleProject, parser).build())
+        // Asar recalculates the internal checksum; compare every game byte with the legacy IPS.
+        for (i in fixture.rom.indices) if (i !in 0x7FDC..0x7FDF) assertEquals(oracle.resultRom[i], first.resultRom[i], "PC ${i.toString(16)}")
+        assertTrue(first.writeReport.writes.none { it.owner == "patch:${patch.id}" && it.kind == RomWriteKind.FIXED_PATCH })
+        assertTrue(editor.openFastDoorsSource())
+        assertEquals(file, workspace.selectedFileId)
+        assertTrue(workspace.sourceEditorLinks!!(file, workspace.selectedLineIndex).any { it.target is com.supermetroid.editor.asm.AsmEditorTarget.CodePatch })
+        val custom = workspace.projectSourceText(file).replace("LDA.W #\$0002", "LDA.W #\$0003 ; custom speed")
+            .replace("Freespace_Bank80_CD8E+\$0372", "Freespace_Bank80_CD8E+\$0400")
+            .replace("Freespace_Bank82_F70F+\$0671", "Freespace_Bank82_F70F+\$0700")
+        assertTrue(workspace.updateSourceEditText(file, custom))
+        val moved = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0xD18E, RomParser(moved.resultRom).readUInt16At(0x2E5D))
+        assertEquals(0xFE0F, RomParser(moved.resultRom).readUInt16At(0x1632C))
+        assertEquals(0xFF, moved.resultRom[0x5100].toInt() and 255, "Old helper bytes are not patched")
+        editor.togglePatch(patch.id)
+        assertFalse(patch.enabled, editor.statusMessage)
+        assertContains(workspace.projectSourceText(file), "#\$0003 ; custom speed")
+        same(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertTrue(workspace.undoSourceEdit(file)); assertTrue(patch.enabled)
+        same(moved.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        assertTrue(workspace.redoSourceEdit(file)); assertFalse(patch.enabled)
+        assertTrue(workspace.saveAllSources())
+        assertTrue(ProjectFileService.saveProject(project, fixture.projectFile.path, null, false) {})
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val cold = ProjectFileService.loadProject(fixture.projectFile)
+        same(fixture.rom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        editor.togglePatch(patch.id)
+        val header = ByteArray(512) { (it % 251).toByte() }
+        val headered = assertNotNull(build(input = RomParser(header + fixture.rom)), logs.joinToString("\n"))
+        assertContentEquals(header, headered.resultRom.copyOfRange(0, 512))
+        same(moved.resultRom, headered.resultRom.copyOfRange(512, headered.resultRom.size))
+        // Relocate both native consumers as well, not just the new helpers.
+        for ((bank, root, next, address, restore) in listOf(
+            listOf("bank_80.asm", "DoorTransitionScrolling:", ";;; \$AE7E:", "80D300", "80AE7E"),
+            listOf("bank_82.asm", "DoorTransitionFunction_ScrollScreenToAlignment:", ";;; \$E353:", "82F800", "82E353"))) {
+            val text = workspace.projectSourceText(bank)
+            val start = text.indexOf(root); val end = text.indexOf(next, start)
+            assertTrue(workspace.updateSourceEditText(bank, text.replaceRange(start until end,
+                "org \$$address\n" + text.substring(start, end) + "org \$$restore\n")))
+        }
+        val relocated = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0x20, relocated.resultRom[0x530E].toInt() and 255)
+        assertEquals(0xD18E, RomParser(relocated.resultRom).readUInt16At(0x530F))
+        assertEquals(0xEA, relocated.resultRom[0x17815].toInt() and 255)
+        assertEquals(0xFF, relocated.resultRom[0x16325].toInt() and 255)
+        assertTrue(workspace.createProjectModule("fast_doors_collision"), workspace.error)
+        val collisionFile = "project/fast_doors_collision.asm"
+        assertTrue(workspace.updateSourceEditText(collisionFile, "org \$80D18E\ndb \$DA ; same byte as the helper, still a competing allocation\n"))
+        assertNull(build()); assertTrue(logs.any { it.contains("another authored source allocation") }, logs.joinToString("\n"))
+        assertTrue(workspace.deleteProjectModule(collisionFile), workspace.error)
+        // Full ownership includes an unchanged NOP byte, not just ROM diffs.
+        val conflict = SmPatch("fast-doors-conflict", "Competing hook", enabled = true,
+            writes = mutableListOf(PatchWrite(0x17815, listOf(0xEA))))
+        project.patches += conflict
+        assertNull(build()); assertTrue(logs.any { it.contains("conflict", true) || it.contains("overlap", true) }, logs.joinToString("\n"))
+        project.patches.remove(conflict)
+        val bank80 = workspace.projectSourceText("bank_80.asm")
+        val start = bank80.indexOf("DoorTransitionScrolling:")
+        assertTrue(workspace.updateSourceEditText("bank_80.asm", bank80.replaceRange(start, start + "DoorTransitionScrolling:".length,
+            "DoorTransitionScrolling:\n    NOP")))
+        assertNull(build()); assertTrue(logs.any { it.contains("native hook routine") }, logs.joinToString("\n"))
+        assertTrue(workspace.undoSourceEdit("bank_80.asm"))
+        val valid = workspace.projectSourceText(file)
+        assertTrue(workspace.updateSourceEditText(file, valid.replace("JSR.W SMEDIT_FastDoors_ScrollTwice", "JSR.W DoorTransitionScrolling_Right")))
+        assertNull(build()); assertTrue(logs.any { it.contains("compiled hook/consumer") }, logs.joinToString("\n"))
+        assertTrue(workspace.undoSourceEdit(file))
+        assertTrue(workspace.updateSourceEditText(file, valid.replace("\nendif", "\norg \$DFFFF0\ndb \$42\nendif")))
+        assertNull(build()); assertTrue(logs.any { it.contains("outside its checked hooks/helper spans") }, logs.joinToString("\n"))
+        assertTrue(workspace.undoSourceEdit(file))
+        assertTrue(workspace.updateSourceEditText(file, valid.replace("Enabled = 1", "Enabled = 0")))
+        assertFalse(patch.enabled)
+        assertTrue(workspace.undoSourceEdit(file)); assertTrue(patch.enabled)
+        val romOnly = project.copy(asmWorkspace = project.asmWorkspace.copy(buildMode = ProjectRomBuildMode.PATCHED_ROM))
+        assertNull(build(romOnly)); assertTrue(logs.any { it.contains("requires ASM source mode") || it.contains("cannot ignore saved ASM") }, logs.joinToString("\n"))
+        same(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `short charge packed timers and counter consumers survive native relocation cold builds and reversible toggles`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)

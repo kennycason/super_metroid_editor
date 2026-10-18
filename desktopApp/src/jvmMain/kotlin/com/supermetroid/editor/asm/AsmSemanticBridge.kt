@@ -22,6 +22,7 @@ internal sealed interface AsmEditorTarget {
     data class BossStats(val key: String) : AsmEditorTarget
     data class EnvironmentalDamage(val key: String) : AsmEditorTarget
     data class PatchData(val configType: String, val key: String) : AsmEditorTarget
+    data class CodePatch(val patchId: String) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget

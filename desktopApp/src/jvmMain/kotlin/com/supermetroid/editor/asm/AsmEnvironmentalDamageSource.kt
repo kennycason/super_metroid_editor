@@ -205,7 +205,7 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
 /** Check live table bindings/instruction widths, then protect whole pairs and the code consuming them. */
 internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSource?, texts: Map<String, String>,
     project: SmEditProject, compiled: AsmCompiledBuildBase): AsmCompiledBuildBase {
-    val registered = EnvironmentalDamagePatch.FIELDS.map { environmentalSourceKey(it.key) }.toSet() + DATA_PATCH_DEFINITIONS.map { it.id }
+    val registered = EnvironmentalDamagePatch.FIELDS.map { environmentalSourceKey(it.key) }.toSet() + DATA_PATCH_DEFINITIONS.map { it.id } + AsmFastDoorsModule.SOURCE_KEY
     require(project.asmWorkspace.patchSourceKeys.all { it in registered }) { "Unknown authored patch-data identities." }
     val owned = project.asmWorkspace.patchSourceKeys.filter { it.startsWith(EnvironmentalDamagePatch.CONFIG_TYPE + ":") }.toSet()
     val configs = project.patches.filter { it.enabled && it.configType == EnvironmentalDamagePatch.CONFIG_TYPE }

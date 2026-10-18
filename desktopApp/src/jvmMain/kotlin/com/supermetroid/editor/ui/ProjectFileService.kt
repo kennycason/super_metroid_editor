@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v20-native-patch-data"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v21-curated-patches"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -241,12 +241,16 @@ internal object ProjectFileService {
         onLog("[ASM-BUILD] Preparing clean source build for $projectFilePath")
         val compiler = asmProjectCompiler
         val loadedRom = romParser.copyRomData()
+        com.supermetroid.editor.asm.AsmFastDoorsModule.prepare(project, projectFilePath)
         val sourceInputs = compiler.sourceInputsFingerprint(projectFilePath, loadedRom) { progress ->
             onLog("[ASM-BUILD] $progress")
             onStatus(progress)
         }
         // Automatic ownership must work even when this room was never visited and no binding was saved.
         val linkedWorkspace = requireNotNull(AsmProjectWorkspaceRepository().loadForBuild(projectFilePath))
+        if (project.patches.any { it.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID && it.enabled }) {
+            com.supermetroid.editor.asm.AsmFastDoorsModule.validateNative(linkedWorkspace)
+        }
         linkedWorkspace.let { tree ->
             val files = listOf(PLM_SOURCE_FILE, "macros.asm") +
                 listOf("main.asm", "bank_A0.asm", "bank_B4.asm", "bank_93.asm", "bank_8D.asm", "bank_90.asm", "bank_80.asm", "bank_81.asm", "bank_82.asm", "bank_84.asm", "bank_85.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
@@ -398,12 +402,12 @@ internal object ProjectFileService {
         }
         // Resolve known collisions before spending time in Asar. GUI-only lists stay GUI-owned.
         linkedCatalog.sourceBindings(project, linkedSource, linkedMacros)
-        fun protectLinkedObjects(base: AsmCompiledBuildBase): AsmCompiledBuildBase = linkedCatalog.protectBuild(
+        fun protectLinkedObjects(base: AsmCompiledBuildBase): AsmCompiledBuildBase = com.supermetroid.editor.asm.AsmFastDoorsModule.protect(project, linkedWorkspace, linkedCatalog.protectBuild(
             project,
             linkedSource,
             linkedMacros,
             base,
-        )
+        ))
         val resolvedSelectors = com.supermetroid.editor.asm.resolveExecutableRoomSelectors(selectorDeclarations, protectLinkedObjects(compiler.compile(
             projectFilePath = projectFilePath,
             loadedRom = loadedRom,

@@ -1133,6 +1133,8 @@ class EditorState(
         private set
     internal var patchToggleController: com.supermetroid.editor.asm.AsmPatchToggleController? = null
         private set
+    internal var fastDoorsBridge by mutableStateOf<com.supermetroid.editor.asm.AsmFastDoorsBridge?>(null)
+        private set
     internal var pendingPatchDisable by mutableStateOf<SmPatch?>(null)
         private set
 
@@ -1164,6 +1166,7 @@ class EditorState(
         environmentalDamageBridge = null
         dataPatchBridge = null
         patchToggleController = null
+        fastDoorsBridge = null
         pendingPatchDisable = null
     }
 
@@ -1272,12 +1275,22 @@ class EditorState(
             dirty = true; patchVersion++
         }
         patchToggleController = toggleController
+        val codePatchBridge = com.supermetroid.editor.asm.AsmFastDoorsBridge(workspace, {
+            check(project === owner && workspace.projectWorkspace?.root == root) { "The ASM project changed." }
+            owner
+        }) { dirty = true; patchVersion++ }
+        fastDoorsBridge = codePatchBridge
+        workspace.codePatchModuleToggle = { file, enabled ->
+            require(asmNavigationEnabled && file == com.supermetroid.editor.asm.AsmFastDoorsModule.FILE) { "Use ASM source mode to toggle Fast Doors." }
+            codePatchBridge.setEnabled(enabled)
+        }
         beamDamageBridge?.publisher = toggleController::publish
         bossStatsBridge?.publisher = toggleController::publish
         environmentalDamageBridge?.publisher = toggleController::publish
         dataPatchBridge?.publisher = toggleController::publish
         workspace.sourceEditorInterceptor = { file, before, after ->
             if (!asmNavigationEnabled) null else runCatching {
+                codePatchBridge.intercept(file, before, after)?.let { return@runCatching it }
                 val changes = listOfNotNull(enemyTuningBridge?.prepareIntercept(file, before, after),
                     bossStatsBridge?.prepareIntercept(file, before, after), environmentalDamageBridge?.prepareIntercept(file, before, after)) +
                     dataPatchBridge?.prepareIntercept(file, before, after).orEmpty()
@@ -1290,6 +1303,8 @@ class EditorState(
             }.getOrElse { postStatus("Source edit blocked: ${it.message}"); false }
         }
         workspace.sourceEditorLinks = { file, line ->
+            (if (file == com.supermetroid.editor.asm.AsmFastDoorsModule.FILE && com.supermetroid.editor.asm.AsmFastDoorsModule.hasGate(workspace.sourceEditText(file))) listOf(com.supermetroid.editor.asm.AsmEditorLink(
+                "Edit Fast Doors", "Code patch", com.supermetroid.editor.asm.AsmEditorTarget.CodePatch(com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID))) else emptyList()) +
             enemyTuningBridge?.editorLinks(file, line).orEmpty() +
                 bossStatsBridge?.editorLinks(file, line).orEmpty() +
                 beamDamageBridge?.editorLinks(file, line).orEmpty() + environmentalDamageBridge?.editorLinks(file, line).orEmpty() +
@@ -1297,6 +1312,9 @@ class EditorState(
         }
         runCatching { toggleController.reconcileSourceFlags() }
             .onFailure { postStatus("Patch synchronization blocked: ${it.message}") }
+        if (project.patches.any { it.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID }) {
+            runCatching { codePatchBridge.reconcile() }.onFailure { postStatus("Fast Doors synchronization blocked: ${it.message}") }
+        }
         return bridge
     }
 
@@ -2786,6 +2804,10 @@ class EditorState(
                 return
             }
         }
+        if (asmNavigationEnabled && patch.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID) {
+            requireNotNull(fastDoorsBridge) { "Wait for patch source indexing." }.setEnabled(enabled)
+            return
+        }
         if (asmNavigationEnabled && patch.configType in com.supermetroid.editor.asm.NATIVE_PATCH_CONFIG_TYPES) {
             if (enabled == patch.enabled && (!enabled || patch.configType !in project.asmWorkspace.disabledPatchValues)) return
             requireNotNull(patchToggleController) { "Wait for patch source indexing." }.setEnabled(patch, enabled)
@@ -2802,6 +2824,17 @@ class EditorState(
         }
         patch.enabled = enabled
     }
+
+    internal fun openFastDoorsSource(): Boolean = runCatching {
+        require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
+        val bridge = requireNotNull(fastDoorsBridge) { "Wait for patch source indexing." }
+        require(bridge.installed) { "Enable Fast Doors once to add its editable source module." }
+        bridge.workspace.showProjectWorkspace()
+        val text = bridge.workspace.projectSourceText(com.supermetroid.editor.asm.AsmFastDoorsModule.FILE)
+        val line = text.lineSequence().indexOfFirst { it == "SMEDIT_FastDoors_ScrollTwice:" }.coerceAtLeast(0)
+        bridge.workspace.openSource(com.supermetroid.editor.asm.AsmFastDoorsModule.FILE, line)
+        true
+    }.getOrElse { postStatus("Fast Doors source unavailable: ${it.message}"); false }
 
     fun enabledCustomItems(): List<CustomItemDef> =
         project.patches
@@ -4617,6 +4650,7 @@ class EditorState(
     }
 
     private fun resetForLoadedProject(seedPatches: Boolean) {
+        fastDoorsBridge = null
         armedSharedDoors.clear()
         asmPlmSourceBridge = null
         enemyTuningBridge = null

@@ -126,6 +126,10 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
     private fun normalize(code: String) = code.trim().replace(patchWhitespace, " ").let {
         it.substringBefore(' ').uppercase() + it.substringAfter(' ', "").let { tail -> if (tail.isEmpty()) "" else " $tail" }
     }
+    /** Checked native code consumers, shared with curated code-patch hook audits. */
+    internal fun instructionBlock(file: String, symbol: String, texts: Map<String, String>): List<String> =
+        document(texts.getValue(file)).block(symbol).map { normalize(it.text) }
+            .dropLastWhile { it.startsWith("ORG ") || it.startsWith("WARNPC ") }
     private fun width(code: String): Int {
         val op = code.takeWhile { !it.isWhitespace() }.uppercase()
         return patchInstructionWidths[op] ?: error("Unrecognized instruction before this field: $code. Edit its ASM directly.")

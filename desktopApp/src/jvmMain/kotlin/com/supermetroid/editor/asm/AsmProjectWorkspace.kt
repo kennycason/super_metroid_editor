@@ -306,6 +306,7 @@ internal class AsmProjectWorkspaceRepository(
         projectFilePath: String,
         requestedName: String,
         description: String = "",
+        initialSource: String? = null,
     ): Pair<AsmProjectWorkspace, String> {
         val current = requireNotNull(loadForBuild(projectFilePath)) { "Project ASM workspace is unavailable" }
         val modulesDirectory = File(current.root, MODULES_DIRECTORY)
@@ -315,7 +316,7 @@ internal class AsmProjectWorkspaceRepository(
         require(!target.exists()) { "A project module named $fileName already exists" }
         val order = readModuleOrder(modulesDirectory).toMutableList()
         val displayName = fileName.removeSuffix(".asm").replace('_', ' ')
-        writeTextAtomically(target, projectModuleTemplate(displayName, normalizeProjectModuleDescription(description)))
+        writeTextAtomically(target, initialSource ?: projectModuleTemplate(displayName, normalizeProjectModuleDescription(description)))
         order.add(fileName)
         writeModuleOrder(modulesDirectory, order)
         syncProjectModules(modulesDirectory, File(current.workingDirectory, "src"))

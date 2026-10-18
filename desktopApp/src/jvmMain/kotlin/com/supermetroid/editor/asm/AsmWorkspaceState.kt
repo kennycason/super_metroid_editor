@@ -439,7 +439,11 @@ internal class AsmWorkspaceState(
     fun isProjectModule(fileId: String?): Boolean = fileId != null && fileId in projectModuleFileIds
 
     fun isProjectModuleEnabled(fileId: String?): Boolean =
-        isProjectModule(fileId) && fileId !in disabledProjectModuleFileIds
+        isProjectModule(fileId) && fileId !in disabledProjectModuleFileIds &&
+            (fileId != AsmFastDoorsModule.FILE || !AsmFastDoorsModule.hasGate(sourceEditText(fileId)) ||
+                runCatching { AsmFastDoorsModule.enabled(sourceEditText(fileId)) }.getOrDefault(true))
+
+    internal var codePatchModuleToggle: ((String, Boolean) -> Unit)? = null
 
     suspend fun loadInstalled() {
         if (referenceLoading) return
@@ -1314,6 +1318,17 @@ internal class AsmWorkspaceState(
         }
     }
 
+    /** Install only on first Enable; subsequent toggles edit the existing document, never regenerate it. */
+    internal fun ensureFastDoorsModule(enabled: Boolean) {
+        check(!busy && projectWorkspace != null && boundProjectFilePath.isNotBlank()) { "Wait for the project ASM workspace." }
+        if (AsmFastDoorsModule.FILE in projectModuleFileIds) return
+        val (result, _) = projectRepository.createModule(boundProjectFilePath,
+            AsmFastDoorsModule.FILE.removePrefix(ASM_PROJECT_MODULE_PREFIX),
+            initialSource = AsmFastDoorsModule.template(enabled))
+        adoptProjectWorkspace(result)
+        buildReport = null
+    }
+
     suspend fun renameProjectModule(fileId: String, name: String): Boolean =
         updateProjectModuleSettings(
             fileId = fileId,
@@ -1327,6 +1342,10 @@ internal class AsmWorkspaceState(
         description: String,
     ): Boolean {
         if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (fileId == AsmFastDoorsModule.FILE && AsmFastDoorsModule.hasGate(sourceEditText(fileId)) && name.removeSuffix(".asm") != "fast_doors") {
+            error = "Fast Doors uses a managed module name. Keep fast_doors.asm so its patch toggle and checked hooks remain connected."
+            return false
+        }
         if (hasUnsavedSourceChanges(fileId)) {
             error = "Save or revert this module before changing its settings"
             return false
@@ -1359,6 +1378,10 @@ internal class AsmWorkspaceState(
 
     suspend fun deleteProjectModule(fileId: String): Boolean {
         if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (fileId == AsmFastDoorsModule.FILE && AsmFastDoorsModule.hasGate(sourceEditText(fileId))) {
+            error = "Fast Doors retains its authored module to preserve custom code. Turn it off through its patch toggle instead."
+            return false
+        }
         busy = true
         error = null
         return try {
@@ -1412,6 +1435,16 @@ internal class AsmWorkspaceState(
 
     suspend fun setProjectModuleEnabled(fileId: String, enabled: Boolean): Boolean {
         if (!isProjectModule(fileId) || boundProjectFilePath.isBlank() || busy) return false
+        if (fileId == AsmFastDoorsModule.FILE && AsmFastDoorsModule.hasGate(sourceEditText(fileId)) && fileId !in disabledProjectModuleFileIds) {
+            return try {
+                error = null
+                requireNotNull(codePatchModuleToggle) { "Open Patches > Fast Doors after source indexing to toggle this module." }(fileId, enabled)
+                true
+            } catch (problem: Exception) {
+                error = problem.message
+                false
+            }
+        }
         if (hasUnsavedSourceChanges(fileId)) {
             error = "Save or revert this module before ${if (enabled) "enabling" else "disabling"} it"
             return false
@@ -1731,6 +1764,7 @@ internal class AsmWorkspaceState(
     }
 
     private fun clearEditSessions() {
+        codePatchModuleToggle = null
         roomSourceInspection = null
         cancelSourceIndexing()
         sourceSaveParticipant = null

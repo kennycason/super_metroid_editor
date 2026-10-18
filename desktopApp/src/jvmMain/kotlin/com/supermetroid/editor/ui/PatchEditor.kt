@@ -443,6 +443,9 @@ fun PatchEditorCanvas(
         PatchToolbar(patch, editorState)
         Divider()
         // Config panel for GUI patches, hex editor for manual patches
+        if (editorState.asmNavigationEnabled && patch.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID) {
+            FastDoorsSourcePanel(patch, editorState, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
+        } else
         when (patch.configType) {
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             in com.supermetroid.editor.asm.DATA_PATCH_TYPES -> NativeDataPatchEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
@@ -471,6 +474,34 @@ fun PatchEditorCanvas(
             "boss_defeated" -> BossDefeatedEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
             else -> PatchHexEditor(patch, editorState, Modifier.weight(1f).fillMaxWidth())
         }
+    }
+}
+
+@Composable
+private fun FastDoorsSourcePanel(patch: SmPatch, editor: EditorState, modifier: Modifier, onNavigateToAsm: (() -> Unit)?) {
+    val bridge = editor.fastDoorsBridge
+    @Suppress("UNUSED_VARIABLE") val revision = bridge?.workspace?.sourceBufferRevision
+    val installed = bridge?.installed == true
+    val problem = if (installed) runCatching {
+        com.supermetroid.editor.asm.AsmFastDoorsModule.requireBundled(patch)
+        com.supermetroid.editor.asm.AsmFastDoorsModule.enabled(bridge!!.workspace.projectSourceText(com.supermetroid.editor.asm.AsmFastDoorsModule.FILE))
+        require(com.supermetroid.editor.asm.AsmFastDoorsModule.FILE !in bridge.workspace.disabledProjectModuleFileIds) {
+            "Re-enable this module in the module browser; use the patch toggle to disable its code."
+        }
+    }.exceptionOrNull()?.message else null
+    Column(modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Fast Doors", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(onClick = { if (editor.openFastDoorsSource()) onNavigateToAsm?.invoke() }, enabled = installed,
+                modifier = Modifier.testTag("fast-doors-asm")) { Text("ASM") }
+        }
+        Text("Runs door scrolling twice per frame and aligns the screen in two-pixel steps. Original patch by NobodyNada.")
+        Text(if (!installed) "Enable once to add an editable project/fast_doors.asm module."
+            else if (patch.enabled) "The project's authored ASM module supplies this patch. Hooks follow checked native symbols; customized helper code is retained."
+            else "The module is retained but emits no hooks or helpers. Enable restores your custom code.")
+        Text("Enable/Disable edits the module's literal on/off flag. You can also edit that flag in ASM; both views share source Undo/Redo.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 

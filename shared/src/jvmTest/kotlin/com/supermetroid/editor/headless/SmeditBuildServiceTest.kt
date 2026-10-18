@@ -25,6 +25,15 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SmeditBuildServiceTest {
+    @Test fun `headless ROM and IPS exports cannot omit an authored code patch even when disabled`() {
+        val project = SmEditProject("source.sfc").apply {
+            asmWorkspace.patchSourceKeys.add("code_patch:fast_doors")
+            patches += PatchRepository.loadBundledPatches().single { it.id == "bundled_fast_doors" }
+        }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(ByteArray(0x300000), SmeditBuildRequest(), project) }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(SmeditBuildRequest(), project) }
+    }
+
     @Test fun `short charge aliases preserve custom timing header bytes and empty request values`() {
         val original = TestRomHelper.requireRomBytes()
         val pc = com.supermetroid.editor.rom.ShortChargePatch.pc(SHORT_CHARGE_INITIAL_TIMER_SNES)

@@ -25,12 +25,13 @@ internal object AsmPatchBackendRegistry {
     private val sourceConfigTypes = emptyMap<String, PatchImplementationBackend>()
 
     fun supportFor(patch: SmPatch): PatchBackendSupport = PatchBackendSupport(
-        asm = patch.configType?.let(sourceConfigTypes::get),
+        asm = if (patch.id == AsmFastDoorsModule.PATCH_ID) PatchImplementationBackend.ASM_CURATED_MODULE
+            else patch.configType?.let(sourceConfigTypes::get),
     )
 
     fun sourceOwners(patches: List<SmPatch>): Set<String> = patches.asSequence()
         .filter(SmPatch::enabled)
-        .filter { supportFor(it).asm != null }
+        .filter { supportFor(it).asm == PatchImplementationBackend.ASM_GENERATED_OVERLAY }
         .mapTo(linkedSetOf()) { "patch:${it.id}" }
 }
 

@@ -810,6 +810,12 @@ internal class RomExporter(
             if (!patch.enabled) continue
             onLog("[EXPORT] Applying patch: '${patch.name}' [${patch.id}] configType=${patch.configType ?: "hex"}")
             claimPatchResources(writePlan, patch)
+            if (compiledAsmBase != null && patch.id == com.supermetroid.editor.asm.AsmFastDoorsModule.PATCH_ID) {
+                require(patch.id in compiledAsmBase.curatedPatchIds) { "Fast Doors has no checked ASM module; no fixed-offset fallback was applied." }
+                onLog("[EXPORT]   Authored Fast Doors ASM module supplied its checked symbolic hooks and helpers")
+                patchesApplied++
+                continue
+            }
             val compiledPatchRanges = compiledAsmBase?.generatedPatchClaims.orEmpty()
                 .count { it.owner == "patch:${patch.id}" }
             if (patch.configType != null && compiledPatchRanges > 0) {

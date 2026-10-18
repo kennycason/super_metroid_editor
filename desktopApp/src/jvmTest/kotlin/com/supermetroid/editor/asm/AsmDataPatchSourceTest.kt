@@ -444,6 +444,18 @@ class AsmDataPatchSourceTest {
             click("patch-header-toggle"); render(); click("patch-disable-confirm"); render()
             assertTrue(tag("native-short-charge-4").config[SemanticsProperties.Selected])
             click("patch-header-toggle"); render(); assertTrue(tag("native-short-charge-1").config[SemanticsProperties.Selected])
+            val doors = f.project.patches.single { it.id == AsmFastDoorsModule.PATCH_ID }
+            f.editor.selectPatch(doors.id); render()
+            assertFalse(f.editor.fastDoorsBridge!!.installed, "Inspection does not install a module")
+            assertTrue(tag("fast-doors-asm").config.contains(SemanticsProperties.Disabled))
+            click("patch-header-toggle"); render(); assertTrue(doors.enabled, f.editor.statusMessage)
+            click("fast-doors-asm"); render(); assertEquals(AsmFastDoorsModule.FILE, f.workspace.selectedFileId)
+            val customDoors = f.workspace.projectSourceText(AsmFastDoorsModule.FILE) + "; Keep my notes\n"
+            assertTrue(f.workspace.updateSourceEditText(AsmFastDoorsModule.FILE, customDoors)); render()
+            click("patch-header-toggle"); render(); assertFalse(doors.enabled)
+            assertNull(f.editor.pendingPatchDisable, "Code is retained, so disabling needs no discard confirmation")
+            assertContains(f.workspace.projectSourceText(AsmFastDoorsModule.FILE), "; Keep my notes")
+            assertTrue(f.workspace.undoSourceEdit(AsmFastDoorsModule.FILE)); render(); assertTrue(doors.enabled)
         } finally { scene.close(); surface.close() }
     }
 }

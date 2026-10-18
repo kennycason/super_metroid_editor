@@ -67,6 +67,10 @@ internal data class AsmCompiledBuildBase(
     /** Checked typed native-data operands for this exact source/project build. */
     val nativePatchLocations: Map<String, List<AsmDataPatchLocation>> = emptyMap(),
     val nativePatchWrites: Map<String, List<AsmDataPatchWrite>> = emptyMap(),
+    /** Checked authored code modules replace the entire bundled ROM implementation, even after relocation. */
+    val curatedPatchIds: Set<String> = emptySet(),
+    /** Same authored build with the curated module gated off; proves hooks/free space were not occupied by other ASM. */
+    val curatedBaselineRomBody: ByteArray? = null,
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -84,6 +88,8 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     patchDataLocations = patchDataLocations.toMap(),
     nativePatchLocations = nativePatchLocations.mapValues { it.value.toList() },
     nativePatchWrites = nativePatchWrites.mapValues { it.value.toList() },
+    curatedPatchIds = curatedPatchIds.toSet(),
+    curatedBaselineRomBody = curatedBaselineRomBody?.copyOf(),
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )
@@ -253,6 +259,7 @@ internal class AsmProjectCompiler(
         val project: CompiledTree
         var predicateStart: Int? = null
         var predicateClaims: List<AsmSourceOwnedRange> = emptyList()
+        var curatedBaseline: ByteArray? = null
         try {
             reference = if (referenceRomBody == null) {
                 onProgress("Compiling immutable ASM snapshot…")
@@ -286,6 +293,16 @@ internal class AsmProjectCompiler(
                 generatedPatchSource = patchMaterialization.source,
                 generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
             )
+            val fastDoors = File(workspace.workingDirectory, "src/${AsmFastDoorsModule.FILE}")
+            if (fastDoors.isFile && AsmFastDoorsModule.hasGate(fastDoors.readText()) && AsmFastDoorsModule.enabled(fastDoors.readText()) &&
+                AsmFastDoorsModule.FILE !in workspace.disabledProjectModuleFileIds) {
+                onProgress("Checking Fast Doors hooks and free space against the rest of the authored source…")
+                curatedBaseline = compileTree(workspace.workingDirectory, asar,
+                    assetOverrides = materialization.assetOverrides, generatedRoomSource = roomMaterialization.source,
+                    generatedPatchSource = patchMaterialization.source,
+                    generatedBank8FSource = AsmManagedBank8FCode.render(predicates, predicateStart),
+                    muteFastDoors = true).rom
+            }
             if (predicateStart != null) {
                 predicateClaims = AsmManagedBank8FCode.claims(predicates, predicateStart, reference.rom, project.rom, project.symbols)
                 val generatedClaims = materialization.claims.map { it.pcOffset until it.endExclusive } +
@@ -362,6 +379,7 @@ internal class AsmProjectCompiler(
             compilerOutput = (reference.output + project.output).distinct(),
             compilerSymbols = project.symbols,
             managedBank8FStart = predicateStart,
+            curatedBaselineRomBody = curatedBaseline,
         ).also { compiled ->
             runCatching {
                 buildArtifacts.publishSuccess(
@@ -477,6 +495,7 @@ internal class AsmProjectCompiler(
         generatedRoomSource: String = "",
         generatedPatchSource: String = "",
         generatedBank8FSource: String = "",
+        muteFastDoors: Boolean = false,
     ): CompiledTree {
         require(File(sourceTree, "src/main.asm").isFile) { "ASM source tree has no src/main.asm: $sourceTree" }
         require(File(sourceTree, "data").isDirectory) { "ASM source tree has no extracted data: $sourceTree" }
@@ -484,6 +503,10 @@ internal class AsmProjectCompiler(
         try {
             copyTree(File(sourceTree, "src"), File(staging, "src"))
             copyTree(File(sourceTree, "data"), File(staging, "data"))
+            if (muteFastDoors) {
+                val module = File(staging, "src/${AsmFastDoorsModule.FILE}")
+                module.writeText(AsmFastDoorsModule.withEnabled(module.readText(), false))
+            }
             applyAssetOverrides(File(staging, "data"), assetOverrides)
             AsmProjectModuleGateway.apply(File(staging, "src"))
             applyGeneratedBank8FSource(File(staging, "src"), generatedBank8FSource)
@@ -636,7 +659,7 @@ internal class AsmProjectCompiler(
         private const val GENERATED_ROOM_FILE = "__smedit_generated_rooms.asm"
         private const val GENERATED_PATCH_FILE = "__smedit_generated_patches.asm"
         private const val GENERATED_BANK8F_FILE = "__smedit_managed_bank8f.asm"
-        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v7-arrivals"
+        private const val CACHE_FORMAT_VERSION = "smedit-asm-build-cache-v8-curated-patches"
 
         internal fun clearBuildCacheForTests() = AsmCompiledBuildCache.clear()
 
