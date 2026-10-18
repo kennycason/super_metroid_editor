@@ -46,6 +46,125 @@ import kotlin.test.assertFailsWith
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
 
+    @Test fun `pending timer and bomb overrides follow relocated source and reject consumer rebinding`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        editor.findOrCreateConfigPatch("ceres_escape_seconds").apply { enabled = true; configValue = 120 }
+        editor.findOrCreateConfigPatch(BOMB_CONFIG_TYPE).apply { enabled = true; configData = mutableMapOf(BOMB_FUSE_FRAMES_KEY to 80, BOMB_COOLDOWN_FRAMES_KEY to 12) }
+        editor.findOrCreateConfigPatch(FANFARE_CONFIG_TYPE).apply { enabled = true; configData = mutableMapOf(FANFARE_FRAMES_KEY to 200) }
+        editor.findOrCreateConfigPatch("controller_config").apply { enabled = true; configData = mutableMapOf("jump" to 0x4000) }
+        for ((snes, count) in listOf(0x80FF00 to 24, 0x90FF00 to 9, 0x90FF20 to 2)) {
+            val pc = parser.snesToPc(snes); assertTrue(fixture.rom.copyOfRange(pc, pc + count).all { it == 0xFF.toByte() })
+        }
+        val timer = workspace.projectSourceText("bank_80.asm")
+        val start = timer.indexOf("ProcessTimer_CeresStart:"); val end = timer.indexOf("ProcessTimer_MotherBrainStart:")
+        assertTrue(workspace.updateSourceEditText("bank_80.asm", timer.replaceRange(start until end,
+            "org ${'$'}80FF00\n" + timer.substring(start, end).replace("ProcessTimer_CeresStart:\n", "ProcessTimer_CeresStart:\n NOP\n") + "org ${'$'}809E1C\n")))
+        val bombs = workspace.projectSourceText("bank_90.asm")
+        val tableStart = bombs.indexOf("  .NonBeamProjectiles:", bombs.indexOf("ProjectileCooldowns:")); val tableEnd = bombs.indexOf("BeamAutoFireCooldowns:", tableStart)
+        var moved = bombs.replaceRange(tableStart until tableEnd, "org ${'$'}90FF00\n" + bombs.substring(tableStart, tableEnd) + "org ${'$'}90C283\n")
+        val fuseStart = moved.indexOf("BombTimerResetValue:"); val fuseEnd = moved.indexOf("HUDSelectionHandler_MorphBall:", fuseStart)
+        moved = moved.replaceRange(fuseStart until fuseEnd, "org ${'$'}90FF20\n" + moved.substring(fuseStart, fuseEnd) + "org ${'$'}90BF9D\n")
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", moved), workspace.error)
+        assertTrue(project.asmWorkspace.patchSourceKeys.isEmpty(), "Address/layout edits alone don't adopt numerical values")
+        val logs = mutableListOf<String>()
+        suspend fun build(): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(project, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        val result = assertNotNull(build(), logs.joinToString("\n")); val rom = RomParser(result.resultRom)
+        assertEquals(0x0200, rom.readUInt16At(0x7F06)); assertEquals(65535, rom.readUInt16At(0x1E0E))
+        assertEquals(80, rom.readUInt16At(0x87F20)); assertEquals(12, result.resultRom[0x87F05].toInt() and 255)
+        assertEquals(65535, rom.readUInt16At(BOMB_FUSE_TIMER_PC)); assertEquals(255, result.resultRom[BOMB_COOLDOWN_PC].toInt() and 255)
+        assertEquals(0xFF20, rom.readUInt16At(0x83FFC), "Fuse consumer follows the moved symbol")
+        assertEquals(0xFF00, rom.readUInt16At(0x84012), "Cooldown consumer follows the moved table")
+        for (pc in FANFARE_MUSIC_RESUME_DELAY_PCS + FANFARE_MESSAGE_BOX_WAIT_PC) assertEquals(200, rom.readUInt16At(pc))
+        assertEquals(0x4000, com.supermetroid.editor.rom.ControllerBindings.read(result.resultRom)["jump"])
+        assertEquals(0x80, com.supermetroid.editor.rom.ControllerBindings.read(result.resultRom, reset = true)["item_cancel"])
+        val conflict = SmPatch("pending-high-byte", "Unchanged pending fuse high byte", enabled = true,
+            writes = mutableListOf(PatchWrite(0x87F21, listOf(0), expectedBytes = listOf(0))))
+        project.patches.add(conflict)
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        editor.setPatchConfigData(editor.findOrCreateConfigPatch(BOMB_CONFIG_TYPE).id, BOMB_FUSE_FRAMES_KEY, 75)
+        assertEquals(75, assertNotNull(editor.dataPatchBridge).view(BOMB_CONFIG_TYPE, BOMB_FUSE_FRAMES_KEY).value)
+        val valid = workspace.projectSourceText("bank_90.asm")
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", valid.replaceFirst("LDA.W BombTimerResetValue", "LDA.W SamusProjectile_CooldownTimer")))
+        assertNull(build()); assertTrue(logs.any { "consumers changed" in it }, logs.joinToString("\n"))
+    }
+
+    @Test fun `native timers bombs fanfares and controller round trip real source builds and cold headered toggles`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val bridge = assertNotNull(editor.dataPatchBridge)
+        val definitions = com.supermetroid.editor.asm.DATA_PATCH_DEFINITIONS
+        assertEquals(14, bridge.catalog.definitions.size)
+        for (def in definitions) {
+            val field = bridge.catalog.original(def.id)
+            assertNull(bridge.view(def.type, def.key).problem, "${def.id}: ${bridge.view(def.type, def.key).problem}")
+            for (word in field.words) {
+                val pc = parser.snesToPc(word.site.native)
+                val actual = if (word.site.size == 1) fixture.rom[pc].toInt() and 255 else parser.readUInt16At(pc)
+                assertEquals(actual, word.value, "${def.id}: ${word.site.symbol}")
+            }
+        }
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        assertContentEquals(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val edits = mapOf(
+            "ceres_escape_seconds" to mapOf("seconds" to 95), ZEBES_ESCAPE_CONFIG_TYPE to mapOf("seconds" to 305),
+            BOMB_CONFIG_TYPE to mapOf(BOMB_MAX_ACTIVE_KEY to 4, BOMB_FUSE_FRAMES_KEY to 70, BOMB_EXPLOSION_FRAME_DELAY_KEY to 3),
+            FANFARE_CONFIG_TYPE to mapOf(FANFARE_FRAMES_KEY to 240), "controller_config" to mapOf("jump" to 0x4000),
+        )
+        val patches = edits.map { (type, values) -> editor.findOrCreateConfigPatch(type).also { editor.setNativePatchValues(it.id, values) } }
+        patches.forEach { assertTrue(it.enabled, editor.statusMessage); assertNull(it.configData); assertNull(it.configValue) }
+        val compiled = assertNotNull(build(), logs.joinToString("\n")); val rom = RomParser(compiled.resultRom)
+        assertEquals(0x0135, rom.readUInt16At(0x1E0E)); assertEquals(0x0505, rom.readUInt16At(0x1E21))
+        assertEquals(4, rom.readUInt16At(BOMB_ACTIVE_HARD_CAP_OPERAND_PC)); assertEquals(70, rom.readUInt16At(BOMB_FUSE_TIMER_PC))
+        assertEquals(16, compiled.resultRom[BOMB_COOLDOWN_PC].toInt() and 255, "70 frame fuse reaches four bombs at the stock cooldown")
+        assertEquals(3, rom.readUInt16At(BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC))
+        for (pc in FANFARE_MUSIC_RESUME_DELAY_PCS + FANFARE_MESSAGE_BOX_WAIT_PC) assertEquals(240, rom.readUInt16At(pc))
+        val controls = com.supermetroid.editor.rom.ControllerBindings
+        for (reset in listOf(false, true)) {
+            val mapping = controls.read(compiled.resultRom, reset)
+            assertEquals(0x4000, mapping["jump"]); assertEquals(0x80, mapping["item_cancel"])
+        }
+        assertContentEquals(fixture.rom.copyOfRange(0x17575, 0x17587), compiled.resultRom.copyOfRange(0x17575, 0x17587))
+        for (patch in patches) { editor.requestTogglePatch(patch.id); assertNotNull(editor.pendingPatchDisable); editor.confirmPatchDisable(); assertFalse(patch.enabled, editor.statusMessage) }
+        assertContentEquals(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val json = kotlinx.serialization.json.Json
+        val disabled = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(fixture.rom, assertNotNull(build(disabled), logs.joinToString("\n")).resultRom)
+        for (patch in patches) { editor.requestTogglePatch(patch.id); assertTrue(patch.enabled, editor.statusMessage) }
+        assertContentEquals(compiled.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val header = ByteArray(512) { 0x5A }; val file = File(tempDirectory, "HeaderedNative.smc").apply { writeBytes(header + fixture.rom) }
+        logs.clear()
+        val headered = assertNotNull(ProjectFileService.buildRom(project.copy(romPath = file.path), RomParser(header + fixture.rom), logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        assertContentEquals(header, headered.resultRom.copyOfRange(0, 512))
+        assertContentEquals(compiled.resultRom, headered.resultRom.copyOfRange(512, headered.resultRom.size))
+        val valid = workspace.projectSourceText("bank_80.asm")
+        assertTrue(workspace.updateSourceEditText("bank_80.asm", valid.replaceFirst("#${'$'}0135", "#${'$'}0160")))
+        assertNull(build()); assertTrue(logs.any { "BCD" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_80.asm", valid))
+        val conflicting = SmPatch("native-byte", "Unchanged timer high byte", enabled = true, writes = mutableListOf(PatchWrite(0x1E0F, listOf(1), expectedBytes = listOf(1))))
+        project.patches.add(conflicting)
+        assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflicting.enabled = false
+        assertNull(RomExporter(project, parser, logs::add).build(), "No native source fallback in ROM-only exporter")
+    }
+
     @Test fun `environmental rates follow relocated tables preserve exact fractions and protect cold headered builds`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory)

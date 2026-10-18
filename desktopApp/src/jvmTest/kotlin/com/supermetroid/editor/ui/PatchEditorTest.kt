@@ -51,7 +51,7 @@ class PatchEditorTest {
         rom[model.FIELDS.last().lowWordPc] = 1
         val rounded = SmPatch("fraction", "Fraction", configType = model.CONFIG_TYPE, configData = mutableMapOf(model.ACID_KEY to 60))
         assertTrue(patchSettingsDifferFromBaseline(rounded, parser), "Equal rounded GUI values can still replace exact fractional ROM data")
-        assertFalse(patchSettingsDifferFromBaseline(SmPatch("controls", "Controls", configType = "controller_config", configData = CONTROLLER_SLOTS.associate { it.key to it.defaultButton }.toMutableMap()), null))
+        assertFalse(patchSettingsDifferFromBaseline(SmPatch("controls", "Controls", configType = "controller_config", configData = CONTROLLER_SLOTS.associate { it.key to it.defaultMask }.toMutableMap()), null))
     }
 
     @Test

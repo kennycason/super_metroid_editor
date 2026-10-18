@@ -64,6 +64,9 @@ internal data class AsmCompiledBuildBase(
     val beamDamageLocations: Map<String, Int> = emptyMap(),
     /** Checked headerless word pairs for pending numerical overrides in source builds. */
     val patchDataLocations: Map<String, AsmPatchWordLocations> = emptyMap(),
+    /** Checked typed native-data operands for this exact source/project build. */
+    val nativePatchLocations: Map<String, List<AsmDataPatchLocation>> = emptyMap(),
+    val nativePatchWrites: Map<String, List<AsmDataPatchWrite>> = emptyMap(),
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -79,6 +82,8 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     compilerSymbols = compilerSymbols.copyOf(),
     beamDamageLocations = beamDamageLocations.toMap(),
     patchDataLocations = patchDataLocations.toMap(),
+    nativePatchLocations = nativePatchLocations.mapValues { it.value.toList() },
+    nativePatchWrites = nativePatchWrites.mapValues { it.value.toList() },
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )

@@ -59,12 +59,6 @@ internal data class HeadlessPhysicsField(
     val description: String,
 )
 
-internal data class HeadlessControllerSlot(
-    val key: String,
-    val label: String,
-    val tableIndex: Int,
-    val defaultButton: Int,
-)
 
 internal data class HeadlessSnesButton(
     val label: String,
@@ -232,15 +226,7 @@ internal val HEADLESS_PHYSICS_FIELDS = listOf(
     HeadlessPhysicsField("air_physics", "Air Physics Mode", 0x081B2F, 0x02, "Air Control", "Mid-air control mode"),
 )
 
-internal val HEADLESS_CONTROLLER_SLOTS = listOf(
-    HeadlessControllerSlot("shot", "Shot", 0, 0x0040),
-    HeadlessControllerSlot("jump", "Jump", 1, 0x0080),
-    HeadlessControllerSlot("dash", "Dash (Run)", 2, 0x8000),
-    HeadlessControllerSlot("item_select", "Item Select", 3, 0x2000),
-    HeadlessControllerSlot("item_cancel", "Item Cancel", 4, 0x4000),
-    HeadlessControllerSlot("angle_down", "Angle Down", 5, 0x0020),
-    HeadlessControllerSlot("angle_up", "Angle Up", 6, 0x0010),
-)
+internal val HEADLESS_CONTROLLER_SLOTS = com.supermetroid.editor.rom.ControllerBindings.slots
 
 internal val HEADLESS_SNES_BUTTONS = listOf(
     HeadlessSnesButton("A", 0x0080),
@@ -344,7 +330,6 @@ internal const val ENEMY_HEADER_DROP_TABLE_PTR_OFFSET = 0x3A
 internal const val ENEMY_HEADER_VULNERABILITY_TABLE_PTR_OFFSET = 0x3C
 internal const val ENEMY_DROP_TABLE_BYTES = 6
 internal const val ENEMY_VULNERABILITY_TABLE_BYTES = 22
-internal const val CONTROLLER_TABLE_PC = 0x017575
 internal const val PER_FRAME_HOOK_PAYLOAD_PC = 0x2FF040
 internal const val PER_FRAME_HOOK_PATCH_PC = 0x01096E
 internal val PER_FRAME_HOOK_JSL = listOf(0x22, 0x40, 0xF0, 0xDF)

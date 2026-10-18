@@ -2216,9 +2216,10 @@ Environmental damage now uses reciprocal native word pairs with automatic first-
 ownership, exact fractional preservation, cross-bank source/model Undo, per-field
 navigation and checked compiler destinations/bindings. See the
 [environmental damage workflow](../rom/environmental_damage.md#asm--visual-editing).
-The [patch integration inventory](patch_support.md) separates native data authoring
-from toggleable ASM patch backends and prioritizes escape timers and other common
-numerical settings before detailed boss behavior.
+Ceres/Zebes timers, bombs, fanfares and controller defaults also support first-edit
+native source ownership, reciprocal controls/links and reversible Enable/Disable.
+Controllers target both new-game initialization and Options reset, leaving the
+button decoder untouched. See [patch workflows and manual checks](patch_support.md#timers-bombs-fanfares-and-controllers).
 
 ## Project-created room ASM builds and navigation
 

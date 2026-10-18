@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v19-patch-toggles"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v20-native-patch-data"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -249,7 +249,7 @@ internal object ProjectFileService {
         val linkedWorkspace = requireNotNull(AsmProjectWorkspaceRepository().loadForBuild(projectFilePath))
         linkedWorkspace.let { tree ->
             val files = listOf(PLM_SOURCE_FILE, "macros.asm") +
-                listOf("main.asm", "bank_A0.asm", "bank_B4.asm", "bank_93.asm", "bank_8D.asm", "bank_90.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
+                listOf("main.asm", "bank_A0.asm", "bank_B4.asm", "bank_93.asm", "bank_8D.asm", "bank_90.asm", "bank_80.asm", "bank_81.asm", "bank_82.asm", "bank_84.asm", "bank_85.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
                 (if (project.rooms.values.any { it.asmDoorSourceVersion != 0 || it.asmFxSourceVersion != 0 }) listOf(FX_SOURCE_FILE) else emptyList()) +
                 (if (project.rooms.values.any { it.asmEnemySourceVersion != 0 }) listOf(ENEMY_SOURCE_FILE) else emptyList())
             for (fileId in files) {
@@ -286,14 +286,17 @@ internal object ProjectFileService {
         val bossStats = com.supermetroid.editor.asm.AsmBossStatsSource.load(linkedWorkspace.originalDirectory)
         val environmental = com.supermetroid.editor.asm.AsmEnvironmentalDamageSource.load(linkedWorkspace.originalDirectory)
         val environmentalTexts = (com.supermetroid.editor.asm.ENVIRONMENT_SOURCE_FILES + "main.asm").associateWith { File(linkedWorkspace.workingDirectory, "src/$it").takeIf { file -> file.isFile }?.readText().orEmpty() }
+        val patchData = com.supermetroid.editor.asm.AsmDataPatchSource.load(linkedWorkspace.originalDirectory)
+        val patchTexts = patchData?.originals.orEmpty().keys.associateWith { File(linkedWorkspace.workingDirectory, "src/$it").readText() }
         fun protectTuning(base: AsmCompiledBuildBase): AsmCompiledBuildBase {
             com.supermetroid.editor.asm.validatePatchToggleSources(project,
-                com.supermetroid.editor.asm.patchToggleFamilies(beamDamage, bossStats, environmental),
-                environmentalTexts + mapOf("bank_A0.asm" to tuningHeaders, "bank_93.asm" to beamSource))
-            return com.supermetroid.editor.asm.protectEnvironmentalDamageSource(environmental, environmentalTexts, project,
+                com.supermetroid.editor.asm.patchToggleFamilies(beamDamage, bossStats, environmental, patchData),
+                environmentalTexts + mapOf("bank_A0.asm" to tuningHeaders, "bank_93.asm" to beamSource) + patchTexts)
+            return com.supermetroid.editor.asm.protectDataPatchSource(patchData, patchTexts, project,
+                com.supermetroid.editor.asm.protectEnvironmentalDamageSource(environmental, environmentalTexts, project,
             com.supermetroid.editor.asm.protectBossStatsSource(bossStats, tuningHeaders, project,
             com.supermetroid.editor.asm.protectBeamDamageSource(beamDamage, beamSource, project,
-                com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base))))
+                com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base)))))
         }
         val managedRooms = project.rooms.values.filter { it.asmPlmSourceVersion != 0 }
         if (managedRooms.isNotEmpty()) linkedCatalog.requireStandardMacro(linkedMacros)

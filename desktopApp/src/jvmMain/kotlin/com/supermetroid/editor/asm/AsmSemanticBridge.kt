@@ -21,6 +21,7 @@ internal sealed interface AsmEditorTarget {
     data class BeamDamage(val key: String) : AsmEditorTarget
     data class BossStats(val key: String) : AsmEditorTarget
     data class EnvironmentalDamage(val key: String) : AsmEditorTarget
+    data class PatchData(val configType: String, val key: String) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget
@@ -253,6 +254,10 @@ internal object AsmSemanticBridge {
         for (field in com.supermetroid.editor.rom.EnvironmentalDamagePatch.FIELDS) {
             val link = environmentalEditorLink(field.key)
             environmentalRuntimeWords(romParser, field.key).forEach { add(it, link) }
+        }
+        for (definition in DATA_PATCH_DEFINITIONS) {
+            val link = AsmEditorLink("Edit ${definition.label}", "Patch data", AsmEditorTarget.PatchData(definition.type, definition.key))
+            nativeDataPatchRuntimeAddresses(definition, romParser).forEach { add(it, link) }
         }
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES) {
             val target = AsmEditorTarget.Sprite(entry.speciesId)

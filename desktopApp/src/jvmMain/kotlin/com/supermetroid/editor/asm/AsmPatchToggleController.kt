@@ -4,10 +4,10 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 
-internal val NATIVE_PATCH_CONFIG_TYPES = setOf("beam_damage", "boss_stats", EnvironmentalDamagePatch.CONFIG_TYPE)
+internal val NATIVE_PATCH_CONFIG_TYPES = setOf("beam_damage", "boss_stats", EnvironmentalDamagePatch.CONFIG_TYPE) + DATA_PATCH_TYPES
 internal typealias AsmPatchSourcePublisher = (String, Set<String>, Map<String, Pair<String, String>>, List<AsmSourceModelChange>) -> Unit
 
-internal data class AsmToggleWord(val file: String, val span: IntRange, val value: Int)
+internal data class AsmToggleWord(val file: String, val span: IntRange, val value: Int, val size: Int = 2)
 
 /** Word lenses, not file snapshots: toggles must never revert adjacent code, comments, or relocation. */
 internal class AsmPatchToggleFamily(
@@ -19,7 +19,7 @@ internal class AsmPatchToggleFamily(
     fun values(key: String, texts: Map<String, String>) = words(key, texts).map { it.value }
 }
 
-internal fun patchToggleFamilies(beam: AsmBeamDamageSource?, boss: AsmBossStatsSource?, environment: AsmEnvironmentalDamageSource?) = listOfNotNull(
+internal fun patchToggleFamilies(beam: AsmBeamDamageSource?, boss: AsmBossStatsSource?, environment: AsmEnvironmentalDamageSource?, data: AsmDataPatchSource? = null) = listOfNotNull(
     beam?.let { catalog -> AsmPatchToggleFamily("beam_damage", catalog.keys, mapOf(BEAM_DAMAGE_SOURCE_FILE to catalog.originalText),
         { key, texts -> catalog.field(key, texts.getValue(BEAM_DAMAGE_SOURCE_FILE)).let { listOf(AsmToggleWord(BEAM_DAMAGE_SOURCE_FILE, it.span, it.value)) } },
         { before, after -> catalog.changedKeys(before.getValue(BEAM_DAMAGE_SOURCE_FILE), after.getValue(BEAM_DAMAGE_SOURCE_FILE)) }) },
@@ -29,7 +29,13 @@ internal fun patchToggleFamilies(beam: AsmBeamDamageSource?, boss: AsmBossStatsS
     environment?.let { catalog -> AsmPatchToggleFamily(EnvironmentalDamagePatch.CONFIG_TYPE, catalog.keys, catalog.originals,
         { key, texts -> catalog.field(key, texts).let { field -> field.words.map { AsmToggleWord(field.file, it.span, it.value) } } },
         catalog::changedKeys) },
-)
+) + data?.types.orEmpty().map { type ->
+    val catalog = requireNotNull(data)
+    val keys = catalog.definitions.values.filter { it.type == type }.map { it.key }.toSet()
+    AsmPatchToggleFamily(type, keys, catalog.originals,
+        { key, texts -> catalog.field(dataPatchKey(type, key), texts).words.map { AsmToggleWord(it.site.file, it.span, it.value, it.site.size) } },
+        { before, after -> catalog.changedKeys(before, after, type).map { it.substringAfter(':') }.toSet() })
+}
 
 /** A reversible source transaction plus the ordinary patch flag. No build-time hidden byte overlay. */
 internal class AsmPatchToggleController(
@@ -131,7 +137,7 @@ internal class AsmPatchToggleController(
         require(family.keys.containsAll(values.keys)) { "Unknown saved ${family.type} fields." }
         val edits = values.flatMap { (key, values) ->
             val words = family.words(key, texts)
-            require(values.size == words.size && values.all { it in 0..65535 }) { "Invalid saved $key words." }
+            require(values.size == words.size && words.zip(values).all { (word, value) -> value in 0..if (word.size == 1) 255 else 65535 }) { "Invalid saved $key words." }
             require(!requireOriginal || words.map { it.value } == family.original(key)) {
                 "$key changed in ASM while disabled. No source was overwritten; reconcile these edits before re-enabling."
             }
@@ -144,7 +150,7 @@ internal class AsmPatchToggleController(
             var text = texts.getValue(file)
             for (group in groups.sortedByDescending { it.key.second.first }) {
                 val (word, value) = group.value.first()
-                if (word.value != value) text = text.replaceRange(word.span, "$" + value.toString(16).uppercase().padStart(4, '0'))
+                if (word.value != value) text = text.replaceRange(word.span, "$" + value.toString(16).uppercase().padStart(word.size * 2, '0'))
             }
             text
         }
@@ -157,7 +163,7 @@ internal class AsmPatchToggleController(
             "boss_stats" -> owner.asmWorkspace.bossStatsSourceKeys
             else -> owner.asmWorkspace.patchSourceKeys
         }
-        val identities = keys.map { if (type == EnvironmentalDamagePatch.CONFIG_TYPE) environmentalSourceKey(it) else it }.toSet()
+        val identities = keys.map { if (type in setOf("beam_damage", "boss_stats")) it else dataPatchKey(type, it) }.toSet()
         val before = owned.intersect(identities)
         val after = if (remove) emptySet() else identities
         return AsmSourceModelChange({ undo ->
@@ -196,7 +202,8 @@ internal fun validatePatchToggleSources(project: SmEditProject, families: List<A
         }
         require(family.keys.containsAll(saved.keys)) { "Unknown disabled $type fields." }
         for ((key, values) in saved) {
-            require(values.size == family.original(key).size && values.all { it in 0..65535 }) { "Invalid saved $key words." }
+            val words = family.words(key, family.originals)
+            require(values.size == words.size && words.zip(values).all { (word, value) -> value in 0..if (word.size == 1) 255 else 65535 }) { "Invalid saved $key words." }
         }
     }
     for (family in families) {

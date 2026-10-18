@@ -646,7 +646,7 @@ object SmeditPatchCatalog {
             supportsPatchOnly = true,
             requiresRom = false,
             fields = listOf(
-                intField(BOMB_MAX_ACTIVE_KEY, "Max Active Bombs", 1, BOMB_MAX_PROJECTILE_SLOTS, BOMB_DEFAULT_MAX_ACTIVE),
+                intField(BOMB_MAX_ACTIVE_KEY, "Bomb Slot Limit", 1, BOMB_MAX_PROJECTILE_SLOTS, BOMB_DEFAULT_HARD_CAP),
                 intField(BOMB_FUSE_FRAMES_KEY, "Fuse Frames", 1, 9999, BOMB_DEFAULT_FUSE_FRAMES),
                 intField(BOMB_COOLDOWN_FRAMES_KEY, "Cooldown Frames", 0, 255, BOMB_DEFAULT_COOLDOWN_FRAMES),
                 intField(BOMB_EXPLOSION_FRAME_DELAY_KEY, "Explosion Frame Delay", 1, 255, BOMB_DEFAULT_EXPLOSION_FRAME_DELAY),
@@ -849,7 +849,7 @@ object SmeditPatchCatalog {
             configType = CONTROLLER_CONFIG_TYPE,
             patchId = "config_controller",
             name = "Controller Config",
-            description = "Remaps the 7-slot default controller button table.",
+            description = "Sets new-game and Options reset defaults. Occupied buttons swap actions; existing saves retain their stored controls until reset in Options.",
             headlessSupported = true,
             supportsPatchOnly = true,
             requiresRom = false,
@@ -860,7 +860,7 @@ object SmeditPatchCatalog {
                     type = "enum",
                     min = 0,
                     max = 0xFFFF,
-                    defaultValue = slot.defaultButton,
+                    defaultValue = slot.defaultMask,
                     category = "Controller",
                     choices = HEADLESS_SNES_BUTTONS.map { button ->
                         SmeditConfigChoiceSchema(label = button.label, value = button.bitmask)

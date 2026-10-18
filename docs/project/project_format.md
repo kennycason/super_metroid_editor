@@ -74,6 +74,10 @@ text edits retire their config keys and restore them on Undo as one transaction.
 patch-data families. Environmental damage owns its fractional/whole word pair under
 `environmental_damage:<field-key>`. Exact values live in source; checked compiler
 locations are build-cache data only. ROM-only/headless builds cannot omit these keys.
+Timers use `ceres_escape_seconds:seconds` and `zebes_escape_seconds:seconds`;
+`bombs:<key>`, `fanfares:<key>` and `controller_config:<action>` identify the other
+finite native-data fields. Timer scalar overrides retire on first source adoption;
+coupled defaults/timers retain their complete per-site values in source.
 `asmWorkspace.disabledPatchValues` stores exact word lists only while a native-data
 patch is disabled (config type → field identity → words). Its live ASM contains the
 original values; re-enabling restores these saved values and removes the snapshot.

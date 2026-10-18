@@ -685,6 +685,11 @@ fun main() = application {
                             editorState.selectPatch(editorState.findOrCreateConfigPatch("boss_stats").id)
                             leftTab = TAB_PATCHES
                         }
+                        is AsmEditorTarget.PatchData -> {
+                            com.supermetroid.editor.ui.selectNativePatchField(target.configType, target.key)
+                            editorState.selectPatch(editorState.findOrCreateConfigPatch(target.configType).id)
+                            leftTab = TAB_PATCHES
+                        }
                         is AsmEditorTarget.EnvironmentalDamage -> {
                             com.supermetroid.editor.ui.selectEnvironmentalDamage(target.key)
                             editorState.selectPatch(editorState.findOrCreateConfigPatch(com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE).id)

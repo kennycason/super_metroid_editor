@@ -1,12 +1,33 @@
 package com.supermetroid.editor.ui
 
 import com.supermetroid.editor.data.SmPatch
+import com.supermetroid.editor.asm.DATA_PATCH_DEFINITIONS
+import com.supermetroid.editor.asm.DATA_PATCH_TYPES
+import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
 
 /** Compare actual settings, not merely the presence of a config map. Unknown settings err on confirmation. */
 internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?): Boolean {
+    if (patch.configType in DATA_PATCH_TYPES) return runCatching {
+        if (patch.configType == ControllerBindings.CONFIG_TYPE) {
+            val rom = parser?.getRomData()
+            val base = rom?.let { ControllerBindings.read(it) } ?: ControllerBindings.defaults
+            val reset = rom?.let { ControllerBindings.read(it, reset = true) } ?: ControllerBindings.defaults
+            val target = ControllerBindings.resolve(base, patch.configData.orEmpty())
+            patch.configData.orEmpty().isNotEmpty() && (target != base || target != reset)
+        } else {
+            val definitions = DATA_PATCH_DEFINITIONS.filter { it.type == patch.configType }.associateBy { it.key }
+            val values = patch.configData.orEmpty().toMutableMap()
+            patch.configValue?.let { values["seconds"] = it }
+            values.any { (key, value) ->
+                val definition = definitions[key] ?: return@any true
+                val encoded = definition.encode(value)
+                nativeRomValues(definition, parser).any { it != encoded }
+            }
+        }
+    }.getOrDefault(true)
     fun word(snes: Int): Int? = runCatching {
         val rom = requireNotNull(parser).getRomData()
         val pc = parser.snesToPc(snes)
@@ -48,16 +69,10 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
             beam.chargedKey to (word(beam.chargedSnesAddress) ?: beam.defaultDamage * 3),
         ) }.toMap()
         EnvironmentalDamagePatch.CONFIG_TYPE -> readEnvironmentalDamageRomRates(parser)
-        BOMB_CONFIG_TYPE -> readBombsRomDefaults(parser).let { mapOf(BOMB_MAX_ACTIVE_KEY to it.maxActiveBombs,
-            BOMB_FUSE_FRAMES_KEY to it.fuseFrames, BOMB_COOLDOWN_FRAMES_KEY to it.cooldownFrames,
-            BOMB_EXPLOSION_FRAME_DELAY_KEY to it.explosionFrameDelay) }
-        FANFARE_CONFIG_TYPE -> readFanfareRomDefaults(parser).let { mapOf(
-            FANFARE_FRAMES_KEY to it.itemFanfareFrames) }
         "samus_physics" -> ALL_PHYSICS_FIELDS.associate { it.key to (readPhysicsValue(parser, it) ?: it.defaultValue) }
         "phantoon" -> ALL_PHANTOON_FIELDS.associate { it.key to (readPhantoonFromRom(parser, it) ?: it.defaultValue) }
         KRAID_CONFIG_TYPE -> ALL_KRAID_FIELDS.associate { it.key to (readKraidFromRom(parser, it) ?: it.defaultValue) }
         "boss_defeated" -> data.keys.associateWith { 0 }
-        "controller_config" -> CONTROLLER_SLOTS.associate { it.key to (word(0x82F575 + it.tableIndex * 2) ?: it.defaultButton) }
         RoomNamePauseMapPatch.CONFIG_TYPE -> mapOf(RoomNamePauseMapPatch.CONFIG_ALIGNMENT_KEY to RoomNamePauseMapPatch.RoomNameAlignment.CENTER.configValue)
         "enemy_stats" -> ENEMY_DEFS.flatMap { enemy -> listOf(
             "${enemy.key}_hp" to (word((0xA00000 or enemy.speciesId) + 4) ?: enemy.defaultHp),

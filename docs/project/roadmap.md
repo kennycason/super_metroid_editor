@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-10-16
+**Last updated:** 2026-10-17
 
 ---
 
@@ -113,7 +113,8 @@ build authority. Source/Assets expose direct layout editing, not an enable promp
 
 - Context-aware source navigation — The caret-driven link bar and right-click **Visual Editor** share live/structured mappings for beams, enemies and room resources, explicit shared-resource choices and independent panes. Navigation preserves source ownership, history and Find Usages; interaction and viewport regressions cover editable and read-only source.
 
-- Reciprocal environmental damage — Heat/lava/acid rates adopt their native fixed-point pairs on the first real edit, with atomic config retirement and source Undo across banks. Exact non-GUI fractions remain intact and ASM-managed. Checked compiler symbols, accumulator instructions and live table bindings protect relocation, complete unchanged words and independent suit patches. Native parity, relocated legacy overrides, cold/headered Asar builds, rendered controls and omission guards have coverage. The [patch integration inventory](../asm/patch_support.md) prioritizes common numerical patches over detailed boss AI; escape timers are next.
+- Reciprocal environmental damage — Heat/lava/acid rates adopt their native fixed-point pairs on the first real edit, with atomic config retirement and source Undo across banks. Exact non-GUI fractions remain intact and ASM-managed. Checked compiler symbols, accumulator instructions and live table bindings protect relocation, complete unchanged words and independent suit patches. Native parity, relocated legacy overrides, cold/headered Asar builds, rendered controls and omission guards have coverage.
+- Reciprocal common patches — Ceres/Zebes BCD timers, bomb slots/fuse/cooldown/explosion timing, ten-site item fanfares and both controller-default paths use native ASM ↔ GUI editing and ordinary reversible patch toggles. Controller defaults now target new-game initialization and Options reset, not the menu decoder; occupied-button swaps match the game. Checked placements/consumers, no-op inspection, source Undo, rendered panels, pending relocated overrides and cold/headered Asar builds have coverage. [Next](../asm/patch_support.md): Short Charge/other derived settings and individual QoL patch audits, before detailed boss AI.
 
 ## Remaining — Prioritized
 

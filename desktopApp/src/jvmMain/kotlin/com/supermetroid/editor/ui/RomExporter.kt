@@ -897,8 +897,19 @@ internal class RomExporter(
             }
 
             val beforePatch = romData.copyOf()
-            if (patch.configType == "ceres_escape_seconds") {
-                val totalSecs = requireConfigRange(patch, "seconds", patch.configValue ?: 60, 15..600)
+            if (compiledAsmBase != null && patch.configType in com.supermetroid.editor.asm.DATA_PATCH_TYPES) {
+                val writes = requireNotNull(compiledAsmBase.nativePatchWrites[patch.id]) { "${patch.name}: no checked ASM patch data; no fixed-offset fallback was applied." }
+                for (write in writes) {
+                    writePlan.add(owner = "patch:${patch.id}", label = patch.name, offset = write.pc,
+                        bytes = List(write.size) { index -> write.value ushr (index * 8) and 255 }, kind = RomWriteKind.CONFIG,
+                        expectedBefore = List(write.size) { index -> beforePatch[writePlan.headerSize + write.pc + index].toInt() and 255 })
+                }
+                patchesApplied++
+                continue // Planned writes own complete words, including unchanged bytes; never reduce them to a diff.
+            } else if (patch.configType == "ceres_escape_seconds") {
+                validateConfigKeys(patch.configData, setOf("seconds"), patch)
+                require(patch.configValue == null || patch.configData?.get("seconds") == null || patch.configValue == patch.configData?.get("seconds")) { "Conflicting Ceres timer overrides." }
+                val totalSecs = requireConfigRange(patch, "seconds", patch.configValue ?: patch.configData?.get("seconds") ?: continue, 15..600)
                 val mins = totalSecs / 60
                 val secs = totalSecs % 60
                 val secsBcd = ((secs / 10) shl 4) or (secs % 10)
@@ -907,10 +918,12 @@ internal class RomExporter(
                 writeU16(romData, off, (minsBcd shl 8) or secsBcd)
                 onLog("[EXPORT]   Ceres timer: ${mins}m${secs}s")
             } else if (patch.configType == ZEBES_ESCAPE_CONFIG_TYPE) {
+                validateConfigKeys(patch.configData, setOf("seconds"), patch)
+                require(patch.configValue == null || patch.configData?.get("seconds") == null || patch.configValue == patch.configData?.get("seconds")) { "Conflicting Zebes timer overrides." }
                 val totalSecs = requireConfigRange(
                     patch,
                     "seconds",
-                    patch.configValue ?: ZEBES_ESCAPE_DEFAULT_SECONDS,
+                    patch.configValue ?: patch.configData?.get("seconds") ?: continue,
                     ZEBES_ESCAPE_MIN_SECONDS..ZEBES_ESCAPE_MAX_SECONDS,
                 )
                 val mins = totalSecs / 60
@@ -1141,6 +1154,7 @@ internal class RomExporter(
                 onLog("[EXPORT]   Environmental damage: $modCount rates modified")
             } else if (patch.configType == BOMB_CONFIG_TYPE) {
                 val data = patch.configData
+                if (data.isNullOrEmpty()) continue
                 validateConfigKeys(
                     data,
                     setOf(
@@ -1155,19 +1169,19 @@ internal class RomExporter(
                 val maxActive = requireConfigRange(
                     patch,
                     BOMB_MAX_ACTIVE_KEY,
-                    data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs,
+                    data[BOMB_MAX_ACTIVE_KEY] ?: defaults.hardCap,
                     1..BOMB_MAX_PROJECTILE_SLOTS,
                 )
                 val fuseFrames = requireConfigRange(
                     patch,
                     BOMB_FUSE_FRAMES_KEY,
-                    data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames,
+                    data[BOMB_FUSE_FRAMES_KEY] ?: defaults.fuseFrames,
                     1..9999,
                 )
                 val cooldownFrames = requireConfigRange(
                     patch,
                     BOMB_COOLDOWN_FRAMES_KEY,
-                    data?.get(BOMB_COOLDOWN_FRAMES_KEY)
+                    data[BOMB_COOLDOWN_FRAMES_KEY]
                         ?: calculateBombCooldownForConfig(
                             maxActiveBombs = maxActive,
                             fuseFrames = fuseFrames,
@@ -1178,13 +1192,14 @@ internal class RomExporter(
                 val explosionDelay = requireConfigRange(
                     patch,
                     BOMB_EXPLOSION_FRAME_DELAY_KEY,
-                    data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay,
+                    data[BOMB_EXPLOSION_FRAME_DELAY_KEY] ?: defaults.explosionFrameDelay,
                     1..255,
                 )
-                writeU16(romData, BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
-                writeU8(romData, BOMB_COOLDOWN_PC, cooldownFrames)
-                writeU16(romData, BOMB_FUSE_TIMER_PC, fuseFrames)
-                writeU16(romData, BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay)
+                val header = writePlan.headerSize
+                if (BOMB_MAX_ACTIVE_KEY in data) writeU16(romData, header + BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive)
+                if (BOMB_COOLDOWN_FRAMES_KEY in data || BOMB_MAX_ACTIVE_KEY in data) writeU8(romData, header + BOMB_COOLDOWN_PC, cooldownFrames)
+                if (BOMB_FUSE_FRAMES_KEY in data) writeU16(romData, header + BOMB_FUSE_TIMER_PC, fuseFrames)
+                if (BOMB_EXPLOSION_FRAME_DELAY_KEY in data) writeU16(romData, header + BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay)
                 onLog(
                     "[EXPORT]   Bombs: maxActive=$maxActive, fuse=$fuseFrames frames, " +
                         "cooldown=$cooldownFrames frames, explosionDelay=$explosionDelay"
@@ -1192,16 +1207,15 @@ internal class RomExporter(
             } else if (patch.configType == FANFARE_CONFIG_TYPE) {
                 val data = patch.configData
                 validateConfigKeys(data, setOf(FANFARE_FRAMES_KEY), patch)
-                val defaults = readFanfareRomDefaults(romParser)
                 val frames = requireConfigRange(
                     patch,
                     FANFARE_FRAMES_KEY,
-                    data?.get(FANFARE_FRAMES_KEY) ?: defaults.itemFanfareFrames,
+                    data?.get(FANFARE_FRAMES_KEY) ?: continue,
                     FANFARE_MIN_FRAMES..FANFARE_MAX_FRAMES,
                 )
-                writeU16(romData, FANFARE_MESSAGE_BOX_WAIT_PC, frames)
+                writeU16(romData, writePlan.headerSize + FANFARE_MESSAGE_BOX_WAIT_PC, frames)
                 for (offset in FANFARE_MUSIC_RESUME_DELAY_PCS) {
-                    writeU16(romData, offset, frames)
+                    writeU16(romData, writePlan.headerSize + offset, frames)
                 }
                 onLog(
                     "[EXPORT]   Fanfares: item box/music resume delay=$frames frames, " +
@@ -1210,13 +1224,11 @@ internal class RomExporter(
             } else if (patch.configType == "controller_config") {
                 val data = patch.configData ?: continue
                 validateConfigKeys(data, CONTROLLER_SLOTS.mapTo(mutableSetOf()) { it.key }, patch)
-                var slotCount = 0
-                for (slot in CONTROLLER_SLOTS) {
-                    val value = data[slot.key] ?: continue
-                    writeU16(romData, CONTROLLER_TABLE_PC + slot.tableIndex * 2, value)
-                    slotCount++
+                val writes = com.supermetroid.editor.rom.ControllerBindings.writes(romData, data)
+                for (write in writes) {
+                    writeU16(romData, writePlan.headerSize + write.pc, write.value)
                 }
-                onLog("[EXPORT]   Controller config: $slotCount buttons remapped")
+                onLog("[EXPORT]   Controller defaults: ${writes.size} new-save/options-reset operands updated; button decoder unchanged")
             } else if (patch.configType == RoomNamePauseMapPatch.CONFIG_TYPE) {
                 validateConfigKeys(
                     patch.configData,

@@ -544,18 +544,8 @@ val CONTROLLER_CONFIG_PATCH = SmPatch(
     configType = "controller_config"
 )
 
-data class ControllerSlot(val key: String, val name: String, val tableIndex: Int, val defaultButton: Int)
-
-/** The 7 configurable actions in the order they appear in the ROM table at $82:F575 (PC 0x017575). */
-val CONTROLLER_SLOTS = listOf(
-    ControllerSlot("shot",        "Shot",        0, 0x0040),
-    ControllerSlot("jump",        "Jump",        1, 0x0080),
-    ControllerSlot("dash",        "Dash (Run)",  2, 0x8000),
-    ControllerSlot("item_select", "Item Select", 3, 0x2000),
-    ControllerSlot("item_cancel", "Item Cancel", 4, 0x4000),
-    ControllerSlot("angle_down",  "Angle Down",  5, 0x0020),
-    ControllerSlot("angle_up",    "Angle Up",    6, 0x0010),
-)
+/** Action order matches the in-game controller settings screen. */
+val CONTROLLER_SLOTS = com.supermetroid.editor.rom.ControllerBindings.slots
 
 data class SnesButton(val name: String, val bitmask: Int)
 
@@ -598,7 +588,6 @@ internal val GUI_CONFIG_PATCHES = listOf(
 )
 
 /** PC offset of the 7×2-byte default button table in the ROM. */
-const val CONTROLLER_TABLE_PC = 0x017575
 
 /**
  * Build the ASM payload + hook for boss-defeated flags at export time.

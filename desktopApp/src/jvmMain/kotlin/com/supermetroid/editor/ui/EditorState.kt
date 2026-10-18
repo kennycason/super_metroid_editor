@@ -602,6 +602,7 @@ class EditorState(
         statusMessage.startsWith("Beam edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Boss stats edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Environmental edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Patch edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Patch toggle blocked", ignoreCase = true) ||
         statusMessage.startsWith("Patch synchronization blocked", ignoreCase = true) ||
         statusMessage.startsWith("Source edit blocked", ignoreCase = true) ||
@@ -1128,6 +1129,8 @@ class EditorState(
         private set
     internal var environmentalDamageBridge by mutableStateOf<com.supermetroid.editor.asm.AsmEnvironmentalDamageBridge?>(null)
         private set
+    internal var dataPatchBridge by mutableStateOf<com.supermetroid.editor.asm.AsmDataPatchBridge?>(null)
+        private set
     internal var patchToggleController: com.supermetroid.editor.asm.AsmPatchToggleController? = null
         private set
     internal var pendingPatchDisable by mutableStateOf<SmPatch?>(null)
@@ -1159,6 +1162,7 @@ class EditorState(
         beamDamageBridge = null
         bossStatsBridge = null
         environmentalDamageBridge = null
+        dataPatchBridge = null
         patchToggleController = null
         pendingPatchDisable = null
     }
@@ -1253,21 +1257,30 @@ class EditorState(
                 owner
             }) { dirty = true; patchVersion++ }
         }
+        dataPatchBridge = root?.let { com.supermetroid.editor.asm.AsmDataPatchSource.load(workspace.projectWorkspace!!.originalDirectory) }?.let { source ->
+            com.supermetroid.editor.asm.AsmDataPatchBridge(source, workspace, {
+                check(project === owner && workspace.projectWorkspace?.root == root &&
+                    (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The patch ROM or ASM workspace changed." }
+                owner
+            }) { dirty = true; patchVersion++ }
+        }
         val toggleController = com.supermetroid.editor.asm.AsmPatchToggleController(workspace, {
             check(project === owner && workspace.projectWorkspace?.root == root &&
                 (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The patch ROM or ASM workspace changed." }
             owner
-        }, com.supermetroid.editor.asm.patchToggleFamilies(beamDamageBridge?.catalog, bossStatsBridge?.catalog, environmentalDamageBridge?.catalog)) {
+        }, com.supermetroid.editor.asm.patchToggleFamilies(beamDamageBridge?.catalog, bossStatsBridge?.catalog, environmentalDamageBridge?.catalog, dataPatchBridge?.catalog)) {
             dirty = true; patchVersion++
         }
         patchToggleController = toggleController
         beamDamageBridge?.publisher = toggleController::publish
         bossStatsBridge?.publisher = toggleController::publish
         environmentalDamageBridge?.publisher = toggleController::publish
+        dataPatchBridge?.publisher = toggleController::publish
         workspace.sourceEditorInterceptor = { file, before, after ->
             if (!asmNavigationEnabled) null else runCatching {
                 val changes = listOfNotNull(enemyTuningBridge?.prepareIntercept(file, before, after),
-                    bossStatsBridge?.prepareIntercept(file, before, after), environmentalDamageBridge?.prepareIntercept(file, before, after))
+                    bossStatsBridge?.prepareIntercept(file, before, after), environmentalDamageBridge?.prepareIntercept(file, before, after)) +
+                    dataPatchBridge?.prepareIntercept(file, before, after).orEmpty()
                 val sources = mapOf(file to (before to after))
                 val touches = toggleController.touches(sources).filterKeys { it != "beam_damage" }
                 if (changes.isNotEmpty() || touches.keys.any(toggleController::needsActivation)) {
@@ -1279,7 +1292,8 @@ class EditorState(
         workspace.sourceEditorLinks = { file, line ->
             enemyTuningBridge?.editorLinks(file, line).orEmpty() +
                 bossStatsBridge?.editorLinks(file, line).orEmpty() +
-                beamDamageBridge?.editorLinks(file, line).orEmpty() + environmentalDamageBridge?.editorLinks(file, line).orEmpty()
+                beamDamageBridge?.editorLinks(file, line).orEmpty() + environmentalDamageBridge?.editorLinks(file, line).orEmpty() +
+                dataPatchBridge?.editorLinks(file, line).orEmpty()
         }
         runCatching { toggleController.reconcileSourceFlags() }
             .onFailure { postStatus("Patch synchronization blocked: ${it.message}") }
@@ -2830,6 +2844,10 @@ class EditorState(
     }
 
     fun setPatchConfigValue(id: String, value: Int) {
+        val patch = project.patches.find { it.id == id }
+        if (patch?.configType in com.supermetroid.editor.asm.DATA_PATCH_TYPES) {
+            setNativePatchValues(id, mapOf("seconds" to value)); return
+        }
         project.patches.find { it.id == id }?.let {
             it.configValue = value
             if (it.configType != null) setPatchEnabled(it, true)
@@ -2839,6 +2857,9 @@ class EditorState(
 
     fun setPatchConfigData(id: String, key: String, value: Int) {
         val patch = project.patches.find { it.id == id } ?: return
+        if (patch.configType in com.supermetroid.editor.asm.DATA_PATCH_TYPES) {
+            setNativePatchValues(id, mapOf(key to value)); return
+        }
         if (usesRoomAsmAuthoring && patch.configType == com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE) {
             runCatching { requireNotNull(environmentalDamageBridge) { "Wait for environmental source indexing." }.edit(key, value) }
                 .onFailure { postStatus("Environmental edit blocked: ${it.message}") }
@@ -2865,6 +2886,46 @@ class EditorState(
         patch.configData = data
         if (patch.configType != null) setPatchEnabled(patch, true)
         dirty = true; patchVersion++
+    }
+
+    internal fun setNativePatchValues(id: String, values: Map<String, Int>) {
+        val patch = project.patches.find { it.id == id } ?: return
+        runCatching {
+            if (asmNavigationEnabled) {
+                requireNotNull(dataPatchBridge) { "Wait for patch source indexing." }.editValues(requireNotNull(patch.configType), values)
+            } else {
+                val definitions = com.supermetroid.editor.asm.DATA_PATCH_DEFINITIONS.filter { it.type == patch.configType }.associateBy { it.key }
+                val current = definitions.mapValues { nativePatchRomView(patch, it.value, currentRomParser) }
+                values.forEach { (key, value) -> definitions.getValue(key).encode(value); require(current.getValue(key).problem == null) { current.getValue(key).problem.orEmpty() } }
+                if (values.all { (key, value) -> current.getValue(key).value == value }) return
+                val changes = values.toMutableMap()
+                if (patch.configType == com.supermetroid.editor.rom.ControllerBindings.CONFIG_TYPE) {
+                    changes.putAll(com.supermetroid.editor.rom.ControllerBindings.resolve(current.mapValues { requireNotNull(it.value.value) }, values))
+                }
+                if (patch.configType == BOMB_CONFIG_TYPE && BOMB_MAX_ACTIVE_KEY in changes && BOMB_COOLDOWN_FRAMES_KEY !in changes) {
+                    changes[BOMB_COOLDOWN_FRAMES_KEY] = calculateBombCooldownForConfig(changes.getValue(BOMB_MAX_ACTIVE_KEY),
+                        changes[BOMB_FUSE_FRAMES_KEY] ?: requireNotNull(current[BOMB_FUSE_FRAMES_KEY]?.value), requireNotNull(current[BOMB_COOLDOWN_FRAMES_KEY]?.value))
+                }
+                if (patch.configType in setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE)) patch.configValue = changes.getValue("seconds")
+                else patch.configData = (patch.configData.orEmpty() + changes).toMutableMap()
+                setPatchEnabled(patch, true); dirty = true; patchVersion++
+            }
+        }.onFailure { postStatus("Patch edit blocked: ${it.message}") }
+    }
+
+    internal fun openDataPatchSource(type: String, key: String? = null): Boolean = runCatching {
+        require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
+        val bridge = requireNotNull(dataPatchBridge) { "Wait for patch source indexing." }
+        val (file, line) = bridge.line(type, key)
+        bridge.workspace.showProjectWorkspace(); bridge.workspace.openSource(file, line); true
+    }.getOrElse { postStatus("Patch source unavailable: ${it.message}"); false }
+
+    internal fun resetNativePatchToOriginal(id: String) {
+        val patch = project.patches.find { it.id == id } ?: return
+        runCatching {
+            if (asmNavigationEnabled) requireNotNull(dataPatchBridge) { "Wait for patch source indexing." }.reset(requireNotNull(patch.configType))
+            else { patch.configData = null; patch.configValue = null; patch.enabled = true; dirty = true; patchVersion++ }
+        }.onFailure { postStatus("Patch edit blocked: ${it.message}") }
     }
 
     fun normalizedRoomNameOverrideKey(roomIdText: String): String? {
@@ -4555,6 +4616,7 @@ class EditorState(
         bossStatsBridge = null
         objectPreviewLoading = false
         environmentalDamageBridge = null
+        dataPatchBridge = null
         patchToggleController = null
         pendingPatchDisable = null
         objectPreviewProblem = null

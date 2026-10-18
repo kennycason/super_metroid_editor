@@ -1277,7 +1277,8 @@ class SmeditBuildService(
         patch: SmPatch,
         context: ApplyContext,
     ): String? =
-        when (patch.configType) {
+        if (patch.configType in setOf(CERES_ESCAPE_CONFIG_TYPE, ZEBES_ESCAPE_CONFIG_TYPE, BOMB_CONFIG_TYPE, FANFARE_CONFIG_TYPE, CONTROLLER_CONFIG_TYPE) &&
+            patch.configValue == null && patch.configData.isNullOrEmpty()) patch.configType else when (patch.configType) {
             CERES_ESCAPE_CONFIG_TYPE -> {
                 val data = patch.configData
                 val totalSecs = (
@@ -1333,7 +1334,7 @@ class SmeditBuildService(
             BOMB_CONFIG_TYPE -> {
                 val data = patch.configData
                 val defaults = if (context.outputRom != null) bombDefaults(context) else BombDefaults.vanilla()
-                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.maxActiveBombs)
+                val maxActive = (data?.get(BOMB_MAX_ACTIVE_KEY) ?: defaults.hardCap)
                     .coerceIn(1, BOMB_MAX_PROJECTILE_SLOTS)
                 val fuseFrames = (data?.get(BOMB_FUSE_FRAMES_KEY) ?: defaults.fuseFrames)
                     .coerceIn(1, 9999)
@@ -1344,10 +1345,10 @@ class SmeditBuildService(
                 val explosionDelay = (data?.get(BOMB_EXPLOSION_FRAME_DELAY_KEY) ?: defaults.explosionFrameDelay)
                     .coerceIn(1, 255)
 
-                writeWord(context, BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive, "Bomb hard cap")
-                writeByte(context, BOMB_COOLDOWN_PC, cooldownFrames, "Bomb cooldown")
-                writeWord(context, BOMB_FUSE_TIMER_PC, fuseFrames, "Bomb fuse")
-                writeWord(context, BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay, "Bomb explosion delay")
+                if (data?.containsKey(BOMB_MAX_ACTIVE_KEY) == true) writeWord(context, BOMB_ACTIVE_HARD_CAP_OPERAND_PC, maxActive, "Bomb hard cap")
+                if (data?.containsKey(BOMB_COOLDOWN_FRAMES_KEY) == true || data?.containsKey(BOMB_MAX_ACTIVE_KEY) == true) writeByte(context, BOMB_COOLDOWN_PC, cooldownFrames, "Bomb cooldown")
+                if (data?.containsKey(BOMB_FUSE_FRAMES_KEY) == true) writeWord(context, BOMB_FUSE_TIMER_PC, fuseFrames, "Bomb fuse")
+                if (data?.containsKey(BOMB_EXPLOSION_FRAME_DELAY_KEY) == true) writeWord(context, BOMB_EXPLOSION_FRAME_DELAY_OPERAND_PC, explosionDelay, "Bomb explosion delay")
                 BOMB_CONFIG_TYPE
             }
             FANFARE_CONFIG_TYPE -> {
@@ -1539,9 +1540,8 @@ class SmeditBuildService(
         context: ApplyContext,
     ) {
         val data = patch.configData ?: return
-        for (slot in HEADLESS_CONTROLLER_SLOTS) {
-            val value = data[slot.key]?.coerceIn(0, 0xFFFF) ?: continue
-            writeWord(context, CONTROLLER_TABLE_PC + slot.tableIndex * 2, value, "Controller config ${slot.key}")
+        for (write in com.supermetroid.editor.rom.ControllerBindings.writes(context.outputRom, data)) {
+            writeWord(context, write.pc, write.value, "Controller new-save/options-reset default")
         }
     }
 
