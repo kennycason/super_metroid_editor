@@ -33,8 +33,7 @@ internal fun dataPatchOverrides(patch: SmPatch, fields: Map<String, DataPatchFie
     }
     return values.map { (key, value) ->
         val def = definitions.getValue(key)
-        val encoded = def.encode(value)
-        def.id to List(field(key).words.size) { encoded }
+        def.id to field(key).words.map { def.encode(value, it.value) }
     }.toMap()
 }
 
@@ -67,6 +66,7 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
     }
     fun compiledByte(pc: Int) = compiled.romBytes[pc + header].toInt() and 255
     fun compiledWord(pc: Int) = parser.readUInt16At(pc + header)
+    fun compiledValue(pc: Int, size: Int) = (0 until size).fold(0) { value, index -> value or (compiledByte(pc + index) shl (index * 8)) }
     fun symbolValue(expression: String): Int {
         AsmPlmDocument.literal(expression)?.let { return it }
         val parts = Regex("([A-Za-z_][A-Za-z0-9_]*)(?:([+-])(\\$[0-9A-Fa-f]+|[0-9]+))?").matchEntire(expression)
@@ -86,7 +86,10 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
                 "LDA.W" -> if (immediate) 0xA9 else if (arg.endsWith(",Y")) 0xB9 else if (arg.endsWith(",X")) 0xBD else 0xAD
                 "LDX.W" -> 0xA2
                 "STA.W" -> if (arg.endsWith(",Y")) 0x99 else if (indexed) 0x9D else 0x8D
-                "CMP.W" -> 0xC9
+                "STA.B" -> 0x85
+                "CMP.W" -> if (immediate) 0xC9 else if (arg.endsWith(",X")) 0xDD else 0xCD
+                "ADC.W" -> if (immediate) 0x69 else if (arg.endsWith(",X")) 0x7D else 0x6D
+                "ADC.B" -> 0x65
                 "CPX.W" -> 0xE0
                 "BIT.W" -> 0x89
                 "AND.W" -> 0x29
@@ -120,11 +123,12 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
                 pc += 2
             } else if (arg.isEmpty()) pc++ else {
                 val expression = arg.removeSuffix(",X").removeSuffix(",Y")
-                val value = if (immediate) requireNotNull(AsmPlmDocument.literal(arg.drop(1))) else
-                    symbolValue(if (expression.startsWith('.')) guard.symbol + "_" + expression.drop(1) else expression)
-                require(compiledWord(pc + 1) == value and 65535) { "${guard.symbol}: compiled operand/binding differs from source ($code)." }
+                val binding = expression.removePrefix("#")
+                val value = symbolValue(if (binding.startsWith('.')) guard.symbol + "_" + binding.drop(1) else binding)
+                val short = op.endsWith(".B")
+                require((if (short) compiledByte(pc + 1) else compiledWord(pc + 1)) == value and (if (short) 255 else 65535)) { "${guard.symbol}: compiled operand/binding differs from source ($code)." }
                 if (op == "JSL.L") require(compiledByte(pc + 3) == value ushr 16) { "${guard.symbol}: long-call bank changed." }
-                pc += if (op == "JSL.L") 4 else 3
+                pc += if (short) 2 else if (op == "JSL.L") 4 else 3
             }
         }
         address(guard.file, guard.symbol, guard.offset, pc - start)
@@ -142,7 +146,7 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
         require(!authored || id !in pendingIds) { "$id has both ASM and a patch override. Use ASM values before building." }
         require(!def.bcd || field.values.all { def.decode(it) != null }) { "$id: invalid BCD timer. Seconds must be 00–59." }
         for ((pc, word) in pcs.zip(field.words)) {
-            val actual = if (word.site.size == 1) compiledByte(pc) else compiledWord(pc)
+            val actual = compiledValue(pc, word.site.size)
             require(actual == word.value) { "$id: compiled data differs from the checked source word." }
             for (at in pc until pc + word.site.size) {
                 require(typed[at] == null || typed[at] == id) { "$id shares compiled bytes with ${typed[at]}; split the bindings before patching." }

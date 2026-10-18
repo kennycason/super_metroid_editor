@@ -50,9 +50,11 @@ class NativeDataPatchRomTest {
         val edits = mapOf("ceres_escape_seconds" to mapOf("seconds" to 95), ZEBES_ESCAPE_CONFIG_TYPE to mapOf("seconds" to 305),
             BOMB_CONFIG_TYPE to mapOf(BOMB_FUSE_FRAMES_KEY to 70), FANFARE_CONFIG_TYPE to mapOf(FANFARE_FRAMES_KEY to 240),
             ControllerBindings.CONFIG_TYPE to mapOf("jump" to 0x4000))
-        unmodified.forEach { it.configData = edits.getValue(it.configType!!).toMutableMap() }
+        unmodified.forEach { it.configData = (edits[it.configType] ?: mapOf("gravity" to 0x2C)).toMutableMap() }
         val result = assertNotNull(RomExporter(project, parser).build()).resultRom; val output = RomParser(result)
         assertContentEquals(header, result.copyOfRange(0, 512))
+        assertEquals(0x2C, result[512 + 0x081EA2].toInt() and 255)
+        assertEquals(0x1C, original[0x081EA2].toInt() and 255)
         assertEquals(0x0135, output.readUInt16At(512 + 0x1E0E)); assertEquals(0x0505, output.readUInt16At(512 + 0x1E21))
         assertEquals(70, output.readUInt16At(512 + BOMB_FUSE_TIMER_PC))
         assertEquals(5, output.readUInt16At(512 + BOMB_ACTIVE_HARD_CAP_OPERAND_PC)); assertEquals(16, result[512 + BOMB_COOLDOWN_PC].toInt() and 255)
@@ -62,7 +64,7 @@ class NativeDataPatchRomTest {
         val index = AsmSemanticBridge.buildIndex(parser)
         for (definition in DATA_PATCH_DEFINITIONS) {
             val addresses = nativeDataPatchRuntimeAddresses(definition, parser)
-            assertEquals(definition.sites.size * if (definition.sites.first().op in setOf("dw", "db")) 1 else 2, addresses.size, definition.id)
+            assertEquals(definition.sites.size * if (definition.sites.first().op in com.supermetroid.editor.asm.PATCH_DATA_OPS) 1 else 2, addresses.size, definition.id)
             addresses.forEach { assertTrue(index.linksFor(it).any { link -> link.target == AsmEditorTarget.PatchData(definition.type, definition.key) }, definition.id) }
         }
     }

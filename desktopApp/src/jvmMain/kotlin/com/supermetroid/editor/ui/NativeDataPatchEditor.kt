@@ -33,13 +33,14 @@ internal fun nativeRomValues(definition: DataPatchDefinition, parser: RomParser?
         ZEBES_ESCAPE_CONFIG_TYPE -> 0x0300
         BOMB_CONFIG_TYPE -> when (definition.key) { BOMB_MAX_ACTIVE_KEY -> 5; BOMB_FUSE_FRAMES_KEY -> 60; BOMB_COOLDOWN_FRAMES_KEY -> 16; else -> 1 }
         FANFARE_CONFIG_TYPE -> 360
+        PHYSICS_CONFIG_TYPE -> definition.sites.first().nativeValue ?: ALL_PHYSICS_FIELDS.single { it.key == definition.key }.defaultValue
         else -> ControllerBindings.defaults.getValue(definition.key)
     }
     return definition.sites.map { site ->
         if (parser == null) fallback else {
             val pc = parser.snesToPc(site.native); val rom = parser.getRomData()
             require(pc >= 0 && pc + site.size <= rom.size) { "${definition.label}: ROM data is unavailable." }
-            (rom[pc].toInt() and 255) or if (site.size == 2) ((rom[pc + 1].toInt() and 255) shl 8) else 0
+            (0 until site.size).fold(0) { value, index -> value or ((rom[pc + index].toInt() and 255) shl (index * 8)) }
         }
     }
 }
@@ -78,7 +79,7 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
     }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(when (type) { BOMB_CONFIG_TYPE -> "Bombs"; FANFARE_CONFIG_TYPE -> "Item Fanfares"; ControllerBindings.CONFIG_TYPE -> "Controller Defaults"; else -> "Escape Timer" },
+            Text(when (type) { BOMB_CONFIG_TYPE -> "Bombs"; FANFARE_CONFIG_TYPE -> "Item Fanfares"; PHYSICS_CONFIG_TYPE -> "Samus Physics"; ControllerBindings.CONFIG_TYPE -> "Controller Defaults"; else -> "Escape Timer" },
                 fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             if (sourceMode) TextButton(onClick = { open() }, enabled = bridge != null, modifier = Modifier.width(64.dp).testTag("native-patch-asm")) { Text("ASM", maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { editor.resetNativePatchToOriginal(patch.id) }) { Text(if (sourceMode) "Original ASM" else "Original ROM") }
@@ -87,9 +88,13 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
             ControllerBindings.CONFIG_TYPE -> "Sets new-game defaults and the title/options screen's Reset to default. Choosing an occupied button swaps its action, just like the game. Existing saves keep their stored controls until reset in Options."
             BOMB_CONFIG_TYPE -> "Five slots are available. The stock three-bomb feel comes from fuse length and cooldown; the slot limit is a separate hard cap."
             FANFARE_CONFIG_TYPE -> "The item-message wait and all nine music-resume delays edit together."
+            PHYSICS_CONFIG_TYPE -> "Tune jump heights, gravity, running and air control. Values are bytes (0–255); source edits preserve the complete native value and its other bytes."
             else -> "Time is entered in seconds; ASM stores packed BCD minutes and seconds."
         }, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (definition in definitions) {
+            val physicsCategory = if (type == PHYSICS_CONFIG_TYPE) PHYSICS_CATEGORIES.first { category -> category.fields.any { it.key == definition.key } } else null
+            if (physicsCategory?.fields?.first()?.key == definition.key) Text(physicsCategory.name,
+                fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = physicsCategory.color)
             val state = views.getValue(definition.key)
             val selected = nativeSelection?.let { it.first == type && it.second == definition.key } == true
             val bring = remember(definition.id) { BringIntoViewRequester() }
@@ -130,9 +135,13 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
                                     .testTag("native-patch-${definition.key}"))
                             OutlinedButton(onClick = { apply(definition.key, requireNotNull(state.value) + 1) }, enabled = editable && state.value!! < definition.range.last,
                                 contentPadding = PaddingValues(0.dp), modifier = Modifier.size(30.dp)) { Text("+") }
+                            if (type == PHYSICS_CONFIG_TYPE) Text(state.value?.let { "\$" + it.toString(16).uppercase().padStart(2, '0') } ?: "—",
+                                fontSize = LocalEditorTheme.current.fontSize.value.detail, modifier = Modifier.width(40.dp))
                         }
                     }
                     state.problem?.let { Text(it, fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (type == PHYSICS_CONFIG_TYPE) Text(ALL_PHYSICS_FIELDS.single { it.key == definition.key }.description,
+                        fontSize = LocalEditorTheme.current.fontSize.value.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val presets = when (type) { "ceres_escape_seconds" -> listOf(60, 90, 120, 180, 300)
                         ZEBES_ESCAPE_CONFIG_TYPE -> listOf(60, 180, 300, 600); FANFARE_CONFIG_TYPE -> listOf(16, 240, 360); else -> emptyList() }
                     if (presets.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

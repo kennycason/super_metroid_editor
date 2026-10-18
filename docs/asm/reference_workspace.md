@@ -2220,6 +2220,10 @@ Ceres/Zebes timers, bombs, fanfares and controller defaults also support first-e
 native source ownership, reciprocal controls/links and reversible Enable/Disable.
 Controllers target both new-game initialization and Options reset, leaving the
 button decoder untouched. See [patch workflows and manual checks](patch_support.md#timers-bombs-fanfares-and-controllers).
+Samus physics now uses the same reciprocal workflow for all seventeen controls,
+including native word/dword preservation and checked movement-table bindings across
+banks $90/$94. The previous GUI-generated physics overlay is retired; see
+[physics source editing](patch_support.md#samus-physics).
 
 ## Project-created room ASM builds and navigation
 

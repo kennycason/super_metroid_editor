@@ -48,7 +48,9 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
         if (!patch.enabled || source.problem != null) return source
         return runCatching {
             val texts = texts()
-            val fields = catalog.definitions.filterValues { it.type == type }.keys.associateWith { catalog.field(it, texts) }
+            val fields = catalog.definitions.filterValues { it.type == type }.keys.mapNotNull { id ->
+                runCatching { catalog.field(id, texts) }.getOrNull()?.let { id to it }
+            }.toMap()
             val words = dataPatchOverrides(patch, fields)[dataPatchKey(type, key)] ?: return source
             source.copy(value = fields.getValue(dataPatchKey(type, key)).definition.decode(words.first()))
         }.getOrElse { source.copy(problem = it.message) }
@@ -60,7 +62,9 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
     fun editValues(type: String, requested: Map<String, Int>) {
         if (requested.isEmpty()) return
         val before = texts()
-        val fields = catalog.definitions.filterValues { it.type == type }.keys.associateWith { catalog.field(it, before) }
+        val fields = catalog.definitions.filterValues { it.type == type }.keys.mapNotNull { id ->
+            runCatching { catalog.field(id, before) }.getOrNull()?.let { id to it }
+        }.toMap()
         requested.keys.forEach { require(view(type, it).problem == null) { view(type, it).problem ?: "Repair this source first." } }
         // Re-entering the native slot limit alone is inspection, not a request to retime bombs.
         // Explicit pending count overrides still retain their coupled cooldown semantics.
@@ -96,14 +100,16 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
         val def = catalog.definitions.getValue(id)
         return project().patches.filter { it.configType == def.type }.any { patch ->
             listOfNotNull(patch.configData?.get(def.key), patch.configValue?.takeIf { def.key == "seconds" }).any { value ->
-                runCatching { val encoded = def.encode(value); words.any { it != encoded } }.getOrDefault(true)
+                runCatching { words.any { def.encode(value, it) != it } }.getOrDefault(true)
             }
         }
     }
     fun prepareIntercept(file: String, before: String, after: String): List<AsmSourceModelChange> {
         if (file !in catalog.originals || before == after) return emptyList()
         val texts = texts()
-        val keys = catalog.changedKeys(texts + (file to before), texts + (file to after))
+        val previous = texts + (file to before)
+        val keys = catalog.changedKeys(previous, texts + (file to after))
+        keys.forEach { id -> runCatching { catalog.field(id, previous).value }.getOrNull()?.let { lastGood[id] = it } }
         return keys.groupBy { catalog.definitions.getValue(it).type }.mapNotNull { (_, ids) ->
             if (ids.all { it in project().asmWorkspace.patchSourceKeys && !pending(it) }) null else preparePublish(ids.toSet())
         }
@@ -117,7 +123,7 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
             var after = before.getValue(file)
             for (edit in edits.sortedByDescending { it.key.second.first }) {
                 val (word, value) = edit.value.first(); val span = edit.key.second
-                if (word.value != value) after = after.replaceRange(span, "$" + value.toString(16).uppercase().padStart(word.site.size * 2, '0'))
+                if (word.value != value) after = after.replaceRange(span, patchHex(value, word.site.size))
             }
             before.getValue(file) to after
         }

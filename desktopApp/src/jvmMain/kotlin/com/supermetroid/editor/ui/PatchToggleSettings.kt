@@ -23,8 +23,7 @@ internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?)
             patch.configValue?.let { values["seconds"] = it }
             values.any { (key, value) ->
                 val definition = definitions[key] ?: return@any true
-                val encoded = definition.encode(value)
-                nativeRomValues(definition, parser).any { it != encoded }
+                nativeRomValues(definition, parser).any { definition.encode(value, it) != it }
             }
         }
     }.getOrDefault(true)

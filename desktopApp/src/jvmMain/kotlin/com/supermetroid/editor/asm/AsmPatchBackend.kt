@@ -22,9 +22,7 @@ internal data class PatchBackendSupport(
  * to mutate the same bytes. New patch families graduate one at a time.
  */
 internal object AsmPatchBackendRegistry {
-    private val sourceConfigTypes = mapOf(
-        "samus_physics" to PatchImplementationBackend.ASM_GENERATED_OVERLAY,
-    )
+    private val sourceConfigTypes = emptyMap<String, PatchImplementationBackend>()
 
     fun supportFor(patch: SmPatch): PatchBackendSupport = PatchBackendSupport(
         asm = patch.configType?.let(sourceConfigTypes::get),

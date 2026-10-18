@@ -137,7 +137,7 @@ internal class AsmPatchToggleController(
         require(family.keys.containsAll(values.keys)) { "Unknown saved ${family.type} fields." }
         val edits = values.flatMap { (key, values) ->
             val words = family.words(key, texts)
-            require(values.size == words.size && words.zip(values).all { (word, value) -> value in 0..if (word.size == 1) 255 else 65535 }) { "Invalid saved $key words." }
+            require(values.size == words.size && words.zip(values).all { (word, value) -> patchValueFits(value, word.size) }) { "Invalid saved $key words." }
             require(!requireOriginal || words.map { it.value } == family.original(key)) {
                 "$key changed in ASM while disabled. No source was overwritten; reconcile these edits before re-enabling."
             }
@@ -150,7 +150,7 @@ internal class AsmPatchToggleController(
             var text = texts.getValue(file)
             for (group in groups.sortedByDescending { it.key.second.first }) {
                 val (word, value) = group.value.first()
-                if (word.value != value) text = text.replaceRange(word.span, "$" + value.toString(16).uppercase().padStart(word.size * 2, '0'))
+                if (word.value != value) text = text.replaceRange(word.span, patchHex(value, word.size))
             }
             text
         }
@@ -203,7 +203,7 @@ internal fun validatePatchToggleSources(project: SmEditProject, families: List<A
         require(family.keys.containsAll(saved.keys)) { "Unknown disabled $type fields." }
         for ((key, values) in saved) {
             val words = family.words(key, family.originals)
-            require(values.size == words.size && words.zip(values).all { (word, value) -> value in 0..if (word.size == 1) 255 else 65535 }) { "Invalid saved $key words." }
+            require(values.size == words.size && words.zip(values).all { (word, value) -> patchValueFits(value, word.size) }) { "Invalid saved $key words." }
         }
     }
     for (family in families) {

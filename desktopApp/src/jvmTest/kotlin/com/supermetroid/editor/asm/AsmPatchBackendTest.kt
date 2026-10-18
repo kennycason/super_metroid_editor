@@ -9,10 +9,11 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertNull
 
 class AsmPatchBackendTest {
     @Test
-    fun `Samus physics explicitly supports ROM and generated ASM backends`() {
+    fun `Samus physics uses native source data instead of a generated overlay`() {
         val patch = SmPatch(
             id = "config_samus_physics",
             name = "Samus Physics",
@@ -23,8 +24,9 @@ class AsmPatchBackendTest {
         val support = AsmPatchBackendRegistry.supportFor(patch)
 
         assertEquals(PatchImplementationBackend.ROM_WRITES, support.rom)
-        assertEquals(PatchImplementationBackend.ASM_GENERATED_OVERLAY, support.asm)
-        assertEquals(setOf("patch:config_samus_physics"), AsmPatchBackendRegistry.sourceOwners(listOf(patch)))
+        assertNull(support.asm)
+        assertTrue(AsmPatchBackendRegistry.sourceOwners(listOf(patch)).isEmpty())
+        assertTrue(PHYSICS_CONFIG_TYPE in DATA_PATCH_TYPES)
     }
 
     @Test

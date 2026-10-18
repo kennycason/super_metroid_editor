@@ -1121,7 +1121,8 @@ internal class RomExporter(
                 var modCount = 0
                 for (field in ALL_PHYSICS_FIELDS) {
                     val value = data[field.key] ?: continue
-                    writeU8(romData, field.pcOffset, value)
+                    val header = if (romData.size % 0x8000 == 512) 512 else 0
+                    writeU8(romData, header + field.pcOffset, value)
                     modCount++
                 }
                 onLog("[EXPORT]   Samus physics: $modCount values modified")

@@ -26,10 +26,26 @@ import kotlin.test.*
 class AsmDataPatchSourceTest {
     @TempDir lateinit var directory: File
     private val originals: Map<String, String> get() = buildMap {
+        val bindings = PHYSICS_PATCH_DEFINITIONS.flatMap(::physicsBindings).distinct()
         for ((file, entries) in DATA_PATCH_DEFINITIONS.flatMap { def -> def.sites.map { def to it } }.groupBy { it.second.file }) {
             put(file, buildString {
-                for ((symbol, sites) in entries.groupBy { it.second.symbol }) {
+                val grouped = entries.groupBy { it.second.symbol }
+                val extra = bindings.filter { it.file == file }.groupBy { it.symbol }
+                for (symbol in grouped.keys + extra.keys) {
+                    val sites = grouped[symbol].orEmpty()
                     appendLine("$symbol:")
+                    if (sites.isNotEmpty() && sites.all { it.second.op in PATCH_DATA_OPS }) {
+                        val op = sites.first().second.op
+                        for (index in 0..maxOf(sites.maxOf { it.second.index }, if (op == "db") 8 else 0)) {
+                            val site = sites.firstOrNull { it.second.index == index }?.second
+                            val token = site?.nativeExpression ?: when (op) {
+                                "db" -> if (index == 5) "regional(${ '$' }10, ${ '$' }0C)" else "0"
+                                "dw" -> "regional(${ '$' }003C, ${ '$' }0034)"
+                                else -> "0"
+                            }
+                            appendLine(" $op $token")
+                        }
+                    } else {
                     for ((def, site) in sites) {
                         val value = when (def.type) {
                             "ceres_escape_seconds" -> 0x0100
@@ -38,18 +54,14 @@ class AsmDataPatchSourceTest {
                             ControllerBindings.CONFIG_TYPE -> ControllerBindings.defaults.getValue(def.key)
                             else -> when (def.key) { BOMB_MAX_ACTIVE_KEY -> 5; BOMB_FUSE_FRAMES_KEY -> 60; BOMB_COOLDOWN_FRAMES_KEY -> 16; else -> 1 }
                         }
-                        if (site.op == "db") {
-                            repeat(5) { appendLine(" db 0") }
-                            appendLine(" db regional(${ '$' }10, ${ '$' }0C)")
-                            repeat(3) { appendLine(" db 0") }
-                        } else if (site.op == "dw") appendLine(" dw regional(${ '$' }003C, ${ '$' }0034)")
-                        else {
                             site.before.forEach { appendLine(" $it") }
-                            appendLine(" ${site.op} #${'$'}${value.toString(16).padStart(4, '0')}")
+                            val token = site.nativeExpression ?: patchHex(if (!site.immediate) 2 else value, site.size)
+                            appendLine(" ${site.op} ${if (site.immediate) "#" else ""}$token${if (site.immediate) "" else ",X"}")
                             site.consumer?.let { appendLine(" $it") }
-                        }
                     }
-                    if (sites.none { it.second.op in setOf("db", "dw") }) appendLine(" RTS")
+                    }
+                    extra[symbol].orEmpty().forEach { binding -> binding.instructions.forEach { appendLine(" $it") } }
+                    if (sites.none { it.second.op in PATCH_DATA_OPS }) appendLine(" RTS")
                 }
                 if (file == "bank_90.asm") {
                     appendLine("HUDSelectionHandler_MorphBall:")
@@ -68,6 +80,7 @@ class AsmDataPatchSourceTest {
                 }
             })
         }
+        put("bank_94.asm", "NormalSpeedBinding:\n LDA.W #SamusXSpeedTable_Normal\n STA.W XSpeedTablePointer\n RTS\n")
         put("main.asm", "!PAL ?= 0\n" + keys.joinToString("\n") { "incsrc $it" } + "\nincsrc bank_8F.asm\n")
         put("macros.asm", "function regional(value_ntsc, value_pal) = select(!PAL, value_pal, value_ntsc)\n")
     }
@@ -92,7 +105,7 @@ class AsmDataPatchSourceTest {
 
     @Test fun `all finite codecs are readable and inspection and unchanged edits do not dirty the project`() = runBlocking {
         val f = fixture(); val before = Json.encodeToString(SmEditProject.serializer(), f.project); val revision = f.workspace.sourceBufferRevision
-        assertEquals(14, f.bridge.catalog.definitions.size)
+        assertEquals(DATA_PATCH_DEFINITIONS.size, f.bridge.catalog.definitions.size)
         for (def in DATA_PATCH_DEFINITIONS) {
             val view = f.bridge.view(def.type, def.key); assertNull(view.problem, "${def.id}: ${view.problem}")
             assertTrue(f.editor.openDataPatchSource(def.type, def.key))
@@ -111,6 +124,85 @@ class AsmDataPatchSourceTest {
         assertFailsWith<IllegalArgumentException> { def.encode(601) }
         val catalog = AsmDataPatchSource(originals)
         assertNull(catalog.field(def.id, originals + ("bank_80.asm" to originals.getValue("bank_80.asm").replace("#${'$'}0100", "#${'$'}9959"))).value)
+    }
+
+    @Test fun `physics byte edits preserve complete native words and swapped dwords with reciprocal undo`() = runBlocking {
+        val f = fixture(); val type = PHYSICS_CONFIG_TYPE; val patch = f.patch(type)
+        val source = f.bridge.texts().getValue("bank_90.asm")
+            .replace("regional(\$1C00, \$2800)", "\$1C35")
+            .replace("wordSwap(\$02C0*!SPF*\$100)", "\$C1230002")
+            .replace("wordSwap(\$0030*!SPF*\$100)", "\$30120000")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", source), f.workspace.error)
+        assertTrue(patch.enabled)
+        f.editor.setNativePatchValues(patch.id, mapOf("jump_height" to 6, "gravity" to 40, "run_max" to 3, "run_accel" to 0x38,
+            "air_spin" to 2, "air_normal" to 2, "max_fall" to 7, "air_physics" to 4))
+        fun raw(key: String) = f.bridge.catalog.field(dataPatchKey(type, key), f.bridge.texts()).values.single()
+        assertEquals(6, raw("jump_height")); assertEquals(0x2835, raw("gravity"))
+        assertEquals(0xC1230003.toInt(), raw("run_max")); assertEquals(0x38120000, raw("run_accel"))
+        assertEquals(0x60000002, raw("air_spin")); assertEquals(0x40000002, raw("air_normal"))
+        assertEquals(7, raw("max_fall")); assertEquals(4, raw("air_physics")); assertNull(patch.configData)
+        assertTrue(f.workspace.undoSourceEdit("bank_90.asm"), f.workspace.error)
+        assertEquals(source, f.workspace.projectSourceText("bank_90.asm"))
+        assertTrue(f.workspace.redoSourceEdit("bank_90.asm"), f.workspace.error)
+        assertEquals(0x2835, raw("gravity"))
+        val (file, line) = f.bridge.line(type, "run_max")
+        assertTrue(f.bridge.editorLinks(file, line).any { it.target == AsmEditorTarget.PatchData(type, "run_max") })
+        f.editor.requestTogglePatch(patch.id); assertNotNull(f.editor.pendingPatchDisable); f.editor.confirmPatchDisable()
+        assertFalse(patch.enabled); assertEquals(0xC0000002.toInt(), raw("run_max")); assertEquals(0x1C00, raw("gravity"))
+        val serialized = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val restored = Json.decodeFromString<SmEditProject>(serialized)
+        assertEquals(listOf(0xC1230003.toInt()), restored.asmWorkspace.disabledPatchValues[type]?.get("run_max"))
+        f.editor.requestTogglePatch(patch.id); assertTrue(patch.enabled)
+        assertEquals(0xC1230003.toInt(), raw("run_max")); assertEquals(0x2835, raw("gravity"))
+    }
+
+    @Test fun `physics source edits retire enabled and disabled legacy values in the same undo transaction`() = runBlocking {
+        val f = fixture(); val patch = f.patch(PHYSICS_CONFIG_TYPE)
+        patch.configData = mutableMapOf("jump_height" to 7, "gravity" to 30)
+        val before = f.workspace.projectSourceText("bank_90.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", before.replace("\$04E0*!SPF/\$100", "\$0006")))
+        assertEquals(mapOf("gravity" to 30), patch.configData?.toMap())
+        assertTrue(patch.enabled); assertEquals(6, f.bridge.view(PHYSICS_CONFIG_TYPE, "jump_height").value)
+        assertTrue(f.workspace.undoSourceEdit("bank_90.asm"), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(mapOf("jump_height" to 7, "gravity" to 30), patch.configData?.toMap())
+    }
+
+    @Test fun `physics unsupported drafts keep last good values and only lock associated controls`() = runBlocking {
+        val f = fixture(); val patch = f.patch(PHYSICS_CONFIG_TYPE)
+        f.editor.setPatchConfigData(patch.id, "jump_height", 6)
+        val valid = f.workspace.projectSourceText("bank_90.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", valid.replaceFirst("dw \$0006", "dw CustomJump")))
+        val stale = f.bridge.view(PHYSICS_CONFIG_TYPE, "jump_height")
+        assertEquals(6, stale.value); assertNotNull(stale.problem)
+        assertNull(f.bridge.view(PHYSICS_CONFIG_TYPE, "gravity").problem)
+        assertFails { f.bridge.editValues(PHYSICS_CONFIG_TYPE, mapOf("jump_height" to 8)) }
+        f.editor.requestTogglePatch(patch.id); f.editor.confirmPatchDisable()
+        assertTrue(patch.enabled); assertContains(f.editor.statusMessage, "blocked")
+        f.editor.setPatchConfigData(patch.id, "gravity", 40)
+        assertEquals(40, f.bridge.view(PHYSICS_CONFIG_TYPE, "gravity").value)
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", valid.replaceFirst("dw \$0006", "dw \$0106")))
+        val large = f.bridge.view(PHYSICS_CONFIG_TYPE, "jump_height")
+        assertNull(large.value); assertContains(large.problem.orEmpty(), "managed in ASM")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", valid))
+        assertNull(f.bridge.view(PHYSICS_CONFIG_TYPE, "jump_height").problem)
+    }
+
+    @Test fun `physics changed consumers and region definitions are read only and cannot be overwritten`() = runBlocking<Unit> {
+        val f = fixture(); val type = PHYSICS_CONFIG_TYPE
+        val source = f.workspace.projectSourceText("bank_90.asm")
+        val retargeted = source.replace("LDA.W SamusPhysicsConstants_InitialYSpeeds_Jumping,X", "LDA.W CustomJumpTable,X")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", retargeted))
+        assertNotNull(f.bridge.view(type, "jump_height").problem)
+        assertNull(f.bridge.view(type, "hijump_height").problem)
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", source))
+        val bank94 = f.workspace.projectSourceText("bank_94.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_94.asm", bank94.replace("#SamusXSpeedTable_Normal", "#OtherSpeedTable")))
+        assertNotNull(f.bridge.view(type, "run_max").problem)
+        assertNull(f.bridge.view(type, "jump_height").problem)
+        assertTrue(f.workspace.updateSourceEditText("bank_94.asm", bank94))
+        val main = f.workspace.projectSourceText("main.asm")
+        assertTrue(f.workspace.updateSourceEditText("main.asm", main.replace("!PAL ?= 0", "!PAL ?= 1")))
+        assertNotNull(f.bridge.view(type, "gravity").problem)
     }
 
     @Test fun `CRLF tabs and instruction case retain correct lenses and precise source context links`() {
@@ -268,6 +360,19 @@ class AsmDataPatchSourceTest {
             click("native-patch-jump"); render(); click("native-controller-jump-Y"); render()
             assertEquals(0x4000, f.bridge.view(ControllerBindings.CONFIG_TYPE, "jump").value)
             assertEquals(0x80, f.bridge.view(ControllerBindings.CONFIG_TYPE, "item_cancel").value)
+            val physics = f.patch(PHYSICS_CONFIG_TYPE); f.editor.selectPatch(physics.id); render()
+            val untouched = f.workspace.sourceBufferRevision
+            input("jump_height", "256"); render(); assertEquals(untouched, f.workspace.sourceBufferRevision)
+            input("jump_height", "6"); render()
+            assertEquals(6, f.bridge.view(PHYSICS_CONFIG_TYPE, "jump_height").value)
+            click("native-patch-asm-jump_height"); render(); assertEquals("bank_90.asm", f.workspace.selectedFileId)
+            val selected = f.bridge.line(PHYSICS_CONFIG_TYPE, "jump_height")
+            assertEquals(listOf(AsmEditorTarget.PatchData(PHYSICS_CONFIG_TYPE, "jump_height")), f.bridge.editorLinks(selected.first, selected.second).map { it.target })
+            val text = f.workspace.projectSourceText("bank_90.asm")
+            assertTrue(f.workspace.updateSourceEditText("bank_90.asm", text.replaceFirst("dw \$0006", "dw \$0007")))
+            render(); assertEquals("7", tag("native-patch-jump_height").config[SemanticsProperties.EditableText].text)
+            assertTrue(f.workspace.undoSourceEdit("bank_90.asm")); render()
+            assertEquals("6", tag("native-patch-jump_height").config[SemanticsProperties.EditableText].text)
         } finally { scene.close(); surface.close() }
     }
 }

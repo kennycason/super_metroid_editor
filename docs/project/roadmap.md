@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-10-17
+**Last updated:** 2026-10-18
 
 ---
 
@@ -115,6 +115,7 @@ build authority. Source/Assets expose direct layout editing, not an enable promp
 
 - Reciprocal environmental damage — Heat/lava/acid rates adopt their native fixed-point pairs on the first real edit, with atomic config retirement and source Undo across banks. Exact non-GUI fractions remain intact and ASM-managed. Checked compiler symbols, accumulator instructions and live table bindings protect relocation, complete unchanged words and independent suit patches. Native parity, relocated legacy overrides, cold/headered Asar builds, rendered controls and omission guards have coverage.
 - Reciprocal common patches — Ceres/Zebes BCD timers, bomb slots/fuse/cooldown/explosion timing, ten-site item fanfares and both controller-default paths use native ASM ↔ GUI editing and ordinary reversible patch toggles. Controller defaults now target new-game initialization and Options reset, not the menu decoder; occupied-button swaps match the game. Checked placements/consumers, no-op inspection, source Undo, rendered panels, pending relocated overrides and cold/headered Asar builds have coverage. [Next](../asm/patch_support.md): Short Charge/other derived settings and individual QoL patch audits, before detailed boss AI.
+- Reciprocal Samus physics — All seventeen byte controls edit native words, swapped dwords and checked operands through the common source/GUI transaction. Other bytes/fractions survive GUI edits and reversible toggles; unsupported drafts retain last-good values and lock only affected controls. Symbolic Bank $90/$94 movement bindings and full storage claims protect relocated pending overrides and unchanged bytes. The generated physics overlay is retired, and ordinary ROM/headless physics patches respect copier headers.
 
 ## Remaining — Prioritized
 

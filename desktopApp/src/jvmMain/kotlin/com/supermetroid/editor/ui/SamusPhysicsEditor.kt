@@ -1,47 +1,14 @@
 package com.supermetroid.editor.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Divider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.RomParser
 
 // ─── Samus Physics data definitions ─────────────────────────────────
-// All values are single bytes at verified PC offsets.
-// Addresses confirmed from hex_edits.txt (begrimed.com) and direct ROM inspection.
-// DO NOT treat as 16-bit: these are 1-byte values in jump/gravity/speed tables.
+// Legacy GUI controls select bytes within native words, swapped dwords or operands.
+// ASM lenses own the complete storage unit and preserve the other bytes.
 
 data class PhysicsField(
     val key: String,
@@ -98,7 +65,7 @@ internal fun readPhysicsValue(romParser: RomParser?, field: PhysicsField): Int? 
     if (romParser == null) return null
     return try {
         val rom = romParser.getRomData()
-        val pc = field.pcOffset
+        val pc = field.pcOffset + if (rom.size % 0x8000 == 512) 512 else 0
         if (pc < rom.size) (rom[pc].toInt() and 0xFF) else null
     } catch (_: Exception) { null }
 }
@@ -110,168 +77,8 @@ fun SamusPhysicsEditor(
     patch: SmPatch,
     editorState: EditorState,
     romParser: RomParser?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onNavigateToAsm: (() -> Unit)? = null,
 ) {
-    val values = remember(patch.id, editorState.patchVersion) {
-        val map = mutableStateMapOf<String, Int>()
-        val stored = patch.configData
-        for (field in ALL_PHYSICS_FIELDS) {
-            map[field.key] = stored?.get(field.key)
-                ?: readPhysicsValue(romParser, field)
-                ?: field.defaultValue
-        }
-        map
-    }
-
-    fun apply(field: PhysicsField, value: Int) {
-        values[field.key] = value
-        editorState.setPatchConfigData(patch.id, field.key, value)
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp)
-    ) {
-        Text("Samus Physics Editor", fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Edit Samus movement physics — jump heights, gravity, run speed, air control, and more. " +
-                "Values are single-byte table entries. Changes apply when the patch is enabled.",
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(16.dp))
-
-        for (cat in PHYSICS_CATEGORIES) {
-            PhysicsCategoryCard(cat, values, ::apply)
-            Spacer(Modifier.height(12.dp))
-        }
-
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = {
-                for (field in ALL_PHYSICS_FIELDS) {
-                    apply(field, readPhysicsValue(romParser, field) ?: field.defaultValue)
-                }
-            },
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-        ) {
-            Text("Reset All to ROM Defaults", fontSize = LocalEditorTheme.current.fontSize.value.body)
-        }
-    }
-}
-
-@Composable
-private fun PhysicsCategoryCard(
-    category: PhysicsCategory,
-    values: Map<String, Int>,
-    onApply: (PhysicsField, Int) -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = category.color.copy(alpha = 0.06f),
-        border = BorderStroke(1.dp, category.color.copy(alpha = 0.2f))
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(category.name, fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.SemiBold, color = category.color)
-            Spacer(Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Property", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f))
-                Text("Value", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(80.dp), textAlign = TextAlign.Center)
-                Text("Hex", fontSize = LocalEditorTheme.current.fontSize.value.detail, fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(60.dp), textAlign = TextAlign.Center)
-            }
-            Divider(modifier = Modifier.padding(vertical = 4.dp))
-
-            for (field in category.fields) {
-                PhysicsRow(field, values[field.key] ?: field.defaultValue, { onApply(field, it) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun PhysicsRow(
-    field: PhysicsField,
-    value: Int,
-    onChange: (Int) -> Unit
-) {
-    val isModified = value != field.defaultValue
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                field.label,
-                fontSize = LocalEditorTheme.current.fontSize.value.body,
-                fontWeight = if (isModified) FontWeight.Medium else FontWeight.Normal,
-                color = if (isModified) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface
-            )
-            if (field.description.isNotEmpty()) {
-                Text(
-                    field.description,
-                    fontSize = LocalEditorTheme.current.fontSize.value.detail,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        PhysicsInput(value, onChange, Modifier.width(80.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(
-            String.format("%04X", value),
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(60.dp),
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun PhysicsInput(
-    value: Int,
-    onChange: (Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
-
-    BasicTextField(
-        value = text,
-        onValueChange = { raw ->
-            val filtered = raw.filter { it.isDigit() }.take(5)
-            text = filtered
-            filtered.toIntOrNull()?.let { onChange(it.coerceIn(0, 65535)) }
-        },
-        singleLine = true,
-        textStyle = TextStyle(
-            fontSize = LocalEditorTheme.current.fontSize.value.heading,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        ),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        modifier = modifier
-            .height(28.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 4.dp)
-    )
+    NativeDataPatchEditor(patch, editorState, romParser, modifier, onNavigateToAsm)
 }

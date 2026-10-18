@@ -444,6 +444,7 @@ fun PatchEditorCanvas(
         Divider()
         // Config panel for GUI patches, hex editor for manual patches
         when (patch.configType) {
+            "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             in com.supermetroid.editor.asm.DATA_PATCH_TYPES -> NativeDataPatchEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             SHORT_CHARGE_CONFIG_TYPE -> ShortChargeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
@@ -460,7 +461,6 @@ fun PatchEditorCanvas(
             "enemy_stats" -> EnemyStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_drops" -> EnemyDropRateEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "enemy_vuln" -> EnemyVulnerabilityEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
-            "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             EnvironmentalDamagePatch.CONFIG_TYPE -> EnvironmentalDamageEditor(
                 patch,
                 editorState,

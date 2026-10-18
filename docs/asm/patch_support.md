@@ -26,7 +26,7 @@ source first. Reset-to-original discards the saved customization explicitly.
 | Beam normal/charged damage | Reciprocal native projectile data | Maintain symbolic relocation and independent charged values. |
 | Boss HP/contact damage | Reciprocal native headers, including sub-parts | Keep detailed AI separate. |
 | Environmental damage | Reciprocal heat/lava/acid word pairs | First common numerical-patch slice; see the [workflow](../rom/environmental_damage.md#asm--visual-editing). |
-| Samus physics | GUI-owned generated ASM overlay | Not yet reciprocal native-field editing; do not label it as such. |
+| Samus physics | Reciprocal native words, swapped dwords and checked operands | Byte controls preserve complete storage and fractional bits; symbolic movement consumers follow relocation. |
 | Ceres/Zebes escape timers | Reciprocal checked BCD operands | Preserve exact BCD; unsupported GUI ranges stay ASM-managed. |
 | Bombs and item fanfares | Reciprocal native counts/timers | Bomb slot/cooldown edits and ten-site fanfare edits are atomic; consumers and complete words/bytes are protected. |
 | Controller configuration | Reciprocal new-game and Options-reset defaults | Occupied buttons swap actions. Protect the menu's decoder and action bindings; never patch its button-mask lookup table. |
@@ -102,3 +102,32 @@ Automated coverage includes rendered controls, source/model Undo, no-op inspecti
 controller swaps, ROM/headless destinations, relocated pending overrides, complete
 byte ownership, cold/headered builds and real Asar round trips. Emulator gameplay
 and the on-screen options labels still benefit from the manual controller check.
+
+## Samus physics
+
+All seventeen controls share Bank $90 source with the GUI. Section/per-field **ASM**
+links inspect without adoption; **Visual Editor** on a recognized declaration returns
+to the matching control. The first real GUI/text edit retires that field's legacy
+override (including a disabled override), enables the patch, and joins source Undo.
+
+The existing 0–255 controls select bytes within native values: jump/fall words,
+gravity's fractional word, swapped running/air-speed dwords, and the air-control
+indexed operand. GUI changes preserve all other bits. Disable saves/restores complete
+values, including authored fractions, without reverting comments or relocation.
+Known pinned NTSC `!SPF`, `regional` and `wordSwap` forms remain readable without
+rewriting untouched source. Arbitrary expressions stay editable in ASM and lock the
+affected GUI field; integer speeds above the byte range remain exact and ASM-managed.
+Invalid drafts retain marked last-good values and a repair link. Changing the region,
+frame-rate or helper definitions requires explicit literals for affected expressions.
+
+Builds check compiler symbols, emitted complete values, operand opcodes, movement
+table consumers and Bank $94's normal-speed table bindings. Pending legacy overrides
+follow relocated source rather than writing the old physics byte offsets. Complete
+words/dwords and their bindings are protected, including unchanged fractional bytes.
+ROM and headless byte patches respect copier headers; headless/ROM-only builds cannot
+silently omit owned source or saved disabled values.
+
+Manual check: change Jump Height to **6**, follow its ASM link, change its `dw` value
+to `$0007`, and return through **Visual Editor**. Expect **7**, with Undo restoring
+both views. Build and playtest a jump, then disable/re-enable the patch to confirm
+the custom value returns.

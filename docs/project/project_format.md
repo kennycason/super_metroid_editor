@@ -78,8 +78,11 @@ Timers use `ceres_escape_seconds:seconds` and `zebes_escape_seconds:seconds`;
 `bombs:<key>`, `fanfares:<key>` and `controller_config:<action>` identify the other
 finite native-data fields. Timer scalar overrides retire on first source adoption;
 coupled defaults/timers retain their complete per-site values in source.
+`samus_physics:<field-key>` identifies the seventeen physics byte controls; the
+complete native words/swapped dwords and indexed operands remain in source.
 `asmWorkspace.disabledPatchValues` stores exact word lists only while a native-data
-patch is disabled (config type → field identity → words). Its live ASM contains the
+patch is disabled (config type → field identity → words/dwords). Dwords retain their
+32-bit bit patterns as signed JSON integers. Its live ASM contains the
 original values; re-enabling restores these saved values and removes the snapshot.
 Source, checkbox, ownership, and snapshot changes share one Undo boundary. Snapshots
 contain no placed addresses or file copies and require the validated ASM workflow,

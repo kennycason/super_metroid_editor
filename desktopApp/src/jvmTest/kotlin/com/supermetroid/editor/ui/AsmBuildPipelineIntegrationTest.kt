@@ -46,6 +46,88 @@ import kotlin.test.assertFailsWith
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
 
+    @Test fun `physics native fields preserve complete storage through pending relocation reciprocal edits and cold toggles`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val bridge = assertNotNull(editor.dataPatchBridge); val type = com.supermetroid.editor.asm.PHYSICS_CONFIG_TYPE
+        val definitions = com.supermetroid.editor.asm.PHYSICS_PATCH_DEFINITIONS
+        val edits = ALL_PHYSICS_FIELDS.associate { it.key to it.defaultValue + 1 } + mapOf("air_physics" to 4)
+        val patch = editor.findOrCreateConfigPatch(type).apply { enabled = true; configData = edits.toMutableMap() }
+        val source = workspace.projectSourceText("bank_90.asm")
+        val speedStart = source.indexOf("SamusXSpeedTable_Normal:")
+        val speedEnd = source.indexOf("SamusXSpeedTable_InWater:", speedStart)
+        var moved = source.replaceRange(speedStart until speedEnd, "org \$90F800\n" + source.substring(speedStart, speedEnd) + "org \$90A08D\n")
+        val jumpStart = moved.indexOf("  .InitialYSpeeds_Jumping:")
+        val jumpEnd = moved.indexOf("  .InitialYSubSpeeds_Jumping:", jumpStart)
+        moved = moved.replaceRange(jumpStart until jumpEnd, "org \$90FE00\n" + moved.substring(jumpStart, jumpEnd) + "org \$909EBF\n")
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", moved), workspace.error)
+        assertTrue(project.asmWorkspace.patchSourceKeys.isEmpty(), "Relocation does not adopt values")
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        val pending = assertNotNull(build(), logs.joinToString("\n"))
+        fun pc(definition: com.supermetroid.editor.asm.DataPatchDefinition): Int {
+            val site = definition.sites.single()
+            return parser.snesToPc(when (site.symbol) {
+                "SamusXSpeedTable_Normal" -> 0x90F800 + site.index * site.size
+                "SamusPhysicsConstants_InitialYSpeeds_Jumping" -> 0x90FE00 + site.index * site.size
+                else -> site.native
+            })
+        }
+        fun raw(bytes: ByteArray, at: Int, size: Int) = (0 until size).fold(0) { value, index -> value or ((bytes[at + index].toInt() and 255) shl (8 * index)) }
+        for (definition in definitions) {
+            val original = bridge.catalog.original(definition.id).values.single()
+            assertEquals(definition.encode(edits.getValue(definition.key), original), raw(pending.resultRom, pc(definition), definition.sites.single().size), definition.id)
+        }
+        assertEquals(255, pending.resultRom[0x81F64].toInt() and 255, "Pending running edits cannot use the old byte offsets")
+        assertEquals(0xF800, RomParser(pending.resultRom).readUInt16At(parser.snesToPc(0x9497D1)), "Cross-bank pointer follows the moved table")
+        assertEquals(0xFE00, RomParser(pending.resultRom).readUInt16At(parser.snesToPc(0x909906)))
+        editor.setNativePatchValues(patch.id, edits); assertNull(patch.configData)
+        assertEquals(definitions.map { it.id }.toSet(), project.asmWorkspace.patchSourceKeys)
+        val adopted = assertNotNull(build(), logs.joinToString("\n")).resultRom
+        // Asar calculates its header checksum before legacy pending writes are applied.
+        assertNull(pending.resultRom.indices.firstOrNull { it !in 0x7FDC..0x7FDF && pending.resultRom[it] != adopted[it] },
+            "Pending and source-adopted physics must produce the same game bytes")
+        val rawSource = workspace.projectSourceText("bank_90.asm")
+        val gravity = bridge.catalog.field("$type:gravity", bridge.texts()).words.single()
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", rawSource.replaceRange(gravity.span, "\$2A35")))
+        assertEquals(42, bridge.view(type, "gravity").value)
+        val compiled = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0x2A35, RomParser(compiled.resultRom).readUInt16At(0x81EA1))
+        val json = kotlinx.serialization.json.Json
+        val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(compiled.resultRom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        val header = ByteArray(512) { 0x5A }; val headerFile = File(tempDirectory, "Physics.smc").apply { writeBytes(header + fixture.rom) }
+        logs.clear()
+        val headered = assertNotNull(ProjectFileService.buildRom(cold.copy(romPath = headerFile.path), RomParser(header + fixture.rom), logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        assertContentEquals(header + compiled.resultRom, headered.resultRom)
+        editor.requestTogglePatch(patch.id); assertNotNull(editor.pendingPatchDisable); editor.confirmPatchDisable(); assertFalse(patch.enabled, editor.statusMessage)
+        val disabled = assertNotNull(build(), logs.joinToString("\n"))
+        for (definition in definitions) assertEquals(bridge.catalog.original(definition.id).values.single(), raw(disabled.resultRom, pc(definition), definition.sites.single().size), definition.id)
+        val disabledCold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        assertContentEquals(disabled.resultRom, assertNotNull(build(disabledCold), logs.joinToString("\n")).resultRom)
+        editor.requestTogglePatch(patch.id); assertTrue(patch.enabled, editor.statusMessage)
+        assertContentEquals(compiled.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val conflict = SmPatch("physics-word", "Unchanged running fractional byte", enabled = true,
+            writes = mutableListOf(PatchWrite((0x87800 + 4 * 4 + 2).toLong(), listOf(0), expectedBytes = listOf(0))))
+        project.patches.add(conflict); assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        val valid = workspace.projectSourceText("bank_94.asm")
+        assertTrue(workspace.updateSourceEditText("bank_94.asm", valid.replaceFirst("#SamusXSpeedTable_Normal", "#SamusXSpeedTable_InWater")))
+        assertNull(build()); assertTrue(logs.any { "binding changed" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_94.asm", valid))
+        assertNull(RomExporter(project, parser, logs::add).build(), "Owned physics cannot silently fall back to fixed ROM writes")
+        assertContentEquals(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `pending timer and bomb overrides follow relocated source and reject consumer rebinding`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)
@@ -106,13 +188,13 @@ class AsmBuildPipelineIntegrationTest {
         editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
         val bridge = assertNotNull(editor.dataPatchBridge)
         val definitions = com.supermetroid.editor.asm.DATA_PATCH_DEFINITIONS
-        assertEquals(14, bridge.catalog.definitions.size)
+        assertEquals(definitions.size, bridge.catalog.definitions.size)
         for (def in definitions) {
             val field = bridge.catalog.original(def.id)
             assertNull(bridge.view(def.type, def.key).problem, "${def.id}: ${bridge.view(def.type, def.key).problem}")
             for (word in field.words) {
                 val pc = parser.snesToPc(word.site.native)
-                val actual = if (word.site.size == 1) fixture.rom[pc].toInt() and 255 else parser.readUInt16At(pc)
+                val actual = (0 until word.site.size).fold(0) { value, index -> value or ((fixture.rom[pc + index].toInt() and 255) shl (index * 8)) }
                 assertEquals(actual, word.value, "${def.id}: ${word.site.symbol}")
             }
         }
@@ -3727,7 +3809,7 @@ class AsmBuildPipelineIntegrationTest {
         val result = assertNotNull(ProjectFileService.buildRom(
             project, parser, logs::add, logs::add, fixture.projectFile.absolutePath,
         ), logs.joinToString("\n"))
-        assertTrue(result.sourceAssetPatched > 0 && result.sourceRoomPatched > 0 && result.sourcePatchPatched > 0,
+        assertTrue(result.sourceAssetPatched > 0 && result.sourceRoomPatched > 0 && result.sourcePatchPatched == 0,
             "assets=${result.sourceAssetPatched}, rooms=${result.sourceRoomPatched}, patches=${result.sourcePatchPatched}\n${logs.joinToString("\n")}")
         assertEquals(0x2C, result.resultRom[0x081EA2].toInt() and 0xFF)
         assertEquals(legacyValue, result.resultRom[legacyOffset].toInt() and 0xFF,

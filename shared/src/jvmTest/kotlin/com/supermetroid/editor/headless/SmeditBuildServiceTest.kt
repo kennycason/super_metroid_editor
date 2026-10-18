@@ -25,6 +25,23 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SmeditBuildServiceTest {
+    @Test fun `physics config respects copier headers and exported IPS uses body offsets`() {
+        val original = ByteArray(RomConstants.ROM_SIZE_WITH_HEADER)
+        original.fill(0x5A, 0, 512)
+        original[512 + 0x81EA1] = 0x35
+        val result = SmeditBuildService().build(original, SmeditBuildRequest(patches = mapOf(
+            SAMUS_PHYSICS_CONFIG_TYPE to SmeditPatchRequest(config = mapOf("gravity" to 40, "run_max" to 3)))))
+        assertContentEquals(original.copyOfRange(0, 512), result.romBytes.copyOfRange(0, 512))
+        assertEquals(40, result.romBytes[512 + 0x81EA2].toInt() and 255)
+        assertEquals(0x35, result.romBytes[512 + 0x81EA1].toInt() and 255)
+        assertEquals(3, result.romBytes[512 + 0x81F65].toInt() and 255)
+        assertEquals(0, result.romBytes[0x81EA2].toInt() and 255)
+        val writes = PatchRepository.parseIps(result.ipsPatchBytes)
+        assertTrue(writes.any { it.offset == 0x81EA2L && it.bytes == listOf(40) })
+        val source = SmEditProject("source.sfc").apply { asmWorkspace.patchSourceKeys.add("samus_physics:gravity") }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(original, SmeditBuildRequest(), source) }
+    }
+
     @Test
     fun `vanilla ROM environmental damage constants decode to documented rates`() {
         val original = TestRomHelper.loadRomBytes() ?: return
