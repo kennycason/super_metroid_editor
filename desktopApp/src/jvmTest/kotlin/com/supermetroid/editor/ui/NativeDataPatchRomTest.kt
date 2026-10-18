@@ -35,6 +35,14 @@ class NativeDataPatchRomTest {
         val before = controller.configData?.toMap()
         editor.setPatchConfigData(controller.id, "jump", 0x1000)
         assertEquals(before, controller.configData); assertContains(editor.statusMessage, "blocked")
+        val charge = editor.findOrCreateConfigPatch(SHORT_CHARGE_CONFIG_TYPE)
+        editor.setPatchConfigValue(charge.id, 2)
+        assertEquals(mapOf("stages" to 2), charge.configData?.toMap()); assertNull(charge.configValue)
+        editor.setPatchConfigData(charge.id, "taps", 1)
+        assertEquals(mapOf("stages" to 1), charge.configData?.toMap())
+        val revision = editor.patchVersion
+        editor.setPatchConfigValue(charge.id, 5)
+        assertEquals(revision, editor.patchVersion); assertContains(editor.statusMessage, "blocked")
     }
 
     @Test fun `headered ROM readers writers and source reference links agree on all native fields`() {
@@ -49,13 +57,14 @@ class NativeDataPatchRomTest {
         assertContentEquals(header + original, assertNotNull(RomExporter(project, parser).build()).resultRom, "Empty enabled panels cannot invent overrides")
         val edits = mapOf("ceres_escape_seconds" to mapOf("seconds" to 95), ZEBES_ESCAPE_CONFIG_TYPE to mapOf("seconds" to 305),
             BOMB_CONFIG_TYPE to mapOf(BOMB_FUSE_FRAMES_KEY to 70), FANFARE_CONFIG_TYPE to mapOf(FANFARE_FRAMES_KEY to 240),
-            ControllerBindings.CONFIG_TYPE to mapOf("jump" to 0x4000))
+            ControllerBindings.CONFIG_TYPE to mapOf("jump" to 0x4000), SHORT_CHARGE_CONFIG_TYPE to mapOf("stages" to 2))
         unmodified.forEach { it.configData = (edits[it.configType] ?: mapOf("gravity" to 0x2C)).toMutableMap() }
         val result = assertNotNull(RomExporter(project, parser).build()).resultRom; val output = RomParser(result)
         assertContentEquals(header, result.copyOfRange(0, 512))
         assertEquals(0x2C, result[512 + 0x081EA2].toInt() and 255)
         assertEquals(0x1C, original[0x081EA2].toInt() and 255)
         assertEquals(0x0135, output.readUInt16At(512 + 0x1E0E)); assertEquals(0x0505, output.readUInt16At(512 + 0x1E21))
+        assertEquals(0x0201, output.readUInt16At(parser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)))
         assertEquals(70, output.readUInt16At(512 + BOMB_FUSE_TIMER_PC))
         assertEquals(5, output.readUInt16At(512 + BOMB_ACTIVE_HARD_CAP_OPERAND_PC)); assertEquals(16, result[512 + BOMB_COOLDOWN_PC].toInt() and 255)
         for (pc in FANFARE_MUSIC_RESUME_DELAY_PCS + FANFARE_MESSAGE_BOX_WAIT_PC) assertEquals(240, output.readUInt16At(512 + pc))

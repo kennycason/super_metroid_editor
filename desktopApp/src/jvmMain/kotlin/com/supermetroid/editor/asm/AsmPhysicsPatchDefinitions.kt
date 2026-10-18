@@ -40,24 +40,24 @@ internal val PHYSICS_PATCH_DEFINITIONS: List<DataPatchDefinition> = buildList {
 }.sortedBy { definition -> ALL_PHYSICS_FIELDS.indexOfFirst { it.key == definition.key } }
 
 private data class PhysicsJump(val stem: String, val keys: List<String>, val amounts: List<String>, val native: Int)
-internal data class PhysicsBinding(val file: String, val symbol: String, val instructions: List<String>)
+internal data class DataPatchBinding(val file: String, val symbol: String, val instructions: List<String>)
 
-internal fun physicsBindings(definition: DataPatchDefinition): List<PhysicsBinding> {
+internal fun physicsBindings(definition: DataPatchDefinition): List<DataPatchBinding> {
     val site = definition.sites.single()
     val symbol = site.symbol
     return when {
-        symbol.startsWith("SamusPhysicsConstants_InitialYSpeeds_") -> listOf(PhysicsBinding("bank_90.asm",
+        symbol.startsWith("SamusPhysicsConstants_InitialYSpeeds_") -> listOf(DataPatchBinding("bank_90.asm",
             if ("WallJumping" in symbol) "Make_Samus_WallJump" else "Make_Samus_Jump",
             listOf("LDA.W $symbol,X", "STA.W SamusYSpeed")))
-        definition.key == "gravity" -> listOf(PhysicsBinding("bank_90.asm", "Determine_Samus_YAcceleration",
+        definition.key == "gravity" -> listOf(DataPatchBinding("bank_90.asm", "Determine_Samus_YAcceleration",
             listOf("LDA.W $symbol", "STA.W SamusYSubAcceleration")))
         site.op == "dd" -> listOf(
-            PhysicsBinding("bank_90.asm", "Determine_SamusXSpeedTable_EntryPointer", listOf(
+            DataPatchBinding("bank_90.asm", "Determine_SamusXSpeedTable_EntryPointer", listOf(
                 "LDA.W MovementType", "AND.W #\$00FF", "STA.B DP_Temp14", "ASL", "CLC", "ADC.B DP_Temp14", "ASL", "ASL", "CLC", "ADC.W XSpeedTablePointer", "TAX")),
-            PhysicsBinding("bank_90.asm", "CalculateSamusXBaseSpeed_DecelerationAllowed", listOf(
+            DataPatchBinding("bank_90.asm", "CalculateSamusXBaseSpeed_DecelerationAllowed", listOf(
                 "LDA.W SamusXBaseSubSpeed", "CLC", "ADC.W \$0002,X", "STA.W SamusXBaseSubSpeed",
                 "LDA.W SamusXBaseSpeed", "ADC.W \$0000,X", "STA.W SamusXBaseSpeed", "CMP.W \$0004,X")),
-            PhysicsBinding("bank_90.asm", "CalculateSamusXBaseSpeed_DecelerationDisallowed", listOf(
+            DataPatchBinding("bank_90.asm", "CalculateSamusXBaseSpeed_DecelerationDisallowed", listOf(
                 "LDA.W SamusXBaseSpeed", "ADC.W \$0000,X", "STA.W SamusXBaseSpeed", "CMP.W \$0004,X")),
         )
         else -> emptyList()

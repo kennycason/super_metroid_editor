@@ -25,6 +25,27 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class SmeditBuildServiceTest {
+    @Test fun `short charge aliases preserve custom timing header bytes and empty request values`() {
+        val original = TestRomHelper.requireRomBytes()
+        val pc = com.supermetroid.editor.rom.ShortChargePatch.pc(SHORT_CHARGE_INITIAL_TIMER_SNES)
+        val table = listOf(0x0207, 3, 5, 7, 9)
+        table.forEachIndexed { index, word -> writeWord(original, pc + index * 2, word) }
+        val header = ByteArray(512) { 0x5A }; val rom = header + original
+        val empty = SmeditBuildService().build(rom, SmeditBuildRequest(patches = mapOf("short_charge" to SmeditPatchRequest())))
+        assertContentEquals(rom, empty.romBytes)
+        val result = SmeditBuildService().build(rom, SmeditBuildRequest(patches = mapOf(
+            "short_charge" to SmeditPatchRequest(config = mapOf("taps" to 1)))))
+        assertEquals(0x0307, result.romBytes.readWord(512 + pc))
+        table.drop(1).forEachIndexed { index, value -> assertEquals(value, result.romBytes.readWord(512 + pc + (index + 1) * 2)) }
+        assertContentEquals(header, result.romBytes.copyOfRange(0, 512))
+        assertTrue(PatchRepository.parseIps(result.ipsPatchBytes).any { it.offset == pc + 1L })
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(SmeditBuildRequest(patches = mapOf(
+            "short_charge" to SmeditPatchRequest(configValue = 3, config = mapOf("taps" to 2))))) }
+        val changed = rom.copyOf(); changed[512 + com.supermetroid.editor.rom.ShortChargePatch.pc(0x908594)] = 2
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(changed, SmeditBuildRequest(patches = mapOf(
+            "short_charge" to SmeditPatchRequest(configValue = 2)))) }
+    }
+
     @Test fun `physics config respects copier headers and exported IPS uses body offsets`() {
         val original = ByteArray(RomConstants.ROM_SIZE_WITH_HEADER)
         original.fill(0x5A, 0, 512)

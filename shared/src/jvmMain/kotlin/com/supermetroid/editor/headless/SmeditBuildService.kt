@@ -346,12 +346,19 @@ class SmeditBuildService(
             val patch = entry.patch
             patch.enabled = patchRequest.enabled
             if (patchRequest.configType != null) patch.configType = patchRequest.configType
-            if (patchRequest.configValue != null) patch.configValue = patchRequest.configValue
             val config = patchRequest.configData + patchRequest.config
-            if (config.isNotEmpty()) {
-                val data = patch.configData ?: mutableMapOf()
-                data.putAll(config)
-                patch.configData = data
+            if (patch.configType == SHORT_CHARGE_CONFIG_TYPE && (patchRequest.configValue != null || config.isNotEmpty())) {
+                val model = com.supermetroid.editor.rom.ShortChargePatch
+                val stages = requireNotNull(model.requestedStages(patchRequest.configValue, config))
+                patch.configValue = null
+                patch.configData = (patch.configData.orEmpty().filterKeys { it !in model.keys } + mapOf(model.STAGES_KEY to stages)).toMutableMap()
+            } else {
+                if (patchRequest.configValue != null) patch.configValue = patchRequest.configValue
+                if (config.isNotEmpty()) {
+                    val data = patch.configData ?: mutableMapOf()
+                    data.putAll(config)
+                    patch.configData = data
+                }
             }
 
             if (patch.writes.isEmpty() &&
@@ -1314,21 +1321,12 @@ class SmeditBuildService(
                 ZEBES_ESCAPE_CONFIG_TYPE
             }
             SHORT_CHARGE_CONFIG_TYPE -> {
-                val data = patch.configData
-                val stages = (
-                    patch.configValue
-                        ?: data?.get(SHORT_CHARGE_STAGES_KEY)
-                        ?: data?.get(SHORT_CHARGE_TAPS_KEY)
-                        ?: SHORT_CHARGE_DEFAULT_STAGES
-                    ).coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
-                val initialCounter = SHORT_CHARGE_MAX_STAGES - stages
-                val initialTimer = (initialCounter shl 8) or 0x0001
-                writeWord(
-                    context,
-                    context.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES),
-                    initialTimer,
-                    "Short charge initial Speed Booster counter",
-                )
+                val model = com.supermetroid.editor.rom.ShortChargePatch
+                model.requestedStages(patch.configValue, patch.configData)?.let { stages ->
+                    val words = model.encode(stages, context.outputRom?.let(model::read) ?: model.defaults)
+                    words.forEachIndexed { index, value -> writeWord(context, model.pc(model.TABLE_SNES) + index * 2,
+                        value, "Short Charge native counter/timer table") }
+                }
                 SHORT_CHARGE_CONFIG_TYPE
             }
             BOMB_CONFIG_TYPE -> {

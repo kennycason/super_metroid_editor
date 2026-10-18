@@ -30,7 +30,8 @@ source first. Reset-to-original discards the saved customization explicitly.
 | Ceres/Zebes escape timers | Reciprocal checked BCD operands | Preserve exact BCD; unsupported GUI ranges stay ASM-managed. |
 | Bombs and item fanfares | Reciprocal native counts/timers | Bomb slot/cooldown edits and ten-site fanfare edits are atomic; consumers and complete words/bytes are protected. |
 | Controller configuration | Reciprocal new-game and Options-reset defaults | Occupied buttons swap actions. Protect the menu's decoder and action bindings; never patch its button-mask lookup table. |
-| Short Charge and other derived settings | ROM implementation | Model all coupled values together; choose data ownership or a toggleable backend deliberately. |
+| Short Charge | Reciprocal packed counter/timer table | Preserve initial delay and all five words; check both initialization paths and stage-transition logic. |
+| Other derived settings | ROM implementation | Model coupled values together; choose data ownership or a toggleable backend deliberately. |
 | Bundled QoL/IPS/hex patches | ROM writes and preconditions | Audit one at a time; use curated symbolic hooks/modules for code changes. |
 | Hyper Beam, pause-map room names, defeated flags | Bespoke ROM/runtime implementations | Review each generated-code/runtime dependency before choosing a source backend. |
 | Detailed boss behavior | ROM implementation | Lower priority than common patches; retain an ASM-managed boundary for custom logic. |
@@ -131,3 +132,32 @@ Manual check: change Jump Height to **6**, follow its ASM link, change its `dw` 
 to `$0007`, and return through **Visual Editor**. Expect **7**, with Undo restoring
 both views. Build and playtest a jump, then disable/re-enable the patch to confirm
 the custom value returns.
+
+## Short Charge
+
+The 0–4 stage selector edits the complete five-word `SpeedBoostTimerResetValues`
+table in Bank $91. The first word packs the starting counter in its high byte and
+the initial timer in its low byte. GUI changes set counter = 4 − stages, preserving
+the initial timer and all later stage delays. Positive timer bytes up to 255 remain
+editable; zero timers, extra counter bits, or changed table layouts require ASM repair.
+
+Section/per-field **ASM** links and **Visual Editor** return links are inspection-only.
+The first GUI/text edit retires legacy scalar, `stages`, and `taps` overrides together
+with one source/model Undo. Aliases must agree when building pending settings; choosing
+**Use ASM values** resolves a competing legacy configuration explicitly. New enabled
+panels without overrides preserve the native table. Disable snapshots all five exact
+words and restores the originals; re-enable restores custom timing, even after reopen.
+
+Checked compiler symbols follow relocated tables. Builds validate running initialization,
+equipment-change initialization, and the native counter increment/cap/index/reload
+sequence, including anonymous branch destinations and long operand banks. All ten table
+bytes and participating instructions are protected, including unchanged timer bytes.
+ROM/headless writes validate the native consumers and retain custom timing and copier
+headers. Standalone IPS builds use the native default timing; authored source cannot be
+omitted by a ROM-only/headless build.
+
+Manual check: choose **2**, follow **ASM**, and expect `$0201` in the first word.
+Change it to `$0307`, return via **Visual Editor**, and expect **1**. Choosing **0**
+should produce `$0407` and preserve every later delay. Undo and Disable/Re-enable
+should restore the complete table. Playtest a Speed Booster run; stage selection does
+not automate the advanced tap timing technique.

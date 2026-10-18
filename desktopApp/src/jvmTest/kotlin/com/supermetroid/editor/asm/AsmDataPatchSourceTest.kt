@@ -26,7 +26,7 @@ import kotlin.test.*
 class AsmDataPatchSourceTest {
     @TempDir lateinit var directory: File
     private val originals: Map<String, String> get() = buildMap {
-        val bindings = PHYSICS_PATCH_DEFINITIONS.flatMap(::physicsBindings).distinct()
+        val bindings = (PHYSICS_PATCH_DEFINITIONS.flatMap(::physicsBindings) + SHORT_CHARGE_BINDINGS).distinct()
         for ((file, entries) in DATA_PATCH_DEFINITIONS.flatMap { def -> def.sites.map { def to it } }.groupBy { it.second.file }) {
             put(file, buildString {
                 val grouped = entries.groupBy { it.second.symbol }
@@ -38,7 +38,8 @@ class AsmDataPatchSourceTest {
                         val op = sites.first().second.op
                         for (index in 0..maxOf(sites.maxOf { it.second.index }, if (op == "db") 8 else 0)) {
                             val site = sites.firstOrNull { it.second.index == index }?.second
-                            val token = site?.nativeExpression ?: when (op) {
+                            val token = site?.nativeExpression ?: if (sites.first().first.type == SHORT_CHARGE_CONFIG_TYPE)
+                                patchHex(com.supermetroid.editor.rom.ShortChargePatch.defaults[index], 2) else when (op) {
                                 "db" -> if (index == 5) "regional(${ '$' }10, ${ '$' }0C)" else "0"
                                 "dw" -> "regional(${ '$' }003C, ${ '$' }0034)"
                                 else -> "0"
@@ -124,6 +125,64 @@ class AsmDataPatchSourceTest {
         assertFailsWith<IllegalArgumentException> { def.encode(601) }
         val catalog = AsmDataPatchSource(originals)
         assertNull(catalog.field(def.id, originals + ("bank_80.asm" to originals.getValue("bank_80.asm").replace("#${'$'}0100", "#${'$'}9959"))).value)
+    }
+
+    @Test fun `short charge stage edits preserve packed timer and all later delays through undo and toggles`() = runBlocking {
+        val f = fixture(); val patch = f.patch(SHORT_CHARGE_CONFIG_TYPE)
+        val id = dataPatchKey(SHORT_CHARGE_CONFIG_TYPE, "stages")
+        val original = f.workspace.projectSourceText("bank_91.asm")
+        val words = f.bridge.catalog.field(id, f.bridge.texts()).words
+        var custom = original
+        val authored = listOf(7, 3, 5, 7, 9)
+        for ((word, value) in words.zip(authored).reversed()) custom = custom.replaceRange(word.span, patchHex(value, 2))
+        assertTrue(f.workspace.updateSourceEditText("bank_91.asm", custom), f.workspace.error)
+        f.editor.setPatchConfigValue(patch.id, 2)
+        fun table() = f.bridge.catalog.field(id, f.bridge.texts()).values
+        val expected = listOf(0x0207, 3, 5, 7, 9)
+        assertEquals(expected, table()); assertNull(patch.configValue); assertNull(patch.configData); assertTrue(patch.enabled)
+        assertTrue(f.workspace.undoSourceEdit("bank_91.asm")); assertEquals(authored, table())
+        assertTrue(f.workspace.redoSourceEdit("bank_91.asm")); assertEquals(expected, table())
+        f.editor.requestTogglePatch(patch.id); assertNotNull(f.editor.pendingPatchDisable); f.editor.confirmPatchDisable()
+        assertFalse(patch.enabled); assertEquals(listOf(1, 1, 1, 1, 2), table())
+        val saved = Json.decodeFromString<SmEditProject>(Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertEquals(expected, saved.asmWorkspace.disabledPatchValues[SHORT_CHARGE_CONFIG_TYPE]?.get("stages"))
+        f.editor.requestTogglePatch(patch.id); assertTrue(patch.enabled); assertEquals(expected, table())
+        val line = f.bridge.line(SHORT_CHARGE_CONFIG_TYPE, "stages")
+        assertEquals(listOf(AsmEditorTarget.PatchData(SHORT_CHARGE_CONFIG_TYPE, "stages")), f.bridge.editorLinks(line.first, line.second).map { it.target })
+    }
+
+    @Test fun `short charge raw edits retire scalar stages and taps together and undo restores disabled aliases`() = runBlocking {
+        val f = fixture(); val patch = f.patch(SHORT_CHARGE_CONFIG_TYPE)
+        patch.configValue = 3; patch.configData = mutableMapOf("stages" to 3, "taps" to 3)
+        val word = f.bridge.catalog.field(dataPatchKey(SHORT_CHARGE_CONFIG_TYPE, "stages"), f.bridge.texts()).words.first()
+        val before = f.workspace.projectSourceText("bank_91.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_91.asm", before.replaceRange(word.span, "\$0201")))
+        assertNull(patch.configValue); assertNull(patch.configData); assertTrue(patch.enabled)
+        assertEquals(2, f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").value)
+        assertTrue(f.workspace.undoSourceEdit("bank_91.asm"))
+        assertFalse(patch.enabled); assertEquals(3, patch.configValue)
+        assertEquals(mapOf("stages" to 3, "taps" to 3), patch.configData?.toMap())
+        f.editor.setPatchConfigData(patch.id, "taps", 1)
+        assertEquals(1, f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").value)
+        assertNull(patch.configData); assertNull(patch.configValue); assertTrue(patch.enabled)
+    }
+
+    @Test fun `short charge invalid drafts and changed transition logic lock its control without coercion`() = runBlocking<Unit> {
+        val f = fixture(); val patch = f.patch(SHORT_CHARGE_CONFIG_TYPE)
+        f.editor.setPatchConfigValue(patch.id, 2)
+        val id = dataPatchKey(SHORT_CHARGE_CONFIG_TYPE, "stages")
+        val word = f.bridge.catalog.field(id, f.bridge.texts()).words.first()
+        val valid = f.workspace.projectSourceText("bank_91.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_91.asm", valid.replaceRange(word.span, "CustomCounter")))
+        assertEquals(2, f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").value)
+        assertNotNull(f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").problem)
+        assertNull(f.bridge.view(PHYSICS_CONFIG_TYPE, "gravity").problem)
+        assertTrue(f.workspace.updateSourceEditText("bank_91.asm", valid))
+        val source = f.workspace.projectSourceText("bank_90.asm")
+        assertTrue(f.workspace.updateSourceEditText("bank_90.asm", source.replace("ADC.W #\$0100", "ADC.W #\$0200")))
+        assertNotNull(f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").problem)
+        val blocked = f.workspace.sourceBufferRevision
+        f.editor.setPatchConfigValue(patch.id, 1); assertEquals(blocked, f.workspace.sourceBufferRevision)
     }
 
     @Test fun `physics byte edits preserve complete native words and swapped dwords with reciprocal undo`() = runBlocking {
@@ -373,6 +432,18 @@ class AsmDataPatchSourceTest {
             render(); assertEquals("7", tag("native-patch-jump_height").config[SemanticsProperties.EditableText].text)
             assertTrue(f.workspace.undoSourceEdit("bank_90.asm")); render()
             assertEquals("6", tag("native-patch-jump_height").config[SemanticsProperties.EditableText].text)
+            val charge = f.patch(SHORT_CHARGE_CONFIG_TYPE); f.editor.selectPatch(charge.id); render()
+            val inspected = f.workspace.sourceBufferRevision
+            click("native-short-charge-4"); render(); assertEquals(inspected, f.workspace.sourceBufferRevision); assertFalse(charge.enabled)
+            click("native-short-charge-2"); render(); assertTrue(charge.enabled)
+            assertEquals(2, f.bridge.view(SHORT_CHARGE_CONFIG_TYPE, "stages").value)
+            click("native-patch-asm-stages"); render(); assertEquals("bank_91.asm", f.workspace.selectedFileId)
+            val packed = f.bridge.catalog.field(dataPatchKey(SHORT_CHARGE_CONFIG_TYPE, "stages"), f.bridge.texts()).words.first()
+            assertTrue(f.workspace.updateSourceEditText("bank_91.asm", f.workspace.projectSourceText("bank_91.asm").replaceRange(packed.span, "\$0307")))
+            render(); assertTrue(tag("native-short-charge-1").config[SemanticsProperties.Selected])
+            click("patch-header-toggle"); render(); click("patch-disable-confirm"); render()
+            assertTrue(tag("native-short-charge-4").config[SemanticsProperties.Selected])
+            click("patch-header-toggle"); render(); assertTrue(tag("native-short-charge-1").config[SemanticsProperties.Selected])
         } finally { scene.close(); surface.close() }
     }
 }

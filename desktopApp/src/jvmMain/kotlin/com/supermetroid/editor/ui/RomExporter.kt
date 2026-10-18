@@ -933,16 +933,16 @@ internal class RomExporter(
                 writeU16(romData, romParser.snesToPc(ZEBES_TIMER_OPERAND_SNES), (minsBcd shl 8) or secsBcd)
                 onLog("[EXPORT]   Zebes escape timer: ${mins}m${secs}s")
             } else if (patch.configType == SHORT_CHARGE_CONFIG_TYPE) {
-                val stages = requireConfigRange(
-                    patch,
-                    "stages",
-                    patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES,
-                    SHORT_CHARGE_MIN_STAGES..SHORT_CHARGE_MAX_STAGES,
-                )
-                val initialCounter = SHORT_CHARGE_MAX_STAGES - stages
-                val initialTimer = (initialCounter shl 8) or 0x0001
-                writeU16(romData, romParser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES), initialTimer)
-                onLog("[EXPORT]   Short charge: $stages stage(s), initial counter=$initialCounter")
+                val model = com.supermetroid.editor.rom.ShortChargePatch
+                val stages = model.requestedStages(patch.configValue, patch.configData) ?: continue
+                val words = model.encode(stages, model.read(beforePatch))
+                val pc = model.pc(model.TABLE_SNES)
+                val bytes = words.flatMap { listOf(it and 255, it ushr 8) }
+                writePlan.add(owner = "patch:${patch.id}", label = patch.name, offset = pc, bytes = bytes,
+                    kind = RomWriteKind.CONFIG, expectedBefore = List(bytes.size) { beforePatch[writePlan.headerSize + pc + it].toInt() and 255 })
+                onLog("[EXPORT]   Short charge: $stages stage(s), native timing preserved")
+                patchesApplied++
+                continue
             } else if (patch.configType == "beam_damage") {
                 val data = patch.configData ?: continue
                 val values = beamDamageConfigValues(data)

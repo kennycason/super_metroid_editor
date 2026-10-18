@@ -284,7 +284,7 @@ val SHORT_CHARGE_PATCH = SmPatch(
     enabled = false,
     writes = mutableListOf(),
     configType = SHORT_CHARGE_CONFIG_TYPE,
-    configValue = SHORT_CHARGE_DEFAULT_STAGES
+    configValue = null
 )
 
 /** Config patch: Beam Damage overrides. Stores per-beam damage values in configData. */

@@ -2,12 +2,13 @@ package com.supermetroid.editor.asm
 
 import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.ShortChargePatch
 import com.supermetroid.editor.ui.*
 import java.io.File
 
 internal const val PHYSICS_CONFIG_TYPE = "samus_physics"
-internal val DATA_PATCH_TYPES = setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE, BOMB_CONFIG_TYPE, FANFARE_CONFIG_TYPE, ControllerBindings.CONFIG_TYPE, PHYSICS_CONFIG_TYPE)
-internal fun dataPatchKey(type: String, key: String) = "$type:$key"
+internal val DATA_PATCH_TYPES = setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE, BOMB_CONFIG_TYPE, FANFARE_CONFIG_TYPE, ControllerBindings.CONFIG_TYPE, PHYSICS_CONFIG_TYPE, ShortChargePatch.CONFIG_TYPE)
+internal fun dataPatchKey(type: String, key: String) = "$type:${if (type == ShortChargePatch.CONFIG_TYPE && key == ShortChargePatch.LEGACY_KEY) ShortChargePatch.STAGES_KEY else key}"
 internal data class DataPatchSite(val file: String, val symbol: String, val native: Int, val op: String = "LDA.W",
     val consumer: String? = null, val index: Int = 0, val size: Int = 2, val before: List<String> = emptyList(),
     val nativeExpression: String? = null, val nativeValue: Int? = null, val immediate: Boolean = true)
@@ -15,7 +16,14 @@ internal data class DataPatchDefinition(val type: String, val key: String, val l
     val sites: List<DataPatchSite>, val bcd: Boolean = false, val mask: Int = -1, val shift: Int = 0,
     val unrepresentableMask: Int = 0) {
     val id get() = dataPatchKey(type, key)
+    val configKeys get() = if (type == ShortChargePatch.CONFIG_TYPE) ShortChargePatch.keys else setOf(key)
+    val scalar get() = key == "seconds" || type == ShortChargePatch.CONFIG_TYPE
+    fun decodeWords(words: List<Int>): Int? = if (type == ShortChargePatch.CONFIG_TYPE) ShortChargePatch.decode(words)
+        else words.distinct().singleOrNull()?.let(::decode)
+    fun encodeWords(value: Int, words: List<Int>) = if (type == ShortChargePatch.CONFIG_TYPE) ShortChargePatch.encode(value, words)
+        else words.map { encode(value, it) }
     fun decode(word: Int): Int? {
+        if (type == ShortChargePatch.CONFIG_TYPE) return ShortChargePatch.decodeInitial(word)
         if (!bcd) return if (word and unrepresentableMask != 0) null else (word and mask) ushr shift
         val digits = listOf(word and 15, (word ushr 4) and 15, (word ushr 8) and 15, (word ushr 12) and 15)
         if (digits.any { it > 9 } || digits[1] > 5) return null
@@ -23,6 +31,7 @@ internal data class DataPatchDefinition(val type: String, val key: String, val l
     }
     fun encode(value: Int, previous: Int = 0): Int {
         require(value in range) { "$label must fit ${range.first}–${range.last}." }
+        if (type == ShortChargePatch.CONFIG_TYPE) return ShortChargePatch.encodeInitial(value, previous)
         if (!bcd) return (previous and mask.inv()) or ((value shl shift) and mask)
         val minutes = value / 60; val seconds = value % 60
         return ((minutes / 10) shl 12) or ((minutes % 10) shl 8) or ((seconds / 10) shl 4) or (seconds % 10)
@@ -54,13 +63,17 @@ internal val DATA_PATCH_DEFINITIONS: List<DataPatchDefinition> = buildList {
         listOf(DataPatchSite("bank_81.asm", "NewSaveFile", slot.newSaveOperand, consumer = "STA.W ${slot.ramSymbol}"),
             DataPatchSite("bank_82.asm", "GameOptions_ControllerSettings_ResetToDefault_reset", slot.resetOperand, consumer = "STA.W ${slot.ramSymbol}"))))
     addAll(PHYSICS_PATCH_DEFINITIONS)
+    add(DataPatchDefinition(ShortChargePatch.CONFIG_TYPE, ShortChargePatch.STAGES_KEY, "Speed Booster charge stages", 0..4,
+        (0..4).map { index -> DataPatchSite("bank_91.asm", "SpeedBoostTimerResetValues", ShortChargePatch.TABLE_SNES + index * 2,
+            op = "dw", index = index) }))
 }
 internal data class DataPatchWord(val site: DataPatchSite, val span: IntRange, val value: Int, val offset: Int)
 internal data class DataPatchField(val definition: DataPatchDefinition, val words: List<DataPatchWord>) {
     val values get() = words.map { it.value }
-    val value get() = values.distinct().singleOrNull()?.let(definition::decode)?.takeIf { it in definition.range }
+    val value get() = definition.decodeWords(values)?.takeIf { it in definition.range }
 }
-internal data class DataPatchGuard(val file: String, val symbol: String, val offset: Int, val instructions: List<String>)
+internal data class DataPatchGuard(val file: String, val symbol: String, val offset: Int, val instructions: List<String>,
+    val anonymousTargets: Map<Int, Int> = emptyMap())
 internal val PATCH_DATA_OPS = setOf("db", "dw", "dd")
 internal fun patchHex(value: Int, size: Int) = "$" + value.toUInt().toString(16).uppercase().padStart(size * 2, '0')
 internal fun patchValueFits(value: Int, size: Int) = size == 4 || value in 0..if (size == 1) 255 else 65535
@@ -208,6 +221,19 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
         return guards
     }
     fun guards(field: DataPatchField, texts: Map<String, String>): List<DataPatchGuard> = buildList {
+        if (field.definition.type == ShortChargePatch.CONFIG_TYPE) {
+            val codes = document(texts.getValue("bank_91.asm")).block("SpeedBoostTimerResetValues").takeWhile { !it.text.startsWith("org ", true) }
+            require(codes.sumOf { tokens(it).size } == 5) { "Short Charge requires exactly five native timer words; custom layouts are managed in ASM." }
+            for (binding in SHORT_CHARGE_BINDINGS) {
+                val instructions = document(texts.getValue(binding.file)).block(binding.symbol)
+                val matches = instructions.indices.filter { index -> instructions.drop(index).take(binding.instructions.size).map { normalize(it.text) } == binding.instructions }
+                require(matches.size == 1) { "${binding.symbol}: Short Charge consumer/counter logic changed; managed in ASM." }
+                val offset = instructions.take(matches.single()).sumOf { width(it.text) }
+                val target = binding.instructions.indexOf("XBA").takeIf { it >= 0 }?.let { binding.instructions.take(it).sumOf(::width) }
+                add(DataPatchGuard(binding.file, binding.symbol, offset, binding.instructions,
+                    if (target == null) emptyMap() else binding.instructions.withIndex().filter { it.value in setOf("BNE +", "BEQ +") }.associate { it.index to target }))
+            }
+        }
         for (word in field.words) if (word.site.op !in PATCH_DATA_OPS) add(DataPatchGuard(word.site.file, word.site.symbol,
             word.offset - 1 - word.site.before.sumOf(::width), word.site.before +
                 listOf("${word.site.op} ${if (word.site.immediate) "#" else ""}${patchHex(word.value, word.site.size)}${if (word.site.immediate) "" else ",X"}") + listOfNotNull(word.site.consumer)))
@@ -288,6 +314,7 @@ internal fun nativeDataPatchRuntimeAddresses(definition: DataPatchDefinition, pa
     fun byte(snes: Int) = rom[parser.snesToPc(snes)].toInt() and 255
     fun word(snes: Int) = parser.readUInt16At(parser.snesToPc(snes))
     if (definition.type == ControllerBindings.CONFIG_TYPE) { ControllerBindings.read(rom); ControllerBindings.read(rom, reset = true) }
+    if (definition.type == ShortChargePatch.CONFIG_TYPE) { ShortChargePatch.read(rom); return definition.sites.map { it.native } }
     if (definition.type == PHYSICS_CONFIG_TYPE) return definition.sites.flatMap { site ->
         if (site.op !in PATCH_DATA_OPS) {
             require(byte(site.native - 1) == if (site.immediate) 0xC9 else 0x7D)

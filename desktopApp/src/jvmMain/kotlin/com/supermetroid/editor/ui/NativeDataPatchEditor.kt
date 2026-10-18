@@ -23,11 +23,13 @@ import com.supermetroid.editor.asm.*
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.ShortChargePatch
 
 private var nativeSelection by mutableStateOf<Triple<String, String, Int>?>(null)
 internal fun selectNativePatchField(type: String, key: String) { nativeSelection = Triple(type, key, (nativeSelection?.third ?: 0) + 1) }
 
 internal fun nativeRomValues(definition: DataPatchDefinition, parser: RomParser?): List<Int> {
+    if (definition.type == ShortChargePatch.CONFIG_TYPE) return parser?.getRomData()?.let(ShortChargePatch::read) ?: ShortChargePatch.defaults
     val fallback = when (definition.type) {
         "ceres_escape_seconds" -> 0x0100
         ZEBES_ESCAPE_CONFIG_TYPE -> 0x0300
@@ -46,6 +48,12 @@ internal fun nativeRomValues(definition: DataPatchDefinition, parser: RomParser?
 }
 
 internal fun nativePatchRomView(patch: SmPatch, definition: DataPatchDefinition, parser: RomParser?): DataPatchView = try {
+    if (definition.type == ShortChargePatch.CONFIG_TYPE) {
+        val table = nativeRomValues(definition, parser)
+        val source = ShortChargePatch.decode(table)
+        val stages = ShortChargePatch.requestedStages(patch.configValue, patch.configData)
+        DataPatchView(stages ?: source, if (source == null) "Custom counter/timer values are managed in ASM; restore supported timing before using the stage control." else null)
+    } else {
     if (definition.key == "seconds") require(patch.configValue == null || patch.configData?.get("seconds") == null ||
         patch.configValue == patch.configData?.get("seconds")) { "Conflicting timer overrides; reset to original or repair the project settings." }
     val value = if (definition.type == ControllerBindings.CONFIG_TYPE) {
@@ -54,9 +62,10 @@ internal fun nativePatchRomView(patch: SmPatch, definition: DataPatchDefinition,
     } else patch.configData?.get(definition.key) ?: patch.configValue?.takeIf { definition.key == "seconds" }
         ?: definition.decode(nativeRomValues(definition, parser).first())
     DataPatchView(value, if (value == null || value !in definition.range) "This value is outside the supported format/range." else null)
+    }
 } catch (error: Exception) { DataPatchView(null, error.message ?: "ROM data unavailable.") }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: RomParser?, modifier: Modifier = Modifier,
                                    onNavigateToAsm: (() -> Unit)? = null) {
@@ -79,7 +88,7 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
     }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(when (type) { BOMB_CONFIG_TYPE -> "Bombs"; FANFARE_CONFIG_TYPE -> "Item Fanfares"; PHYSICS_CONFIG_TYPE -> "Samus Physics"; ControllerBindings.CONFIG_TYPE -> "Controller Defaults"; else -> "Escape Timer" },
+            Text(when (type) { BOMB_CONFIG_TYPE -> "Bombs"; FANFARE_CONFIG_TYPE -> "Item Fanfares"; PHYSICS_CONFIG_TYPE -> "Samus Physics"; ShortChargePatch.CONFIG_TYPE -> "Short Charge"; ControllerBindings.CONFIG_TYPE -> "Controller Defaults"; else -> "Escape Timer" },
                 fontSize = LocalEditorTheme.current.fontSize.value.heading, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             if (sourceMode) TextButton(onClick = { open() }, enabled = bridge != null, modifier = Modifier.width(64.dp).testTag("native-patch-asm")) { Text("ASM", maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { editor.resetNativePatchToOriginal(patch.id) }) { Text(if (sourceMode) "Original ASM" else "Original ROM") }
@@ -89,6 +98,7 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
             BOMB_CONFIG_TYPE -> "Five slots are available. The stock three-bomb feel comes from fuse length and cooldown; the slot limit is a separate hard cap."
             FANFARE_CONFIG_TYPE -> "The item-message wait and all nine music-resume delays edit together."
             PHYSICS_CONFIG_TYPE -> "Tune jump heights, gravity, running and air control. Values are bytes (0–255); source edits preserve the complete native value and its other bytes."
+            ShortChargePatch.CONFIG_TYPE -> "Choose how many Speed Booster charge stages complete before blue speed. Vanilla uses 4; 0 starts blue speed when Dash running begins. Custom stage timing is preserved. This does not automate the advanced tap timing technique."
             else -> "Time is entered in seconds; ASM stores packed BCD minutes and seconds."
         }, fontSize = LocalEditorTheme.current.fontSize.value.body, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (definition in definitions) {
@@ -119,6 +129,12 @@ internal fun NativeDataPatchEditor(patch: SmPatch, editor: EditorState, parser: 
                                         expanded = false; apply(definition.key, button.bitmask)
                                     }, modifier = Modifier.testTag("native-controller-${definition.key}-${button.name}")) }
                                 }
+                            }
+                        } else if (type == ShortChargePatch.CONFIG_TYPE) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                for (stages in 0..4) FilterChip(selected = state.value == stages, enabled = editable,
+                                    onClick = { apply(definition.key, stages) }, label = { Text(stages.toString()) },
+                                    modifier = Modifier.testTag("native-short-charge-$stages"))
                             }
                         } else {
                             OutlinedButton(onClick = { apply(definition.key, requireNotNull(state.value) - 1) }, enabled = editable && state.value!! > definition.range.first,

@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.ProjectRomBuildMode
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.ControllerBindings
+import com.supermetroid.editor.rom.ShortChargePatch
 import com.supermetroid.editor.ui.BOMB_CONFIG_TYPE
 import com.supermetroid.editor.ui.BOMB_MAX_ACTIVE_KEY
 
@@ -22,7 +23,7 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
             val texts = texts(); val field = catalog.field(id, texts)
             catalog.guards(field, texts) // Invalid consumer drafts lock their associated control, not the whole editor.
             val conflict = (id in project().asmWorkspace.patchSourceKeys || catalog.changed(id, texts)) && project().patches.any {
-                it.enabled && it.configType == type && (key in it.configData.orEmpty() || key == "seconds" && it.configValue != null)
+                it.enabled && it.configType == type && (field.definition.configKeys.any { key -> key in it.configData.orEmpty() } || field.definition.scalar && it.configValue != null)
             }
             if (type == ControllerBindings.CONFIG_TYPE) {
                 catalog.controllerInterface(texts)
@@ -35,7 +36,7 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
             if (value != null) lastGood[id] = value
             DataPatchView(value, when {
                 conflict -> "This field has both ASM and a patch override. Use ASM values to choose the source."
-                field.values.distinct().size > 1 -> "The native sites have independent values (${field.values.joinToString()}); managed in ASM. Reset to original or edit their source individually."
+                type != ShortChargePatch.CONFIG_TYPE && field.values.distinct().size > 1 -> "The native sites have independent values (${field.values.joinToString()}); managed in ASM. Reset to original or edit their source individually."
                 value == null -> "The exact ASM value is outside this control's supported format/range; managed in ASM."
                 else -> null
             }, conflict)
@@ -52,7 +53,7 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
                 runCatching { catalog.field(id, texts) }.getOrNull()?.let { id to it }
             }.toMap()
             val words = dataPatchOverrides(patch, fields)[dataPatchKey(type, key)] ?: return source
-            source.copy(value = fields.getValue(dataPatchKey(type, key)).definition.decode(words.first()))
+            source.copy(value = fields.getValue(dataPatchKey(type, key)).definition.decodeWords(words))
         }.getOrElse { source.copy(problem = it.message) }
     }
     fun line(type: String, key: String? = null): Pair<String, Int> = catalog.line(
@@ -94,14 +95,16 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
     }
     private fun pending(id: String): Boolean {
         val def = catalog.definitions.getValue(id)
-        return project().patches.any { it.configType == def.type && (def.key in it.configData.orEmpty() || def.key == "seconds" && it.configValue != null) }
+        return project().patches.any { it.configType == def.type && (def.configKeys.any { key -> key in it.configData.orEmpty() } || def.scalar && it.configValue != null) }
     }
     private fun pendingDiffers(id: String, words: List<Int>): Boolean {
         val def = catalog.definitions.getValue(id)
         return project().patches.filter { it.configType == def.type }.any { patch ->
-            listOfNotNull(patch.configData?.get(def.key), patch.configValue?.takeIf { def.key == "seconds" }).any { value ->
-                runCatching { words.any { def.encode(value, it) != it } }.getOrDefault(true)
-            }
+            runCatching {
+                val values = if (def.type == ShortChargePatch.CONFIG_TYPE) listOfNotNull(ShortChargePatch.requestedStages(patch.configValue, patch.configData))
+                    else listOfNotNull(patch.configData?.get(def.key), patch.configValue?.takeIf { def.scalar })
+                values.any { def.encodeWords(it, words) != words }
+            }.getOrDefault(true)
         }
     }
     fun prepareIntercept(file: String, before: String, after: String): List<AsmSourceModelChange> {
@@ -135,8 +138,9 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
         val ownedBefore = owner.asmWorkspace.patchSourceKeys.intersect(ids)
         data class Config(val patch: SmPatch, val data: Map<String, Int>, val scalar: Int?, val retiresScalar: Boolean)
         val states = owner.patches.mapNotNull { patch ->
-            val keys = ids.map { catalog.definitions.getValue(it) }.filter { it.type == patch.configType }.map { it.key }.toSet()
-            if (keys.isEmpty()) null else Config(patch, patch.configData.orEmpty().filterKeys { it in keys }, patch.configValue, "seconds" in keys)
+            val definitions = ids.map { catalog.definitions.getValue(it) }.filter { it.type == patch.configType }
+            val keys = definitions.flatMap { it.configKeys }.toSet()
+            if (keys.isEmpty()) null else Config(patch, patch.configData.orEmpty().filterKeys { it in keys }, patch.configValue, definitions.any { it.scalar })
         }
         fun check(undo: Boolean) {
             require(project() === owner && owner.asmWorkspace.patchSourceKeys.intersect(ids) == if (undo) ids else ownedBefore) { "Patch source ownership changed; undo newer edits first." }
@@ -144,11 +148,11 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
                 val patch = state.patch
                 require(owner.patches.any { it === patch } && patch.configData.orEmpty().filterKeys { dataPatchKey(requireNotNull(patch.configType), it) in ids } ==
                     if (undo) emptyMap() else state.data) { "Patch overrides changed; undo newer edits first." }
-                require(!state.retiresScalar || patch.configValue == if (undo) null else state.scalar) { "Timer override changed; undo newer edits first." }
+                require(!state.retiresScalar || patch.configValue == if (undo) null else state.scalar) { "Scalar override changed; undo newer edits first." }
             }
             require(owner.patches.none { patch -> states.none { it.patch === patch } && ids.any { id ->
                 val def = catalog.definitions.getValue(id)
-                patch.configType == def.type && (def.key in patch.configData.orEmpty() || def.key == "seconds" && patch.configValue != null)
+                patch.configType == def.type && (def.configKeys.any { key -> key in patch.configData.orEmpty() } || def.scalar && patch.configValue != null)
             } }) { "A newer patch owns these fields; undo it first." }
         }
         fun set(undo: Boolean) {

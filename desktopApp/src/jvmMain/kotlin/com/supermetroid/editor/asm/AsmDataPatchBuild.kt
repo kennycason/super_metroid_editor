@@ -4,6 +4,7 @@ import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.RomParser
+import com.supermetroid.editor.rom.ShortChargePatch
 import com.supermetroid.editor.ui.*
 
 internal data class AsmDataPatchLocation(val pc: Int, val size: Int)
@@ -13,6 +14,11 @@ internal data class AsmDataPatchWrite(val pc: Int, val size: Int, val value: Int
 internal fun dataPatchOverrides(patch: SmPatch, fields: Map<String, DataPatchField>): Map<String, List<Int>> {
     val type = patch.configType ?: return emptyMap()
     val definitions = DATA_PATCH_DEFINITIONS.filter { it.type == type }.associateBy { it.key }
+    if (type == ShortChargePatch.CONFIG_TYPE) {
+        val stages = ShortChargePatch.requestedStages(patch.configValue, patch.configData) ?: return emptyMap()
+        val definition = definitions.getValue(ShortChargePatch.STAGES_KEY)
+        return mapOf(definition.id to definition.encodeWords(stages, fields.getValue(definition.id).values))
+    }
     require(definitions.keys.containsAll(patch.configData.orEmpty().keys)) { "Unknown $type settings." }
     val values = patch.configData.orEmpty().toMutableMap()
     if (type in setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE)) patch.configValue?.let {
@@ -33,7 +39,7 @@ internal fun dataPatchOverrides(patch: SmPatch, fields: Map<String, DataPatchFie
     }
     return values.map { (key, value) ->
         val def = definitions.getValue(key)
-        def.id to field(key).words.map { def.encode(value, it.value) }
+        def.id to def.encodeWords(value, field(key).values)
     }.toMap()
 }
 
@@ -78,7 +84,7 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
     fun checkGuard(guard: DataPatchGuard): List<Int> {
         val start = address(guard.file, guard.symbol, guard.offset, 1)
         var pc = start
-        for (code in guard.instructions) {
+        for ((index, code) in guard.instructions.withIndex()) {
             val op = code.substringBefore(' '); val arg = code.substringAfter(' ', "")
             val immediate = arg.startsWith('#')
             val indexed = arg.endsWith(",X") || arg.endsWith(",Y")
@@ -90,6 +96,8 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
                 "CMP.W" -> if (immediate) 0xC9 else if (arg.endsWith(",X")) 0xDD else 0xCD
                 "ADC.W" -> if (immediate) 0x69 else if (arg.endsWith(",X")) 0x7D else 0x6D
                 "ADC.B" -> 0x65
+                "ORA.L" -> if (arg.endsWith(",X")) 0x1F else 0x0F
+                "LDA.L" -> if (arg.endsWith(",X")) 0xBF else 0xAF
                 "CPX.W" -> 0xE0
                 "BIT.W" -> 0x89
                 "AND.W" -> 0x29
@@ -108,6 +116,8 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
                 "ASL" -> 0x0A
                 "INX" -> 0xE8
                 "CLC" -> 0x18
+                "DEC" -> 0x3A
+                "XBA" -> 0xEB
                 "RTS" -> 0x60
                 else -> error("Unsupported guarded instruction $code.")
             }
@@ -115,7 +125,10 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
             if (op in setOf("BPL", "BMI", "BNE", "BEQ", "BRA")) {
                 val scope = guard.symbol
                 val displacement = compiledByte(pc + 1).let { if (it >= 128) it - 256 else it }
-                if (arg == "+") require(displacement >= 0) { "${guard.symbol}: expected a forward anonymous branch." }
+                if (arg == "+") {
+                    val target = guard.anonymousTargets[index]?.let { start + it }
+                    require(if (target == null) displacement >= 0 else pc + 2 + displacement == target) { "${guard.symbol}: anonymous branch binding changed." }
+                }
                 else {
                     val target = requireNotNull(labels[scope + "_" + arg.removePrefix(".")]) { "Missing branch target $arg." }
                     require(parser.pcToSnes(pc + header + 2 + displacement) == target) { "${guard.symbol}: branch binding changed." }
@@ -127,8 +140,9 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
                 val value = symbolValue(if (binding.startsWith('.')) guard.symbol + "_" + binding.drop(1) else binding)
                 val short = op.endsWith(".B")
                 require((if (short) compiledByte(pc + 1) else compiledWord(pc + 1)) == value and (if (short) 255 else 65535)) { "${guard.symbol}: compiled operand/binding differs from source ($code)." }
-                if (op == "JSL.L") require(compiledByte(pc + 3) == value ushr 16) { "${guard.symbol}: long-call bank changed." }
-                pc += if (short) 2 else if (op == "JSL.L") 4 else 3
+                val long = op.endsWith(".L")
+                if (long) require(compiledByte(pc + 3) == value ushr 16) { "${guard.symbol}: long operand bank changed." }
+                pc += if (short) 2 else if (long) 4 else 3
             }
         }
         address(guard.file, guard.symbol, guard.offset, pc - start)
@@ -145,6 +159,9 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
         if (!authored && !relocated && id !in pendingIds) continue
         require(!authored || id !in pendingIds) { "$id has both ASM and a patch override. Use ASM values before building." }
         require(!def.bcd || field.values.all { def.decode(it) != null }) { "$id: invalid BCD timer. Seconds must be 00–59." }
+        require(def.type != ShortChargePatch.CONFIG_TYPE || ShortChargePatch.decode(field.values) != null) {
+            "$id: unsupported native counter/timer values; counters must fit 0–4 and timer bytes must be nonzero without counter bits in reset delays."
+        }
         for ((pc, word) in pcs.zip(field.words)) {
             val actual = compiledValue(pc, word.site.size)
             require(actual == word.value) { "$id: compiled data differs from the checked source word." }

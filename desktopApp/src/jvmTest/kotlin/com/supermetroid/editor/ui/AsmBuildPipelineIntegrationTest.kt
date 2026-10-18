@@ -46,6 +46,83 @@ import kotlin.test.assertFailsWith
 class AsmBuildPipelineIntegrationTest {
     @TempDir lateinit var tempDirectory: File
 
+    @Test fun `short charge packed timers and counter consumers survive native relocation cold builds and reversible toggles`() = runBlocking {
+        ProjectFileService.clearAsmBuildCachesForTests()
+        val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)
+        val project = sourceProject(fixture)
+        val workspace = AsmWorkspaceState().apply { bindProject(fixture.projectFile.path, true) }
+        val editor = EditorState().apply { testMode = true; initForProject(fixture.projectFile, project) }
+        editor.bindRoomSources(AsmPlmSourceCatalog.load(fixture.workspace.originalDirectory, parser), workspace)
+        val bridge = assertNotNull(editor.dataPatchBridge)
+        val type = SHORT_CHARGE_CONFIG_TYPE; val id = "$type:stages"
+        assertEquals(4, bridge.view(type, "stages").value); assertNull(bridge.view(type, "stages").problem)
+        val logs = mutableListOf<String>()
+        suspend fun build(owner: SmEditProject = project): RomBuildResult? {
+            assertTrue(workspace.saveAllSources(), workspace.error); logs.clear()
+            return ProjectFileService.buildRom(owner, parser, logs::add, logs::add, fixture.projectFile.path)
+        }
+        fun same(expected: ByteArray, actual: ByteArray) = assertEquals(com.supermetroid.editor.asm.AsmVerifiedCache.hash(expected), com.supermetroid.editor.asm.AsmVerifiedCache.hash(actual))
+        same(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val before = workspace.projectSourceText("bank_91.asm")
+        val start = before.indexOf("SpeedBoostTimerResetValues:"); val end = before.indexOf("PoseDefinitions:", start)
+        val movedSnes = 0x91FFEE; val movedPc = parser.snesToPc(movedSnes)
+        assertTrue(fixture.rom.copyOfRange(movedPc, movedPc + 10).all { it == 0xFF.toByte() })
+        assertTrue(workspace.updateSourceEditText("bank_91.asm", before.replaceRange(start until end,
+            "org \$91FFEE\n" + before.substring(start, end) + "org \$91B629\n")))
+        assertTrue(project.asmWorkspace.patchSourceKeys.isEmpty(), "Relocation alone does not adopt values")
+        val patch = editor.findOrCreateConfigPatch(type).apply { enabled = true; configValue = 2 }
+        val pending = assertNotNull(build(), logs.joinToString("\n")); val pendingRom = RomParser(pending.resultRom)
+        assertEquals(0x0201, pendingRom.readUInt16At(movedPc))
+        assertEquals(0xFFFF, pendingRom.readUInt16At(parser.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)))
+        assertEquals(0xFFEE, pendingRom.readUInt16At(parser.snesToPc(0x9097A3)))
+        assertEquals(0xFFEE, pendingRom.readUInt16At(parser.snesToPc(0x9085B7)))
+        assertEquals(0xFFEE, pendingRom.readUInt16At(parser.snesToPc(0x91E680)))
+        editor.setPatchConfigValue(patch.id, 1); assertNull(patch.configValue); assertNull(patch.configData)
+        assertEquals(setOf(id), project.asmWorkspace.patchSourceKeys)
+        val field = bridge.catalog.field(id, bridge.texts())
+        var custom = workspace.projectSourceText("bank_91.asm")
+        custom = custom.replaceRange(field.words[3].span, "\$0009")
+        custom = custom.replaceRange(field.words[0].span, "\$0307")
+        assertTrue(workspace.updateSourceEditText("bank_91.asm", custom))
+        editor.setPatchConfigValue(patch.id, 0)
+        assertEquals(listOf(0x0407, 1, 1, 9, 2), bridge.catalog.field(id, bridge.texts()).values)
+        val compiled = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(0x0407, RomParser(compiled.resultRom).readUInt16At(movedPc))
+        assertEquals(9, RomParser(compiled.resultRom).readUInt16At(movedPc + 6))
+        val json = kotlinx.serialization.json.Json
+        val cold = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        same(compiled.resultRom, assertNotNull(build(cold), logs.joinToString("\n")).resultRom)
+        val header = ByteArray(512) { 0x5A }; val headerFile = File(tempDirectory, "Charge.smc").apply { writeBytes(header + fixture.rom) }
+        logs.clear()
+        val headered = assertNotNull(ProjectFileService.buildRom(cold.copy(romPath = headerFile.path), RomParser(header + fixture.rom), logs::add, logs::add, fixture.projectFile.path), logs.joinToString("\n"))
+        same(header + compiled.resultRom, headered.resultRom)
+        editor.requestTogglePatch(patch.id); assertNotNull(editor.pendingPatchDisable); editor.confirmPatchDisable(); assertFalse(patch.enabled)
+        val disabled = assertNotNull(build(), logs.joinToString("\n"))
+        assertEquals(listOf(1, 1, 1, 1, 2), (0..4).map { RomParser(disabled.resultRom).readUInt16At(movedPc + it * 2) })
+        val saved = json.decodeFromString<SmEditProject>(json.encodeToString(SmEditProject.serializer(), project))
+        ProjectFileService.clearAsmBuildCachesForTests()
+        same(disabled.resultRom, assertNotNull(build(saved), logs.joinToString("\n")).resultRom)
+        editor.requestTogglePatch(patch.id); assertTrue(patch.enabled)
+        same(compiled.resultRom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
+        val conflict = SmPatch("charge-timer-byte", "Unchanged timer byte", enabled = true,
+            writes = mutableListOf(PatchWrite((movedPc + 3).toLong(), listOf(0), expectedBytes = listOf(0))))
+        project.patches.add(conflict); assertNull(build()); assertTrue(logs.any { "conflict" in it.lowercase() }, logs.joinToString("\n"))
+        conflict.enabled = false
+        val valid = workspace.projectSourceText("bank_90.asm")
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", valid.replaceFirst("ADC.W #\$0100", "ADC.W #\$0200")))
+        assertNull(build()); assertTrue(logs.any { "Short Charge" in it && "logic changed" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", valid))
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", valid + "\norg Handle_SpeedBooster_AnimationDelay+\$64\ndb \$00\n"))
+        assertNull(build()); assertTrue(logs.any { "anonymous branch binding changed" in it }, logs.joinToString("\n"))
+        assertTrue(workspace.updateSourceEditText("bank_90.asm", valid))
+        val unsupported = bridge.catalog.field(id, bridge.texts()).words.first()
+        assertTrue(workspace.updateSourceEditText("bank_91.asm", workspace.projectSourceText("bank_91.asm").replaceRange(unsupported.span, "\$0400")))
+        assertNull(build()); assertTrue(logs.any { "unsupported native counter/timer" in it }, logs.joinToString("\n"))
+        assertNull(RomExporter(project, parser, logs::add).build(), "ROM-only export cannot omit authored charge timing")
+        same(fixture.rom, fixture.romFile.readBytes())
+    }
+
     @Test fun `physics native fields preserve complete storage through pending relocation reciprocal edits and cold toggles`() = runBlocking {
         ProjectFileService.clearAsmBuildCachesForTests()
         val fixture = AsmProjectTestFixture.create(tempDirectory); val parser = RomParser(fixture.rom)

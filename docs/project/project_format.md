@@ -80,6 +80,8 @@ finite native-data fields. Timer scalar overrides retire on first source adoptio
 coupled defaults/timers retain their complete per-site values in source.
 `samus_physics:<field-key>` identifies the seventeen physics byte controls; the
 complete native words/swapped dwords and indexed operands remain in source.
+`short_charge_stages:stages` owns the five native counter/timer words; first edits
+retire the legacy scalar, `stages` and `taps` settings in the same Undo transaction.
 `asmWorkspace.disabledPatchValues` stores exact word lists only while a native-data
 patch is disabled (config type → field identity → words/dwords). Dwords retain their
 32-bit bit patterns as signed JSON integers. Its live ASM contains the

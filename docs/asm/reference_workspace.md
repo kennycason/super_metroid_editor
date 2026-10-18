@@ -2224,6 +2224,9 @@ Samus physics now uses the same reciprocal workflow for all seventeen controls,
 including native word/dword preservation and checked movement-table bindings across
 banks $90/$94. The previous GUI-generated physics overlay is retired; see
 [physics source editing](patch_support.md#samus-physics).
+Short Charge likewise shares its packed counter and five-word timer table with the
+stage selector, preserving custom timing and validating all three native consumers.
+See [Short Charge source editing](patch_support.md#short-charge).
 
 ## Project-created room ASM builds and navigation
 

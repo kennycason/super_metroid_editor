@@ -446,7 +446,6 @@ fun PatchEditorCanvas(
         when (patch.configType) {
             "samus_physics" -> SamusPhysicsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             in com.supermetroid.editor.asm.DATA_PATCH_TYPES -> NativeDataPatchEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
-            SHORT_CHARGE_CONFIG_TYPE -> ShortChargeConfig(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             "beam_damage" -> BeamDamageEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             "boss_stats" -> BossStatsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth(), onNavigateToAsm)
             "phantoon" -> PhantoonEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
@@ -905,72 +904,6 @@ private fun parsePatchInt(text: String): Int? {
 }
 
 
-// ─── Config patch: Short Charge ────────────────────────────────────────
-
-@Composable
-@OptIn(ExperimentalMaterial3Api::class)
-private fun ShortChargeConfig(
-    patch: SmPatch,
-    editorState: EditorState,
-    romParser: RomParser?,
-    modifier: Modifier
-) {
-    val stages = (patch.configValue ?: SHORT_CHARGE_DEFAULT_STAGES)
-        .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
-    val romStages = remember(romParser) {
-        romParser?.let {
-            val off = it.snesToPc(SHORT_CHARGE_INITIAL_TIMER_SNES)
-            val rom = it.getRomData()
-            if (off + 1 < rom.size) {
-                val initialCounter = rom[off + 1].toInt() and 0xFF
-                (SHORT_CHARGE_MAX_STAGES - initialCounter)
-                    .coerceIn(SHORT_CHARGE_MIN_STAGES, SHORT_CHARGE_MAX_STAGES)
-            } else SHORT_CHARGE_DEFAULT_STAGES
-        } ?: SHORT_CHARGE_DEFAULT_STAGES
-    }
-
-    Column(modifier = modifier.padding(16.dp)) {
-        Text(
-            "Choose how many Speed Booster charge stages must complete before Samus gains blue speed.",
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "ROM default: $romStages stages. Vanilla uses 4; 0 activates blue speed as soon as Dash running begins.",
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(14.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (value in SHORT_CHARGE_MIN_STAGES..SHORT_CHARGE_MAX_STAGES) {
-                FilterChip(
-                    selected = stages == value,
-                    onClick = { editorState.setPatchConfigValue(patch.id, value) },
-                    label = { Text(value.toString(), fontSize = LocalEditorTheme.current.fontSize.value.body) },
-                )
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            when (stages) {
-                0 -> "Immediate: pressing Dash while running starts blue speed."
-                1 -> "One charge stage before blue speed."
-                4 -> "Vanilla charge length (four stages)."
-                else -> "$stages charge stages before blue speed."
-            },
-            fontSize = LocalEditorTheme.current.fontSize.value.body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "This changes the engine's charge-stage requirement; it does not automate the advanced tap timing technique.",
-            fontSize = LocalEditorTheme.current.fontSize.value.detail,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-        )
-    }
-}
 
 
 private enum class PatchWriteViewMode {

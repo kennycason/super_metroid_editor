@@ -7,11 +7,16 @@ import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.rom.RoomNamePauseMapPatch
+import com.supermetroid.editor.rom.ShortChargePatch
 
 /** Compare actual settings, not merely the presence of a config map. Unknown settings err on confirmation. */
 internal fun patchSettingsDifferFromBaseline(patch: SmPatch, parser: RomParser?): Boolean {
     if (patch.configType in DATA_PATCH_TYPES) return runCatching {
-        if (patch.configType == ControllerBindings.CONFIG_TYPE) {
+        if (patch.configType == ShortChargePatch.CONFIG_TYPE) {
+            val stages = ShortChargePatch.requestedStages(patch.configValue, patch.configData)
+            val table = parser?.getRomData()?.let(ShortChargePatch::read) ?: ShortChargePatch.defaults
+            stages != null && ShortChargePatch.encode(stages, table) != table
+        } else if (patch.configType == ControllerBindings.CONFIG_TYPE) {
             val rom = parser?.getRomData()
             val base = rom?.let { ControllerBindings.read(it) } ?: ControllerBindings.defaults
             val reset = rom?.let { ControllerBindings.read(it, reset = true) } ?: ControllerBindings.defaults

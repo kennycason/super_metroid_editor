@@ -2846,7 +2846,8 @@ class EditorState(
     fun setPatchConfigValue(id: String, value: Int) {
         val patch = project.patches.find { it.id == id }
         if (patch?.configType in com.supermetroid.editor.asm.DATA_PATCH_TYPES) {
-            setNativePatchValues(id, mapOf("seconds" to value)); return
+            val key = if (patch?.configType == SHORT_CHARGE_CONFIG_TYPE) "stages" else "seconds"
+            setNativePatchValues(id, mapOf(key to value)); return
         }
         project.patches.find { it.id == id }?.let {
             it.configValue = value
@@ -2888,9 +2889,11 @@ class EditorState(
         dirty = true; patchVersion++
     }
 
-    internal fun setNativePatchValues(id: String, values: Map<String, Int>) {
+    internal fun setNativePatchValues(id: String, requested: Map<String, Int>) {
         val patch = project.patches.find { it.id == id } ?: return
         runCatching {
+            val values = if (patch.configType == SHORT_CHARGE_CONFIG_TYPE) mapOf("stages" to requireNotNull(
+                com.supermetroid.editor.rom.ShortChargePatch.requestedStages(null, requested))) else requested
             if (asmNavigationEnabled) {
                 requireNotNull(dataPatchBridge) { "Wait for patch source indexing." }.editValues(requireNotNull(patch.configType), values)
             } else {
@@ -2906,7 +2909,12 @@ class EditorState(
                     changes[BOMB_COOLDOWN_FRAMES_KEY] = calculateBombCooldownForConfig(changes.getValue(BOMB_MAX_ACTIVE_KEY),
                         changes[BOMB_FUSE_FRAMES_KEY] ?: requireNotNull(current[BOMB_FUSE_FRAMES_KEY]?.value), requireNotNull(current[BOMB_COOLDOWN_FRAMES_KEY]?.value))
                 }
-                if (patch.configType in setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE)) patch.configValue = changes.getValue("seconds")
+                if (patch.configType == SHORT_CHARGE_CONFIG_TYPE) {
+                    val stages = com.supermetroid.editor.rom.ShortChargePatch.requestedStages(null, changes)
+                    patch.configValue = null
+                    patch.configData = (patch.configData.orEmpty().filterKeys { it !in com.supermetroid.editor.rom.ShortChargePatch.keys } +
+                        mapOf("stages" to requireNotNull(stages))).toMutableMap()
+                } else if (patch.configType in setOf("ceres_escape_seconds", ZEBES_ESCAPE_CONFIG_TYPE)) patch.configValue = changes.getValue("seconds")
                 else patch.configData = (patch.configData.orEmpty() + changes).toMutableMap()
                 setPatchEnabled(patch, true); dirty = true; patchVersion++
             }

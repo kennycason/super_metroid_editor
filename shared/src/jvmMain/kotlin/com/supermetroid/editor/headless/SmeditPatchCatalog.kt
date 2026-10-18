@@ -459,7 +459,7 @@ object SmeditPatchCatalog {
             description = "Sets the number of Speed Booster charge stages required for blue speed (vanilla: 4).",
             enabled = false,
             configType = SHORT_CHARGE_CONFIG_TYPE,
-            configValue = SHORT_CHARGE_DEFAULT_STAGES,
+            configValue = null,
         ),
         SmPatch(
             id = "config_bombs",
