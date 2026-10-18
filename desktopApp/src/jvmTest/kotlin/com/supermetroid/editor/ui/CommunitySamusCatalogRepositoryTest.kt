@@ -1,5 +1,6 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.rom.SamusCommunityLayout
 import com.supermetroid.editor.rom.SamusCommunitySheetDecoder
 import org.junit.jupiter.api.io.TempDir
 import java.awt.image.BufferedImage
@@ -10,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class CommunitySamusCatalogRepositoryTest {
@@ -73,29 +75,13 @@ class CommunitySamusCatalogRepositoryTest {
         assertTrue(download.file.isFile)
         assertContentEquals(png, download.file.readBytes())
         assertEquals(3, requests.size)
-        val showcase = repository.loadShowcase(snapshot, sprite)
+        val showcase = assertNotNull(repository.loadShowcase(snapshot, sprite))
+        assertEquals(SamusCommunitySheetDecoder.IMAGE_COUNT, showcase.images.size)
         assertEquals(
-            listOf(
-                "stand_right",
-                "stand_right_aim_up",
-                "run_right3",
-                "run_right_aim_diag_up3",
-                "jump_right2",
-                "jump_right_aim_up1",
-                "spin_jump_right2",
-                "wall_jump_right",
-                "crouch_right",
-                "morph_right",
-                "shine_spark_right",
-                "death_right",
-                "fall_right2",
-                "moonwalk_right3",
-                "crystal_flash_right2",
-                "xray_right2",
-            ),
-            showcase?.images?.map { it.name },
+            SamusCommunityLayout.loadBundled().rows.flatten(),
+            showcase.images.map { it.name },
         )
-        assertFalse(requireNotNull(showcase).hasVisiblePixels)
+        assertFalse(showcase.hasVisiblePixels)
 
         val artifact = repository.downloadInjectionArtifact(
             snapshot,

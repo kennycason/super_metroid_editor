@@ -263,24 +263,6 @@ internal class CommunitySamusCatalogRepository(
         private const val MAP_RANDOMIZER_RAW_ROOT = "https://raw.githubusercontent.com/blkerby/MapRandomizer"
         private val REVISION_REGEX = Regex("[0-9a-fA-F]{40}")
         private val SPRITE_NAME_REGEX = Regex("[a-zA-Z0-9_-]+")
-        private val SHOWCASE_IMAGE_NAMES = listOf(
-            "stand_right",
-            "stand_right_aim_up",
-            "run_right3",
-            "run_right_aim_diag_up3",
-            "jump_right2",
-            "jump_right_aim_up1",
-            "spin_jump_right2",
-            "wall_jump_right",
-            "crouch_right",
-            "morph_right",
-            "shine_spark_right",
-            "death_right",
-            "fall_right2",
-            "moonwalk_right3",
-            "crystal_flash_right2",
-            "xray_right2",
-        )
 
         fun manifestUrl(revision: String): String =
             "$RAW_ROOT/$revision/samus_sprites/manifest.json"
