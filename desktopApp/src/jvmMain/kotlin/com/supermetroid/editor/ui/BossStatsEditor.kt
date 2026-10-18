@@ -186,7 +186,7 @@ fun BossStatsEditor(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            if (sourceMode) "ASM edits use source Undo, not patch toggles. Matching sub-species edit together; independent sub-species values are managed in ASM."
+            if (sourceMode) "Edits enable this patch automatically. Disabling keeps custom values for later. Matching sub-species edit together; independent sub-species values are managed in ASM."
             else "Edit HP and damage values for all major and mini-bosses. Changes apply on ROM export.",
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

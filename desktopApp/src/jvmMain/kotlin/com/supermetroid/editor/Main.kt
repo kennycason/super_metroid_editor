@@ -410,6 +410,7 @@ fun main() = application {
             var romLoadMessageDetailsOpen by remember { mutableStateOf(false) }
             var romLoadMessageDismissedFor by remember { mutableStateOf<String?>(null) }
             val fs = editorThemeState.fontSize.value
+            com.supermetroid.editor.ui.PatchDisableConfirmation(editorState)
             if (showNewProject) NewProjectDialog(newProjectRom, romLoadInFlight, projectDialogError,
                 onDismiss = { showNewProject = false; projectDialogError = null },
                 onCreate = { name, parent, base -> scope.launch {
@@ -682,6 +683,11 @@ fun main() = application {
                         is AsmEditorTarget.BossStats -> {
                             com.supermetroid.editor.ui.selectBossStats(target.key)
                             editorState.selectPatch(editorState.findOrCreateConfigPatch("boss_stats").id)
+                            leftTab = TAB_PATCHES
+                        }
+                        is AsmEditorTarget.EnvironmentalDamage -> {
+                            com.supermetroid.editor.ui.selectEnvironmentalDamage(target.key)
+                            editorState.selectPatch(editorState.findOrCreateConfigPatch(com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE).id)
                             leftTab = TAB_PATCHES
                         }
                         is AsmEditorTarget.Sound -> {

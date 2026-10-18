@@ -11,6 +11,59 @@ import org.junit.jupiter.api.Test
 
 class PatchEditorTest {
     @Test
+    fun `simple and unchanged patches toggle immediately but changed settings require a cancellable confirmation`() {
+        val editor = EditorState().apply { testMode = true }
+        val simple = editor.addPatch("Simple")
+        editor.requestTogglePatch(simple.id)
+        assertTrue(simple.enabled); assertEquals(null, editor.pendingPatchDisable)
+        editor.requestTogglePatch(simple.id)
+        assertFalse(simple.enabled); assertEquals(null, editor.pendingPatchDisable)
+        val rates = SmPatch("rates", "Rates", enabled = true, configType = "environmental_damage",
+            configData = mutableMapOf("heat_per_second" to 15, "lava_per_second" to 30, "acid_per_second" to 90))
+        editor.project.patches.add(rates)
+        editor.requestTogglePatch(rates.id)
+        assertFalse(rates.enabled); assertEquals(null, editor.pendingPatchDisable)
+        editor.setPatchConfigData(rates.id, "lava_per_second", 45)
+        editor.requestTogglePatch(rates.id)
+        assertTrue(rates.enabled); assertSame(rates, editor.pendingPatchDisable)
+        editor.dismissPatchDisable(); assertTrue(rates.enabled); assertEquals(45, rates.configData?.get("lava_per_second"))
+        editor.requestTogglePatch(rates.id); editor.confirmPatchDisable()
+        assertFalse(rates.enabled); assertEquals(45, rates.configData?.get("lava_per_second"))
+        editor.requestTogglePatch(rates.id); assertTrue(rates.enabled)
+    }
+
+    @Test
+    fun `default comparisons use the input ROM rather than vanilla values`() {
+        val rom = ByteArray(0x300000)
+        val model = com.supermetroid.editor.rom.EnvironmentalDamagePatch
+        model.FIELDS.forEach { field ->
+            val rate = model.encodeEnergyPerSecond(60)
+            rom[field.lowWordPc] = rate.lowWord.toByte(); rom[field.lowWordPc + 1] = (rate.lowWord ushr 8).toByte()
+            rom[field.highWordPc] = rate.highWord.toByte(); rom[field.highWordPc + 1] = (rate.highWord ushr 8).toByte()
+        }
+        val parser = com.supermetroid.editor.rom.RomParser(rom)
+        val patch = SmPatch("rates", "Rates", configType = model.CONFIG_TYPE, configData = mutableMapOf(model.HEAT_KEY to 60))
+        assertFalse(patchSettingsDifferFromBaseline(patch, parser))
+        patch.configData!![model.HEAT_KEY] = 15
+        assertTrue(patchSettingsDifferFromBaseline(patch, parser))
+        assertFalse(patchSettingsDifferFromBaseline(SmPatch("beam", "Beam", configType = "beam_damage", configData = mutableMapOf("power" to 20)), null))
+        assertFalse(patchSettingsDifferFromBaseline(SmPatch("bomb", "Bomb", configType = BOMB_CONFIG_TYPE, configData = mutableMapOf(BOMB_FUSE_FRAMES_KEY to BOMB_DEFAULT_FUSE_FRAMES)), null))
+        rom[model.FIELDS.last().lowWordPc] = 1
+        val rounded = SmPatch("fraction", "Fraction", configType = model.CONFIG_TYPE, configData = mutableMapOf(model.ACID_KEY to 60))
+        assertTrue(patchSettingsDifferFromBaseline(rounded, parser), "Equal rounded GUI values can still replace exact fractional ROM data")
+        assertFalse(patchSettingsDifferFromBaseline(SmPatch("controls", "Controls", configType = "controller_config", configData = CONTROLLER_SLOTS.associate { it.key to it.defaultButton }.toMutableMap()), null))
+    }
+
+    @Test
+    fun `confirmation cannot toggle a replacement patch or a different project`() {
+        val editor = EditorState().apply { testMode = true }
+        val patch = SmPatch("custom", "Custom", enabled = true, configType = "environmental_damage", configData = mutableMapOf("lava_per_second" to 45))
+        editor.project.patches.add(patch); editor.requestTogglePatch(patch.id)
+        editor.project.patches.remove(patch)
+        val replacement = patch.copy(); editor.project.patches.add(replacement)
+        editor.confirmPatchDisable(); assertTrue(replacement.enabled)
+    }
+    @Test
     fun `patch search covers names descriptions ids and config types`() {
         val patches = listOf(
             SmPatch(id = "hex_alpha", name = "Alpha", description = "Movement tweak"),

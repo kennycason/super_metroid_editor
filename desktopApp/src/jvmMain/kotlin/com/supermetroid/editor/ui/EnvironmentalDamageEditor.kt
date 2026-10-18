@@ -1,6 +1,9 @@
 package com.supermetroid.editor.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,13 +27,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +47,9 @@ import com.supermetroid.editor.data.SmPatch
 import com.supermetroid.editor.rom.EnvironmentalDamagePatch
 import com.supermetroid.editor.rom.RomParser
 
+private var environmentalSelection by mutableStateOf<Pair<String?, Int>>(null to 0)
+internal fun selectEnvironmentalDamage(key: String?) { environmentalSelection = key to (environmentalSelection.second + 1) }
+
 fun readEnvironmentalDamageRomRates(romParser: RomParser?): Map<String, Int> {
     val rom = try {
         romParser?.getRomData()
@@ -47,8 +57,9 @@ fun readEnvironmentalDamageRomRates(romParser: RomParser?): Map<String, Int> {
         null
     }
     return EnvironmentalDamagePatch.FIELDS.associate { field ->
-        val low = rom?.readEnvironmentalWord(field.lowWordPc)
-        val high = rom?.readEnvironmentalWord(field.highWordPc)
+        val header = if (rom != null && rom.size % 0x8000 == 512) 512 else 0
+        val low = rom?.readEnvironmentalWord(header + field.lowWordPc)
+        val high = rom?.readEnvironmentalWord(header + field.highWordPc)
         val value = if (low != null && high != null) {
             EnvironmentalDamagePatch.decodeEnergyPerSecond(low, high)
         } else {
@@ -71,7 +82,11 @@ fun EnvironmentalDamageEditor(
     editorState: EditorState,
     romParser: RomParser?,
     modifier: Modifier = Modifier,
+    onNavigateToAsm: (() -> Unit)? = null,
 ) {
+    val sourceMode = editorState.asmNavigationEnabled
+    val bridge = editorState.environmentalDamageBridge.takeIf { sourceMode }
+    @Suppress("UNUSED_VARIABLE") val sourceRevision = bridge?.revision
     val romRates = remember(romParser) { readEnvironmentalDamageRomRates(romParser) }
     @Suppress("UNUSED_VARIABLE") val patchVersion = editorState.patchVersion
 
@@ -87,6 +102,9 @@ fun EnvironmentalDamageEditor(
                 EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND,
             ),
         )
+    }
+    fun openSource(key: String? = null) {
+        if (editorState.openEnvironmentalDamageSource(key)) onNavigateToAsm?.invoke()
     }
 
     Column(
@@ -109,17 +127,20 @@ fun EnvironmentalDamageEditor(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (sourceMode) TextButton(onClick = { openSource() }, modifier = Modifier.testTag("environmental-asm")) { Text("ASM", maxLines = 1, softWrap = false) }
             Spacer(Modifier.width(16.dp))
             OutlinedButton(
                 onClick = {
-                    EnvironmentalDamagePatch.FIELDS.forEach { field ->
+                    if (sourceMode) runCatching { requireNotNull(bridge).resetToOriginal() }
+                        .onFailure { editorState.postStatus(it.message ?: "Cannot reset environmental ASM.") }
+                    else EnvironmentalDamagePatch.FIELDS.forEach { field ->
                         apply(field.key, field.defaultEnergyPerSecond)
                     }
                 },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.height(30.dp),
             ) {
-                Text("Vanilla", fontSize = LocalEditorTheme.current.fontSize.value.body)
+                Text(if (sourceMode) "Original ASM" else "Vanilla", fontSize = LocalEditorTheme.current.fontSize.value.body)
             }
         }
 
@@ -133,13 +154,27 @@ fun EnvironmentalDamageEditor(
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                 EnvironmentalDamagePatch.FIELDS.forEachIndexed { index, field ->
+                    val view = if (sourceMode) bridge?.value(patch, field.key)
+                        ?: com.supermetroid.editor.asm.AsmEnvironmentalDamageView(null, "—", "Wait for environmental source indexing.") else null
                     EnvironmentalDamageRateRow(
+                        key = field.key,
                         label = field.label,
                         suitBehavior = field.suitBehavior,
-                        value = currentValue(field.key),
+                        value = if (sourceMode) view?.value else currentValue(field.key),
+                        display = if (sourceMode) view!!.display else currentValue(field.key).toString(),
+                        enabled = view?.problem == null,
                         vanillaValue = field.defaultEnergyPerSecond,
                         onChange = { apply(field.key, it) },
+                        onAsm = if (sourceMode) ({ openSource(field.key) }) else null,
                     )
+                    view?.problem?.let { problem ->
+                        Text(if (view.managedInAsm) "Managed in ASM: $problem" else "Read-only: $problem",
+                            color = if (view.managedInAsm) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                            fontSize = LocalEditorTheme.current.fontSize.value.detail)
+                    }
+                    if (view?.conflict == true) TextButton(onClick = {
+                        runCatching { bridge?.useSourceValue(field.key) }.onFailure { editorState.postStatus(it.message ?: "Cannot use ASM values.") }
+                    }, modifier = Modifier.testTag("environmental-use-asm-${field.key}")) { Text("Use ASM values") }
                     if (index != EnvironmentalDamagePatch.FIELDS.lastIndex) {
                         Divider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
                     }
@@ -149,23 +184,34 @@ fun EnvironmentalDamageEditor(
 
         Spacer(Modifier.height(10.dp))
         Text(
-            "Rates are accumulated every frame, so low values still drain smoothly.",
+            if (sourceMode) "Rates accumulate every frame. Edits enable this patch automatically; disabling keeps custom values for later. Both words of each rate edit together."
+            else "Rates are accumulated every frame, so low values still drain smoothly.",
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EnvironmentalDamageRateRow(
+    key: String,
     label: String,
     suitBehavior: String,
-    value: Int,
+    value: Int?,
+    display: String,
+    enabled: Boolean,
     vanillaValue: Int,
     onChange: (Int) -> Unit,
+    onAsm: (() -> Unit)?,
 ) {
+    val requester = remember { BringIntoViewRequester() }
+    val selection = environmentalSelection
+    LaunchedEffect(selection) { if (selection.first == key) requester.bringIntoView() }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        modifier = Modifier.bringIntoViewRequester(requester).fillMaxWidth()
+            .background(if (selection.first == key) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else androidx.compose.ui.graphics.Color.Transparent)
+            .padding(vertical = 10.dp).testTag("environmental-row-$key"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -189,12 +235,15 @@ private fun EnvironmentalDamageRateRow(
             )
         }
 
-        DamageStepButton("−", enabled = value > EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND) {
-            onChange(value - 1)
+        if (onAsm != null) TextButton(onClick = onAsm, modifier = Modifier.width(64.dp).testTag("environmental-asm-$key"),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("ASM", maxLines = 1, softWrap = false) }
+        DamageStepButton("−", enabled = enabled && value != null && value > EnvironmentalDamagePatch.MIN_ENERGY_PER_SECOND) {
+            value?.let { onChange(it - 1) }
         }
-        DamageRateInput(value = value, onChange = onChange)
-        DamageStepButton("+", enabled = value < EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND) {
-            onChange(value + 1)
+        DamageRateInput(display = display, enabled = enabled, onChange = onChange,
+            modifier = Modifier.testTag("environmental-rate-$key").onFocusChanged { if (it.isFocused) selectEnvironmentalDamage(key) })
+        DamageStepButton("+", enabled = enabled && value != null && value < EnvironmentalDamagePatch.MAX_ENERGY_PER_SECOND) {
+            value?.let { onChange(it + 1) }
         }
         Text(
             "energy/sec",
@@ -206,8 +255,8 @@ private fun EnvironmentalDamageRateRow(
 }
 
 @Composable
-private fun DamageRateInput(value: Int, onChange: (Int) -> Unit) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+private fun DamageRateInput(display: String, enabled: Boolean, onChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    var text by remember(display, enabled) { mutableStateOf(display) }
     BasicTextField(
         value = text,
         onValueChange = { candidate ->
@@ -215,14 +264,15 @@ private fun DamageRateInput(value: Int, onChange: (Int) -> Unit) {
             text = filtered
             filtered.toIntOrNull()?.let { onChange(it) }
         },
+        enabled = enabled,
         singleLine = true,
         textStyle = TextStyle(
             fontSize = LocalEditorTheme.current.fontSize.value.heading,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.45f),
             textAlign = TextAlign.Center,
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        modifier = Modifier.width(62.dp),
+        modifier = modifier.width(96.dp),
         decorationBox = { inner ->
             Box(
                 modifier = Modifier

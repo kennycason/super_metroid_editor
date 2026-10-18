@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -48,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -315,13 +317,12 @@ fun PatchListPanel(
                     },
                     onToggle = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
-                        editorState.togglePatch(patch.id)
+                        editorState.requestTogglePatch(patch.id)
                     },
                     onToggleFavorite = {
                         requestVerticalSelectionFocus(navigationFocusRequester)
                         editorState.togglePatchFavorite(patch.id)
                     },
-                    sourceManaged = patch.configType in setOf("beam_damage", "boss_stats") && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty(),
                     onDelete = if (isSystemPatch(patch.id)) null
                                else {{
                                    requestVerticalSelectionFocus(navigationFocusRequester)
@@ -342,7 +343,6 @@ private fun PatchListItem(
     onToggle: () -> Unit,
     onToggleFavorite: () -> Unit,
     onDelete: (() -> Unit)?,
-    sourceManaged: Boolean = false,
 ) {
     val bg = if (isSelected) MaterialTheme.colorScheme.primaryContainer
              else Color.Transparent
@@ -360,11 +360,10 @@ private fun PatchListItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (sourceManaged) Text("ASM", color = MaterialTheme.colorScheme.primary, fontSize = LocalEditorTheme.current.fontSize.value.detail)
-            else Checkbox(
+            Checkbox(
                 checked = patch.enabled,
                 onCheckedChange = { onToggle() },
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(16.dp).testTag("patch-toggle-${patch.id}"),
                 colors = CheckboxDefaults.colors(
                     checkedColor = Color(0xFF4CAF50),
                     uncheckedColor = Color(0xFF888888),
@@ -380,7 +379,7 @@ private fun PatchListItem(
                     lineHeight = LocalEditorTheme.current.fontSize.value.heading,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (patch.enabled || sourceManaged) MaterialTheme.colorScheme.onSurface
+                    color = if (patch.enabled) MaterialTheme.colorScheme.onSurface
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
             }
@@ -468,6 +467,7 @@ fun PatchEditorCanvas(
                 editorState,
                 romParser,
                 Modifier.weight(1f).fillMaxWidth(),
+                onNavigateToAsm,
             )
             BOMB_CONFIG_TYPE -> BombsEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
             FANFARE_CONFIG_TYPE -> FanfareEditor(patch, editorState, romParser, Modifier.weight(1f).fillMaxWidth())
@@ -523,24 +523,22 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f).clickable { editingName = true }
                 )
-                val sourceManaged = patch.configType in setOf("beam_damage", "boss_stats") && editorState.asmNavigationEnabled && patch.configData.orEmpty().isEmpty()
-                // Source-authored values do not follow the legacy patch toggle.
                 Surface(
-                    color = if (sourceManaged) MaterialTheme.colorScheme.primary else if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
+                    color = if (patch.enabled) Color(0xFF4CAF50) else Color(0xFF888888),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        if (sourceManaged) "ASM SOURCE" else if (patch.enabled) "ENABLED" else "DISABLED",
+                        if (patch.enabled) "ENABLED" else "DISABLED",
                         fontSize = LocalEditorTheme.current.fontSize.value.detail,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                     )
                 }
-                if (!sourceManaged) Button(
-                    onClick = { editorState.togglePatch(patch.id) },
+                Button(
+                    onClick = { editorState.requestTogglePatch(patch.id) },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                    modifier = Modifier.height(28.dp),
+                    modifier = Modifier.height(28.dp).testTag("patch-header-toggle"),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (patch.enabled) Color(0xFF888888) else Color(0xFF4CAF50)
                     )
@@ -548,6 +546,12 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
                     Text(if (patch.enabled) "Disable" else "Enable", fontSize = LocalEditorTheme.current.fontSize.value.body)
                 }
             }
+        }
+        if (!patch.enabled && patch.configType in editorState.project.asmWorkspace.disabledPatchValues) {
+            Text("Custom values are saved. Enable this patch to restore them; ASM currently contains the original values.",
+                fontSize = LocalEditorTheme.current.fontSize.value.detail,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp))
         }
         if (!patch.exclusiveGroup.isNullOrBlank()) {
             Text(
@@ -599,6 +603,19 @@ private fun PatchToolbar(patch: SmPatch, editorState: EditorState) {
             )
         }
     }
+}
+
+/** Shared by the sidebar and toolbar; confirmation never itself mutates source or patch settings. */
+@Composable
+fun PatchDisableConfirmation(editorState: EditorState) {
+    val patch = editorState.pendingPatchDisable ?: return
+    AlertDialog(
+        onDismissRequest = editorState::dismissPatchDisable,
+        title = { Text("Disable ${patch.name}?") },
+        text = { Text("These settings will return to the project's original values while disabled. Your custom values will be kept and restored when you re-enable this patch.") },
+        confirmButton = { TextButton(onClick = editorState::confirmPatchDisable, modifier = Modifier.testTag("patch-disable-confirm")) { Text("Disable") } },
+        dismissButton = { TextButton(onClick = editorState::dismissPatchDisable, modifier = Modifier.testTag("patch-disable-cancel")) { Text("Cancel") } },
+    )
 }
 
 @Composable

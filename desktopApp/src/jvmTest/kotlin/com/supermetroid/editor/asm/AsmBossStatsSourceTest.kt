@@ -248,6 +248,44 @@ class AsmBossStatsSourceTest {
         assertEquals(1000, view.value) // $03E8 = 1000
     }
 
+    @Test fun `boss toggle preserves independent sub species words and restores them with source undo`() = runBlocking {
+        val f = fixture()
+        val patch = f.editor.findOrCreateConfigPatch("boss_stats")
+        f.bridge.edit("kraid_hp", 2400)
+        val field = f.bridge.catalog.field("kraid_hp", f.text())
+        val arm = field.words.single { it.speciesId == 0xE2FF }
+        assertTrue(f.workspace.updateSourceEditText(ENEMY_HEADER_SOURCE_FILE, f.text().replaceRange(arm.span, "1234")))
+        assertTrue(patch.enabled); assertNull(f.bridge.catalog.field("kraid_hp", f.text()).sharedValue)
+        val custom = f.text()
+        f.editor.requestTogglePatch(patch.id); assertSame(patch, f.editor.pendingPatchDisable); f.editor.confirmPatchDisable()
+        assertFalse(patch.enabled, f.editor.statusMessage)
+        assertEquals(listOf(1000, 1000), f.bridge.catalog.field("kraid_hp", f.text()).values)
+        assertEquals(listOf(2400, 1234), f.editor.project.asmWorkspace.disabledPatchValues["boss_stats"]?.get("kraid_hp"))
+        f.editor.requestTogglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(listOf(2400, 1234), f.bridge.catalog.field("kraid_hp", f.text()).values)
+        assertTrue(f.workspace.undoSourceEdit(ENEMY_HEADER_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled)
+        assertTrue(f.workspace.undoSourceEdit(ENEMY_HEADER_SOURCE_FILE), f.workspace.error)
+        assertTrue(patch.enabled); assertEquals(custom, f.text())
+    }
+
+    @Test fun `reset original restores each native sub species even when their original values differ`() = runBlocking {
+        val originalArm = AsmBossStatsSource(headers).original("kraid_hp").words.last()
+        val f = fixture(headers.replaceRange(originalArm.span, "900"))
+        val patch = f.editor.findOrCreateConfigPatch("boss_stats")
+        val field = f.bridge.catalog.field("kraid_hp", f.text())
+        var custom = f.text()
+        for (word in field.words.sortedByDescending { it.span.first }) custom = custom.replaceRange(word.span, "2400")
+        assertTrue(f.workspace.updateSourceEditText(ENEMY_HEADER_SOURCE_FILE, custom))
+        f.editor.togglePatch(patch.id); assertFalse(patch.enabled, f.editor.statusMessage)
+        assertEquals(listOf(1000, 900), f.bridge.catalog.field("kraid_hp", f.text()).values)
+        f.bridge.resetToOriginal()
+        assertTrue(patch.enabled); assertTrue(f.editor.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertEquals(listOf(1000, 900), f.bridge.catalog.field("kraid_hp", f.text()).values)
+        assertTrue(f.workspace.undoSourceEdit(ENEMY_HEADER_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(listOf(2400, 2400), f.editor.project.asmWorkspace.disabledPatchValues["boss_stats"]?.get("kraid_hp"))
+    }
+
     @Test fun `reads phantoon HP from source`() = runBlocking {
         val f = fixture()
         val view = f.bridge.view("phantoon_hp")

@@ -75,6 +75,16 @@ internal class AsmBeamDamageSource(val originalText: String) {
         return AsmBeamDamageField(key, table, word.first, value, pointer, slot, binding.first)
     }
     fun original(key: String) = field(key, originalText)
+    fun changedKeys(before: String, after: String): Set<String> {
+        val delta = AsmSourceTextChange.between(before, after) ?: return emptySet()
+        return keys.filter { key ->
+            val old = runCatching { field(key, before) }.getOrNull()
+            val next = runCatching { field(key, after) }.getOrNull()
+            if (old == null) next != null
+            else if (next != null) old.value != next.value || old.table != next.table else
+                listOf(old.span, old.bindingSpan).any { delta.offset <= it.last + 1 && delta.offset + delta.removed.length >= it.first }
+        }.toSet()
+    }
     /** Navigation needs a proven binding/section, not a valid numeric draft or a prior build. */
     fun navigationKeysAt(text: String, line: Int): List<String> {
         val sections = document(text).sections

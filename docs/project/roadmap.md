@@ -113,6 +113,8 @@ build authority. Source/Assets expose direct layout editing, not an enable promp
 
 - Context-aware source navigation — The caret-driven link bar and right-click **Visual Editor** share live/structured mappings for beams, enemies and room resources, explicit shared-resource choices and independent panes. Navigation preserves source ownership, history and Find Usages; interaction and viewport regressions cover editable and read-only source.
 
+- Reciprocal environmental damage — Heat/lava/acid rates adopt their native fixed-point pairs on the first real edit, with atomic config retirement and source Undo across banks. Exact non-GUI fractions remain intact and ASM-managed. Checked compiler symbols, accumulator instructions and live table bindings protect relocation, complete unchanged words and independent suit patches. Native parity, relocated legacy overrides, cold/headered Asar builds, rendered controls and omission guards have coverage. The [patch integration inventory](../asm/patch_support.md) prioritizes common numerical patches over detailed boss AI; escape timers are next.
+
 ## Remaining — Prioritized
 
 ### Tier 1: High Impact, Next Up

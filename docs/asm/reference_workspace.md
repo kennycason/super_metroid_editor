@@ -2163,9 +2163,11 @@ First GUI/text edits adopt literal words automatically. Values live only in sour
 patches retain their established 3× charged meaning until adopted. Adoption writes
 the untouched effective half into source before retiring its implicit patch value,
 and one source Undo restores text, ownership and old config together. New charged
-overrides are independent in ROM mode and the headless exporter too. Source-owned
-values use source Undo, not the patch checkbox; an empty source-backed beam panel
-is marked **ASM SOURCE** instead of offering a misleading patch toggle.
+overrides are independent in ROM mode and the headless exporter too. The ordinary
+patch checkbox also works in ASM mode: edits enable it automatically, and disabling
+customized values asks for confirmation. Exact custom values are saved while the
+original words are restored in source; re-enabling restores the customization.
+Source Undo/Redo includes the checkbox and saved values. Opening links stays read-only.
 
 The lens follows each live symbolic pointer, including shared/aliased records.
 Shared GUI changes adopt all matching words together; bulk reset rejects incompatible
@@ -2207,6 +2209,16 @@ fixed-address patch. Real-Asar coverage includes native parity, grouped and inde
 parts, cold builds, headered ROMs, patch conflicts and invalid/moved records. ROM-only
 and headless builds cannot silently omit authored boss stats. Specialized boss AI,
 timing and behavior tables are separate from this HP/contact-damage integration.
+
+## Common numerical patches
+
+Environmental damage now uses reciprocal native word pairs with automatic first-edit
+ownership, exact fractional preservation, cross-bank source/model Undo, per-field
+navigation and checked compiler destinations/bindings. See the
+[environmental damage workflow](../rom/environmental_damage.md#asm--visual-editing).
+The [patch integration inventory](patch_support.md) separates native data authoring
+from toggleable ASM patch backends and prioritizes escape timers and other common
+numerical settings before detailed boss behavior.
 
 ## Project-created room ASM builds and navigation
 

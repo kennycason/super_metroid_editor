@@ -166,8 +166,9 @@ class SmeditBuildService(
         context: ApplyContext,
     ): List<SmeditAppliedPatchReport> {
         require(project == null || project.asmWorkspace.beamDamageSourceKeys.isEmpty() && project.asmWorkspace.enemyTuningSourceKeys.isEmpty() &&
-            project.asmWorkspace.bossStatsSourceKeys.isEmpty()) {
-            "Authored enemy/beam/boss tuning requires its validated desktop ASM source build; headless ROM/IPS builds cannot omit it."
+            project.asmWorkspace.bossStatsSourceKeys.isEmpty() && project.asmWorkspace.patchSourceKeys.isEmpty() &&
+            project.asmWorkspace.disabledPatchValues.isEmpty()) {
+            "Authored tuning or patch data requires its validated desktop ASM source build; headless ROM/IPS builds cannot omit it."
         }
         require(request.schemaVersion == 1) {
             "Unsupported build schemaVersion ${request.schemaVersion}; expected 1"

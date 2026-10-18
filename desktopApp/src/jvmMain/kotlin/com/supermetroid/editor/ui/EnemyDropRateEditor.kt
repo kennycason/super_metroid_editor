@@ -65,7 +65,7 @@ val DROP_SLOTS = listOf(
 
 // ─── ROM access: read drop table pointer and data ──────────────────
 
-private fun readDropTable(romParser: RomParser?, speciesId: Int): IntArray? {
+internal fun readDropTable(romParser: RomParser?, speciesId: Int): IntArray? {
     if (romParser == null) return null
     return try {
         val rom = romParser.getRomData()

@@ -7,6 +7,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SmPatchSerializationTest {
+    @Test
+    fun `disabled source customization snapshots preserve exact word pairs independently of active source identities`() {
+        val project = SmEditProject("base.sfc")
+        project.asmWorkspace.disabledPatchValues["environmental_damage"] = mapOf("acid_per_second" to listOf(1, 1))
+        val restored = json.decodeFromString(SmEditProject.serializer(), json.encodeToString(SmEditProject.serializer(), project))
+        assertEquals(mapOf("acid_per_second" to listOf(1, 1)), restored.asmWorkspace.disabledPatchValues["environmental_damage"])
+        assertTrue(restored.asmWorkspace.patchSourceKeys.isEmpty())
+        assertTrue(Json.decodeFromString(ProjectAsmWorkspaceSettings.serializer(), "{}").disabledPatchValues.isEmpty())
+    }
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true

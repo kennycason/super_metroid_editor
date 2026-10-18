@@ -600,6 +600,10 @@ class EditorState(
         statusMessage.startsWith("Save failed", ignoreCase = true) ||
         statusMessage.startsWith("Enemy edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Beam edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Boss stats edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Environmental edit blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Patch toggle blocked", ignoreCase = true) ||
+        statusMessage.startsWith("Patch synchronization blocked", ignoreCase = true) ||
         statusMessage.startsWith("Source edit blocked", ignoreCase = true) ||
         statusMessage.startsWith("Object edit blocked", ignoreCase = true)
 
@@ -1122,12 +1126,41 @@ class EditorState(
         private set
     internal var bossStatsBridge by mutableStateOf<com.supermetroid.editor.asm.AsmBossStatsBridge?>(null)
         private set
+    internal var environmentalDamageBridge by mutableStateOf<com.supermetroid.editor.asm.AsmEnvironmentalDamageBridge?>(null)
+        private set
+    internal var patchToggleController: com.supermetroid.editor.asm.AsmPatchToggleController? = null
+        private set
+    internal var pendingPatchDisable by mutableStateOf<SmPatch?>(null)
+        private set
+
+    fun requestTogglePatch(id: String) {
+        val patch = project.patches.find { it.id == id } ?: return
+        if (patch.enabled && patchHasCustomSettings(patch)) pendingPatchDisable = patch
+        else togglePatch(id)
+    }
+
+    internal fun patchHasCustomSettings(patch: SmPatch): Boolean =
+        (patch.configType == com.supermetroid.editor.rom.RoomNamePauseMapPatch.CONFIG_TYPE && project.roomNameOverrides.isNotEmpty()) ||
+        (asmNavigationEnabled && patch.configType in com.supermetroid.editor.asm.NATIVE_PATCH_CONFIG_TYPES &&
+            runCatching { requireNotNull(patchToggleController).customized(requireNotNull(patch.configType)) }.getOrDefault(true)) ||
+            runCatching { patchSettingsDifferFromBaseline(patch, currentRomParser) }.getOrDefault(true)
+
+    internal fun dismissPatchDisable() { pendingPatchDisable = null }
+
+    internal fun confirmPatchDisable() {
+        val patch = pendingPatchDisable ?: return
+        pendingPatchDisable = null
+        if (project.patches.any { it === patch } && patch.enabled) togglePatch(patch.id)
+    }
 
     internal fun detachRoomSourceBridges() {
         asmPlmSourceBridge = null
         enemyTuningBridge = null
         beamDamageBridge = null
         bossStatsBridge = null
+        environmentalDamageBridge = null
+        patchToggleController = null
+        pendingPatchDisable = null
     }
 
     internal fun openEnemyTuningSource(key: String): Boolean = runCatching {
@@ -1156,6 +1189,14 @@ class EditorState(
         bridge.workspace.openSource(com.supermetroid.editor.asm.ENEMY_HEADER_SOURCE_FILE, line)
         true
     }.getOrElse { postStatus("Boss stats source unavailable: ${it.message}"); false }
+
+    internal fun openEnvironmentalDamageSource(key: String? = null): Boolean = runCatching {
+        require(asmNavigationEnabled) { "Enable the project ASM source workspace first." }
+        val bridge = requireNotNull(environmentalDamageBridge) { "Wait for environmental source indexing." }
+        val (file, line) = bridge.line(key)
+        bridge.workspace.showProjectWorkspace(); bridge.workspace.openSource(file, line)
+        true
+    }.getOrElse { postStatus("Environmental source unavailable: ${it.message}"); false }
 
     internal fun bindRoomSources(catalog: AsmPlmSourceCatalog,
                                  workspace: AsmWorkspaceState): AsmPlmSourceBridge {
@@ -1205,12 +1246,32 @@ class EditorState(
                 owner
             }) { dirty = true; patchVersion++ }
         }
+        environmentalDamageBridge = root?.let { com.supermetroid.editor.asm.AsmEnvironmentalDamageSource.load(workspace.projectWorkspace!!.originalDirectory) }?.let { source ->
+            com.supermetroid.editor.asm.AsmEnvironmentalDamageBridge(source, workspace, {
+                check(project === owner && workspace.projectWorkspace?.root == root &&
+                    (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The environmental ROM or ASM workspace changed." }
+                owner
+            }) { dirty = true; patchVersion++ }
+        }
+        val toggleController = com.supermetroid.editor.asm.AsmPatchToggleController(workspace, {
+            check(project === owner && workspace.projectWorkspace?.root == root &&
+                (currentRomParser == null || matchesRoomSourceContext(catalog.parser))) { "The patch ROM or ASM workspace changed." }
+            owner
+        }, com.supermetroid.editor.asm.patchToggleFamilies(beamDamageBridge?.catalog, bossStatsBridge?.catalog, environmentalDamageBridge?.catalog)) {
+            dirty = true; patchVersion++
+        }
+        patchToggleController = toggleController
+        beamDamageBridge?.publisher = toggleController::publish
+        bossStatsBridge?.publisher = toggleController::publish
+        environmentalDamageBridge?.publisher = toggleController::publish
         workspace.sourceEditorInterceptor = { file, before, after ->
             if (!asmNavigationEnabled) null else runCatching {
                 val changes = listOfNotNull(enemyTuningBridge?.prepareIntercept(file, before, after),
-                    bossStatsBridge?.prepareIntercept(file, before, after))
-                if (changes.isNotEmpty()) {
-                    workspace.publishSourceModelChanges(mapOf(file to (before to after)), changes)
+                    bossStatsBridge?.prepareIntercept(file, before, after), environmentalDamageBridge?.prepareIntercept(file, before, after))
+                val sources = mapOf(file to (before to after))
+                val touches = toggleController.touches(sources).filterKeys { it != "beam_damage" }
+                if (changes.isNotEmpty() || touches.keys.any(toggleController::needsActivation)) {
+                    toggleController.publishEdits(touches, sources, changes)
                     true
                 } else beamDamageBridge?.intercept(file, before, after)
             }.getOrElse { postStatus("Source edit blocked: ${it.message}"); false }
@@ -1218,8 +1279,10 @@ class EditorState(
         workspace.sourceEditorLinks = { file, line ->
             enemyTuningBridge?.editorLinks(file, line).orEmpty() +
                 bossStatsBridge?.editorLinks(file, line).orEmpty() +
-                beamDamageBridge?.editorLinks(file, line).orEmpty()
+                beamDamageBridge?.editorLinks(file, line).orEmpty() + environmentalDamageBridge?.editorLinks(file, line).orEmpty()
         }
+        runCatching { toggleController.reconcileSourceFlags() }
+            .onFailure { postStatus("Patch synchronization blocked: ${it.message}") }
         return bridge
     }
 
@@ -2680,8 +2743,10 @@ class EditorState(
 
     fun togglePatch(id: String) {
         val patch = project.patches.find { it.id == id } ?: return
-        setPatchEnabled(patch, !patch.enabled)
-        dirty = true; patchVersion++
+        runCatching {
+            setPatchEnabled(patch, !patch.enabled)
+            dirty = true; patchVersion++
+        }.onFailure { postStatus("Patch toggle blocked: ${it.message}") }
     }
 
     fun updatePatch(id: String, name: String? = null, description: String? = null, enabled: Boolean? = null) {
@@ -2693,6 +2758,25 @@ class EditorState(
     }
 
     private fun setPatchEnabled(patch: SmPatch, enabled: Boolean) {
+        // Preflight before either backend changes source, snapshots, or ownership.
+        if (!enabled && patch.enabled) {
+            patch.enabled = false
+            val dependency = try {
+                RomValidator.checkProjectCustomItemDependencies(project)
+                    .firstOrNull { it.severity == RomValidator.Severity.ERROR }
+            } finally { patch.enabled = true }
+            if (dependency != null) {
+                val message = "Cannot disable '${patch.name}': ${dependency.message}"
+                editorLog("WARN: $message")
+                postStatus(message)
+                return
+            }
+        }
+        if (asmNavigationEnabled && patch.configType in com.supermetroid.editor.asm.NATIVE_PATCH_CONFIG_TYPES) {
+            if (enabled == patch.enabled && (!enabled || patch.configType !in project.asmWorkspace.disabledPatchValues)) return
+            requireNotNull(patchToggleController) { "Wait for patch source indexing." }.setEnabled(patch, enabled)
+            return
+        }
         if (enabled) {
             patch.exclusiveGroup?.let { group ->
                 project.patches.forEach { other ->
@@ -2702,18 +2786,7 @@ class EditorState(
                 }
             }
         }
-        val previous = patch.enabled
         patch.enabled = enabled
-        if (!enabled && previous) {
-            val dependency = RomValidator.checkProjectCustomItemDependencies(project)
-                .firstOrNull { it.severity == RomValidator.Severity.ERROR }
-            if (dependency != null) {
-                patch.enabled = true
-                val message = "Cannot disable '${patch.name}': ${dependency.message}"
-                editorLog("WARN: $message")
-                postStatus(message)
-            }
-        }
     }
 
     fun enabledCustomItems(): List<CustomItemDef> =
@@ -2766,6 +2839,11 @@ class EditorState(
 
     fun setPatchConfigData(id: String, key: String, value: Int) {
         val patch = project.patches.find { it.id == id } ?: return
+        if (usesRoomAsmAuthoring && patch.configType == com.supermetroid.editor.rom.EnvironmentalDamagePatch.CONFIG_TYPE) {
+            runCatching { requireNotNull(environmentalDamageBridge) { "Wait for environmental source indexing." }.edit(key, value) }
+                .onFailure { postStatus("Environmental edit blocked: ${it.message}") }
+            return
+        }
         if (project.asmWorkspace.enabled && project.asmWorkspace.buildMode == ProjectRomBuildMode.ASM_SOURCE && patch.configType == "beam_damage") {
             runCatching { requireNotNull(beamDamageBridge) { "Wait for the beam ASM workspace." }.edit(key, value) }
                 .onFailure { postStatus("Beam edit blocked: ${it.message}") }
@@ -4476,6 +4554,9 @@ class EditorState(
         beamDamageBridge = null
         bossStatsBridge = null
         objectPreviewLoading = false
+        environmentalDamageBridge = null
+        patchToggleController = null
+        pendingPatchDisable = null
         objectPreviewProblem = null
         initialScrollPreviewProblem = null
         fxPreviewProblem = null

@@ -70,6 +70,17 @@ values only in native bank-A0 source. A grouped control owns every configured
 sub-species word, including unchanged bytes. Independent sub-species values remain
 authorable in ASM and make only that grouped GUI control read-only. Mixed enemy/boss
 text edits retire their config keys and restore them on Undo as one transaction.
+`asmWorkspace.patchSourceKeys` provides namespaced identities for subsequent native
+patch-data families. Environmental damage owns its fractional/whole word pair under
+`environmental_damage:<field-key>`. Exact values live in source; checked compiler
+locations are build-cache data only. ROM-only/headless builds cannot omit these keys.
+`asmWorkspace.disabledPatchValues` stores exact word lists only while a native-data
+patch is disabled (config type → field identity → words). Its live ASM contains the
+original values; re-enabling restores these saved values and removes the snapshot.
+Source, checkbox, ownership, and snapshot changes share one Undo boundary. Snapshots
+contain no placed addresses or file copies and require the validated ASM workflow,
+including after save/reopen. This optional empty-by-default field needs no format
+version migration.
 Both build modes end in a binary ROM—the ASM choice changes the order and ownership
 of inputs, not the output format.
 

@@ -42,7 +42,7 @@ import java.security.MessageDigest
 
 internal object ProjectFileService {
     private val asmProjectCompiler = AsmProjectCompiler()
-    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v17-boss-stats"
+    private const val PREPARED_ASM_CACHE_VERSION = "smedit-prepared-asm-base-v19-patch-toggles"
     private const val MAX_PREPARED_ASM_BASES = 2
     private val preparedAsmBases = object : LinkedHashMap<String, AsmCompiledBuildBase>(
         MAX_PREPARED_ASM_BASES,
@@ -221,6 +221,8 @@ internal object ProjectFileService {
             require(project.asmWorkspace.enemyTuningSourceKeys.isEmpty()) { "Authored enemy tuning requires ASM source mode." }
             require(project.asmWorkspace.beamDamageSourceKeys.isEmpty()) { "Authored beam damage requires ASM source mode." }
             require(project.asmWorkspace.bossStatsSourceKeys.isEmpty()) { "Authored boss stats require ASM source mode." }
+            require(project.asmWorkspace.patchSourceKeys.isEmpty()) { "Authored patch data requires ASM source mode." }
+            require(project.asmWorkspace.disabledPatchValues.isEmpty()) { "Saved disabled ASM customizations require ASM source mode." }
             require(project.rooms.values.none { it.asmDoorSourceVersion != 0 || it.asmStateSelectorsSourceVersion != 0 || it.asmRoomPropertiesSourceVersion != 0 || it.asmLayoutSourceVersion != 0 || it.asmPlmSourceVersion != 0 || it.asmInitialScrollSourceVersion != 0 || it.asmFxSourceVersion != 0 || it.asmEnemySourceVersion != 0 }) { "Authored room data requires ASM source mode." }
             require(project.asmWorkspace.plmSourceBindings.isEmpty()) { "Linked room objects require ASM source mode." }
             val sourceEdits = if (project.asmWorkspace.enabled && projectFilePath.isNotBlank()) {
@@ -247,7 +249,7 @@ internal object ProjectFileService {
         val linkedWorkspace = requireNotNull(AsmProjectWorkspaceRepository().loadForBuild(projectFilePath))
         linkedWorkspace.let { tree ->
             val files = listOf(PLM_SOURCE_FILE, "macros.asm") +
-                listOf("bank_A0.asm", "bank_B4.asm", "bank_93.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
+                listOf("main.asm", "bank_A0.asm", "bank_B4.asm", "bank_93.asm", "bank_8D.asm", "bank_90.asm").filter { File(tree.originalDirectory, "src/$it").isFile } +
                 (if (project.rooms.values.any { it.asmDoorSourceVersion != 0 || it.asmFxSourceVersion != 0 }) listOf(FX_SOURCE_FILE) else emptyList()) +
                 (if (project.rooms.values.any { it.asmEnemySourceVersion != 0 }) listOf(ENEMY_SOURCE_FILE) else emptyList())
             for (fileId in files) {
@@ -282,9 +284,17 @@ internal object ProjectFileService {
         val beamDamage = com.supermetroid.editor.asm.AsmBeamDamageSource.load(linkedWorkspace.originalDirectory)
         val beamSource = if (beamDamage == null) "" else File(linkedWorkspace.workingDirectory, "src/bank_93.asm").readText()
         val bossStats = com.supermetroid.editor.asm.AsmBossStatsSource.load(linkedWorkspace.originalDirectory)
-        fun protectTuning(base: AsmCompiledBuildBase) = com.supermetroid.editor.asm.protectBossStatsSource(bossStats, tuningHeaders, project,
+        val environmental = com.supermetroid.editor.asm.AsmEnvironmentalDamageSource.load(linkedWorkspace.originalDirectory)
+        val environmentalTexts = (com.supermetroid.editor.asm.ENVIRONMENT_SOURCE_FILES + "main.asm").associateWith { File(linkedWorkspace.workingDirectory, "src/$it").takeIf { file -> file.isFile }?.readText().orEmpty() }
+        fun protectTuning(base: AsmCompiledBuildBase): AsmCompiledBuildBase {
+            com.supermetroid.editor.asm.validatePatchToggleSources(project,
+                com.supermetroid.editor.asm.patchToggleFamilies(beamDamage, bossStats, environmental),
+                environmentalTexts + mapOf("bank_A0.asm" to tuningHeaders, "bank_93.asm" to beamSource))
+            return com.supermetroid.editor.asm.protectEnvironmentalDamageSource(environmental, environmentalTexts, project,
+            com.supermetroid.editor.asm.protectBossStatsSource(bossStats, tuningHeaders, project,
             com.supermetroid.editor.asm.protectBeamDamageSource(beamDamage, beamSource, project,
-                com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base)))
+                com.supermetroid.editor.asm.protectEnemyTuningSource(enemyTuning, tuningHeaders, tuningDrops, project, base))))
+        }
         val managedRooms = project.rooms.values.filter { it.asmPlmSourceVersion != 0 }
         if (managedRooms.isNotEmpty()) linkedCatalog.requireStandardMacro(linkedMacros)
         val projectRoomSourceIds = com.supermetroid.editor.asm.AsmProjectRoomLabels.identities(project)

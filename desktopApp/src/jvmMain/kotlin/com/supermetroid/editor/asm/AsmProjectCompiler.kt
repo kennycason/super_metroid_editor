@@ -62,6 +62,8 @@ internal data class AsmCompiledBuildBase(
     val managedBank8FStart: Int? = null,
     /** Checked headerless compiler-resolved damage-word PCs, never guessed native addresses. */
     val beamDamageLocations: Map<String, Int> = emptyMap(),
+    /** Checked headerless word pairs for pending numerical overrides in source builds. */
+    val patchDataLocations: Map<String, AsmPatchWordLocations> = emptyMap(),
 )
 
 internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
@@ -76,6 +78,7 @@ internal fun AsmCompiledBuildBase.copyForReuse(): AsmCompiledBuildBase = copy(
     compilerOutput = compilerOutput.toList(),
     compilerSymbols = compilerSymbols.copyOf(),
     beamDamageLocations = beamDamageLocations.toMap(),
+    patchDataLocations = patchDataLocations.toMap(),
     expectedFinalRomBytes = expectedFinalRomBytes?.copyOf(),
     roomValidationRomBytes = roomValidationRomBytes?.copyOf(),
 )

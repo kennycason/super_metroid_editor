@@ -20,6 +20,7 @@ internal class AsmBossStatsBridge(
 ) {
     private val lastGood = mutableMapOf<String, Int>()
     val revision get() = workspace.sourceBufferRevision
+    var publisher: AsmPatchSourcePublisher = { _, _, sources, changes -> workspace.publishSourceModelChanges(sources, changes) }
     private fun text() = workspace.projectSourceText(ENEMY_HEADER_SOURCE_FILE)
 
     fun view(key: String): AsmBossStatsView = try {
@@ -78,7 +79,7 @@ internal class AsmBossStatsBridge(
         require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared boss fields have competing values. No changes were made." }
         val changes = edits.filter { (_, group) -> group.first().let { it.first.value != it.second } }
         val retiring = owner.patches.any { it.configType == "boss_stats" && values.keys.any { key -> key in it.configData.orEmpty() } }
-        if (changes.isEmpty() && !retiring) return
+        if (changes.isEmpty() && !retiring && owner.asmWorkspace.disabledPatchValues["boss_stats"].orEmpty().keys.none { it in values }) return
         var after = text
         for ((word, value) in changes.values.map { it.first() }.sortedByDescending { it.first.span.first }) {
             val literal = "$" + value.toString(16).uppercase().padStart(4, '0')
@@ -87,7 +88,24 @@ internal class AsmBossStatsBridge(
         publish(values.keys, text, after)
     }
 
-    fun resetToOriginal() = editValues(catalog.keys.associateWith { catalog.original(it).value })
+    fun resetToOriginal() {
+        val before = text()
+        // An original grouped field need not have equal sub-species values.
+        val edits = catalog.keys.flatMap { key ->
+            val original = catalog.original(key).words
+            val current = catalog.field(key, before).words
+            require(current.map { it.speciesId } == original.map { it.speciesId }) { "$key: boss sub-species changed." }
+            current.zip(original).map { (word, originalWord) -> word to originalWord.value }
+        }.groupBy { it.first.span }
+        require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared boss fields have different original values." }
+        var after = before
+        for ((word, value) in edits.values.map { it.first() }.sortedByDescending { it.first.span.first }) {
+            if (word.value != value) after = after.replaceRange(word.span, "$" + value.toString(16).uppercase().padStart(4, '0'))
+        }
+        if (after == before && project().patches.none { it.configType == "boss_stats" && it.configData.orEmpty().isNotEmpty() } &&
+            project().asmWorkspace.disabledPatchValues["boss_stats"].orEmpty().isEmpty()) return
+        publish(catalog.keys, before, after)
+    }
 
     fun useSourceValues(key: String) {
         val keys = setOf(key)
@@ -97,7 +115,7 @@ internal class AsmBossStatsBridge(
 
     fun intercept(file: String, before: String, after: String): Boolean? {
         val change = prepareIntercept(file, before, after) ?: return null
-        workspace.publishSourceModelChanges(mapOf(file to (before to after)), listOf(change))
+        publisher("boss_stats", catalog.changedKeys(before, after), mapOf(file to (before to after)), listOf(change))
         return true
     }
 
@@ -108,12 +126,13 @@ internal class AsmBossStatsBridge(
         keys.forEach { key -> runCatching { catalog.field(key, before).value }.getOrNull()?.let { lastGood[key] = it } }
         if (project().asmWorkspace.bossStatsSourceKeys.containsAll(keys) && project().patches.none {
                 it.configType == "boss_stats" && keys.any { k -> k in it.configData.orEmpty() }
-            }) return null
+            } && project().patches.none { it.configType == "boss_stats" && !it.enabled } &&
+            "boss_stats" !in project().asmWorkspace.disabledPatchValues) return null
         return preparePublish(keys)
     }
 
     private fun publish(touched: Set<String>, beforeText: String, proposed: String) {
-        workspace.publishSourceModelChanges(mapOf(ENEMY_HEADER_SOURCE_FILE to (beforeText to proposed)), listOf(preparePublish(touched)))
+        publisher("boss_stats", touched, mapOf(ENEMY_HEADER_SOURCE_FILE to (beforeText to proposed)), listOf(preparePublish(touched)))
     }
 
     private fun preparePublish(touched: Set<String>): AsmSourceModelChange {

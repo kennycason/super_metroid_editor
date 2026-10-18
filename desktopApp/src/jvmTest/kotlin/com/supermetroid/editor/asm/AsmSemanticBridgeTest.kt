@@ -9,6 +9,27 @@ import org.junit.jupiter.api.Test
 
 class AsmSemanticBridgeTest {
     @Test
+    fun `environmental word pairs return to their matching hazard editor with or without copier header`() {
+        val bytes = TestRomHelper.requireRomBytes()
+        for (rom in listOf(bytes, ByteArray(512) { 0x5A } + bytes)) {
+            val parser = com.supermetroid.editor.rom.RomParser(rom)
+            val header = rom.size % 0x8000
+            val index = AsmSemanticBridge.buildIndex(parser)
+            for (field in com.supermetroid.editor.rom.EnvironmentalDamagePatch.FIELDS) for (pc in listOf(field.lowWordPc, field.highWordPc))
+                assertTrue(index.linksFor(parser.pcToSnes(pc + header)).any { it.target == AsmEditorTarget.EnvironmentalDamage(field.key) })
+        }
+        val moved = bytes.copyOf()
+        fun word(pc: Int, value: Int) { moved[pc] = value.toByte(); moved[pc + 1] = (value ushr 8).toByte() }
+        word(0x801FC, 0xFF00); word(0x80205, 0xFF02)
+        val parser = com.supermetroid.editor.rom.RomParser(moved)
+        val index = AsmSemanticBridge.buildIndex(parser)
+        val target = AsmEditorTarget.EnvironmentalDamage(com.supermetroid.editor.rom.EnvironmentalDamagePatch.LAVA_KEY)
+        assertTrue(index.linksFor(0x90FF00).any { it.target == target })
+        assertTrue(index.linksFor(0x909E8B).none { it.target == target })
+        moved[0x801FB] = 0x69
+        assertTrue(environmentalRuntimeWords(com.supermetroid.editor.rom.RomParser(moved), com.supermetroid.editor.rom.EnvironmentalDamagePatch.LAVA_KEY).isEmpty())
+    }
+    @Test
     fun `boss HP and contact words return to their exact control including secondary parts`() {
         val index = AsmSemanticBridge.buildIndex(TestRomHelper.requireRomParser())
         for (field in com.supermetroid.editor.ui.ALL_BOSS_FIELDS) for (species in field.writeSpeciesIds) {

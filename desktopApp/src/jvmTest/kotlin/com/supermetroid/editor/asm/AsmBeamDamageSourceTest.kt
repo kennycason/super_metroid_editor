@@ -47,7 +47,7 @@ class AsmBeamDamageSourceTest {
         val bridge get() = assertNotNull(editor.beamDamageBridge)
         fun text() = workspace.projectSourceText(BEAM_DAMAGE_SOURCE_FILE)
     }
-    private suspend fun fixture(roomSourceText: String = "; Unrelated room source\n"): Fixture {
+    private suspend fun fixture(roomSourceText: String = "; Unrelated room source\n", saved: SmEditProject? = null): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }
         File(src, "main.asm").writeText("incsrc bank_93.asm\nincsrc bank_8F.asm\n")
@@ -59,7 +59,7 @@ class AsmBeamDamageSourceTest {
         val file = File(directory, "Test.smedit").apply { writeText("{}") }
         val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList()).also { it.initialize(file.path, reference) }
         val workspace = AsmWorkspaceState(projectRepository = repository).apply { bindProject(file.path, true) }
-        val project = SmEditProject("test.sfc").apply { asmWorkspace.enabled = true; asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE }
+        val project = saved ?: SmEditProject("test.sfc").apply { asmWorkspace.enabled = true; asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE }
         val editor = EditorState().apply { testMode = true; initForProject(file, project) }
         editor.bindRoomSources(AsmPlmSourceCatalog("", "", emptyMap(), RomParser(ByteArray(0x300000)), emptyMap()), workspace)
         return Fixture(editor, workspace)
@@ -142,13 +142,13 @@ class AsmBeamDamageSourceTest {
         f.bridge.edit("ice", 57)
         assertEquals(57, f.bridge.view("ice").value)
     }
-    @Test fun `disabled legacy overrides never become active on adoption and explicit charged repair retires both halves`() = runBlocking {
+    @Test fun `adoption enables the customization without activating retired disabled legacy values`() = runBlocking {
         val f = fixture()
         val patch = SmPatch("legacy", "Legacy", enabled = false, configType = "beam_damage", configData = mutableMapOf("power" to 40))
         f.project.patches.add(patch)
         f.bridge.edit("power_charged", 97)
         assertEquals(20, f.bridge.view("power").value); assertEquals(97, f.bridge.view("power_charged").value)
-        assertFalse(patch.enabled); assertNull(patch.configData)
+        assertTrue(patch.enabled); assertNull(patch.configData)
         assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
         assertEquals(source, f.text()); assertFalse(patch.enabled)
         patch.enabled = true; patch.configData = mutableMapOf("power" to 40, "power_charged" to 91)
@@ -159,6 +159,141 @@ class AsmBeamDamageSourceTest {
         assertEquals(111, f.bridge.view("power_charged").value); assertNull(patch.configData)
         assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
         assertEquals(mapOf("power" to 40, "power_charged" to 91), assertNotNull(patch.configData).toMap())
+    }
+    @Test fun `checkbox confirms custom data and disable restore and source undo keep values and flags atomic`() = runBlocking {
+        val f = fixture()
+        val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        val initial = f.text()
+        f.editor.requestTogglePatch(patch.id)
+        assertTrue(patch.enabled); assertNull(f.editor.pendingPatchDisable)
+        f.editor.requestTogglePatch(patch.id)
+        assertFalse(patch.enabled); assertNull(f.editor.pendingPatchDisable)
+        assertEquals(initial, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        f.bridge.editValues(mapOf("power" to 83, "power_charged" to 177, "wave" to 129))
+        assertTrue(patch.enabled)
+        val custom = f.text()
+        f.editor.requestTogglePatch(patch.id)
+        assertSame(patch, f.editor.pendingPatchDisable); assertTrue(patch.enabled); assertEquals(custom, f.text())
+        f.editor.dismissPatchDisable()
+        assertTrue(patch.enabled); assertEquals(custom, f.text())
+        f.editor.requestTogglePatch(patch.id); f.editor.confirmPatchDisable()
+        assertFalse(patch.enabled); assertEquals(20, f.bridge.view("power").value); assertEquals(60, f.bridge.view("power_charged").value)
+        assertTrue(f.project.asmWorkspace.beamDamageSourceKeys.isEmpty())
+        val snapshot = mapOf("power" to listOf(83), "power_charged" to listOf(177), "wave" to listOf(129))
+        assertEquals(snapshot, f.project.asmWorkspace.disabledPatchValues["beam_damage"])
+        val disabled = f.text()
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertTrue(patch.enabled); assertEquals(custom, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertTrue(f.workspace.redoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(disabled, f.text())
+        f.editor.requestTogglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(custom, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(disabled, f.text()); assertEquals(snapshot, f.project.asmWorkspace.disabledPatchValues["beam_damage"])
+    }
+
+    @Test fun `GUI and ASM edits while disabled restore other saved settings and undo to the disabled snapshot`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.editValues(mapOf("power" to 80, "wave" to 120, "wave_charged" to 250))
+        f.editor.togglePatch(patch.id)
+        val unrelated = f.text().replace("keep damage note", "independent comment edit")
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, unrelated)); assertFalse(patch.enabled)
+        val disabled = f.text(); val saved = f.project.asmWorkspace.disabledPatchValues.toMap()
+        f.editor.setPatchConfigData(patch.id, "power", 91)
+        assertTrue(patch.enabled); assertEquals(91, f.bridge.view("power").value)
+        assertEquals(120, f.bridge.view("wave").value); assertEquals(250, f.bridge.view("wave_charged").value)
+        assertContains(f.text(), "independent comment edit")
+        assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(disabled, f.text()); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues)
+        val field = f.bridge.catalog.field("power", f.text())
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(field.span, "92")))
+        assertTrue(patch.enabled); assertEquals(92, f.bridge.view("power").value); assertEquals(120, f.bridge.view("wave").value)
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(disabled, f.text()); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues)
+        f.bridge.resetToOriginal()
+        assertTrue(patch.enabled); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+        assertEquals(20, f.bridge.view("power").value); assertEquals(50, f.bridge.view("wave").value)
+    }
+
+    @Test fun `disabled snapshots survive cold reload and later external ASM edits auto enable without discarding other saved values`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.editValues(mapOf("power" to 82, "ice" to 93)); f.editor.togglePatch(patch.id)
+        assertTrue(f.workspace.saveAllSources(), f.workspace.error)
+        val serialized = Json.encodeToString(SmEditProject.serializer(), f.project)
+        val g = fixture(saved = Json.decodeFromString<SmEditProject>(serialized))
+        val restored = g.project.patches.single { it.configType == "beam_damage" }
+        assertFalse(restored.enabled); assertEquals(20, g.bridge.view("power").value)
+        assertEquals(serialized, Json.encodeToString(SmEditProject.serializer(), g.project))
+        val field = g.bridge.catalog.field("power", g.text())
+        g.workspace.replaceProjectSource(BEAM_DAMAGE_SOURCE_FILE, g.text(), g.text().replaceRange(field.span, "101"))
+        assertFails { validatePatchToggleSources(g.project, patchToggleFamilies(g.bridge.catalog, null, null), mapOf(BEAM_DAMAGE_SOURCE_FILE to g.text())) }
+        assertNotNull(g.editor.patchToggleController).reconcileSourceFlags()
+        assertTrue(restored.enabled); assertEquals(101, g.bridge.view("power").value); assertEquals(93, g.bridge.view("ice").value)
+        assertTrue(g.project.asmWorkspace.disabledPatchValues.isEmpty())
+        validatePatchToggleSources(g.project, patchToggleFamilies(g.bridge.catalog, null, null), mapOf(BEAM_DAMAGE_SOURCE_FILE to g.text()))
+    }
+
+    @Test fun `unsupported drafts and shared bindings cannot cause a partial reset or false disabled flag`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.edit("power", 99)
+        val field = f.bridge.catalog.field("ice", f.text())
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(field.bindingSpan, table("power"))))
+        val before = f.text(); val model = Json.encodeToString(SmEditProject.serializer(), f.project)
+        f.editor.togglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(before, f.text()); assertEquals(model, Json.encodeToString(SmEditProject.serializer(), f.project))
+        assertContains(f.editor.statusMessage, "Shared source words")
+        val shared = f.bridge.catalog.field("power", f.text())
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(shared.span, "99+1")))
+        val draft = f.text(); f.editor.togglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(draft, f.text()); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
+    }
+
+    @Test fun `repairing an externally invalid beam value still auto enables its customization`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        val field = f.bridge.catalog.field("power", f.text())
+        f.workspace.replaceProjectSource(BEAM_DAMAGE_SOURCE_FILE, f.text(), f.text().replaceRange(field.span, "83+1"))
+        assertFalse(patch.enabled)
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replace("83+1", "84")))
+        assertTrue(patch.enabled); assertEquals(84, f.bridge.view("power").value)
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertContains(f.text(), "83+1")
+    }
+
+    @Test fun `rebinding a disabled beam preserves saved damage in its new shared destination`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.editValues(mapOf("power" to 82, "ice" to 93)); f.editor.togglePatch(patch.id)
+        val before = f.text(); val saved = f.project.asmWorkspace.disabledPatchValues.toMap()
+        val ice = f.bridge.catalog.field("ice", before)
+        assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, before.replaceRange(ice.bindingSpan, table("power"))))
+        assertTrue(patch.enabled); assertEquals(82, f.bridge.view("power").value); assertEquals(82, f.bridge.view("ice").value)
+        assertTrue(f.workspace.undoSourceEdit(BEAM_DAMAGE_SOURCE_FILE), f.workspace.error)
+        assertFalse(patch.enabled); assertEquals(before, f.text()); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues)
+    }
+
+    @Test fun `source toggles preserve the existing placed custom item dependency guard before any source mutation`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.edit("power", 82)
+        patch.customItems.add(CustomItemDef("custom", "Custom", "C", visiblePlmId = 0xF200))
+        f.project.getOrCreateRoom(0x91F8).plmChanges.add(PlmChange("add", 0xF200, 71, 55, 0x53))
+        val before = f.text(); val keys = f.project.asmWorkspace.beamDamageSourceKeys.toSet()
+        f.editor.togglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(before, f.text()); assertEquals(keys, f.project.asmWorkspace.beamDamageSourceKeys)
+        assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty()); assertContains(f.editor.statusMessage, "Cannot disable")
+    }
+
+    @Test fun `repeating disable preserves saved work and inconsistent active snapshots cannot be discarded by toggling`() = runBlocking {
+        val f = fixture(); val patch = f.editor.findOrCreateConfigPatch("beam_damage")
+        f.bridge.edit("power", 82); f.editor.togglePatch(patch.id)
+        val saved = f.project.asmWorkspace.disabledPatchValues.toMap(); val before = f.text()
+        f.editor.updatePatch(patch.id, enabled = false)
+        assertFalse(patch.enabled); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues); assertEquals(before, f.text())
+        patch.enabled = true // Simulate an inconsistent external project edit.
+        f.editor.togglePatch(patch.id)
+        assertTrue(patch.enabled); assertEquals(saved, f.project.asmWorkspace.disabledPatchValues); assertEquals(before, f.text())
+        assertContains(f.editor.statusMessage, "no values were discarded")
+        f.editor.updatePatch(patch.id, enabled = true)
+        assertEquals(82, f.bridge.view("power").value); assertTrue(f.project.asmWorkspace.disabledPatchValues.isEmpty())
     }
     @Test fun `shared records adopt together and conflicting bulk reset is atomic`() = runBlocking {
         val f = fixture()
@@ -331,6 +466,9 @@ class AsmBeamDamageSourceTest {
             sourceText(scene, "Edit Ice Beam damage")
             val before = f.text(); val revision = f.workspace.sourceBufferRevision; val navigation = f.workspace.navigationSerial
             rightClickField(scene, pane, "wave"); render()
+            assertTrue(sourceText(scene, "Undo").positionInRoot.y < sourceText(scene, "Redo").positionInRoot.y)
+            assertTrue(sourceText(scene, "Redo").positionInRoot.y < sourceText(scene, "Visual Editor").positionInRoot.y)
+            assertTrue(sourceText(scene, "Visual Editor").positionInRoot.y < sourceText(scene, "Find in this file").positionInRoot.y)
             clickSourceAction(scene, "Visual Editor"); render()
             assertEquals<List<AsmEditorTarget>>(listOf(AsmEditorTarget.BeamDamage("wave")), opened.toList())
             // Desktop text selection may select the right-clicked word; it must not navigate or edit source.
@@ -340,6 +478,7 @@ class AsmBeamDamageSourceTest {
             assertTrue(f.workspace.updateSourceEditText(BEAM_DAMAGE_SOURCE_FILE, f.text().replaceRange(binding, table("wave"))))
             render()
             rightClickField(scene, pane, "wave"); render()
+            assertTrue(sourceText(scene, "Redo").positionInRoot.y < sourceText(scene, "Visual Editor…").positionInRoot.y)
             clickSourceAction(scene, "Visual Editor…"); render()
             assertEquals(1, opened.size)
             clickSourceAction(scene, "Edit Wave Beam damage"); render()

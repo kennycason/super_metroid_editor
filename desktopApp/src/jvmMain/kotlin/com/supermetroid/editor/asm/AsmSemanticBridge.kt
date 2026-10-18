@@ -20,6 +20,7 @@ internal sealed interface AsmEditorTarget {
     data class EnemyTuning(val speciesId: Int, val section: AsmEnemyTuningSection = AsmEnemyTuningSection.STATS) : AsmEditorTarget
     data class BeamDamage(val key: String) : AsmEditorTarget
     data class BossStats(val key: String) : AsmEditorTarget
+    data class EnvironmentalDamage(val key: String) : AsmEditorTarget
     data class Sound(val songSet: Int) : AsmEditorTarget
     data class Map(val area: Int?) : AsmEditorTarget
     data class Text(val entryId: String) : AsmEditorTarget
@@ -248,6 +249,10 @@ internal object AsmSemanticBridge {
         for (bossField in com.supermetroid.editor.ui.ALL_BOSS_FIELDS) {
             val link = bossStatsEditorLink(bossField.key)
             for (species in bossField.writeSpeciesIds) add((RomConstants.BANK_ENEMY_AI or species) + bossField.offset, link)
+        }
+        for (field in com.supermetroid.editor.rom.EnvironmentalDamagePatch.FIELDS) {
+            val link = environmentalEditorLink(field.key)
+            environmentalRuntimeWords(romParser, field.key).forEach { add(it, link) }
         }
         for (entry in EnemySpriteGraphics.EDITOR_ENEMIES) {
             val target = AsmEditorTarget.Sprite(entry.speciesId)

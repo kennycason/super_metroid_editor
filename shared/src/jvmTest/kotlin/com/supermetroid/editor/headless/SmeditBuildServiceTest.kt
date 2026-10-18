@@ -73,6 +73,20 @@ class SmeditBuildServiceTest {
     }
 
     @Test
+    fun `headless builds reject omitted native patch data but ordinary environmental IPS remains available`() {
+        val request = SmeditBuildRequest(patches = mapOf(EnvironmentalDamagePatch.CONFIG_TYPE to SmeditPatchRequest(
+            config = mapOf(EnvironmentalDamagePatch.HEAT_KEY to 5))))
+        val project = SmEditProject("source.sfc").apply { asmWorkspace.patchSourceKeys.add("environmental_damage:heat_per_second") }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(request, project) }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(ByteArray(0x300000), request, project) }
+        project.asmWorkspace.patchSourceKeys.clear()
+        project.asmWorkspace.disabledPatchValues[EnvironmentalDamagePatch.CONFIG_TYPE] = mapOf(EnvironmentalDamagePatch.ACID_KEY to listOf(1, 1))
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().buildPatch(request, project) }
+        assertFailsWith<IllegalArgumentException> { SmeditBuildService().build(ByteArray(0x300000), request, project) }
+        assertTrue(SmeditBuildService().buildPatch(request).ipsPatchBytes.isNotEmpty())
+    }
+
+    @Test
     fun `vanilla ROM uses a three minute Zebes escape and four short charge stages`() {
         val original = TestRomHelper.loadRomBytes() ?: return
         val parser = RomParser(original)

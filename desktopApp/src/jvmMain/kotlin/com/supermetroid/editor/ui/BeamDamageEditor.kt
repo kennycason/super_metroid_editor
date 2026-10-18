@@ -160,7 +160,7 @@ fun BeamDamageEditor(
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Normal and charged damage are independent. " + if (sourceMode) "ASM edits use source Undo, not patch toggles. Shared records edit together." else "Changes apply when this patch is enabled.",
+            "Normal and charged damage are independent. " + if (sourceMode) "Edits enable this patch automatically. Disabling keeps custom values for later. Shared records edit together." else "Changes apply when this patch is enabled.",
             fontSize = LocalEditorTheme.current.fontSize.value.body,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

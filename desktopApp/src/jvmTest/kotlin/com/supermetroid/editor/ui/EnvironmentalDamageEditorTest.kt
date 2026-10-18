@@ -34,6 +34,22 @@ class EnvironmentalDamageEditorTest {
         assertEquals(15, rates[EnvironmentalDamagePatch.HEAT_KEY])
         assertEquals(30, rates[EnvironmentalDamagePatch.LAVA_KEY])
         assertEquals(90, rates[EnvironmentalDamagePatch.ACID_KEY])
+        assertEquals(rates, readEnvironmentalDamageRomRates(RomParser(ByteArray(512) { 0x5A } + parser.getRomData())))
+    }
+
+    @Test
+    fun `ROM environmental export preserves copier header and targets header adjusted pairs`() {
+        val original = TestRomHelper.requireRomBytes()
+        val header = ByteArray(512) { 0x5A }
+        val input = File(tempDir, "headered-hazards.smc").apply { writeBytes(header + original) }
+        val project = SmEditProject(input.path).apply { patches.add(ENVIRONMENTAL_DAMAGE_PATCH.copy(enabled = true,
+            configData = mutableMapOf(EnvironmentalDamagePatch.LAVA_KEY to 40))) }
+        val result = kotlin.test.assertNotNull(RomExporter(project, RomParser(header + original)).build())
+        kotlin.test.assertContentEquals(header, result.resultRom.copyOfRange(0, 512))
+        val fixed = EnvironmentalDamagePatch.encodeEnergyPerSecond(40)
+        assertEquals(fixed.lowWord, result.resultRom.readWord(512 + 0x81E8B))
+        assertEquals(fixed.highWord, result.resultRom.readWord(512 + 0x81E8D))
+        kotlin.test.assertContentEquals(original, input.readBytes().copyOfRange(512, input.length().toInt()))
     }
 
     @Test

@@ -3707,7 +3707,6 @@ private fun AsmEditableSourcePane(
                             buildList {
                                 val contextLine = page.startLine + asmLineIndexAtOffset(fieldValue.text,
                                     (contextMenuOffset ?: fieldValue.selection.end).coerceIn(0, fieldValue.text.length))
-                                addAll(asmVisualEditorContextMenuItems(visualEditorLinksAt(contextLine), onOpenVisualEditors))
                                 add(ContextMenuItem("Undo\t$ASM_MODIFIER_LABEL+Z") {
                                     state.activateSourcePane(pane.id)
                                     state.undoSourceEdit(source.id)
@@ -3716,6 +3715,7 @@ private fun AsmEditableSourcePane(
                                     state.activateSourcePane(pane.id)
                                     state.redoSourceEdit(source.id)
                                 })
+                                addAll(asmVisualEditorContextMenuItems(visualEditorLinksAt(contextLine), onOpenVisualEditors))
                                 add(ContextMenuItem("Find in this file\t$ASM_MODIFIER_LABEL+F") { find.show() })
                                 add(
                                 ContextMenuItem("Go to Definition\t$ASM_MODIFIER_LABEL+D") {

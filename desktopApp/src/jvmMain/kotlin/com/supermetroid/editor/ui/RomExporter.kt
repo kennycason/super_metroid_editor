@@ -225,9 +225,10 @@ internal class RomExporter(
 
     fun build(): RomBuildResult? {
         if ((project.asmWorkspace.enemyTuningSourceKeys.isNotEmpty() || project.asmWorkspace.beamDamageSourceKeys.isNotEmpty() ||
-                project.asmWorkspace.bossStatsSourceKeys.isNotEmpty()) && compiledAsmBase == null) {
-            onStatus("Authored enemy/beam/boss tuning requires its validated ASM build.")
-            onLog("ERROR: Authored enemy/beam/boss tuning requires its validated ASM build.")
+                project.asmWorkspace.bossStatsSourceKeys.isNotEmpty() || project.asmWorkspace.patchSourceKeys.isNotEmpty() ||
+                project.asmWorkspace.disabledPatchValues.isNotEmpty()) && compiledAsmBase == null) {
+            onStatus("Authored tuning or patch data requires its validated ASM build.")
+            onLog("ERROR: Authored tuning or patch data requires its validated ASM build.")
             return null
         }
         fun compiledRoomId(id: Int) = project.newRoomForPreviewId(id)?.let { compiledAsmBase?.generatedNewRoomIds?.get(it.id) } ?: id
@@ -1131,8 +1132,10 @@ internal class RomExporter(
                         ),
                     )
                     val fixedRate = EnvironmentalDamagePatch.encodeEnergyPerSecond(energyPerSecond)
-                    writeU16(romData, field.lowWordPc, fixedRate.lowWord)
-                    writeU16(romData, field.highWordPc, fixedRate.highWord)
+                    val locations = if (compiledAsmBase == null) com.supermetroid.editor.asm.AsmPatchWordLocations(field.lowWordPc, field.highWordPc)
+                        else requireNotNull(compiledAsmBase.patchDataLocations[com.supermetroid.editor.asm.environmentalSourceKey(field.key)]) { "${field.key}: no checked ASM destination; no fixed-address patch was applied." }
+                    writeU16(romData, writePlan.headerSize + locations.lowPc, fixedRate.lowWord)
+                    writeU16(romData, writePlan.headerSize + locations.highPc, fixedRate.highWord)
                     modCount++
                 }
                 onLog("[EXPORT]   Environmental damage: $modCount rates modified")

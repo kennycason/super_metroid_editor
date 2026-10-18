@@ -959,6 +959,11 @@ data class ProjectAsmWorkspaceSettings(
     val beamDamageSourceKeys: MutableSet<String> = mutableSetOf(),
     /** Boss stat identities only; values remain in the authored bank A0 source. */
     val bossStatsSourceKeys: MutableSet<String> = mutableSetOf(),
+    /** Native patch-data identities (configType:key); numeric values live only in ASM. */
+    val patchSourceKeys: MutableSet<String> = mutableSetOf(),
+    /** Disabled native-data customizations, by config type, field identity, and exact word values.
+     * Active values remain solely in ASM. These snapshots exist only while a patch is disabled. */
+    val disabledPatchValues: MutableMap<String, Map<String, List<Int>>> = mutableMapOf(),
 )
 
 @Serializable

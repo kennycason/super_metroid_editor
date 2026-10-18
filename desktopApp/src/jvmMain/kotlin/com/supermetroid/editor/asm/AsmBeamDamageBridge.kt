@@ -12,6 +12,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     private val project: () -> SmEditProject, private val changed: () -> Unit) {
     private val lastGood = mutableMapOf<String, Int>()
     val revision get() = workspace.sourceBufferRevision
+    var publisher: AsmPatchSourcePublisher = { _, _, sources, changes -> workspace.publishSourceModelChanges(sources, changes) }
     private fun text() = workspace.projectSourceText(BEAM_DAMAGE_SOURCE_FILE)
     private fun effectiveKeys(patch: SmPatch): Set<String> = patch.configData.orEmpty().keys.flatMap {
         if (it.endsWith("_charged")) listOf(it) else listOf(it, "${it}_charged")
@@ -60,7 +61,8 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
         }.groupBy { it.first.span }
         require(edits.values.all { group -> group.map { it.second }.distinct().size == 1 }) { "Shared beam records have competing values. No changes were made." }
         if (edits.values.all { group -> group.first().let { it.first.value == it.second } } &&
-            project().patches.none { patch -> patch.configType == "beam_damage" && patch.configData.orEmpty().keys.any { it.removeSuffix("_charged") in values.keys.map { key -> key.removeSuffix("_charged") } } }) return
+            project().patches.none { patch -> patch.configType == "beam_damage" && patch.configData.orEmpty().keys.any { it.removeSuffix("_charged") in values.keys.map { key -> key.removeSuffix("_charged") } } } &&
+            project().asmWorkspace.disabledPatchValues["beam_damage"].orEmpty().keys.none { it in values }) return
         var after = before
         for ((field, value) in edits.values.map { it.first() }.sortedByDescending { it.first.span.first }) {
             after = after.replaceRange(field.span, literal(value))
@@ -77,18 +79,13 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     /** Opening, searching, and unchanged saves never enter this first-edit transaction. */
     fun intercept(file: String, before: String, after: String): Boolean? {
         if (file != BEAM_DAMAGE_SOURCE_FILE || before == after) return null
-        val delta = AsmSourceTextChange.between(before, after) ?: return null
-        val keys = catalog.keys.filter { key ->
-            val old = runCatching { catalog.field(key, before) }.getOrNull() ?: return@filter false
-            lastGood[key] = old.value
-            val next = runCatching { catalog.field(key, after) }.getOrNull()
-            if (next != null) old.value != next.value || old.table != next.table else
-                listOf(old.span, old.bindingSpan).any { delta.offset <= it.last + 1 && delta.offset + delta.removed.length >= it.first }
-        }.toSet()
+        val keys = catalog.changedKeys(before, after)
+        keys.forEach { key -> runCatching { catalog.field(key, before).value }.getOrNull()?.let { lastGood[key] = it } }
         if (keys.isEmpty()) return null
         if (project().asmWorkspace.beamDamageSourceKeys.containsAll(keys) && project().patches.none {
                 it.configType == "beam_damage" && it.configData.orEmpty().keys.any { k -> k.removeSuffix("_charged") in keys.map { key -> key.removeSuffix("_charged") } }
-            }) return null
+            } && project().patches.none { it.configType == "beam_damage" && !it.enabled } &&
+            "beam_damage" !in project().asmWorkspace.disabledPatchValues) return null
         publish(keys, before, after)
         return true
     }
@@ -145,9 +142,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
             }
         }
         check(false)
-        workspace.replaceProjectSources(mapOf(BEAM_DAMAGE_SOURCE_FILE to (beforeText to afterText)),
-            beforeApply = { set(false) }, afterApply = changed,
-            beforeUndo = { check(true); set(true) }, afterUndo = changed,
-            beforeRedo = { check(false); set(false) }, afterRedo = changed)
+        publisher("beam_damage", touched, mapOf(BEAM_DAMAGE_SOURCE_FILE to (beforeText to afterText)),
+            listOf(AsmSourceModelChange(::check, ::set, changed)))
     }
 }
