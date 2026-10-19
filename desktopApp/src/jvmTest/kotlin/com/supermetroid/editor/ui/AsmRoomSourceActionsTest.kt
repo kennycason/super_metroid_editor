@@ -72,10 +72,11 @@ class AsmRoomSourceActionsTest {
             render()
             click(scene, "Edit door data…"); render()
             val planned = workspace.sourceEditorText(DOOR_SOURCE_FILE)
+            val presented = AsmSourcePresentation(planned).text
             assertContains(planned, "macro SmeditDoors_91F8_Door_0()")
-            assertEquals(planned, field().config[SemanticsProperties.EditableText].text)
+            assertEquals(presented, field().config[SemanticsProperties.EditableText].text)
             assertTrue(nodes(scene).none { text(it) == "Create editable source" })
-            val cursor = planned.indexOf("dw ${'$'}0000 ; Distance") + 4
+            val cursor = presented.indexOf("dw ${'$'}0000 ; Distance") + 4
             assertTrue(field().config[SemanticsActions.SetSelection].action!!.invoke(cursor, cursor + 4, false))
             render()
             assertEquals(model, Json.encodeToString(SmEditProject.serializer(), project))
@@ -86,17 +87,17 @@ class AsmRoomSourceActionsTest {
             render()
             assertNull(workspace.roomSourceInspection)
             assertEquals(edited, workspace.projectSourceText(DOOR_SOURCE_FILE))
-            assertEquals(edited, field().config[SemanticsProperties.EditableText].text)
+            assertEquals(AsmSourcePresentation(edited).text, field().config[SemanticsProperties.EditableText].text)
             assertEquals(cursor + 4, field().config[SemanticsProperties.TextSelectionRange].start, "First-edit promotion must preserve the typing caret")
             assertEquals(1, project.rooms.getValue("91F8").asmDoorSourceVersion)
             click(scene, "Edit room"); assertEquals(AsmEditorTarget.Room(0x91F8), openedRoom)
             assertTrue(workspace.undoSourceEdit(DOOR_SOURCE_FILE), workspace.error); render()
             assertEquals(source, workspace.projectSourceText(DOOR_SOURCE_FILE))
             assertEquals(model, Json.encodeToString(SmEditProject.serializer(), project))
-            assertEquals(planned, field().config[SemanticsProperties.EditableText].text)
+            assertEquals(presented, field().config[SemanticsProperties.EditableText].text)
             assertTrue(workspace.canRedoSource(DOOR_SOURCE_FILE))
             assertTrue(workspace.redoSourceEdit(DOOR_SOURCE_FILE), workspace.error); render()
-            assertEquals(edited, field().config[SemanticsProperties.EditableText].text)
+            assertEquals(AsmSourcePresentation(edited).text, field().config[SemanticsProperties.EditableText].text)
             assertEquals(0, editor.currentRoomId); assertTrue(editor.undoStack.isEmpty())
         } finally { scene.close(); surface.close() }
     }
@@ -155,8 +156,9 @@ class AsmRoomSourceActionsTest {
                 assertTrue(nodes(scene).none { text(it) == "Create editable source" })
                 val draft = assertNotNull(preview.automaticEdit)
                 fun field() = nodes(scene).single { it.config.contains(SemanticsProperties.EditableText) }
-                assertEquals(draft.text, field().config[SemanticsProperties.EditableText].text)
-                val cursor = draft.text.length
+                val presented = AsmSourcePresentation(draft.text).text
+                assertEquals(presented, field().config[SemanticsProperties.EditableText].text)
+                val cursor = presented.length
                 assertTrue(field().config[SemanticsActions.SetSelection].action!!.invoke(cursor, cursor, false))
                 render()
                 assertTrue(field().config[SemanticsActions.InsertTextAtCursor].action!!.invoke(AnnotatedString("; My layout note\n")))

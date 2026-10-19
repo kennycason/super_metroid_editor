@@ -49,8 +49,11 @@ internal class AsmEnvironmentalDamageBridge(val catalog: AsmEnvironmentalDamageS
             else source.copy(problem = "Environmental damage must fit 0–9999 energy/sec.")
     }
     fun line(key: String? = null) = catalog.line(key ?: EnvironmentalDamagePatch.HEAT_KEY, texts())
-    fun editorLinks(file: String, line: Int) = if (file !in ENVIRONMENT_SOURCE_FILES) emptyList() else
-        catalog.navigationKeysAt(file, line, texts()).map(::environmentalEditorLink)
+    fun editorLinks(file: String, line: Int): List<AsmEditorLink> {
+        if (file !in ENVIRONMENT_SOURCE_FILES) return emptyList()
+        val texts = workspace.projectSourceTextsForNavigation(catalog.originals.keys) ?: return emptyList()
+        return catalog.navigationKeysAt(file, line, texts).map(::environmentalEditorLink)
+    }
 
     fun edit(key: String, value: Int) = editValues(mapOf(key to value))
     fun editValues(values: Map<String, Int>) {

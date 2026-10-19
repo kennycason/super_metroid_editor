@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 /** Uses the same private parity fixtures as the source-symbol audit; never touches a user's project. */
@@ -52,9 +53,22 @@ class AsmSourceAugmentationIntegrationTest {
             AsmSourceRename("MainPauseRoutine", "PauseMenuDispatch"),
         ))
 
-    @Test fun `explicit v1 to v2 update preserves a native enemy edit and real authored Objectives ROM output`() {
+    @Test fun `explicit v1 to current update preserves a native enemy edit and real authored Objectives ROM output`() {
+        val v2 = previousCrawlerRecipe()
+        verifyBaselineUpdate(v2.copy(revision = "super-metroid-ntsc-1", documentation = v2.documentation.filterNot { it.id.startsWith("crawlers.") }))
+    }
+
+    @Test fun `explicit v2 to current update adds inline comments and preserves native edits and authored Objectives ROM output`() {
+        verifyBaselineUpdate(previousCrawlerRecipe())
+    }
+
+    private fun previousCrawlerRecipe(): AsmSourceAugmentation =
+        checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+
+    private fun verifyBaselineUpdate(previous: AsmSourceAugmentation) {
+        AsmProjectCompiler.clearBuildCacheForTests()
         val latest = AsmSourceAugmentation.bundled()
-        val previous = latest.copy(revision = "super-metroid-ntsc-1", documentation = latest.documentation.filterNot { it.id.startsWith("crawlers.") })
         val fixture = AsmProjectTestFixture.create(temporary, previous)
         val repo = AsmProjectWorkspaceRepository(starterModules = emptyList())
         val catalog = assertNotNull(AsmEnemyTuningSource.load(fixture.workspace.originalDirectory))
@@ -72,16 +86,18 @@ class AsmSourceAugmentationIntegrationTest {
             AsmSourceParser().parse(File(upstream, "src"), File(upstream, "data"), emptyList()))
         val plan = updater.prepare(fixture.projectFile.path, reference)
         assertEquals(0, plan.conflictCount)
-        assertEquals("super-metroid-ntsc-1", AsmSourceBaseline.load(fixture.workspace.root)?.augmentationRevision)
+        assertEquals(previous.revision, AsmSourceBaseline.load(fixture.workspace.root)?.augmentationRevision)
         val result = updater.apply(plan, emptyMap(), fixture.rom)
         val after = AsmProjectCompiler(repo).compile(fixture.projectFile.path, fixture.rom)
         assertContentEquals(before.romBytes, after.romBytes, "Adding crawler documentation must preserve the complete edited/modular ROM")
         assertEquals(latest.revision, result.workspace.baselineRevision)
         assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(), "; Falling uses a separate signed 16.16")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(),
+            ";A3E66F; Keep the starting orientation: upside right, left, down, or up (0..3).")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
-        assertEquals("super-metroid-ntsc-1", AsmSourceBaseline.load(File(result.backupDirectory, "asm"))?.augmentationRevision)
+        assertEquals(previous.revision, AsmSourceBaseline.load(File(result.backupDirectory, "asm"))?.augmentationRevision)
     }
 
     @Test fun `current Objectives and Fast Doors modules compile identically on two frozen naming baselines`() {
@@ -137,6 +153,8 @@ class AsmSourceAugmentationIntegrationTest {
         val upstream = TestRomHelper.requireDisassemblyDir()
         val before = AsmSourceParser().parse(File(upstream, "src"), File(upstream, "data"), emptyList())
         val after = AsmSourceParser().parse(File(fixture.workspace.workingDirectory, "src"), File(fixture.workspace.workingDirectory, "data"), emptyList())
+        val inlineNotes = planAsmSourceLineDocumentation(recipe.lineDocumentation, before)
+            .associateBy { it.fileId to it.lineIndex }
         assertEquals(before.labels.size, after.labels.size, "No declarations may disappear")
         before.labels.zip(after.labels).forEach { (old, updated) ->
             assertEquals(old.fileId, updated.fileId)
@@ -152,7 +170,9 @@ class AsmSourceAugmentationIntegrationTest {
                 if (origin < 0) {
                     assertTrue(asmExecutableCode(text).isBlank(), "Inserted line must be documentation: ${file.id}:$line")
                 } else {
-                    assertEquals(manifest.symbols.activeCode(original[origin]), text, "Preserve original line ${file.id}:$origin")
+                    val addition = inlineNotes[file.id to origin]?.text.orEmpty()
+                    assertEquals(manifest.symbols.activeCode(original[origin]) + addition, text,
+                        "Preserve original line ${file.id}:$origin except its explicitly declared comment suffix")
                 }
             }
         }

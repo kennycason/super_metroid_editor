@@ -46,6 +46,7 @@ internal fun AsmDocumentFindBar(
     text: String,
     onNavigate: (AsmDocumentMatch) -> Unit,
     onClose: () -> Unit,
+    findMatches: (String, String, Boolean) -> List<AsmDocumentMatch> = ::findAsmDocumentText,
 ) {
     if (!find.open) return
     val fs = LocalEditorTheme.current.fontSize.value
@@ -53,12 +54,12 @@ internal fun AsmDocumentFindBar(
     val navigate by rememberUpdatedState(onNavigate)
     var previousQuery by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var pending by remember { mutableStateOf(false) }
-    LaunchedEffect(find.query, find.matchCase, text) {
+    LaunchedEffect(find.query, find.matchCase, text, findMatches) {
         pending = true
         val key = find.query to find.matchCase
         val restart = previousQuery != key
         delay(100)
-        val result = withContext(Dispatchers.Default) { findAsmDocumentText(text, key.first, key.second) }
+        val result = withContext(Dispatchers.Default) { findMatches(text, key.first, key.second) }
         find.updateMatches(result, restart)
         previousQuery = key
         pending = false

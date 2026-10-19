@@ -220,8 +220,8 @@ ROM/source fixture and reads addresses/member facts from WLA output, not comment
    default, and selecting it again collapses it. Back/forward navigation
    preserves the trail. At a definition, the compact **References** bar reports
    every resolved use; **Prev**, **Next**, and **Show all** navigate callers and
-   data references without losing the active symbol. Definition names and source
-   gutters are clickable, so reference browsing also works from search/address
+   data references without losing the active symbol. Definition names are
+   clickable, so reference browsing also works from search/address
    landings instead of only from an operand. Literal-text results land on the
    exact matching column, and ASM back/forward history retains that caret target.
 5. Open **Library** for a practical learning path covering source/data syntax,
@@ -238,8 +238,10 @@ ROM/source fixture and reads addresses/member facts from WLA output, not comment
    `SNES:8F805A`) or an unheadered PC offset (`0x07805A`, `PC:07805A`, or
    `07805A`) to find exact source anchors, a containing extracted asset, and the
    nearest authored source context. Full 24-bit address operands in source are
-   clickable. The source gutter displays exact addresses independently of line
-   numbers.
+   clickable. Clicking anywhere in the source gutter cycles line numbers,
+   original annotated SNES addresses, or both; missing addresses remain blank. Address annotations
+   are hidden from code without changing saved source. See
+   [Source presentation](source_presentation.md) for the editing/offset contract.
 9. Open **ROM** and choose **Build SMEDIT Result** for a non-writing snapshot of
    the real export transaction. **Loaded ROM** shows the bytes from the opened
    file, **SMEDIT Result** shows the fully validated bytes SMEDIT would export,
@@ -276,7 +278,11 @@ ROM/source fixture and reads addresses/member facts from WLA output, not comment
     and then **Checking ASM…** while background work refreshes navigation and
     checks saved files for unsafe data literals. Editing remains available;
     newer typing stays unsaved, and obsolete jobs cannot replace a newer index
-    or build report. Asar `!defines` such as `!SPF` are colored and
+    or build report. On startup, room banks are available before the full source
+    index. Visual-editor links wait for their source dependencies and refresh
+    automatically when indexing completes, without reopening the tab. Missing
+    source never becomes an empty editable bank; semantic edits remain blocked
+    until their real source is available. Asar `!defines` such as `!SPF` are colored and
     navigate to their declarations like ordinary source symbols. Resolvable
     references retain syntax colors without persistent underlines; hovering any
     navigable token changes the text cursor to a hand. Use **Cmd+D** on macOS or

@@ -153,6 +153,7 @@ internal class AsmWorkspaceState(
         private set
     var browserMode by mutableStateOf(AsmBrowserMode.SOURCE)
         private set
+    var sourceGutterMode by mutableStateOf(AsmSourceGutterMode.LINES)
     var plmPlacementSnapshot by mutableStateOf<AsmPlmPlacementSnapshot?>(null)
         private set
     /** One sidebar search shared across browser modes, independent of navigation history. */
@@ -908,6 +909,21 @@ internal class AsmWorkspaceState(
         savedSourceTexts[fileId] = text
         sourceBuffers[fileId] = text
         return text
+    }
+
+    /**
+     * Optional navigation must tolerate the room-only startup index and missing source files.
+     * Return no snapshot until every dependency is available; never substitute baseline or empty
+     * text. Semantic reads/writes still use [projectSourceText] and report unavailable source.
+     */
+    fun projectSourceTextsForNavigation(fileIds: Collection<String>): Map<String, String>? {
+        val active = projectWorkspace ?: return null
+        if (fileIds.any { it !in sourceBuffers && active.referenceWorkspace.index.file(it) == null }) return null
+        return try {
+            fileIds.associateWith(::projectSourceText)
+        } catch (_: java.io.IOException) {
+            null
+        }
     }
 
     fun replaceProjectSource(fileId: String, expected: String, replacement: String,

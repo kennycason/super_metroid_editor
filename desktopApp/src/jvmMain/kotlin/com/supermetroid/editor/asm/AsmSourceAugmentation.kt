@@ -30,6 +30,7 @@ internal data class AsmSourceAugmentation(
     val upstreamSourceSha256: String = "",
     val documentation: List<AsmSourceDocumentation> = emptyList(),
     val renames: List<AsmSourceRename> = emptyList(),
+    val lineDocumentation: List<AsmSourceLineDocumentation> = emptyList(),
 ) {
     fun apply(sourceRoot: File, sourceIndex: AsmReferenceIndex? = null,
         nativeSymbols: List<AsmNativeSymbol> = AsmNativeSymbolManifest.load(upstreamRevision)): AsmAugmentedSource =
@@ -42,7 +43,8 @@ internal data class AsmSourceAugmentation(
         require(upstreamSourceSha256.isEmpty() || AsmVerifiedCache.fingerprint(texts) == upstreamSourceSha256) {
             "ASM augmentation $revision does not match the pinned upstream source bytes"
         }
-        if (documentation.isEmpty() && renames.isEmpty()) return AsmAugmentedSource(texts, emptyMap(), emptyMap(), upstreamHashes)
+        if (documentation.isEmpty() && renames.isEmpty() && lineDocumentation.isEmpty())
+            return AsmAugmentedSource(texts, emptyMap(), emptyMap(), upstreamHashes)
         val index = image.index
         val lineStarts = mutableMapOf<String, List<Int>>()
         fun offset(fileId: String, line: Int) = lineStarts.getOrPut(fileId) {
@@ -51,7 +53,8 @@ internal data class AsmSourceAugmentation(
         if (renames.isNotEmpty()) require(texts.values.none { text -> text.lineSequence().any {
             augmentationNamespace.containsMatchIn(asmExecutableCode(it))
         } }) { "Global renaming of namespaced source requires an explicit scoped transformation" }
-        require(documentation.map { it.id }.distinct().size == documentation.size) { "Duplicate ASM documentation identity" }
+        val documentationIds = documentation.map { it.id } + lineDocumentation.map { it.id }
+        require(documentationIds.distinct().size == documentationIds.size) { "Duplicate ASM documentation identity" }
         require(documentation.map { Triple(it.fileId, it.symbol, it.localLabel) }.distinct().size == documentation.size) { "Duplicate ASM documentation target" }
         require(renames.map { it.symbol }.distinct().size == renames.size) { "Duplicate ASM rename identity" }
         val changes = mutableMapOf<String, MutableList<SourceChange>>()
@@ -162,6 +165,10 @@ internal data class AsmSourceAugmentation(
             val start = offset(label.fileId, label.lineIndex)
             changes.getOrPut(label.fileId, ::mutableListOf) += SourceChange(start, start, comments)
         }
+        planAsmSourceLineDocumentation(lineDocumentation, index).forEach { insertion ->
+            val start = offset(insertion.fileId, insertion.lineIndex) + insertion.column
+            changes.getOrPut(insertion.fileId, ::mutableListOf) += SourceChange(start, start, insertion.text)
+        }
         val origins = linkedMapOf<String, List<Int>>()
         val augmented = texts.mapValues { (fileId, text) ->
             val edits = changes[fileId].orEmpty().distinct().sortedWith(compareBy(SourceChange::start, SourceChange::end))
@@ -171,8 +178,12 @@ internal data class AsmSourceAugmentation(
                 edits.forEach { edit -> append(text, cursor, edit.start); append(edit.replacement); cursor = edit.end }
                 append(text, cursor, text.length)
             }
-            if (edits.any { it.start == it.end }) {
-                val inserted = edits.filter { it.start == it.end }.groupBy { text.take(it.start).count { c -> c == '\n' } }
+            if (edits.any { it.start == it.end && '\n' in it.replacement }) {
+                val starts = lineStarts.getValue(fileId)
+                val inserted = edits.filter { it.start == it.end && '\n' in it.replacement }.groupBy {
+                    val found = starts.binarySearch(it.start)
+                    if (found >= 0) found else -found - 2
+                }
                 origins[fileId] = buildList {
                     text.split('\n').indices.forEach { line ->
                         inserted[line].orEmpty().forEach { edit -> repeat(edit.replacement.count { it == '\n' }) { add(-1) } }

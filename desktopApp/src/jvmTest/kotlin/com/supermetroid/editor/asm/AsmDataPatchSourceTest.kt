@@ -15,6 +15,7 @@ import com.supermetroid.editor.data.*
 import com.supermetroid.editor.rom.ControllerBindings
 import com.supermetroid.editor.rom.RomParser
 import com.supermetroid.editor.ui.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
@@ -112,18 +113,104 @@ class AsmDataPatchSourceTest {
         val project get() = editor.project
         fun patch(type: String) = editor.findOrCreateConfigPatch(type)
     }
-    private suspend fun fixture(): Fixture {
+    private suspend fun fixture(
+        progressive: Boolean = false,
+        createWorkspace: (AsmProjectWorkspaceRepository) -> AsmWorkspaceState = { AsmWorkspaceState(projectRepository = it) },
+    ): Fixture {
         val root = File(directory, "reference"); val src = File(root, "src").apply { mkdirs() }; val data = File(root, "data").apply { mkdirs() }
         originals.forEach { (file, text) -> File(src, file).writeText(text) }; File(src, PLM_SOURCE_FILE).writeText("; Unrelated\n")
         val reference = AsmReferenceWorkspace(root, AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL,
             AsmReferenceContract.COMMIT, "test", "base.sfc", "ab".repeat(32), 0x300000, 0), AsmSourceParser().parse(src, data, emptyList()))
         val file = File(directory, "Test.smedit").apply { writeText("{}") }
         val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList()).also { it.initialize(file.path, reference) }
-        val workspace = AsmWorkspaceState(projectRepository = repository).apply { bindProject(file.path, true) }
+        val workspace = createWorkspace(repository).apply { bindProject(file.path, true, progressive = progressive) }
         val project = SmEditProject("test.sfc").apply { asmWorkspace.enabled = true; asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE }
         val editor = EditorState().apply { testMode = true; initForProject(file, project) }
         editor.bindRoomSources(AsmPlmSourceCatalog("", "", emptyMap(), RomParser(ByteArray(0x300000)), emptyMap()), workspace)
         return Fixture(editor, workspace)
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test fun `ASM tab renders during progressive startup and links recover after indexing`() = runBlocking {
+        val release = CompletableDeferred<Unit>()
+        val f = fixture(progressive = true) { repository ->
+            AsmWorkspaceState(projectRepository = repository, sourceIndexLoader = { path ->
+                release.await(); repository.load(path)
+            })
+        }
+        val scene = ComposeScene()
+        val surface = Surface.makeRasterN32Premul(1000, 800)
+        try {
+            assertFalse(assertNotNull(f.workspace.projectWorkspace).indexComplete)
+            assertNull(f.workspace.workspace?.index?.file("bank_80.asm"))
+            assertTrue(f.workspace.sourceIndexingInProgress)
+            f.workspace.openSource(PLM_SOURCE_FILE, 0)
+            val before = Json.encodeToString(SmEditProject.serializer(), f.project)
+            val revision = f.workspace.sourceBufferRevision
+            val liveLinks = assertNotNull(f.workspace.sourceEditorLinks)
+            var linkLookups = 0
+            f.workspace.sourceEditorLinks = { file, line -> linkLookups++; liveLinks(file, line) }
+            scene.constraints = Constraints.fixed(1000, 800)
+            scene.setContent {
+                CompositionLocalProvider(LocalEditorTheme provides EditorThemeState()) {
+                    MaterialTheme { AsmWorkspaceCanvas(f.workspace) }
+                }
+            }
+            var time = System.nanoTime()
+            suspend fun render() { repeat(8) {
+                Snapshot.sendApplyNotifications(); yield(); time += 16_666_667
+                scene.render(surface.canvas, time); yield()
+            } }
+            render() // Exercise the real link resolver called during Compose measurement.
+            assertTrue(assertNotNull(f.workspace.sourceEditorLinks)(PLM_SOURCE_FILE, 0).isEmpty())
+            for (file in f.bridge.catalog.originals.keys) assertTrue(f.bridge.editorLinks(file, 0).isEmpty(), file)
+            assertFailsWith<IllegalArgumentException> { f.workspace.projectSourceText("bank_80.asm") }
+            assertFailsWith<IllegalArgumentException> { f.bridge.editValues("ceres_escape_seconds", mapOf("seconds" to 95)) }
+            assertEquals(revision, f.workspace.sourceBufferRevision)
+            assertTrue(f.workspace.unsavedSourceFileIds.isEmpty())
+            assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
+
+            val lookupsBeforeIndex = linkLookups
+            release.complete(Unit)
+            f.workspace.awaitSourceIndexing()
+            render() // The same canvas must survive the partial -> complete transition.
+            assertTrue(linkLookups > lookupsBeforeIndex, "Recheck cached links without moving the caret or reopening the tab")
+            assertTrue(assertNotNull(f.workspace.projectWorkspace).indexComplete)
+            val target = f.bridge.line("ceres_escape_seconds", "seconds")
+            f.workspace.openSource(target.first, target.second)
+            render()
+            assertEquals(listOf(AsmEditorTarget.PatchData("ceres_escape_seconds", "seconds")),
+                assertNotNull(f.workspace.sourceEditorLinks)(target.first, target.second).map { it.target })
+            assertTrue(f.workspace.unsavedSourceFileIds.isEmpty())
+            assertEquals(before, Json.encodeToString(SmEditProject.serializer(), f.project))
+        } finally {
+            scene.close(); surface.close()
+            release.complete(Unit); f.workspace.awaitSourceIndexing()
+        }
+    }
+
+    @Test fun `navigation remains optional after index failure and recovers on retry`() = runBlocking {
+        var fail = true
+        val f = fixture(progressive = true) { repository ->
+            AsmWorkspaceState(projectRepository = repository, sourceIndexLoader = { path ->
+                if (fail) error("broken index fixture") else repository.load(path)
+            })
+        }
+        f.workspace.awaitSourceIndexing()
+        val problem = f.workspace.error
+        assertEquals("broken index fixture", f.workspace.sourceIndexFailure)
+        val links = assertNotNull(f.workspace.sourceEditorLinks)
+        assertTrue(links(PLM_SOURCE_FILE, 0).isEmpty())
+        assertTrue(links("bank_80.asm", 0).isEmpty())
+        assertEquals(problem, f.workspace.error, "Optional navigation must not clear the index failure")
+        assertFailsWith<IllegalArgumentException> { f.bridge.texts() }
+        fail = false
+        f.workspace.rebuildSourceIndex()
+        f.workspace.awaitSourceIndexing()
+        val target = f.bridge.line("ceres_escape_seconds", "seconds")
+        assertTrue(links(target.first, target.second).isNotEmpty())
+        assertNull(f.workspace.sourceIndexFailure)
+        assertTrue(f.workspace.unsavedSourceFileIds.isEmpty())
     }
 
     @Test fun `all finite codecs are readable and inspection and unchanged edits do not dirty the project`() = runBlocking {

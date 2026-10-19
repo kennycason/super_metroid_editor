@@ -58,7 +58,11 @@ internal class AsmDataPatchBridge(val catalog: AsmDataPatchSource, val workspace
     }
     fun line(type: String, key: String? = null): Pair<String, Int> = catalog.line(
         key?.let { dataPatchKey(type, it) } ?: catalog.definitions.values.first { it.type == type }.id, texts())
-    fun editorLinks(file: String, line: Int) = catalog.editorLinks(file, line, texts())
+    fun editorLinks(file: String, line: Int): List<AsmEditorLink> {
+        if (file !in catalog.originals) return emptyList()
+        val texts = workspace.projectSourceTextsForNavigation(catalog.originals.keys) ?: return emptyList()
+        return catalog.editorLinks(file, line, texts)
+    }
 
     fun editValues(type: String, requested: Map<String, Int>) {
         if (requested.isEmpty()) return

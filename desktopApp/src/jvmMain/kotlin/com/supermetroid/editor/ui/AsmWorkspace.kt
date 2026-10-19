@@ -2742,6 +2742,10 @@ private fun AsmSourceCanvas(
         else source.lines.joinToString("\n")
     }
     val lineOffsets = remember(source) { asmDocumentLineOffsets(source.lines) }
+    val presentedLines = remember(source, state.workspaceKind) {
+        if (state.workspaceKind == AsmWorkspaceKind.REFERENCE) source.lines.map(::AsmSourcePresentation) else emptyList()
+    }
+    val gutterMode = state.sourceGutterMode
     val characterWidthPx = with(LocalDensity.current) { fs.body.toPx() * MONOSPACE_CHARACTER_WIDTH }
     val numberWidth = with(LocalDensity.current) {
         (fs.detail.toPx() * MONOSPACE_CHARACTER_WIDTH * source.lines.size.toString().length).toDp() + 16.dp
@@ -2763,9 +2767,9 @@ private fun AsmSourceCanvas(
     val visualEditorAddresses = remember(addressAnchorsByLine, compiledAddressesByLine) {
         addressAnchorsByLine.mapValues { it.value.snesAddress } + compiledAddressesByLine
     }
-    val minimumContentWidth = remember(source.id, fs.body, numberWidth, addressWidth) {
-        val longestLine = source.lines.maxOfOrNull(String::length)?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
-        (numberWidth.value + addressWidth.value + 24f +
+    val minimumContentWidth = remember(source, fs.body, numberWidth, addressWidth, gutterMode) {
+        val longestLine = presentedLines.maxOfOrNull { it.text.length }?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
+        ((if (gutterMode.lines) numberWidth.value else 0f) + (if (gutterMode.addresses) addressWidth.value else 0f) + 24f +
             longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp
     }
     LaunchedEffect(pane.navigationSerial, source.id) {
@@ -2777,7 +2781,9 @@ private fun AsmSourceCanvas(
     var visualEditorLine by remember(pane.id, source.id, pane.navigationSerial, state.editSessionSerial, state.workspaceKind) {
         mutableStateOf(pane.lineIndex)
     }
-    val visualEditors = remember(source, editorLines, semanticIndex, visualEditorAddresses, state.workspaceKind, state.sourceEditorLinks) {
+    // Links can depend on other banks, including ones absent from the startup index.
+    val visualEditors = remember(source, editorLines, semanticIndex, visualEditorAddresses,
+        state.workspaceKind, state.sourceEditorLinks, state.sourceBufferRevision) {
         AsmVisualEditorResolver(source, editorLines, semanticIndex, visualEditorAddresses,
             if (state.workspaceKind == AsmWorkspaceKind.PROJECT) ({ line -> state.sourceEditorLinks?.invoke(source.id, line).orEmpty() }) else null)
     }
@@ -2956,8 +2962,9 @@ private fun AsmSourceCanvas(
         AsmDocumentFindBar(find, documentText, { match ->
             state.activateSourcePane(pane.id)
             state.selectSourceEditorMatch(source.id, match.line, match.column)
-            scope.launch { horizontal.scrollTo(((match.column - 8).coerceAtLeast(0) * characterWidthPx).toInt()) }
-        }, closeFind)
+            val column = presentedLines.getOrNull(match.line)?.displayOffset(match.column) ?: match.column
+            scope.launch { horizontal.scrollTo(((column - 8).coerceAtLeast(0) * characterWidthPx).toInt()) }
+        }, closeFind, findMatches = ::findAsmPresentedDocumentText)
         if (state.workspaceKind == AsmWorkspaceKind.PROJECT) {
             state.roomSourceInspection?.takeIf { it.fileId == source.id && it.automaticEdit != null }?.let {
                 Text("This room data is ready to edit and syncs with the visual editor. Opening this view changes nothing.",
@@ -2995,76 +3002,94 @@ private fun AsmSourceCanvas(
             }
             CompositionLocalProvider(LocalContextMenuRepresentation provides ASM_CONTEXT_MENU_REPRESENTATION) {
                 ContextMenuDataProvider(items = { asmVisualEditorContextMenuItems(visualEditors.linksAt(visualEditorLine), ::openVisualEditors) }) {
-                    AsmScrollableTextPane(
-                        listState = listState,
-                        horizontalState = horizontal,
-                        minimumContentWidth = minimumContentWidth,
-                        focusKey = source.id,
-                        onFind = find::show,
-                        onBack = state::goBack,
-                        onForward = state::goForward,
-                        modifier = Modifier.weight(1f).fillMaxWidth().background(codeBackground()),
-                        externalFocusRequester = textFocus,
-                    ) {
-                        items(source.lines.size, key = { it }) { lineIndex ->
-                            val selected = lineIndex == pane.lineIndex
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { visualEditorLine = lineIndex }
-                                    .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
-                                    .padding(vertical = 1.dp),
-                                verticalAlignment = Alignment.Top,
-                            ) {
-                                DisableSelection {
-                                    Row(Modifier.clickable { state.selectSourceLine(lineIndex) }) {
-                                        Text(
-                                            (lineIndex + 1).toString(),
-                                            fontSize = fs.detail,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                                            softWrap = false,
-                                            maxLines = 1,
-                                            modifier = Modifier.width(numberWidth).padding(end = 10.dp),
-                                        )
-                                        Text(
-                                            addressAnchorsByLine[lineIndex]?.let { formatSnesAddress(it.snesAddress) }.orEmpty(),
-                                            fontSize = fs.detail,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = MaterialTheme.colorScheme.secondary,
-                                            softWrap = false,
-                                            maxLines = 1,
-                                            modifier = Modifier.width(addressWidth).padding(end = 10.dp),
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        AsmScrollableTextPane(
+                            listState = listState,
+                            horizontalState = horizontal,
+                            minimumContentWidth = minimumContentWidth,
+                            focusKey = source.id,
+                            onFind = find::show,
+                            onBack = state::goBack,
+                            onForward = state::goForward,
+                            modifier = Modifier.fillMaxSize().background(codeBackground()),
+                            externalFocusRequester = textFocus,
+                        ) {
+                            items(source.lines.size, key = { it }) { lineIndex ->
+                                val selected = lineIndex == pane.lineIndex
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { visualEditorLine = lineIndex }
+                                        .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.11f) else Color.Transparent)
+                                        .padding(vertical = 1.dp),
+                                    verticalAlignment = Alignment.Top,
+                                ) {
+                                    DisableSelection {
+                                        Row {
+                                            if (gutterMode.lines) Text(
+                                                (lineIndex + 1).toString(),
+                                                fontSize = fs.detail,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                                softWrap = false,
+                                                maxLines = 1,
+                                                modifier = Modifier.width(numberWidth).padding(end = 10.dp),
+                                            )
+                                            if (gutterMode.addresses) Text(
+                                                presentedLines[lineIndex].originalAddresses.single().orEmpty(),
+                                                fontSize = fs.detail,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.secondary,
+                                                softWrap = false,
+                                                maxLines = 1,
+                                                modifier = Modifier.width(addressWidth).padding(end = 10.dp),
+                                            )
+                                        }
+                                    }
+                                    val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
+                                    Box(Modifier.weight(1f)) {
+                                        AsmSelectableLinkedText(
+                                            text = presentedLines[lineIndex].annotated(
+                                                asmHighlightDocumentMatches(annotated, lineOffsets[lineIndex], find, Color(0xFFFFC857))),
+                                            style = TextStyle(
+                                                fontSize = fs.body,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = codeForeground(),
+                                            ),
+                                            onAnnotationClick = { annotation ->
+                                                when (annotation.tag) {
+                                                    "label" -> state.openLabel(source.id, lineIndex, annotation.item)
+                                                    "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
+                                                    "asset" -> state.openAssetReference(annotation.item)
+                                                    "source" -> state.openSource(annotation.item)
+                                                    "instruction" -> state.showInstruction(annotation.item)
+                                                    "macro" -> index.resolveMacro(annotation.item)?.let { macro ->
+                                                        state.openMacro(macro)
+                                                    }
+                                                    "macroDefinition" -> index.resolveMacro(annotation.item)
+                                                        ?.let(state::showMacroReferences)
+                                                    "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
+                                                }
+                                            }
                                         )
                                     }
                                 }
-                                val annotated = asmAnnotatedLine(source.lines[lineIndex], source.id, lineIndex, index)
-                                Box(Modifier.weight(1f)) {
-                                    AsmSelectableLinkedText(
-                                        text = asmHighlightDocumentMatches(annotated, lineOffsets[lineIndex], find, Color(0xFFFFC857)),
-                                        style = TextStyle(
-                                            fontSize = fs.body,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = codeForeground(),
-                                        ),
-                                        onAnnotationClick = { annotation ->
-                                            when (annotation.tag) {
-                                                "label" -> state.openLabel(source.id, lineIndex, annotation.item)
-                                                "definition" -> state.showReferences(source.id, lineIndex, annotation.item)
-                                                "asset" -> state.openAssetReference(annotation.item)
-                                                "source" -> state.openSource(annotation.item)
-                                                "instruction" -> state.showInstruction(annotation.item)
-                                                "macro" -> index.resolveMacro(annotation.item)?.let { macro ->
-                                                    state.openMacro(macro)
-                                                }
-                                                "macroDefinition" -> index.resolveMacro(annotation.item)
-                                                    ?.let(state::showMacroReferences)
-                                                "address" -> annotation.item.toIntOrNull()?.let(state::openAddress)
-                                            }
-                                        }
-                                    )
-                                }
                             }
                         }
+                        AsmSourceGutterToggle(
+                            state = state,
+                            paneId = pane.id,
+                            width = (if (gutterMode.lines) numberWidth else 0.dp) +
+                                (if (gutterMode.addresses) addressWidth else 0.dp),
+                            horizontalOffset = horizontal.value,
+                            onScroll = { delta, shift ->
+                                if (shift && delta.y != 0f) horizontal.dispatchRawDelta(delta.y * ASM_MOUSE_WHEEL_SCALE)
+                                else {
+                                    listState.dispatchRawDelta(delta.y * ASM_MOUSE_WHEEL_SCALE)
+                                    horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize().padding(end = ASM_SCROLLBAR_SIZE, bottom = ASM_SCROLLBAR_SIZE),
+                        )
                     }
                 }
             }
@@ -3347,6 +3372,8 @@ private fun AsmEditableSourcePane(
         val match = find.selected?.takeIf { it.line == pane.lineIndex && it.column == pane.columnIndex }
         mutableStateOf(TextFieldValue(page.text, selection = TextRange(cursor, (cursor + (match?.length ?: 0)).coerceAtMost(page.text.length))))
     }
+    val presentation = remember(fieldValue.text) { AsmSourcePresentation(fieldValue.text) }
+    val displayedValue = presentation.displayValue(fieldValue)
     // Navigation within the same page changes pageKey so the caret can move to
     // the destination, but it does not necessarily make Compose lay identical
     // text out again. Keep the last valid layout across that navigation; a
@@ -3478,10 +3505,10 @@ private fun AsmEditableSourcePane(
     LaunchedEffect(fieldLayout, pendingDefinitionPosition, fieldValue.text) {
         val position = pendingDefinitionPosition ?: return@LaunchedEffect
         val layout = fieldLayout
-            ?.takeIf { it.layoutInput.text.text == fieldValue.text }
+            ?.takeIf { it.layoutInput.text.text == presentation.text }
             ?: return@LaunchedEffect
         pendingDefinitionPosition = null
-        val offset = layout.getOffsetForPosition(position)
+        val offset = presentation.sourceOffset(layout.getOffsetForPosition(position))
         asmOpenEditableReference(
             state = state,
             index = state.workspace?.index,
@@ -3497,7 +3524,13 @@ private fun AsmEditableSourcePane(
     val numberWidth = with(density) {
         (fs.body.toPx() * MONOSPACE_CHARACTER_WIDTH * totalLineCount.toString().length).toDp() + 20.dp
     }.coerceAtLeast(ASM_LINE_NUMBER_WIDTH)
-    val longestLine = fieldValue.text.lineSequence().maxOfOrNull(String::length)
+    val addressWidth = with(density) {
+        (fs.body.toPx() * MONOSPACE_CHARACTER_WIDTH * 6).toDp() + 20.dp
+    }.coerceAtLeast(ASM_ADDRESS_GUTTER_WIDTH)
+    val gutterMode = state.sourceGutterMode
+    val gutterWidth = (if (gutterMode.lines) numberWidth else 0.dp) +
+        (if (gutterMode.addresses) addressWidth else 0.dp)
+    val longestLine = presentation.text.lineSequence().maxOfOrNull(String::length)
         ?.coerceAtMost(MAX_MEASURED_CODE_COLUMNS) ?: 0
     val lineHeight = fs.body * 1.4f
     val lineHeightPx = with(density) { lineHeight.toPx() }
@@ -3540,7 +3573,7 @@ private fun AsmEditableSourcePane(
     LaunchedEffect(pageKey, fieldLayout, vertical.maxValue, pendingScrollOffset) {
         // Page changes must wait for this page's measured layout, not merely yield to
         // another coroutine. Wheel/scrollbar positioning must not race caret navigation.
-        val layout = fieldLayout?.takeIf { it.layoutInput.text.text == fieldValue.text } ?: return@LaunchedEffect
+        val layout = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text } ?: return@LaunchedEffect
         val requested = pendingScrollOffset
         when {
             requested != null -> {
@@ -3560,9 +3593,9 @@ private fun AsmEditableSourcePane(
         val match = find.selected ?: return@LaunchedEffect
         if (revealedFindNavigation == pane.navigationSerial) return@LaunchedEffect
         if (!find.open || match.line != pane.lineIndex || match.column != pane.columnIndex) return@LaunchedEffect
-        val layout = fieldLayout?.takeIf { it.layoutInput.text.text == fieldValue.text } ?: return@LaunchedEffect
+        val layout = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text } ?: return@LaunchedEffect
         val offset = (match.offset - page.prefix.length).coerceIn(0, fieldValue.text.length)
-        val cursor = layout.getCursorRect(offset)
+        val cursor = layout.getCursorRect(presentation.displayOffset(offset))
         horizontal.scrollTo((cursor.left - 40f).toInt().coerceAtLeast(0))
         revealedFindNavigation = pane.navigationSerial
     }
@@ -3616,19 +3649,31 @@ private fun AsmEditableSourcePane(
         definition = if (isDarkCodeTheme()) Color(0xFFFFCB6B) else Color(0xFF8A6100),
         symbol = if (isDarkCodeTheme()) Color(0xFF82AAFF) else Color(0xFF1455A0),
     )
-    val transformation = remember(syntaxColors, state.workspace?.index, source.id, page.startLine, page.prefix.length, find.open, find.matches, find.selectedIndex) {
-        VisualTransformation { input ->
+    val transformation = remember(presentation, syntaxColors, state.workspace?.index, source.id, page.startLine, page.prefix.length, find.open, find.matches, find.selectedIndex) {
+        VisualTransformation { _ ->
             TransformedText(
-                asmHighlightDocumentMatches(asmEditableHighlight(
-                    text = input.text,
+                presentation.annotated(asmHighlightDocumentMatches(asmEditableHighlight(
+                    text = presentation.source,
                     colors = syntaxColors,
                     index = state.workspace?.index,
                     fileId = source.id,
                     pageStartLine = page.startLine,
-                ), page.prefix.length, find, Color(0xFFFFC857)),
+                ), page.prefix.length, find, Color(0xFFFFC857))),
                 OffsetMapping.Identity,
             )
         }
+    }
+    fun scrollSourceWheel(delta: Offset, shift: Boolean): Boolean {
+        when {
+            shift && delta.y != 0f -> horizontal.dispatchRawDelta(delta.y * ASM_MOUSE_WHEEL_SCALE)
+            delta.y != 0f -> {
+                val current = pendingScrollOffset ?: verticalAdapter.scrollOffset
+                scrollDocumentTo(current + delta.y * ASM_MOUSE_WHEEL_SCALE)
+                if (delta.x != 0f) horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
+            }
+            else -> return false
+        }
+        return true
     }
     Column(modifier) {
         BoxWithConstraints(
@@ -3636,27 +3681,15 @@ private fun AsmEditableSourcePane(
         ) {
             val contentWidth = maxOf(
                 maxWidth - ASM_SCROLLBAR_SIZE,
-                (numberWidth.value + 28f + longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp,
+                (gutterWidth.value + 28f + longestLine * fs.body.value * MONOSPACE_CHARACTER_WIDTH).dp,
             )
             Row(
                 Modifier.fillMaxSize()
                     .padding(end = ASM_SCROLLBAR_SIZE, bottom = ASM_SCROLLBAR_SIZE)
                     .onPointerEvent(PointerEventType.Scroll, PointerEventPass.Initial) { event ->
                         val change = event.changes.firstOrNull() ?: return@onPointerEvent
-                        val delta = change.scrollDelta
                         val native = event.nativeEvent as? MouseWheelEvent
-                        when {
-                            native?.isShiftDown == true && delta.y != 0f -> {
-                                horizontal.dispatchRawDelta(delta.y * ASM_MOUSE_WHEEL_SCALE)
-                                change.consume()
-                            }
-                            delta.y != 0f -> {
-                                val current = pendingScrollOffset ?: verticalAdapter.scrollOffset
-                                scrollDocumentTo(current + delta.y * ASM_MOUSE_WHEEL_SCALE)
-                                if (delta.x != 0f) horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
-                                change.consume()
-                            }
-                        }
+                        if (scrollSourceWheel(change.scrollDelta, native?.isShiftDown == true)) change.consume()
                     }
                     .horizontalScroll(horizontal)
                     .verticalScroll(vertical)
@@ -3702,7 +3735,7 @@ private fun AsmEditableSourcePane(
                     .padding(vertical = ASM_SOURCE_VERTICAL_PADDING),
                 verticalAlignment = Alignment.Top,
             ) {
-                Text(
+                if (gutterMode.lines) Text(
                     buildString {
                         repeat(lineCount) { index ->
                             append(page.startLine + index + 1)
@@ -3715,7 +3748,17 @@ private fun AsmEditableSourcePane(
                     textAlign = TextAlign.End,
                     color = MaterialTheme.colorScheme.outline,
                     softWrap = false,
-                    modifier = Modifier.width(numberWidth).padding(end = 10.dp),
+                    modifier = Modifier.width(numberWidth).padding(end = 10.dp).testTag("asm-source-line-numbers-${pane.id}"),
+                )
+                if (gutterMode.addresses) Text(
+                    presentation.originalAddresses.joinToString("\n") { it.orEmpty() },
+                    fontSize = fs.body,
+                    lineHeight = lineHeight,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End,
+                    color = MaterialTheme.colorScheme.secondary,
+                    softWrap = false,
+                    modifier = Modifier.width(addressWidth).padding(end = 10.dp).testTag("asm-source-addresses-${pane.id}"),
                 )
                 CompositionLocalProvider(LocalContextMenuRepresentation provides ASM_CONTEXT_MENU_REPRESENTATION) {
                     ContextMenuDataProvider(
@@ -3781,12 +3824,12 @@ private fun AsmEditableSourcePane(
                         },
                     ) {
                         BasicTextField(
-                        value = fieldValue,
+                        value = displayedValue,
                         onValueChange = { updated ->
-                            if (updated.selection != fieldValue.selection || updated.text != fieldValue.text) contextMenuOffset = null
-                            completionFromTyping = asmAutomaticCompletionRequested(fieldValue, updated)
+                            if (updated.selection != displayedValue.selection || updated.text != displayedValue.text) contextMenuOffset = null
+                            completionFromTyping = asmAutomaticCompletionRequested(displayedValue, updated)
                             completionExplicit = false
-                            applyEditorValue(asmApplyAutomaticIndentation(fieldValue, updated))
+                            applyEditorValue(presentation.sourceValue(asmApplyAutomaticIndentation(displayedValue, updated)))
                         },
                         modifier = Modifier.weight(1f).testTag("asm-source-editor-${pane.id}")
                         .focusRequester(editorFocusRequester)
@@ -3869,7 +3912,7 @@ private fun AsmEditableSourcePane(
                                 }
                                 event.key == Key.Tab -> {
                                     applyEditorValue(
-                                        asmApplyTabIndentation(fieldValue, unindent = event.isShiftPressed),
+                                        presentation.sourceValue(asmApplyTabIndentation(displayedValue, unindent = event.isShiftPressed)),
                                     )
                                     true
                                 }
@@ -3878,7 +3921,8 @@ private fun AsmEditableSourcePane(
                         }
                         .onPointerEvent(PointerEventType.Move, PointerEventPass.Initial) { event ->
                             val offset = event.changes.firstOrNull()?.position
-                                ?.let { fieldLayout?.getOffsetForPosition(it) }
+                                ?.let { position -> fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text }
+                                    ?.getOffsetForPosition(position)?.let(presentation::sourceOffset) }
                             hoveredEditableLink = offset != null && asmEditableReferenceIsNavigable(
                                 index = state.workspace?.index,
                                 fileId = source.id,
@@ -3897,7 +3941,8 @@ private fun AsmEditableSourcePane(
                             completionExplicit = false
                             val change = event.changes.firstOrNull() ?: return@onPointerEvent
                             if (mouse?.button == MouseEvent.BUTTON3 || event.buttons.isSecondaryPressed) {
-                                contextMenuOffset = fieldLayout?.getOffsetForPosition(change.position)
+                                contextMenuOffset = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text }
+                                    ?.getOffsetForPosition(change.position)?.let(presentation::sourceOffset)
                                 contextMenuOffset?.let { offset -> onContextLineChanged(page.startLine + asmLineIndexAtOffset(fieldValue.text, offset)) }
                                 return@onPointerEvent
                             }
@@ -3914,12 +3959,12 @@ private fun AsmEditableSourcePane(
                             ) return@onPointerEvent
                             runCatching { editorFocusRequester.requestFocus() }
                             val layout = fieldLayout
-                                ?.takeIf { it.layoutInput.text.text == fieldValue.text }
+                                ?.takeIf { it.layoutInput.text.text == presentation.text }
                             if (layout == null) {
                                 pendingDefinitionPosition = change.position
                                 return@onPointerEvent
                             }
-                            val offset = layout.getOffsetForPosition(change.position)
+                            val offset = presentation.sourceOffset(layout.getOffsetForPosition(change.position))
                             if (asmOpenEditableReference(
                                     state = state,
                                     index = state.workspace?.index,
@@ -3943,6 +3988,16 @@ private fun AsmEditableSourcePane(
                     }
                 }
             }
+            AsmSourceGutterToggle(
+                state = state,
+                paneId = pane.id,
+                width = gutterWidth,
+                horizontalOffset = horizontal.value,
+                onScroll = { delta, shift ->
+                    if (!scrollSourceWheel(delta, shift)) horizontal.dispatchRawDelta(delta.x * ASM_MOUSE_WHEEL_SCALE)
+                },
+                modifier = Modifier.fillMaxSize().padding(end = ASM_SCROLLBAR_SIZE, bottom = ASM_SCROLLBAR_SIZE),
+            )
             VerticalScrollbar(
                 adapter = verticalAdapter,
                 modifier = Modifier.align(Alignment.CenterEnd)
@@ -3961,7 +4016,8 @@ private fun AsmEditableSourcePane(
             )
             if (completionVisible) {
                 val result = checkNotNull(completionResult)
-                val cursor = fieldLayout?.getCursorRect(fieldValue.selection.end)
+                val cursor = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text }
+                    ?.getCursorRect(displayedValue.selection.end)
                 if (cursor != null) {
                     val popupWidth = minOf(ASM_COMPLETION_WIDTH, (maxWidth - 16.dp).coerceAtLeast(180.dp))
                     val popupHeight = minOf(
@@ -3969,7 +4025,7 @@ private fun AsmEditableSourcePane(
                         (result.items.size * ASM_COMPLETION_ROW_HEIGHT.value + 8f).dp,
                     )
                     val desiredX = with(density) {
-                        (numberWidth.toPx() + cursor.left - horizontal.value).toDp()
+                        (gutterWidth.toPx() + cursor.left - horizontal.value).toDp()
                     }
                     val desiredBelow = with(density) {
                         (sourceTopPaddingPx + cursor.bottom - vertical.value).toDp()
@@ -4046,11 +4102,12 @@ private fun AsmEditableSourcePane(
                     }
                 }
             } else if (macroCallHint != null) {
-                val cursor = fieldLayout?.getCursorRect(fieldValue.selection.end)
+                val cursor = fieldLayout?.takeIf { it.layoutInput.text.text == presentation.text }
+                    ?.getCursorRect(displayedValue.selection.end)
                 if (cursor != null) {
                     val hintWidth = minOf(ASM_MACRO_HINT_WIDTH, (maxWidth - 16.dp).coerceAtLeast(180.dp))
                     val desiredX = with(density) {
-                        (numberWidth.toPx() + cursor.left - horizontal.value).toDp()
+                        (gutterWidth.toPx() + cursor.left - horizontal.value).toDp()
                     }
                     val desiredBelow = with(density) {
                         (sourceTopPaddingPx + cursor.bottom - vertical.value).toDp()

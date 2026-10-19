@@ -32,8 +32,11 @@ internal class AsmEnemyTuningBridge(val catalog: AsmEnemyTuningSource, val works
     }
     fun editorLinks(fileId: String, line: Int): List<AsmEditorLink> {
         if (fileId !in setOf(ENEMY_HEADER_SOURCE_FILE, ENEMY_DROP_SOURCE_FILE)) return emptyList()
-        val (a, b) = texts()
-        return catalog.navigationTargetsAt(a, b, fileId, line).map { target ->
+        val texts = workspace.projectSourceTextsForNavigation(listOf(ENEMY_HEADER_SOURCE_FILE, ENEMY_DROP_SOURCE_FILE))
+            ?: return emptyList()
+        val headers = texts.getValue(ENEMY_HEADER_SOURCE_FILE)
+        val drops = texts.getValue(ENEMY_DROP_SOURCE_FILE)
+        return catalog.navigationTargetsAt(headers, drops, fileId, line).map { target ->
             val enemy = com.supermetroid.editor.ui.ENEMY_DEFS.single { it.speciesId == target.speciesId }
             AsmEditorLink("Edit ${enemy.name} ${target.section.title}", "Reciprocal enemy data", target)
         }.distinctBy { it.target }

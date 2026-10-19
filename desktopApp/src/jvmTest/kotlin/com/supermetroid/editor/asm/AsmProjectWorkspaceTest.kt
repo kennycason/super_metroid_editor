@@ -245,6 +245,92 @@ class AsmProjectWorkspaceTest {
         assertTrue(state.unsavedSourceFileIds.isEmpty())
     }
 
+    @Test fun `optional navigation snapshots wait for all dependencies and preserve live unsaved source`() = runBlocking {
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val file = File(tempDirectory, "Navigation.smedit").apply { writeText("{}") }
+        val reference = roomReference()
+        File(reference.root, "src/empty.asm").writeText("")
+        repository.initialize(file.path, reference)
+        val release = CompletableDeferred<Unit>()
+        val state = AsmWorkspaceState(projectRepository = repository, sourceIndexLoader = { path ->
+            release.await(); repository.load(path)
+        })
+        assertNull(state.projectSourceTextsForNavigation(listOf(PLM_SOURCE_FILE)))
+        try {
+            state.bindProject(file.path, true, progressive = true)
+            val before = state.projectSourceText(PLM_SOURCE_FILE)
+            val edited = "$before; unsaved navigation fixture\n"
+            state.replaceProjectSource(PLM_SOURCE_FILE, before, edited)
+            val revision = state.sourceBufferRevision
+            assertEquals(edited, state.projectSourceTextsForNavigation(listOf(PLM_SOURCE_FILE))?.get(PLM_SOURCE_FILE))
+            assertNull(state.projectSourceTextsForNavigation(listOf(PLM_SOURCE_FILE, "bank_80.asm")))
+            assertThrows<IllegalArgumentException> { state.projectSourceText("bank_80.asm") }
+            assertEquals(revision, state.sourceBufferRevision)
+            assertEquals(setOf(PLM_SOURCE_FILE), state.unsavedSourceFileIds.toSet())
+            release.complete(Unit)
+            state.awaitSourceIndexing()
+            val loaded = state.projectSourceTextsForNavigation(listOf(PLM_SOURCE_FILE, "bank_80.asm", "empty.asm"))
+            assertNotNull(loaded)
+            assertEquals(edited, loaded!![PLM_SOURCE_FILE])
+            assertTrue(loaded.getValue("bank_80.asm").contains("Boot:"))
+            assertEquals("", loaded["empty.asm"], "An actual empty file is available, not a missing dependency")
+            assertNull(state.projectSourceTextsForNavigation(listOf("missing.asm")))
+            assertEquals(setOf(PLM_SOURCE_FILE), state.unsavedSourceFileIds.toSet())
+        } finally { release.complete(Unit); state.awaitSourceIndexing() }
+    }
+
+    @Test fun `optional navigation tolerates a missing indexed file without weakening semantic reads`() = runBlocking {
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val file = File(tempDirectory, "Missing source.smedit").apply { writeText("{}") }
+        repository.initialize(file.path, roomReference())
+        val state = AsmWorkspaceState(projectRepository = repository)
+        state.bindProject(file.path, true)
+        val source = state.projectWorkspace!!.referenceWorkspace.index.file("bank_80.asm")!!.file
+        assertTrue(source.delete(), "Remove only this temporary fixture's uncached source")
+        assertNull(state.projectSourceTextsForNavigation(listOf("bank_80.asm")))
+        assertThrows<java.io.IOException> { state.projectSourceText("bank_80.asm") }
+        assertTrue(state.unsavedSourceFileIds.isEmpty())
+        assertFalse(File(state.projectWorkspace!!.root, "overrides/src/bank_80.asm").exists())
+    }
+
+    @Test fun `every patch navigation provider tolerates unavailable banks during startup`() = runBlocking {
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList())
+        val file = File(tempDirectory, "Patch navigation.smedit").apply { writeText("{}") }
+        repository.initialize(file.path, roomReference())
+        val release = CompletableDeferred<Unit>()
+        val state = AsmWorkspaceState(projectRepository = repository, sourceIndexLoader = { path ->
+            release.await(); repository.load(path)
+        })
+        val owner = com.supermetroid.editor.data.SmEditProject("fixture.sfc")
+        val project = { owner }
+        val changed: () -> Unit = { error("Navigation must not publish changes") }
+        val enemy = AsmEnemyTuningBridge(AsmEnemyTuningSource("", ""), state, project, changed)
+        val boss = AsmBossStatsBridge(AsmBossStatsSource(""), state, project, changed)
+        val beam = AsmBeamDamageBridge(AsmBeamDamageSource(""), state, project, changed)
+        val environment = AsmEnvironmentalDamageBridge(AsmEnvironmentalDamageSource(
+            ENVIRONMENT_SOURCE_FILES.associateWith { "" }), state, project, changed)
+        val data = AsmDataPatchBridge(AsmDataPatchSource(mapOf("bank_80.asm" to "")), state, project, changed)
+        val cases: List<Pair<String, (String, Int) -> List<AsmEditorLink>>> = listOf(
+            ENEMY_HEADER_SOURCE_FILE to enemy::editorLinks,
+            ENEMY_DROP_SOURCE_FILE to enemy::editorLinks,
+            ENEMY_HEADER_SOURCE_FILE to boss::editorLinks,
+            BEAM_DAMAGE_SOURCE_FILE to beam::editorLinks,
+            ENVIRONMENT_HEAT_FILE to environment::editorLinks,
+            ENVIRONMENT_LIQUID_FILE to environment::editorLinks,
+            "bank_80.asm" to data::editorLinks,
+        )
+        try {
+            state.bindProject(file.path, true, progressive = true)
+            val revision = state.sourceBufferRevision
+            for ((bank, links) in cases) {
+                assertTrue(links(bank, 0).isEmpty(), bank)
+                assertTrue(links(PLM_SOURCE_FILE, 0).isEmpty(), "Unrelated room bank: $bank")
+            }
+            assertEquals(revision, state.sourceBufferRevision)
+            assertTrue(state.unsavedSourceFileIds.isEmpty())
+        } finally { release.complete(Unit); state.awaitSourceIndexing() }
+    }
+
     @Test fun `switching projects rejects a late non-cooperative startup index`() = runBlocking {
         val repository = AsmProjectWorkspaceRepository(emptyList(), starterModules = emptyList())
         val a = File(tempDirectory, "A/A.smedit").apply { parentFile.mkdirs(); writeText("{}") }

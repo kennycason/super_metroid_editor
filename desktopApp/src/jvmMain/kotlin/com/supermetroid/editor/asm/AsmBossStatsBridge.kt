@@ -57,7 +57,7 @@ internal class AsmBossStatsBridge(
 
     fun editorLinks(file: String, line: Int): List<AsmEditorLink> {
         if (file != ENEMY_HEADER_SOURCE_FILE) return emptyList()
-        val text = text()
+        val text = workspace.projectSourceTextsForNavigation(listOf(file))?.getValue(file) ?: return emptyList()
         return catalog.navigationKeysAt(text, line).map(::bossStatsEditorLink).distinctBy { it.target }
     }
 

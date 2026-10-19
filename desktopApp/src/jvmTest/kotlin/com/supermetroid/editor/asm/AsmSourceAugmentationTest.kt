@@ -147,7 +147,7 @@ class AsmSourceAugmentationTest {
 
     @Test fun `bundled crawler pass adds game documentation without renaming existing crawler symbols`() {
         val recipe = AsmSourceAugmentation.bundled()
-        assertEquals("super-metroid-ntsc-2", recipe.revision)
+        assertEquals("super-metroid-ntsc-3", recipe.revision)
         assertEquals(listOf(AsmSourceRename("SpeedBoostTimerResetValues", "SpeedBoostTimerReloadTable")), recipe.renames)
         val notes = recipe.documentation.filter { it.id.startsWith("crawlers.") }
         assertEquals(18, notes.size)
@@ -157,6 +157,11 @@ class AsmSourceAugmentationTest {
         val scoped = notes.first { it.localLabel != null }
         assertEquals(scoped, Json.decodeFromString(AsmSourceDocumentation.serializer(),
             Json.encodeToString(AsmSourceDocumentation.serializer(), scoped)))
+        assertEquals(8, recipe.lineDocumentation.size)
+        val lineComments = recipe.lineDocumentation.flatMap { it.lines }.mapNotNull { it.comment }
+        assertEquals(281, lineComments.size)
+        assertTrue(lineComments.none { it.contains("SMEDIT", ignoreCase = true) || it.contains("GUI") })
+        assertTrue(recipe.lineDocumentation.single { it.symbol == "InitAI_Zoomer_MZoomer" }.lines.all { it.comment != null })
     }
 
     @Test fun `global rename updates declarations expressions macro arguments and cross bank references only`() {

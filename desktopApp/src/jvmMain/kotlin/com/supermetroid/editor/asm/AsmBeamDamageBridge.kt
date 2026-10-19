@@ -43,7 +43,7 @@ internal class AsmBeamDamageBridge(val catalog: AsmBeamDamageSource, val workspa
     fun line(key: String?) = if (key == null) catalog.sectionLine(text()) else catalog.line(key, text())
     fun editorLinks(file: String, line: Int): List<AsmEditorLink> {
         if (file != BEAM_DAMAGE_SOURCE_FILE) return emptyList()
-        val text = text()
+        val text = workspace.projectSourceTextsForNavigation(listOf(file))?.getValue(file) ?: return emptyList()
         return catalog.navigationKeysAt(text, line).map { key ->
             val name = com.supermetroid.editor.ui.ALL_BEAMS.single { it.key == key.removeSuffix("_charged") }.name
             AsmEditorLink("Edit $name ${if (key.endsWith("_charged")) "charged " else ""}damage",
