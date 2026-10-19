@@ -17,7 +17,7 @@ internal data class AsmBossStatsField(val key: String, val words: List<AsmBossSt
 }
 
 /** Strict lenses into boss EnemyHeader %health/%damage arguments in bank A0 source. */
-internal class AsmBossStatsSource(val originalText: String) {
+internal class AsmBossStatsSource(val originalText: String, val bindings: AsmSourceBindings = AsmSourceBindings.current()) {
     private data class Document(
         val text: String, val labels: List<MatchResult>, val byName: Map<String, List<Int>>,
         val arguments: MutableMap<Pair<String, String>, Pair<IntRange, String>> = mutableMapOf(),
@@ -35,9 +35,7 @@ internal class AsmBossStatsSource(val originalText: String) {
         }
     }
 
-    /** Map species ID -> label name from the header comments (;A0XXXX;). */
-    val headers: Map<Int, String> = Regex("(?m)^(EnemyHeaders_[A-Za-z0-9_]+):[^\\r\\n]*;A0([0-9A-F]{4});")
-        .findAll(originalText).associate { it.groupValues[2].toInt(16) to it.groupValues[1] }
+    val headers: Map<Int, String> = bindings.enemyHeaders(originalText)
 
     private val bossFieldsByKey: Map<String, BossStatField> = ALL_BOSS_FIELDS.associateBy { it.key }
 
@@ -148,7 +146,7 @@ internal class AsmBossStatsSource(val originalText: String) {
 
     companion object {
         fun load(original: File): AsmBossStatsSource? = File(original, "src/$ENEMY_HEADER_SOURCE_FILE")
-            .takeIf { it.isFile }?.let { AsmBossStatsSource(it.readText()) }
+            .takeIf { it.isFile }?.let { AsmBossStatsSource(it.readText(), AsmSourceBindings.load(original)) }
     }
 }
 

@@ -95,7 +95,6 @@ import com.supermetroid.editor.rom.RomValidator
 import com.supermetroid.editor.rom.EnemySpriteGraphics
 import com.supermetroid.editor.rom.SpcData
 import com.supermetroid.editor.asm.AsmEditorTarget
-import com.supermetroid.editor.asm.AsmReferenceContract
 import com.supermetroid.editor.asm.AsmWorkspaceState
 import com.supermetroid.editor.asm.AsmPlmSourceCatalog
 import com.supermetroid.editor.asm.AsmPlmPlacementTarget
@@ -1463,7 +1462,7 @@ fun main() = application {
                                         projectFilePath = editorState.projectFilePath,
                                         projectAsmEnabled = editorState.project.asmWorkspace.enabled,
                                         onProjectAsmEnabled = {
-                                            editorState.enableProjectAsmWorkspace(AsmReferenceContract.COMMIT)
+                                            editorState.enableProjectAsmWorkspace(checkNotNull(asmWorkspaceState.workspace).metadata.commit)
                                             romParser?.let(editorState::saveProject)
                                         },
                                         projectBuildMode = editorState.project.asmWorkspace.buildMode,

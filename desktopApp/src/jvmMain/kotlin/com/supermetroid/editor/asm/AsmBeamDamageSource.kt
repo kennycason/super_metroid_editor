@@ -13,7 +13,7 @@ internal data class AsmBeamDamageField(val key: String, val table: String, val s
     val pointerLabel: String, val slot: Int, val bindingSpan: IntRange)
 
 /** Literal damage words reached through the live native projectile pointer lists. Not an Asar evaluator. */
-internal class AsmBeamDamageSource(val originalText: String) {
+internal class AsmBeamDamageSource(val originalText: String, val symbolNames: AsmSourceSymbolNames = AsmSourceSymbolNames()) {
     val keys = ALL_BEAMS.flatMap { listOf(it.key, it.chargedKey) }.toSet()
     private data class Document(val text: String, val labels: List<MatchResult>,
         val words: MutableMap<Pair<String, Int>, List<Pair<IntRange, String>>> = mutableMapOf()) {
@@ -65,7 +65,7 @@ internal class AsmBeamDamageSource(val originalText: String) {
         require(key in keys) { "Unknown beam damage field $key." }
         val charged = key.endsWith("_charged")
         val slot = BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))
-        val pointer = beamPointerLabel(charged)
+        val pointer = symbolNames.active(beamPointerLabel(charged))
         val binding = words(text, pointer, 12)[slot]
         val table = binding.second
         require(table.matches(Regex("[A-Za-z_][A-Za-z0-9_]*"))) { "$pointer: beam damage must reference an exact bank-93 table label." }
@@ -90,14 +90,14 @@ internal class AsmBeamDamageSource(val originalText: String) {
         val sections = document(text).sections
         val section = sections.at(line) ?: return emptyList()
         return keys.filter { key -> runCatching {
-            val pointer = beamPointerLabel(key.endsWith("_charged"))
+            val pointer = symbolNames.active(beamPointerLabel(key.endsWith("_charged")))
             val binding = words(text, pointer, 12)[BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))]
             val atBinding = sections.unique(pointer) == section &&
                 (sections.lineAt(binding.first.first) == line || line in section.labelLines)
             atBinding || sections.unique(binding.second) == section
         }.getOrDefault(false) }
     }
-    fun sectionLine(text: String): Int = labelLine(text, beamPointerLabel(false))
+    fun sectionLine(text: String): Int = labelLine(text, symbolNames.active(beamPointerLabel(false)))
     private fun labelLine(text: String, name: String): Int {
         val label = document(text).labels.filter { it.groupValues[1] == name }
         require(label.size == 1) { "Expected exactly one $name declaration." }
@@ -106,14 +106,14 @@ internal class AsmBeamDamageSource(val originalText: String) {
     fun line(key: String, text: String): Int {
         runCatching { field(key, text) }.getOrNull()?.let { return text.take(it.span.first).count { c -> c == '\n' } }
         require(key in keys) { "Unknown beam damage field $key." }
-        val pointer = beamPointerLabel(key.endsWith("_charged"))
+        val pointer = symbolNames.active(beamPointerLabel(key.endsWith("_charged")))
         val binding = runCatching { words(text, pointer, 12)[BEAM_POINTER_KEYS.indexOf(key.removeSuffix("_charged"))] }.getOrNull()
         return binding?.let { runCatching { labelLine(text, it.second) }.getOrNull() }
             ?: labelLine(text, pointer)
     }
     companion object {
         fun load(original: File): AsmBeamDamageSource? = File(original, "src/$BEAM_DAMAGE_SOURCE_FILE")
-            .takeIf { it.isFile }?.let { AsmBeamDamageSource(it.readText()) }
+            .takeIf { it.isFile }?.let { AsmBeamDamageSource(it.readText(), AsmSourceBindings.load(original).names) }
     }
 }
 

@@ -1,0 +1,83 @@
+{
+  "revision": "super-metroid-ntsc-1",
+  "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
+  "renames": [
+    { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
+  ],
+  "documentation": [
+    {
+      "id": "speed-booster.stage-timers",
+      "fileId": "bank_91.asm",
+      "symbol": "SpeedBoostTimerResetValues",
+      "expectedCode": "dw $0001,$0001,$0001,$0001,$0002",
+      "paragraphs": [
+        "Five timer reload words, indexed by the Speed Booster counter times two.",
+        "The first word also initializes the adjacent timer/counter pair: its low",
+        "byte is the initial delay and its high byte is the starting counter.",
+        "Later reloads are ORed into the low timer byte while preserving the counter."
+      ]
+    },
+    {
+      "id": "samus.jump-velocity",
+      "fileId": "bank_90.asm",
+      "symbol": "SamusPhysicsConstants_InitialYSpeeds_Jumping",
+      "expectedCode": "dw $04E0*!SPF/$100,$01C0*!SPF/$100,$02C0*!SPF/$100",
+      "paragraphs": [
+        "Initial jump velocities for air, water, and lava/acid, in that order.",
+        "The integer and fractional components live in parallel speed/subspeed",
+        "tables. !SPF scales the velocity for the selected regional frame rate."
+      ]
+    },
+    {
+      "id": "samus.movement-speed-layout",
+      "fileId": "bank_90.asm",
+      "symbol": "SamusXSpeedTable_Normal",
+      "expectedCode": "dd wordSwap($00C0*!SPF*$100),wordSwap($0000*!SPF*$100),wordSwap($0080*!SPF*$100)",
+      "paragraphs": [
+        "Each movement type selects a 12-byte row: acceleration, maximum speed,",
+        "then deceleration. Each value occupies two words; wordSwap places the",
+        "integer word before the fractional word consumed by the movement code."
+      ]
+    },
+    {
+      "id": "escape-timer.ceres-encoding",
+      "fileId": "bank_80.asm",
+      "symbol": "ProcessTimer_CeresStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Clear the old countdown before loading the duration and startup state."
+      ]
+    },
+    {
+      "id": "escape-timer.zebes-encoding",
+      "fileId": "bank_80.asm",
+      "symbol": "ProcessTimer_MotherBrainStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Startup begins with an initial delay before the timer display moves into place."
+      ]
+    },
+    {
+      "id": "bomb.fuse-reload",
+      "fileId": "bank_90.asm",
+      "symbol": "BombTimerResetValue",
+      "expectedCode": "dw regional($003C, $0034)",
+      "paragraphs": [
+        "Fuse countdown loaded for newly fired bombs before their explosion sequence.",
+        "regional selects the NTSC or PAL reload value."
+      ]
+    },
+    {
+      "id": "item-fanfare.message-wait",
+      "fileId": "bank_85.asm",
+      "symbol": "Handle_MessageBox_Interaction",
+      "expectedCode": "SEP #$20",
+      "paragraphs": [
+        "Item messages wait for lag frames before accepting input. The collecting",
+        "PLM schedules the music-resume delay separately from this message wait."
+      ]
+    }
+  ]
+}

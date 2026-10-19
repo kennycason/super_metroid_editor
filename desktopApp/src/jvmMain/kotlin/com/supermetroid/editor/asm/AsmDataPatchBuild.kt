@@ -58,7 +58,7 @@ internal fun protectDataPatchSource(catalog: AsmDataPatchSource?, texts: Map<Str
     val fields = inputs.mapNotNull { (id, field) -> field.getOrNull()?.let { id to it } }.toMap()
     val pending = patches.associate { patch -> patch.id to dataPatchOverrides(patch, fields) }
     val pendingIds = pending.values.flatMap { it.keys }.toSet()
-    val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
+    val labels = catalog.symbolNames.canonicalLabels(AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels)
     val parser = RomParser(compiled.romBytes)
     val header = if (compiled.romBytes.size % 0x8000 == 512) 512 else 0
     val typed = mutableMapOf<Int, String>()

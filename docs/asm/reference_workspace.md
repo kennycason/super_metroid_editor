@@ -20,6 +20,126 @@ without updating reference source, so those shortcuts must not imply a mapping i
 patch-only projects. The main **ASM** tab, reference navigation and Library remain
 available in either mode.
 
+## Frozen augmented project baseline
+
+New Project ASM workspaces start from the exact upstream revision plus the reviewed
+recipe in `desktopApp/src/jvmMain/resources/asm-reference/augmentation.json`.
+The recipe checks the complete upstream source digest before adding ordinary
+game-code comments or performing symbol-aware renames. Revision 1 documents Speed
+Booster timing, jump/movement storage, escape timers, bomb fuse timing and item
+message waits. It renames `SpeedBoostTimerResetValues` to
+`SpeedBoostTimerReloadTable` in its declaration and all code references; native
+field identities and byte checks use the baseline's symbol mapping.
+
+The result is frozen under portable `asm/base/`: `manifest.json` records upstream
+and augmented file hashes, the augmentation revision, symbol mappings, original
+line correspondence, frozen asset ranges and native symbol identities;
+`source.zip` contains the complete augmented ASM sources.
+It contains no ROM or extracted binary assets. The generated `smedit/asm/original/`
+tree is a checked extraction of that baseline, and the working tree applies the
+existing full-bank overrides and ordered project modules on top. These actual
+working files are both displayed and compiled. Baseline comments/names do not mark
+a new project edited or enable a gameplay patch.
+
+Opening a project with a newer app does not replay the current recipe. Repair
+reuses its frozen source even if the global reference or bundled recipe changed;
+the supplied asset ROM must still match the baseline's recorded identity. Repair
+extracts the frozen asset ranges from that ROM, including when a later app's
+asset manifest uses different filenames or ranges.
+**Restore baseline** restores that project's augmented bank, while
+**Original (read-only)** continues to browse raw upstream source. Custom modules
+remain separate authored files and retain their order and enabled state.
+Upstream/augmentation updates are engineering work; there is no automatic project
+rebase or user merge workflow.
+If an already-enabled project loses `asm/base/`, repair reports the missing
+authored input instead of silently creating a newer baseline. Restore that folder
+from the project's backup or source control; its modules and overrides are not discarded.
+
+`AsmSourceAugmentationTest` and `AsmSourceBaselineTest` cover transformation guards,
+cross-file and nested-label renames, collisions, simultaneous renames, exact source
+persistence and cache repair. `:desktopApp:asmSymbolCoverageTest`, with the existing
+private parity fixtures, additionally builds both the shipped recipe and a
+cross-bank scratch/parent rename stress case. It checks every compiled symbol,
+source-reference edge, declaration and mapped original line, unchanged complete ROM
+bytes, and numerical field/consumer bindings. Run this gate whenever the recipe or
+source transformation machinery changes. Namespaced or unclassified rename cases
+require an explicit supported transformation rather than partial replacement.
+
+Renames are reviewed recipe changes, not a user-facing global refactor. A new
+rename also requires auditing native codecs and bundled module templates that
+depend on that spelling. Templates inserted into an older project must respect
+that project's symbol mapping, not assume the current app's names. Existing
+authored modules are never rewritten on open.
+
+### Shared bindings and supported transformations
+
+`AsmSourceBindings` separates stable contract identities from active source names.
+Numerical settings, environmental damage, beam pointers, enemy/boss fields and
+Fast Doors consume the same baseline naming map. Newly inserted bundled templates
+are written using canonical contract names and bound to the target project's
+spellings once. This applies to the Objectives starter and both Fast Doors
+insertion paths. Saved modules, module order and enablement are not regenerated.
+
+Native enemy identities no longer come from `;A0XXXX;` annotations. The
+revision-addressed TSVs under `asm-reference/native-symbols/` record the pinned
+compiler's header addresses and verified macro-generated member names. New
+format-2 snapshots freeze this inventory in their manifest. The existing
+format-1 reader uses the matching revision's bundled inventory without modifying
+its saved source or manifest. Keep these revision-addressed catalogs available
+when changing the application's upstream pin.
+
+The manifest identity hashes its exact saved JSON bytes. Decoding and re-encoding
+with a future serializer's additional default fields must not change an existing
+project's identity. Source/hash inventories and archive entries remain validated;
+missing, corrupt or ambiguous bindings fail rather than guessing an address.
+`AsmSourceImage` captures source contents once. Baseline creation refreshes a
+partial/stale browser index against that captured image; transformation,
+native-identity selection and upstream fingerprints all use that same complete
+image. A directly supplied transformation index must match it exactly. Native
+inventories are validated before any snapshot is published.
+
+Navigation, auditing and transformation now share lexical token boundaries.
+Refactoring requires unique resolution even where navigation can offer a
+best-effort destination. String contents, comments, numerical literals and line
+endings are preserved. Documentation guards ignore formatting whitespace but
+retain whitespace within string data. This is still a conservative source model,
+not a general macro expander or CPU data-flow analyzer. Generated member spellings
+are known compiler facts; unindexed source uses of those members still require
+explicit resolver support before a source rename is allowed. Namespaces, template
+scope collisions and bound function/macro parameter collisions are rejected.
+Other native-source families must be audited before expanding their rename rules;
+this is not a claim that every adapter already supports arbitrary renaming.
+
+### Engineering verification
+
+Normal JVM tests exercise commentless identities, literal/token boundaries,
+ambiguous bindings, serializer-default changes and frozen-inventory repair.
+The public `:desktopApp:asarToolchainSmokeTest` additionally builds copyright-free
+source against two frozen naming baselines, including newly inserted modules,
+authored Objectives-style source, cache reconstruction, source edits and cold
+headered builds. It runs through the existing release workflow on each OS and
+does not require a private ROM.
+
+With the existing private parity fixtures, `:desktopApp:verifyAsmEnrichment`
+combines packaged-toolchain smoke tests with the complete source/ROM gate. The
+stress recipe exercises scratch memory, parent/local aliases, generated enemy
+members, hazard accumulators, beam pointers, door routines and pause dispatch.
+It verifies all compiler symbols/reference edges and native editor guards. A
+separate case binds the real Objectives and Fast Doors modules to two baselines,
+preserves authored notes/placements, checks definition coverage and compares their
+complete output byte-for-byte through cold headered builds. Its custom Fast Doors
+helper placement explicitly avoids the Objectives payload's free-space range.
+
+After building the pinned oracle, check the generated native inventory with:
+
+```sh
+python3 parity/native_symbol_manifest.py --rom "$SMEDIT_TEST_ROM"
+```
+
+Regeneration requires explicit `--write`; review the resulting TSV and run the
+enrichment gate before publishing a recipe. The generator validates the clean
+ROM/source fixture and reads addresses/member facts from WLA output, not comments.
+
 ## User workflow
 
 1. Open a ROM normally in SMEDIT.
@@ -78,8 +198,8 @@ available in either mode.
     editing, a compact `Save *` dirty indicator, `Cmd/Ctrl+S`, buffer
     Undo/Redo, and confirmed recovery actions under the source settings cog.
     **Discard unsaved changes** returns to the last save, while **Restore
-    original bank ASM** removes the project override and returns to the pinned
-    source snapshot. Enter inherits the
+    bank to project baseline** removes the project override and returns to its frozen
+    augmented source snapshot. Enter inherits the
     current instruction indentation and opens an instruction column after a
     label. **Tab** advances a caret to the next four-column stop or indents the
     selected rows; **Shift+Tab** removes up to one indentation level. Paste and
@@ -135,7 +255,7 @@ available in either mode.
     is literal, so Asar punctuation such as `!`, `$`, and `\\` is never treated
     as a regular-expression or replacement escape.
     An **EDITED** badge in the bank tree means the source intentionally differs
-    from the immutable vanilla snapshot; only `Save *` or an explicit
+    from the frozen project baseline; only `Save *` or an explicit
     **unsaved** count means a buffer or project still needs to be written.
     Use **+ Module** above the banks for new standalone project code. Modules are
     immediately portable authored files. The source-header settings cog changes
@@ -194,7 +314,7 @@ button while split. Project modules remain single-view inputs. **Cmd/Ctrl+Z**
 and **Cmd/Ctrl+Shift+Z** provide bounded, delta-backed Undo/Redo without retaining
 whole copies of large banks.
 The current address, PC offset, line count, and compact build state live in the
-application's existing bottom-right status bar. **Restore original** provides
+application's existing bottom-right status bar. **Restore baseline** provides
 the recovery boundary for a modified pinned source file. Large
 banks are presented in bounded line pages so syntax highlighting, selection,
 and scrolling remain reliable; one continuous right scrollbar addresses the

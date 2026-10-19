@@ -3,6 +3,14 @@ package com.supermetroid.editor.asm
 import com.supermetroid.editor.rom.TestRomHelper
 import java.io.File
 
+/** Synthetic fixtures explicitly define native identities; production code never reads these annotations. */
+internal fun testNativeEnemySymbols(text: String): List<AsmNativeSymbol> =
+    Regex("(?m)^(EnemyHeaders_[A-Za-z0-9_]+):[^\\r\\n]*;A0([0-9A-Fa-f]{4});").findAll(text).map {
+        AsmNativeSymbol(ENEMY_HEADER_SOURCE_FILE, it.groupValues[1], 0xA00000 or it.groupValues[2].toInt(16))
+    }.toList()
+
+internal fun testEnemyBindings(text: String) = AsmSourceBindings(nativeSymbols = testNativeEnemySymbols(text))
+
 /** A disposable project; no tests read or publish build artifacts into a user's hack. */
 internal data class AsmProjectTestFixture(
     val projectFile: File,
@@ -35,12 +43,12 @@ internal data class AsmProjectTestFixture(
                 AsmSourceParser().parse(src, data, assets))
             val file = File(directory, "Synthetic.smedit").apply { writeText("{}") }
             val romFile = File(directory, "Synthetic.sfc").apply { writeBytes(rom) }
-            val repository = AsmProjectWorkspaceRepository(starterModules = emptyList())
+            val repository = AsmProjectWorkspaceRepository(starterModules = emptyList(), augmentation = AsmSourceAugmentation.NONE)
             repository.initialize(file.path, reference)
             return AsmProjectTestFixture(file, romFile, rom, requireNotNull(repository.loadForBuild(file.path)))
         }
 
-        fun create(directory: File): AsmProjectTestFixture {
+        fun create(directory: File, augmentation: AsmSourceAugmentation = AsmSourceAugmentation.bundled()): AsmProjectTestFixture {
             val rom = TestRomHelper.requireRomBytes()
             val checkout = TestRomHelper.requireDisassemblyDir()
             val referenceRoot = File(directory, "reference")
@@ -62,7 +70,7 @@ internal data class AsmProjectTestFixture(
             )
             val projectFile = File(directory, "Fixture.smedit").apply { writeText("{}") }
             val romFile = File(directory, "Fixture.sfc").apply { writeBytes(rom) }
-            val repository = AsmProjectWorkspaceRepository(starterModules = emptyList())
+            val repository = AsmProjectWorkspaceRepository(starterModules = emptyList(), augmentation = augmentation)
             repository.initialize(projectFile.absolutePath, reference)
             val workspace = requireNotNull(repository.loadForBuild(projectFile.absolutePath))
             return AsmProjectTestFixture(projectFile, romFile, rom, workspace)

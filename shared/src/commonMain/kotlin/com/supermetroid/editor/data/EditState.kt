@@ -934,6 +934,7 @@ data class ProjectGeneralSettings(
  * Opt-in project ASM mode. Source and binary files live beside the `.smedit`
  * file rather than being serialized into JSON; this records the portable
  * project contract and the immutable upstream revision they were seeded from.
+ * asm/base/ separately retains the exact augmented source snapshot and its manifest.
  */
 @Serializable
 enum class ProjectRomBuildMode {

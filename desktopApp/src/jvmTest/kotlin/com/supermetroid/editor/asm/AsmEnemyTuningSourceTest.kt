@@ -39,6 +39,20 @@ import kotlin.test.*
 @OptIn(ExperimentalComposeUiApi::class)
 class AsmEnemyTuningSourceTest {
     @TempDir lateinit var directory: File
+
+    @Test fun `renamed commentless headers and drop tables retain stable enemy identities and category links`() {
+        val names = AsmSourceSymbolNames(mapOf("EnemyHeaders_TestZoomer" to "CrawlerRecord", "EnemyDropChances_Test" to "CrawlerLoot"))
+        val a = headers.lineSequence().joinToString("\n") { names.activeCode(it).replace(Regex(";A0[0-9A-Fa-f]{4};"), "") }
+        val b = drops.lineSequence().joinToString("\n", postfix = "\n") { names.activeCode(it) }
+        val bindings = AsmSourceBindings(names, testNativeEnemySymbols(headers))
+        val renamed = AsmEnemyTuningSource(a, b, bindings)
+        val original = AsmEnemyTuningSource(headers, drops, testEnemyBindings(headers))
+        for (key in original.keys) assertEquals(original.original(key).value, renamed.original(key).value, key)
+        assertEquals("CrawlerRecord", renamed.headers[0xDCFF])
+        assertEquals("CrawlerLoot", renamed.field("zoomer_drop0", a, b).table)
+        assertEquals(0, renamed.sectionLine(AsmEnemyTuningSection.STATS, a))
+        assertEquals(0, renamed.sectionLine(AsmEnemyTuningSection.DROPS, b))
+    }
     private val headers = """
         EnemyHeaders_TestZoomer: ;A0DCFF;
             %EnemyHeader(\
@@ -76,7 +90,7 @@ class AsmEnemyTuningSourceTest {
             AsmReferenceMetadata(AsmReferenceContract.REPOSITORY_URL, AsmReferenceContract.COMMIT, "test", "base.sfc", "ab".repeat(32), 0x300000, 0),
             AsmSourceParser().parse(src, data, emptyList()))
         val file = File(directory, "Test.smedit").apply { writeText("{}") }
-        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList()).also { it.initialize(file.path, reference) }
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList(), nativeSymbols = testNativeEnemySymbols(headerText)).also { it.initialize(file.path, reference) }
         val workspace = AsmWorkspaceState(projectRepository = repository).apply { bindProject(file.path, true) }
         val parser = RomParser(ByteArray(0x300000))
         val project = SmEditProject("test.sfc").apply { asmWorkspace.enabled = true; asmWorkspace.buildMode = ProjectRomBuildMode.ASM_SOURCE }
@@ -320,7 +334,7 @@ class AsmEnemyTuningSourceTest {
     }
 
     @Test fun `native literal lenses preserve comments CRLF and aliases without accepting expressions or malformed tables`() {
-        val source = AsmEnemyTuningSource(headers, drops)
+        val source = AsmEnemyTuningSource(headers, drops, testEnemyBindings(headers))
         assertEquals(15, source.original("zoomer_hp").value)
         assertEquals(200, source.original("ripper_hp").value)
         assertEquals(0x37, source.original("zoomer_drop0").value)
@@ -373,7 +387,7 @@ class AsmEnemyTuningSourceTest {
     }
 
     @Test fun `vulnerability lenses roundtrip every raw byte and preserve aliases flags comments CRLF and slot order`() {
-        val source = AsmEnemyTuningSource(headers, drops)
+        val source = AsmEnemyTuningSource(headers, drops, testEnemyBindings(headers))
         assertEquals(listOf(0, 128, 130, 255), (0..3).map { source.original("zoomer_vuln$it").value })
         assertEquals(0, source.original("zoomer_vuln21").value)
         assertEquals(setOf(0xDCFF, 0xD47F), source.tableConsumers("zoomer_vuln0", headers, drops).toSet())
@@ -586,7 +600,7 @@ class AsmEnemyTuningSourceTest {
     }
 
     @Test fun `build protection follows drop symbols but rejects moved headers wrong banks dual authority and typed byte drift`() {
-        val source = AsmEnemyTuningSource(headers, drops)
+        val source = AsmEnemyTuningSource(headers, drops, testEnemyBindings(headers))
         val project = SmEditProject("test.sfc").apply { asmWorkspace.enemyTuningSourceKeys.addAll(listOf("zoomer_hp", "zoomer_drop0")) }
         val rom = ByteArray(0x300000)
         val parser = RomParser(rom)
@@ -612,7 +626,7 @@ class AsmEnemyTuningSourceTest {
     @Test fun `vulnerability builds protect all native consumer bindings typed unchanged bytes and complete relocated tables`() {
         val outsideHeader = "EnemyHeaders_OutsidePicker: ;A08000;\n    %vulnerabilities(EnemyVulnerabilities_Test),\n"
         val a = headers + outsideHeader
-        val source = AsmEnemyTuningSource(a, drops)
+        val source = AsmEnemyTuningSource(a, drops, testEnemyBindings(a))
         val project = SmEditProject("test.sfc").apply {
             asmWorkspace.enemyTuningSourceKeys.addAll(listOf("zoomer_vuln0", "zoomer_vuln21"))
         }

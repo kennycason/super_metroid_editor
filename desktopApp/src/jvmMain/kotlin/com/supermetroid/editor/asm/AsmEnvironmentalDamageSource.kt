@@ -43,12 +43,12 @@ internal data class AsmEnvironmentalField(
 }
 
 /** Narrow, source-shaped lenses. We never evaluate arbitrary Asar expressions or trust address comments. */
-internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) {
+internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>, val symbolNames: AsmSourceSymbolNames = AsmSourceSymbolNames()) {
     val keys = EnvironmentalDamagePatch.FIELDS.map { it.key }.toSet()
     fun file(key: String) = if (key == EnvironmentalDamagePatch.HEAT_KEY) ENVIRONMENT_HEAT_FILE else ENVIRONMENT_LIQUID_FILE
     private data class Code(val text: String, val start: Int)
     private data class Label(val name: String, val start: Int, val end: Int)
-    private class Document(val text: String) {
+    private class Document(val text: String, val symbolNames: AsmSourceSymbolNames) {
         private val lineStarts = (listOf(0) + text.indices.filter { text[it] == '\n' }.map { it + 1 }).toIntArray()
         fun lineAt(offset: Int): Int = lineStarts.binarySearch(offset).let { if (it >= 0) it else -it - 2 }
         val labels = buildList {
@@ -61,7 +61,7 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
         }
         val blocks = mutableMapOf<String, List<Code>>()
         fun block(name: String): List<Code> = blocks.getOrPut(name) {
-            var index = labels.indices.singleOrNull { labels[it].name == name }
+            var index = labels.indices.singleOrNull { labels[it].name == symbolNames.active(name) }
                 ?: error("Expected exactly one $name declaration.")
             var start = labels[index].end
             while (index + 1 < labels.size && text.substring(start, labels[index + 1].start).lineSequence().all { asmCodeBeforeComment(it).isBlank() }) {
@@ -82,12 +82,12 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
         }
     }
     private val documents = mutableListOf<Document>()
-    private fun document(text: String): Document = documents.firstOrNull { it.text === text } ?: Document(text).also {
+    private fun document(text: String): Document = documents.firstOrNull { it.text === text } ?: Document(text, symbolNames).also {
         if (documents.size == 6) documents.removeAt(0)
         documents.add(it)
     }
     private fun normalized(code: String): String {
-        val value = code.trim().replace(Regex("[ \\t]+"), " ")
+        val value = symbolNames.canonicalCode(code).trim().replace(Regex("[ \\t]+"), " ")
         return value.substringBefore(' ').uppercase() + value.substringAfter(' ', "").let { if (it.isEmpty()) "" else " $it" }
     }
     private fun width(code: String): Int {
@@ -178,7 +178,7 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
         val span = runCatching { field(key, texts).words.first().span.first }.getOrNull()
         val label = if (key == EnvironmentalDamagePatch.HEAT_KEY) "PreInstruction_PaletteFXObject_SamusInHeat"
             else "SamusPhysicsConstants_${if (key == EnvironmentalDamagePatch.LAVA_KEY) "Lava" else "Acid"}SubDamagePerFrame"
-        val offset = span ?: document(text).labels.singleOrNull { it.name == label }?.start ?: error("Cannot locate $label.")
+        val offset = span ?: document(text).labels.singleOrNull { it.name == symbolNames.active(label) }?.start ?: error("Cannot locate $label.")
         return file to document(text).lineAt(offset)
     }
     fun navigationKeysAt(file: String, line: Int, texts: Map<String, String>): List<String> {
@@ -186,10 +186,11 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
         val text = texts.getValue(file)
         val doc = document(text)
         val selected = doc.labels.lastOrNull { doc.lineAt(it.start) <= line } ?: return emptyList()
+        val selectedName = symbolNames.canonical(selected.name)
         return keys.filter { file(it) == file }.filter { key ->
             val stem = if (key == EnvironmentalDamagePatch.LAVA_KEY) "Lava" else "Acid"
-            if (key == EnvironmentalDamagePatch.HEAT_KEY) selected.name == "PreInstruction_PaletteFXObject_SamusInHeat"
-            else (selected.name in setOf("SamusPhysicsConstants_${stem}SubDamagePerFrame", "SamusPhysicsConstants_${stem}DamagePerFrame") && doc.lineAt(selected.start) == line) ||
+            if (key == EnvironmentalDamagePatch.HEAT_KEY) selectedName == "PreInstruction_PaletteFXObject_SamusInHeat"
+            else (selectedName in setOf("SamusPhysicsConstants_${stem}SubDamagePerFrame", "SamusPhysicsConstants_${stem}DamagePerFrame") && doc.lineAt(selected.start) == line) ||
                 runCatching { field(key, texts).words.any { doc.lineAt(it.span.first) == line } }.getOrDefault(false)
         }
     }
@@ -197,7 +198,7 @@ internal class AsmEnvironmentalDamageSource(val originals: Map<String, String>) 
         fun load(original: File): AsmEnvironmentalDamageSource? {
             val files = ENVIRONMENT_SOURCE_FILES.associateWith { File(original, "src/$it") }
             return if (files.values.all { it.isFile }) AsmEnvironmentalDamageSource(files.mapValues { it.value.readText() } +
-                File(original, "src/main.asm").takeIf { it.isFile }?.let { mapOf("main.asm" to it.readText()) }.orEmpty()) else null
+                File(original, "src/main.asm").takeIf { it.isFile }?.let { mapOf("main.asm" to it.readText()) }.orEmpty(), AsmSourceBindings.load(original).names) else null
         }
     }
 }
@@ -214,7 +215,7 @@ internal fun protectEnvironmentalDamageSource(catalog: AsmEnvironmentalDamageSou
     if (catalog == null) return compiled
     require(owned.all { it in catalog.keys.map(::environmentalSourceKey) } && configs.keys.all { it in catalog.keys }) { "Unknown authored patch-data identities." }
     require(configs.values.all { group -> group.map { it.value }.distinct().size == 1 && group.all { it.value in 0..9999 } }) { "Environmental patch rates must agree and fit 0–9999 energy/sec." }
-    val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
+    val labels = catalog.symbolNames.canonicalLabels(AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels)
     val parser = RomParser(compiled.romBytes)
     val header = if (compiled.romBytes.size % 0x8000 == 512) 512 else 0
     val claims = linkedMapOf<Pair<Int, Int>, String>()

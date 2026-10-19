@@ -126,9 +126,9 @@ tasks.register<org.gradle.api.tasks.testing.Test>("asmBuildIntegrationTest") {
     dependsOn(tasks.named("jvmTestClasses"), "copyAsarToAppResources")
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath
-    // Real source indexing plus retained compiled-base caches exceed Gradle's
-    // default 512 MiB test heap when exercising multiple disposable projects.
-    maxHeapSize = "1g"
+    // Full-source indexing plus retained compiled-base caches need headroom when
+    // multiple cold-rebuild scenarios share a worker; 1 GiB is insufficient.
+    maxHeapSize = "2g"
     useJUnitPlatform()
     filter {
         includeTestsMatching("com.supermetroid.editor.ui.AsmBuildPipelineIntegrationTest")
@@ -145,9 +145,17 @@ tasks.register<org.gradle.api.tasks.testing.Test>("asmSymbolCoverageTest") {
     dependsOn(tasks.named("jvmTestClasses"), rootProject.tasks.named("parityBuildReference"))
     testClassesDirs = regularJvmTest.get().testClassesDirs
     classpath = regularJvmTest.get().classpath
+    // Compare original and augmented source indexes alongside real Asar symbol/ROM output.
+    maxHeapSize = "1g"
     useJUnitPlatform { includeTags("asm-symbol-coverage") }
     systemProperty("smedit.requireParityFixtures", "true")
     outputs.upToDateWhen { false }
+}
+
+tasks.register("verifyAsmEnrichment") {
+    group = "verification"
+    description = "Verify augmented source/ROM equivalence, native identities, module bindings and the packaged compiler"
+    dependsOn("asmSymbolCoverageTest", "asarToolchainSmokeTest")
 }
 
 tasks.register<org.gradle.api.tasks.testing.Test>("communitySamusRomTest") {

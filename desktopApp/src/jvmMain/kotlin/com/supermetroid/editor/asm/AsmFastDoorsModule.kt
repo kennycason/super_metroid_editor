@@ -19,7 +19,8 @@ internal object AsmFastDoorsModule {
     private val source by lazy {
         requireNotNull(loadResource("asm-templates/fast_doors.asm")).bufferedReader().use { it.readText() }
     }
-    fun template(enabled: Boolean) = source.replace("$FLAG = 0", "$FLAG = ${if (enabled) 1 else 0}")
+    fun template(enabled: Boolean, bindings: AsmSourceBindings = AsmSourceBindings()) =
+        bindings.template(source.replace("$FLAG = 0", "$FLAG = ${if (enabled) 1 else 0}"))
     fun hasGate(text: String) = FLAG in text
     fun enabled(text: String): Boolean {
         val match = requireNotNull(assignment.findAll(text).toList().singleOrNull()) {
@@ -78,7 +79,7 @@ internal object AsmFastDoorsModule {
         }
         if (!file.isFile && patch?.enabled == true) {
             requireBundled(patch)
-            repository.createModule(projectFilePath, "fast_doors.asm", initialSource = template(true))
+            repository.createModule(projectFilePath, "fast_doors.asm", initialSource = template(true, AsmSourceBindings.load(workspace.originalDirectory)))
             project.asmWorkspace.patchSourceKeys += SOURCE_KEY
         } else if (file.isFile) {
             require(FILE !in workspace.disabledProjectModuleFileIds) { "Toggle Fast Doors in Patches, not the module browser. Its module must remain included." }
@@ -94,7 +95,7 @@ internal object AsmFastDoorsModule {
     fun validateNative(workspace: AsmProjectBuildWorkspace) {
         val originals = roots.values.distinct().associateWith { File(workspace.originalDirectory, "src/$it").readText() }
         val current = originals.keys.associateWith { File(workspace.workingDirectory, "src/$it").readText() }
-        val catalog = AsmDataPatchSource(originals)
+        val catalog = AsmDataPatchSource(originals, AsmSourceBindings.load(workspace.originalDirectory).names)
         for ((root, file) in roots) require(catalog.instructionBlock(file, root, current) == catalog.instructionBlock(file, root, originals)) {
             "Fast Doors: $root changed. Restore the native hook routine or keep this patch disabled; no fixed-offset fallback was applied."
         }
@@ -105,7 +106,8 @@ internal object AsmFastDoorsModule {
         val patch = project.patches.singleOrNull { it.id == PATCH_ID } ?: return compiled
         if (!patch.enabled) return compiled
         validateNative(workspace)
-        val labels = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels
+        val labels = AsmSourceBindings.load(workspace.originalDirectory).names
+            .canonicalLabels(AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8)).labels)
         fun symbol(name: String) = requireNotNull(labels[name]) { "Fast Doors: missing compiled symbol $name." }
         fun pc(address: Int) = ((address ushr 16 and 0x7F) * 0x8000) + (address and 0x7FFF)
         val header = compiled.romBytes.size % 0x8000

@@ -543,7 +543,7 @@ internal class AsmWorkspaceState(
         if (sourceBufferRevision == revision && buildReport === previousReport) buildReport = result.third
     }
 
-    suspend fun enableProjectWorkspace(projectFilePath: String): Boolean {
+    suspend fun enableProjectWorkspace(projectFilePath: String, romBytes: ByteArray? = null): Boolean {
         val reference = referenceWorkspace ?: run {
             error = "Download the ASM reference before enabling project ASM"
             return false
@@ -551,9 +551,11 @@ internal class AsmWorkspaceState(
         if (busy) return false
         busy = true
         error = null
+        val requireExistingBaseline = boundProjectEnabled && boundProjectFilePath == projectFilePath
         return try {
             val result = withContext(Dispatchers.IO) {
-                projectRepository.initialize(projectFilePath, reference) { message -> progress = message }
+                projectRepository.initializeFromRom(projectFilePath, reference, romBytes,
+                    requireExistingBaseline = requireExistingBaseline) { message -> progress = message }
             }
             boundProjectFilePath = projectFilePath
             boundProjectEnabled = true
@@ -1324,7 +1326,7 @@ internal class AsmWorkspaceState(
         if (AsmFastDoorsModule.FILE in projectModuleFileIds) return
         val (result, _) = projectRepository.createModule(boundProjectFilePath,
             AsmFastDoorsModule.FILE.removePrefix(ASM_PROJECT_MODULE_PREFIX),
-            initialSource = AsmFastDoorsModule.template(enabled))
+            initialSource = AsmFastDoorsModule.template(enabled, AsmSourceBindings.load(checkNotNull(projectWorkspace).originalDirectory)))
         adoptProjectWorkspace(result)
         buildReport = null
     }

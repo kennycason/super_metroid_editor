@@ -38,7 +38,19 @@ workspace may return to `PATCHED_ROM`, but saved or unsaved source edits require
 `ASM_SOURCE`; both the UI and export validation prevent those edits from being
 silently ignored. Authored source lives under `asm/`; generated source/data trees live
 under `smedit/asm/`. They are not embedded in JSON. Saved source overrides
-are the portable authored content. In `ASM_SOURCE` mode the two source trees compile
+are the portable authored content. `asm/base/manifest.json` and `source.zip` retain
+the exact augmented source baseline, its upstream/augmentation identities, per-file
+hashes, original line correspondence, asset ranges, symbol rename mappings and
+compiler-backed native identities (including generated member names). This baseline is
+project input, not a disposable cache: app updates leave it unchanged and cache
+repair extracts it instead of applying a newer augmentation recipe. Source cache
+metadata locks its exact manifest identity, which also enters compiler cache keys.
+Format 2 freezes native identities; format-1 manifests retain their exact identity
+and can use the matching revision-addressed native catalog without being rewritten.
+The identity is a hash of saved manifest bytes, not a re-encoding with current app
+defaults. New bundled modules bind canonical names to that project's spellings
+only at insertion; authored modules remain unchanged across app updates and repair.
+In `ASM_SOURCE` mode the two source trees compile
 before the shared semantic-edit and patch transaction, and their authored byte delta
 becomes a normal conflict-checked ROM owner. Eligible fixed-range editor writes are
 projected into temporary copies of exact manifest-owned `data/` assets before the
@@ -104,13 +116,15 @@ Super Metroid ASM Sandbox/
   Super Metroid [JU].smc              # immutable supplied base; original filename
   Super Metroid ASM Sandbox-v1.0.smc  # generated build; project name + version
   asm/
+    base/manifest.json               # frozen source identities, hashes and mappings
+    base/source.zip                  # portable augmented ASM, no ROM assets
     modules/                         # authored modules, .order and .disabled
     overrides/src/                   # authored replacements for source banks
   data/                              # reserved for explicit custom asset inputs
   states/                            # emulator SRAM and save states
   exports/graphics/                  # generated CRE/URE preview PNGs
   smedit/asm/
-    original/                        # pinned source + private extracted assets
+    original/                        # frozen augmented source + private extracted assets
     workspace/                       # generated editable mirror
     build/                           # compiler reports, symbols, generated rooms
     .smedit-project-asm.properties
@@ -150,7 +164,7 @@ An authored module is never recovered from a stale generated mirror.
 - Exports use the **project** name, build label and version, not the base-ROM name.
   Output paths reject unsafe names and any destination that would replace the input ROM.
 
-Source control should include `.smedit`, `asm/modules/`, `asm/overrides/`, and genuinely
+Source control should include `.smedit`, `asm/base/`, `asm/modules/`, `asm/overrides/`, and genuinely
 authored assets. Do not commit ROMs, extracted binary assets, `smedit/`, `states/`
 or generated previews. NEW writes a local `.gitignore`. Changing ignore rules does not
 untrack ROMs already committed to the repository; cleaning those up is a separate step.

@@ -13,6 +13,10 @@ packaged application, project format, or ROM exporter.
 - `build_reference.py` extracts private assets, builds pinned Asar when needed,
   rebuilds the disassembly, and generates `symbols.sym`.
 - `symbol_catalog.py` strictly parses, searches, and exports Asar's WLA labels.
+- `native_symbol_manifest.py` checks the runtime's revision-addressed enemy-header
+  identities and generated members against pinned compiler output, independently
+  of address comments. It checks by default; regeneration requires explicit
+  `--write` and a valid private clean-ROM/source fixture.
 - `asset_manifest.py` maps every active extracted `incbin` to its named symbol,
   exact ROM range, size, aliases, and content hash.
 - `lz5_oracle.py` independently models `$80:B119`, classifies exact compressed

@@ -31,6 +31,8 @@ SMEDIT_FastDoors_AlignXHook:
 ; within their banks' verified free space; hooks use the symbols above.
 org Freespace_Bank80_CD8E+$0372
 SMEDIT_FastDoors_ScrollTwice:
+; X selects the direction's scrolling routine. Preserve it across the first call.
+; Carry set means scrolling finished; otherwise tail-call the routine a second time.
     PHX
     JSR.W (DoorTransitionScrolling_pointers,X)
     PLX
@@ -42,6 +44,8 @@ SMEDIT_FastDoors_ScrollTwice_End:
 
 org Freespace_Bank82_F70F+$0671
 SMEDIT_FastDoors_Align:
+; X selects the layer-1 coordinate pair (0 = X, 4 = Y).
+; The incoming N flag selects negative-direction alignment. Return with A 16-bit.
     SEP #$20
     BMI .negative
     LDA.W Layer1XPosition,X

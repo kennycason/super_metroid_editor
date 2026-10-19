@@ -439,7 +439,7 @@ internal fun AsmWorkspaceSidebar(
 
     fun enableProjectAsm() {
         scope.launch {
-            if (state.enableProjectWorkspace(projectFilePath)) onProjectAsmEnabled()
+            if (state.enableProjectWorkspace(projectFilePath, romParser?.copyRomData())) onProjectAsmEnabled()
         }
     }
 
@@ -2855,7 +2855,7 @@ private fun AsmSourceCanvas(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            if (source.isBank) "Restore original bank ASM…" else "Restore original source ASM…",
+                            if (source.isBank) "Restore bank to project baseline…" else "Restore source to project baseline…",
                             fontSize = fs.body,
                         )
                     }
@@ -2871,7 +2871,7 @@ private fun AsmSourceCanvas(
             onDismissRequest = { confirmRestoreOrDelete = false },
             title = {
                 Text(
-                    if (isProjectModule) "Delete project module?" else "Restore original source?",
+                    if (isProjectModule) "Delete project module?" else "Restore project baseline?",
                     fontSize = fs.heading,
                 )
             },
@@ -2880,7 +2880,7 @@ private fun AsmSourceCanvas(
                     if (isProjectModule) {
                         "This permanently removes ${source.displayName} from the project and its build order. Its saved and unsaved source will be discarded."
                     } else {
-                        "This replaces the saved project copy of ${source.displayName} with its immutable original snapshot. Unsaved changes in this file will also be discarded."
+                        "This replaces the saved project copy of ${source.displayName} with its frozen project baseline, including the comments and names it started with. Unsaved changes in this file will also be discarded."
                     },
                     fontSize = fs.body,
                 )
@@ -2894,7 +2894,7 @@ private fun AsmSourceCanvas(
                         if (changed) onSaveProject()
                     }
                 }, shape = ASM_CONTROL_SHAPE) {
-                    Text(if (isProjectModule) "Delete module" else "Restore original", fontSize = fs.body)
+                    Text(if (isProjectModule) "Delete module" else "Restore baseline", fontSize = fs.body)
                 }
             },
             dismissButton = {

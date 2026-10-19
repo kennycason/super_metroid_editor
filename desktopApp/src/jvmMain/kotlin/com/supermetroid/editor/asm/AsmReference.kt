@@ -1,5 +1,6 @@
 package com.supermetroid.editor.asm
 
+import kotlinx.serialization.Serializable
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URI
@@ -30,6 +31,7 @@ internal object AsmReferenceContract {
         get() = "${REPOSITORY_URL.removeSuffix(".git")}/archive/$COMMIT.zip"
 }
 
+@Serializable
 internal data class AsmAssetRange(
     val path: String,
     val pcOffset: Int,
@@ -187,7 +189,7 @@ internal data class AsmReferenceIndex(
     private val filesById = files.associateBy { it.id }
     private val globalLabels = labels.filter { it.localScope == null }.groupBy { it.name }
     private val localLabels = labels.filter { it.localScope != null }
-        .associateBy { Triple(it.fileId, it.localScope, it.name) }
+        .groupBy { Triple(it.fileId, it.localScope, it.name) }
     private val assetsByPath = assets.associateBy { it.range.path }
     private val labelsByLocation = labels.groupBy { it.fileId to it.lineIndex }
     private val labelsBySymbol = labels.associateBy(AsmLabel::symbolId)
@@ -229,7 +231,7 @@ internal data class AsmReferenceIndex(
         val canonical = asmCanonicalSymbolToken(token)
         return if (canonical.startsWith('.')) {
             val scope = localScopeAt(fileId, lineIndex, asmLocalLabelDepth(canonical)) ?: return null
-            localLabels[Triple(fileId, scope, canonical)]
+            localLabels[Triple(fileId, scope, canonical)]?.lastOrNull()
         } else {
             globalLabels[canonical]?.singleOrNull() ?: globalLabels[canonical]?.firstOrNull()
         }
@@ -240,6 +242,15 @@ internal data class AsmReferenceIndex(
         val path = filesById[fileId]?.scopePathByLine?.getOrNull(lineIndex).orEmpty()
         if (path.size < depth) return null
         return path.take(depth).joinToString("_")
+    }
+
+    /** Editing must never inherit navigation's best-effort choice among ambiguous declarations. */
+    fun resolveUniqueLabel(fileId: String, lineIndex: Int, token: String): AsmLabel? {
+        val canonical = asmCanonicalSymbolToken(token)
+        return if (canonical.startsWith('.')) {
+            val scope = localScopeAt(fileId, lineIndex, asmLocalLabelDepth(canonical)) ?: return null
+            localLabels[Triple(fileId, scope, canonical)]?.singleOrNull()
+        } else globalLabels[canonical]?.singleOrNull()
     }
 
     fun resolveAsset(reference: String): AsmAsset? {
@@ -263,7 +274,7 @@ internal data class AsmReferenceIndex(
                 if (ASM_FILE_DIRECTIVE_REGEX.containsMatchIn(code)) {
                     return@forEachIndexed
                 }
-                ASM_REFERENCE_TOKEN_REGEX.findAll(code).forEach tokenLoop@{ match ->
+                AsmSourceLexing.references(code).forEach tokenLoop@{ match ->
                     val token = match.value
                     if (token.startsWith('"')) return@tokenLoop
                     val target = resolveLabel(source.id, lineIndex, token) ?: return@tokenLoop
@@ -295,7 +306,7 @@ internal data class AsmReferenceIndex(
         files.forEach { source ->
             source.lines.forEachIndexed { lineIndex, sourceLine ->
                 val code = asmCodeBeforeComment(sourceLine)
-                ASM_REFERENCE_TOKEN_REGEX.findAll(code).forEach tokenLoop@{ match ->
+                AsmSourceLexing.references(code).forEach tokenLoop@{ match ->
                     val token = match.value
                     if (!token.startsWith('%')) return@tokenLoop
                     val macro = resolveMacro(token) ?: return@tokenLoop
@@ -317,13 +328,6 @@ internal data class AsmReferenceIndex(
 }
 
 private val ASM_FILE_DIRECTIVE_REGEX = Regex("^\\s*(?:incsrc|incbin)\\b", RegexOption.IGNORE_CASE)
-
-private val ASM_REFERENCE_TOKEN_REGEX =
-    Regex(
-        "\"(?:\\\\.|[^\"])*\"|" +
-            "[!%]?(?:\\.+)?[A-Za-z_][A-Za-z0-9_]*(?:\\[[^]\\r\\n]+])?" +
-            "(?:\\.[A-Za-z_][A-Za-z0-9_]*(?:\\[[^]\\r\\n]+])?)*",
-    )
 
 internal fun asmLocalLabelDepth(token: String): Int = token.indexOfFirst { it != '.' }
     .let { firstNonDot -> if (firstNonDot < 0) token.length else firstNonDot }
@@ -360,7 +364,7 @@ internal object AsmSourceReferenceAuditor {
                 if (parseAsmMacroDefinition(source.id, lineIndex, sourceLine) != null) insideMacro = true
                 val code = asmCodeBeforeComment(sourceLine)
                 if (ASM_FILE_DIRECTIVE_REGEX.containsMatchIn(code)) return@forEachIndexed
-                ASM_REFERENCE_TOKEN_REGEX.findAll(code).forEach tokenLoop@{ match ->
+                AsmSourceLexing.references(code).forEach tokenLoop@{ match ->
                     val token = match.value
                     if (token.startsWith('"') || token.startsWith('%')) return@tokenLoop
                     if (isAsmDefinitionOccurrence(code, match.range)) return@tokenLoop
@@ -434,6 +438,7 @@ private fun isAsmDefinitionOccurrence(code: String, range: IntRange): Boolean {
         prefix.dropLast("struct".length).lastOrNull()?.let { it.isLetterOrDigit() || it == '_' } != true
 }
 
+@Serializable
 internal data class AsmReferenceMetadata(
     val repositoryUrl: String,
     val commit: String,

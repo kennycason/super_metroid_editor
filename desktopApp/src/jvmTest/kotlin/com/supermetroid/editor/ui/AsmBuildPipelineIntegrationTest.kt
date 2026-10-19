@@ -1,5 +1,7 @@
 package com.supermetroid.editor.ui
 
+import com.supermetroid.editor.asm.AsmDataPatchSource
+
 import com.supermetroid.editor.asm.AsmBuildArtifactRepository
 
 import com.supermetroid.editor.asm.AsmProjectTestFixture
@@ -165,7 +167,10 @@ class AsmBuildPipelineIntegrationTest {
         fun same(expected: ByteArray, actual: ByteArray) = assertEquals(com.supermetroid.editor.asm.AsmVerifiedCache.hash(expected), com.supermetroid.editor.asm.AsmVerifiedCache.hash(actual))
         same(fixture.rom, assertNotNull(build(), logs.joinToString("\n")).resultRom)
         val before = workspace.projectSourceText("bank_91.asm")
-        val start = before.indexOf("SpeedBoostTimerResetValues:"); val end = before.indexOf("PoseDefinitions:", start)
+        val timerSymbol = assertNotNull(AsmDataPatchSource.load(fixture.workspace.originalDirectory))
+            .symbolNames.active("SpeedBoostTimerResetValues")
+        val start = before.indexOf("$timerSymbol:"); val end = before.indexOf("PoseDefinitions:", start)
+        assertTrue(start >= 0 && end > start, "The active timer table must be present before relocating it")
         val movedSnes = 0x91FFEE; val movedPc = parser.snesToPc(movedSnes)
         assertTrue(fixture.rom.copyOfRange(movedPc, movedPc + 10).all { it == 0xFF.toByte() })
         assertTrue(workspace.updateSourceEditText("bank_91.asm", before.replaceRange(start until end,

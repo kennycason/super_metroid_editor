@@ -56,6 +56,8 @@ internal data class AsmProjectBuildWorkspace(
     val originalDirectory: File,
     val workingDirectory: File,
     val disabledProjectModuleFileIds: Set<String>,
+    val baselineId: String = "",
+    val assets: List<AsmAssetRange> = emptyList(),
 )
 
 internal data class AsmSavedSource(val modified: Boolean)
@@ -68,13 +70,15 @@ internal data class AsmSavedSource(val modified: Boolean)
 internal class AsmProjectWorkspaceRepository(
     private val assetRanges: List<AsmAssetRange> = AsmAssetManifest.loadBundled(),
     private val starterModules: List<AsmStarterModule> = DEFAULT_ASM_STARTER_MODULES,
+    private val augmentation: AsmSourceAugmentation? = null,
+    private val nativeSymbols: List<AsmNativeSymbol>? = null,
 ) {
     fun load(projectFilePath: String, fileIds: Set<String>? = null): AsmProjectWorkspace? {
         synchronizeProjectModules(projectFilePath)
         synchronizeSourceMirrors(projectFilePath, fileIds)
         val buildWorkspace = loadForBuild(projectFilePath) ?: return null
         val metadata = readMetadata(File(cacheRoot(buildWorkspace.root), METADATA_FILE)) ?: return null
-        val workspace = referenceWorkspace(buildWorkspace.workingDirectory, metadata.reference, fileIds)
+        val workspace = referenceWorkspace(buildWorkspace.workingDirectory, metadata.reference, fileIds, buildWorkspace.assets)
         val projectModuleFileIds = readProjectModuleOrder(buildWorkspace.workingDirectory)
         val disabledProjectModuleFileIds = buildWorkspace.disabledProjectModuleFileIds
         return AsmProjectWorkspace(
@@ -101,13 +105,16 @@ internal class AsmProjectWorkspaceRepository(
         if (!root.isDirectory) return null
         val cache = cacheRoot(root)
         val metadata = readMetadata(File(cache, METADATA_FILE)) ?: return null
-        if (metadata.layoutVersion != LAYOUT_VERSION || metadata.reference.commit != AsmReferenceContract.COMMIT) {
+        if (metadata.layoutVersion != LAYOUT_VERSION) {
             return null
         }
+        val baseline = AsmSourceBaseline.load(root) ?: return null
+        require(baseline.id == metadata.baselineId && baseline.reference == metadata.reference) { "The frozen ASM baseline does not match this workspace" }
         val original = File(cache, ORIGINAL_DIRECTORY)
         val working = File(cache, WORKING_DIRECTORY)
         if (!File(original, "src/main.asm").isFile || !File(working, "src/main.asm").isFile) return null
-        if (!assetRanges.all { File(working, "data/${it.path}").isFile }) return null
+        if (!baseline.matches(File(original, "src"))) return null
+        if (!baseline.assets.all { File(working, "data/${it.path}").isFile }) return null
         val modulesDirectory = File(root, MODULES_DIRECTORY)
         val workingModules = File(working, "src/$ASM_PROJECT_MODULE_DIRECTORY")
         val moduleOrder = runCatching { readModuleOrder(modulesDirectory) }.getOrNull() ?: return null
@@ -131,6 +138,8 @@ internal class AsmProjectWorkspaceRepository(
             disabledProjectModuleFileIds = disabledModules.mapTo(linkedSetOf()) {
                 ASM_PROJECT_MODULE_PREFIX + it
             },
+            baselineId = baseline.id,
+            assets = baseline.assets,
         )
     }
 
@@ -138,9 +147,26 @@ internal class AsmProjectWorkspaceRepository(
         projectFilePath: String,
         reference: AsmReferenceWorkspace,
         onProgress: (String) -> Unit = {},
+    ): AsmProjectWorkspace = initializeFromRom(projectFilePath, reference, null, onProgress = onProgress)
+
+    fun initializeFromRom(
+        projectFilePath: String,
+        reference: AsmReferenceWorkspace,
+        romBytes: ByteArray?,
+        requireExistingBaseline: Boolean = false,
+        onProgress: (String) -> Unit = {},
     ): AsmProjectWorkspace {
         val target = requireNotNull(projectRoot(projectFilePath)) {
             "Save the SMEDIT project before enabling project ASM"
+        }
+        val romBody = romBytes?.let { if (it.size % 0x8000 == 0x200) it.copyOfRange(0x200, it.size) else it }
+        require(romBody == null || AsmVerifiedCache.hash(romBody) == reference.metadata.romSha256) {
+            "The supplied ROM does not match the ASM reference assets"
+        }
+        val priorMetadata = readMetadata(File(cacheRoot(target), METADATA_FILE))
+        require(File(target, AsmSourceBaseline.DIRECTORY).exists() ||
+            !requireExistingBaseline && priorMetadata?.baselineId.orEmpty().isBlank()) {
+            "The project's frozen ASM baseline is missing. Restore asm/base from the project backup; repair will not replace it with the current app's source."
         }
         load(projectFilePath)?.let { return it }
         val cache = cacheRoot(target)
@@ -149,10 +175,21 @@ internal class AsmProjectWorkspaceRepository(
         val staging = File(sidecar, ".asm.installing-${UUID.randomUUID()}")
         requireManagedChild(sidecar, staging)
         try {
-            onProgress("Copying the pinned ASM source into the project…")
+            onProgress("Preparing the project's frozen ASM baseline…")
+            val baseline = AsmSourceBaseline.load(target) ?: AsmSourceBaseline.create(target, reference,
+                augmentation ?: if (assetRanges == AsmAssetManifest.loadBundled()) AsmSourceAugmentation.bundled() else AsmSourceAugmentation.NONE,
+                assetRanges, nativeSymbols)
+            require(baseline.reference.romSha256 == reference.metadata.romSha256) { "The supplied ROM assets do not match the project's frozen ASM baseline" }
             val original = File(staging, ORIGINAL_DIRECTORY)
-            copyTree(File(reference.root, "src"), File(original, "src"))
+            baseline.extract(target, File(original, "src"))
             copyTree(File(reference.root, "data"), File(original, "data"))
+            if (romBody != null) {
+                for (asset in baseline.assets) {
+                    val output = File(original, "data/${asset.path}")
+                    output.parentFile.mkdirs()
+                    output.writeBytes(romBody.copyOfRange(asset.pcOffset, asset.endExclusive))
+                }
+            }
             onProgress("Creating the editable ASM workspace…")
             val working = File(staging, WORKING_DIRECTORY)
             copyTree(File(original, "src"), File(working, "src"))
@@ -172,6 +209,7 @@ internal class AsmProjectWorkspaceRepository(
                 installStarterModules(
                     modulesDirectory = File(staging, MODULES_DIRECTORY),
                     workingSourceRoot = File(working, "src"),
+                    bindings = baseline.bindings,
                 )
             }
             File(sidecar, ".gitignore").writeText("*\n")
@@ -180,18 +218,19 @@ internal class AsmProjectWorkspaceRepository(
                 AsmProjectMetadata(
                     layoutVersion = LAYOUT_VERSION,
                     createdAt = Instant.now().toString(),
-                    reference = reference.metadata,
+                    reference = baseline.reference,
+                    baselineId = baseline.id,
                 ),
             )
             require(File(staging, "$WORKING_DIRECTORY/src/main.asm").isFile) {
                 "Project ASM staging has no src/main.asm"
             }
-            require(assetRanges.all { File(working, "data/${it.path}").isFile }) {
+            require(baseline.assets.all { File(working, "data/${it.path}").let { file -> file.isFile && file.length() == it.length.toLong() } }) {
                 "Project ASM staging is missing one or more extracted assets"
             }
             // Parse before activation so an incomplete or malformed tree never
             // becomes the project's live workspace.
-            referenceWorkspace(working, reference.metadata)
+            referenceWorkspace(working, baseline.reference, ranges = baseline.assets)
             // Authored source survives cache rebuilds. Publish starter modules only
             // when this project has no modules; never replace user-authored files.
             val starters = File(staging, MODULES_DIRECTORY)
@@ -438,8 +477,9 @@ internal class AsmProjectWorkspaceRepository(
         }
     }
 
-    private fun referenceWorkspace(root: File, metadata: AsmReferenceMetadata, fileIds: Set<String>? = null): AsmReferenceWorkspace {
-        val index = AsmSourceParser().parse(File(root, "src"), File(root, "data"), assetRanges, fileIds)
+    private fun referenceWorkspace(root: File, metadata: AsmReferenceMetadata, fileIds: Set<String>? = null,
+                                   ranges: List<AsmAssetRange> = assetRanges): AsmReferenceWorkspace {
+        val index = AsmSourceParser().parse(File(root, "src"), File(root, "data"), ranges, fileIds)
         return AsmReferenceWorkspace(root, metadata, index)
     }
 
@@ -492,7 +532,7 @@ internal class AsmProjectWorkspaceRepository(
         readDisabledModules(modulesDirectory, readModuleOrder(modulesDirectory))
     }
 
-    private fun installStarterModules(modulesDirectory: File, workingSourceRoot: File) {
+    private fun installStarterModules(modulesDirectory: File, workingSourceRoot: File, bindings: AsmSourceBindings) {
         require(starterModules.map(AsmStarterModule::fileName).distinct().size == starterModules.size) {
             "Bundled ASM starter modules contain duplicate names"
         }
@@ -501,10 +541,10 @@ internal class AsmProjectWorkspaceRepository(
             require(normalizeProjectModuleName(starter.fileName) == starter.fileName) {
                 "Unsafe bundled ASM starter module name: ${starter.fileName}"
             }
-            val bytes = checkNotNull(javaClass.getResourceAsStream(starter.resourcePath)) {
+            val text = checkNotNull(javaClass.getResourceAsStream(starter.resourcePath)) {
                 "Missing bundled ASM starter module ${starter.resourcePath}"
-            }.use { it.readBytes() }
-            writeBytesAtomically(File(modulesDirectory, starter.fileName), bytes)
+            }.bufferedReader().use { it.readText() }
+            writeTextAtomically(File(modulesDirectory, starter.fileName), bindings.template(text))
         }
         val order = starterModules.map(AsmStarterModule::fileName)
         writeModuleOrder(modulesDirectory, order)
@@ -811,6 +851,7 @@ internal class AsmProjectWorkspaceRepository(
     private fun writeMetadata(file: File, metadata: AsmProjectMetadata) {
         val properties = Properties().apply {
             setProperty("layoutVersion", metadata.layoutVersion.toString())
+            setProperty("baselineId", metadata.baselineId)
             setProperty("createdAt", metadata.createdAt)
             setProperty("repositoryUrl", metadata.reference.repositoryUrl)
             setProperty("commit", metadata.reference.commit)
@@ -829,6 +870,7 @@ internal class AsmProjectWorkspaceRepository(
         val properties = Properties().apply { file.inputStream().use(::load) }
         AsmProjectMetadata(
             layoutVersion = properties.getProperty("layoutVersion").toInt(),
+            baselineId = properties.getProperty("baselineId", ""),
             createdAt = properties.getProperty("createdAt"),
             reference = AsmReferenceMetadata(
                 repositoryUrl = properties.getProperty("repositoryUrl"),
@@ -846,11 +888,12 @@ internal class AsmProjectWorkspaceRepository(
         val layoutVersion: Int,
         val createdAt: String,
         val reference: AsmReferenceMetadata,
+        val baselineId: String,
     )
 
     private companion object {
         val SOURCE_LOCKS = ConcurrentHashMap<String, Any>()
-        const val LAYOUT_VERSION = 1
+        const val LAYOUT_VERSION = 2
         const val METADATA_FILE = ".smedit-project-asm.properties"
         const val ORIGINAL_DIRECTORY = "original"
         const val WORKING_DIRECTORY = "workspace"

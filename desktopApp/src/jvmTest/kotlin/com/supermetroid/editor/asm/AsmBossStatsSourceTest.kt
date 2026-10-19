@@ -29,6 +29,17 @@ import kotlin.test.*
 class AsmBossStatsSourceTest {
     @TempDir lateinit var directory: File
 
+    @Test fun `boss identity and grouped fields survive renamed declarations without address comments`() {
+        val identities = testNativeEnemySymbols(headers)
+        val names = AsmSourceSymbolNames(mapOf("EnemyHeaders_Kraid" to "KraidBodyRecord", "EnemyHeaders_KraidArm" to "KraidArmRecord"))
+        val text = headers.lineSequence().joinToString("\n") { names.activeCode(it).replace(Regex(";A0[0-9A-Fa-f]{4};"), "") }
+        val renamed = AsmBossStatsSource(text, AsmSourceBindings(names, identities))
+        val original = AsmBossStatsSource(headers, testEnemyBindings(headers))
+        for (key in original.keys) assertEquals(original.original(key).values, renamed.original(key).values, key)
+        assertEquals("KraidBodyRecord", renamed.headers[0xE2BF])
+        assertContains(renamed.navigationKeysAt(text, renamed.line("kraid_hp", text)), "kraid_hp")
+    }
+
     // Minimal headers for every boss-stat control, including Kraid's grouped sub-species.
     private val headers = """
         EnemyHeaders_Kraid:                                                      ;A0E2BF;
@@ -229,7 +240,7 @@ class AsmBossStatsSourceTest {
             AsmSourceParser().parse(src, data, emptyList()),
         )
         val file = File(directory, "Test.smedit").apply { writeText("{}") }
-        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList()).also { it.initialize(file.path, reference) }
+        val repository = AsmProjectWorkspaceRepository(emptyList(), emptyList(), nativeSymbols = testNativeEnemySymbols(headerText)).also { it.initialize(file.path, reference) }
         val workspace = AsmWorkspaceState(projectRepository = repository).apply { bindProject(file.path, true) }
         val parser = com.supermetroid.editor.rom.RomParser(ByteArray(0x300000))
         val project = SmEditProject("test.sfc").apply {
@@ -270,7 +281,7 @@ class AsmBossStatsSourceTest {
     }
 
     @Test fun `reset original restores each native sub species even when their original values differ`() = runBlocking {
-        val originalArm = AsmBossStatsSource(headers).original("kraid_hp").words.last()
+        val originalArm = AsmBossStatsSource(headers, testEnemyBindings(headers)).original("kraid_hp").words.last()
         val f = fixture(headers.replaceRange(originalArm.span, "900"))
         val patch = f.editor.findOrCreateConfigPatch("boss_stats")
         val field = f.bridge.catalog.field("kraid_hp", f.text())
@@ -514,7 +525,7 @@ class AsmBossStatsSourceTest {
     }
 
     @Test fun `compiler validates all subparts full word ownership native identity and header normalization`() {
-        val catalog = AsmBossStatsSource(headers)
+        val catalog = AsmBossStatsSource(headers, testEnemyBindings(headers))
         val project = SmEditProject("test.sfc")
         val rom = ByteArray(0x300000)
         val parser = RomParser(rom)

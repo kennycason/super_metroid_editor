@@ -47,6 +47,26 @@ class AsmBeamDamageSourceTest {
         val bridge get() = assertNotNull(editor.beamDamageBridge)
         fun text() = workspace.projectSourceText(BEAM_DAMAGE_SOURCE_FILE)
     }
+
+    @Test fun `renamed pointer and projectile tables retain every beam field and source link`() {
+        val root = File(directory, "renamed-source").apply { mkdirs() }
+        File(root, "main.asm").writeText("incsrc bank_93.asm\n")
+        File(root, BEAM_DAMAGE_SOURCE_FILE).writeText(source)
+        val augmented = AsmSourceAugmentation("renamed-beams", renames = listOf(
+            AsmSourceRename(beamPointerLabel(false), "NormalBeamProjectilePointers"),
+            AsmSourceRename(beamPointerLabel(true), "ChargedBeamProjectilePointers"),
+            AsmSourceRename(table("power"), "NormalPowerBeamProjectile"),
+        )).apply(root)
+        val text = augmented.texts.getValue(BEAM_DAMAGE_SOURCE_FILE)
+        val before = AsmBeamDamageSource(source)
+        val renamed = AsmBeamDamageSource(text, AsmSourceSymbolNames(augmented.symbolNames))
+        for (key in before.keys) {
+            assertEquals(before.original(key).value, renamed.original(key).value, key)
+            assertContains(renamed.navigationKeysAt(text, renamed.line(key, text)), key)
+        }
+        assertTrue(renamed.field("power", text).table == "NormalPowerBeamProjectile")
+    }
+
     private suspend fun fixture(roomSourceText: String = "; Unrelated room source\n", saved: SmEditProject? = null): Fixture {
         val src = File(directory, "reference/src").apply { mkdirs() }
         val data = File(directory, "reference/data").apply { mkdirs() }

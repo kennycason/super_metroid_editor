@@ -89,12 +89,12 @@ private val patchInstructionWidths = buildMap<String, Int> {
 }
 
 /** Finite codecs for explicit native operands/data rows. No address-comment parsing or general Asar evaluation. */
-internal class AsmDataPatchSource(val originals: Map<String, String>) {
+internal class AsmDataPatchSource(val originals: Map<String, String>, val symbolNames: AsmSourceSymbolNames = AsmSourceSymbolNames()) {
     val definitions = DATA_PATCH_DEFINITIONS.filter { def -> def.sites.all { it.file in originals } }.associateBy { it.id }
     val types = definitions.values.map { it.type }.toSet()
     private data class Code(val text: String, val at: Int)
     private data class Label(val name: String, val start: Int, val end: Int, val local: Boolean)
-    private class Document(val text: String) {
+    private class Document(val text: String, val symbolNames: AsmSourceSymbolNames) {
         val labels = buildList {
             var scope = ""
             for (match in Regex("(?m)^[ \\t]*([A-Za-z_][A-Za-z0-9_]*|\\.[A-Za-z_][A-Za-z0-9_]*):[^\\r\\n]*(?:\\r?\\n|$)").findAll(text)) {
@@ -105,7 +105,7 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
         }
         private val blocks = mutableMapOf<String, List<Code>>()
         fun block(symbol: String): List<Code> = blocks.getOrPut(symbol) {
-            val label = labels.singleOrNull { it.name == symbol } ?: error("Expected exactly one $symbol declaration.")
+            val label = labels.singleOrNull { it.name == symbolNames.active(symbol) } ?: error("Expected exactly one $symbol declaration.")
             val end = labels.firstOrNull { it.start >= label.end && (!it.local || label.local) }?.start ?: text.length
             val nested = labels.filter { it.start >= label.end && it.start < end }.map { it.start }.toSet()
             buildList {
@@ -119,11 +119,11 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
         }
     }
     private val documents = mutableListOf<Document>()
-    private fun document(text: String) = documents.firstOrNull { it.text === text } ?: Document(text).also {
+    private fun document(text: String) = documents.firstOrNull { it.text === text } ?: Document(text, symbolNames).also {
         if (documents.size == 12) documents.removeAt(0)
         documents.add(it)
     }
-    private fun normalize(code: String) = code.trim().replace(patchWhitespace, " ").let {
+    private fun normalize(code: String) = symbolNames.canonicalCode(code).trim().replace(patchWhitespace, " ").let {
         it.substringBefore(' ').uppercase() + it.substringAfter(' ', "").let { tail -> if (tail.isEmpty()) "" else " $tail" }
     }
     /** Checked native code consumers, shared with curated code-patch hook audits. */
@@ -252,7 +252,8 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
             if (field.words.single().site.op == "dd") {
                 val file = "bank_94.asm"
                 val native = document(originals.getValue(file))
-                val roots = native.labels.filter { !it.local && native.block(it.name).any { code -> normalize(code.text) == "LDA.W #SamusXSpeedTable_Normal" } }
+                val roots = native.labels.filter { !it.local && native.block(symbolNames.canonical(it.name)).any { code -> normalize(code.text) == "LDA.W #SamusXSpeedTable_Normal" } }
+                    .map { it.copy(name = symbolNames.canonical(it.name)) }
                 require(roots.isNotEmpty()) { "Normal movement table bindings are unavailable." }
                 for (root in roots) {
                     val sequence = listOf("LDA.W #SamusXSpeedTable_Normal", "STA.W XSpeedTablePointer")
@@ -282,7 +283,7 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
         val word = runCatching { field(id, texts).words.first() }.getOrNull()
         val site = word?.site ?: definitions.getValue(id).sites.first()
         val text = texts.getValue(site.file)
-        val offset = word?.span?.first ?: document(text).labels.singleOrNull { it.name == site.symbol }?.start ?: 0
+        val offset = word?.span?.first ?: document(text).labels.singleOrNull { it.name == symbolNames.active(site.symbol) }?.start ?: 0
         return site.file to text.take(offset).count { it == '\n' }
     }
     fun editorLinks(file: String, line: Int, texts: Map<String, String>): List<AsmEditorLink> {
@@ -296,18 +297,20 @@ internal class AsmDataPatchSource(val originals: Map<String, String>) {
         } }.getOrDefault(false) }
         if (exact.isNotEmpty()) return exact.map(::link)
         val label = labels.lastOrNull { it.start <= offset } ?: return emptyList()
+        val labelName = symbolNames.canonical(label.name)
         // A shared routine's heading can offer a chooser, but unrelated instructions must not
         // pretend to belong to every controller action in NewSaveFile.
         return definitions.values.filter { def -> def.sites.any { site -> site.file == file &&
-            (site.symbol == label.name || label.local && label.name.startsWith(site.symbol + "_") ||
-                !label.local && site.symbol.startsWith(label.name + "_")) } }
+            (site.symbol == labelName || label.local && labelName.startsWith(site.symbol + "_") ||
+                !label.local && site.symbol.startsWith(labelName + "_")) } }
             .let { candidates -> if (candidates.size > 1 && offset !in label.start until label.end) emptyList() else candidates.map(::link) }
     }
     companion object {
         fun load(original: File): AsmDataPatchSource? {
             val files = DATA_PATCH_DEFINITIONS.flatMap { it.sites }.map { it.file }.toSet() + setOf("main.asm", "macros.asm", "bank_94.asm")
             val texts = files.mapNotNull { file -> File(original, "src/$file").takeIf { it.isFile }?.let { file to it.readText() } }.toMap()
-            return texts.takeIf { map -> DATA_PATCH_DEFINITIONS.any { def -> def.sites.all { it.file in map } } }?.let(::AsmDataPatchSource)
+            return texts.takeIf { map -> DATA_PATCH_DEFINITIONS.any { def -> def.sites.all { it.file in map } } }
+                ?.let { AsmDataPatchSource(it, AsmSourceBaseline.symbolsFor(original)) }
         }
     }
 }

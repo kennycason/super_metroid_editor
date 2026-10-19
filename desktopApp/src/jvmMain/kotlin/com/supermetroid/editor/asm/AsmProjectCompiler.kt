@@ -445,6 +445,7 @@ internal class AsmProjectCompiler(
     ): String {
         val fingerprint = BuildFingerprint()
         fingerprint.addText(CACHE_FORMAT_VERSION)
+        fingerprint.addText("source-baseline:${workspace.baselineId}")
         fingerprint.addText("managed-bank8f-start:$managedBank8FStart")
         fingerprint.addText(assemblerVersion)
         fingerprint.addFile("asar", asar)

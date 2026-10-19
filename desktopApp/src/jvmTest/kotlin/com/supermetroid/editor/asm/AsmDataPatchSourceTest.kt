@@ -85,6 +85,28 @@ class AsmDataPatchSourceTest {
         put("main.asm", "!PAL ?= 0\n" + keys.joinToString("\n") { "incsrc $it" } + "\nincsrc bank_8F.asm\n")
         put("macros.asm", "function regional(value_ntsc, value_pal) = select(!PAL, value_pal, value_ntsc)\n")
     }
+    @Test fun `renamed native tables retain every numerical field consumer and navigation binding`() {
+        val source = File(directory, "rename-source").apply { mkdirs() }
+        val before = originals
+        before.forEach { (file, text) -> File(source, file).writeText(text) }
+        val augmented = AsmSourceAugmentation("rename-test", renames = listOf(
+            AsmSourceRename("SpeedBoostTimerResetValues", "SpeedBoostTimerReloadTable"),
+            AsmSourceRename("SamusXSpeedTable_Normal", "SamusNormalMovementSpeeds"),
+        )).apply(source)
+        val original = AsmDataPatchSource(before)
+        val renamed = AsmDataPatchSource(augmented.texts, AsmSourceSymbolNames(augmented.symbolNames))
+        for (definition in DATA_PATCH_DEFINITIONS) {
+            val old = original.field(definition.id, before)
+            val current = renamed.field(definition.id, augmented.texts)
+            assertEquals(old.values, current.values, definition.id)
+            assertEquals(original.guards(old, before), renamed.guards(current, augmented.texts), definition.id)
+            val (file, line) = renamed.line(definition.id, augmented.texts)
+            assertTrue(renamed.editorLinks(file, line, augmented.texts).any {
+                it.target == AsmEditorTarget.PatchData(definition.type, definition.key)
+            }, definition.id)
+        }
+    }
+
     private data class Fixture(val editor: EditorState, val workspace: AsmWorkspaceState) {
         val bridge get() = assertNotNull(editor.dataPatchBridge)
         val project get() = editor.project

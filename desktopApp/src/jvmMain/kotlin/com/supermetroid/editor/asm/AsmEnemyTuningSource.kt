@@ -24,7 +24,8 @@ internal data class AsmEnemyTuningField(val key: String, val speciesId: Int, val
     val section: AsmEnemyTuningSection = AsmEnemyTuningSection.STATS)
 
 /** Strict lenses into native EnemyHeader arguments and drop/vulnerability tables, not an Asar evaluator. */
-internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDrops: String) {
+internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDrops: String,
+    val bindings: AsmSourceBindings = AsmSourceBindings.current()) {
     private data class Document(val text: String, val labels: List<MatchResult>, val byName: Map<String, List<Int>>,
         val blocks: MutableMap<String, Pair<Int, String>> = mutableMapOf(),
         val arguments: MutableMap<Pair<String, String>, Pair<IntRange, String>> = mutableMapOf(),
@@ -43,12 +44,11 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
     /** Category shortcuts inspect live declarations, without decoding/adopting editable fields. */
     fun sectionLine(section: AsmEnemyTuningSection, text: String): Int {
         val declaration = requireNotNull(document(text).labels.firstOrNull {
-            it.groupValues[1].startsWith(section.labelPrefix)
+            bindings.names.canonical(it.groupValues[1]).startsWith(section.labelPrefix)
         }) { "No ${section.labelPrefix} declarations remain in ${section.fileId}." }
         return text.take(declaration.range.first).count { it == '\n' }
     }
-    val headers: Map<Int, String> = Regex("(?m)^(EnemyHeaders_[A-Za-z0-9_]+):[^\\r\\n]*;A0([0-9A-F]{4});")
-        .findAll(originalHeaders).associate { it.groupValues[2].toInt(16) to it.groupValues[1] }
+    val headers: Map<Int, String> = bindings.enemyHeaders(originalHeaders)
     private val enemiesByKey = ENEMY_DEFS.filter { it.speciesId in headers }.associateBy { it.key }
     private val originalFields = mutableMapOf<String, Result<AsmEnemyTuningField>>()
     val keys = enemiesByKey.values.flatMap { enemy ->
@@ -188,7 +188,7 @@ internal class AsmEnemyTuningSource(val originalHeaders: String, val originalDro
         fun load(original: File): AsmEnemyTuningSource? {
             val headers = File(original, "src/$ENEMY_HEADER_SOURCE_FILE")
             val drops = File(original, "src/$ENEMY_DROP_SOURCE_FILE")
-            return if (headers.isFile && drops.isFile) AsmEnemyTuningSource(headers.readText(), drops.readText()) else null
+            return if (headers.isFile && drops.isFile) AsmEnemyTuningSource(headers.readText(), drops.readText(), AsmSourceBindings.load(original)) else null
         }
     }
 }

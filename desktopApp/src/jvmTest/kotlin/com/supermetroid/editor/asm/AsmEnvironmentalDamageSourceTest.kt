@@ -55,6 +55,26 @@ class AsmEnvironmentalDamageSourceTest {
         """.trimIndent() + "\n"
     private val main = "incsrc bank_8D.asm\nincsrc bank_90.asm\nincsrc bank_8F.asm\n"
     private val originals get() = mapOf(ENVIRONMENT_HEAT_FILE to heat, ENVIRONMENT_LIQUID_FILE to liquid, "main.asm" to main)
+
+    @Test fun `renamed hazard routines parent aliases and RAM preserve rates guards and navigation`() {
+        val root = File(directory, "renamed-source").apply { mkdirs() }
+        originals.forEach { (file, text) -> File(root, file).writeText(text) }
+        File(root, "memory.asm").writeText("PeriodicSubDamage: skip 2\nPeriodicDamage: skip 2\n")
+        val augmented = AsmSourceAugmentation("renamed-hazards", renames = listOf(
+            AsmSourceRename("SamusPhysicsConstants", "SamusMovementPhysics"),
+            AsmSourceRename("AnimateSamus_FX_Lava", "HandleLavaContact"),
+            AsmSourceRename("PreInstruction_PaletteFXObject_SamusInHeat", "HandleHeatContact"),
+            AsmSourceRename("PeriodicSubDamage", "PendingFractionalDamage"),
+        )).apply(root)
+        val before = AsmEnvironmentalDamageSource(originals)
+        val renamed = AsmEnvironmentalDamageSource(augmented.texts, AsmSourceSymbolNames(augmented.symbolNames))
+        for (key in before.keys) {
+            assertEquals(before.original(key).fixed, renamed.original(key).fixed, key)
+            val (file, line) = renamed.line(key, augmented.texts)
+            assertContains(renamed.navigationKeysAt(file, line, augmented.texts), key)
+        }
+    }
+
     private data class Fixture(val editor: EditorState, val workspace: AsmWorkspaceState) {
         val bridge get() = assertNotNull(editor.environmentalDamageBridge)
         val project get() = editor.project
