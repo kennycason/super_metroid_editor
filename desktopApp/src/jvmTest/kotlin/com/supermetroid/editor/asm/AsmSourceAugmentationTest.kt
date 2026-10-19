@@ -1,5 +1,6 @@
 package com.supermetroid.editor.asm
 
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -50,6 +51,112 @@ class AsmSourceAugmentationTest {
     @Test fun `duplicate documentation records are rejected`() {
         val root = source("bank_91.asm" to "Timers:\n dw \$0001\n")
         assertFailsWith<IllegalArgumentException> { AsmSourceAugmentation("one", documentation = listOf(note(), note())).apply(root) }
+    }
+
+    @Test fun `local documentation uses its unique parent and preserves indentation CRLF and origins`() {
+        val original = "Timers:\r\n    dw \$0001\r\n\r\n  .turn:\r\n    RTS ; old explanation\r\nOther:\r\n  .turn:\r\n    RTS\r\n"
+        val root = source("bank_91.asm" to original)
+        val scoped = note(code = "RTS").copy(localLabel = ".turn", paragraphs = listOf("Change attachment side.", "", "Restart the animation."))
+        val result = AsmSourceAugmentation("one", documentation = listOf(scoped)).apply(root)
+        assertEquals(original.replaceFirst("\r\n  .turn:", "\r\n  ; Change attachment side.\r\n  ;\r\n  ; Restart the animation.\r\n  .turn:"),
+            result.texts["bank_91.asm"])
+        assertEquals(listOf(0, 1, 2, -1, -1, -1, 3, 4, 5, 6, 7, 8), result.upstreamLines["bank_91.asm"])
+        assertEquals(original, File(root, "bank_91.asm").readText())
+    }
+
+    @Test fun `multiple scoped notes and a parent rename compose without changing branch bindings`() {
+        val root = source("bank_91.asm" to "Timers:\n dw \$0001\n  .turn:\n BNE .fall\n  .fall:\n RTL\n")
+        val before = parse(root)
+        val notes = listOf(note(), note(code = "BNE .fall").copy(id = "turn", localLabel = ".turn"),
+            note(code = "RTL").copy(id = "fall", localLabel = ".fall"))
+        val result = AsmSourceAugmentation("one", documentation = notes,
+            renames = listOf(AsmSourceRename("Timers", "Reloads"))).apply(root)
+        val output = result.texts.getValue("bank_91.asm")
+        assertEquals(3, output.lineSequence().count { it.trim().startsWith("; Timer reload words") })
+        assertContains(output, "Reloads:\n dw \$0001")
+        result.texts.forEach { (name, text) -> File(root, name).writeText(text) }
+        val after = parse(root)
+        val turn = after.labels.single { it.name == ".turn" }
+        val use = after.usagesFor(after.labels.single { it.name == ".fall" }).single()
+        assertEquals("Reloads", turn.localScope)
+        assertEquals("Reloads", after.resolveUniqueLabel(use.fileId, use.lineIndex, use.token)?.localScope)
+        assertEquals(before.labels.size, after.labels.size)
+        assertEquals(before.labels.sumOf { before.usagesFor(it).size }, after.labels.sumOf { after.usagesFor(it).size })
+    }
+
+    @Test fun `missing and ambiguous local anchors never borrow another parent's declaration`() {
+        val root = source("bank_91.asm" to "Timers:\n dw \$0001\nOther:\n .turn:\n RTS\n")
+        val recipe = AsmSourceAugmentation("one", documentation = listOf(note(code = "RTS").copy(localLabel = ".turn")))
+        assertFailsWith<IllegalStateException> { recipe.apply(root) }
+        File(root, "bank_91.asm").writeText("Timers:\n dw \$0001\n .turn:\n RTS\n .turn:\n RTS\n")
+        val original = readAsmSourceTree(root)
+        assertFailsWith<IllegalStateException> { recipe.apply(root) }
+        assertEquals(original, readAsmSourceTree(root))
+    }
+
+    @Test fun `local anchors reject nested anonymous and unscoped spellings`() {
+        val root = source("bank_91.asm" to "Timers:\n dw \$0001\n .turn:\n RTS\n")
+        for (anchor in listOf("turn", "..turn", "+", ".turn: ", ".turn\n")) {
+            assertFailsWith<IllegalArgumentException>(anchor) {
+                AsmSourceAugmentation("one", documentation = listOf(note(code = "RTS").copy(localLabel = anchor))).apply(root)
+            }
+        }
+    }
+
+    @Test fun `empty anchors cannot borrow instructions across local or global declarations`() {
+        for (next in listOf("Other:", " .next:")) {
+            val root = source("bank_91.asm" to "Timers:\n ; Only a comment.\n$next\n dw \$0001\n")
+            assertFailsWith<IllegalArgumentException> { AsmSourceAugmentation("one", documentation = listOf(note())).apply(root) }
+            File(root, "bank_91.asm").writeText("Timers:\n dw \$0001\n .turn:\n$next\n RTS\n")
+            assertFailsWith<IllegalArgumentException> {
+                AsmSourceAugmentation("one", documentation = listOf(note(code = "RTS").copy(localLabel = ".turn"))).apply(root)
+            }
+        }
+    }
+
+    @Test fun `local guards reject changed instructions but accept absent addresses and formatting`() {
+        val root = source("bank_91.asm" to "Timers:\n dw \$0001\n .turn:\n\tLDA.W   \$0002\n")
+        val recipe = AsmSourceAugmentation("one", documentation = listOf(note(code = "LDA.W \$0002").copy(localLabel = ".turn")))
+        assertContains(recipe.apply(root).texts.getValue("bank_91.asm"), "\tLDA.W   \$0002")
+        File(root, "bank_91.asm").writeText("Timers:\n dw \$0001\n .turn:\n LDA.W \$0003 ;91B61F;\n")
+        assertFailsWith<IllegalArgumentException> { recipe.apply(root) }
+    }
+
+    @Test fun `different aliases cannot document the same declaration twice`() {
+        val root = source("bank_91.asm" to "Timers:\n dw \$0001\n .turn:\n RTS\n")
+        val scoped = note(code = "RTS").copy(localLabel = ".turn")
+        val alias = note(symbol = "Timers_turn", code = "RTS").copy(id = "alias")
+        assertFailsWith<IllegalArgumentException> { AsmSourceAugmentation("one", documentation = listOf(scoped, alias)).apply(root) }
+    }
+
+    @Test fun `documentation must guard a nonempty executable statement`() {
+        val root = source("bank_91.asm" to "Timers:\n ; No instruction.\n")
+        assertFailsWith<IllegalArgumentException> {
+            AsmSourceAugmentation("one", documentation = listOf(note(code = ""))).apply(root)
+        }
+    }
+
+    @Test fun `an inline instruction cannot be skipped to satisfy a later documentation guard`() {
+        val root = source("bank_91.asm" to "Timers: dw \$0002\n dw \$0001\n")
+        assertFailsWith<IllegalArgumentException> { AsmSourceAugmentation("one", documentation = listOf(note())).apply(root) }
+        File(root, "bank_91.asm").writeText("Timers:\n dw \$0001\n .turn: LDA.W \$0002\n RTS\n")
+        assertFailsWith<IllegalArgumentException> {
+            AsmSourceAugmentation("one", documentation = listOf(note(code = "RTS").copy(localLabel = ".turn"))).apply(root)
+        }
+    }
+
+    @Test fun `bundled crawler pass adds game documentation without renaming existing crawler symbols`() {
+        val recipe = AsmSourceAugmentation.bundled()
+        assertEquals("super-metroid-ntsc-2", recipe.revision)
+        assertEquals(listOf(AsmSourceRename("SpeedBoostTimerResetValues", "SpeedBoostTimerReloadTable")), recipe.renames)
+        val notes = recipe.documentation.filter { it.id.startsWith("crawlers.") }
+        assertEquals(18, notes.size)
+        assertEquals(setOf("Function_Crawlers_CrawlingHorizontally", "Function_Crawlers_CrawlingVertically"),
+            notes.filter { it.localLabel == ".outsideTurn" }.map { it.symbol }.toSet())
+        assertTrue(notes.flatMap { it.paragraphs }.none { it.contains("SMEDIT", ignoreCase = true) || it.contains("GUI") })
+        val scoped = notes.first { it.localLabel != null }
+        assertEquals(scoped, Json.decodeFromString(AsmSourceDocumentation.serializer(),
+            Json.encodeToString(AsmSourceDocumentation.serializer(), scoped)))
     }
 
     @Test fun `global rename updates declarations expressions macro arguments and cross bank references only`() {

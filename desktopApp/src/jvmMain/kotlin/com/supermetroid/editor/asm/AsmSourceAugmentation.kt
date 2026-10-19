@@ -5,6 +5,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 private val augmentationNamespace = Regex("^\\s*namespace\\b", RegexOption.IGNORE_CASE)
+private val documentationLocalLabel = Regex("\\.[A-Za-z_][A-Za-z0-9_]*")
+private val documentationDeclaration = Regex("\\s*(?:[A-Za-z_][A-Za-z0-9_]*:|\\.+[A-Za-z0-9_]+:?)\\s*")
 
 @Serializable
 internal data class AsmSourceDocumentation(
@@ -13,6 +15,8 @@ internal data class AsmSourceDocumentation(
     val symbol: String,
     val expectedCode: String,
     val paragraphs: List<String>,
+    /** A first-level local declaration owned by [symbol], never a line/address lookup. */
+    val localLabel: String? = null,
 )
 
 @Serializable
@@ -48,7 +52,7 @@ internal data class AsmSourceAugmentation(
             augmentationNamespace.containsMatchIn(asmExecutableCode(it))
         } }) { "Global renaming of namespaced source requires an explicit scoped transformation" }
         require(documentation.map { it.id }.distinct().size == documentation.size) { "Duplicate ASM documentation identity" }
-        require(documentation.map { it.fileId to it.symbol }.distinct().size == documentation.size) { "Duplicate ASM documentation target" }
+        require(documentation.map { Triple(it.fileId, it.symbol, it.localLabel) }.distinct().size == documentation.size) { "Duplicate ASM documentation target" }
         require(renames.map { it.symbol }.distinct().size == renames.size) { "Duplicate ASM rename identity" }
         val changes = mutableMapOf<String, MutableList<SourceChange>>()
         val symbolNames = linkedMapOf<String, String>()
@@ -117,20 +121,43 @@ internal data class AsmSourceAugmentation(
                 offset += line.length + 1
             }
         }
+        val documentedLocations = mutableSetOf<Pair<String, Int>>()
+        val labelsByFile = index.labels.groupBy { it.fileId }
         documentation.forEach { note ->
             require(note.id.isNotBlank() && note.paragraphs.isNotEmpty()) { "Empty ASM documentation record" }
-            val label = globals[note.symbol]?.singleOrNull()?.takeIf { it.fileId == note.fileId }
+            val root = globals[note.symbol]?.singleOrNull()?.takeIf { it.fileId == note.fileId }
                 ?: error("${note.id}: expected one ${note.symbol} declaration in ${note.fileId}")
-            val source = index.file(label.fileId)!!
-            val firstCode = source.lines.drop(label.lineIndex + 1).asSequence()
+            val source = index.file(root.fileId)!!
+            val fileLabels = labelsByFile.getValue(root.fileId)
+            val label = note.localLabel?.let { local ->
+                require(documentationLocalLabel.matches(local)) {
+                    "${note.id}: documentation requires a first-level local label"
+                }
+                require(Regex("^\\s*${Regex.escape(root.name)}:").containsMatchIn(asmExecutableCode(source.lines[root.lineIndex]))) {
+                    "${note.id}: a local documentation anchor requires an ordinary global parent"
+                }
+                fileLabels.singleOrNull { it.name == local && it.localScope == root.name }
+                    ?: error("${note.id}: expected one $local declaration under ${root.name}")
+            } ?: root
+            require(documentedLocations.add(label.fileId to label.lineIndex)) { "${note.id}: duplicate ASM documentation location" }
+            require(documentationDeclaration.matches(asmExecutableCode(source.lines[label.lineIndex]))) {
+                "${note.id}: documentation requires a standalone label declaration"
+            }
+            // An empty block must not accidentally borrow the next label's instruction as its guard.
+            val end = fileLabels.asSequence().map { it.lineIndex }.filter { it > label.lineIndex }.minOrNull() ?: source.lines.size
+            val firstCode = source.lines.subList(label.lineIndex + 1, end).asSequence()
                 .map(::asmExecutableCode).map(String::trim)
                 .firstOrNull { it.isNotEmpty() && !it.endsWith(':') }
-            require(asmStatementSignature(firstCode.orEmpty()) == asmStatementSignature(note.expectedCode)) { "${note.id}: ${note.symbol} source shape changed" }
+            require(note.expectedCode.isNotBlank() && firstCode != null &&
+                asmStatementSignature(firstCode) == asmStatementSignature(note.expectedCode)) {
+                "${note.id}: ${note.symbol}${note.localLabel.orEmpty()} source shape changed"
+            }
             val text = texts.getValue(label.fileId)
             val newline = if ("\r\n" in text) "\r\n" else "\n"
+            val indent = source.lines[label.lineIndex].takeWhile { it == ' ' || it == '\t' }
             val comments = note.paragraphs.joinToString(newline, postfix = newline) { paragraph ->
                 require('\n' !in paragraph && '\r' !in paragraph) { "Documentation paragraphs must be single lines" }
-                if (paragraph.isEmpty()) ";" else "; $paragraph"
+                indent + if (paragraph.isEmpty()) ";" else "; $paragraph"
             }
             val start = offset(label.fileId, label.lineIndex)
             changes.getOrPut(label.fileId, ::mutableListOf) += SourceChange(start, start, comments)

@@ -30,6 +30,11 @@ Booster timing, jump/movement storage, escape timers, bomb fuse timing and item
 message waits. It renames `SpeedBoostTimerResetValues` to
 `SpeedBoostTimerReloadTable` in its declaration and all code references; native
 field identities and byte checks use the baseline's symbol mapping.
+Revision 2 adds the first enemy-AI documentation pass: the regular Zoomer's shared
+crawler initialisation, script-driven dispatch, corner transitions, falling and
+slope-adjusted movement. It preserves every existing crawler name. See the
+[crawler review guide](crawler_enrichment.md) for source entry points and the
+behavioral evidence behind these comments.
 
 The result is frozen under portable `asm/base/`: `manifest.json` records upstream
 and augmented file hashes, the augmentation revision, symbol mappings, original
@@ -109,6 +114,16 @@ explicit resolver support before a source rename is allowed. Namespaces, templat
 scope collisions and bound function/macro parameter collisions are rejected.
 Other native-source families must be audited before expanding their rename rules;
 this is not a claim that every adapter already supports arbitrary renaming.
+
+Documentation can also name a first-level `localLabel` under its uniquely
+declared global `symbol`. Repeated branch names in other routines do not match.
+The first executable statement must match `expectedCode` before the next
+declaration; an empty block cannot borrow another block's instruction. Missing or
+ambiguous anchors, unsupported nested spellings and two aliases targeting the
+same source location fail before publication. Anchors must be standalone label
+declarations, so an inline instruction cannot be skipped by the guard. Inserted
+comments preserve the target's indentation and line endings, and their provenance
+is explicitly marked as added lines rather than fabricated upstream addresses.
 
 ### Engineering verification
 

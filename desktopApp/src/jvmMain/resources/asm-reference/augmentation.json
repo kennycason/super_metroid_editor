@@ -1,5 +1,5 @@
 {
-  "revision": "super-metroid-ntsc-1",
+  "revision": "super-metroid-ntsc-2",
   "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
   "renames": [
     { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
@@ -77,6 +77,229 @@
       "paragraphs": [
         "Item messages wait for lag frames before accepting input. The collecting",
         "PLM schedules the music-resume delay separately from this message wait."
+      ]
+    },
+    {
+      "id": "crawlers.zoomer-header",
+      "fileId": "bank_A0.asm",
+      "symbol": "EnemyHeaders_Zoomer",
+      "expectedCode": "%EnemyHeader(\\",
+      "paragraphs": [
+        "The regular Zoomer shares its movement state machine with other crawlers.",
+        "InitAI_Zoomer_MZoomer chooses its starting orientation; MainAI_Crawlers",
+        "dispatches the handler installed by the orientation's animation script."
+      ]
+    },
+    {
+      "id": "crawlers.orientation-script",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Crawlers_FunctionInY",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "X is the enemy slot and Y points to the script's next word: a bank $A3",
+        "movement-handler address. Consume that word and return Y to the interpreter.",
+        "Zoomer/Zeela orientation lists install the handler before their first frame.",
+        "Their frame loops skip this command, so they do not overwrite a falling",
+        "handler on every animation cycle."
+      ]
+    },
+    {
+      "id": "crawlers.initial-orientation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Zoomer_MZoomer",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Before initialisation, Enemy.instList holds the population's initialisation",
+        "value, not a script pointer. Its low two bits select upside right, left,",
+        "down or up (0..3). Replace that value with the matching instruction list,",
+        "then fall through to the shared initialiser with X still the enemy slot."
+      ]
+    },
+    {
+      "id": "crawlers.common-initialisation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Crawlers_Common",
+      "expectedCode": "LDA.W #Spritemap_Common_Nothing",
+      "paragraphs": [
+        "Start with no visible spritemap and a do-nothing handler. An instruction",
+        "timer of one lets the orientation script install both on its next update.",
+        "Enemy.init0 selects the speed-table word copied into both velocity fields;",
+        "$00FF bypasses that lookup and leaves the existing velocities untouched.",
+        "Crawling velocities are signed 8.8 pixels per frame, unlike the separate",
+        "integer/fractional word pair used while falling."
+      ]
+    },
+    {
+      "id": "crawlers.initial-direction",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Crawlers_Common",
+      "localLabel": ".skipSpeedTable",
+      "expectedCode": "LDA.W Enemy.properties,X",
+      "paragraphs": [
+        "The low two property bits choose the initial velocity signs independently",
+        "of the script-orientation value: 0 negates X, 2 negates Y, 1 and 3 leave",
+        "both unchanged. These signs are also applied when the speed lookup was skipped."
+      ]
+    },
+    {
+      "id": "crawlers.animation-variants",
+      "fileId": "bank_A3.asm",
+      "symbol": "CrawlersInstListPointerTable_upsideDown",
+      "expectedCode": "dw InstList_Zeela_Zoomer_UpsideDown_0",
+      "paragraphs": [
+        "These four orientation tables use Enemy.init1 directly as a byte offset",
+        "(0, 2, 4, 6, 8 or $0A), not an element number. It selects the species' script.",
+        "A corner turn chooses a new orientation list and resets the instruction timer",
+        "to one; that list installs the corresponding horizontal or vertical handler."
+      ]
+    },
+    {
+      "id": "crawlers.dispatch",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Crawlers",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Crawler.function is a bank-local handler address, not a numeric state ID.",
+        "Tail-jump with X = EnemyIndex; the selected handler returns with RTL to",
+        "the AI caller. Orientation scripts and falling transitions share this field."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "expectedCode": "LDA.W EarthquakeTimer",
+      "paragraphs": [
+        "On a wall, X velocity presses into the surface and Y velocity moves along it.",
+        "A type $0014 earthquake at timer $001E saves this handler and selects falling.",
+        "That change does not return early: this invocation still performs its crawl step."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-contact-probe",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".noQuake",
+      "expectedCode": "STZ.B DP_Temp12",
+      "paragraphs": [
+        "Convert signed 8.8 velocity to the movement helpers' signed 16.16 distance:",
+        "clear $12/$14, sign-extend, then store the velocity across $13/$14.",
+        "Add one pixel in the X direction to probe wall contact before travelling",
+        "along Y. The helpers return carry set on collision; $14.$12 is scratch",
+        "for the current move, not a persistent X- or Y-specific variable."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-inside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".insideTurn",
+      "expectedCode": "LDA.W Crawler.XVelocity,X",
+      "paragraphs": [
+        "The wall probe collided, but travel along Y hit an inside corner.",
+        "Reverse X velocity and choose a floor/ceiling animation from the Y sign.",
+        "Restarting that script switches movement to the horizontal handler."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-outside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".outsideTurn",
+      "expectedCode": "LDA.L Crawler.consecutiveTurnCounter,X",
+      "paragraphs": [
+        "No wall contact: count this unsupported turn. Four consecutive misses",
+        "save the current handler and select falling instead of turning again.",
+        "Earlier misses reverse Y and select a floor/ceiling script to follow",
+        "the outside corner. Finding wall contact resets the shared turn counter."
+      ]
+    },
+    {
+      "id": "crawlers.falling-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_Falling",
+      "expectedCode": "LDA.L Crawler.fallingYSubVelocity,X",
+      "paragraphs": [
+        "Falling uses a separate signed 16.16 Y velocity: $14 receives the integer",
+        "word and $12 the fractional word. Move first, then accelerate if unobstructed.",
+        "A collision restores nonFallingFunction after clearing fall speed and the",
+        "turn counter. For the $00FF speed-lookup sentinel, landing first assigns",
+        "$0080 (0.5 pixels per frame) to both crawling velocities."
+      ]
+    },
+    {
+      "id": "crawlers.falling-acceleration",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_Falling",
+      "localLabel": ".noCollision",
+      "expectedCode": "LDA.L Crawler.fallingYVelocity,X",
+      "paragraphs": [
+        "Add $8000 to the fractional word in NTSC, or $A000 in PAL, propagating",
+        "carry into the integer word. Acceleration stops once the integer part",
+        "is at least four; this test does not clamp an existing overshoot."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "expectedCode": "LDA.W EarthquakeTimer",
+      "paragraphs": [
+        "On a floor or ceiling, Y velocity presses into the surface and X travels",
+        "along it. The same earthquake trigger as vertical crawling saves this",
+        "handler and selects falling without skipping the current crawl step."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-contact-probe",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".noQuake",
+      "expectedCode": "STZ.B DP_Temp12",
+      "paragraphs": [
+        "Expand signed 8.8 Y velocity into $14.$12, then add one pixel in its",
+        "direction to probe floor/ceiling contact. With support, calculate the",
+        "slope-adjusted X distance and move along the surface. A clear X move",
+        "is followed by vertical alignment to a non-square slope."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-inside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".insideTurn",
+      "expectedCode": "LDA.W Crawler.YVelocity,X",
+      "paragraphs": [
+        "The support probe collided, but X travel hit an inside corner.",
+        "Reverse Y velocity and use the X sign to select a wall-facing script.",
+        "Its initial command installs the vertical movement handler."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-outside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".outsideTurn",
+      "expectedCode": "LDA.L Crawler.consecutiveTurnCounter,X",
+      "paragraphs": [
+        "No floor/ceiling contact: share the vertical handler's unsupported-turn",
+        "counter. On the fourth miss save this handler and fall; otherwise reverse",
+        "X and select a wall-facing script to follow the outside corner.",
+        "Finding support resets the counter before attempting X travel."
+      ]
+    },
+    {
+      "id": "crawlers.slope-distance",
+      "fileId": "bank_A3.asm",
+      "symbol": "AdjustEnemyXVelocityForSlopes",
+      "expectedCode": "LDA.W Enemy.XPosition,X",
+      "paragraphs": [
+        "Input X is the enemy slot. Sample the supporting edge selected by the sign",
+        "of Y velocity. A slope block with BTS subtype >= 5 selects an 8.8 multiplier;",
+        "multiply the magnitude of the 8.8 X velocity and restore its sign.",
+        "Return the 16.16 move distance in $14.$12 with X restored to EnemyIndex.",
+        "Without such a slope, just expand the original velocity to 16.16.",
+        "The stored Crawler.XVelocity is not changed by this adjustment."
       ]
     }
   ]

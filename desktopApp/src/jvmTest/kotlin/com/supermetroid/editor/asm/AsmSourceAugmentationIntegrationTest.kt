@@ -17,11 +17,21 @@ import kotlin.test.*
 class AsmSourceAugmentationIntegrationTest {
     @TempDir lateinit var temporary: File
 
-    @Test fun `bundled documentation preserves the complete source graph and ROM`() = verify(AsmSourceAugmentation.bundled())
+    @Test fun `bundled documentation preserves the complete source graph and ROM`() {
+        val fixture = verify(AsmSourceAugmentation.bundled())
+        // A disposable, generated review artifact, never a change to a user's pinned baseline.
+        System.getProperty("smedit.asmEnrichmentReviewDirectory")?.let { directory ->
+            for (fileId in listOf("bank_A0.asm", "bank_A3.asm")) {
+                val output = File(directory, "src/$fileId")
+                output.parentFile.mkdirs()
+                File(fixture.workspace.originalDirectory, "src/$fileId").copyTo(output, overwrite = true)
+            }
+        }
+    }
 
-    @Test fun `cross bank scratch table and parent renames preserve all symbols ROM and smart fields`() = verify(
-        stressRecipe(),
-    )
+    @Test fun `cross bank scratch table and parent renames preserve all symbols ROM and smart fields`() {
+        verify(stressRecipe())
+    }
 
     private fun stressRecipe() = AsmSourceAugmentation.bundled().copy(revision = "rename-proof", renames = listOf(
             AsmSourceRename("DP_Temp14", "DP_Scratch14"),
@@ -89,7 +99,7 @@ class AsmSourceAugmentationIntegrationTest {
         }
     }
 
-    private fun verify(recipe: AsmSourceAugmentation) {
+    private fun verify(recipe: AsmSourceAugmentation): AsmProjectTestFixture {
         val fixture = AsmProjectTestFixture.create(temporary, recipe)
         val manifest = assertNotNull(AsmSourceBaseline.load(fixture.workspace.root))
         val upstream = TestRomHelper.requireDisassemblyDir()
@@ -103,11 +113,23 @@ class AsmSourceAugmentationIntegrationTest {
             val origin = manifest.upstreamLines[updated.fileId]?.get(updated.lineIndex) ?: updated.lineIndex
             assertEquals(old.lineIndex, origin, old.name)
         }
+        after.files.forEach { file ->
+            val original = assertNotNull(before.file(file.id)).lines
+            file.lines.forEachIndexed { line, text ->
+                val origin = manifest.upstreamLines[file.id]?.get(line) ?: line
+                if (origin < 0) {
+                    assertTrue(asmExecutableCode(text).isBlank(), "Inserted line must be documentation: ${file.id}:$line")
+                } else {
+                    assertEquals(manifest.symbols.activeCode(original[origin]), text, "Preserve original line ${file.id}:$origin")
+                }
+            }
+        }
         val compiled = AsmProjectCompiler().compile(fixture.projectFile.path, fixture.rom)
         assertContentEquals(fixture.rom, compiled.romBytes, "Documentation and naming must preserve the entire ROM")
         assertTrue(compiled.sourceOwnedRanges.isEmpty(), "Augmentation is the baseline, not a project edit")
         val originalSymbols = AsmWlaSymbolParser.parse(File(upstream, "symbols.sym").readText())
         val currentSymbols = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8))
+        verifyCrawlerContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         val natives = assertNotNull(manifest.nativeSymbols)
         assertEquals(163, natives.size)
         natives.forEach { native ->
@@ -172,5 +194,72 @@ class AsmSourceAugmentationIntegrationTest {
         project.asmWorkspace.enemyTuningSourceKeys += listOf("zoomer_hp", "zoomer_drop0", "zoomer_vuln0")
         val enemyBuild = protectEnemyTuningSource(enemies, headerText, drops, project, bossBuild)
         assertContentEquals(fixture.rom, enemyBuild.romBytes)
+        return fixture
+    }
+
+    /** Pin the actual script/parameter/state contracts described by the new comments, not just their placement. */
+    private fun verifyCrawlerContracts(rom: ByteArray, symbols: Map<String, Int>, index: AsmReferenceIndex, names: AsmSourceSymbolNames) {
+        fun address(name: String) = assertNotNull(symbols[name], name)
+        fun word(name: String, offset: Int = 0): Int {
+            val pc = assertNotNull(snesLoRomToPc(address(name) + offset))
+            return (rom[pc].toInt() and 255) or ((rom[pc + 1].toInt() and 255) shl 8)
+        }
+        val sides = listOf("Right", "Left", "Down", "Up")
+        sides.forEachIndexed { orientation, side ->
+            val entry = "InstList_Zeela_Zoomer_Upside${side}_0"
+            val frames = "InstList_Zeela_Zoomer_Upside${side}_1"
+            val handler = "Function_Crawlers_Crawling" + if (orientation < 2) "Vertically" else "Horizontally"
+            assertEquals(address(entry) and 0xFFFF, word("InitialInstListPointers_Crawlers", orientation * 2))
+            assertEquals(address("Instruction_Crawlers_FunctionInY") and 0xFFFF, word(entry))
+            assertEquals(address(handler) and 0xFFFF, word(entry, 2))
+            repeat(5) { frame -> assertEquals(3, word(frames, frame * 4), "$side frame duration") }
+            assertEquals(address("Instruction_Common_GotoY") and 0xFFFF, word(frames, 20))
+            assertEquals(address(frames) and 0xFFFF, word(frames, 22), "Frame loop must not reinstall the handler")
+        }
+        val species = listOf("Zeela_Zoomer", "Zeela_Zoomer", "Zeela_Zoomer", "Viola", "Sciser", "Zero")
+        for (side in sides) {
+            val table = "CrawlersInstListPointerTable_upside$side"
+            species.forEachIndexed { variant, family ->
+                val expected = when {
+                    family == "Viola" -> "InstList_Viola_Upside$side"
+                    family == "Zero" && side == "Up" -> "UNUSED_InstList_Zero_UpsideUp_FacingRight_A3990B"
+                    family == "Zero" && side == "Down" -> "InstList_Zero_UpsideDown_FacingLeft_0"
+                    family == "Zero" && side == "Right" -> "InstList_Zero_UpsideRight_FacingDown_0"
+                    family == "Zero" -> "InstList_Zero_UpsideLeft_FacingUp_0"
+                    else -> "InstList_${family}_Upside${side}_0"
+                }
+                assertEquals(address(expected) and 0xFFFF, word(table, variant * 2), "$table variant $variant")
+            }
+        }
+        assertEquals(address("InitAI_Zoomer_MZoomer") and 0xFFFF, word("EnemyHeaders_Zoomer_initAI"))
+        assertEquals(address("MainAI_Crawlers") and 0xFFFF, word("EnemyHeaders_Zoomer_mainAI"))
+        assertEquals(0x0040, word("CrawlersSpeedTable"))
+        assertEquals(0x0080, word("CrawlersSpeedTable", 2))
+
+        fun statements(symbol: String, local: String? = null): List<String> {
+            val root = index.labels.single { it.name == symbol && it.localScope == null }
+            val label = local?.let { name -> index.labels.single { it.fileId == root.fileId && it.localScope == symbol && it.name == name } } ?: root
+            val end = index.labels.filter { it.fileId == root.fileId && it.lineIndex > label.lineIndex }.minOfOrNull { it.lineIndex }
+                ?: assertNotNull(index.file(root.fileId)).lines.size
+            return assertNotNull(index.file(root.fileId)).lines.subList(label.lineIndex + 1, end)
+                .map { asmStatementSignature(names.canonicalCode(asmExecutableCode(it))) }.filter(String::isNotEmpty)
+        }
+        fun signature(vararg code: String) = code.map(::asmStatementSignature)
+        assertEquals(signature("LDX.W EnemyIndex", "JMP.W (Crawler.function,X)"), statements("MainAI_Crawlers"))
+        assertEquals(signature("LDA.W \$0000,Y", "STA.W Crawler.function,X", "INY", "INY", "RTL"),
+            statements("Instruction_Crawlers_FunctionInY"))
+        for ((routine, branch) in listOf("Function_Crawlers_CrawlingVertically" to ".negate", "Function_Crawlers_CrawlingHorizontally" to ".notFalling")) {
+            val turn = statements(routine, ".outsideTurn")
+            assertEquals(signature("LDA.L Crawler.consecutiveTurnCounter,X", "INC", "STA.L Crawler.consecutiveTurnCounter,X",
+                "CMP.W #\$0004", "BMI $branch", "LDA.W Crawler.function,X", "STA.L Crawler.nonFallingFunction,X",
+                "LDA.W #Function_Crawlers_Falling", "STA.W Crawler.function,X", "RTL"), turn)
+            assertEquals(signature("LDA.W EarthquakeTimer", "CMP.W #\$001E", "BNE .noQuake", "LDA.W EarthquakeType",
+                "CMP.W #\$0014", "BNE .noQuake", "LDA.W Crawler.function,X", "STA.L Crawler.nonFallingFunction,X",
+                "LDA.W #Function_Crawlers_Falling", "STA.W Crawler.function,X"), statements(routine))
+        }
+        assertEquals(signature("LDA.L Crawler.fallingYVelocity,X", "CMP.W #\$0004", "BPL .fallSpeedCapped",
+            "LDA.L Crawler.fallingYSubVelocity,X", "CLC", "ADC.W #regional(\$8000, \$A000)",
+            "STA.L Crawler.fallingYSubVelocity,X", "LDA.L Crawler.fallingYVelocity,X", "ADC.W #\$0000", "STA.L Crawler.fallingYVelocity,X"),
+            statements("Function_Crawlers_Falling", ".noCollision"))
     }
 }

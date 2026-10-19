@@ -149,6 +149,7 @@ tasks.register<org.gradle.api.tasks.testing.Test>("asmSymbolCoverageTest") {
     maxHeapSize = "1g"
     useJUnitPlatform { includeTags("asm-symbol-coverage") }
     systemProperty("smedit.requireParityFixtures", "true")
+    systemProperty("smedit.asmEnrichmentReviewDirectory", layout.buildDirectory.dir("reports/asm-enrichment").get().asFile.absolutePath)
     outputs.upToDateWhen { false }
 }
 
