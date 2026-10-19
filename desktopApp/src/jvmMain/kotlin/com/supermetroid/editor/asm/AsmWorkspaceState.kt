@@ -130,6 +130,7 @@ internal class AsmWorkspaceState(
     private val buildArtifactRepository: AsmBuildArtifactRepository = AsmBuildArtifactRepository(projectRepository),
     private val sourceIndexLoader: suspend (String) -> AsmProjectWorkspace? = { projectRepository.load(it) },
     private val installedReferenceLoader: suspend () -> AsmReferenceWorkspace? = { repository.loadInstalled() },
+    private val baselineUpdater: AsmBaselineUpdateRepository = AsmBaselineUpdateRepository(projectRepository),
 ) {
     var workspace by mutableStateOf<AsmReferenceWorkspace?>(null)
         private set
@@ -143,6 +144,11 @@ internal class AsmWorkspaceState(
         private set
     var error by mutableStateOf<String?>(null)
         private set
+    var baselineUpdatePlan by mutableStateOf<AsmBaselineUpdatePlan?>(null)
+        private set
+    var baselineUpdateMessage by mutableStateOf<String?>(null)
+        private set
+    private var baselinePreviewBufferRevision = -1L
     var currentRomSha256 by mutableStateOf<String?>(null)
         private set
     var browserMode by mutableStateOf(AsmBrowserMode.SOURCE)
@@ -485,6 +491,12 @@ internal class AsmWorkspaceState(
 
     suspend fun bindProject(projectFilePath: String, enabled: Boolean, progressive: Boolean = false) {
         val changedProject = boundProjectFilePath != projectFilePath
+        if (changedProject) {
+            val draft = baselineUpdatePlan
+            baselineUpdatePlan = null
+            baselineUpdateMessage = null
+            if (!busy && draft != null) withContext(Dispatchers.IO) { baselineUpdater.discard(draft) }
+        }
         boundProjectFilePath = projectFilePath
         boundProjectEnabled = enabled
         progressiveProjectLoading = progressive
@@ -570,6 +582,80 @@ internal class AsmWorkspaceState(
             busy = false
             progress = null
         }
+    }
+
+    suspend fun previewBaselineUpdate(): Boolean {
+        if (busy || projectWorkspace == null || boundProjectFilePath.isBlank()) return false
+        if (unsavedSourceFileIds.isNotEmpty()) {
+            error = "Save all ASM edits before previewing a baseline update."
+            return false
+        }
+        val reference = referenceWorkspace ?: run { error = "Download the current ASM reference before updating."; return false }
+        val path = boundProjectFilePath
+        val generation = projectBindingGeneration
+        busy = true
+        error = null
+        progress = "Comparing the old baseline, project edits and updated baseline…"
+        return try {
+            val plan = withContext(Dispatchers.IO) { baselineUpdater.prepare(path, reference) }
+            if (path != boundProjectFilePath || generation != projectBindingGeneration) {
+                withContext(Dispatchers.IO) { baselineUpdater.discard(plan) }
+                false
+            } else {
+                baselineUpdatePlan?.let { previous -> withContext(Dispatchers.IO) { baselineUpdater.discard(previous) } }
+                baselineUpdatePlan = plan
+                baselinePreviewBufferRevision = sourceBufferRevision
+                baselineUpdateMessage = null
+                true
+            }
+        } catch (problem: Exception) {
+            error = problem.message ?: "Could not prepare the baseline update"
+            false
+        } finally { busy = false; progress = null }
+    }
+
+    suspend fun cancelBaselineUpdate() {
+        if (busy) return
+        val plan = baselineUpdatePlan ?: return
+        baselineUpdatePlan = null
+        withContext(Dispatchers.IO) { baselineUpdater.discard(plan) }
+    }
+
+    suspend fun applyBaselineUpdate(resolutions: Map<String, Map<Int, String>>, romBytes: ByteArray): Boolean {
+        val plan = baselineUpdatePlan ?: return false
+        if (busy) return false
+        if (plan.projectFilePath != boundProjectFilePath || sourceBufferRevision != baselinePreviewBufferRevision || unsavedSourceFileIds.isNotEmpty()) {
+            error = "Source changed after the update preview. Cancel and preview the update again."
+            return false
+        }
+        busy = true
+        error = null
+        cancelSourceIndexing()
+        val generation = projectBindingGeneration
+        return try {
+            val result = withContext(Dispatchers.IO) { baselineUpdater.apply(plan, resolutions, romBytes) { progress = it } }
+            if (plan.projectFilePath != boundProjectFilePath || generation != projectBindingGeneration) return false
+            baselineUpdatePlan = null
+            // Do not retain offsets, undo transactions or source buffers from the previous baseline.
+            clearEditSessions()
+            sourcePanes = sourcePanes.map { it.copy(lineIndex = 0, columnIndex = 0, referenceSymbol = null, referenceMacro = null, navigationSerial = it.navigationSerial + 1) }
+            selectedLineIndexValue = 0
+            selectedColumnIndexValue = 0
+            projectWorkspace = result.workspace
+            activateProjectWorkspace(result.workspace)
+            backStacks.values.forEach { it.clear() }
+            forwardStacks.values.forEach { it.clear() }
+            buildReport = null
+            generatedRoomInput = null
+            roomDataSnapshot = null
+            clearRomPreview()
+            baselineUpdateMessage = "Updated to ${plan.nextRevision}. Previous ASM saved in ${result.backupDirectory.path}"
+            true
+        } catch (problem: Exception) {
+            if (plan.consumed) baselineUpdatePlan = null
+            error = problem.message ?: "The baseline update could not be validated. The current project was not replaced."
+            false
+        } finally { busy = false; progress = null }
     }
 
     fun showReferenceWorkspace() {

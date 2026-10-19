@@ -366,6 +366,15 @@ internal fun AsmWorkspaceSidebar(
     var showReplaceDialog by remember { mutableStateOf(false) }
     var showCreateModuleDialog by remember { mutableStateOf(false) }
 
+    state.baselineUpdatePlan?.let { plan ->
+        AsmBaselineUpdateDialog(plan, state.busy, state.progress, state.error,
+            onCancel = { scope.launch { state.cancelBaselineUpdate() } },
+            onApply = { resolutions -> scope.launch {
+                val rom = romParser?.copyRomData() ?: return@launch
+                if (state.applyBaselineUpdate(resolutions, rom)) onProjectAsmEnabled()
+            } })
+    }
+
     if (showReplaceDialog) {
         AsmProjectReplaceDialog(
             state = state,
@@ -562,6 +571,7 @@ internal fun AsmWorkspaceSidebar(
             onDownload = ::download,
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
+            onUpdateBaseline = { scope.launch { if (state.saveAllSources()) state.previewBaselineUpdate() } },
             onProjectBuildModeChanged = onProjectBuildModeChanged,
         )
     }
@@ -782,6 +792,7 @@ private fun AsmWorkspaceControls(
     onDownload: () -> Unit,
     onSyncAssets: () -> Unit,
     onEnableProjectAsm: () -> Unit,
+    onUpdateBaseline: () -> Unit,
     onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -924,11 +935,16 @@ private fun AsmWorkspaceControls(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "Original snapshot ${AsmReferenceContract.COMMIT.take(12)}",
+                        "Baseline ${state.projectWorkspace?.baselineRevision} · ${state.projectWorkspace?.referenceWorkspace?.metadata?.commit?.take(12)}",
                         fontSize = fs.detail,
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    OutlinedButton(onClick = onUpdateBaseline, enabled = referenceReady && romAvailable && !state.busy,
+                        modifier = Modifier.fillMaxWidth(), shape = ASM_CONTROL_SHAPE) {
+                        Text("Save edits & preview baseline update…", fontSize = fs.detail)
+                    }
+                    state.baselineUpdateMessage?.let { Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.primary) }
                     Spacer(Modifier.height(7.dp))
                     Text("ROM build base", fontSize = fs.detail, fontWeight = FontWeight.Bold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -50,6 +50,17 @@ and can use the matching revision-addressed native catalog without being rewritt
 The identity is a hash of saved manifest bytes, not a re-encoding with current app
 defaults. New bundled modules bind canonical names to that project's spellings
 only at insertion; authored modules remain unchanged across app updates and repair.
+
+An explicit ASM **baseline update** is different from opening or repairing a project:
+it previews a three-way merge of old baseline, project edits and the new baseline,
+requires conflict resolution and a successful candidate build, then installs a new
+frozen `asm/base/` and rebased overrides. Supported symbol changes also migrate
+custom-module references through checked bindings. Module order and enablement
+are retained. The previous complete authored tree is kept in
+`asm-backups/<UUID>/asm/`; disposable drafts, old generated caches and the interrupted
+installation journal stay under `smedit/`. A stale preview cannot overwrite newer
+authored inputs. Baseline identity changes invalidate compiler and native-editor
+bindings even when the project directory is unchanged.
 In `ASM_SOURCE` mode the two source trees compile
 before the shared semantic-edit and patch transaction, and their authored byte delta
 becomes a normal conflict-checked ROM owner. Eligible fixed-range editor writes are

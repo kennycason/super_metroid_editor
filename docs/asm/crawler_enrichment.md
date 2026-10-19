@@ -79,7 +79,9 @@ The gate also reads the compiled orientation/script tables and checks the
 dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 
 Existing projects retain their frozen baseline. Opening or repairing one does
-not add these comments or rewrite its modules. Inspect the new recipe in a fresh
-Project ASM workspace; **Original (read-only)** intentionally remains upstream.
+not add these comments or rewrite its modules. To adopt the new comments in an
+existing project, expand **Project ASM enabled**, choose **Save edits & preview
+baseline update…**, review any conflicts, then **Validate & apply**. Alternatively,
+inspect a fresh Project ASM workspace. **Original (read-only)** remains upstream.
 `asset-manifest.tsv` is unchanged: this pass neither changes assets nor their
 ROM extraction ranges.

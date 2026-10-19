@@ -47,6 +47,8 @@ internal data class AsmProjectWorkspace(
     val projectModuleFileIds: List<String>,
     val disabledProjectModuleFileIds: Set<String>,
     val indexComplete: Boolean = true,
+    val baselineRevision: String = "",
+    val baselineId: String = "",
 )
 
 /** Minimal workspace view for compilation. It avoids rebuilding the browser's
@@ -73,7 +75,12 @@ internal class AsmProjectWorkspaceRepository(
     private val augmentation: AsmSourceAugmentation? = null,
     private val nativeSymbols: List<AsmNativeSymbol>? = null,
 ) {
-    fun load(projectFilePath: String, fileIds: Set<String>? = null): AsmProjectWorkspace? {
+    fun load(projectFilePath: String, fileIds: Set<String>? = null): AsmProjectWorkspace? = withBaselineUpdateLock(projectFilePath) {
+        AsmBaselineUpdateTransaction.recover(projectFilePath)
+        loadAfterRecovery(projectFilePath, fileIds)
+    }
+
+    private fun loadAfterRecovery(projectFilePath: String, fileIds: Set<String>?): AsmProjectWorkspace? {
         synchronizeProjectModules(projectFilePath)
         synchronizeSourceMirrors(projectFilePath, fileIds)
         val buildWorkspace = loadForBuild(projectFilePath) ?: return null
@@ -93,6 +100,8 @@ internal class AsmProjectWorkspaceRepository(
             projectModuleFileIds = projectModuleFileIds,
             disabledProjectModuleFileIds = disabledProjectModuleFileIds,
             indexComplete = fileIds == null,
+            baselineRevision = AsmSourceBaseline.load(buildWorkspace.root)?.augmentationRevision.orEmpty(),
+            baselineId = buildWorkspace.baselineId,
         )
     }
 
@@ -100,7 +109,12 @@ internal class AsmProjectWorkspaceRepository(
     fun loadRoomWorkspace(projectFilePath: String): AsmProjectWorkspace? =
         load(projectFilePath, setOf("main.asm", "macros.asm", PLM_SOURCE_FILE, FX_SOURCE_FILE, ENEMY_SOURCE_FILE))
 
-    fun loadForBuild(projectFilePath: String): AsmProjectBuildWorkspace? {
+    fun loadForBuild(projectFilePath: String): AsmProjectBuildWorkspace? = withSourceLock(projectFilePath) {
+        AsmBaselineUpdateTransaction.recover(projectFilePath)
+        loadForBuildAfterRecovery(projectFilePath)
+    }
+
+    private fun loadForBuildAfterRecovery(projectFilePath: String): AsmProjectBuildWorkspace? {
         val root = projectRoot(projectFilePath) ?: return null
         if (!root.isDirectory) return null
         val cache = cacheRoot(root)
@@ -712,6 +726,8 @@ internal class AsmProjectWorkspaceRepository(
         val key = projectRoot(projectFilePath)?.canonicalPath ?: projectFilePath
         return synchronized(SOURCE_LOCKS.computeIfAbsent(key) { Any() }) { action() }
     }
+
+    internal fun <T> withBaselineUpdateLock(projectFilePath: String, action: () -> T): T = withSourceLock(projectFilePath, action)
 
     private fun modifiedSourceFiles(original: File, working: File): Set<String> {
         val originalRoot = File(original, "src")

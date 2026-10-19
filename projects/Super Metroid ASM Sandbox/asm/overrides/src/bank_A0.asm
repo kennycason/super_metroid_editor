@@ -12268,6 +12268,9 @@ EnemyHeaders_Sova:                                                       ;A0DCBF
     %vulnerabilities(EnemyVulnerabilities_Viola_Yard_HZoomer_Zeela_Sova_Zoomer),
     %name(EnemyName_Sova))
 
+; The regular Zoomer shares its movement state machine with other crawlers.
+; InitAI_Zoomer_MZoomer chooses its starting orientation; MainAI_Crawlers
+; dispatches the handler installed by the orientation's animation script.
 EnemyHeaders_Zoomer:                                                     ;A0DCFF;
     %EnemyHeader(\
     %tileDataSize($0600),

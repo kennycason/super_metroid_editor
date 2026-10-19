@@ -54,11 +54,63 @@ asset manifest uses different filenames or ranges.
 **Restore baseline** restores that project's augmented bank, while
 **Original (read-only)** continues to browse raw upstream source. Custom modules
 remain separate authored files and retain their order and enabled state.
-Upstream/augmentation updates are engineering work; there is no automatic project
-rebase or user merge workflow.
+Upstream/augmentation recipe maintenance remains engineering work. Projects never
+upgrade automatically, but **Save edits & preview baseline update…** explicitly
+merges the project's saved edits onto the current reviewed baseline.
 If an already-enabled project loses `asm/base/`, repair reports the missing
 authored input instead of silently creating a newer baseline. Restore that folder
 from the project's backup or source control; its modules and overrides are not discarded.
+
+### Explicit baseline updates
+
+Expand the **Project ASM enabled** controls to see the project's actual baseline
+revision and upstream commit. Choose **Save edits & preview baseline update…**.
+This first saves source buffers through their normal source/model bridge, then
+compares the old frozen baseline, authored source and new augmented baseline.
+Opening, repairing or redownloading the reference never invokes this operation.
+
+Non-overlapping edits are combined with a bounded, exact-line three-way merge.
+CRLF and final-newline differences remain meaningful. Overlaps are typed conflict
+records in a separate draft, not conflict markers written into compilable source.
+For each conflict, keep the project fragment, use the updated fragment or edit a
+custom resolution. Clean fragments surrounding a conflict remain merged. Large
+or expensive differences conservatively become a whole-file review conflict.
+
+Symbol-map changes first migrate both the old baseline and the complete authored
+image, including custom modules, through the existing strict symbol-aware
+refactoring engine. Comments/literals and unrelated names are preserved. Unsupported
+scopes, shadowed parameters, missing declarations or unclassified references stop
+the preview rather than using broad textual substitution. Unchanged modules are
+copied verbatim; order, disabled state and additional authored files are preserved.
+
+**Validate & apply** requires every conflict to be resolved. The candidate's
+immutable source must rebuild the expected base ROM, and the merged source and
+enabled modules must assemble successfully before publication. This is not a
+substitute for reviewing gameplay semantics or running the normal export/native
+guards. Wrong ROMs, source-file inventory additions/removals, unsafe paths and
+stale source/module settings are rejected. File-inventory changes currently need
+an explicit engineering migration rather than an inferred delete/add merge.
+
+The draft uses one captured authored byte snapshot, including the portable base,
+overrides, modules and their metadata. Hash inventories are rechecked before and
+after validation. Compilation, workspace reloads, source-save persistence and
+baseline installation share the workspace lock. After installation,
+buffers/undo/navigation/build views are invalidated and native editor bridges
+rebind to the new baseline identity.
+
+Before installation, the exact previous authored tree is retained under
+`asm-backups/<UUID>/asm/`. Its generated cache is retained separately under
+`smedit/asm-update-backups/<UUID>/cache/`. A small installation journal rolls an
+interrupted, uncommitted directory swap back on the next workspace load. Partly
+installed trees are preserved beside the cache backup, not deleted. A committed
+journal never rolls back a successful update. Backups are not automatically pruned.
+Canceling a review or failing candidate compilation leaves the active baseline
+unchanged. Review drafts are disposable; reopening does not resume unsaved conflict
+choices. Source-file additions/removals and unsupported symbolic migrations require
+an explicit follow-up migration, not a destructive reset.
+To restore a backup manually, close SMEDIT and restore its complete `asm/` tree as
+a unit, then repair the generated workspace from that frozen baseline. Never mix
+a manifest and source archive from different baselines.
 
 `AsmSourceAugmentationTest` and `AsmSourceBaselineTest` cover transformation guards,
 cross-file and nested-label renames, collisions, simultaneous renames, exact source

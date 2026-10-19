@@ -52,6 +52,38 @@ class AsmSourceAugmentationIntegrationTest {
             AsmSourceRename("MainPauseRoutine", "PauseMenuDispatch"),
         ))
 
+    @Test fun `explicit v1 to v2 update preserves a native enemy edit and real authored Objectives ROM output`() {
+        val latest = AsmSourceAugmentation.bundled()
+        val previous = latest.copy(revision = "super-metroid-ntsc-1", documentation = latest.documentation.filterNot { it.id.startsWith("crawlers.") })
+        val fixture = AsmProjectTestFixture.create(temporary, previous)
+        val repo = AsmProjectWorkspaceRepository(starterModules = emptyList())
+        val catalog = assertNotNull(AsmEnemyTuningSource.load(fixture.workspace.originalDirectory))
+        val headers = File(fixture.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText()
+        val drops = File(fixture.workspace.workingDirectory, "src/$ENEMY_DROP_SOURCE_FILE").readText()
+        val edited = catalog.edit("zoomer_hp", 42, headers, drops).first
+        repo.persistSource(fixture.projectFile.path, ENEMY_HEADER_SOURCE_FILE, edited)
+        val objectives = assertNotNull(javaClass.getResourceAsStream("/asm-templates/objectives_pause_screen.asm"))
+            .bufferedReader().use { it.readText() } + "; My authored Objectives notes stay.\n"
+        repo.createModule(fixture.projectFile.path, "objectives", initialSource = objectives)
+        val before = AsmProjectCompiler(repo).compile(fixture.projectFile.path, fixture.rom)
+        val updater = AsmBaselineUpdateRepository(repo)
+        val upstream = TestRomHelper.requireDisassemblyDir()
+        val reference = AsmReferenceWorkspace(upstream, assertNotNull(AsmSourceBaseline.load(fixture.workspace.root)).reference,
+            AsmSourceParser().parse(File(upstream, "src"), File(upstream, "data"), emptyList()))
+        val plan = updater.prepare(fixture.projectFile.path, reference)
+        assertEquals(0, plan.conflictCount)
+        assertEquals("super-metroid-ntsc-1", AsmSourceBaseline.load(fixture.workspace.root)?.augmentationRevision)
+        val result = updater.apply(plan, emptyMap(), fixture.rom)
+        val after = AsmProjectCompiler(repo).compile(fixture.projectFile.path, fixture.rom)
+        assertContentEquals(before.romBytes, after.romBytes, "Adding crawler documentation must preserve the complete edited/modular ROM")
+        assertEquals(latest.revision, result.workspace.baselineRevision)
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(), "; Falling uses a separate signed 16.16")
+        assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
+        val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
+        assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
+        assertEquals("super-metroid-ntsc-1", AsmSourceBaseline.load(File(result.backupDirectory, "asm"))?.augmentationRevision)
+    }
+
     @Test fun `current Objectives and Fast Doors modules compile identically on two frozen naming baselines`() {
         var firstOutput: ByteArray? = null
         for ((name, recipe) in listOf("older" to AsmSourceAugmentation.NONE, "renamed" to stressRecipe())) {

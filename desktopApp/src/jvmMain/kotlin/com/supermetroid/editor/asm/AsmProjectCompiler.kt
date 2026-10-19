@@ -207,6 +207,20 @@ internal class AsmProjectCompiler(
         referenceRomBody: ByteArray? = null,
         managedBank8FStart: Int? = null,
         onProgress: (String) -> Unit = {},
+    ): AsmCompiledBuildBase = workspaceRepository.withBaselineUpdateLock(projectFilePath) {
+        compileLocked(projectFilePath, loadedRom, materialization, patchMaterialization, roomMaterialization,
+            referenceRomBody, managedBank8FStart, onProgress)
+    }
+
+    private fun compileLocked(
+        projectFilePath: String,
+        loadedRom: ByteArray,
+        materialization: AsmAssetMaterialization,
+        patchMaterialization: AsmPatchMaterialization,
+        roomMaterialization: AsmRoomMaterialization,
+        referenceRomBody: ByteArray?,
+        managedBank8FStart: Int?,
+        onProgress: (String) -> Unit,
     ): AsmCompiledBuildBase {
         val workspace = workspaceRepository.loadForBuild(projectFilePath)
             ?: throw AsmCompilationException("Project ASM is enabled, but its local workspace is missing or incomplete")

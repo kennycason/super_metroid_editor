@@ -745,7 +745,7 @@ fun main() = application {
             LaunchedEffect(editorState.romBuildInProgress, editorState.projectFilePath) {
                 if (!editorState.romBuildInProgress) asmWorkspaceState.refreshBuildReport(validateSources = false)
             }
-            LaunchedEffect(asmWorkspaceState.projectWorkspace?.root, romParser) {
+            LaunchedEffect(asmWorkspaceState.projectWorkspace?.root, asmWorkspaceState.projectWorkspace?.baselineId, romParser) {
                 val owner = editorState.project
                 val projectPath = editorState.projectFilePath
                 editorState.objectPreviewLoading = false
