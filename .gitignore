@@ -52,6 +52,8 @@ room_model/datasets/
 projects/**/smedit/
 projects/**/states/
 projects/**/exports/
+# Local recovery snapshots from explicit ASM baseline updates, not active source.
+projects/**/asm-backups/
 # But keep test-resources directory structure
 !test-resources/.gitkeep
 

@@ -176,7 +176,8 @@ An authored module is never recovered from a stale generated mirror.
   Output paths reject unsafe names and any destination that would replace the input ROM.
 
 Source control should include `.smedit`, `asm/base/`, `asm/modules/`, `asm/overrides/`, and genuinely
-authored assets. Do not commit ROMs, extracted binary assets, `smedit/`, `states/`
+authored assets. Do not commit local ASM recovery copies under `asm-backups/`,
+ROMs, extracted binary assets, `smedit/`, `states/`
 or generated previews. NEW writes a local `.gitignore`. Changing ignore rules does not
 untrack ROMs already committed to the repository; cleaning those up is a separate step.
 

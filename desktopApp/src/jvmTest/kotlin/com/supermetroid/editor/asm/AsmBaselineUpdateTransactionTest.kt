@@ -49,7 +49,32 @@ class AsmBaselineUpdateTransactionTest {
         val backup = AsmBaselineUpdateTransaction.install(project.path, stage)
         assertEquals("new", File(paths.asm, "new.txt").readText())
         assertEquals("original", File(backup, "asm/old.txt").readText())
+        assertEquals("*\n", File(backup, ".gitignore").readText(), "Recovery snapshots must not be committed as project source")
         assertFalse(stage.exists())
+    }
+
+    @Test fun `recovery backups ignore their entire contents in a standalone project repository`() {
+        val project = File(temporary, "Standalone project/Test.smedit")
+        val paths = ProjectPaths.forProject(project.path)
+        write(File(paths.asm, "modules/objectives.asm"), "old objectives")
+        write(File(paths.asmCache, "old.txt"), "old cache")
+        val stage = File(paths.cache, "candidate")
+        write(File(stage, "asm/modules/objectives.asm"), "new objectives")
+        write(File(stage, "smedit/asm/new.txt"), "new cache")
+        val backup = AsmBaselineUpdateTransaction.install(project.path, stage)
+        fun git(vararg arguments: String): Pair<Int, String> {
+            val process = ProcessBuilder(listOf("git", "-C", paths.root.path) + arguments)
+                .redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            return process.waitFor() to output
+        }
+        assertEquals(0, git("init", "-q").first)
+        val oldModule = File(backup, "asm/modules/objectives.asm").relativeTo(paths.root).invariantSeparatorsPath
+        assertEquals(0, git("check-ignore", "--quiet", "--", oldModule).first)
+        assertEquals(1, git("check-ignore", "--quiet", "--", "asm/modules/objectives.asm").first,
+            "The active module must remain eligible for source control")
+        assertEquals("old objectives", File(backup, "asm/modules/objectives.asm").readText())
+        assertEquals("new objectives", File(paths.asm, "modules/objectives.asm").readText())
     }
 
     @Test fun `committed journal recovery keeps the new workspace and rejects unsafe backup identities`() {

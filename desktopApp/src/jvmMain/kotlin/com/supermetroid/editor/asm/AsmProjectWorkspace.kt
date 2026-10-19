@@ -324,7 +324,8 @@ internal class AsmProjectWorkspaceRepository(
     fun cacheFor(projectFilePath: String): File? = projectRoot(projectFilePath)?.let(::cacheRoot)
 
     /**
-     * Saved project source edits are mirrored as small override files. Reading
+     * Saved project source edits are mirrored as complete changed-bank overrides;
+     * unchanged banks are omitted. Reading
      * this ledger does not require parsing the generated source/data trees, so
      * export-mode validation stays cheap and also works before the workspace UI
      * has been opened.

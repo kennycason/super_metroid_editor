@@ -36,6 +36,7 @@ Each project's support folders now use short names:
 
 ```text
 asm/                authored modules and source overrides
+asm-backups/        local recovery snapshots from ASM baseline updates
 data/               custom asset files (not automatically imported)
 smedit/             generated ASM workspace, extracted assets and build cache
 states/             emulator SRAM and save states
@@ -54,3 +55,21 @@ it does not convert retired project formats. See the instructions linked below.
 ROMs, extracted binary assets, save states and generated files should stay outside source
 control; ignore rules do not untrack files already committed. See the
 [project format and layout](../docs/project/project_format.md) for details.
+
+For an ASM project, keep `asm/base/manifest.json` and `asm/base/source.zip` together
+with `asm/modules/` and `asm/overrides/`. The frozen baseline makes the project
+reproducible across app updates; overrides contain complete banks only when their
+text differs from that baseline. Do not ignore active overrides: they are authored
+project source, even if an entire bank records only a small edit. Generated mirrors
+under `smedit/` can be rebuilt and do not belong in Git.
+
+`asm-backups/` is different: it contains old, whole-workspace recovery copies, not
+inputs to the active project. Keep these locally for recovery, but never commit
+them. Repository ignore rules cover existing snapshots; newly created snapshots
+also carry their own `.gitignore` for standalone project repositories. There is no
+automatic pruning; removing old backups should be an explicit action after
+checking the updated project.
+
+The root `.gitattributes` excludes assembly from GitHub's language statistics
+without hiding ASM diffs or changing syntax highlighting. This is separate from
+Git tracking: the active project source, examples and templates remain versioned.

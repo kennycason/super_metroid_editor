@@ -25,6 +25,9 @@ internal object AsmBaselineUpdateTransaction {
         val cacheBackup = cachedBackup(paths, state.id)
         requireManaged(paths, backup, cacheBackup)
         backup.mkdirs()
+        // Recovery copies are local safety nets, not another version of the authored project.
+        // A self-contained ignore also protects projects outside this application's repository.
+        File(backup, ".gitignore").writeText("*\n")
         cacheBackup.mkdirs()
         write(journal(paths), state)
         try {
