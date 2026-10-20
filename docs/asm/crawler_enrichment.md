@@ -6,6 +6,10 @@ Existing names, upstream comments, instructions and assets are preserved.
 The source uses `Zoomer`/`Crawler`; the comments keep that
 vocabulary rather than renaming species or attributing shared behavior to one enemy.
 
+Revision `super-metroid-ntsc-4` preserves that pass unchanged and adds the Waver
+slice described below: ten block explanations and 139 instruction/data-line
+comments across nine complete scopes. It introduces no additional renames.
+
 The recipe is in
 [`augmentation.json`](../../desktopApp/src/jvmMain/resources/asm-reference/augmentation.json).
 There are no new renames in this pass. Shared `DP_Temp` storage remains shared
@@ -93,6 +97,43 @@ These are source/control-flow claims checked against the pinned disassembly and
 compiled tables, not claims of new emulator-based gameplay validation. Complete
 ROM parity proves preservation; it cannot by itself prove an explanation true.
 
+## Waver: movement and animation handshake
+
+Start at `EnemyHeaders_Waver` in bank `$A0`, then follow these bank `$A3` symbols:
+
+1. `InitAI_Waver`: population parameter 1 bit 0 selects left (0) or right (1).
+   It is not a speed selector. The regional 8.8 magnitude is `$0180` for NTSC
+   or `$01D0` for PAL, split into integer/subvelocity words for 16.16 movement.
+2. `MainAI_Waver`: attempt horizontal travel first. A wall reverses the packed
+   speed and facing, skips vertical travel/phase advance, and continues to the
+   animation checks. Otherwise, a radius-4 negative-sine calculation supplies
+   the integer Y distance for this update. This is not an absolute Y sine curve;
+   its fractional result is not used for movement.
+3. `SetWaverInstList` and `InstListPointers_Waver`: bit 0 of the requested index
+   chooses facing; bit 1 chooses spinning. Indices 0/1 are steady-left/right,
+   and 2/3 are spinning-left/right. An unchanged index does not restart its script.
+4. `InstList_Waver_Spinning_FacingLeft` / `...FacingRight` and
+   `Instruction_Waver_SetSpinFinishedFlag`: four eight-tick frames precede the
+   completion command. Main AI consumes the flag, clears only the spin bit,
+   and requests the matching steady animation. Sleep holds the final frame
+   until another list is selected; the script does not change X velocity.
+
+Two retained names deserve care. The initialiser's `.facingLeft` is a common
+tail: the branch reaching it with bit 0 set actually keeps positive/rightward
+motion. `Enemy.var0+1,X` in the wall path is also intentional: `Enemy.var0`
+aliases `Waver.XSubVelocity` at `$0FA8`, with `Waver.XVelocity` at `$0FAA`.
+The unaligned word read combines the fraction's high byte and integer's low byte
+into the original 8.8 value. Negate that whole value before splitting it again:
+NTSC left is integer `$FFFE` + fraction `$8000`, and PAL left is `$FFFE` + `$3000`.
+Existing labels and scratch names are left intact; comments explain their use.
+
+A vertical collision adds `$80` and masks the phase to a byte instead of taking
+the normal `+2` step. With both moves unobstructed, `+2` is stored as a full word;
+the sine call uses only the low byte and the spin test only the low seven bits.
+Spinning is requested at low-byte phases `$38` and `$B8`, including when a
+collision path reaches the shared animation checks. No exact gameplay timing
+or ideal floating-point sine behavior is inferred from these source contracts.
+
 ## Validation and review
 
 Ordinary JVM tests cover scoped anchors, duplicate/missing declarations, complete
@@ -106,13 +147,19 @@ compiler symbols, source-reference edges, native bindings and authored modules:
 ```
 
 On success, the bundled-source case writes complete annotated bank previews to
-`desktopApp/build/reports/asm-enrichment/src/bank_A0.asm` and `bank_A3.asm`.
+`desktopApp/build/reports/asm-enrichment/src/`: `bank_A0.asm`, `bank_A3.asm`, and
+the core-engine banks `bank_80.asm` / `bank_82.asm` added in revision 5.
 These are generated review files, not project overrides or a new source of truth.
 The gate also reads the compiled orientation/script tables and checks the
 dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
-Updates from both revision 1 and the frozen revision-2 recipe are compiled before
-and after migration, retaining a custom Zoomer HP value and the real authored
-Objectives module with byte-identical complete ROM output.
+Waver checks additionally pin its emitted direction/script pointer table, both
+four-frame spin sequences and completion commands, native AI links, RAM layout,
+packed-speed read, phase/collision paths and non-restarting animation selection.
+Updates from revisions 1, 2, 3 and 4 are compiled before and after migration,
+retaining custom Zoomer/Waver HP values and the real authored Objectives module
+with byte-identical complete ROM output. Version-2, version-3 and version-4 recipes are
+frozen test resources; the version-1 case omits the later crawler blocks from
+the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 
 Existing projects retain their frozen baseline. Opening or repairing one does
 not add these comments or rewrite its modules. To adopt the new comments in an

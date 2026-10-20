@@ -22,7 +22,7 @@ class AsmSourceAugmentationIntegrationTest {
         val fixture = verify(AsmSourceAugmentation.bundled())
         // A disposable, generated review artifact, never a change to a user's pinned baseline.
         System.getProperty("smedit.asmEnrichmentReviewDirectory")?.let { directory ->
-            for (fileId in listOf("bank_A0.asm", "bank_A3.asm")) {
+            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_A0.asm", "bank_A3.asm")) {
                 val output = File(directory, "src/$fileId")
                 output.parentFile.mkdirs()
                 File(fixture.workspace.originalDirectory, "src/$fileId").copyTo(output, overwrite = true)
@@ -62,6 +62,18 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previousCrawlerRecipe())
     }
 
+    @Test fun `explicit v3 to current update adds Waver documentation while retaining crawler notes and authored ROM output`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-3.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v4 to current update adds core documentation while retaining enemy notes and authored ROM output`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-4.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -74,7 +86,7 @@ class AsmSourceAugmentationIntegrationTest {
         val catalog = assertNotNull(AsmEnemyTuningSource.load(fixture.workspace.originalDirectory))
         val headers = File(fixture.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText()
         val drops = File(fixture.workspace.workingDirectory, "src/$ENEMY_DROP_SOURCE_FILE").readText()
-        val edited = catalog.edit("zoomer_hp", 42, headers, drops).first
+        val edited = catalog.edit("waver_hp", 27, catalog.edit("zoomer_hp", 42, headers, drops).first, drops).first
         repo.persistSource(fixture.projectFile.path, ENEMY_HEADER_SOURCE_FILE, edited)
         val objectives = assertNotNull(javaClass.getResourceAsStream("/asm-templates/objectives_pause_screen.asm"))
             .bufferedReader().use { it.readText() } + "; My authored Objectives notes stay.\n"
@@ -89,14 +101,21 @@ class AsmSourceAugmentationIntegrationTest {
         assertEquals(previous.revision, AsmSourceBaseline.load(fixture.workspace.root)?.augmentationRevision)
         val result = updater.apply(plan, emptyMap(), fixture.rom)
         val after = AsmProjectCompiler(repo).compile(fixture.projectFile.path, fixture.rom)
-        assertContentEquals(before.romBytes, after.romBytes, "Adding crawler documentation must preserve the complete edited/modular ROM")
+        assertContentEquals(before.romBytes, after.romBytes, "Adding documentation must preserve the complete edited/modular ROM")
         assertEquals(latest.revision, result.workspace.baselineRevision)
         assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(), "; Falling uses a separate signed 16.16")
         assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(),
             ";A3E66F; Keep the starting orientation: upside right, left, down, or up (0..3).")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(),
+            ";A3875F; Read packed 8.8 speed across the subvelocity high byte and velocity low byte.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_82.asm").readText(),
+            ";82897A; Publish the completed frame and wait for NMI's acknowledgement.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
+            ";8095F9; Count every NMI, including the no-request lag path.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
+        assertEquals(27, reloaded.field("waver_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
         assertEquals(previous.revision, AsmSourceBaseline.load(File(result.backupDirectory, "asm"))?.augmentationRevision)
     }
 
@@ -182,6 +201,8 @@ class AsmSourceAugmentationIntegrationTest {
         val originalSymbols = AsmWlaSymbolParser.parse(File(upstream, "symbols.sym").readText())
         val currentSymbols = AsmWlaSymbolParser.parse(compiled.compilerSymbols.toString(Charsets.UTF_8))
         verifyCrawlerContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyWaverContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyCoreContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         val natives = assertNotNull(manifest.nativeSymbols)
         assertEquals(163, natives.size)
         natives.forEach { native ->
@@ -247,6 +268,164 @@ class AsmSourceAugmentationIntegrationTest {
         val enemyBuild = protectEnemyTuningSource(enemies, headerText, drops, project, bossBuild)
         assertContentEquals(fixture.rom, enemyBuild.romBytes)
         return fixture
+    }
+
+    /** Independently pin the vector, frame-handshake and dispatch contracts described by the core notes. */
+    private fun verifyCoreContracts(rom: ByteArray, symbols: Map<String, Int>, index: AsmReferenceIndex, names: AsmSourceSymbolNames) {
+        fun address(name: String) = assertNotNull(symbols[name], name)
+        fun bytes(name: String, size: Int, offset: Int = 0): List<Int> {
+            val pc = assertNotNull(snesLoRomToPc(address(name) + offset))
+            return rom.copyOfRange(pc, pc + size).map { it.toInt() and 255 }
+        }
+        fun word(name: String, offset: Int = 0): Int = bytes(name, 2, offset).let { it[0] or (it[1] shl 8) }
+        fun longJump(name: String) = listOf(0x5C, address(name) and 255, (address(name) ushr 8) and 255, address(name) ushr 16)
+        assertEquals(address("Boot") and 0xFFFF, word("Emulation_RESET"))
+        assertEquals(address("NMI") and 0xFFFF, word("Native_NMI"))
+        assertEquals(address("IRQ") and 0xFFFF, word("Native_IRQ"))
+        assertEquals(listOf(0x78, 0x18, 0xFB) + longJump("Boot_bank80"), bytes("Boot", 7), "SEI, CLC, XCE, then enter FastROM")
+        for (entry in listOf("NMI", "IRQ"))
+            assertEquals(listOf(0xC2, 0x30) + longJump("${entry}_bank80"), bytes(entry, 6), "$entry saves full-width registers in bank 80")
+        assertEquals(listOf(0xFC, address("MainGameLoop_gamemodes") and 255, (address("MainGameLoop_gamemodes") ushr 8) and 255),
+            bytes("MainGameLoop", 3, 0x2E), "The dispatcher uses JSR (table,X), not a long or computed-bank call")
+        val states = listOf(
+            "GameState_0_ResetStart", "GameState_1_TitleSequence", "GameState_2_GameOptionsMenu", "GameState_3_Nothing",
+            "GameState_4_FileSelectMenus", "GameState_5_FileSelectMap", "GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData",
+            "GameState_7_MainGameplayFadingIn", "GameState_8_MainGameplay", "GameState_9_HitADoorBlock", "GameState_A_LoadingNextRoom",
+            "GameState_B_LoadingNextRoom", "GameState_C_Pausing_NormalGameplayDarkening", "GameState_D_Pausing_LoadingPauseScreen",
+            "GameState_E_Paused_LoadingPauseScreen", "GameState_F_Paused_MapAndItemScreens", "GameState_10_Unpausing_LoadingNormalGameplay",
+            "GameState_11_Unpausing_LoadingNormalGameplay", "GameState_12_Unpausing_NormalGameplayBrightening", "GameState_13_DeathSequence_Start",
+            "GameState_14_DeathSequence_BlackOutSurroundings", "GameState_15_DeathSequence_WaitForMusic", "GameState_16_DeathSequence_PreFlashing",
+            "GameState_17_DeathSequence_Flashing", "GameState_18_DeathSequence_ExplosionWhiteOut", "GameState_19_DeathSequence_BlackOut",
+            "GameState_1A_GameOverScreen", "GameState_1B_ReserveTankAuto", "UNUSED_GameState_1C_828B3F", "GameState_1D_DebugGameOverMenu",
+            "GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes", "GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData",
+            "GameState_20_MadeItToCeresElevator", "GameState_21_BlackoutFromCeres", "GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes",
+            "GameState_23_TimeUpWhiteOut", "GameState_23_TimeUpBlackOut", "GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes",
+            "GameState_26_SamusEscapesFromZebes", "GameState_27_EndingAndCredits", "GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData",
+            "GameState_29_TransitionToDemo", "GameState_2A_PlayingDemo", "GameState_2B_UnloadGameData", "GameState_2C_TransitionFromDemo")
+        assertEquals(0x2D, states.size)
+        states.forEachIndexed { slot, state -> assertEquals(address(state) and 0xFFFF, word("MainGameLoop_gamemodes", slot * 2), "Game state $slot") }
+        for ((symbol, ram) in mapOf("NMI_Request" to 0x05B4, "NMI_8bitFrameCounter" to 0x05B5, "NMI_FrameCounter" to 0x05B6,
+            "NMI_Counter" to 0x05B8, "NMI_LagCounter" to 0x05BA, "NMI_MaximumLag" to 0x05BB, "DP_IRQAutoJoy" to 0x84, "DP_IRQCmd" to 0xAB))
+            assertEquals(ram, address(symbol), "Request/byte-counter adjacency makes register widths significant: $symbol")
+
+        fun statements(symbol: String, local: String? = null): List<String> {
+            val root = index.labels.single { it.name == names.active(symbol) && it.localScope == null }
+            val source = assertNotNull(index.file(root.fileId))
+            val start = local?.let { name -> index.labels.single { it.fileId == root.fileId && it.localScope == root.name && it.name == name }.lineIndex }
+                ?: root.lineIndex
+            val end = (start + 1 until source.lines.size).firstOrNull { line ->
+                source.scopePathByLine[line].firstOrNull() != root.name ||
+                    (local != null && index.labels.any { it.fileId == root.fileId && it.lineIndex == line })
+            } ?: source.lines.size
+            return source.lines.subList(start + 1, end).map { asmStatementSignature(names.canonicalCode(asmExecutableCode(it))) }.filter(String::isNotBlank)
+        }
+        fun signature(vararg code: String) = code.map(::asmStatementSignature)
+        val wait = statements("WaitForNMI")
+        assertEquals(signature("PHP", "PHB", "PHK", "PLB", "SEP #\$30", "LDA.B #\$01", "STA.W NMI_Request", ".wait:",
+            "LDA.W NMI_Request", "BNE .wait", "PLB", "PLP", "RTL"), wait)
+        assertEquals(signature("REP #\$30", "INC.W NMI_Counter", "PLY", "PLX", "PLA", "PLD", "PLB", "RTI"), statements("NMI", ".return"))
+        assertEquals(signature("LDX.W NMI_LagCounter", "INX", "STX.W NMI_LagCounter", "LDX.W NMI_LagCounter", "CPX.W NMI_MaximumLag",
+            "BCC .return", "STX.W NMI_MaximumLag", "BRA .return"), statements("NMI", ".lag"))
+        val nmi = statements("NMI")
+        val requestTest = nmi.indexOf(asmStatementSignature("LDX.W NMI_Request"))
+        assertEquals(signature("SEP #\$10", "LDX.W \$4210", "LDX.W NMI_Request", "BEQ .lag", "JSR.W UpdateOAM_CGRAM"),
+            nmi.subList(requestTest - 2, requestTest + 3))
+        assertEquals(signature("SEP #\$10", "REP #\$20", "LDX.B DP_HDMAEnable", "STX.W \$420C", "JSL.L ReadControllerInput", "LDX.B #\$00",
+            "STX.W NMI_Request", "STX.W NMI_LagCounter", "LDX.W NMI_8bitFrameCounter", "INX", "STX.W NMI_8bitFrameCounter", "INC.W NMI_FrameCounter"),
+            statements("NMI", ".mode7Disabled").drop(2))
+        val irq = statements("IRQ", ".bank80")
+        assertEquals(signature("LDA.W \$4211", "LDX.B DP_IRQCmd", "JSR.W (InterruptCommandPointers,X)", "STA.B DP_IRQCmd",
+            "STY.W \$4209", "STX.W \$4207"), irq.drop(6).take(6))
+        assertTrue(irq.none { it == asmStatementSignature("TCD") || it == asmStatementSignature("PHD") })
+        val loop = statements("MainGameLoop").takeWhile { it != asmStatementSignature(".gamemodes:") }
+        assertEquals(signature("JSL.L HDMAObjectHandler_HandleMusicQueue", "JSL.L GenerateRandomNumber", "JSL.L ClearHighOAM", "JSR.W (.gamemodes,X)",
+            "JSL.L HandleSounds", "JSL.L Finalise_OAM", "JSL.L ShowSpareCPUDebug_UpdatePrevCtrl1Input", "JSL.L WaitForNMI"),
+            loop.filter { it.startsWith("JSL") || it.startsWith("JSR") })
+        val gameplay = statements("GameState_8_MainGameplay")
+        // Anonymous labels share instruction lines in this scope; compare call operands, not their textual prefix.
+        fun calls(rows: List<String>) = rows.mapNotNull { row -> Regex("(?:JSL\\.L|JSR\\.W)(.+)").find(row)?.groupValues?.get(1) }
+        assertEquals(listOf("Determine_Which_Enemies_to_Process", "DebugHandler", "PaletteFXObject_Handler", "SamusCurrentStateHandler",
+            "Samus_Projectiles_Interaction_Handling", "Main_Enemy_Routine", "SamusNewStateHandler", "Enemy_Projectile_Handler", "PLM_Handler",
+            "AnimatedTilesObject_Handler", "EnemyProjectile_Samus_Collision_Handling", "Projectile_vs_Projectile_Collision_Handling",
+            "Process_Enemy_PowerBomb_Interaction", "Main_Scrolling_Routine", "Debug_Layer1Position_Saving_Loading",
+            "Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles", "Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer", "HandleHUDTilemap_PausedAndRunning",
+            "Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling", "Execute_Room_Main_ASM", "HandleSamusRunningOutOfEnergy_and_IncrementGameTime",
+            "Handle_Room_Shaking", "DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists"), calls(gameplay))
+        assertTrue(gameplay.indexOf(asmStatementSignature("BNE .skipProcessing")) < gameplay.indexOf(asmStatementSignature(".skipProcessing:")))
+        assertEquals(signature("JSL.L HandleHUDTilemap_PausedAndRunning", "JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling",
+            "JSL.L Execute_Room_Main_ASM", "JSR.W HandleSamusRunningOutOfEnergy_and_IncrementGameTime", "JSL.L Handle_Room_Shaking",
+            "JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists", "PLP", "RTS"), statements("GameState_8_MainGameplay", ".skipProcessing"))
+    }
+
+    private fun verifyWaverContracts(rom: ByteArray, symbols: Map<String, Int>, index: AsmReferenceIndex, names: AsmSourceSymbolNames) {
+        fun address(name: String) = assertNotNull(symbols[name], name)
+        fun word(name: String, offset: Int = 0): Int {
+            val pc = assertNotNull(snesLoRomToPc(address(name) + offset))
+            return (rom[pc].toInt() and 255) or ((rom[pc + 1].toInt() and 255) shl 8)
+        }
+        assertEquals(address("InitAI_Waver") and 0xFFFF, word("EnemyHeaders_Waver_initAI"))
+        assertEquals(address("MainAI_Waver") and 0xFFFF, word("EnemyHeaders_Waver_mainAI"))
+        assertEquals(0x0180, word("InitAI_Waver", 4), "The NTSC magnitude is signed 8.8 before splitting")
+        assertEquals(0x0FA8, address("Waver.XSubVelocity"))
+        assertEquals(address("Enemy.var0"), address("Waver.XSubVelocity"))
+        assertEquals(address("Waver.XSubVelocity") + 2, address("Waver.XVelocity"), "var0+1 reads overlapping fraction/integer bytes")
+        assertEquals(0x0FAC, address("Waver.instListIndex"))
+        assertEquals(0x0FAE, address("Waver.angle"))
+        assertEquals(0x0FB0, address("Waver.spinFinishedFlag"))
+        assertEquals(0x0FB2, address("Waver.newInstListIndex"))
+        val lists = listOf("Steady_FacingLeft", "Steady_FacingRight", "Spinning_FacingLeft", "Spinning_FacingRight")
+        lists.forEachIndexed { slot, suffix ->
+            assertEquals(address("InstList_Waver_$suffix") and 0xFFFF, word("InstListPointers_Waver", slot * 2))
+        }
+        for ((side, sprite) in listOf("Left" to 2, "Right" to 7)) {
+            val steady = "InstList_Waver_Steady_Facing$side"
+            assertEquals(1, word(steady))
+            assertEquals(address("Spritemap_Waver_$sprite") and 0xFFFF, word(steady, 2))
+            assertEquals(address("Instruction_Common_Sleep") and 0xFFFF, word(steady, 4))
+        }
+        for ((side, sprites) in listOf("Left" to listOf(3, 4, 0, 1), "Right" to listOf(8, 9, 5, 6))) {
+            val spin = "InstList_Waver_Spinning_Facing$side"
+            sprites.forEachIndexed { frame, sprite ->
+                assertEquals(8, word(spin, frame * 4), "$side spin frame duration")
+                assertEquals(address("Spritemap_Waver_$sprite") and 0xFFFF, word(spin, frame * 4 + 2))
+            }
+            assertEquals(address("Instruction_Waver_SetSpinFinishedFlag") and 0xFFFF, word(spin, 16))
+            assertEquals(address("Instruction_Common_Sleep") and 0xFFFF, word(spin, 18))
+        }
+        fun statements(symbol: String, local: String? = null): List<String> {
+            val root = index.labels.single { it.name == symbol && it.localScope == null }
+            val label = local?.let { name -> index.labels.single { it.fileId == root.fileId && it.localScope == symbol && it.name == name } } ?: root
+            val source = assertNotNull(index.file(root.fileId))
+            val end = index.labels.filter { it.fileId == root.fileId && it.lineIndex > label.lineIndex }.minOfOrNull { it.lineIndex } ?: source.lines.size
+            return source.lines.subList(label.lineIndex + 1, end)
+                .map { asmStatementSignature(names.canonicalCode(asmExecutableCode(it))) }.filter(String::isNotEmpty)
+        }
+        fun signature(vararg code: String) = code.map(::asmStatementSignature)
+        assertEquals(signature("LDX.W EnemyIndex", "LDA.W #\$0001", "STA.W Waver.spinFinishedFlag,X", "RTL"),
+            statements("Instruction_Waver_SetSpinFinishedFlag"))
+        assertEquals(signature("STZ.W Waver.newInstListIndex,X", "STZ.W Waver.instListIndex,X", "STZ.W Waver.spinFinishedFlag,X",
+            "LDA.W #InstList_Waver_Steady_FacingLeft", "STA.W Enemy.instList,X", "LDA.W Enemy.init0,X", "AND.W #\$0001",
+            "STA.W Waver.newInstListIndex,X", "JSR.W SetWaverInstList", "RTL"), statements("InitAI_Waver", ".facingLeft"))
+        val horizontal = statements("MainAI_Waver")
+        assertEquals(signature("LDX.W EnemyIndex", "LDA.W Waver.XSubVelocity,X", "STA.B DP_Temp12", "LDA.W Waver.XVelocity,X",
+            "STA.B DP_Temp14", "JSL.L MoveEnemyRightBy_14_12_IgnoreSlopes", "BCC .noWallCollision"), horizontal.take(7))
+        assertEquals(signature("LDA.W Enemy.var0+1,X", "STA.B DP_Temp12", "EOR.W #\$FFFF", "INC"), horizontal.drop(7).take(4))
+        assertEquals(signature("LDA.W Waver.newInstListIndex,X", "EOR.W #\$0001", "AND.W #\$0001", "STA.W Waver.newInstListIndex,X",
+            "JSR.W SetWaverInstList", "JMP.W .merge"), horizontal.takeLast(6))
+        assertEquals(signature("LDA.W #\$0004", "STA.W Temp_Radius", "LDA.W Waver.angle,X", "AND.W #\$00FF",
+            "JSL.L EightBitNegativeSineMultiplication_A0B0C6", "STA.B DP_Temp14", "STZ.B DP_Temp12", "JSL.L MoveEnemyDownBy_14_12",
+            "BCC .noBlockCollision", "LDX.W EnemyIndex", "LDA.W Waver.angle,X", "CLC", "ADC.W #\$0080", "AND.W #\$00FF",
+            "STA.W Waver.angle,X", "BRA .merge"), statements("MainAI_Waver", ".noWallCollision"))
+        assertEquals(signature("LDX.W EnemyIndex", "LDA.W Waver.angle,X", "CLC", "ADC.W #\$0002", "STA.W Waver.angle,X"),
+            statements("MainAI_Waver", ".noBlockCollision"))
+        assertEquals(signature("LDX.W EnemyIndex", "LDA.W Waver.angle,X", "AND.W #\$007F", "CMP.W #\$0038", "BNE .notSpinning",
+            "LDA.W Waver.newInstListIndex,X", "ORA.W #\$0002", "STA.W Waver.newInstListIndex,X", "JSR.W SetWaverInstList"),
+            statements("MainAI_Waver", ".merge"))
+        assertEquals(signature("LDA.W Waver.spinFinishedFlag,X", "BEQ .return", "STZ.W Waver.spinFinishedFlag,X", "LDA.W Waver.newInstListIndex,X",
+            "AND.W #\$0001", "STA.W Waver.newInstListIndex,X", "JSR.W SetWaverInstList"), statements("MainAI_Waver", ".notSpinning"))
+        assertEquals(signature("LDX.W EnemyIndex", "LDA.W Waver.newInstListIndex,X", "CMP.W Waver.instListIndex,X", "BEQ .return",
+            "STA.W Waver.instListIndex,X", "ASL", "TAY", "LDA.W InstListPointers_Waver,Y", "STA.W Enemy.instList,X",
+            "LDA.W #\$0001", "STA.W Enemy.instTimer,X", "STZ.W Enemy.loopCounter,X"), statements("SetWaverInstList"))
     }
 
     /** Pin the actual script/parameter/state contracts described by the new comments, not just their placement. */

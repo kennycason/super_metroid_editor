@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -26,22 +27,43 @@ internal fun AsmBaselineUpdateDialog(
     val fs = LocalEditorTheme.current.fontSize.value
     val choices = remember(plan) { mutableStateMapOf<Pair<String, Int>, String>() }
     val conflicts = remember(plan) { plan.files.flatMap { file -> file.merge.conflicts.mapIndexed { index, conflict -> Triple(file.fileId, index, conflict) } } }
+    var details by remember(plan) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = { if (!busy) onCancel() },
         modifier = Modifier.width(960.dp),
-        title = { Text("Update project ASM baseline", fontSize = fs.heading) },
+        title = { Text("Update ASM baseline", fontSize = fs.heading) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("${plan.previousRevision} → ${plan.nextRevision}", fontSize = fs.body, fontFamily = FontFamily.Monospace)
-                Text("${plan.changedFiles.size} affected files · ${plan.conflictCount - choices.size} unresolved conflicts", fontSize = fs.body)
-                Text("Non-overlapping edits merge automatically. Modules, order and enablement are preserved. The current project stays active until the resolved candidate builds; a backup is kept before installation.", fontSize = fs.detail)
+                val documented = plan.baselineChanges.count { it.documentationOnly }
+                val sourceChanges = plan.baselineChanges.size - documented
+                Text(buildList {
+                    if (documented > 0) add("$documented files: comments/formatting only")
+                    if (sourceChanges > 0) add("$sourceChanges files: code, data or symbol changes")
+                    if (isEmpty()) add("No baseline source text changes")
+                }.joinToString(" · "), fontSize = fs.body, modifier = Modifier.testTag("asm-baseline-summary"))
+                Text("Your edits in ${plan.editedBankCount} banks and ${plan.moduleCount} custom modules are carried forward. Module order and on/off settings are retained.", fontSize = fs.detail)
                 if (conflicts.isEmpty()) {
-                    Text("No textual conflicts. The merged candidate still needs compiler validation.", fontSize = fs.body)
-                    LazyColumn(Modifier.heightIn(max = 220.dp)) {
-                        items(plan.changedFiles) { file -> Text(file.fileId, fontFamily = FontFamily.Monospace, fontSize = fs.detail) }
+                    Text("No changes need review. Your edits merged without conflicts.", fontSize = fs.body)
+                    TextButton(onClick = { details = !details }, modifier = Modifier.testTag("asm-baseline-details-toggle")) {
+                        Text(if (details) "Hide update details" else "Show update details", fontSize = fs.detail)
+                    }
+                    if (details) LazyColumn(Modifier.heightIn(max = 220.dp)) {
+                        items(plan.changedFiles) { file ->
+                            val detail = when {
+                                file.fileId.startsWith(com.supermetroid.editor.asm.ASM_PROJECT_MODULE_PREFIX) -> "Module symbol references updated"
+                                !file.baselineChanged -> "Your edits retained; baseline unchanged"
+                                file.documentationOnly -> "Comments/formatting only"
+                                else -> "Code, data or symbols changed"
+                            }
+                            Text("${file.fileId} · $detail", fontFamily = FontFamily.Monospace, fontSize = fs.detail)
+                        }
                     }
                 } else {
-                    LazyColumn(Modifier.heightIn(max = 440.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val remaining = plan.conflictCount - choices.size
+                    Text(if (remaining == 0) "Review complete. Ready for build validation." else
+                        "$remaining changes need your review. Your current project has not been replaced.", fontSize = fs.body)
+                    LazyColumn(Modifier.heightIn(max = 340.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(conflicts, key = { "${it.first}:${it.second}" }) { (file, index, conflict) ->
                             val key = file to index
                             var draft by remember(plan, key) { mutableStateOf(conflict.project) }
@@ -52,7 +74,8 @@ internal fun AsmBaselineUpdateDialog(
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Column(Modifier.weight(1f)) {
                                             MergeExcerpt("Your edits", conflict.project)
-                                            TextButton(enabled = !busy, onClick = { draft = conflict.project; choices[key] = draft }) { Text("Keep project") }
+                                            TextButton(enabled = !busy, onClick = { draft = conflict.project; choices[key] = draft },
+                                                modifier = Modifier.testTag("asm-baseline-keep-$file-$index")) { Text("Keep project") }
                                         }
                                         Column(Modifier.weight(1f)) {
                                             MergeExcerpt("Updated baseline", conflict.updated)
@@ -68,12 +91,13 @@ internal fun AsmBaselineUpdateDialog(
                         }
                     }
                 }
+                Text("The candidate is compiled and checked before installation; a previous ASM copy is kept. Build validation does not verify gameplay.", fontSize = fs.detail)
                 if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(progress ?: "Validating merged source…", fontSize = fs.detail) }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = fs.detail) }
             }
         },
         confirmButton = {
-            Button(enabled = !busy && choices.size == plan.conflictCount,
+            Button(enabled = !busy && choices.size == plan.conflictCount, modifier = Modifier.testTag("asm-baseline-apply"),
                 onClick = { onApply(choices.entries.groupBy({ it.key.first }, { it.key.second to it.value }).mapValues { it.value.toMap() }) }) {
                 Text("Validate & apply", fontSize = fs.body)
             }

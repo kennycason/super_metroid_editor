@@ -45,6 +45,10 @@ class AsmBaselineUpdateTest {
         val before = AsmBaselineUpdateRepository.inventory(initial.root)
         val plan = updater().prepare(file.path, reference)
         assertEquals(0, plan.conflictCount)
+        assertEquals(1, plan.baselineChanges.size)
+        assertTrue(plan.baselineChanges.single().documentationOnly)
+        assertEquals(1, plan.editedBankCount)
+        assertEquals(2, plan.moduleCount)
         assertEquals(before, AsmBaselineUpdateRepository.inventory(initial.root))
         val result = updater().apply(plan, emptyMap(), rom)
         assertEquals("two", result.workspace.baselineRevision)
@@ -55,6 +59,15 @@ class AsmBaselineUpdateTest {
         assertEquals(before, AsmBaselineUpdateRepository.inventory(File(result.backupDirectory, "asm")))
         assertEquals("one", AsmSourceBaseline.load(File(result.backupDirectory, "asm"))?.augmentationRevision)
         assertEquals(setOf("bank_80.asm", "project/custom.asm"), result.workspace.modifiedFileIds)
+    }
+
+    @Test fun `update summaries preserve string significance and distinguish executable compatibility lines and renames`() {
+        assertTrue(asmBaselineDocumentationOnly("Root:\n LDA #1 ; old\n RTL\n", "; Heading\nRoot:\n  LDA  #1 ; new\n RTL ; end\n"))
+        assertFalse(asmBaselineDocumentationOnly("Root:\n LDA #1\n", "Root:\n LDA #2\n"))
+        assertFalse(asmBaselineDocumentationOnly("Old:\n RTL\n", "New:\n RTL\n"))
+        assertFalse(asmBaselineDocumentationOnly(" db \"A B\"\n", " db \"AB\"\n"))
+        assertFalse(asmBaselineDocumentationOnly(";@ LDA #1\n", ";@ LDA #2\n"))
+        assertTrue(asmBaselineDocumentationOnly(" LDA #1 ;A08000;\r\n", " LDA #1 ; explanation\n"))
     }
 
     @Test fun `overlapping comments require explicit resolution and choosing project keeps other new changes`() {

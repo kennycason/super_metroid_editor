@@ -63,11 +63,41 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
+The current enrichment revision is `super-metroid-ntsc-5`. It retains the
+Zoomer/crawler and Waver documentation, adding the main frame loop, gameplay
+update order, NMI request/lag paths and scanline IRQ dispatch without renaming
+existing symbols. Core routines receive 15 block explanations and 182 line
+comments across nine complete, guarded scopes.
+See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
+
+For the core engine, start at `MainGameLoop` in bank `$82`, then follow
+`GameState_0_ResetStart`, `GameState_7_MainGameplayFadingIn` and
+`GameState_8_MainGameplay`. In bank `$80`, follow `WaitForNMI`, `NMI` and `IRQ`.
+Boot/common boot, NMI enable/disable and controller sampling have additional
+context. `WaitForNMI` publishes a prepared frame; the no-request NMI path skips
+uploads and input sampling. `NMI_FrameCounter` and its byte counterpart advance
+only on serviced requests, while `NMI_Counter` advances on every NMI. These are
+not interchangeable with the in-game clock.
+
+The enrichment gate emits annotated bank `$80`/`$82` review copies alongside the
+enemy banks under `desktopApp/build/reports/asm-enrichment/src/`. It checks native
+reset/NMI/IRQ vectors, full-width FastROM entry, all 45 state pointers, byte-field
+RAM adjacency, request acknowledgement/counter paths and gameplay call order,
+in addition to complete ROM parity and source-reference identity. These are
+source/compiler contracts, not an emulator or gameplay certification.
+
 Expand the **Project ASM enabled** controls to see the project's actual baseline
 revision and upstream commit. Choose **Save edits & preview baseline update…**.
 This first saves source buffers through their normal source/model bridge, then
 compares the old frozen baseline, authored source and new augmented baseline.
 Opening, repairing or redownloading the reference never invokes this operation.
+
+The preview starts with a short summary: the baseline versions, files whose changes
+are limited to comments/formatting, files with code/data/symbol changes, and the
+authored banks/custom modules carried forward. This is a lexical description, not
+a claim of gameplay equivalence. Clean merges need no additional acceptance step;
+**Show update details** optionally lists affected files. A conflict presents the
+focused resolver instead. **Validate & apply** remains the single final action.
 
 Non-overlapping edits are combined with a bounded, exact-line three-way merge.
 CRLF and final-newline differences remain meaningful. Overlaps are typed conflict
@@ -104,13 +134,28 @@ Before installation, the exact previous authored tree is retained under
 interrupted, uncommitted directory swap back on the next workspace load. Partly
 installed trees are preserved beside the cache backup, not deleted. A committed
 journal never rolls back a successful update. Backups are not automatically pruned.
+
+**Previous ASM versions…**, inside the same expanded Project ASM settings, lists
+each local copy's baseline, creation date and combined ASM/cache size. Opening the
+list or **Open folder** does not save or adopt source. **Delete…** requires a
+separate confirmation and permanently removes only that UUID's previous ASM copy
+and companion cache. Active source, modules, `.smedit` and other backups are not
+deleted. The source lock, a fresh authored-content fingerprint and a pending-journal
+guard protect deletion. Changed copies require a fresh review; symbolic links,
+incomplete snapshots and interrupted-update artifacts are left for manual inspection.
+There is no automatic cleanup or Restore button. Folder-access/listing failures
+stay in the dialog rather than becoming source/build failures.
+
 Canceling a review or failing candidate compilation leaves the active baseline
 unchanged. Review drafts are disposable; reopening does not resume unsaved conflict
 choices. Source-file additions/removals and unsupported symbolic migrations require
 an explicit follow-up migration, not a destructive reset.
-To restore a backup manually, close SMEDIT and restore its complete `asm/` tree as
-a unit, then repair the generated workspace from that frozen baseline. Never mix
-a manifest and source archive from different baselines.
+These are ASM-only recovery copies, not full-project restore points. Manual
+recovery must also reconcile the associated `.smedit` ownership/settings, using a
+matching project revision or an engineering review. With SMEDIT closed, restore
+the complete `asm/` tree as a unit and repair the generated workspace from its
+frozen baseline. Never mix manifests/archives or assume an older ASM tree matches
+the current project metadata.
 
 `AsmSourceAugmentationTest` and `AsmSourceBaselineTest` cover transformation guards,
 cross-file and nested-label renames, collisions, simultaneous renames, exact source

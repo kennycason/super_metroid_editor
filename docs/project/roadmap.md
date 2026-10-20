@@ -4,7 +4,7 @@
 **See also:** `plan.md` for detailed implementation notes per feature.
 **See also:** `room_model.md` for the current state model and delivery chunks, and
 `project_format.md` for the native `.smedit` boundary.
-**Last updated:** 2026-10-18
+**Last updated:** 2026-10-20
 
 ---
 
@@ -42,6 +42,9 @@
 - Custom ASM Embedding — Hex bytes → free space + auto-link pointer
 
 ### Infrastructure
+- Enemy-AI enrichment — Frozen, explicitly upgradable baselines include block/line explanations for Zoomer/shared crawlers and Waver movement/animation. Complete-scope guards, compiled tables, source-reference identities and full-ROM parity protect the documentation pass; authored names and existing comments remain intact.
+- Core-engine enrichment — The main frame loop, gameplay ordering, NMI request/lag handshake and scanline IRQ dispatch have guarded block/line comments. Compiled vectors, state tables, RAM widths and authored-baseline upgrades are checked alongside full-ROM parity; opening a project never upgrades its source silently.
+- ASM baseline update/recovery UX — Compact change summaries, optional clean-merge details and focused conflict review retain compile-before-install validation. Previous ASM versions stay under expanded settings with dates/sizes, folder access and guarded, confirmed deletion of only the selected recovery pair; no automatic pruning or unsafe partial-project Restore.
 - Project-root workflow — NEW/OPEN, original-name immutable base ROM, portable relative path + ROM fingerprint, missing-ROM recovery, project-named builds, authored `asm/`, generated `smedit/`, `states/` and `exports/`; no automatic legacy-folder migration
 - Enemy/Boss promoted to top-level tabs
 - TestRomHelper migration — 73 test files, eliminated hardcoded ROM paths

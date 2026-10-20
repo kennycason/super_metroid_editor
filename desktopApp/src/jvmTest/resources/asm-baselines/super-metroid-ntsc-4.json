@@ -1,0 +1,1047 @@
+{
+  "revision": "super-metroid-ntsc-4",
+  "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
+  "renames": [
+    { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
+  ],
+  "documentation": [
+    {
+      "id": "speed-booster.stage-timers",
+      "fileId": "bank_91.asm",
+      "symbol": "SpeedBoostTimerResetValues",
+      "expectedCode": "dw $0001,$0001,$0001,$0001,$0002",
+      "paragraphs": [
+        "Five timer reload words, indexed by the Speed Booster counter times two.",
+        "The first word also initializes the adjacent timer/counter pair: its low",
+        "byte is the initial delay and its high byte is the starting counter.",
+        "Later reloads are ORed into the low timer byte while preserving the counter."
+      ]
+    },
+    {
+      "id": "samus.jump-velocity",
+      "fileId": "bank_90.asm",
+      "symbol": "SamusPhysicsConstants_InitialYSpeeds_Jumping",
+      "expectedCode": "dw $04E0*!SPF/$100,$01C0*!SPF/$100,$02C0*!SPF/$100",
+      "paragraphs": [
+        "Initial jump velocities for air, water, and lava/acid, in that order.",
+        "The integer and fractional components live in parallel speed/subspeed",
+        "tables. !SPF scales the velocity for the selected regional frame rate."
+      ]
+    },
+    {
+      "id": "samus.movement-speed-layout",
+      "fileId": "bank_90.asm",
+      "symbol": "SamusXSpeedTable_Normal",
+      "expectedCode": "dd wordSwap($00C0*!SPF*$100),wordSwap($0000*!SPF*$100),wordSwap($0080*!SPF*$100)",
+      "paragraphs": [
+        "Each movement type selects a 12-byte row: acceleration, maximum speed,",
+        "then deceleration. Each value occupies two words; wordSwap places the",
+        "integer word before the fractional word consumed by the movement code."
+      ]
+    },
+    {
+      "id": "escape-timer.ceres-encoding",
+      "fileId": "bank_80.asm",
+      "symbol": "ProcessTimer_CeresStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Clear the old countdown before loading the duration and startup state."
+      ]
+    },
+    {
+      "id": "escape-timer.zebes-encoding",
+      "fileId": "bank_80.asm",
+      "symbol": "ProcessTimer_MotherBrainStart",
+      "expectedCode": "JSL.L ClearTimerRAM",
+      "paragraphs": [
+        "SetTimer takes packed BCD minutes and seconds ($MMSS), not binary seconds.",
+        "Startup begins with an initial delay before the timer display moves into place."
+      ]
+    },
+    {
+      "id": "bomb.fuse-reload",
+      "fileId": "bank_90.asm",
+      "symbol": "BombTimerResetValue",
+      "expectedCode": "dw regional($003C, $0034)",
+      "paragraphs": [
+        "Fuse countdown loaded for newly fired bombs before their explosion sequence.",
+        "regional selects the NTSC or PAL reload value."
+      ]
+    },
+    {
+      "id": "item-fanfare.message-wait",
+      "fileId": "bank_85.asm",
+      "symbol": "Handle_MessageBox_Interaction",
+      "expectedCode": "SEP #$20",
+      "paragraphs": [
+        "Item messages wait for lag frames before accepting input. The collecting",
+        "PLM schedules the music-resume delay separately from this message wait."
+      ]
+    },
+    {
+      "id": "crawlers.zoomer-header",
+      "fileId": "bank_A0.asm",
+      "symbol": "EnemyHeaders_Zoomer",
+      "expectedCode": "%EnemyHeader(\\",
+      "paragraphs": [
+        "The regular Zoomer shares its movement state machine with other crawlers.",
+        "InitAI_Zoomer_MZoomer chooses its starting orientation; MainAI_Crawlers",
+        "dispatches the handler installed by the orientation's animation script."
+      ]
+    },
+    {
+      "id": "crawlers.orientation-script",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Crawlers_FunctionInY",
+      "expectedCode": "LDA.W $0000,Y",
+      "paragraphs": [
+        "X is the enemy slot and Y points to the script's next word: a bank $A3",
+        "movement-handler address. Consume that word and return Y to the interpreter.",
+        "Zoomer/Zeela orientation lists install the handler before their first frame.",
+        "Their frame loops skip this command, so they do not overwrite a falling",
+        "handler on every animation cycle."
+      ]
+    },
+    {
+      "id": "crawlers.initial-orientation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Zoomer_MZoomer",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Before initialisation, Enemy.instList holds the population's initialisation",
+        "value, not a script pointer. Its low two bits select upside right, left,",
+        "down or up (0..3). Replace that value with the matching instruction list,",
+        "then fall through to the shared initialiser with X still the enemy slot."
+      ]
+    },
+    {
+      "id": "crawlers.common-initialisation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Crawlers_Common",
+      "expectedCode": "LDA.W #Spritemap_Common_Nothing",
+      "paragraphs": [
+        "Start with no visible spritemap and a do-nothing handler. An instruction",
+        "timer of one lets the orientation script install both on its next update.",
+        "Enemy.init0 selects the speed-table word copied into both velocity fields;",
+        "$00FF skips the lookup; existing velocities still pass through sign selection.",
+        "Crawling velocities are signed 8.8 pixels per frame, unlike the separate",
+        "integer/fractional word pair used while falling."
+      ]
+    },
+    {
+      "id": "crawlers.initial-direction",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Crawlers_Common",
+      "localLabel": ".skipSpeedTable",
+      "expectedCode": "LDA.W Enemy.properties,X",
+      "paragraphs": [
+        "The low two property bits choose the initial velocity signs independently",
+        "of the script-orientation value: 0 negates X, 2 negates Y, 1 and 3 leave",
+        "both unchanged. These signs are also applied when the speed lookup was skipped."
+      ]
+    },
+    {
+      "id": "crawlers.animation-variants",
+      "fileId": "bank_A3.asm",
+      "symbol": "CrawlersInstListPointerTable_upsideDown",
+      "expectedCode": "dw InstList_Zeela_Zoomer_UpsideDown_0",
+      "paragraphs": [
+        "These four orientation tables use Enemy.init1 directly as a byte offset",
+        "(0, 2, 4, 6, 8 or $0A), not an element number. It selects the species' script.",
+        "A corner turn chooses a new orientation list and resets the instruction timer",
+        "to one; that list installs the corresponding horizontal or vertical handler."
+      ]
+    },
+    {
+      "id": "crawlers.dispatch",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Crawlers",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Crawler.function is a bank-local handler address, not a numeric state ID.",
+        "Tail-jump with X = EnemyIndex; the selected handler returns with RTL to",
+        "the AI caller. Orientation scripts and falling transitions share this field."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "expectedCode": "LDA.W EarthquakeTimer",
+      "paragraphs": [
+        "On a wall, X velocity presses into the surface and Y velocity moves along it.",
+        "A type $0014 earthquake at timer $001E saves this handler and selects falling.",
+        "That change does not return early: this invocation still performs its crawl step."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-contact-probe",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".noQuake",
+      "expectedCode": "STZ.B DP_Temp12",
+      "paragraphs": [
+        "Convert signed 8.8 velocity to the movement helpers' signed 16.16 distance:",
+        "clear $12/$14, sign-extend, then store the velocity across $13/$14.",
+        "Add one pixel in the X direction to probe wall contact before travelling",
+        "along Y. The helpers return carry set on collision; $14.$12 is scratch",
+        "for the current move, not a persistent X- or Y-specific variable."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-inside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".insideTurn",
+      "expectedCode": "LDA.W Crawler.XVelocity,X",
+      "paragraphs": [
+        "The wall probe collided, but travel along Y hit an inside corner.",
+        "Reverse X velocity and choose a floor/ceiling animation from the Y sign.",
+        "Restarting that script switches movement to the horizontal handler."
+      ]
+    },
+    {
+      "id": "crawlers.vertical-outside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "localLabel": ".outsideTurn",
+      "expectedCode": "LDA.L Crawler.consecutiveTurnCounter,X",
+      "paragraphs": [
+        "No wall contact: count this unsupported turn. Four consecutive misses",
+        "save the current handler and select falling instead of turning again.",
+        "Earlier misses reverse Y and select a floor/ceiling script to follow",
+        "the outside corner. Finding wall contact resets the shared turn counter."
+      ]
+    },
+    {
+      "id": "crawlers.falling-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_Falling",
+      "expectedCode": "LDA.L Crawler.fallingYSubVelocity,X",
+      "paragraphs": [
+        "Falling uses a separate signed 16.16 Y velocity: $14 receives the integer",
+        "word and $12 the fractional word. Move first, then accelerate if unobstructed.",
+        "A collision restores nonFallingFunction after clearing fall speed and the",
+        "turn counter. For the $00FF speed-lookup sentinel, landing first assigns",
+        "$0080 (0.5 pixels per frame) to both crawling velocities."
+      ]
+    },
+    {
+      "id": "crawlers.falling-acceleration",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_Falling",
+      "localLabel": ".noCollision",
+      "expectedCode": "LDA.L Crawler.fallingYVelocity,X",
+      "paragraphs": [
+        "Add $8000 to the fractional word in NTSC, or $A000 in PAL, propagating",
+        "carry into the integer word. Acceleration stops once the integer part",
+        "is at least four; this test does not clamp an existing overshoot."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-state",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "expectedCode": "LDA.W EarthquakeTimer",
+      "paragraphs": [
+        "On a floor or ceiling, Y velocity presses into the surface and X travels",
+        "along it. The same earthquake trigger as vertical crawling saves this",
+        "handler and selects falling without skipping the current crawl step."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-contact-probe",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".noQuake",
+      "expectedCode": "STZ.B DP_Temp12",
+      "paragraphs": [
+        "Expand signed 8.8 Y velocity into $14.$12, then add one pixel in its",
+        "direction to probe floor/ceiling contact. With support, calculate the",
+        "slope-adjusted X distance and move along the surface. A clear X move",
+        "is followed by vertical alignment to a non-square slope."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-inside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".insideTurn",
+      "expectedCode": "LDA.W Crawler.YVelocity,X",
+      "paragraphs": [
+        "The support probe collided, but X travel hit an inside corner.",
+        "Reverse Y velocity and use the X sign to select a wall-facing script.",
+        "Its initial command installs the vertical movement handler."
+      ]
+    },
+    {
+      "id": "crawlers.horizontal-outside-corner",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "localLabel": ".outsideTurn",
+      "expectedCode": "LDA.L Crawler.consecutiveTurnCounter,X",
+      "paragraphs": [
+        "No floor/ceiling contact: share the vertical handler's unsupported-turn",
+        "counter. On the fourth miss save this handler and fall; otherwise reverse",
+        "X and select a wall-facing script to follow the outside corner.",
+        "Finding support resets the counter before attempting X travel."
+      ]
+    },
+    {
+      "id": "crawlers.slope-distance",
+      "fileId": "bank_A3.asm",
+      "symbol": "AdjustEnemyXVelocityForSlopes",
+      "expectedCode": "LDA.W Enemy.XPosition,X",
+      "paragraphs": [
+        "Input X is the enemy slot. Sample the supporting edge selected by the sign",
+        "of Y velocity. A slope block with BTS subtype >= 5 selects an 8.8 multiplier;",
+        "multiply the magnitude of the 8.8 X velocity and restore its sign.",
+        "Return the 16.16 move distance in $14.$12 with X restored to EnemyIndex.",
+        "Without such a slope, just expand the original velocity to 16.16.",
+        "The stored Crawler.XVelocity is not changed by this adjustment."
+      ]
+    },
+    {
+      "id": "waver.enemy-header",
+      "fileId": "bank_A0.asm",
+      "symbol": "EnemyHeaders_Waver",
+      "expectedCode": "%EnemyHeader(\\",
+      "paragraphs": [
+        "InitAI_Waver splits the regional horizontal speed and chooses its direction.",
+        "MainAI_Waver moves horizontally, derives vertical distance from a wave phase,",
+        "and coordinates steady/spinning animation scripts through a completion flag.",
+        "Population parameter 1 bit 0 selects left (0) or right (1), not a speed index."
+      ]
+    },
+    {
+      "id": "waver.animation-table",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstListPointers_Waver",
+      "expectedCode": "dw InstList_Waver_Steady_FacingLeft",
+      "paragraphs": [
+        "The animation index packs facing in bit 0 and spinning in bit 1.",
+        "Indices 0/1 select steady-left/right; 2/3 select spinning-left/right.",
+        "newInstListIndex requests a state; instListIndex caches the installed list."
+      ]
+    },
+    {
+      "id": "waver.spin-completion",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Waver_SetSpinFinishedFlag",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Both spin scripts execute this after their four eight-tick frames.",
+        "Signal main AI through spinFinishedFlag; do not change facing or velocity.",
+        "There is no parameter word to consume. The following sleep holds the last",
+        "spin frame until main AI clears the spin bit and selects a steady list."
+      ]
+    },
+    {
+      "id": "waver.initialisation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Waver",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "The regional 8.8 speed is $0180 (NTSC) or $01D0 (PAL), split into",
+        "a signed integer word and a fractional word for 16.16 movement.",
+        "Parameter 1 bit 0 set keeps positive X motion; clear negates the full",
+        "8.8 value before splitting it. The .facingLeft name marks the common",
+        "tail, not the direction of the branch that reaches it.",
+        "Seed the steady-left list directly, then request index 0/1 from the same bit.",
+        "The animation helper only resets timers when that requested index changes."
+      ]
+    },
+    {
+      "id": "waver.movement",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Move in X first. On a wall hit, reconstruct the original 8.8 speed from",
+        "overlapping velocity bytes, negate it, and toggle facing while clearing spin.",
+        "That path skips Y movement and phase advance but still checks animation.",
+        "Without an X collision, use the shared negative-sine helper's integer return",
+        "as a Y distance; this is phase-driven velocity, not an absolute Y coordinate.",
+        "Y collision reflects the phase; otherwise advance it by two before testing spin."
+      ]
+    },
+    {
+      "id": "waver.vertical-distance",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".noWallCollision",
+      "expectedCode": "LDA.W #$0004",
+      "paragraphs": [
+        "Pass radius 4 and the low-byte phase to the shared negative-sine helper.",
+        "Only its signed integer return is used; $12 is zero, so the fractional",
+        "sine result is discarded rather than accumulated as vertical subpixels.",
+        "A blocked Y move adds $80 and masks to a byte, selecting the opposite",
+        "vertical phase instead of taking the normal +2 advance."
+      ]
+    },
+    {
+      "id": "waver.phase-advance",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".noBlockCollision",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Advance the phase only after both X and Y movement report no collision.",
+        "The stored word is not masked here: the sine helper uses its low byte,",
+        "and the animation test uses its low seven bits. A wall leaves it unchanged."
+      ]
+    },
+    {
+      "id": "waver.spin-request",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".merge",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "The low-seven-bit phase test requests spinning at $38 and $B8.",
+        "Keep facing in bit 0 and set spin in bit 1. Repeating the same request",
+        "does not restart its script because SetWaverInstList compares cached indices.",
+        "This check also runs after either collision path, not only after free movement."
+      ]
+    },
+    {
+      "id": "waver.consume-spin-completion",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".notSpinning",
+      "expectedCode": "LDA.W Waver.spinFinishedFlag,X",
+      "paragraphs": [
+        "Consume the flag set by the spin script after all four frames.",
+        "Clear only the spin bit in the requested index, preserving its current",
+        "facing, then select the matching steady list. The flag is cleared once."
+      ]
+    },
+    {
+      "id": "waver.animation-selection",
+      "fileId": "bank_A3.asm",
+      "symbol": "SetWaverInstList",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Switch scripts only when the desired index differs from the installed index.",
+        "An unchanged index returns without resetting animation timing, allowing the",
+        "spin's frames to finish. On a change, resolve the two-byte table entry,",
+        "set instruction timer 1, and clear the previous script's loop counter."
+      ]
+    }
+  ],
+  "lineDocumentation": [
+    {
+      "id": "zoomer.initial-orientation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Zoomer_MZoomer",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"X selects this enemy's slot in the enemy arrays."},
+        {"expectedCode":"LDA.W Enemy.instList,X","comment":"Read the population's initialisation value; it is not a script pointer yet."},
+        {"expectedCode":"AND.W #$0003","comment":"Keep the starting orientation: upside right, left, down, or up (0..3)."},
+        {"expectedCode":"ASL","comment":"Each orientation pointer is a word, so double the orientation number."},
+        {"expectedCode":"TAY","comment":"Y now holds the byte offset into the orientation table."},
+        {"expectedCode":"LDA.W InitialInstListPointers_Crawlers,Y","comment":"Fetch the bank-$A3 instruction list for this starting orientation."},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"Replace the initialisation value with the live animation-script pointer."}
+      ]
+    },
+    {
+      "id": "crawlers.common-initialisation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Crawlers_Common",
+      "lines": [
+        {"expectedCode":"LDA.W #Spritemap_Common_Nothing","comment":"Select the empty spritemap until the animation supplies a frame."},
+        {"expectedCode":"STA.W Enemy.spritemap,X","comment":"Start with no visible sprite for this enemy."},
+        {"expectedCode":"LDA.W #$0001","comment":"A timer of one makes the script run on its next instruction update."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"Schedule the orientation script's first command."},
+        {"expectedCode":"LDA.W #.return","comment":"Use the local RTL as an idle handler until the script chooses movement."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Main AI can safely dispatch before the first scripted frame."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Population parameter 1 selects the crawling-speed entry."},
+        {"expectedCode":"CMP.W #$00FF","comment":"$00FF is the sentinel for skipping the speed-table lookup."},
+        {"expectedCode":"BEQ .skipSpeedTable","comment":"Skip only the speed lookup; property-based sign selection still follows."},
+        {"expectedCode":"ASL","comment":"Speed entries are words; convert the selector to a byte offset."},
+        {"expectedCode":"TAY","comment":"Y indexes the selected speed word."},
+        {"expectedCode":"LDA.W CrawlersSpeedTable,Y","comment":"Load the signed 8.8 crawling speed, in pixels per frame."},
+        {"expectedCode":"STA.W Crawler.XVelocity,X","comment":"Give X the chosen speed before applying direction signs."},
+        {"expectedCode":"STA.W Crawler.YVelocity,X","comment":"Start Y with the same speed before applying direction signs."},
+        {"expectedCode":".skipSpeedTable:"},
+        {"expectedCode":"LDA.W Enemy.properties,X","comment":"Direction signs come from properties, not the initialisation value."},
+        {"expectedCode":"AND.W #$0003","comment":"Isolate the two property bits that control the initial signs."},
+        {"expectedCode":"BNE .invertY","comment":"Only property value 0 takes the X-negation path."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Read the X velocity to reverse."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement all bits as the first step of signed negation."},
+        {"expectedCode":"INC","comment":"Add one to finish the two's-complement negation."},
+        {"expectedCode":"STA.W Crawler.XVelocity,X","comment":"Store the reversed X direction."},
+        {"expectedCode":"RTL","comment":"Initialisation is complete; this path leaves Y unchanged."},
+        {"expectedCode":".invertY:"},
+        {"expectedCode":"CMP.W #$0002","comment":"Property value 2 requests a Y reversal instead."},
+        {"expectedCode":"BNE .return","comment":"Values 1 and 3 leave both velocity signs unchanged."},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Read the Y velocity to reverse."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the Y velocity before adding one."},
+        {"expectedCode":"INC","comment":"Complete -YVelocity without changing its 8.8 scale."},
+        {"expectedCode":"STA.W Crawler.YVelocity,X","comment":"Store the reversed Y direction."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTL","comment":"Return to the caller; this also serves as the temporary idle handler."}
+      ]
+    },
+    {
+      "id": "crawlers.script-handler.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Crawlers_FunctionInY",
+      "lines": [
+        {"expectedCode":"LDA.W $0000,Y","comment":"Read the script's next word: a bank-$A3 movement-handler address."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Install that handler for this enemy's main AI."},
+        {"expectedCode":"INY","comment":"Advance past the handler pointer's low byte."},
+        {"expectedCode":"INY","comment":"Advance past its high byte to the next script word."},
+        {"expectedCode":"RTL","comment":"Return the updated script pointer in Y to the instruction interpreter."}
+      ]
+    },
+    {
+      "id": "crawlers.main-dispatch.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Crawlers",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Select this enemy's state before dispatching its movement handler."},
+        {"expectedCode":"JMP.W (Crawler.function,X)","comment":"Tail-jump within bank $A3; the handler's RTL returns to the AI caller."}
+      ]
+    },
+    {
+      "id": "crawlers.falling.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_Falling",
+      "lines": [
+        {"expectedCode":"LDA.L Crawler.fallingYSubVelocity,X","comment":"Read the fractional word of the separate 16.16 falling velocity."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Supply the movement helper's fractional Y distance."},
+        {"expectedCode":"LDA.L Crawler.fallingYVelocity,X","comment":"Read the signed integer word of falling velocity."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Complete the helper's signed 16.16 distance at $14.$12."},
+        {"expectedCode":"JSL.L MoveEnemyDownBy_14_12","comment":"Move using the current falling velocity before applying gravity."},
+        {"expectedCode":"BCC .noCollision","comment":"Carry clear means unobstructed travel; continue falling."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Check whether this enemy skipped the normal speed lookup."},
+        {"expectedCode":"CMP.W #$00FF","comment":"The $00FF sentinel has special landing-speed handling."},
+        {"expectedCode":"BNE .skipSpeed","comment":"Ordinary speed selectors keep their existing crawling velocities."},
+        {"expectedCode":"LDA.W #$0080","comment":"The sentinel case resumes with +0.5 pixels per frame in 8.8."},
+        {"expectedCode":"STA.W Crawler.XVelocity,X","comment":"Give X the sentinel's post-landing crawling speed."},
+        {"expectedCode":"STA.W Crawler.YVelocity,X","comment":"Give Y the same positive post-landing speed."},
+        {"expectedCode":".skipSpeed:"},
+        {"expectedCode":"LDA.W #$0000","comment":"Reset the fall state after collision."},
+        {"expectedCode":"STA.L Crawler.fallingYSubVelocity,X","comment":"Clear the fractional falling velocity."},
+        {"expectedCode":"STA.L Crawler.fallingYVelocity,X","comment":"Clear the integer falling velocity."},
+        {"expectedCode":"STA.L Crawler.consecutiveTurnCounter,X","comment":"Contact ends the run of unsupported corner turns."},
+        {"expectedCode":"LDA.L Crawler.nonFallingFunction,X","comment":"Recover the crawling handler saved when falling began."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Resume that handler on the next main-AI dispatch."},
+        {"expectedCode":"RTL","comment":"Finish this landing update without another movement step."},
+        {"expectedCode":".noCollision:"},
+        {"expectedCode":"LDA.L Crawler.fallingYVelocity,X","comment":"Test the integer part before adding acceleration."},
+        {"expectedCode":"CMP.W #$0004","comment":"Stop accelerating once the integer part is at least four."},
+        {"expectedCode":"BPL .fallSpeedCapped","comment":"Skip acceleration; this does not clamp an existing overshoot."},
+        {"expectedCode":"LDA.L Crawler.fallingYSubVelocity,X","comment":"Begin acceleration with the fractional word."},
+        {"expectedCode":"CLC","comment":"Start the fractional addition without an incoming carry."},
+        {"expectedCode":"ADC.W #regional($8000, $A000)","comment":"Add 0.5 px/frame per update in NTSC, or 0.625 in PAL."},
+        {"expectedCode":"STA.L Crawler.fallingYSubVelocity,X","comment":"Keep the new fraction; STA preserves the carry for the next ADC."},
+        {"expectedCode":"LDA.L Crawler.fallingYVelocity,X","comment":"Load the integer word without disturbing that carry."},
+        {"expectedCode":"ADC.W #$0000","comment":"Carry any fractional overflow into the integer velocity."},
+        {"expectedCode":"STA.L Crawler.fallingYVelocity,X","comment":"Save the complete accelerated falling velocity."},
+        {"expectedCode":".fallSpeedCapped:"},
+        {"expectedCode":"LDA.L Crawler.fallingYSubVelocity,X","comment":"Test both words for an exactly zero fall velocity."},
+        {"expectedCode":"BNE .return","comment":"A nonzero fraction keeps the falling handler active."},
+        {"expectedCode":"LDA.L Crawler.fallingYVelocity,X","comment":"The fraction was zero; check the integer word too."},
+        {"expectedCode":"BNE .return","comment":"A nonzero integer likewise keeps falling active."},
+        {"expectedCode":"LDA.W #Function_Crawlers_CrawlingVertically","comment":"Zero velocity selects the vertical-crawling handler."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Install it for the next dispatch, not a second move this update."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTL","comment":"Return from this falling-AI update."}
+      ]
+    },
+    {
+      "id": "crawlers.vertical.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingVertically",
+      "lines": [
+        {"expectedCode":"LDA.W EarthquakeTimer","comment":"Check for the specific earthquake update that makes crawlers let go."},
+        {"expectedCode":"CMP.W #$001E","comment":"The falling transition triggers when the quake timer is $001E."},
+        {"expectedCode":"BNE .noQuake","comment":"Other timer values proceed with ordinary wall crawling."},
+        {"expectedCode":"LDA.W EarthquakeType","comment":"Check the earthquake type as well as its timer."},
+        {"expectedCode":"CMP.W #$0014","comment":"Only quake type $0014 triggers this detachment path."},
+        {"expectedCode":"BNE .noQuake","comment":"Other earthquake types do not detach this crawler here."},
+        {"expectedCode":"LDA.W Crawler.function,X","comment":"Remember the crawling handler to resume after a landing."},
+        {"expectedCode":"STA.L Crawler.nonFallingFunction,X","comment":"Save the bank-local return-to-crawling handler."},
+        {"expectedCode":"LDA.W #Function_Crawlers_Falling","comment":"Select the separate falling state."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Schedule falling, but continue this invocation's crawl step."},
+        {"expectedCode":".noQuake:"},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Clear the fractional distance word at $12/$13."},
+        {"expectedCode":"STZ.B DP_Temp14","comment":"Start the integer word at $14/$15 with a zero sign extension."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"X velocity presses into the wall while Y travels along it."},
+        {"expectedCode":"BPL .positive","comment":"A nonnegative speed needs no negative sign extension."},
+        {"expectedCode":"DEC.B DP_Temp14","comment":"Negative speed needs an all-ones integer sign extension."},
+        {"expectedCode":".positive:"},
+        {"expectedCode":"STA.B DP_Temp13","comment":"Write 8.8 speed across $13/$14 to form 16.16 distance at $14.$12."},
+        {"expectedCode":"LDA.B DP_Temp14","comment":"Adjust the integer part for an extra pixel toward the wall."},
+        {"expectedCode":"BPL .inc","comment":"Nonnegative X presses one pixel farther to the right."},
+        {"expectedCode":"DEC","comment":"Negative X presses one pixel farther to the left."},
+        {"expectedCode":"BRA .moveRight","comment":"The negative support-probe distance is ready."},
+        {"expectedCode":".inc:"},
+        {"expectedCode":"INC","comment":"Add one pixel in the positive X direction."},
+        {"expectedCode":".moveRight:"},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Keep the extra probe pixel in the integer distance word."},
+        {"expectedCode":"JSL.L MoveEnemyRightBy_14_12_IgnoreSlopes","comment":"Probe wall contact with X velocity plus the extra pixel."},
+        {"expectedCode":"BCC .outsideTurn","comment":"Carry clear means no wall was found: try an outside corner."},
+        {"expectedCode":"LDA.W #$0000","comment":"Wall contact breaks the streak of unsupported corner turns."},
+        {"expectedCode":"STA.L Crawler.consecutiveTurnCounter,X","comment":"Reset the shared turn counter before travelling along the wall."},
+        {"expectedCode":"JSL.L AlignEnemyYPositionWithNonSquareSlope","comment":"Align Y to any applicable non-square slope before Y travel."},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Begin a fresh fractional word for travel along the wall."},
+        {"expectedCode":"STZ.B DP_Temp14","comment":"Begin with a zero integer sign extension."},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Use the stored Y speed for the actual along-wall movement."},
+        {"expectedCode":"BPL .moveDown","comment":"Nonnegative Y does not need an all-ones sign extension."},
+        {"expectedCode":"DEC.B DP_Temp14","comment":"Sign-extend an upward, negative Y speed."},
+        {"expectedCode":".moveDown:"},
+        {"expectedCode":"STA.B DP_Temp13","comment":"Expand signed 8.8 Y speed into the helper's 16.16 distance."},
+        {"expectedCode":"JSL.L MoveEnemyDownBy_14_12","comment":"Move along the wall using the signed Y distance."},
+        {"expectedCode":"BCS .insideTurn","comment":"A collision along Y is an inside corner, unlike the wall probe."},
+        {"expectedCode":"RTL","comment":"No inside corner: this wall-crawling update is complete."},
+        {"expectedCode":".insideTurn:"},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Reverse the wall-normal X direction for the new surface."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement X as the first half of signed negation."},
+        {"expectedCode":"INC","comment":"Add one to complete the X-velocity reversal."},
+        {"expectedCode":"STA.W Crawler.XVelocity,X","comment":"Keep the reversed X speed for the next orientation."},
+        {"expectedCode":"LDY.W Enemy.init1,X","comment":"Parameter 2 is already a byte offset into the species script tables."},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"The Y sign chooses the new floor/ceiling orientation."},
+        {"expectedCode":"BPL .insideTurn_up","comment":"Nonnegative Y uses the upside-up instruction list."},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideDown,Y","comment":"Negative Y selects this species' upside-down list."},
+        {"expectedCode":"BRA +","comment":"Join the common script-restart path."},
+        {"expectedCode":".insideTurn_up:"},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideUp,Y","comment":"Select this species' upside-up list."},
+        {"expectedCode":"+ STA.W Enemy.instList,X","comment":"Install the new orientation script; it will choose horizontal crawling."},
+        {"expectedCode":"LDA.W #$0001","comment":"Restart the new script on its next instruction update."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"Make its handler-setting command run before the new animation frame."},
+        {"expectedCode":"RTL","comment":"Finish the inside-corner transition."},
+        {"expectedCode":".outsideTurn:"},
+        {"expectedCode":"LDA.L Crawler.consecutiveTurnCounter,X","comment":"Count another turn without supporting-wall contact."},
+        {"expectedCode":"INC","comment":"Advance the unsupported-turn streak, not a general animation timer."},
+        {"expectedCode":"STA.L Crawler.consecutiveTurnCounter,X","comment":"Keep the count across orientation changes."},
+        {"expectedCode":"CMP.W #$0004","comment":"Four consecutive unsupported turns are enough to stop cornering."},
+        {"expectedCode":"BMI .negate","comment":"Earlier misses still attempt an outside-corner turn."},
+        {"expectedCode":"LDA.W Crawler.function,X","comment":"Save the current handler before entering the falling state."},
+        {"expectedCode":"STA.L Crawler.nonFallingFunction,X","comment":"Remember which crawling handler a landing should restore."},
+        {"expectedCode":"LDA.W #Function_Crawlers_Falling","comment":"Select falling instead of another unsupported turn."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"The next main-AI dispatch will use the falling handler."},
+        {"expectedCode":"RTL","comment":"Do not also change orientation on this falling transition."},
+        {"expectedCode":".negate:"},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Reverse along-wall Y motion to wrap around the outside corner."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement Y before adding one."},
+        {"expectedCode":"INC","comment":"Complete the signed Y-velocity negation."},
+        {"expectedCode":"STA.W Crawler.YVelocity,X","comment":"Keep the reversed Y direction for the new surface."},
+        {"expectedCode":"LDY.W Enemy.init1,X","comment":"Index this species' orientation scripts with parameter 2."},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Choose the new orientation using the reversed Y sign."},
+        {"expectedCode":"BPL .positiveYVelocity","comment":"Nonnegative Y selects the upside-up list."},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideDown,Y","comment":"Negative Y selects the upside-down list."},
+        {"expectedCode":"BRA .outsideTurn_up","comment":"Rejoin the shared script-restart path."},
+        {"expectedCode":".positiveYVelocity:"},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideUp,Y","comment":"Fetch the upside-up list for this species."},
+        {"expectedCode":".outsideTurn_up:"},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"Install the floor/ceiling orientation after the outside turn."},
+        {"expectedCode":"LDA.W #$0001","comment":"Restart the orientation script without waiting for the old timer."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"Let the script install its horizontal-crawling handler."},
+        {"expectedCode":"RTL","comment":"Finish this outside-corner update."}
+      ]
+    },
+    {
+      "id": "crawlers.horizontal.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Function_Crawlers_CrawlingHorizontally",
+      "lines": [
+        {"expectedCode":"LDA.W EarthquakeTimer","comment":"Check the earthquake timer before the floor/ceiling crawl step."},
+        {"expectedCode":"CMP.W #$001E","comment":"Detachment is triggered on quake timer $001E."},
+        {"expectedCode":"BNE .noQuake","comment":"Other timer values keep ordinary crawling."},
+        {"expectedCode":"LDA.W EarthquakeType","comment":"The timer match alone is not sufficient to detach."},
+        {"expectedCode":"CMP.W #$0014","comment":"This transition is specific to earthquake type $0014."},
+        {"expectedCode":"BNE .noQuake","comment":"Ignore other earthquake types here."},
+        {"expectedCode":"LDA.W Crawler.function,X","comment":"Read the crawling handler to resume after falling."},
+        {"expectedCode":"STA.L Crawler.nonFallingFunction,X","comment":"Save that bank-local handler for the landing path."},
+        {"expectedCode":"LDA.W #Function_Crawlers_Falling","comment":"Choose the separate falling state."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Schedule falling without skipping the remainder of this crawl update."},
+        {"expectedCode":".noQuake:"},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Clear the fractional word for the floor/ceiling support probe."},
+        {"expectedCode":"STZ.B DP_Temp14","comment":"Start the integer sign extension at zero."},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Y velocity presses toward the supporting floor or ceiling."},
+        {"expectedCode":"BPL .positive","comment":"Downward, nonnegative speed needs no negative sign extension."},
+        {"expectedCode":"DEC.B DP_Temp14","comment":"Sign-extend an upward, negative Y speed."},
+        {"expectedCode":".positive:"},
+        {"expectedCode":"STA.B DP_Temp13","comment":"Expand the 8.8 Y speed into 16.16 distance at $14.$12."},
+        {"expectedCode":"LDA.B DP_Temp14","comment":"Add an extra support-probe pixel to the integer part."},
+        {"expectedCode":"BPL .inc","comment":"Nonnegative Y probes one pixel farther downward."},
+        {"expectedCode":"DEC","comment":"Negative Y probes one pixel farther upward."},
+        {"expectedCode":"BRA .moveDown","comment":"Use the completed negative probe distance."},
+        {"expectedCode":".inc:"},
+        {"expectedCode":"INC","comment":"Add one pixel in the downward direction."},
+        {"expectedCode":".moveDown:"},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Store the extra probe pixel without changing the fraction."},
+        {"expectedCode":"JSL.L MoveEnemyDownBy_14_12","comment":"Test support with Y velocity plus the extra pixel."},
+        {"expectedCode":"BCC .outsideTurn","comment":"No collision means the floor/ceiling support has ended."},
+        {"expectedCode":"LDA.W #$0000","comment":"Found support ends the unsupported-turn streak."},
+        {"expectedCode":"STA.L Crawler.consecutiveTurnCounter,X","comment":"Reset the shared counter before attempting X travel."},
+        {"expectedCode":"JSR.W AdjustEnemyXVelocityForSlopes","comment":"Compute the slope-adjusted X distance in $14.$12; keep stored X speed."},
+        {"expectedCode":"JSL.L MoveEnemyRightBy_14_12_IgnoreSlopes","comment":"Travel along the surface with that signed X distance."},
+        {"expectedCode":"BCS .insideTurn","comment":"A collision along X is an inside corner."},
+        {"expectedCode":"JSL.L AlignEnemyYPositionWithNonSquareSlope","comment":"Keep Y aligned to a non-square slope after unobstructed X travel."},
+        {"expectedCode":"RTL","comment":"Finish the normal floor/ceiling crawl step."},
+        {"expectedCode":".insideTurn:"},
+        {"expectedCode":"LDA.W Crawler.YVelocity,X","comment":"Reverse the support-normal Y direction to attach to the wall."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement Y before completing signed negation."},
+        {"expectedCode":"INC","comment":"Add one to finish the Y-velocity reversal."},
+        {"expectedCode":"STA.W Crawler.YVelocity,X","comment":"Keep the reversed Y speed for the new wall orientation."},
+        {"expectedCode":"LDY.W Enemy.init1,X","comment":"Parameter 2 is the species pointer-table byte offset."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"The X sign selects which wall-facing script to use."},
+        {"expectedCode":"BPL ..left","comment":"Nonnegative X selects the upside-left list."},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideRight,Y","comment":"Negative X selects this species' upside-right list."},
+        {"expectedCode":"BRA +","comment":"Join the common orientation-script restart."},
+        {"expectedCode":"..left:"},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideLeft,Y","comment":"Fetch the upside-left list for this species."},
+        {"expectedCode":"+ STA.W Enemy.instList,X","comment":"Install the wall-facing script; it will select vertical crawling."},
+        {"expectedCode":"LDA.W #$0001","comment":"Run the new orientation script on its next instruction update."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"Restart at the handler-setting command, not the old animation frame."},
+        {"expectedCode":"RTL","comment":"Finish the inside-corner transition."},
+        {"expectedCode":".outsideTurn:"},
+        {"expectedCode":"LDA.L Crawler.consecutiveTurnCounter,X","comment":"Count another turn without floor/ceiling support."},
+        {"expectedCode":"INC","comment":"Advance the consecutive unsupported-turn count."},
+        {"expectedCode":"STA.L Crawler.consecutiveTurnCounter,X","comment":"Preserve this streak while cornering changes orientation."},
+        {"expectedCode":"CMP.W #$0004","comment":"The fourth consecutive miss switches from cornering to falling."},
+        {"expectedCode":"BMI .notFalling","comment":"Earlier misses still try to follow the outside corner."},
+        {"expectedCode":"LDA.W Crawler.function,X","comment":"Read the current handler before replacing it with falling."},
+        {"expectedCode":"STA.L Crawler.nonFallingFunction,X","comment":"Save the crawling handler that a landing should restore."},
+        {"expectedCode":"LDA.W #Function_Crawlers_Falling","comment":"Select falling instead of another corner turn."},
+        {"expectedCode":"STA.W Crawler.function,X","comment":"Use falling on the next main-AI dispatch."},
+        {"expectedCode":"RTL","comment":"Do not also restart an orientation script on this transition."},
+        {"expectedCode":".notFalling:"},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Reverse along-surface X motion to wrap around the outside corner."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement X as the first step of signed negation."},
+        {"expectedCode":"INC","comment":"Add one to complete -XVelocity."},
+        {"expectedCode":"STA.W Crawler.XVelocity,X","comment":"Store the reversed X direction."},
+        {"expectedCode":"LDY.W Enemy.init1,X","comment":"Select this species' row in the orientation pointer tables."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Choose the wall orientation from the reversed X sign."},
+        {"expectedCode":"BPL .outsideTurn_left","comment":"Nonnegative X uses the upside-left list."},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideRight,Y","comment":"Negative X uses the upside-right list."},
+        {"expectedCode":"BRA +","comment":"Rejoin the common instruction-list restart."},
+        {"expectedCode":".outsideTurn_left:"},
+        {"expectedCode":"LDA.W CrawlersInstListPointerTable_upsideLeft,Y","comment":"Fetch this species' upside-left list."},
+        {"expectedCode":"+ STA.W Enemy.instList,X","comment":"Install the wall-facing script after the outside turn."},
+        {"expectedCode":"LDA.W #$0001","comment":"Replace the old instruction timer with an immediate restart."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"Let the new script install its vertical-crawling handler."},
+        {"expectedCode":"RTL","comment":"Finish this outside-corner update."}
+      ]
+    },
+    {
+      "id": "crawlers.slope-distance.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "AdjustEnemyXVelocityForSlopes",
+      "lines": [
+        {"expectedCode":"LDA.W Enemy.XPosition,X","comment":"Use the enemy's X position for the supporting-block sample."},
+        {"expectedCode":"PHA","comment":"Pass the sample's X coordinate on the stack."},
+        {"expectedCode":"LDA.W Enemy.YPosition,X","comment":"Start with the centre Y coordinate."},
+        {"expectedCode":"BIT.W Crawler.YVelocity,X","comment":"Test the Y-velocity sign without replacing the position in A."},
+        {"expectedCode":"BPL .negativeYVelocity","comment":"Nonnegative Y samples the lower edge, despite this local label's name."},
+        {"expectedCode":"SEC","comment":"Subtract the hitbox radius without an incoming borrow."},
+        {"expectedCode":"SBC.W Enemy.YHitboxRadius,X","comment":"Negative Y presses upward, so sample the top hitbox edge."},
+        {"expectedCode":"BRA .positiveYVelocity","comment":"The upper-edge sample is ready."},
+        {"expectedCode":".negativeYVelocity:"},
+        {"expectedCode":"CLC","comment":"Add the radius without an incoming carry."},
+        {"expectedCode":"ADC.W Enemy.YHitboxRadius,X","comment":"Nonnegative Y presses downward, so sample the lower edge."},
+        {"expectedCode":"DEC","comment":"Use the last pixel inside the hitbox, not the next block below it."},
+        {"expectedCode":".positiveYVelocity:"},
+        {"expectedCode":"PHA","comment":"Pass the sampled Y coordinate alongside the earlier X coordinate."},
+        {"expectedCode":"JSL.L CalculateTheBlockContainingAPixelPosition","comment":"Resolve the block containing the stack-supplied sample point."},
+        {"expectedCode":"LDA.W CurrentBlockIndex","comment":"Get that block's index in the room's block arrays."},
+        {"expectedCode":"ASL","comment":"LevelData entries are words, so double the block index."},
+        {"expectedCode":"TAX","comment":"X now indexes the sampled block, temporarily not the enemy."},
+        {"expectedCode":"LDA.L LevelData,X","comment":"Read the sampled block's level-data word."},
+        {"expectedCode":"AND.W #$F000","comment":"Keep only the block-type nibble."},
+        {"expectedCode":"CMP.W #$1000","comment":"Block type $1 is a slope."},
+        {"expectedCode":"BNE .normalSpeed","comment":"Other block types use the unadjusted X velocity."},
+        {"expectedCode":"LDX.W CurrentBlockIndex","comment":"BTS entries are bytes, so return to the undoubled block index."},
+        {"expectedCode":"LDA.L BTS,X","comment":"Read the sampled slope's BTS byte."},
+        {"expectedCode":"AND.W #$001F","comment":"Keep the slope shape, discarding the other BTS bits."},
+        {"expectedCode":"CMP.W #$0005","comment":"Shapes below five do not use this non-square-slope adjustment."},
+        {"expectedCode":"BCC .normalSpeed","comment":"Fall back to the ordinary speed conversion for those shapes."},
+        {"expectedCode":"ASL","comment":"Begin converting the shape number to a modifier-pair byte offset."},
+        {"expectedCode":"ASL","comment":"Each shape has a four-byte modifier pair."},
+        {"expectedCode":"TAX","comment":"Index the modifier table rather than the enemy arrays."},
+        {"expectedCode":"LDY.W .adjustedSpeedMultiplier,X","comment":"Load this shape's 8.8 X-speed multiplier."},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore the enemy slot before reading its velocity."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Read the stored signed 8.8 X speed without modifying it."},
+        {"expectedCode":"BPL .multiply","comment":"Nonnegative X can go directly to unsigned multiplication."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Negative X must first be converted to its unsigned magnitude."},
+        {"expectedCode":"INC","comment":"Finish negating X to obtain that magnitude."},
+        {"expectedCode":"JSL.L A_Y_16bit_UnsignedMultiplication","comment":"Multiply two 8.8 magnitudes; the 32-bit product is a 16.16 distance."},
+        {"expectedCode":"LDA.W MultiplicationResult","comment":"Begin restoring a negative sign with the product's low word."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the fractional word of the 32-bit product."},
+        {"expectedCode":"CLC","comment":"Start the two-word negation with a clean carry."},
+        {"expectedCode":"ADC.W #$0001","comment":"Add one to the complemented low word; keep its carry."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Return the negative distance's fractional word at $12."},
+        {"expectedCode":"LDA.W MultiplicationResult+2","comment":"Read the high word without disturbing the low-word carry."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the high word as the other half of 32-bit negation."},
+        {"expectedCode":"ADC.W #$0000","comment":"Propagate the low-word carry to finish negating the whole product."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Return the signed integer distance word at $14."},
+        {"expectedCode":"RTS","comment":"Return the temporary move distance; the stored X velocity is unchanged."},
+        {"expectedCode":".multiply:"},
+        {"expectedCode":"JSL.L A_Y_16bit_UnsignedMultiplication","comment":"Multiply speed by the slope multiplier to get a 16.16 distance."},
+        {"expectedCode":"LDA.W MultiplicationResult","comment":"Read the fractional word of the positive product."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Supply the movement helper's fractional X distance."},
+        {"expectedCode":"LDA.W MultiplicationResult+2","comment":"Read the integer word of the product."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Supply the movement helper's integer X distance."},
+        {"expectedCode":"RTS","comment":"Return the scaled distance without changing Crawler.XVelocity."},
+        {"expectedCode":".normalSpeed:"},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore the enemy slot after sampling the block arrays."},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Clear the fractional word for an unscaled 8.8-to-16.16 conversion."},
+        {"expectedCode":"STZ.B DP_Temp14","comment":"Start the integer sign extension at zero."},
+        {"expectedCode":"LDA.W Crawler.XVelocity,X","comment":"Use the original crawling speed when no multiplier applies."},
+        {"expectedCode":"BPL +","comment":"A nonnegative speed needs no negative sign extension."},
+        {"expectedCode":"DEC.B DP_Temp14","comment":"Negative X requires an all-ones sign extension."},
+        {"expectedCode":"+ STA.B DP_Temp13","comment":"Place 8.8 speed across $13/$14 to form signed 16.16 at $14.$12."},
+        {"expectedCode":"RTS","comment":"Return the unscaled distance; the persistent X velocity is untouched."},
+        {"expectedCode":".additiveSpeedMultiplier:"},
+        {"expectedCode":"dw $0000"},
+        {"expectedCode":".adjustedSpeedMultiplier:"},
+        {"expectedCode":"dw       $0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $1000,$00B0"},
+        {"expectedCode":"dw $1000,$00B0"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $1000,$00C0"},
+        {"expectedCode":"dw $0000,$0100"},
+        {"expectedCode":"dw $1000,$00C0"},
+        {"expectedCode":"dw $1000,$00C0"},
+        {"expectedCode":"dw $0800,$00D8"},
+        {"expectedCode":"dw $0800,$00D8"},
+        {"expectedCode":"dw $0600,$00F0"},
+        {"expectedCode":"dw $0600,$00F0"},
+        {"expectedCode":"dw $0600,$00F0"},
+        {"expectedCode":"dw $4000,$0080"},
+        {"expectedCode":"dw $4000,$0080"},
+        {"expectedCode":"dw $6000,$0050"},
+        {"expectedCode":"dw $6000,$0050"},
+        {"expectedCode":"dw $6000,$0050"}
+      ]
+    },
+    {
+      "id": "waver.steady-left.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Steady_FacingLeft",
+      "lines": [
+        {"expectedCode":"dw $0001,Spritemap_Waver_2","comment":"Show the left-facing steady sprite for one instruction tick."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Keep that sprite until main AI selects a different animation list."}
+      ]
+    },
+    {
+      "id": "waver.steady-right.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Steady_FacingRight",
+      "lines": [
+        {"expectedCode":"dw $0001,Spritemap_Waver_7","comment":"Show the right-facing steady sprite for one instruction tick."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Keep that sprite until main AI selects a different animation list."}
+      ]
+    },
+    {
+      "id": "waver.spin-left.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Spinning_FacingLeft",
+      "lines": [
+        {"expectedCode":"dw $0008,Spritemap_Waver_3","comment":"First left-facing spin frame, held for eight instruction ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_4","comment":"Second left-facing spin frame, also held for eight ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_0","comment":"Third left-facing spin frame; movement continues independently."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_1","comment":"Fourth left-facing spin frame before signalling completion."},
+        {"expectedCode":"dw Instruction_Waver_SetSpinFinishedFlag","comment":"Tell main AI that the four-frame spin has finished."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Hold the final spin frame until main AI selects the steady list."}
+      ]
+    },
+    {
+      "id": "waver.spin-right.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Spinning_FacingRight",
+      "lines": [
+        {"expectedCode":"dw $0008,Spritemap_Waver_8","comment":"First right-facing spin frame, held for eight instruction ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_9","comment":"Second right-facing spin frame, also held for eight ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_5","comment":"Third right-facing spin frame; movement continues independently."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_6","comment":"Fourth right-facing spin frame before signalling completion."},
+        {"expectedCode":"dw Instruction_Waver_SetSpinFinishedFlag","comment":"Use the same completion handshake as the left-facing spin."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Hold the final spin frame until main AI selects the steady list."}
+      ]
+    },
+    {
+      "id": "waver.animation-table.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstListPointers_Waver",
+      "lines": [
+        {"expectedCode":"dw InstList_Waver_Steady_FacingLeft","comment":"Index 0: steady, facing left."},
+        {"expectedCode":"dw InstList_Waver_Steady_FacingRight","comment":"Index 1: steady, facing right."},
+        {"expectedCode":"dw InstList_Waver_Spinning_FacingLeft","comment":"Index 2: spinning, facing left."},
+        {"expectedCode":"dw InstList_Waver_Spinning_FacingRight","comment":"Index 3: spinning, facing right."}
+      ]
+    },
+    {
+      "id": "waver.spin-completion.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Waver_SetSpinFinishedFlag",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"X selects the enemy whose animation script is running."},
+        {"expectedCode":"LDA.W #$0001","comment":"Prepare a pending spin-completion signal."},
+        {"expectedCode":"STA.W Waver.spinFinishedFlag,X","comment":"Main AI consumes this flag to return to the steady animation."},
+        {"expectedCode":"RTL","comment":"Return to the instruction interpreter without consuming a parameter word."}
+      ]
+    },
+    {
+      "id": "waver.initialisation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Waver",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"X selects this Waver's slot in the enemy arrays."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Load the regional 8.8 horizontal speed: $0180 NTSC or $01D0 PAL."},
+        {"expectedCode":"AND.W #$FF00","comment":"Keep only the positive speed's integer byte."},
+        {"expectedCode":"XBA","comment":"Move the integer byte into the low byte of A."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store the positive integer part, initially one pixel per update."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Reload the same speed to extract its fractional byte."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep only the 8.8 fractional byte."},
+        {"expectedCode":"XBA","comment":"Shift that fraction into the high byte of a 16-bit subvelocity word."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Store $8000 for NTSC, or $D000 for PAL."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Read population parameter 1; its low bit selects horizontal direction."},
+        {"expectedCode":"AND.W #$0001","comment":"Ignore the other parameter bits for this direction choice."},
+        {"expectedCode":"BNE .facingLeft","comment":"A set bit keeps positive, rightward motion despite the destination's name."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"A clear bit takes the left-moving path using the same speed magnitude."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Begin two's-complement negation of the complete 8.8 speed."},
+        {"expectedCode":"INC","comment":"Finish negation before splitting the integer and fractional parts."},
+        {"expectedCode":"AND.W #$FF00","comment":"Keep the negated speed's integer byte."},
+        {"expectedCode":"XBA","comment":"Move that signed byte down for sign extension."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"Extend the negative integer byte to a signed 16-bit word."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store $FFFE; the positive fractional word completes the negative distance."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Reload the magnitude to recover the negated speed's fractional byte."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the full 8.8 speed, not the fraction in isolation."},
+        {"expectedCode":"INC","comment":"Finish the same two's-complement negation."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep the low byte of the negative 8.8 speed."},
+        {"expectedCode":"XBA","comment":"Shift it into the subvelocity word: $8000 NTSC or $3000 PAL."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"The swapped word has a zero low byte, so this call leaves it unchanged."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Together with $FFFE, the fraction represents -1.5 NTSC or -1.8125 PAL."},
+        {"expectedCode":".facingLeft:"},
+        {"expectedCode":"STZ.W Waver.newInstListIndex,X","comment":"Start the requested animation index at steady-left (0)."},
+        {"expectedCode":"STZ.W Waver.instListIndex,X","comment":"Seed the current-index cache to match that default."},
+        {"expectedCode":"STZ.W Waver.spinFinishedFlag,X","comment":"No animation-completion signal is pending at initialisation."},
+        {"expectedCode":"LDA.W #InstList_Waver_Steady_FacingLeft","comment":"Install the steady-left script directly for direction bit 0."},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"This pointer is already correct if the helper finds index 0 unchanged."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Read the direction selector again for animation selection."},
+        {"expectedCode":"AND.W #$0001","comment":"The same low bit chooses steady-left (0) or steady-right (1)."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request the steady script matching the chosen X direction."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Switch to the right-facing script if its index differs from the default."},
+        {"expectedCode":"RTL","comment":"Return with velocity and initial animation direction selected."}
+      ]
+    },
+    {
+      "id": "waver.movement-and-animation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Select this Waver before reading its per-enemy state."},
+        {"expectedCode":"LDA.W Waver.XSubVelocity,X","comment":"Load the fractional word of the horizontal movement distance."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Pass that fraction in the movement helper's low word."},
+        {"expectedCode":"LDA.W Waver.XVelocity,X","comment":"Load the signed integer part of horizontal movement."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Complete the signed 16.16 distance in $14.$12."},
+        {"expectedCode":"JSL.L MoveEnemyRightBy_14_12_IgnoreSlopes","comment":"Attempt horizontal travel using block collision rather than slope following."},
+        {"expectedCode":"BCC .noWallCollision","comment":"Carry clear permits vertical movement; a wall hit takes the reversal path."},
+        {"expectedCode":"LDA.W Enemy.var0+1,X","comment":"Read packed 8.8 speed across the subvelocity high byte and velocity low byte."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Keep that packed speed while rebuilding its negated components."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Begin reversing the complete 8.8 value."},
+        {"expectedCode":"INC","comment":"Finish its two's-complement negation."},
+        {"expectedCode":"AND.W #$FF00","comment":"Select the new signed integer byte."},
+        {"expectedCode":"XBA","comment":"Move that byte down for sign extension."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"Extend the new integer byte to 16 bits."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store the reversed integer component of X velocity."},
+        {"expectedCode":"LDA.B DP_Temp12","comment":"Reload the original packed speed for the fractional component."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the same complete 8.8 value."},
+        {"expectedCode":"INC","comment":"Finish negation before extracting its fractional byte."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep the new fractional byte."},
+        {"expectedCode":"XBA","comment":"Position it in the high byte of the subvelocity word."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"The low byte is zero after the swap, so the fraction is unchanged here."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Store the fractional component of the reversed X velocity."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the requested direction/spin bits."},
+        {"expectedCode":"EOR.W #$0001","comment":"Toggle bit 0 to face the new horizontal direction."},
+        {"expectedCode":"AND.W #$0001","comment":"Clear the spin bit; a wall reversal first requests a steady sprite."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Publish the requested steady-left or steady-right index."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Restart the animation only if this index differs from the current one."},
+        {"expectedCode":"JMP.W .merge","comment":"Skip vertical travel and phase advance, but still process spin state."},
+        {"expectedCode":".noWallCollision:"},
+        {"expectedCode":"LDA.W #$0004","comment":"Use a radius of four for the shared sine multiplication."},
+        {"expectedCode":"STA.W Temp_Radius","comment":"Pass the radius through the helper's shared scratch field."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Load the stored wave phase, not an absolute Y position."},
+        {"expectedCode":"AND.W #$00FF","comment":"Only the low byte participates in the 256-step angular cycle."},
+        {"expectedCode":"JSL.L EightBitNegativeSineMultiplication_A0B0C6","comment":"Compute the shared negative-sine product and return its signed integer part."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Use that integer result as this update's vertical distance."},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Use zero subpixel distance rather than the sine helper's fractional output."},
+        {"expectedCode":"JSL.L MoveEnemyDownBy_14_12","comment":"Attempt signed vertical movement, stopping at blocking geometry."},
+        {"expectedCode":"BCC .noBlockCollision","comment":"Carry clear takes the normal phase-advance path."},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore X to the current enemy slot before updating its phase."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the phase that produced the blocked vertical move."},
+        {"expectedCode":"CLC","comment":"Start phase addition without a carry from collision handling."},
+        {"expectedCode":"ADC.W #$0080","comment":"Shift by half a cycle so the next vertical move has the opposite sign."},
+        {"expectedCode":"AND.W #$00FF","comment":"Wrap this collision-adjusted phase to eight bits."},
+        {"expectedCode":"STA.W Waver.angle,X","comment":"Store the reflected phase instead of doing the normal +2 advance."},
+        {"expectedCode":"BRA .merge","comment":"Continue to animation handling after the vertical collision."},
+        {"expectedCode":".noBlockCollision:"},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore X before updating this enemy's phase."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the phase after both movement attempts succeeded."},
+        {"expectedCode":"CLC","comment":"Start the normal phase increment without an incoming carry."},
+        {"expectedCode":"ADC.W #$0002","comment":"Advance by two angular steps per unobstructed update."},
+        {"expectedCode":"STA.W Waver.angle,X","comment":"Store the whole word; sine and spin tests mask the phase bits they need."},
+        {"expectedCode":".merge:"},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Both collision paths and free movement join the animation checks here."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the possibly advanced, reflected, or unchanged phase."},
+        {"expectedCode":"AND.W #$007F","comment":"Ignore the half-cycle bit so the test repeats twice per angular cycle."},
+        {"expectedCode":"CMP.W #$0038","comment":"Request a spin at low-byte phase $38 or $B8."},
+        {"expectedCode":"BNE .notSpinning","comment":"Other phases skip the spin request and check for script completion."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Preserve the current facing bit when choosing the spin."},
+        {"expectedCode":"ORA.W #$0002","comment":"Set bit 1 to select a spinning animation."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request spin-left (2) or spin-right (3)."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Do not restart a spin whose requested index is already current."},
+        {"expectedCode":".notSpinning:"},
+        {"expectedCode":"LDA.W Waver.spinFinishedFlag,X","comment":"Check the completion signal written by the animation script."},
+        {"expectedCode":"BEQ .return","comment":"Keep the current animation while no completion is pending."},
+        {"expectedCode":"STZ.W Waver.spinFinishedFlag,X","comment":"Consume the signal once."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the requested index after movement and any spin request."},
+        {"expectedCode":"AND.W #$0001","comment":"Clear the spin bit while retaining left/right facing."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request the corresponding steady animation."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Install that steady list if the animation index changed."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTL","comment":"Finish this main-AI update."}
+      ]
+    },
+    {
+      "id": "waver.animation-selection.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "SetWaverInstList",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Select this Waver before comparing its animation indices."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the desired combination of facing and spin bits."},
+        {"expectedCode":"CMP.W Waver.instListIndex,X","comment":"Compare it with the index whose script is already installed."},
+        {"expectedCode":"BEQ .return","comment":"An unchanged index must not restart the current animation."},
+        {"expectedCode":"STA.W Waver.instListIndex,X","comment":"Remember the new current index before looking up its script."},
+        {"expectedCode":"ASL","comment":"Each bank-local script pointer occupies two bytes."},
+        {"expectedCode":"TAY","comment":"Use the doubled index as the table's byte offset."},
+        {"expectedCode":"LDA.W InstListPointers_Waver,Y","comment":"Fetch the steady/spinning left/right script pointer."},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"Replace the enemy's animation instruction-list pointer."},
+        {"expectedCode":"LDA.W #$0001","comment":"Schedule the new list to execute on its next instruction update."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"A timer of one starts the newly selected animation promptly."},
+        {"expectedCode":"STZ.W Enemy.loopCounter,X","comment":"Clear the old script's loop counter when changing lists."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTS","comment":"Return without disturbing a list whose index was unchanged."}
+      ]
+    }
+  ]
+}

@@ -11404,6 +11404,10 @@ EnemyHeaders_Kamer:                                                      ;A0D5FF
     %vulnerabilities(EnemyVulnerabilities_NonDestructibleShutter),
     %name(EnemyName_Shutter2_Kamer))
 
+; InitAI_Waver splits the regional horizontal speed and chooses its direction.
+; MainAI_Waver moves horizontally, derives vertical distance from a wave phase,
+; and coordinates steady/spinning animation scripts through a completion flag.
+; Population parameter 1 bit 0 selects left (0) or right (1), not a speed index.
 EnemyHeaders_Waver:                                                      ;A0D63F;
     %EnemyHeader(\
     %tileDataSize($0600),

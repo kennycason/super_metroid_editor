@@ -1141,50 +1141,56 @@ DemoRoomCode_TourianEntrance_KraidIsDead:
 
 
 ;;; $893D: Main game loop ;;;
+; Prepare one game-state iteration, then publish it through WaitForNMI.
+; Music/HDMA logic and the random seed advance before the state handler; sound
+; queues and RAM OAM are finalised afterwards. The state-specific handlers choose
+; which simulation systems run; this loop is also used by menus and cinematics.
+; The low state byte indexes 45 bank-local word pointers ($00..$2C), with no bounds
+; check. A state change inside a handler affects the next dispatch, not this call.
 MainGameLoop:
-    PHK                                                                  ;82893D;
-    PLB                                                                  ;82893E;
-    REP #$20                                                             ;82893F;
-    STZ.W GameState                                                      ;828941;
+    PHK                                                                  ;82893D; Select the game-loop bank for near data accesses.
+    PLB                                                                  ;82893E; Set the data bank to $82.
+    REP #$20                                                             ;82893F; Use a word accumulator for the initial state.
+    STZ.W GameState                                                      ;828941; Begin in state 0, which schedules the title sequence.
 if !DEBUG
-    STZ.W DebugSpareCPUDisplayFlag                                       ;828944;
+    STZ.W DebugSpareCPUDisplayFlag                                       ;828944; Start with the spare-CPU display disabled.
 endif
-    CLI                                                                  ;828947;
+    CLI                                                                  ;828947; Allow maskable IRQs; NMI enabling is controlled separately by $4200.
 
   .loop:
-    PHP                                                                  ;828948;
-    REP #$30                                                             ;828949;
-    JSL.L HDMAObjectHandler_HandleMusicQueue                             ;82894B;
-    JSL.L GenerateRandomNumber                                           ;82894F;
-    JSL.L ClearHighOAM                                                   ;828953;
-    STZ.W OAMStack                                                       ;828957;
-    STZ.W SamusTiles_TopHalfFlag                                         ;82895A;
-    STZ.W SamusTiles_TopHalfTilesDef                                     ;82895D;
-    STZ.W SamusTiles_BottomHalfTilesDef                                  ;828960;
-    LDA.W GameState                                                      ;828963;
-    AND.W #$00FF                                                         ;828966;
-    ASL                                                                  ;828969;
-    TAX                                                                  ;82896A;
-    JSR.W (.gamemodes,X)                                                 ;82896B;
-    JSL.L HandleSounds                                                   ;82896E;
-    JSL.L Finalise_OAM                                                   ;828972;
+    PHP                                                                  ;828948; Preserve this iteration's processor status across its handlers.
+    REP #$30                                                             ;828949; Start the iteration with word-sized A, X and Y.
+    JSL.L HDMAObjectHandler_HandleMusicQueue                             ;82894B; Advance music and HDMA-object logic before dispatching the game state.
+    JSL.L GenerateRandomNumber                                           ;82894F; Advance the shared random seed once on this loop path.
+    JSL.L ClearHighOAM                                                   ;828953; Clear the RAM high-OAM bits before rebuilding sprite attributes.
+    STZ.W OAMStack                                                       ;828957; Start writing this iteration's sprite entries at the beginning of OAM.
+    STZ.W SamusTiles_TopHalfFlag                                         ;82895A; Clear the pending Samus top-half tile-transfer flag.
+    STZ.W SamusTiles_TopHalfTilesDef                                     ;82895D; Discard the previous top-half tile definition.
+    STZ.W SamusTiles_BottomHalfTilesDef                                  ;828960; Discard the previous bottom-half tile definition.
+    LDA.W GameState                                                      ;828963; Read the current game-state selector.
+    AND.W #$00FF                                                         ;828966; Only the low byte selects a game-mode entry.
+    ASL                                                                  ;828969; Convert the state number to a word-table byte offset.
+    TAX                                                                  ;82896A; Use that byte offset for the indexed indirect call.
+    JSR.W (.gamemodes,X)                                                 ;82896B; Run the selected bank-$82 state handler; it returns with RTS.
+    JSL.L HandleSounds                                                   ;82896E; Service sound queues after the state's logic has run.
+    JSL.L Finalise_OAM                                                   ;828972; Move unused RAM OAM sprites offscreen and reset the write pointer.
 if !DEBUG
-    JSL.L ShowSpareCPUDebug_UpdatePrevCtrl1Input                         ;828976;
+    JSL.L ShowSpareCPUDebug_UpdatePrevCtrl1Input                         ;828976; Update the optional spare-CPU display and previous drawing-input snapshot.
 endif
-    JSL.L WaitForNMI                                                     ;82897A;
-    PLP                                                                  ;82897E;
-    BRA .loop                                                            ;82897F;
+    JSL.L WaitForNMI                                                     ;82897A; Publish the completed frame and wait for NMI's acknowledgement.
+    PLP                                                                  ;82897E; Restore the status saved at the start of this iteration.
+    BRA .loop                                                            ;82897F; Prepare the next frame using the input sampled by the serviced NMI.
 
   .gamemodes:
-    dw GameState_0_ResetStart                                            ;828981;
+    dw GameState_0_ResetStart                                            ;828981; State $00: schedule title-sequence initialisation.
     dw GameState_1_TitleSequence                                         ;828983;
     dw GameState_2_GameOptionsMenu                                       ;828985;
     dw GameState_3_Nothing                                               ;828987;
     dw GameState_4_FileSelectMenus                                       ;828989;
     dw GameState_5_FileSelectMap                                         ;82898B;
     dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData       ;82898D;
-    dw GameState_7_MainGameplayFadingIn                                  ;82898F;
-    dw GameState_8_MainGameplay                                          ;828991;
+    dw GameState_7_MainGameplayFadingIn                                  ;82898F; State $07: run gameplay while fading in.
+    dw GameState_8_MainGameplay                                          ;828991; State $08: run the normal gameplay update.
     dw GameState_9_HitADoorBlock                                         ;828993;
     dw GameState_A_LoadingNextRoom                                       ;828995;
     dw GameState_B_LoadingNextRoom                                       ;828997;
@@ -1438,22 +1444,25 @@ endif
 
 
 ;;; $8AE4: Game state 0 (reset/start) ;;;
+; Schedule the title-sequence loader and choose the initial attract-mode demo set.
+; The count found during boot normally starts at set 0; a count of four selects
+; set 3. Increment GameState to 1 and return to the outer frame loop.
 GameState_0_ResetStart:
     STZ.W unknown0DF8                                                    ;828AE4;
     STZ.W neverRead0DFA                                                  ;828AE7;
     STZ.W neverRead0DFC                                                  ;828AEA;
     LDA.W #CinematicFunction_LoadTitleSequence                           ;828AED;
-    STA.W CinematicFunction                                              ;828AF0;
-    STZ.W DemoSet                                                        ;828AF3;
-    LDA.W NumberOfDemoSets                                               ;828AF6;
-    CMP.W #$0004                                                         ;828AF9;
-    BNE .return                                                          ;828AFC;
-    LDA.W #$0003                                                         ;828AFE;
-    STA.W DemoSet                                                        ;828B01;
+    STA.W CinematicFunction                                              ;828AF0; Schedule the cinematic function that loads the title sequence.
+    STZ.W DemoSet                                                        ;828AF3; Default to the first attract-mode demo set.
+    LDA.W NumberOfDemoSets                                               ;828AF6; Use the demo-set count determined from SRAM during boot.
+    CMP.W #$0004                                                         ;828AF9; The four-set case starts at the final set instead.
+    BNE .return                                                          ;828AFC; Keep demo set 0 for all other counts.
+    LDA.W #$0003                                                         ;828AFE; Select demo set 3 when four demo sets were found.
+    STA.W DemoSet                                                        ;828B01; Store the attract-mode starting set.
 
   .return:
-    INC.W GameState                                                      ;828B04;
-    RTS                                                                  ;828B07;
+    INC.W GameState                                                      ;828B04; Advance from reset/start to title-sequence state 1.
+    RTS                                                                  ;828B07; Return to the main loop's sound, OAM and NMI stages.
 
 
 ;;; $8B08: Game state 1 (title sequence) ;;;
@@ -1491,23 +1500,26 @@ endif ; !FEATURE_KEEP_UNREFERENCED
 
 
 ;;; $8B20: Game state 7 (main gameplay fading in) ;;;
+; Run the normal gameplay handler before advancing the fade-in. Actors and room
+; logic therefore continue while the screen brightens. When the brightness shadow
+; is exactly $0F, clear the fade timers and increment GameState (normally 7 to 8).
 GameState_7_MainGameplayFadingIn:
     PHP                                                                  ;828B20;
-    REP #$30                                                             ;828B21;
-    JSR.W GameState_8_MainGameplay                                       ;828B23;
-    JSL.L HandleFadingIn                                                 ;828B26;
-    SEP #$20                                                             ;828B2A;
-    LDA.B DP_Brightness                                                  ;828B2C;
-    CMP.B #$0F                                                           ;828B2E;
-    BNE .return                                                          ;828B30;
-    REP #$20                                                             ;828B32;
-    STZ.W ScreenFadeDelay                                                ;828B34;
-    STZ.W ScreenFadeCounter                                              ;828B37;
-    INC.W GameState                                                      ;828B3A;
+    REP #$30                                                             ;828B21; Run gameplay and fade bookkeeping with word-sized registers.
+    JSR.W GameState_8_MainGameplay                                       ;828B23; Update gameplay even while the screen is still fading in.
+    JSL.L HandleFadingIn                                                 ;828B26; Advance the brightness fade after the gameplay update.
+    SEP #$20                                                             ;828B2A; Test the byte-sized display-brightness shadow.
+    LDA.B DP_Brightness                                                  ;828B2C; Read brightness together with its forced-blank bit.
+    CMP.B #$0F                                                           ;828B2E; Require exactly full brightness with forced blank clear.
+    BNE .return                                                          ;828B30; Return without advancing the fade-completion state until brightness is $0F.
+    REP #$20                                                             ;828B32; Return to word-sized fade timers and state accesses.
+    STZ.W ScreenFadeDelay                                                ;828B34; Clear the delay used by the completed fade.
+    STZ.W ScreenFadeCounter                                              ;828B37; Clear the completed fade's counter.
+    INC.W GameState                                                      ;828B3A; Increment the current game state, normally from fade-in 7 to gameplay 8.
 
   .return:
     PLP                                                                  ;828B3D;
-    RTS                                                                  ;828B3E;
+    RTS                                                                  ;828B3E; Return to the main loop's shared end-of-frame stages.
 
 
 ;;; $8B3F: Game state 1Ch (unused) ;;;
@@ -1517,55 +1529,65 @@ UNUSED_GameState_1C_828B3F:
 
 
 ;;; $8B44: Game state 8 (main gameplay) ;;;
+; Order the gameplay subsystems, rather than running every entity from one loop.
+; Select enemy lists first; Samus's current-state phase precedes interactions and
+; enemy AI, and her new-state phase follows the main enemy routine. Projectiles,
+; PLMs, tile animation and collision passes run before scrolling and sprite drawing.
+; Individual handlers still control their own frozen/disabled behavior. The debug
+; skip below bypasses this simulation block, but not the shared housekeeping tail.
 GameState_8_MainGameplay:
     PHP                                                                  ;828B44;
-    REP #$30                                                             ;828B45;
-    JSL.L Determine_Which_Enemies_to_Process                             ;828B47;
+    REP #$30                                                             ;828B45; Use word-sized registers for gameplay dispatch.
+    JSL.L Determine_Which_Enemies_to_Process                             ;828B47; Build the active and interactive enemy lists before Samus and enemy logic.
 if !DEBUG
-    JSL.L DebugHandler                                                   ;828B4B;
-    AND.W #$FFFF                                                         ;828B4F;
-    BNE .skipProcessing                                                  ;828B52;
+    JSL.L DebugHandler                                                   ;828B4B; Let the debug handler decide whether normal processing should be skipped.
+    AND.W #$FFFF                                                         ;828B4F; Set the zero flag from the debug handler's result without changing A.
+    BNE .skipProcessing                                                  ;828B52; Skip the main simulation block, but still run the common housekeeping tail.
 endif
-    JSL.L PaletteFXObject_Handler                                        ;828B54;
-    JSL.L SamusCurrentStateHandler                                       ;828B58;
+    JSL.L PaletteFXObject_Handler                                        ;828B54; Advance palette-effect objects before the actor updates.
+    JSL.L SamusCurrentStateHandler                                       ;828B58; Run Samus's current-state phase before projectile interactions and enemy AI.
 if !DEBUG
-    LDA.W DebugDisableSpriteInteractions                                 ;828B5C;
-    BNE +                                                                ;828B5F;
+    LDA.W DebugDisableSpriteInteractions                                 ;828B5C; Check the debug override for the following interaction call.
+    BNE +                                                                ;828B5F; Skip Samus/projectile interactions, not the main enemy routine.
 endif
-    JSL.L Samus_Projectiles_Interaction_Handling                         ;828B61;
+    JSL.L Samus_Projectiles_Interaction_Handling                         ;828B61; Resolve Samus and projectile interactions before enemy AI.
 
-+   JSL.L Main_Enemy_Routine                                             ;828B65;
-    JSL.L SamusNewStateHandler                                           ;828B69;
-    JSL.L Enemy_Projectile_Handler                                       ;828B6D;
-    JSL.L PLM_Handler                                                    ;828B71;
-    JSL.L AnimatedTilesObject_Handler                                    ;828B75;
++   JSL.L Main_Enemy_Routine                                             ;828B65; Run the main enemy routine using the lists selected earlier.
+    JSL.L SamusNewStateHandler                                           ;828B69; Run Samus's new-state phase after the enemy routine.
+    JSL.L Enemy_Projectile_Handler                                       ;828B6D; Advance enemy projectiles after Samus's two state phases.
+    JSL.L PLM_Handler                                                    ;828B71; Run PLM logic for room objects such as doors and pickups.
+    JSL.L AnimatedTilesObject_Handler                                    ;828B75; Advance animated-tile objects; their pending uploads are handled by NMI.
 if !DEBUG
-    LDA.W DebugDisableSpriteInteractions                                 ;828B79;
-    BNE +                                                                ;828B7C;
+    LDA.W DebugDisableSpriteInteractions                                 ;828B79; Check the debug override for the following three collision handlers.
+    BNE +                                                                ;828B7C; Skip projectile collisions and power-bomb enemy interactions when requested.
 endif
-    JSL.L EnemyProjectile_Samus_Collision_Handling                       ;828B7E;
-    JSL.L Projectile_vs_Projectile_Collision_Handling                    ;828B82;
-    JSL.L Process_Enemy_PowerBomb_Interaction                            ;828B86;
+    JSL.L EnemyProjectile_Samus_Collision_Handling                       ;828B7E; Resolve enemy-projectile hits against Samus.
+    JSL.L Projectile_vs_Projectile_Collision_Handling                    ;828B82; Resolve projectile-versus-projectile collisions.
+    JSL.L Process_Enemy_PowerBomb_Interaction                            ;828B86; Apply the enemy-side power-bomb interaction pass.
 
-+   JSL.L Main_Scrolling_Routine                                         ;828B8A;
++   JSL.L Main_Scrolling_Routine                                         ;828B8A; Update the camera after actor movement and interactions.
 if !DEBUG
-    LDA.L DebugConst_DebugScrolling                                      ;828B8E;
-    BEQ +                                                                ;828B92;
-    JSL.L Debug_Layer1Position_Saving_Loading                            ;828B94;
+    LDA.L DebugConst_DebugScrolling                                      ;828B8E; Read the ROM debug setting for saved camera positions.
+    BEQ +                                                                ;828B92; Keep the normal camera position when debug scrolling is disabled.
+    JSL.L Debug_Layer1Position_Saving_Loading                            ;828B94; Apply the debug layer-1 position save/load behavior when enabled.
 endif
 
-+   JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;828B98;
-    JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer                 ;828B9C;
++   JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles           ;828B98; Build the sprite display from the updated actors and projectiles.
+    JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer                 ;828B9C; Queue any required enemy background tilemap transfer rather than doing it here.
 
+  ; This tail also runs after the debug skip: HUD and background scroll calculations,
+  ; room main ASM, energy/game-time handling, shaking and hurt-timer/list cleanup.
+  ; The in-game clock is updated by the called helper, not by counting all NMIs.
+  ; Return to MainGameLoop for sound processing, OAM finalisation and publication.
   .skipProcessing:
-    JSL.L HandleHUDTilemap_PausedAndRunning                              ;828BA0;
-    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;828BA4;
-    JSL.L Execute_Room_Main_ASM                                          ;828BA8;
-    JSR.W HandleSamusRunningOutOfEnergy_and_IncrementGameTime            ;828BAC;
-    JSL.L Handle_Room_Shaking                                            ;828BAF;
-    JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists          ;828BB3;
+    JSL.L HandleHUDTilemap_PausedAndRunning                              ;828BA0; Update the HUD even when the debug skip bypassed the main simulation.
+    JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling   ;828BA4; Calculate layer-2 scrolling and prepare scrolling background updates.
+    JSL.L Execute_Room_Main_ASM                                          ;828BA8; Execute this room's main ASM after the HUD and scrolling calculations.
+    JSR.W HandleSamusRunningOutOfEnergy_and_IncrementGameTime            ;828BAC; Handle energy depletion and tick in-game time on the helper's eligible paths.
+    JSL.L Handle_Room_Shaking                                            ;828BAF; Apply room shaking after the room's main ASM.
+    JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists          ;828BB3; Tick Samus's hurt timers and terminate the active/interactive enemy lists.
     PLP                                                                  ;828BB7;
-    RTS                                                                  ;828BB8;
+    RTS                                                                  ;828BB8; Return to the outer loop; this handler does not publish the frame itself.
 
 
 ;;; $8BB9: Delete game options menu objects ;;;

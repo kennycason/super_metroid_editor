@@ -374,6 +374,14 @@ internal fun AsmWorkspaceSidebar(
                 if (state.applyBaselineUpdate(resolutions, rom)) onProjectAsmEnabled()
             } })
     }
+    if (state.baselineBackupsVisible) AsmBaselineBackupsDialog(
+        state.baselineBackups, state.baselineBackupsBusy, state.baselineBackupsError, state.baselineBackupsMessage,
+        onClose = state::closeBaselineBackups,
+        onRefresh = { scope.launch { state.refreshBaselineBackups() } },
+        onReveal = { entry -> scope.launch { state.revealBaselineBackup(entry) } },
+        onDelete = { entry -> scope.launch { state.deleteBaselineBackup(entry) } },
+        deleting = state.baselineBackupsDeleting,
+    )
 
     if (showReplaceDialog) {
         AsmProjectReplaceDialog(
@@ -572,6 +580,7 @@ internal fun AsmWorkspaceSidebar(
             onSyncAssets = ::syncAssets,
             onEnableProjectAsm = ::enableProjectAsm,
             onUpdateBaseline = { scope.launch { if (state.saveAllSources()) state.previewBaselineUpdate() } },
+            onShowBaselineBackups = { scope.launch { state.showBaselineBackups() } },
             onProjectBuildModeChanged = onProjectBuildModeChanged,
         )
     }
@@ -793,6 +802,7 @@ private fun AsmWorkspaceControls(
     onSyncAssets: () -> Unit,
     onEnableProjectAsm: () -> Unit,
     onUpdateBaseline: () -> Unit,
+    onShowBaselineBackups: () -> Unit,
     onProjectBuildModeChanged: (ProjectRomBuildMode) -> Unit,
 ) {
     val fs = LocalEditorTheme.current.fontSize.value
@@ -945,6 +955,10 @@ private fun AsmWorkspaceControls(
                         Text("Save edits & preview baseline update…", fontSize = fs.detail)
                     }
                     state.baselineUpdateMessage?.let { Text(it, fontSize = fs.detail, color = MaterialTheme.colorScheme.primary) }
+                    TextButton(onClick = onShowBaselineBackups, enabled = !state.busy,
+                        modifier = Modifier.fillMaxWidth().testTag("asm-baseline-backups-open")) {
+                        Text("Previous ASM versions…", fontSize = fs.detail)
+                    }
                     Spacer(Modifier.height(7.dp))
                     Text("ROM build base", fontSize = fs.detail, fontWeight = FontWeight.Bold)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

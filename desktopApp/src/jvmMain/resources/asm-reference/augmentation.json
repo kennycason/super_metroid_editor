@@ -1,5 +1,5 @@
 {
-  "revision": "super-metroid-ntsc-3",
+  "revision": "super-metroid-ntsc-5",
   "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
   "renames": [
     { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
@@ -300,6 +300,322 @@
         "Return the 16.16 move distance in $14.$12 with X restored to EnemyIndex.",
         "Without such a slope, just expand the original velocity to 16.16.",
         "The stored Crawler.XVelocity is not changed by this adjustment."
+      ]
+    },
+    {
+      "id": "waver.enemy-header",
+      "fileId": "bank_A0.asm",
+      "symbol": "EnemyHeaders_Waver",
+      "expectedCode": "%EnemyHeader(\\",
+      "paragraphs": [
+        "InitAI_Waver splits the regional horizontal speed and chooses its direction.",
+        "MainAI_Waver moves horizontally, derives vertical distance from a wave phase,",
+        "and coordinates steady/spinning animation scripts through a completion flag.",
+        "Population parameter 1 bit 0 selects left (0) or right (1), not a speed index."
+      ]
+    },
+    {
+      "id": "waver.animation-table",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstListPointers_Waver",
+      "expectedCode": "dw InstList_Waver_Steady_FacingLeft",
+      "paragraphs": [
+        "The animation index packs facing in bit 0 and spinning in bit 1.",
+        "Indices 0/1 select steady-left/right; 2/3 select spinning-left/right.",
+        "newInstListIndex requests a state; instListIndex caches the installed list."
+      ]
+    },
+    {
+      "id": "waver.spin-completion",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Waver_SetSpinFinishedFlag",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Both spin scripts execute this after their four eight-tick frames.",
+        "Signal main AI through spinFinishedFlag; do not change facing or velocity.",
+        "There is no parameter word to consume. The following sleep holds the last",
+        "spin frame until main AI clears the spin bit and selects a steady list."
+      ]
+    },
+    {
+      "id": "waver.initialisation",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Waver",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "The regional 8.8 speed is $0180 (NTSC) or $01D0 (PAL), split into",
+        "a signed integer word and a fractional word for 16.16 movement.",
+        "Parameter 1 bit 0 set keeps positive X motion; clear negates the full",
+        "8.8 value before splitting it. The .facingLeft name marks the common",
+        "tail, not the direction of the branch that reaches it.",
+        "Seed the steady-left list directly, then request index 0/1 from the same bit.",
+        "The animation helper only resets timers when that requested index changes."
+      ]
+    },
+    {
+      "id": "waver.movement",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Move in X first. On a wall hit, reconstruct the original 8.8 speed from",
+        "overlapping velocity bytes, negate it, and toggle facing while clearing spin.",
+        "That path skips Y movement and phase advance but still checks animation.",
+        "Without an X collision, use the shared negative-sine helper's integer return",
+        "as a Y distance; this is phase-driven velocity, not an absolute Y coordinate.",
+        "Y collision reflects the phase; otherwise advance it by two before testing spin."
+      ]
+    },
+    {
+      "id": "waver.vertical-distance",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".noWallCollision",
+      "expectedCode": "LDA.W #$0004",
+      "paragraphs": [
+        "Pass radius 4 and the low-byte phase to the shared negative-sine helper.",
+        "Only its signed integer return is used; $12 is zero, so the fractional",
+        "sine result is discarded rather than accumulated as vertical subpixels.",
+        "A blocked Y move adds $80 and masks to a byte, selecting the opposite",
+        "vertical phase instead of taking the normal +2 advance."
+      ]
+    },
+    {
+      "id": "waver.phase-advance",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".noBlockCollision",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Advance the phase only after both X and Y movement report no collision.",
+        "The stored word is not masked here: the sine helper uses its low byte,",
+        "and the animation test uses its low seven bits. A wall leaves it unchanged."
+      ]
+    },
+    {
+      "id": "waver.spin-request",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".merge",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "The low-seven-bit phase test requests spinning at $38 and $B8.",
+        "Keep facing in bit 0 and set spin in bit 1. Repeating the same request",
+        "does not restart its script because SetWaverInstList compares cached indices.",
+        "This check also runs after either collision path, not only after free movement."
+      ]
+    },
+    {
+      "id": "waver.consume-spin-completion",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "localLabel": ".notSpinning",
+      "expectedCode": "LDA.W Waver.spinFinishedFlag,X",
+      "paragraphs": [
+        "Consume the flag set by the spin script after all four frames.",
+        "Clear only the spin bit in the requested index, preserving its current",
+        "facing, then select the matching steady list. The flag is cleared once."
+      ]
+    },
+    {
+      "id": "waver.animation-selection",
+      "fileId": "bank_A3.asm",
+      "symbol": "SetWaverInstList",
+      "expectedCode": "LDX.W EnemyIndex",
+      "paragraphs": [
+        "Switch scripts only when the desired index differs from the installed index.",
+        "An unchanged index returns without resetting animation timing, allowing the",
+        "spin's frames to finish. On a change, resolve the two-byte table entry,",
+        "set instruction timer 1, and clear the previous script's loop counter."
+      ]
+    },
+    {
+      "id": "core.boot",
+      "fileId": "bank_80.asm",
+      "symbol": "Boot",
+      "expectedCode": "SEI",
+      "paragraphs": [
+        "The reset vector enters in emulation mode. Switch to native mode and the",
+        "bank-$80 FastROM mirror, establish the stack and direct page, then initialise",
+        "low RAM and the display. Upload the SPC engine before joining CommonBootSection.",
+        "The polling delay below is retained as written; its original purpose is unknown."
+      ]
+    },
+    {
+      "id": "core.boot-common",
+      "fileId": "bank_80.asm",
+      "symbol": "CommonBootSection",
+      "expectedCode": "SEP #$20",
+      "paragraphs": [
+        "Cold boot and SoftReset converge here. Force blank, clear bank $7E and initialise",
+        "CPU/PPU shadows, sound queues and sprite-transfer state before enabling NMI.",
+        "Finish the SRAM/demo checks, then jump to MainGameLoop without a return address.",
+        "NMI may run before the first frame request; its no-request path skips uploads."
+      ]
+    },
+    {
+      "id": "core.main-loop",
+      "fileId": "bank_82.asm",
+      "symbol": "MainGameLoop",
+      "expectedCode": "PHK",
+      "paragraphs": [
+        "Prepare one game-state iteration, then publish it through WaitForNMI.",
+        "Music/HDMA logic and the random seed advance before the state handler; sound",
+        "queues and RAM OAM are finalised afterwards. The state-specific handlers choose",
+        "which simulation systems run; this loop is also used by menus and cinematics.",
+        "The low state byte indexes 45 bank-local word pointers ($00..$2C), with no bounds",
+        "check. A state change inside a handler affects the next dispatch, not this call."
+      ]
+    },
+    {
+      "id": "core.frame-handshake",
+      "fileId": "bank_80.asm",
+      "symbol": "WaitForNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Set NMI_Request only after the caller's frame buffers and transfer queues are",
+        "ready. NMI clears it after uploads and controller sampling, releasing this",
+        "busy-wait. An NMI with no request takes the lag path instead of consuming",
+        "partially prepared data. NMI must be enabled or this routine cannot finish.",
+        "Processor flags and the data bank are restored; A is used by the polling loop",
+        "and byte-index mode truncates the high bytes of X and Y."
+      ]
+    },
+    {
+      "id": "core.enable-nmi",
+      "fileId": "bank_80.asm",
+      "symbol": "EnableNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Set bit 7 in both $4200 and its shared DP_IRQAutoJoy shadow. Preserve the",
+        "h/v-counter interrupt and auto-joypad bits. This is separate from CLI/SEI:",
+        "the CPU's IRQ-disable flag does not enable or disable NMI."
+      ]
+    },
+    {
+      "id": "core.disable-nmi",
+      "fileId": "bank_80.asm",
+      "symbol": "DisableNMI",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Clear bit 7 in both $4200 and DP_IRQAutoJoy, preserving the other control bits.",
+        "Keeping the shadow in sync matters because Update_IO_Registers uploads it again.",
+        "A subsequent WaitForNMI requires NMI to be re-enabled."
+      ]
+    },
+    {
+      "id": "core.nmi",
+      "fileId": "bank_80.asm",
+      "symbol": "NMI",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "The native NMI vector enters through bank $00; jump to the bank-$80 mirror,",
+        "save full-width registers and establish direct page $0000 before doing work.",
+        "A nonzero NMI_Request gates the prepared-frame transfers and input sampling.",
+        "Servicing it clears the request and lag count and advances NMI_8bitFrameCounter",
+        "and NMI_FrameCounter. NMI_Counter advances on both serviced and lag paths.",
+        "RTI restores the interrupted processor status as well as its program address."
+      ]
+    },
+    {
+      "id": "core.nmi-hdma",
+      "fileId": "bank_80.asm",
+      "symbol": "NMI",
+      "expectedCode": "LDA.W HDMAObject_ChannelBitflags,X",
+      "paragraphs": [
+        "Refresh the table-address registers for six HDMA-object slots. The object index",
+        "steps by two; each active slot supplies a DMA-channel offset and a word pointer.",
+        "Later, DP_HDMAEnable is written to $420C after the queued VRAM transfers."
+      ],
+      "localLabel": ".handleHDMAQueue"
+    },
+    {
+      "id": "core.nmi-lag",
+      "fileId": "bank_80.asm",
+      "symbol": "NMI",
+      "expectedCode": "LDX.W NMI_LagCounter",
+      "paragraphs": [
+        "No frame is ready. Leave transfer queues and sampled controller state untouched;",
+        "increment the byte-sized consecutive lag count and its unsigned high-water mark.",
+        "The count wraps at $100; the high-water mark is retained across that wrap.",
+        "Rejoin the common exit to count this NMI and restore the interrupted context",
+        "without advancing the serviced-frame counters."
+      ],
+      "localLabel": ".lag"
+    },
+    {
+      "id": "core.scanline-irq",
+      "fileId": "bank_80.asm",
+      "symbol": "IRQ",
+      "expectedCode": "REP #$30",
+      "paragraphs": [
+        "Dispatch h/v-counter IRQ commands for scanline effects such as the HUD split",
+        "and door-transition drawing. DP_IRQCmd is already a word-table byte offset.",
+        "The command returns its successor in A, the next horizontal target in X and",
+        "vertical target in Y. Store all three before restoring the interrupted registers.",
+        "Unlike NMI, this entry does not change the direct-page base; direct-page command",
+        "state uses the engine's existing direct page."
+      ]
+    },
+    {
+      "id": "core.reset-state",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_0_ResetStart",
+      "expectedCode": "STZ.W unknown0DF8",
+      "paragraphs": [
+        "Schedule the title-sequence loader and choose the initial attract-mode demo set.",
+        "The count found during boot normally starts at set 0; a count of four selects",
+        "set 3. Increment GameState to 1 and return to the outer frame loop."
+      ]
+    },
+    {
+      "id": "core.fade-in",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_7_MainGameplayFadingIn",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run the normal gameplay handler before advancing the fade-in. Actors and room",
+        "logic therefore continue while the screen brightens. When the brightness shadow",
+        "is exactly $0F, clear the fade timers and increment GameState (normally 7 to 8)."
+      ]
+    },
+    {
+      "id": "core.gameplay",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_8_MainGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Order the gameplay subsystems, rather than running every entity from one loop.",
+        "Select enemy lists first; Samus's current-state phase precedes interactions and",
+        "enemy AI, and her new-state phase follows the main enemy routine. Projectiles,",
+        "PLMs, tile animation and collision passes run before scrolling and sprite drawing.",
+        "Individual handlers still control their own frozen/disabled behavior. The debug",
+        "skip below bypasses this simulation block, but not the shared housekeeping tail."
+      ]
+    },
+    {
+      "id": "core.gameplay-tail",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_8_MainGameplay",
+      "expectedCode": "JSL.L HandleHUDTilemap_PausedAndRunning",
+      "paragraphs": [
+        "This tail also runs after the debug skip: HUD and background scroll calculations,",
+        "room main ASM, energy/game-time handling, shaking and hurt-timer/list cleanup.",
+        "The in-game clock is updated by the called helper, not by counting all NMIs.",
+        "Return to MainGameLoop for sound processing, OAM finalisation and publication."
+      ],
+      "localLabel": ".skipProcessing"
+    },
+    {
+      "id": "core.input-sampling",
+      "fileId": "bank_80.asm",
+      "symbol": "ReadControllerInput",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Called near the end of a serviced NMI, after the graphics work. Wait until the",
+        "auto-joypad busy bit clears before reading the controller result. Derive newly",
+        "pressed buttons from current AND (current XOR previous), then maintain held",
+        "button repeat state. The no-request NMI path does not call this routine."
       ]
     }
   ],
@@ -705,6 +1021,558 @@
         {"expectedCode":"dw $6000,$0050"},
         {"expectedCode":"dw $6000,$0050"},
         {"expectedCode":"dw $6000,$0050"}
+      ]
+    },
+    {
+      "id": "waver.steady-left.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Steady_FacingLeft",
+      "lines": [
+        {"expectedCode":"dw $0001,Spritemap_Waver_2","comment":"Show the left-facing steady sprite for one instruction tick."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Keep that sprite until main AI selects a different animation list."}
+      ]
+    },
+    {
+      "id": "waver.steady-right.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Steady_FacingRight",
+      "lines": [
+        {"expectedCode":"dw $0001,Spritemap_Waver_7","comment":"Show the right-facing steady sprite for one instruction tick."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Keep that sprite until main AI selects a different animation list."}
+      ]
+    },
+    {
+      "id": "waver.spin-left.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Spinning_FacingLeft",
+      "lines": [
+        {"expectedCode":"dw $0008,Spritemap_Waver_3","comment":"First left-facing spin frame, held for eight instruction ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_4","comment":"Second left-facing spin frame, also held for eight ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_0","comment":"Third left-facing spin frame; movement continues independently."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_1","comment":"Fourth left-facing spin frame before signalling completion."},
+        {"expectedCode":"dw Instruction_Waver_SetSpinFinishedFlag","comment":"Tell main AI that the four-frame spin has finished."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Hold the final spin frame until main AI selects the steady list."}
+      ]
+    },
+    {
+      "id": "waver.spin-right.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstList_Waver_Spinning_FacingRight",
+      "lines": [
+        {"expectedCode":"dw $0008,Spritemap_Waver_8","comment":"First right-facing spin frame, held for eight instruction ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_9","comment":"Second right-facing spin frame, also held for eight ticks."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_5","comment":"Third right-facing spin frame; movement continues independently."},
+        {"expectedCode":"dw $0008,Spritemap_Waver_6","comment":"Fourth right-facing spin frame before signalling completion."},
+        {"expectedCode":"dw Instruction_Waver_SetSpinFinishedFlag","comment":"Use the same completion handshake as the left-facing spin."},
+        {"expectedCode":"dw Instruction_Common_Sleep","comment":"Hold the final spin frame until main AI selects the steady list."}
+      ]
+    },
+    {
+      "id": "waver.animation-table.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InstListPointers_Waver",
+      "lines": [
+        {"expectedCode":"dw InstList_Waver_Steady_FacingLeft","comment":"Index 0: steady, facing left."},
+        {"expectedCode":"dw InstList_Waver_Steady_FacingRight","comment":"Index 1: steady, facing right."},
+        {"expectedCode":"dw InstList_Waver_Spinning_FacingLeft","comment":"Index 2: spinning, facing left."},
+        {"expectedCode":"dw InstList_Waver_Spinning_FacingRight","comment":"Index 3: spinning, facing right."}
+      ]
+    },
+    {
+      "id": "waver.spin-completion.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "Instruction_Waver_SetSpinFinishedFlag",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"X selects the enemy whose animation script is running."},
+        {"expectedCode":"LDA.W #$0001","comment":"Prepare a pending spin-completion signal."},
+        {"expectedCode":"STA.W Waver.spinFinishedFlag,X","comment":"Main AI consumes this flag to return to the steady animation."},
+        {"expectedCode":"RTL","comment":"Return to the instruction interpreter without consuming a parameter word."}
+      ]
+    },
+    {
+      "id": "waver.initialisation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "InitAI_Waver",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"X selects this Waver's slot in the enemy arrays."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Load the regional 8.8 horizontal speed: $0180 NTSC or $01D0 PAL."},
+        {"expectedCode":"AND.W #$FF00","comment":"Keep only the positive speed's integer byte."},
+        {"expectedCode":"XBA","comment":"Move the integer byte into the low byte of A."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store the positive integer part, initially one pixel per update."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Reload the same speed to extract its fractional byte."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep only the 8.8 fractional byte."},
+        {"expectedCode":"XBA","comment":"Shift that fraction into the high byte of a 16-bit subvelocity word."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Store $8000 for NTSC, or $D000 for PAL."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Read population parameter 1; its low bit selects horizontal direction."},
+        {"expectedCode":"AND.W #$0001","comment":"Ignore the other parameter bits for this direction choice."},
+        {"expectedCode":"BNE .facingLeft","comment":"A set bit keeps positive, rightward motion despite the destination's name."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"A clear bit takes the left-moving path using the same speed magnitude."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Begin two's-complement negation of the complete 8.8 speed."},
+        {"expectedCode":"INC","comment":"Finish negation before splitting the integer and fractional parts."},
+        {"expectedCode":"AND.W #$FF00","comment":"Keep the negated speed's integer byte."},
+        {"expectedCode":"XBA","comment":"Move that signed byte down for sign extension."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"Extend the negative integer byte to a signed 16-bit word."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store $FFFE; the positive fractional word completes the negative distance."},
+        {"expectedCode":"LDA.W #regional($0180, $01D0)","comment":"Reload the magnitude to recover the negated speed's fractional byte."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the full 8.8 speed, not the fraction in isolation."},
+        {"expectedCode":"INC","comment":"Finish the same two's-complement negation."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep the low byte of the negative 8.8 speed."},
+        {"expectedCode":"XBA","comment":"Shift it into the subvelocity word: $8000 NTSC or $3000 PAL."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"The swapped word has a zero low byte, so this call leaves it unchanged."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Together with $FFFE, the fraction represents -1.5 NTSC or -1.8125 PAL."},
+        {"expectedCode":".facingLeft:"},
+        {"expectedCode":"STZ.W Waver.newInstListIndex,X","comment":"Start the requested animation index at steady-left (0)."},
+        {"expectedCode":"STZ.W Waver.instListIndex,X","comment":"Seed the current-index cache to match that default."},
+        {"expectedCode":"STZ.W Waver.spinFinishedFlag,X","comment":"No animation-completion signal is pending at initialisation."},
+        {"expectedCode":"LDA.W #InstList_Waver_Steady_FacingLeft","comment":"Install the steady-left script directly for direction bit 0."},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"This pointer is already correct if the helper finds index 0 unchanged."},
+        {"expectedCode":"LDA.W Enemy.init0,X","comment":"Read the direction selector again for animation selection."},
+        {"expectedCode":"AND.W #$0001","comment":"The same low bit chooses steady-left (0) or steady-right (1)."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request the steady script matching the chosen X direction."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Switch to the right-facing script if its index differs from the default."},
+        {"expectedCode":"RTL","comment":"Return with velocity and initial animation direction selected."}
+      ]
+    },
+    {
+      "id": "waver.movement-and-animation.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "MainAI_Waver",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Select this Waver before reading its per-enemy state."},
+        {"expectedCode":"LDA.W Waver.XSubVelocity,X","comment":"Load the fractional word of the horizontal movement distance."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Pass that fraction in the movement helper's low word."},
+        {"expectedCode":"LDA.W Waver.XVelocity,X","comment":"Load the signed integer part of horizontal movement."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Complete the signed 16.16 distance in $14.$12."},
+        {"expectedCode":"JSL.L MoveEnemyRightBy_14_12_IgnoreSlopes","comment":"Attempt horizontal travel using block collision rather than slope following."},
+        {"expectedCode":"BCC .noWallCollision","comment":"Carry clear permits vertical movement; a wall hit takes the reversal path."},
+        {"expectedCode":"LDA.W Enemy.var0+1,X","comment":"Read packed 8.8 speed across the subvelocity high byte and velocity low byte."},
+        {"expectedCode":"STA.B DP_Temp12","comment":"Keep that packed speed while rebuilding its negated components."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Begin reversing the complete 8.8 value."},
+        {"expectedCode":"INC","comment":"Finish its two's-complement negation."},
+        {"expectedCode":"AND.W #$FF00","comment":"Select the new signed integer byte."},
+        {"expectedCode":"XBA","comment":"Move that byte down for sign extension."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"Extend the new integer byte to 16 bits."},
+        {"expectedCode":"STA.W Waver.XVelocity,X","comment":"Store the reversed integer component of X velocity."},
+        {"expectedCode":"LDA.B DP_Temp12","comment":"Reload the original packed speed for the fractional component."},
+        {"expectedCode":"EOR.W #$FFFF","comment":"Complement the same complete 8.8 value."},
+        {"expectedCode":"INC","comment":"Finish negation before extracting its fractional byte."},
+        {"expectedCode":"AND.W #$00FF","comment":"Keep the new fractional byte."},
+        {"expectedCode":"XBA","comment":"Position it in the high byte of the subvelocity word."},
+        {"expectedCode":"JSL.L Sign_Extend_A","comment":"The low byte is zero after the swap, so the fraction is unchanged here."},
+        {"expectedCode":"STA.W Waver.XSubVelocity,X","comment":"Store the fractional component of the reversed X velocity."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the requested direction/spin bits."},
+        {"expectedCode":"EOR.W #$0001","comment":"Toggle bit 0 to face the new horizontal direction."},
+        {"expectedCode":"AND.W #$0001","comment":"Clear the spin bit; a wall reversal first requests a steady sprite."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Publish the requested steady-left or steady-right index."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Restart the animation only if this index differs from the current one."},
+        {"expectedCode":"JMP.W .merge","comment":"Skip vertical travel and phase advance, but still process spin state."},
+        {"expectedCode":".noWallCollision:"},
+        {"expectedCode":"LDA.W #$0004","comment":"Use a radius of four for the shared sine multiplication."},
+        {"expectedCode":"STA.W Temp_Radius","comment":"Pass the radius through the helper's shared scratch field."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Load the stored wave phase, not an absolute Y position."},
+        {"expectedCode":"AND.W #$00FF","comment":"Only the low byte participates in the 256-step angular cycle."},
+        {"expectedCode":"JSL.L EightBitNegativeSineMultiplication_A0B0C6","comment":"Compute the shared negative-sine product and return its signed integer part."},
+        {"expectedCode":"STA.B DP_Temp14","comment":"Use that integer result as this update's vertical distance."},
+        {"expectedCode":"STZ.B DP_Temp12","comment":"Use zero subpixel distance rather than the sine helper's fractional output."},
+        {"expectedCode":"JSL.L MoveEnemyDownBy_14_12","comment":"Attempt signed vertical movement, stopping at blocking geometry."},
+        {"expectedCode":"BCC .noBlockCollision","comment":"Carry clear takes the normal phase-advance path."},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore X to the current enemy slot before updating its phase."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the phase that produced the blocked vertical move."},
+        {"expectedCode":"CLC","comment":"Start phase addition without a carry from collision handling."},
+        {"expectedCode":"ADC.W #$0080","comment":"Shift by half a cycle so the next vertical move has the opposite sign."},
+        {"expectedCode":"AND.W #$00FF","comment":"Wrap this collision-adjusted phase to eight bits."},
+        {"expectedCode":"STA.W Waver.angle,X","comment":"Store the reflected phase instead of doing the normal +2 advance."},
+        {"expectedCode":"BRA .merge","comment":"Continue to animation handling after the vertical collision."},
+        {"expectedCode":".noBlockCollision:"},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Restore X before updating this enemy's phase."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the phase after both movement attempts succeeded."},
+        {"expectedCode":"CLC","comment":"Start the normal phase increment without an incoming carry."},
+        {"expectedCode":"ADC.W #$0002","comment":"Advance by two angular steps per unobstructed update."},
+        {"expectedCode":"STA.W Waver.angle,X","comment":"Store the whole word; sine and spin tests mask the phase bits they need."},
+        {"expectedCode":".merge:"},
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Both collision paths and free movement join the animation checks here."},
+        {"expectedCode":"LDA.W Waver.angle,X","comment":"Read the possibly advanced, reflected, or unchanged phase."},
+        {"expectedCode":"AND.W #$007F","comment":"Ignore the half-cycle bit so the test repeats twice per angular cycle."},
+        {"expectedCode":"CMP.W #$0038","comment":"Request a spin at low-byte phase $38 or $B8."},
+        {"expectedCode":"BNE .notSpinning","comment":"Other phases skip the spin request and check for script completion."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Preserve the current facing bit when choosing the spin."},
+        {"expectedCode":"ORA.W #$0002","comment":"Set bit 1 to select a spinning animation."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request spin-left (2) or spin-right (3)."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Do not restart a spin whose requested index is already current."},
+        {"expectedCode":".notSpinning:"},
+        {"expectedCode":"LDA.W Waver.spinFinishedFlag,X","comment":"Check the completion signal written by the animation script."},
+        {"expectedCode":"BEQ .return","comment":"Keep the current animation while no completion is pending."},
+        {"expectedCode":"STZ.W Waver.spinFinishedFlag,X","comment":"Consume the signal once."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the requested index after movement and any spin request."},
+        {"expectedCode":"AND.W #$0001","comment":"Clear the spin bit while retaining left/right facing."},
+        {"expectedCode":"STA.W Waver.newInstListIndex,X","comment":"Request the corresponding steady animation."},
+        {"expectedCode":"JSR.W SetWaverInstList","comment":"Install that steady list if the animation index changed."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTL","comment":"Finish this main-AI update."}
+      ]
+    },
+    {
+      "id": "waver.animation-selection.lines",
+      "fileId": "bank_A3.asm",
+      "symbol": "SetWaverInstList",
+      "lines": [
+        {"expectedCode":"LDX.W EnemyIndex","comment":"Select this Waver before comparing its animation indices."},
+        {"expectedCode":"LDA.W Waver.newInstListIndex,X","comment":"Read the desired combination of facing and spin bits."},
+        {"expectedCode":"CMP.W Waver.instListIndex,X","comment":"Compare it with the index whose script is already installed."},
+        {"expectedCode":"BEQ .return","comment":"An unchanged index must not restart the current animation."},
+        {"expectedCode":"STA.W Waver.instListIndex,X","comment":"Remember the new current index before looking up its script."},
+        {"expectedCode":"ASL","comment":"Each bank-local script pointer occupies two bytes."},
+        {"expectedCode":"TAY","comment":"Use the doubled index as the table's byte offset."},
+        {"expectedCode":"LDA.W InstListPointers_Waver,Y","comment":"Fetch the steady/spinning left/right script pointer."},
+        {"expectedCode":"STA.W Enemy.instList,X","comment":"Replace the enemy's animation instruction-list pointer."},
+        {"expectedCode":"LDA.W #$0001","comment":"Schedule the new list to execute on its next instruction update."},
+        {"expectedCode":"STA.W Enemy.instTimer,X","comment":"A timer of one starts the newly selected animation promptly."},
+        {"expectedCode":"STZ.W Enemy.loopCounter,X","comment":"Clear the old script's loop counter when changing lists."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTS","comment":"Return without disturbing a list whose index was unchanged."}
+      ]
+    },
+    {
+      "id": "core.WaitForNMI.lines",
+      "fileId": "bank_80.asm",
+      "symbol": "WaitForNMI",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK","comment":"Use bank $80 for the low-RAM request flag."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"SEP #$30","comment":"Use byte-sized registers for the request handshake."},
+        {"expectedCode":"LDA.B #$01","comment":"Mark the caller's prepared frame as ready."},
+        {"expectedCode":"STA.W NMI_Request","comment":"Publish readiness to the NMI handler."},
+        {"expectedCode":".wait:"},
+        {"expectedCode":"LDA.W NMI_Request","comment":"Poll the same byte that NMI clears after its frame work."},
+        {"expectedCode":"BNE .wait","comment":"Busy-wait for acknowledgement, not merely an interrupt edge."},
+        {"expectedCode":"PLB","comment":"Restore the caller's data bank."},
+        {"expectedCode":"PLP","comment":"Restore the caller's processor flags and register widths."},
+        {"expectedCode":"RTL","comment":"Resume only after the requested NMI work completes."}
+      ]
+    },
+    {
+      "id": "core.EnableNMI.lines",
+      "fileId": "bank_80.asm",
+      "symbol": "EnableNMI",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"SEP #$20"},
+        {"expectedCode":"LDA.B DP_IRQAutoJoy","comment":"Read the shared NMI, IRQ and auto-joypad control shadow."},
+        {"expectedCode":"ORA.B #$80","comment":"Set only the NMI-enable bit, preserving IRQ and joypad settings."},
+        {"expectedCode":"STA.W $4200","comment":"Enable NMI in the CPU I/O register."},
+        {"expectedCode":"STA.B DP_IRQAutoJoy","comment":"Keep the shadow consistent with the hardware write."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTL"}
+      ]
+    },
+    {
+      "id": "core.DisableNMI.lines",
+      "fileId": "bank_80.asm",
+      "symbol": "DisableNMI",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"SEP #$20"},
+        {"expectedCode":"LDA.B DP_IRQAutoJoy","comment":"Read the shared NMI, IRQ and auto-joypad control shadow."},
+        {"expectedCode":"AND.B #$7F","comment":"Clear only the NMI-enable bit, preserving IRQ and joypad settings."},
+        {"expectedCode":"STA.W $4200","comment":"Disable NMI without changing the CPU's IRQ mask."},
+        {"expectedCode":"STA.B DP_IRQAutoJoy","comment":"Keep later shadow-register uploads from re-enabling NMI."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTL"}
+      ]
+    },
+    {
+      "id": "core.NMI.lines",
+      "fileId": "bank_80.asm",
+      "symbol": "NMI",
+      "lines": [
+        {"expectedCode":"REP #$30","comment":"Save and restore full-width registers even if interrupted in byte mode."},
+        {"expectedCode":"JML .bank80","comment":"Enter the bank-$80 mirror explicitly; the native vector supplies only a word."},
+        {"expectedCode":".bank80:"},
+        {"expectedCode":"PHB","comment":"Preserve the interrupted data bank."},
+        {"expectedCode":"PHD","comment":"Preserve the interrupted direct-page base."},
+        {"expectedCode":"PHA","comment":"Save the full accumulator, including its hidden high byte in byte mode."},
+        {"expectedCode":"PHX","comment":"Preserve X before using it for byte-sized I/O and object indices."},
+        {"expectedCode":"PHY","comment":"Preserve Y before using it for HDMA channel offsets."},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB","comment":"Use bank $80 for hardware registers and mirrored low RAM."},
+        {"expectedCode":"LDA.W #$0000","comment":"Select the engine's low-RAM direct page."},
+        {"expectedCode":"TCD","comment":"Make direct-page operands relative to $0000 during NMI."},
+        {"expectedCode":"SEP #$10","comment":"Use byte-sized X and Y while leaving A word-sized."},
+        {"expectedCode":"LDX.W $4210","comment":"Read RDNMI to clear the latched NMI status bit."},
+        {"expectedCode":"LDX.W NMI_Request","comment":"Check whether the main thread has finished preparing a frame."},
+        {"expectedCode":"BEQ .lag","comment":"With no request, skip uploads, controller sampling and frame counters."},
+        {"expectedCode":"JSR.W UpdateOAM_CGRAM","comment":"Transfer the prepared sprite attributes and palette to OAM and CGRAM."},
+        {"expectedCode":"JSR.W TransferSamusTilesToVRAM","comment":"Upload the Samus tile data selected by the main thread."},
+        {"expectedCode":"JSR.W ProcessAnimatedTilesObjectVRAMTransfers","comment":"Consume pending animated-tile VRAM transfers."},
+        {"expectedCode":"JSR.W Update_IO_Registers","comment":"Copy the CPU and PPU register shadows into hardware."},
+        {"expectedCode":"LDX.B #$00","comment":"Start at the first of six HDMA-object slots."},
+        {"expectedCode":".handleHDMAQueue:"},
+        {"expectedCode":"LDA.W HDMAObject_ChannelBitflags,X","comment":"Check whether this HDMA-object slot is in use."},
+        {"expectedCode":"BEQ .next","comment":"Leave unused slots' channel pointers alone."},
+        {"expectedCode":"LDY.W HDMAObject_ChannelIndicesBanks,X","comment":"Read the slot's DMA-channel register offset."},
+        {"expectedCode":"LDA.W HDMAObject_TablePointers,X","comment":"Load the object's current HDMA table address."},
+        {"expectedCode":"STA.W $4302,Y","comment":"Write the two-byte table pointer to that channel's A1T registers."},
+        {"expectedCode":".next:"},
+        {"expectedCode":"INX","comment":"Advance through word-indexed HDMA-object fields."},
+        {"expectedCode":"INX"},
+        {"expectedCode":"CPX.B #$0C","comment":"Stop after offsets $00, $02, $04, $06, $08 and $0A."},
+        {"expectedCode":"BNE .handleHDMAQueue","comment":"Visit the remaining HDMA-object slots."},
+        {"expectedCode":"LDX.B DP_BGModeSize","comment":"Test the actual background-mode shadow."},
+        {"expectedCode":"CPX.B #$07","comment":"Mode 7 needs its additional transfer handler."},
+        {"expectedCode":"BEQ .mode7Enabled","comment":"Run Mode 7 transfers when the actual mode is 7."},
+        {"expectedCode":"LDX.B DP_FakeBGModeSize","comment":"Also test the alternate background-mode shadow."},
+        {"expectedCode":"CPX.B #$07","comment":"Either mode shadow may request Mode 7 transfers."},
+        {"expectedCode":"BNE .mode7Disabled","comment":"Skip Mode 7 transfers only when neither shadow is 7."},
+        {"expectedCode":".mode7Enabled:"},
+        {"expectedCode":"JSL.L HandleMode7Transfers","comment":"Perform the Mode 7-specific queued transfers."},
+        {"expectedCode":".mode7Disabled:"},
+        {"expectedCode":"JSL.L HandleVRAMWriteTable_ScrollingDMAs","comment":"Process queued VRAM writes and scrolling DMA transfers."},
+        {"expectedCode":"JSL.L HandleVRAMReadTable","comment":"Process queued VRAM reads."},
+        {"expectedCode":"SEP #$10","comment":"Re-establish byte-sized channel and control-register accesses."},
+        {"expectedCode":"REP #$20","comment":"Keep accumulator operations word-sized for the remaining work."},
+        {"expectedCode":"LDX.B DP_HDMAEnable","comment":"Load the HDMA channels prepared by the main thread."},
+        {"expectedCode":"STX.W $420C","comment":"Enable those channels for the coming drawing period."},
+        {"expectedCode":"JSL.L ReadControllerInput","comment":"Wait out auto-joypad reading and sample input near the end of NMI."},
+        {"expectedCode":"LDX.B #$00","comment":"Use a byte-sized zero for the request and lag fields."},
+        {"expectedCode":"STX.W NMI_Request","comment":"Acknowledge the prepared frame so WaitForNMI can finish."},
+        {"expectedCode":"STX.W NMI_LagCounter","comment":"Reset the consecutive unrequested-NMI count."},
+        {"expectedCode":"LDX.W NMI_8bitFrameCounter","comment":"Read the byte counter for serviced frame requests."},
+        {"expectedCode":"INX","comment":"Advance modulo $100 because X is byte-sized."},
+        {"expectedCode":"STX.W NMI_8bitFrameCounter","comment":"Store only the frame-counter byte, not its word-sized neighbor."},
+        {"expectedCode":"INC.W NMI_FrameCounter","comment":"Advance the separate word counter for serviced frame requests."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"REP #$30","comment":"Restore word widths before pulling the saved registers."},
+        {"expectedCode":"INC.W NMI_Counter","comment":"Count every NMI, including the no-request lag path."},
+        {"expectedCode":"PLY","comment":"Restore the interrupted Y register."},
+        {"expectedCode":"PLX","comment":"Restore the interrupted X register."},
+        {"expectedCode":"PLA","comment":"Restore the interrupted accumulator."},
+        {"expectedCode":"PLD","comment":"Restore the interrupted direct-page base."},
+        {"expectedCode":"PLB","comment":"Restore the interrupted data bank."},
+        {"expectedCode":"RTI","comment":"Restore the interrupted status and program address from the CPU's stack frame."},
+        {"expectedCode":".lag:"},
+        {"expectedCode":"LDX.W NMI_LagCounter","comment":"Read the byte count of consecutive NMIs without a frame request."},
+        {"expectedCode":"INX","comment":"Increment with byte wraparound; this is not an unbounded timer."},
+        {"expectedCode":"STX.W NMI_LagCounter","comment":"Record one more NMI without a prepared frame."},
+        {"expectedCode":"LDX.W NMI_LagCounter","comment":"Compare the updated byte count with its recorded maximum."},
+        {"expectedCode":"CPX.W NMI_MaximumLag","comment":"Use an unsigned comparison for the lag high-water mark."},
+        {"expectedCode":"BCC .return","comment":"Keep the old maximum when the current count is smaller."},
+        {"expectedCode":"STX.W NMI_MaximumLag","comment":"Record the current count when it equals or exceeds the old maximum."},
+        {"expectedCode":"BRA .return","comment":"Join the common NMI counter and register-restoration path."}
+      ]
+    },
+    {
+      "id": "core.IRQ.lines",
+      "fileId": "bank_80.asm",
+      "symbol": "IRQ",
+      "lines": [
+        {"expectedCode":"REP #$30","comment":"Use full-width registers for the command's return values."},
+        {"expectedCode":"JML .bank80","comment":"Enter the bank-$80 mirror explicitly from the native interrupt vector."},
+        {"expectedCode":".bank80:"},
+        {"expectedCode":"PHB","comment":"Preserve the interrupted data bank."},
+        {"expectedCode":"PHA","comment":"Preserve the full accumulator."},
+        {"expectedCode":"PHX","comment":"Preserve X before it becomes the next horizontal counter target."},
+        {"expectedCode":"PHY","comment":"Preserve Y before it becomes the next vertical counter target."},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB","comment":"Use bank $80 for interrupt registers and the command-pointer table."},
+        {"expectedCode":"LDA.W $4211","comment":"Read TIMEUP to acknowledge the h/v-counter interrupt."},
+        {"expectedCode":"LDX.B DP_IRQCmd","comment":"Load the command's existing word-table byte offset; do not double it."},
+        {"expectedCode":"JSR.W (InterruptCommandPointers,X)","comment":"Run the scanline command selected by that offset."},
+        {"expectedCode":"STA.B DP_IRQCmd","comment":"Use the returned A value as the next interrupt command."},
+        {"expectedCode":"STY.W $4209","comment":"Program the next vertical counter target returned in Y."},
+        {"expectedCode":"STX.W $4207","comment":"Program the next horizontal counter target returned in X."},
+        {"expectedCode":"PLY","comment":"Restore the interrupted Y register."},
+        {"expectedCode":"PLX","comment":"Restore the interrupted X register."},
+        {"expectedCode":"PLA","comment":"Restore the interrupted accumulator."},
+        {"expectedCode":"PLB","comment":"Restore the interrupted data bank."},
+        {"expectedCode":"RTI","comment":"Resume the interrupted code with its original processor status."}
+      ]
+    },
+    {
+      "id": "core.MainGameLoop.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "MainGameLoop",
+      "lines": [
+        {"expectedCode":"PHK","comment":"Select the game-loop bank for near data accesses."},
+        {"expectedCode":"PLB","comment":"Set the data bank to $82."},
+        {"expectedCode":"REP #$20","comment":"Use a word accumulator for the initial state."},
+        {"expectedCode":"STZ.W GameState","comment":"Begin in state 0, which schedules the title sequence."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"STZ.W DebugSpareCPUDisplayFlag","comment":"Start with the spare-CPU display disabled."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"CLI","comment":"Allow maskable IRQs; NMI enabling is controlled separately by $4200."},
+        {"expectedCode":".loop:"},
+        {"expectedCode":"PHP","comment":"Preserve this iteration's processor status across its handlers."},
+        {"expectedCode":"REP #$30","comment":"Start the iteration with word-sized A, X and Y."},
+        {"expectedCode":"JSL.L HDMAObjectHandler_HandleMusicQueue","comment":"Advance music and HDMA-object logic before dispatching the game state."},
+        {"expectedCode":"JSL.L GenerateRandomNumber","comment":"Advance the shared random seed once on this loop path."},
+        {"expectedCode":"JSL.L ClearHighOAM","comment":"Clear the RAM high-OAM bits before rebuilding sprite attributes."},
+        {"expectedCode":"STZ.W OAMStack","comment":"Start writing this iteration's sprite entries at the beginning of OAM."},
+        {"expectedCode":"STZ.W SamusTiles_TopHalfFlag","comment":"Clear the pending Samus top-half tile-transfer flag."},
+        {"expectedCode":"STZ.W SamusTiles_TopHalfTilesDef","comment":"Discard the previous top-half tile definition."},
+        {"expectedCode":"STZ.W SamusTiles_BottomHalfTilesDef","comment":"Discard the previous bottom-half tile definition."},
+        {"expectedCode":"LDA.W GameState","comment":"Read the current game-state selector."},
+        {"expectedCode":"AND.W #$00FF","comment":"Only the low byte selects a game-mode entry."},
+        {"expectedCode":"ASL","comment":"Convert the state number to a word-table byte offset."},
+        {"expectedCode":"TAX","comment":"Use that byte offset for the indexed indirect call."},
+        {"expectedCode":"JSR.W (.gamemodes,X)","comment":"Run the selected bank-$82 state handler; it returns with RTS."},
+        {"expectedCode":"JSL.L HandleSounds","comment":"Service sound queues after the state's logic has run."},
+        {"expectedCode":"JSL.L Finalise_OAM","comment":"Move unused RAM OAM sprites offscreen and reset the write pointer."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"JSL.L ShowSpareCPUDebug_UpdatePrevCtrl1Input","comment":"Update the optional spare-CPU display and previous drawing-input snapshot."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"JSL.L WaitForNMI","comment":"Publish the completed frame and wait for NMI's acknowledgement."},
+        {"expectedCode":"PLP","comment":"Restore the status saved at the start of this iteration."},
+        {"expectedCode":"BRA .loop","comment":"Prepare the next frame using the input sampled by the serviced NMI."},
+        {"expectedCode":".gamemodes:"},
+        {"expectedCode":"dw GameState_0_ResetStart","comment":"State $00: schedule title-sequence initialisation."},
+        {"expectedCode":"dw GameState_1_TitleSequence"},
+        {"expectedCode":"dw GameState_2_GameOptionsMenu"},
+        {"expectedCode":"dw GameState_3_Nothing"},
+        {"expectedCode":"dw GameState_4_FileSelectMenus"},
+        {"expectedCode":"dw GameState_5_FileSelectMap"},
+        {"expectedCode":"dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"},
+        {"expectedCode":"dw GameState_7_MainGameplayFadingIn","comment":"State $07: run gameplay while fading in."},
+        {"expectedCode":"dw GameState_8_MainGameplay","comment":"State $08: run the normal gameplay update."},
+        {"expectedCode":"dw GameState_9_HitADoorBlock"},
+        {"expectedCode":"dw GameState_A_LoadingNextRoom"},
+        {"expectedCode":"dw GameState_B_LoadingNextRoom"},
+        {"expectedCode":"dw GameState_C_Pausing_NormalGameplayDarkening"},
+        {"expectedCode":"dw GameState_D_Pausing_LoadingPauseScreen"},
+        {"expectedCode":"dw GameState_E_Paused_LoadingPauseScreen"},
+        {"expectedCode":"dw GameState_F_Paused_MapAndItemScreens"},
+        {"expectedCode":"dw GameState_10_Unpausing_LoadingNormalGameplay"},
+        {"expectedCode":"dw GameState_11_Unpausing_LoadingNormalGameplay"},
+        {"expectedCode":"dw GameState_12_Unpausing_NormalGameplayBrightening"},
+        {"expectedCode":"dw GameState_13_DeathSequence_Start"},
+        {"expectedCode":"dw GameState_14_DeathSequence_BlackOutSurroundings"},
+        {"expectedCode":"dw GameState_15_DeathSequence_WaitForMusic"},
+        {"expectedCode":"dw GameState_16_DeathSequence_PreFlashing"},
+        {"expectedCode":"dw GameState_17_DeathSequence_Flashing"},
+        {"expectedCode":"dw GameState_18_DeathSequence_ExplosionWhiteOut"},
+        {"expectedCode":"dw GameState_19_DeathSequence_BlackOut"},
+        {"expectedCode":"dw GameState_1A_GameOverScreen"},
+        {"expectedCode":"dw GameState_1B_ReserveTankAuto"},
+        {"expectedCode":"dw UNUSED_GameState_1C_828B3F"},
+        {"expectedCode":"dw GameState_1D_DebugGameOverMenu"},
+        {"expectedCode":"dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"},
+        {"expectedCode":"dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"},
+        {"expectedCode":"dw GameState_20_MadeItToCeresElevator"},
+        {"expectedCode":"dw GameState_21_BlackoutFromCeres"},
+        {"expectedCode":"dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"},
+        {"expectedCode":"dw GameState_23_TimeUpWhiteOut"},
+        {"expectedCode":"dw GameState_23_TimeUpBlackOut"},
+        {"expectedCode":"dw GameState_1E_22_25_Intro_CeresGoesBoom_SamusGoesToZebes"},
+        {"expectedCode":"dw GameState_26_SamusEscapesFromZebes"},
+        {"expectedCode":"dw GameState_27_EndingAndCredits"},
+        {"expectedCode":"dw GameState_6_1F_28_LoadingGameData_SetupNewGame_LoadDemoData"},
+        {"expectedCode":"dw GameState_29_TransitionToDemo"},
+        {"expectedCode":"dw GameState_2A_PlayingDemo"},
+        {"expectedCode":"dw GameState_2B_UnloadGameData"},
+        {"expectedCode":"dw GameState_2C_TransitionFromDemo"}
+      ]
+    },
+    {
+      "id": "core.GameState_0_ResetStart.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_0_ResetStart",
+      "lines": [
+        {"expectedCode":"STZ.W unknown0DF8"},
+        {"expectedCode":"STZ.W neverRead0DFA"},
+        {"expectedCode":"STZ.W neverRead0DFC"},
+        {"expectedCode":"LDA.W #CinematicFunction_LoadTitleSequence"},
+        {"expectedCode":"STA.W CinematicFunction","comment":"Schedule the cinematic function that loads the title sequence."},
+        {"expectedCode":"STZ.W DemoSet","comment":"Default to the first attract-mode demo set."},
+        {"expectedCode":"LDA.W NumberOfDemoSets","comment":"Use the demo-set count determined from SRAM during boot."},
+        {"expectedCode":"CMP.W #$0004","comment":"The four-set case starts at the final set instead."},
+        {"expectedCode":"BNE .return","comment":"Keep demo set 0 for all other counts."},
+        {"expectedCode":"LDA.W #$0003","comment":"Select demo set 3 when four demo sets were found."},
+        {"expectedCode":"STA.W DemoSet","comment":"Store the attract-mode starting set."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"INC.W GameState","comment":"Advance from reset/start to title-sequence state 1."},
+        {"expectedCode":"RTS","comment":"Return to the main loop's sound, OAM and NMI stages."}
+      ]
+    },
+    {
+      "id": "core.GameState_7_MainGameplayFadingIn.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_7_MainGameplayFadingIn",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30","comment":"Run gameplay and fade bookkeeping with word-sized registers."},
+        {"expectedCode":"JSR.W GameState_8_MainGameplay","comment":"Update gameplay even while the screen is still fading in."},
+        {"expectedCode":"JSL.L HandleFadingIn","comment":"Advance the brightness fade after the gameplay update."},
+        {"expectedCode":"SEP #$20","comment":"Test the byte-sized display-brightness shadow."},
+        {"expectedCode":"LDA.B DP_Brightness","comment":"Read brightness together with its forced-blank bit."},
+        {"expectedCode":"CMP.B #$0F","comment":"Require exactly full brightness with forced blank clear."},
+        {"expectedCode":"BNE .return","comment":"Return without advancing the fade-completion state until brightness is $0F."},
+        {"expectedCode":"REP #$20","comment":"Return to word-sized fade timers and state accesses."},
+        {"expectedCode":"STZ.W ScreenFadeDelay","comment":"Clear the delay used by the completed fade."},
+        {"expectedCode":"STZ.W ScreenFadeCounter","comment":"Clear the completed fade's counter."},
+        {"expectedCode":"INC.W GameState","comment":"Increment the current game state, normally from fade-in 7 to gameplay 8."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS","comment":"Return to the main loop's shared end-of-frame stages."}
+      ]
+    },
+    {
+      "id": "core.GameState_8_MainGameplay.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_8_MainGameplay",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30","comment":"Use word-sized registers for gameplay dispatch."},
+        {"expectedCode":"JSL.L Determine_Which_Enemies_to_Process","comment":"Build the active and interactive enemy lists before Samus and enemy logic."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"JSL.L DebugHandler","comment":"Let the debug handler decide whether normal processing should be skipped."},
+        {"expectedCode":"AND.W #$FFFF","comment":"Set the zero flag from the debug handler's result without changing A."},
+        {"expectedCode":"BNE .skipProcessing","comment":"Skip the main simulation block, but still run the common housekeeping tail."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"JSL.L PaletteFXObject_Handler","comment":"Advance palette-effect objects before the actor updates."},
+        {"expectedCode":"JSL.L SamusCurrentStateHandler","comment":"Run Samus's current-state phase before projectile interactions and enemy AI."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"LDA.W DebugDisableSpriteInteractions","comment":"Check the debug override for the following interaction call."},
+        {"expectedCode":"BNE +","comment":"Skip Samus/projectile interactions, not the main enemy routine."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"JSL.L Samus_Projectiles_Interaction_Handling","comment":"Resolve Samus and projectile interactions before enemy AI."},
+        {"expectedCode":"+   JSL.L Main_Enemy_Routine","comment":"Run the main enemy routine using the lists selected earlier."},
+        {"expectedCode":"JSL.L SamusNewStateHandler","comment":"Run Samus's new-state phase after the enemy routine."},
+        {"expectedCode":"JSL.L Enemy_Projectile_Handler","comment":"Advance enemy projectiles after Samus's two state phases."},
+        {"expectedCode":"JSL.L PLM_Handler","comment":"Run PLM logic for room objects such as doors and pickups."},
+        {"expectedCode":"JSL.L AnimatedTilesObject_Handler","comment":"Advance animated-tile objects; their pending uploads are handled by NMI."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"LDA.W DebugDisableSpriteInteractions","comment":"Check the debug override for the following three collision handlers."},
+        {"expectedCode":"BNE +","comment":"Skip projectile collisions and power-bomb enemy interactions when requested."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"JSL.L EnemyProjectile_Samus_Collision_Handling","comment":"Resolve enemy-projectile hits against Samus."},
+        {"expectedCode":"JSL.L Projectile_vs_Projectile_Collision_Handling","comment":"Resolve projectile-versus-projectile collisions."},
+        {"expectedCode":"JSL.L Process_Enemy_PowerBomb_Interaction","comment":"Apply the enemy-side power-bomb interaction pass."},
+        {"expectedCode":"+   JSL.L Main_Scrolling_Routine","comment":"Update the camera after actor movement and interactions."},
+        {"expectedCode":"if !DEBUG"},
+        {"expectedCode":"LDA.L DebugConst_DebugScrolling","comment":"Read the ROM debug setting for saved camera positions."},
+        {"expectedCode":"BEQ +","comment":"Keep the normal camera position when debug scrolling is disabled."},
+        {"expectedCode":"JSL.L Debug_Layer1Position_Saving_Loading","comment":"Apply the debug layer-1 position save/load behavior when enabled."},
+        {"expectedCode":"endif"},
+        {"expectedCode":"+   JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles","comment":"Build the sprite display from the updated actors and projectiles."},
+        {"expectedCode":"JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer","comment":"Queue any required enemy background tilemap transfer rather than doing it here."},
+        {"expectedCode":".skipProcessing:"},
+        {"expectedCode":"JSL.L HandleHUDTilemap_PausedAndRunning","comment":"Update the HUD even when the debug skip bypassed the main simulation."},
+        {"expectedCode":"JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling","comment":"Calculate layer-2 scrolling and prepare scrolling background updates."},
+        {"expectedCode":"JSL.L Execute_Room_Main_ASM","comment":"Execute this room's main ASM after the HUD and scrolling calculations."},
+        {"expectedCode":"JSR.W HandleSamusRunningOutOfEnergy_and_IncrementGameTime","comment":"Handle energy depletion and tick in-game time on the helper's eligible paths."},
+        {"expectedCode":"JSL.L Handle_Room_Shaking","comment":"Apply room shaking after the room's main ASM."},
+        {"expectedCode":"JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists","comment":"Tick Samus's hurt timers and terminate the active/interactive enemy lists."},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS","comment":"Return to the outer loop; this handler does not publish the frame itself."}
       ]
     }
   ]

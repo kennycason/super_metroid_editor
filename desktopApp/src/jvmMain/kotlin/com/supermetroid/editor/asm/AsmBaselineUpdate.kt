@@ -4,7 +4,12 @@ import com.supermetroid.editor.data.ProjectPaths
 import java.io.File
 import java.nio.file.Files
 
-internal data class AsmBaselineFileUpdate(val fileId: String, val merge: AsmTextMerge, val changed: Boolean)
+internal data class AsmBaselineFileUpdate(
+    val fileId: String, val merge: AsmTextMerge, val changed: Boolean,
+    val baselineChanged: Boolean = changed,
+    val projectEdited: Boolean = false,
+    val documentationOnly: Boolean = false,
+)
 internal data class AsmBaselineUpdateResult(val workspace: AsmProjectWorkspace, val backupDirectory: File)
 
 /** A review draft owns only disposable staging. It cannot publish unresolved conflicts. */
@@ -20,6 +25,9 @@ internal class AsmBaselineUpdatePlan internal constructor(
     internal var consumed = false
     val conflictCount: Int get() = files.sumOf { it.merge.conflicts.size }
     val changedFiles: List<AsmBaselineFileUpdate> get() = files.filter { it.changed }
+    val baselineChanges get() = files.filter { it.baselineChanged }
+    val editedBankCount get() = files.count { it.projectEdited && !it.fileId.startsWith(ASM_PROJECT_MODULE_PREFIX) }
+    val moduleCount get() = files.count { it.fileId.startsWith(ASM_PROJECT_MODULE_PREFIX) }
 }
 
 /** Explicit opt-in rebase. The running project is never used as a conflict-resolution scratch tree. */
@@ -67,11 +75,14 @@ internal class AsmBaselineUpdateRepository(
             current.projectModuleFileIds.forEach { id -> authored[id] = captured.getValue("modules/${id.removePrefix(ASM_PROJECT_MODULE_PREFIX)}").toString(Charsets.UTF_8) }
             val (normalizedOld, normalizedProject) = normalizeNames(previous, candidate, old, authored, staging)
             val files = updated.map { (id, text) ->
+                val baselineChanged = old.getValue(id) != text
+                val projectEdited = authored.getValue(id) != old.getValue(id)
                 AsmBaselineFileUpdate(id, AsmThreeWayMerge.merge(normalizedOld.getValue(id), normalizedProject.getValue(id), text),
-                    old.getValue(id) != text || authored.getValue(id) != old.getValue(id))
+                    baselineChanged || projectEdited, baselineChanged, projectEdited,
+                    baselineChanged && asmBaselineDocumentationOnly(old.getValue(id), text))
             } + current.projectModuleFileIds.map { id ->
                 AsmBaselineFileUpdate(id, AsmTextMerge(listOf(AsmMergePiece(normalizedProject.getValue(id)))),
-                    normalizedProject.getValue(id) != authored.getValue(id))
+                    normalizedProject.getValue(id) != authored.getValue(id), baselineChanged = false, projectEdited = true)
             }
             require(inventory(current.root) == before) { "Project ASM changed while preparing the update. Preview it again." }
             return AsmBaselineUpdatePlan(projectFilePath, previous.augmentationRevision, candidate.augmentationRevision, files, staging, before, candidate)
@@ -191,4 +202,11 @@ internal class AsmBaselineUpdateRepository(
             }.toMap()
         }
     }
+}
+
+/** A lexical summary, not a claim of runtime equivalence; candidate compilation is still required. */
+internal fun asmBaselineDocumentationOnly(before: String, after: String): Boolean {
+    fun statements(text: String) = text.lineSequence().map { asmStatementSignature(asmExecutableCode(it)) }
+        .filter(String::isNotBlank).toList()
+    return statements(before) == statements(after)
 }

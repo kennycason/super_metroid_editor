@@ -131,6 +131,14 @@ internal class AsmWorkspaceState(
     private val sourceIndexLoader: suspend (String) -> AsmProjectWorkspace? = { projectRepository.load(it) },
     private val installedReferenceLoader: suspend () -> AsmReferenceWorkspace? = { repository.loadInstalled() },
     private val baselineUpdater: AsmBaselineUpdateRepository = AsmBaselineUpdateRepository(projectRepository),
+    private val backupRepository: AsmBaselineBackupRepository = AsmBaselineBackupRepository(projectRepository),
+    private val backupListLoader: suspend (String) -> AsmBaselineBackupList = { backupRepository.list(it) },
+    private val backupFolderOpener: (java.io.File) -> Unit = { folder ->
+        check(java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.OPEN)) {
+            "This desktop cannot open folders. Backup folder: ${folder.path}"
+        }
+        java.awt.Desktop.getDesktop().open(folder)
+    },
 ) {
     var workspace by mutableStateOf<AsmReferenceWorkspace?>(null)
         private set
@@ -148,6 +156,19 @@ internal class AsmWorkspaceState(
         private set
     var baselineUpdateMessage by mutableStateOf<String?>(null)
         private set
+    var baselineBackupsVisible by mutableStateOf(false)
+        private set
+    var baselineBackups by mutableStateOf<AsmBaselineBackupList?>(null)
+        private set
+    var baselineBackupsBusy by mutableStateOf(false)
+        private set
+    var baselineBackupsDeleting by mutableStateOf(false)
+        private set
+    var baselineBackupsError by mutableStateOf<String?>(null)
+        private set
+    var baselineBackupsMessage by mutableStateOf<String?>(null)
+        private set
+    private var backupRequestGeneration = 0L
     private var baselinePreviewBufferRevision = -1L
     var currentRomSha256 by mutableStateOf<String?>(null)
         private set
@@ -492,6 +513,7 @@ internal class AsmWorkspaceState(
 
     suspend fun bindProject(projectFilePath: String, enabled: Boolean, progressive: Boolean = false) {
         val changedProject = boundProjectFilePath != projectFilePath
+        if (changedProject || !enabled) resetBaselineBackups()
         if (changedProject) {
             val draft = baselineUpdatePlan
             baselineUpdatePlan = null
@@ -650,13 +672,89 @@ internal class AsmWorkspaceState(
             generatedRoomInput = null
             roomDataSnapshot = null
             clearRomPreview()
-            baselineUpdateMessage = "Updated to ${plan.nextRevision}. Previous ASM saved in ${result.backupDirectory.path}"
+            baselineUpdateMessage = "ASM build validation passed. Updated to ${plan.nextRevision}. Previous ASM saved in ${result.backupDirectory.path}"
             true
         } catch (problem: Exception) {
             if (plan.consumed) baselineUpdatePlan = null
             error = problem.message ?: "The baseline update could not be validated. The current project was not replaced."
             false
         } finally { busy = false; progress = null }
+    }
+
+    private fun resetBaselineBackups() {
+        backupRequestGeneration++
+        baselineBackupsVisible = false
+        baselineBackups = null
+        baselineBackupsBusy = false
+        baselineBackupsDeleting = false
+        baselineBackupsError = null
+        baselineBackupsMessage = null
+    }
+
+    fun closeBaselineBackups() { if (!baselineBackupsDeleting) resetBaselineBackups() }
+
+    suspend fun showBaselineBackups() {
+        if (busy || boundProjectFilePath.isBlank() || projectWorkspace == null) return
+        baselineBackupsVisible = true
+        refreshBaselineBackups()
+    }
+
+    private data class BackupOperationResult(
+        val listing: AsmBaselineBackupList? = null, val message: String? = null, val problem: String? = null,
+    )
+
+    suspend fun refreshBaselineBackups(): Boolean = backupOperation { path ->
+        BackupOperationResult(listing = withContext(Dispatchers.IO) { backupListLoader(path) })
+    }
+
+    suspend fun deleteBaselineBackup(selected: AsmBaselineBackup): Boolean = backupOperation(deleting = true) { path ->
+        var failure: Exception? = null
+        try { withContext(Dispatchers.IO) { backupRepository.delete(path, selected) } }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (problem: Exception) { failure = problem }
+        // Also refresh after partial removal/failed guards; preserve the deletion error if refresh fails.
+        val listing = try { withContext(Dispatchers.IO) { backupListLoader(path) } }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (problem: Exception) { if (failure == null) failure = problem; null }
+        BackupOperationResult(listing,
+            if (failure == null) "Previous ASM version deleted. Active project source was not changed." else null,
+            failure?.message)
+    }
+
+    suspend fun revealBaselineBackup(selected: AsmBaselineBackup): Boolean = backupOperation { path ->
+        withContext(Dispatchers.IO) { backupFolderOpener(backupRepository.folder(path, selected)) }
+        BackupOperationResult()
+    }
+
+    private suspend fun backupOperation(deleting: Boolean = false, action: suspend (String) -> BackupOperationResult): Boolean {
+        if (busy || baselineBackupsBusy || !baselineBackupsVisible || boundProjectFilePath.isBlank()) return false
+        val path = boundProjectFilePath
+        val binding = projectBindingGeneration
+        val request = ++backupRequestGeneration
+        baselineBackupsBusy = true
+        baselineBackupsDeleting = deleting
+        baselineBackupsError = null
+        return try {
+            val result = action(path)
+            if (path != boundProjectFilePath || binding != projectBindingGeneration || request != backupRequestGeneration) false
+            else {
+                result.listing?.let { baselineBackups = it }
+                baselineBackupsMessage = result.message
+                baselineBackupsError = result.problem
+                result.problem == null
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (problem: Exception) {
+            if (path == boundProjectFilePath && binding == projectBindingGeneration && request == backupRequestGeneration)
+                baselineBackupsError = problem.message ?: "Could not manage previous ASM versions."
+            false
+        } finally {
+            if (request == backupRequestGeneration) {
+                baselineBackupsBusy = false
+                baselineBackupsDeleting = false
+            }
+        }
     }
 
     fun showReferenceWorkspace() {

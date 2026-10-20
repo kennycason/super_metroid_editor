@@ -68,7 +68,11 @@ inputs to the active project. Keep these locally for recovery, but never commit
 them. Repository ignore rules cover existing snapshots; newly created snapshots
 also carry their own `.gitignore` for standalone project repositories. There is no
 automatic pruning; removing old backups should be an explicit action after
-checking the updated project.
+checking the updated project. In the expanded Project ASM settings, **Previous
+ASM versions…** shows their dates, baseline versions and ASM/cache sizes. Its
+confirmed **Delete…** removes only the selected backup pair, not the active project.
+These ASM-only copies are not full-project restore points; there is no one-click
+Restore action.
 
 The root `.gitattributes` excludes assembly from GitHub's language statistics
 without hiding ASM diffs or changing syntax highlighting. This is separate from
