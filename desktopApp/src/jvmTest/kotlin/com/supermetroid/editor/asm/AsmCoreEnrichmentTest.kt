@@ -26,10 +26,13 @@ class AsmCoreEnrichmentTest {
     @Test fun `v5 adds core documentation without changing any frozen v4 enrichment or names`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-4.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
-        assertEquals("super-metroid-ntsc-5", current.revision)
-        assertEquals(previous, current.copy(revision = previous.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith("core.") },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith("core.") }))
+        val v5 = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-5.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        assertEquals(previous, v5.copy(revision = previous.revision,
+            documentation = v5.documentation.filterNot { it.id.startsWith("core.") },
+            lineDocumentation = v5.lineDocumentation.filterNot { it.id.startsWith("core.") }))
+        assertEquals(v5.documentation.filter { it.id.startsWith("core.") }, current.documentation.filter { it.id.startsWith("core.") })
+        assertEquals(v5.lineDocumentation.filter { it.id.startsWith("core.") }, groups)
         assertEquals(15, current.documentation.count { it.id.startsWith("core.") })
         assertEquals(9, groups.size)
         assertEquals(182, groups.flatMap { it.lines }.count { it.comment != null })

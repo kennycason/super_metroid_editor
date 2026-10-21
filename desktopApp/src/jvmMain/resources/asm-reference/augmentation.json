@@ -1,5 +1,5 @@
 {
-  "revision": "super-metroid-ntsc-5",
+  "revision": "super-metroid-ntsc-6",
   "upstreamSourceSha256": "949d0de18cb91a6292c691eb6888645054528fe623f95d904e768b1841494950",
   "renames": [
     { "symbol": "SpeedBoostTimerResetValues", "replacement": "SpeedBoostTimerReloadTable" }
@@ -616,6 +616,279 @@
         "auto-joypad busy bit clears before reading the controller result. Derive newly",
         "pressed buttons from current AND (current XOR previous), then maintain held",
         "button repeat state. The no-request NMI path does not call this routine."
+      ]
+    },
+    {
+      "id": "transitions.pause-request",
+      "fileId": "bank_90.asm",
+      "symbol": "PauseCheck",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Accept a newly pressed Start only in gameplay state $08, outside Ceres, with",
+        "no power-bomb flag, frozen-time flag or enemy-pause door-transition flag set.",
+        "Prime the brightness fade and select state $0C; do not load the pause menu here."
+      ]
+    },
+    {
+      "id": "transitions.pause-darken",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_C_Pausing_NormalGameplayDarkening",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Gameplay continues while brightness decreases. Test only the low brightness",
+        "nibble for zero, then advance to pause graphics setup. This differs from the",
+        "unpause menu fade-out, which waits for the full brightness shadow to equal $80."
+      ]
+    },
+    {
+      "id": "transitions.pause-setup",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_D_Pausing_LoadingPauseScreen",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Replace the gameplay display while dark: suspend HDMA and animated tiles, back",
+        "up graphics state, run the room's pause hook, then load menu tilemaps and colors.",
+        "PHP/PHB protect the hook caller; PHK plus PEA form a synthetic long return frame.",
+        "The indirect JML uses a 24-bit hook pointer. Its RTL consumes that frame before",
+        "PLB/PLP restore the separately saved bank and status."
+      ]
+    },
+    {
+      "id": "transitions.pause-fade-in",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_E_Paused_LoadingPauseScreen",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Draw the pause menu while increasing brightness. An exact $0F shadow means",
+        "full brightness with forced blank clear; then clear fade timers and advance",
+        "to the interactive paused state. No ordinary gameplay handler is called here."
+      ]
+    },
+    {
+      "id": "transitions.pause-active",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_F_Paused_MapAndItemScreens",
+      "expectedCode": "PHB",
+      "paragraphs": [
+        "Maintain timed held/new input, the selected pause page, HUD and palette animation.",
+        "This uses MainPauseRoutine, not GameState_8_MainGameplay. The outer main loop",
+        "still services music/HDMA logic, sound queues, OAM and the NMI frame handshake."
+      ]
+    },
+    {
+      "id": "transitions.pause-pages",
+      "fileId": "bank_82.asm",
+      "symbol": "MainPauseRoutine",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Dispatch the pause menu's own eight-state machine, independently of GameState.",
+        "Indices 0 and 1 are the interactive map and equipment pages; 2..4 switch from",
+        "map to equipment, and 5..7 switch back. Double the index for bank-local word",
+        "pointers. The table has no bounds check; handlers return with RTS, this entry RTL."
+      ]
+    },
+    {
+      "id": "transitions.pause-start",
+      "fileId": "bank_82.asm",
+      "symbol": "Handle_PauseScreen_StartButton",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Use the pause menu's timed held/new input stream, unlike PauseCheck's new-only",
+        "controller input. Start queues confirmation, primes fade-out and flashes the",
+        "button label before incrementing GameState, normally $0F to unpausing state $10.",
+        "Refresh the L/R/Start tilemap even when no Start input was accepted."
+      ]
+    },
+    {
+      "id": "transitions.unpause-darken",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_10_Unpausing_LoadingNormalGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Keep drawing the selected pause page and pressed-Start highlight while fading",
+        "out. Wait for exactly $80 (forced blank set, brightness zero), not just a zero",
+        "brightness nibble, before advancing to gameplay graphics restoration."
+      ]
+    },
+    {
+      "id": "transitions.unpause-restore",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_11_Unpausing_LoadingNormalGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Rebuild the gameplay display before fading it in: restore saved colors and",
+        "graphics state, reload gameplay assets, then run the room's long unpause hook.",
+        "PHK/PEA build the hook's RTL return frame; the separate saved bank and status",
+        "remain on the stack until after HDMA, animated tiles and movement sounds resume.",
+        "Advance GameState before restoring the handler's outer saved processor status."
+      ]
+    },
+    {
+      "id": "transitions.unpause-brighten",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_12_Unpausing_NormalGameplayBrightening",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Run gameplay while the restored display brightens. On an exact $0F brightness",
+        "shadow, clear fade timers and explicitly select gameplay state $08.",
+        "This state resets to $08 instead of advancing to the next numeric game state."
+      ]
+    },
+    {
+      "id": "transitions.resume-graphics",
+      "fileId": "bank_80.asm",
+      "symbol": "ResumeGameplay",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Reload gameplay graphics while interrupts are controlled for direct VRAM work.",
+        "Mask IRQs, stop DMA, disable NMI and h/v-counter interrupts, then rebuild CRE,",
+        "tileset, background, visible-room and PLM graphics. Re-enable the interrupt",
+        "sources and restore the caller's saved bank and processor status before RTL."
+      ]
+    },
+    {
+      "id": "transitions.door-delay-dispatch",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_9_HitADoorBlock",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Call the bank-$82 preliminary door/elevator phase using a synthetic near return:",
+        "PEA pushes .manualReturn-1 and the indirect JMP reaches a phase ending in RTS.",
+        "Carry clear keeps state $09; carry set advances the state and tail-calls",
+        "GameState_A_LoadingNextRoom immediately in the same outer-loop iteration."
+      ]
+    },
+    {
+      "id": "transitions.door-elevator",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_HandleElevator",
+      "expectedCode": "LDA.W ElevatorProperties",
+      "paragraphs": [
+        "Ordinary doors and elevators with negative direction finish this preliminary",
+        "phase immediately with carry set. The other elevator path selects the regional",
+        "downward delay and executes its first timer decrement in the same call."
+      ]
+    },
+    {
+      "id": "transitions.door-elevator-wait",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_Wait48FramesForDownElevator",
+      "expectedCode": "DEC.W DownwardsElevatorDelayTimer",
+      "paragraphs": [
+        "Decrement the regional delay before testing its sign. A resulting zero still",
+        "runs enemies and draws the scene with carry clear; only a negative result",
+        "returns carry set to release game state $09. This path draws inanimate Samus",
+        "rather than calling her ordinary gameplay state handlers."
+      ]
+    },
+    {
+      "id": "transitions.door-setup",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_A_LoadingNextRoom",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Prepare the room transition once before entering the phase dispatcher. Set the",
+        "transition flags, choose fade target colors while retaining selected HUD/timer",
+        "colors, queue the door sound and inhibit further ordinary sound requests.",
+        "Select WaitForSoundsToFinish and advance GameState, normally $0A to $0B.",
+        "Later phases return to the main frame loop; the room is not loaded in one call."
+      ]
+    },
+    {
+      "id": "transitions.door-phase-dispatch",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_B_LoadingNextRoom",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Dispatch one saved DoorTransitionFunction per call through an indirect near JMP.",
+        "PEA supplies the return word minus one expected by the phase's RTS. Phases may",
+        "select another data bank; save and restore the caller's bank around dispatch.",
+        "After the phase returns, draw an active countdown timer before the common exit."
+      ]
+    },
+    {
+      "id": "transitions.door-sound-queues",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_WaitForSoundsToFinish",
+      "expectedCode": "PHP",
+      "paragraphs": [
+        "Keep running enemies and drawing while all three sound-library queues drain.",
+        "Each queue is empty when (next index - consumed index) AND $0F is zero.",
+        "This checks queued requests, not whether a sound has finished playing on the SPC.",
+        "Only after all three rings are empty select the palette fade-out phase."
+      ]
+    },
+    {
+      "id": "transitions.door-palette-out",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_FadeOutTheScreen",
+      "expectedCode": "JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C",
+      "paragraphs": [
+        "Fade palette entries toward the targets prepared by state $0A. This is palette",
+        "interpolation, not HandleFadingOut's display-brightness fade. While unfinished,",
+        "run enemies and draw the scene; on carry set, schedule door-header/HDMA setup."
+      ]
+    },
+    {
+      "id": "transitions.door-hdma-irq",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ",
+      "expectedCode": "JSR.W Load_Door_Header",
+      "paragraphs": [
+        "Load door metadata, remove old HDMA objects and clear their processing-enable",
+        "bit. Request scanline IRQ command $08 through DP_NextIRQCmd, allowing the",
+        "interrupt chain to adopt it, then schedule camera alignment."
+      ]
+    },
+    {
+      "id": "transitions.door-alignment",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_ScrollScreenToAlignment",
+      "expectedCode": "PEA.W $8F00",
+      "paragraphs": [
+        "Align the camera axis perpendicular to travel: Y for horizontal doors, X for",
+        "vertical doors. Each unfinished call moves that coordinate by one pixel toward",
+        "a $100-pixel boundary; low bytes $80..$FF increment, $01..$7F decrement.",
+        "The unaligned word load places the coordinate's pixel low byte in A's high byte.",
+        "Immediate BIT #$FF00 tests it for zero but preserves the load's N flag for BMI.",
+        "Both paths refresh scrolling. A step reaching alignment still returns first;",
+        "only an already-aligned entry selects FixDoorsMovingUp."
+      ]
+    },
+    {
+      "id": "transitions.door-load-room",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_LoadRoomHeader_SetupMap_Decompress",
+      "expectedCode": "PEA.W RoomHeaders>>8",
+      "paragraphs": [
+        "Select the room-data bank and preserve elevator-related explored-map state",
+        "around loading the destination room and state headers. Initialise room effects",
+        "and decompress level/scroll/CRE data before scheduling scrolling setup.",
+        "This is one phase of state $0B, not the complete destination-room setup."
+      ]
+    },
+    {
+      "id": "transitions.door-music-wait",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_WaitForMusicQueueClear_and_LoadMusic",
+      "expectedCode": "JSL.L CheckIfMusicIsQueued",
+      "paragraphs": [
+        "Wait for all music-queue timer words to clear; this is not a test that the",
+        "currently playing track has ended. Once clear, select the Samus-placement",
+        "correction phase and request the destination music only if the track changed."
+      ]
+    },
+    {
+      "id": "transitions.door-finish",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish",
+      "expectedCode": "JSL.L AnimatedTilesObject_Handler",
+      "paragraphs": [
+        "Run destination-room animated tiles, enemies and enemy projectiles while",
+        "interpolating colors toward the room's target palette. Draw Samus through the",
+        "inanimate path rather than her ordinary state handlers. When the palette helper",
+        "returns carry set, restore sound queuing, clear transition flags and select",
+        "gameplay state $08. This is distinct from the pause/unpause brightness fades."
       ]
     }
   ],
@@ -1573,6 +1846,491 @@
         {"expectedCode":"JSL.L DecrementSamusHurtTimers_ClearActiveEnemyIndicesLists","comment":"Tick Samus's hurt timers and terminate the active/interactive enemy lists."},
         {"expectedCode":"PLP"},
         {"expectedCode":"RTS","comment":"Return to the outer loop; this handler does not publish the frame itself."}
+      ]
+    },
+    {
+      "id": "transitions.GameState_C_Pausing_NormalGameplayDarkening.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_C_Pausing_NormalGameplayDarkening",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"JSR.W GameState_8_MainGameplay","comment":"Keep gameplay running while the display darkens."},
+        {"expectedCode":"JSL.L HandleFadingOut","comment":"Advance the display-brightness fade after the gameplay update."},
+        {"expectedCode":"LDA.B DP_Brightness","comment":"Read the brightness shadow; the following mask ignores adjacent data."},
+        {"expectedCode":"AND.W #$000F","comment":"Test just the brightness nibble, not the forced-blank bit."},
+        {"expectedCode":"BNE .return","comment":"Wait for brightness zero before replacing gameplay graphics."},
+        {"expectedCode":"JSL.L EnableNMI","comment":"Keep NMI enabled for the upcoming pause-menu setup."},
+        {"expectedCode":"STZ.W ScreenFadeDelay","comment":"Clear the completed fade's delay."},
+        {"expectedCode":"STZ.W ScreenFadeCounter","comment":"Clear the completed fade's counter."},
+        {"expectedCode":"INC.W GameState","comment":"Advance the current state, normally from $0C to pause-menu setup $0D."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_D_Pausing_LoadingPauseScreen.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_D_Pausing_LoadingPauseScreen",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB","comment":"Use bank $82 while calling the pause setup routines."},
+        {"expectedCode":"JSL.L Disable_HDMAObjects","comment":"Stop HDMA-object processing before repurposing the display."},
+        {"expectedCode":"SEP #$20","comment":"Use byte writes for the HDMA enable shadow and register."},
+        {"expectedCode":"LDA.B #$00"},
+        {"expectedCode":"STA.B DP_HDMAEnable","comment":"Clear the channels that future NMI register work would enable."},
+        {"expectedCode":"STA.W $420C","comment":"Disable HDMA in hardware immediately as well."},
+        {"expectedCode":"REP #$20","comment":"Restore word-sized accumulator operations."},
+        {"expectedCode":"JSL.L Disable_AnimatedTilesObjects","comment":"Suspend animated-tile object processing during the pause menu."},
+        {"expectedCode":"JSR.W Backup_BG2Tilemap_for_PauseMenu","comment":"Back up the gameplay BG2 tilemap before loading pause graphics."},
+        {"expectedCode":"PHP","comment":"Preserve the caller's processor status around the room's pause hook."},
+        {"expectedCode":"PHB","comment":"Preserve the data bank independently of the synthetic return address."},
+        {"expectedCode":"PHK","comment":"Push bank $82 as the bank byte of the hook's RTL return frame."},
+        {"expectedCode":"PEA.W .returnPEA-1","comment":"Push the return word minus one because RTL increments it."},
+        {"expectedCode":"JML.W [PauseHook_Pause]","comment":"Jump through the room's 24-bit pause-hook pointer; the hook returns with RTL."},
+        {"expectedCode":".returnPEA:"},
+        {"expectedCode":"PLB","comment":"Restore the data bank after the hook's RTL consumed its return frame."},
+        {"expectedCode":"PLP","comment":"Restore the status saved around the hook."},
+        {"expectedCode":"JSL.L Cancel_Sound_Effects","comment":"Cancel gameplay sound effects before showing the pause menu."},
+        {"expectedCode":"JSR.W Backup_SomeGraphicsState_for_PauseScreen","comment":"Save the graphics shadows needed when gameplay resumes."},
+        {"expectedCode":"JSL.L LoadPauseMenuTiles_ClearBG2Tilemap","comment":"Load pause graphics and clear its BG2 tilemap."},
+        {"expectedCode":"JSL.L LoadPauseScreen_BaseTilemaps","comment":"Load the pause screen's base tilemaps."},
+        {"expectedCode":"JSL.L Load_PauseMenuMapTilemap_and_AreaLabel","comment":"Build the current area's map and area-name display."},
+        {"expectedCode":"JSR.W BackupGameplayPalettes_LoadPauseScreenPalettes","comment":"Keep the gameplay palette and install pause-screen colors."},
+        {"expectedCode":"JSR.W ContinueInitializingPauseMenu","comment":"Finish pause-menu state and scroll initialisation."},
+        {"expectedCode":"LDA.W #$0001","comment":"Prime both timers for the pause-menu fade-in."},
+        {"expectedCode":"STA.W ScreenFadeDelay"},
+        {"expectedCode":"STA.W ScreenFadeCounter"},
+        {"expectedCode":"STZ.W PauseMenu_MapScrollLeftArrowAnimationFrame","comment":"Restart the map's left-arrow animation."},
+        {"expectedCode":"LDA.W #$0001"},
+        {"expectedCode":"STA.W PauseMenu_PaletteAnimationTimer","comment":"Prime pause-palette animation with a one-tick timer."},
+        {"expectedCode":"STZ.W MapScrolling_Direction","comment":"Start with no map-scroll direction selected."},
+        {"expectedCode":"STZ.W MapScrolling_SpeedIndex","comment":"Start the map-scroll speed sequence from its first entry."},
+        {"expectedCode":"JSL.L QueueClearingOfFXTilemap","comment":"Queue clearing of the gameplay FX tilemap."},
+        {"expectedCode":"INC.W GameState","comment":"Advance from setup to the pause-menu fade-in state."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_E_Paused_LoadingPauseScreen.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_E_Paused_LoadingPauseScreen",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"JSL.L Draw_PauseMenu_during_FadeIn","comment":"Draw the pause screen while it is fading in."},
+        {"expectedCode":"JSL.L HandleFadingIn","comment":"Advance the brightness fade after drawing the menu."},
+        {"expectedCode":"SEP #$20","comment":"Read the byte-sized brightness shadow."},
+        {"expectedCode":"LDA.B DP_Brightness"},
+        {"expectedCode":"CMP.B #$0F","comment":"Require full brightness with forced blank clear."},
+        {"expectedCode":"BNE .return","comment":"Keep fading until the shadow is exactly $0F."},
+        {"expectedCode":"REP #$20"},
+        {"expectedCode":"STZ.W ScreenFadeDelay","comment":"Clear the completed fade's delay."},
+        {"expectedCode":"STZ.W ScreenFadeCounter","comment":"Clear the completed fade's counter."},
+        {"expectedCode":"INC.W GameState","comment":"Advance to the interactive paused state, normally $0E to $0F."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_F_Paused_MapAndItemScreens.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_F_Paused_MapAndItemScreens",
+      "lines": [
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"LDA.W #$0003","comment":"Select the pause menu's held-input repeat mode."},
+        {"expectedCode":"JSL.L UpdateHeldInput","comment":"Update timed held/new input before processing the pause page."},
+        {"expectedCode":"JSL.L MainPauseRoutine","comment":"Dispatch the active map, equipment or page-transition handler."},
+        {"expectedCode":"JSL.L HandleHUDTilemap_PausedAndRunning","comment":"Maintain the HUD without running the ordinary gameplay handler."},
+        {"expectedCode":"JSR.W Handle_PauseScreen_PaletteAnimation","comment":"Advance the pause-screen palette animation."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.MainPauseRoutine.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "MainPauseRoutine",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"PHB"},
+        {"expectedCode":"PHK"},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"REP #$30","comment":"Use word-sized registers for the pause page selector."},
+        {"expectedCode":"LDA.W PauseMenu_MenuIndex","comment":"Read the pause menu's own state index, separate from GameState."},
+        {"expectedCode":"ASL","comment":"Convert the page-state index into a word-pointer byte offset."},
+        {"expectedCode":"TAX","comment":"Index the bank-local pause-handler table."},
+        {"expectedCode":"JSR.W (.pointers,X)","comment":"Run one pause-page handler using a near return."},
+        {"expectedCode":"PLB","comment":"Restore the caller's data bank."},
+        {"expectedCode":"PLP","comment":"Restore the caller's processor status."},
+        {"expectedCode":"RTL","comment":"Return to the long caller after the selected near handler finishes."},
+        {"expectedCode":".pointers:"},
+        {"expectedCode":"dw PauseMenu_0_MapScreen","comment":"Index 0: interactive map page."},
+        {"expectedCode":"dw PauseScreen_1_EquipmentScreen","comment":"Index 1: interactive equipment page."},
+        {"expectedCode":"dw PauseMenu_2_MapScreenToEquipmentScreen_FadingOut","comment":"Index 2: darken the map before switching to equipment."},
+        {"expectedCode":"dw PauseMenu_3_MapScreenToEquipmentScreen_LoadEquipmentScreen","comment":"Index 3: load the equipment page while dark."},
+        {"expectedCode":"dw PauseMenu_4_MapScreenToEquipmentScreen_FadingIn","comment":"Index 4: brighten the equipment page."},
+        {"expectedCode":"dw PauseMenu_5_EquipmentScreenToMapScreen_FadingOut","comment":"Index 5: darken equipment before switching to the map."},
+        {"expectedCode":"dw PauseMenu_6_EquipmentScreenToMapScreen_LoadMapScreen","comment":"Index 6: load the map page while dark."},
+        {"expectedCode":"dw PauseMenu_7_EquipmentScreenToMapScreen_FadingIn","comment":"Index 7: brighten the map page."}
+      ]
+    },
+    {
+      "id": "transitions.GameState_10_Unpausing_LoadingNormalGameplay.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_10_Unpausing_LoadingNormalGameplay",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"JSL.L Handle_PauseMenu_StartPressedHighlight","comment":"Keep the pressed-Start highlight active during menu fade-out."},
+        {"expectedCode":"JSR.W Draw_PauseMenu_During_FadeOut","comment":"Draw the currently selected pause page while darkening it."},
+        {"expectedCode":"JSL.L HandleFadingOut","comment":"Advance the display-brightness fade."},
+        {"expectedCode":"SEP #$20","comment":"Test the byte-sized brightness and forced-blank shadow."},
+        {"expectedCode":"LDA.B DP_Brightness"},
+        {"expectedCode":"CMP.B #$80","comment":"Wait for exactly $80: brightness zero and forced blank set."},
+        {"expectedCode":"BNE .return","comment":"Keep the pause screen active until the fade reaches forced blank."},
+        {"expectedCode":"JSL.L EnableNMI","comment":"Keep NMI enabled before the gameplay restoration phase."},
+        {"expectedCode":"REP #$20"},
+        {"expectedCode":"STZ.W ScreenFadeDelay","comment":"Clear the completed fade's delay."},
+        {"expectedCode":"STZ.W ScreenFadeCounter","comment":"Clear the completed fade's counter."},
+        {"expectedCode":"INC.W GameState","comment":"Advance to gameplay graphics restoration, normally state $11."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_11_Unpausing_LoadingNormalGameplay.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_11_Unpausing_LoadingNormalGameplay",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"JSR.W Clear_Samus_Beam_Tiles","comment":"Clear the Samus beam graphics before reloading gameplay assets."},
+        {"expectedCode":"JSR.W ContinueInitialising_GameplayResume","comment":"Restore saved colors, PPU setup, scrolling, beam graphics and pause state."},
+        {"expectedCode":"JSL.L ResumeGameplay","comment":"Reload gameplay graphics with the interrupt handling provided by ResumeGameplay."},
+        {"expectedCode":"JSR.W Restore_SomeGraphicsState_from_PauseScreen","comment":"Restore the gameplay graphics-register shadows saved on pause."},
+        {"expectedCode":"JSR.W Restore_BG2Tilemap_from_PauseMenu","comment":"Restore the backed-up BG2 tilemap."},
+        {"expectedCode":"REP #$30","comment":"Re-establish word-sized registers before setting timers and calling the hook."},
+        {"expectedCode":"LDA.W #$0001","comment":"Prime the gameplay fade-in timers."},
+        {"expectedCode":"STA.W ScreenFadeDelay"},
+        {"expectedCode":"STA.W ScreenFadeCounter"},
+        {"expectedCode":"PHP","comment":"Preserve processor status around the room's unpause hook."},
+        {"expectedCode":"PHB","comment":"Preserve the data bank separately from the hook's return frame."},
+        {"expectedCode":"PHK","comment":"Supply bank $82 for the synthetic RTL return."},
+        {"expectedCode":"PEA.W .returnPEA-1","comment":"Supply the hook's return word minus one for RTL."},
+        {"expectedCode":"JML.W [PauseHook_Unpause]","comment":"Jump through the room's 24-bit unpause-hook pointer."},
+        {"expectedCode":".returnPEA:"},
+        {"expectedCode":"JSL.L Enable_HDMAObjects","comment":"Re-enable HDMA-object processing after the room's hook completes."},
+        {"expectedCode":"JSL.L Enable_AnimatedTilesObjects","comment":"Resume animated-tile object processing."},
+        {"expectedCode":"JSL.L Queue_Samus_Movement_SoundEffects","comment":"Queue movement sounds appropriate to Samus's resumed state."},
+        {"expectedCode":"PLB","comment":"Restore the data bank saved around the unpause hook."},
+        {"expectedCode":"PLP","comment":"Restore the status saved around the unpause hook."},
+        {"expectedCode":"INC.W GameState","comment":"Advance to gameplay fade-in, normally state $12."},
+        {"expectedCode":"PLP","comment":"Restore the status saved on entry to the game-state handler."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_12_Unpausing_NormalGameplayBrightening.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_12_Unpausing_NormalGameplayBrightening",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"JSR.W GameState_8_MainGameplay","comment":"Resume gameplay simulation before applying each fade-in step."},
+        {"expectedCode":"JSL.L HandleFadingIn","comment":"Brighten the gameplay display after its update."},
+        {"expectedCode":"SEP #$20","comment":"Check the byte-sized display-brightness shadow."},
+        {"expectedCode":"LDA.B DP_Brightness"},
+        {"expectedCode":"CMP.B #$0F","comment":"Require exactly $0F, including forced blank being clear."},
+        {"expectedCode":"BNE .return","comment":"Keep using the gameplay fade-in handler until fully bright."},
+        {"expectedCode":"REP #$20"},
+        {"expectedCode":"STZ.W ScreenFadeDelay","comment":"Clear the completed fade's delay."},
+        {"expectedCode":"STZ.W ScreenFadeCounter","comment":"Clear the completed fade's counter."},
+        {"expectedCode":"LDA.W #$0008","comment":"Select ordinary gameplay explicitly rather than incrementing the state."},
+        {"expectedCode":"STA.W GameState","comment":"Return the outer dispatcher to state $08."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.Handle_PauseScreen_StartButton.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "Handle_PauseScreen_StartButton",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"LDA.W Input_TimedHeldNew","comment":"Read the pause menu's timed held/new button stream."},
+        {"expectedCode":"BIT.W #$1000","comment":"Test the Start button's $1000 bit."},
+        {"expectedCode":"BEQ +","comment":"Without Start, only refresh the menu button-label tilemap."},
+        {"expectedCode":"LDA.W #$0038","comment":"Select the pause-menu confirmation sound."},
+        {"expectedCode":"JSL.L QueueSound_Lib1_Max6","comment":"Queue confirmation in sound library 1."},
+        {"expectedCode":"LDA.W #$0001","comment":"Prime the pause-screen fade-out timers."},
+        {"expectedCode":"STA.W ScreenFadeDelay","comment":"Set the brightness-step interval to one."},
+        {"expectedCode":"STA.W ScreenFadeCounter","comment":"Prime the first brightness step."},
+        {"expectedCode":"LDA.W PauseMenu_ButtonLabelMode","comment":"Remember the existing button-label palette mode."},
+        {"expectedCode":"PHA","comment":"Keep that mode while temporarily selecting the Start-label colors."},
+        {"expectedCode":"LDA.W #$0001"},
+        {"expectedCode":"STA.W PauseMenu_ButtonLabelMode","comment":"Use label mode 1 for the Start-button palette update."},
+        {"expectedCode":"JSR.W Set_PauseScreen_ButtonLabelPalettes","comment":"Apply the temporary label-palette selection."},
+        {"expectedCode":"PLA","comment":"Recover the previous button-label mode."},
+        {"expectedCode":"STA.W PauseMenu_ButtonLabelMode","comment":"Restore the selection used by the normal pause page."},
+        {"expectedCode":"LDA.W #$000B","comment":"Give the pressed-button highlight an eleven-tick lifetime."},
+        {"expectedCode":"STA.W PauseMenu_ButtonPressedHighlightTimer","comment":"Store the highlight lifetime before beginning unpause."},
+        {"expectedCode":"INC.W GameState","comment":"Advance the game state, normally from paused $0F to fade-out $10."},
+        {"expectedCode":"+   JSR.W Update_PauseMenu_L_R_Start_VRAMTilemap","comment":"Refresh the L/R/Start label tilemap on both input paths."},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.GameState_9_HitADoorBlock.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_9_HitADoorBlock",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30","comment":"Use word-sized registers for the transition function and carry result."},
+        {"expectedCode":"PEA.W .manualReturn-1","comment":"Build the near RTS return frame for the indirect transition call."},
+        {"expectedCode":"JMP.W (DoorTransitionFunction)","comment":"Run the current bank-$82 transition phase without pushing a second return."},
+        {"expectedCode":".manualReturn:"},
+        {"expectedCode":"BCS .gameStateA","comment":"Carry set means the elevator/pre-door delay has finished."},
+        {"expectedCode":"PLP","comment":"Carry clear keeps this game state active for the next iteration."},
+        {"expectedCode":"RTS"},
+        {"expectedCode":".gameStateA:"},
+        {"expectedCode":"INC.W GameState","comment":"Advance the current state, normally from $09 to $0A."},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"JMP.W GameState_A_LoadingNextRoom","comment":"Tail-call room-transition setup immediately instead of waiting another frame."}
+      ]
+    },
+    {
+      "id": "transitions.GameState_B_LoadingNextRoom.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "GameState_B_LoadingNextRoom",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"PHB","comment":"Preserve the data bank across phases that select room-data banks."},
+        {"expectedCode":"REP #$30","comment":"Use word-sized registers for the indirect phase dispatch."},
+        {"expectedCode":"PEA.W .manualReturn-1","comment":"Push a near return word minus one for the phase's RTS."},
+        {"expectedCode":"JMP.W (DoorTransitionFunction)","comment":"Jump to the saved transition phase; it returns to .manualReturn."},
+        {"expectedCode":".manualReturn:"},
+        {"expectedCode":"LDA.W TimerStatus","comment":"Check whether an escape/countdown timer must still be drawn."},
+        {"expectedCode":"BEQ .return","comment":"Skip timer drawing when no timer is active."},
+        {"expectedCode":"JSL.L DrawTimer","comment":"Keep the active countdown visible during room loading."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLB","comment":"Restore the data bank used by the outer frame loop."},
+        {"expectedCode":"PLP","comment":"Restore the outer caller's processor status."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_HandleElevator.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_HandleElevator",
+      "lines": [
+        {"expectedCode":"LDA.W ElevatorProperties","comment":"Check whether this door is associated with an elevator."},
+        {"expectedCode":"BEQ .return","comment":"Ordinary doors finish this preliminary phase immediately."},
+        {"expectedCode":"LDA.W #$0000","comment":"Select Samus command 0 for the elevator path."},
+        {"expectedCode":"JSL.L Run_Samus_Command","comment":"Run the elevator path's Samus command before testing its direction."},
+        {"expectedCode":"LDA.W ElevatorDirection","comment":"Read the elevator's signed direction field."},
+        {"expectedCode":"BMI .return","comment":"A negative direction needs no down-elevator waiting phase."},
+        {"expectedCode":"LDA.W #$0030*!FPS","comment":"Load the region-scaled downward-elevator delay."},
+        {"expectedCode":"STA.W DownwardsElevatorDelayTimer","comment":"Initialise the delay timer before its first decrement."},
+        {"expectedCode":"LDA.W #DoorTransitionFunction_Wait48FramesForDownElevator","comment":"Select the dedicated down-elevator waiting phase."},
+        {"expectedCode":"STA.W DoorTransitionFunction","comment":"Save that phase for later outer-loop iterations."},
+        {"expectedCode":"JMP.W DoorTransitionFunction_Wait48FramesForDownElevator","comment":"Run the first timer step immediately in this same call."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"SEC","comment":"Report completion through carry rather than changing GameState here."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_Wait48FramesForDownElevator.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_Wait48FramesForDownElevator",
+      "lines": [
+        {"expectedCode":"DEC.W DownwardsElevatorDelayTimer","comment":"Decrement first; a zero result still takes the waiting path."},
+        {"expectedCode":"BMI .return","comment":"Finish only after the timer becomes negative."},
+        {"expectedCode":"JSL.L Determine_Which_Enemies_to_Process","comment":"Refresh the enemy lists while the elevator delay is active."},
+        {"expectedCode":"JSL.L Main_Enemy_Routine","comment":"Run the main enemy routine during the waiting phase."},
+        {"expectedCode":"JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles","comment":"Draw the actors and projectiles during the delay."},
+        {"expectedCode":"JSR.W Draw_Inanimate_Samus_Bank82","comment":"Draw Samus through the inanimate drawing path."},
+        {"expectedCode":"CLC","comment":"Tell game state $09 to stay in this waiting phase."},
+        {"expectedCode":"RTS"},
+        {"expectedCode":".return:"},
+        {"expectedCode":"SEC","comment":"Tell game state $09 that transition setup may begin."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_WaitForSoundsToFinish.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_WaitForSoundsToFinish",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"JSL.L Determine_Which_Enemies_to_Process","comment":"Keep selecting and running enemies while queued sounds drain."},
+        {"expectedCode":"JSL.L Main_Enemy_Routine","comment":"Run the main enemy routine on this transition path."},
+        {"expectedCode":"JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles","comment":"Draw actors and projectiles while waiting for the queues."},
+        {"expectedCode":"JSR.W Draw_Inanimate_Samus_Bank82","comment":"Draw Samus without advancing her ordinary state handlers here."},
+        {"expectedCode":"SEP #$20","comment":"Compare the sound-ring indices as bytes."},
+        {"expectedCode":"LDA.W APU_SoundQueueNextIndexLib1","comment":"Read sound library 1's next insertion index."},
+        {"expectedCode":"SEC","comment":"Subtract the consumed index without an incoming borrow."},
+        {"expectedCode":"SBC.W APU_SoundQueueStartIndexLib1","comment":"Measure outstanding entries in sound library 1."},
+        {"expectedCode":"AND.B #$0F","comment":"Reduce the difference modulo the sixteen-entry ring."},
+        {"expectedCode":"BNE .return","comment":"Keep waiting while library 1 has queued entries."},
+        {"expectedCode":"LDA.W APU_SoundQueueNextIndexLib2","comment":"Check library 2 only after library 1's queue is empty."},
+        {"expectedCode":"SEC"},
+        {"expectedCode":"SBC.W APU_SoundQueueStartIndexLib2","comment":"Measure outstanding entries in sound library 2."},
+        {"expectedCode":"AND.B #$0F","comment":"Apply the same sixteen-entry ring mask to library 2."},
+        {"expectedCode":"BNE .return","comment":"Keep waiting while library 2 has queued entries."},
+        {"expectedCode":"LDA.W APU_SoundQueueNextIndexLib3","comment":"Check library 3 only after the first two queues are empty."},
+        {"expectedCode":"SEC"},
+        {"expectedCode":"SBC.W APU_SoundQueueStartIndexLib3","comment":"Measure outstanding entries in sound library 3."},
+        {"expectedCode":"AND.B #$0F","comment":"Apply the same sixteen-entry ring mask to library 3."},
+        {"expectedCode":"BNE .return","comment":"Do not advance until all three queue-index differences are zero."},
+        {"expectedCode":"REP #$20","comment":"Restore word-sized access for the transition-function pointer."},
+        {"expectedCode":"LDA.W #DoorTransitionFunction_FadeOutTheScreen","comment":"Select palette fade-out as the next transition phase."},
+        {"expectedCode":"STA.W DoorTransitionFunction","comment":"Schedule that phase for the next state-$0B dispatch."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_FadeOutTheScreen.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_FadeOutTheScreen",
+      "lines": [
+        {"expectedCode":"JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C","comment":"Advance palette interpolation toward the target colors, not display brightness."},
+        {"expectedCode":"BCS +","comment":"Carry set means the palette transition has completed."},
+        {"expectedCode":"JSL.L Determine_Which_Enemies_to_Process","comment":"Continue enemy-list selection while the palette fade is unfinished."},
+        {"expectedCode":"JSL.L Main_Enemy_Routine","comment":"Run the main enemy routine during the palette fade."},
+        {"expectedCode":"JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles","comment":"Draw actors and projectiles during the fade."},
+        {"expectedCode":"JSR.W Draw_Inanimate_Samus_Bank82","comment":"Draw Samus through the inanimate path."},
+        {"expectedCode":"RTS","comment":"Return without changing phases while palette interpolation is unfinished."},
+        {"expectedCode":"+   LDA.W #DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ","comment":"Select the door-header and HDMA/IRQ setup phase."},
+        {"expectedCode":"STA.W DoorTransitionFunction","comment":"Schedule the next phase rather than running it recursively here."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_LoadDoorHeader_DeleteHDMAObjects_IRQ",
+      "lines": [
+        {"expectedCode":"JSR.W Load_Door_Header","comment":"Load the destination door header before aligning the old room's camera."},
+        {"expectedCode":"JSL.L Delete_HDMAObjects","comment":"Delete the old room's HDMA objects."},
+        {"expectedCode":"LDA.W #$8000","comment":"Select the HDMA-object processing enable bit."},
+        {"expectedCode":"TRB.W HDMAObject_Enable","comment":"Clear that processing bit without replacing the remaining flags."},
+        {"expectedCode":"LDA.W #$0008","comment":"Request IRQ command $08, the door-transition HUD drawing entry."},
+        {"expectedCode":"STA.B DP_NextIRQCmd","comment":"Queue the command for the IRQ chain rather than replacing its current command."},
+        {"expectedCode":"LDA.W #DoorTransitionFunction_ScrollScreenToAlignment","comment":"Select perpendicular-axis camera alignment as the next phase."},
+        {"expectedCode":"STA.W DoorTransitionFunction","comment":"Save the next transition-function pointer."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_ScrollScreenToAlignment.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_ScrollScreenToAlignment",
+      "lines": [
+        {"expectedCode":"PEA.W $8F00","comment":"Prepare bank $8F as the data bank used by this phase."},
+        {"expectedCode":"PLB"},
+        {"expectedCode":"PLB","comment":"The second pull selects $8F after the low byte was discarded."},
+        {"expectedCode":"LDA.W DoorDirection","comment":"Read the transition direction."},
+        {"expectedCode":"BIT.W #$0002","comment":"Bit 1 distinguishes vertical doors from horizontal doors."},
+        {"expectedCode":"BNE .vertical","comment":"For a vertical door, align the camera's X axis."},
+        {"expectedCode":"LDA.W Layer1YPosition-1","comment":"Read Y position one byte early so its pixel low byte occupies A's high byte."},
+        {"expectedCode":"BIT.W #$FF00","comment":"Test that pixel byte for zero; immediate BIT preserves the load's N flag."},
+        {"expectedCode":"BEQ .done","comment":"A zero pixel low byte is already aligned to a $100-pixel boundary."},
+        {"expectedCode":"BMI .scrollUp","comment":"Use the loaded pixel byte's bit 7 to choose incrementing rather than decrementing."},
+        {"expectedCode":"DEC.W Layer1YPosition","comment":"Move Y one pixel toward the lower $100-pixel boundary."},
+        {"expectedCode":"BRA .return","comment":"Update background scrolling without changing the transition phase yet."},
+        {"expectedCode":".scrollUp:"},
+        {"expectedCode":"INC.W Layer1YPosition","comment":"Move Y one pixel toward the upper $100-pixel boundary."},
+        {"expectedCode":"BRA .return"},
+        {"expectedCode":".vertical:"},
+        {"expectedCode":"LDA.W Layer1XPosition-1","comment":"Read X position one byte early to inspect its pixel low byte in A's high byte."},
+        {"expectedCode":"BIT.W #$FF00","comment":"Test X's pixel low byte for zero without replacing the load's N flag."},
+        {"expectedCode":"BEQ .done","comment":"Advance only when X is already aligned to a $100-pixel boundary."},
+        {"expectedCode":"BMI .scrollRight","comment":"Choose increasing X when that pixel byte has bit 7 set."},
+        {"expectedCode":"DEC.W Layer1XPosition","comment":"Move X one pixel toward the lower alignment boundary."},
+        {"expectedCode":"BRA .return","comment":"Keep the current phase active while camera alignment is in progress."},
+        {"expectedCode":".scrollRight:"},
+        {"expectedCode":"INC.W Layer1XPosition","comment":"Move X one pixel toward the upper alignment boundary."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling","comment":"Recalculate layer-2 position and background updates after this one-pixel step."},
+        {"expectedCode":"RTS","comment":"Return for another iteration, even if this step just reached alignment."},
+        {"expectedCode":".done:"},
+        {"expectedCode":"JSL.L Calc_Layer2Position_BGScrolls_UpdateBGGraphics_WhenScrolling","comment":"Refresh background scrolling for the already-aligned camera."},
+        {"expectedCode":"LDA.W #DoorTransitionFunction_FixDoorsMovingUp","comment":"Select the upward-door preparation phase."},
+        {"expectedCode":"STA.W DoorTransitionFunction","comment":"Advance phases only on the aligned entry path."},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish.lines",
+      "fileId": "bank_82.asm",
+      "symbol": "DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish",
+      "lines": [
+        {"expectedCode":"JSL.L AnimatedTilesObject_Handler","comment":"Advance animated-tile objects during the destination-room fade."},
+        {"expectedCode":"JSL.L Determine_Which_Enemies_to_Process","comment":"Select the destination room's active enemies."},
+        {"expectedCode":"JSL.L Main_Enemy_Routine","comment":"Run the main enemy routine while fading in."},
+        {"expectedCode":"JSL.L Enemy_Projectile_Handler","comment":"Advance enemy projectiles on this final transition path."},
+        {"expectedCode":"JSL.L Draw_Samus_Projectiles_Enemies_and_Enemy_Projectiles","comment":"Draw the destination room's actors and projectiles."},
+        {"expectedCode":"JSR.W Draw_Inanimate_Samus_Bank82","comment":"Draw Samus through the inanimate drawing path."},
+        {"expectedCode":"JSL.L Handle_Queuing_Enemy_BG2_Tilemap_VRAM_Transfer","comment":"Queue enemy BG2 tilemap updates produced by the new room."},
+        {"expectedCode":"JSR.W Advance_GradualColorChange_ofAllPalettes_Denominator_C","comment":"Advance the palette interpolation toward the new room's target palette."},
+        {"expectedCode":"BCC .return","comment":"Keep the transition active until the palette helper reports completion."},
+        {"expectedCode":"STZ.W DisableSounds","comment":"Allow ordinary sound queuing again."},
+        {"expectedCode":"JSL.L Play_SpinJumpSound_if_SpinJumping","comment":"Restore Samus's spin-jump sound if appropriate."},
+        {"expectedCode":"STZ.W DoorTransitionFlagElevatorsZebetites","comment":"Clear the transition flag used by elevators and zebetites."},
+        {"expectedCode":"STZ.W DoorTransitionFlagEnemiesPause","comment":"Clear the transition flag that also blocks new pause requests."},
+        {"expectedCode":"LDA.W #$0008","comment":"Select normal gameplay explicitly after the final palette step."},
+        {"expectedCode":"STA.W GameState","comment":"Return the outer dispatcher to game state $08."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"RTS"}
+      ]
+    },
+    {
+      "id": "transitions.PauseCheck.lines",
+      "fileId": "bank_90.asm",
+      "symbol": "PauseCheck",
+      "lines": [
+        {"expectedCode":"PHP"},
+        {"expectedCode":"REP #$30"},
+        {"expectedCode":"LDA.W SamusProjectile_PowerBombFlag","comment":"Reject pausing while the Samus power-bomb flag is nonzero."},
+        {"expectedCode":"BNE .return"},
+        {"expectedCode":"LDA.W TimeIsFrozenFlag","comment":"Reject pausing while time is frozen."},
+        {"expectedCode":"BNE .return"},
+        {"expectedCode":"LDA.W DoorTransitionFlagEnemiesPause","comment":"Reject pausing during the enemy-pause portion of a door transition."},
+        {"expectedCode":"BNE .return"},
+        {"expectedCode":"LDA.W AreaIndex","comment":"Check the current area before accepting Start."},
+        {"expectedCode":"CMP.W #$0006","comment":"Area 6 is Ceres, where this pause path is disabled."},
+        {"expectedCode":"BEQ .return"},
+        {"expectedCode":"LDA.W GameState","comment":"Accept this request only from ordinary gameplay."},
+        {"expectedCode":"CMP.W #$0008","comment":"State $08 is the only allowed source state."},
+        {"expectedCode":"BNE .return"},
+        {"expectedCode":"LDA.B DP_Controller1New","comment":"Use newly pressed buttons, not the held-input repeat stream."},
+        {"expectedCode":"BIT.W #$1000","comment":"Test Start's $1000 button bit."},
+        {"expectedCode":"BEQ .return","comment":"Leave the current state untouched when Start was not newly pressed."},
+        {"expectedCode":"LDA.W #$0001","comment":"Start the pause fade with delay and counter both set to one."},
+        {"expectedCode":"STA.W ScreenFadeDelay","comment":"Set the interval between brightness steps."},
+        {"expectedCode":"STA.W ScreenFadeCounter","comment":"Prime the first brightness step."},
+        {"expectedCode":"LDA.W #$000C","comment":"Select the gameplay-darkening phase, not the pause screen directly."},
+        {"expectedCode":"STA.W GameState","comment":"The next outer-loop dispatch enters state $0C."},
+        {"expectedCode":".return:"},
+        {"expectedCode":"PLP"},
+        {"expectedCode":"RTS"}
       ]
     }
   ]

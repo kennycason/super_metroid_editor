@@ -149,15 +149,17 @@ compiler symbols, source-reference edges, native bindings and authored modules:
 On success, the bundled-source case writes complete annotated bank previews to
 `desktopApp/build/reports/asm-enrichment/src/`: `bank_A0.asm`, `bank_A3.asm`, and
 the core-engine banks `bank_80.asm` / `bank_82.asm` added in revision 5.
+Revision 6 also emits `bank_90.asm` for the pause-request entry point; see the
+[pause/door reading route](reference_workspace.md#pause-and-door-transition-reading-route).
 These are generated review files, not project overrides or a new source of truth.
 The gate also reads the compiled orientation/script tables and checks the
 dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1, 2, 3 and 4 are compiled before and after migration,
+Updates from revisions 1, 2, 3, 4 and 5 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2, version-3 and version-4 recipes are
+with byte-identical complete ROM output. Version-2 through version-5 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 

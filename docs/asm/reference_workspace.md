@@ -63,11 +63,12 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-5`. It retains the
-Zoomer/crawler and Waver documentation, adding the main frame loop, gameplay
-update order, NMI request/lag paths and scanline IRQ dispatch without renaming
-existing symbols. Core routines receive 15 block explanations and 182 line
-comments across nine complete, guarded scopes.
+The current enrichment revision is `super-metroid-ntsc-6`. It retains the
+Zoomer/crawler, Waver and core-loop documentation unchanged. Revision 5 added
+15 block explanations and 182 line comments for the main frame loop, gameplay
+ordering, NMI request/lag paths and scanline IRQ dispatch. Revision 6 adds
+23 block explanations and 251 line comments across 19 guarded pause/unpause
+and door-transition scopes, without introducing any symbol renames.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -85,6 +86,45 @@ reset/NMI/IRQ vectors, full-width FastROM entry, all 45 state pointers, byte-fie
 RAM adjacency, request acknowledgement/counter paths and gameplay call order,
 in addition to complete ROM parity and source-reference identity. These are
 source/compiler contracts, not an emulator or gameplay certification.
+
+### Pause and door-transition reading route
+
+Start with `PauseCheck` in bank `$90`: the new-only Start input must pass the
+power-bomb, frozen-time, door-transition, Ceres and game-state checks before
+selecting state `$0C`. In bank `$82`, follow `GameState_C_Pausing_NormalGameplayDarkening`
+through states `$0D`, `$0E` and `$0F`, then `MainPauseRoutine`. Its eight page
+states are separate from `GameState`. `Handle_PauseScreen_StartButton` begins
+unpause via `$10`, `$11` and `$12`. Gameplay continues during the `$0C` and
+`$12` brightness fades; interactive pause uses the menu/HUD path instead.
+
+Pause and unpause hooks use a synthetic long return frame: `PHK` plus
+`PEA return-1`, followed by indirect `JML`. The room hook returns with `RTL`;
+separate bank/status saves remain to be restored by the wrapper. By contrast,
+`GameState_9_HitADoorBlock` and `GameState_B_LoadingNextRoom` use `PEA` plus
+indirect near `JMP`, and transition phases return with `RTS`.
+
+For doors, follow `GameState_9_HitADoorBlock`, `DoorTransitionFunction_HandleElevator`,
+`GameState_A_LoadingNextRoom` and `GameState_B_LoadingNextRoom`. Then inspect
+`DoorTransitionFunction_WaitForSoundsToFinish`, `DoorTransitionFunction_FadeOutTheScreen`,
+`DoorTransitionFunction_ScrollScreenToAlignment` and
+`DoorTransitionFunction_FadeInTheScreen_and_RunEnemies_Finish`. Sound-ring and
+music-queue waits test queued requests, not whether playback has ended. Door
+fades interpolate palettes rather than using the pause flow's brightness fade.
+
+Alignment moves the camera's perpendicular axis one pixel toward a `$100`-pixel
+boundary per unfinished call. An unaligned word load places the coordinate's
+low pixel byte in A's high byte. `BIT #$FF00` tests alignment while preserving
+the load's N flag for `BMI`; immediate BIT does not replace N/V. See the
+[WDC CPU datasheet, table 5-5 note 2](https://www.westerndesigncenter.com/wdc/documentation/w65c816s.pdf#page=34).
+A step reaching the boundary still returns; the following aligned call advances
+the transition phase. Native tests pin the actual loads, immediate opcodes,
+branches, return frames, eight pause pointers, fade criteria and queue masks.
+The review output now also includes `bank_90.asm`. Upgrades from revisions
+1–5 preserve native enemy edits and the authored Objectives pause hook with
+byte-identical complete ROM output; Objectives and Fast Doors also compile on
+the cross-bank rename stress baseline.
+
+### Applying an update
 
 Expand the **Project ASM enabled** controls to see the project's actual baseline
 revision and upstream commit. Choose **Save edits & preview baseline update…**.

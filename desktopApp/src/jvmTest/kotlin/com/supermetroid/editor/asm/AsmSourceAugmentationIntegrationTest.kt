@@ -22,7 +22,7 @@ class AsmSourceAugmentationIntegrationTest {
         val fixture = verify(AsmSourceAugmentation.bundled())
         // A disposable, generated review artifact, never a change to a user's pinned baseline.
         System.getProperty("smedit.asmEnrichmentReviewDirectory")?.let { directory ->
-            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_A0.asm", "bank_A3.asm")) {
+            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_90.asm", "bank_A0.asm", "bank_A3.asm")) {
                 val output = File(directory, "src/$fileId")
                 output.parentFile.mkdirs()
                 File(fixture.workspace.originalDirectory, "src/$fileId").copyTo(output, overwrite = true)
@@ -74,6 +74,12 @@ class AsmSourceAugmentationIntegrationTest {
         verifyBaselineUpdate(previous)
     }
 
+    @Test fun `explicit v5 to current update adds pause and door notes while preserving the authored Objectives hook and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-5.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
     private fun previousCrawlerRecipe(): AsmSourceAugmentation =
         checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-2.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
@@ -112,6 +118,12 @@ class AsmSourceAugmentationIntegrationTest {
             ";82897A; Publish the completed frame and wait for NMI's acknowledgement.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_80.asm").readText(),
             ";8095F9; Count every NMI, including the no-request lag path.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_82.asm").readText(),
+            ";829108; Convert the page-state index into a word-pointer byte offset.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_82.asm").readText(),
+            ";82E320; Test that pixel byte for zero; immediate BIT preserves the load's N flag.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
+            ";90EA7A; The next outer-loop dispatch enters state $0C.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
@@ -203,6 +215,7 @@ class AsmSourceAugmentationIntegrationTest {
         verifyCrawlerContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyWaverContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyCoreContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyAsmTransitionContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         val natives = assertNotNull(manifest.nativeSymbols)
         assertEquals(163, natives.size)
         natives.forEach { native ->
