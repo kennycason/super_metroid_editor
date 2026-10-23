@@ -22,7 +22,7 @@ class AsmSourceAugmentationIntegrationTest {
         val fixture = verify(AsmSourceAugmentation.bundled())
         // A disposable, generated review artifact, never a change to a user's pinned baseline.
         System.getProperty("smedit.asmEnrichmentReviewDirectory")?.let { directory ->
-            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_90.asm", "bank_A0.asm", "bank_A3.asm")) {
+            for (fileId in listOf("bank_80.asm", "bank_82.asm", "bank_8F.asm", "bank_90.asm", "bank_A0.asm", "bank_A3.asm")) {
                 val output = File(directory, "src/$fileId")
                 output.parentFile.mkdirs()
                 File(fixture.workspace.originalDirectory, "src/$fileId").copyTo(output, overwrite = true)
@@ -51,6 +51,8 @@ class AsmSourceAugmentationIntegrationTest {
             AsmSourceRename("DoorTransitionScrolling", "ScrollRoomTransition"),
             AsmSourceRename("DoorTransitionFunction_ScrollScreenToAlignment", "AlignRoomTransition"),
             AsmSourceRename("MainPauseRoutine", "PauseMenuDispatch"),
+            AsmSourceRename("Main_Enemy_Routine", "RunEnemyActors"),
+            AsmSourceRename("ProcessEnemyInstructions", "AdvanceEnemyScript"),
         ))
 
     @Test fun `explicit v1 to current update preserves a native enemy edit and real authored Objectives ROM output`() {
@@ -76,6 +78,18 @@ class AsmSourceAugmentationIntegrationTest {
 
     @Test fun `explicit v5 to current update adds pause and door notes while preserving the authored Objectives hook and ROM`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-5.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v6 to current update adds room loading notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-6.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        verifyBaselineUpdate(previous)
+    }
+
+    @Test fun `explicit v7 to current update adds enemy runtime notes while preserving authored enemies Objectives and ROM`() {
+        val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-7.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
         verifyBaselineUpdate(previous)
     }
@@ -124,6 +138,14 @@ class AsmSourceAugmentationIntegrationTest {
             ";82E320; Test that pixel byte for zero; immediate BIT preserves the load's N flag.")
         assertContains(File(result.workspace.workingDirectory, "src/bank_90.asm").readText(),
             ";90EA7A; The next outer-loop dispatch enters state $0C.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A0.asm").readText(),
+            ";A08B0B; Copy header health before running enemy-specific Init AI.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_8F.asm").readText(),
+            ";8FE5E9; Discard the condition loop's synthetic near return word.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A0.asm").readText(),
+            ";A0907D; Stop on the first set bit, giving it priority over higher bits.")
+        assertContains(File(result.workspace.workingDirectory, "src/bank_A3.asm").readText(),
+            ";A38136; Replace it with the interpreter's shared exit word minus one.")
         assertEquals(objectives, File(result.workspace.root, "modules/objectives.asm").readText())
         val reloaded = assertNotNull(AsmEnemyTuningSource.load(result.workspace.originalDirectory))
         assertEquals(42, reloaded.field("zoomer_hp", File(result.workspace.workingDirectory, "src/$ENEMY_HEADER_SOURCE_FILE").readText(), drops).value)
@@ -216,6 +238,8 @@ class AsmSourceAugmentationIntegrationTest {
         verifyWaverContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyCoreContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         verifyAsmTransitionContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyAsmRoomLoadingContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
+        verifyAsmEnemyRuntimeContracts(compiled.romBytes, manifest.symbols.canonicalLabels(currentSymbols.labels), after, manifest.symbols)
         val natives = assertNotNull(manifest.nativeSymbols)
         assertEquals(163, natives.size)
         natives.forEach { native ->

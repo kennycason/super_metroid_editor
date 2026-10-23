@@ -24,10 +24,13 @@ class AsmTransitionEnrichmentTest {
     @Test fun `v6 is additive over the exact frozen v5 recipe and preserves all existing names`() {
         val previous = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-5.json"))
             .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
-        assertEquals("super-metroid-ntsc-6", current.revision)
-        assertEquals(previous, current.copy(revision = previous.revision,
-            documentation = current.documentation.filterNot { it.id.startsWith("transitions.") },
-            lineDocumentation = current.lineDocumentation.filterNot { it.id.startsWith("transitions.") }))
+        val v6 = checkNotNull(javaClass.getResourceAsStream("/asm-baselines/super-metroid-ntsc-6.json"))
+            .bufferedReader().use { Json.decodeFromString(AsmSourceAugmentation.serializer(), it.readText()) }
+        assertEquals(previous, v6.copy(revision = previous.revision,
+            documentation = v6.documentation.filterNot { it.id.startsWith("transitions.") },
+            lineDocumentation = v6.lineDocumentation.filterNot { it.id.startsWith("transitions.") }))
+        assertEquals(v6.documentation.filter { it.id.startsWith("transitions.") }, current.documentation.filter { it.id.startsWith("transitions.") })
+        assertEquals(v6.lineDocumentation.filter { it.id.startsWith("transitions.") }, groups)
         assertEquals(23, current.documentation.count { it.id.startsWith("transitions.") })
         assertEquals(19, groups.size)
         assertEquals(251, groups.flatMap { it.lines }.count { it.comment != null })

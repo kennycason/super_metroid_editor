@@ -63,12 +63,17 @@ from the project's backup or source control; its modules and overrides are not d
 
 ### Explicit baseline updates
 
-The current enrichment revision is `super-metroid-ntsc-6`. It retains the
-Zoomer/crawler, Waver and core-loop documentation unchanged. Revision 5 added
+The current enrichment revision is `super-metroid-ntsc-8`. It retains the
+Zoomer/crawler, Waver, core-loop, pause/door and room-loading documentation unchanged. Revision 5 added
 15 block explanations and 182 line comments for the main frame loop, gameplay
 ordering, NMI request/lag paths and scanline IRQ dispatch. Revision 6 adds
 23 block explanations and 251 line comments across 19 guarded pause/unpause
 and door-transition scopes, without introducing any symbol renames.
+Revision 7 adds 16 block explanations and 337 line comments across 13 room/state,
+callback and enemy-initialisation scopes, also without new symbol renames.
+Revision 8 adds 23 block explanations and 302 line comments across 17 enemy
+scheduling, AI dispatch, drawing and instruction-script scopes. Existing names,
+instructions and upstream comments remain intact.
 See the [enemy AI reading routes](crawler_enrichment.md#waver-movement-and-animation-handshake).
 
 For the core engine, start at `MainGameLoop` in bank `$82`, then follow
@@ -123,6 +128,124 @@ The review output now also includes `bank_90.asm`. Upgrades from revisions
 1–5 preserve native enemy edits and the authored Objectives pause hook with
 byte-identical complete ROM output; Objectives and Fast Doors also compile on
 the cross-bank rename stress baseline.
+
+### Room loading and enemy-initialisation reading route
+
+Start with `Load_Room_Header` and `Load_State_Header` in bank `$82`. The fixed
+eleven-byte room header is followed by a condition-function stream in bank `$8F`.
+`Room_State_Checking_Handler`, `RoomStateCheck_EventHasBeenSet` and
+`Use_StatePointer_inX` explain how different payload lengths are consumed.
+An unsuccessful condition returns to the scan loop with `RTS`; selecting a state
+discards that synthetic two-byte return and exits with `RTL`. The default state
+header follows its function word inline: `Use_StatePointer_inX` stores X itself,
+not a pointer dereferenced from X.
+
+The selected state supplies separate enemy-population and enemy-set pointers.
+The population contains placements, flags and two parameters; the set supplies
+graphics/palette bindings. `Load_State_Header` assembles long resource pointers
+with overlapping word stores, and caches the room-main callback. It does not
+load every state field or decompress the level by itself.
+
+Follow `CreatePLMs_ExecuteDoorASM_RoomSetupASM_SetElevatorStatus` in bank `$82`:
+attempt each six-byte PLM record until its zero-ID terminator, then execute door
+ASM followed by room setup ASM, including when the PLM list is absent/empty.
+Bank `$8F`'s `Execute_Door_ASM`, `Execute_Room_Setup_ASM` and
+`Execute_Room_Main_ASM` distinguish the three callback paths and their near/long
+return frames. The main wrapper relies on the gameplay caller's register mode
+and does not preserve processor status like the other two wrappers.
+
+In bank `$A0`, read `Load_Enemies`, `ClearEnemyData_ProcessEnemySet` and
+`Initialise_Enemies`. The base-record clear counts `$0800` bytes, decrementing
+twice per word; the later tile/extra-RAM clear counts `$1400` **word writes**,
+decrementing once per word and clearing `$2800` bytes at `$7E:7000..97FF`.
+For each `$10`-byte population record, the initializer fills a `$40`-byte runtime
+slot from header defaults and placement data before calling Init AI. The two
+population parameters reach `Enemy.init0` / `Enemy.init1`. The separate generic
+init word at population offset `$06` temporarily occupies `Enemy.instList`;
+Zoomer's Init AI reads its low two bits as orientation, not an instruction pointer.
+Header health is only
+the pre-Init-AI default. Init AI returns through the earlier helper `JSL` frame.
+The post-call code resets/selects the placeholder spritemap, advances both
+cursors, and consumes the `$FFFF` terminator's trailing required-kill byte only
+on the nonempty-list tail. The immediate-empty path skips those tail stores.
+
+Finally inspect `DoorTransitionFunction_LoadSpritesBGPLMsAudio_RunDoorRoomASM`
+in bank `$82`. Its object/setup/enemy call order and IRQ-driven transfer/scroll
+waits connect these pieces. It can remain inside one loading phase until IRQ
+signals completion, then runs PLMs and explicitly waits for NMI before scheduling
+the next phase. The original PLM/scrolling visibility caveat is retained.
+
+The gate now also emits `bank_8F.asm`. Independent checks read the Landing Site's
+actual ordered condition records, inline default state, state-resource pointers,
+six-byte PLM records, three enemy population records and kill-count terminator.
+They also pin callback instruction encodings, Init AI bank/return handling, both
+clear-loop counters, field-copy/stride contracts and IRQ wait branches. This
+complements full-ROM parity and the complete source-reference audit; it does not
+execute a CPU or certify runtime gameplay. Upgrades from baselines 1–6 preserve
+authored enemy tuning and the Objectives module with identical full-ROM output.
+
+### Enemy scheduling and instruction-script reading route
+
+In bank `$A0`, start at `Determine_Which_Enemies_to_Process`, then
+`Main_Enemy_Routine`. The active and interactive lists contain runtime slot
+offsets, not header IDs. They have independent byte cursors and `$FFFF`
+terminators. Property `$0800` and the per-enemy frozen-AI bit `$0004` bypass the
+ordinary viewport filter; property `$0400` excludes interaction, not active AI.
+The global offscreen-processing path still filters empty, respawn and deleted
+slots. Its extra interaction-array store at the active cursor is retained and
+explained, not silently simplified. Viewport checks use X hitbox radius but
+fixed Y margins, not a general rectangle intersection.
+
+Main AI processing distinguishes collision eligibility, pre/post-AI paralysis
+checks, global time freeze, the per-enemy AI selector and drawing eligibility.
+For example, the tangible-enemy invincibility timer decrements before freeze
+checks; that branch bypasses the pre-AI paralysis check. An AI selector of zero
+uses header offset `$18`; otherwise the **lowest set bit** selects subsequent
+words (`$1A`, `$1C`, `$1E`, ...). The global-time-freeze path instead uses the
+separate header word at `$20`. The inline helper supplies the AI bank and
+tail-jumps through `EnemyAIPointer`; AI returns with `RTL` through the earlier
+`JSL` frame. With no enemies to process, the common sprite-object/counter tail
+still runs. Its execution counter is not an NMI frame counter.
+
+Follow `ProcessEnemyInstructions` for animation scripts. A pre-decremented
+`Enemy.instTimer` must reach zero before fetching a word; an initial zero wraps
+to `$FFFF`, rather than immediately fetching. Bit 15 distinguishes command
+addresses from nonnegative duration words. A duration/spritemap pair consumes
+four bytes and sets property-2 bit `$8000`; the no-update path clears that bit.
+The per-enemy frozen-AI bit returns before the decrement. The command pointer's
+bank comes from the caller; the interpreter separately selects the data bank
+using the enemy's bank field.
+
+`PHK` / `PEA .loop-1` / indirect `JML` creates the command's synthetic long
+return frame. Ordinary command `RTL` resumes the fetch loop. Read
+`Instruction_Common_GotoY`, `...TimerInY`,
+`...DecrementTimer_GotoYIfNonZero`, `...Sleep`, `...WaitYFrames` and
+`...DeleteEnemy`, plus their `Instruction_CommonA3_` copies in bank `$A3`.
+An `$812F` word in an A3 enemy's script executes A3's local Sleep copy, not the
+same-numbered A0 copy. Sleep, Wait and Delete replace only the return **word**,
+preserving the synthetic A0 bank byte, to exit via
+`ProcessEnemyInstructions_return` and its `PLB` / `RTS`. Sleep rewinds the saved
+cursor to itself without installing a timer or spritemap. Wait saves the next
+cursor and its own instruction timer; the loop-count commands instead use
+`Enemy.loopCounter`. Delete sets property `$0200`; a later selection pass clears
+the ID. These command exits do not take the duration-pair marker update.
+
+Finally, `CheckIfEnemyIsOnScreen` and `AddEnemyToDrawingQueue` explain the
+separate drawing path. Extended-spritemap enemies bypass that viewport helper;
+visibility/deletion flags and explicit drawing suppression still gate queuing.
+The queue helper appends a slot offset to one of eight layer queues. Actual OAM
+emission happens later.
+
+Independent contracts pin compiled AI-header offsets, all eight drawing-queue
+pointers, the AI bank/return sequence, interpreter return frames and all six
+reviewed command copies in both banks. Complete-scope guards cover eligibility,
+selector priority, timer and marker paths; a separate arithmetic test checks all
+nonzero 16-bit selectors and timer wraparound. These remain source/compiler and
+arithmetic checks, not CPU emulation. Updates from baselines 1–7 preserve authored
+enemy tuning and the Objectives module with byte-identical complete ROM output.
+The test-only cross-bank stress recipe now also renames the main enemy routine
+and interpreter, checking dependent local-label references from other banks;
+Objectives and Fast Doors compile against this 18-rename baseline as well.
 
 ### Applying an update
 

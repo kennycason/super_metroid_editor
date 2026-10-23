@@ -147,7 +147,7 @@ class AsmSourceAugmentationTest {
 
     @Test fun `bundled crawler pass adds game documentation without renaming existing crawler symbols`() {
         val recipe = AsmSourceAugmentation.bundled()
-        assertEquals("super-metroid-ntsc-6", recipe.revision)
+        assertEquals("super-metroid-ntsc-8", recipe.revision)
         assertEquals(listOf(AsmSourceRename("SpeedBoostTimerResetValues", "SpeedBoostTimerReloadTable")), recipe.renames)
         val notes = recipe.documentation.filter { it.id.startsWith("crawlers.") }
         assertEquals(18, notes.size)

@@ -151,15 +151,23 @@ On success, the bundled-source case writes complete annotated bank previews to
 the core-engine banks `bank_80.asm` / `bank_82.asm` added in revision 5.
 Revision 6 also emits `bank_90.asm` for the pause-request entry point; see the
 [pause/door reading route](reference_workspace.md#pause-and-door-transition-reading-route).
+Revision 7 adds `bank_8F.asm` for state selection and room callbacks; see the
+[room-loading/Init-AI route](reference_workspace.md#room-loading-and-enemy-initialisation-reading-route).
+Revision 8 connects those initialisers to enemy scheduling, AI dispatch and the
+shared script interpreter, with line comments for six common commands in both
+`bank_A0.asm` and `bank_A3.asm`; see the
+[enemy-runtime/script route](reference_workspace.md#enemy-scheduling-and-instruction-script-reading-route).
+Those A3-local command copies explain the actual Sleep/loop commands reached by
+the crawler and Waver scripts, including their synthetic return frames.
 These are generated review files, not project overrides or a new source of truth.
 The gate also reads the compiled orientation/script tables and checks the
 dispatch, earthquake, unsupported-turn and falling-acceleration contracts above.
 Waver checks additionally pin its emitted direction/script pointer table, both
 four-frame spin sequences and completion commands, native AI links, RAM layout,
 packed-speed read, phase/collision paths and non-restarting animation selection.
-Updates from revisions 1, 2, 3, 4 and 5 are compiled before and after migration,
+Updates from revisions 1, 2, 3, 4, 5, 6 and 7 are compiled before and after migration,
 retaining custom Zoomer/Waver HP values and the real authored Objectives module
-with byte-identical complete ROM output. Version-2 through version-5 recipes are
+with byte-identical complete ROM output. Version-2 through version-7 recipes are
 frozen test resources; the version-1 case omits the later crawler blocks from
 the frozen version-2 recipe, rather than reconstructing it from today's recipe.
 
