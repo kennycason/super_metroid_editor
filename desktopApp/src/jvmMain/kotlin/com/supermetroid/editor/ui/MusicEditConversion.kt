@@ -3,6 +3,7 @@ package com.supermetroid.editor.ui
 import com.supermetroid.editor.data.MusicChannelEdit
 import com.supermetroid.editor.data.MusicCommandEdit
 import com.supermetroid.editor.data.MusicInstrumentEdit
+import com.supermetroid.editor.data.MusicNativeBaselineEdit
 import com.supermetroid.editor.data.MusicNativePayloadEdit
 import com.supermetroid.editor.data.MusicNoteEdit
 import com.supermetroid.editor.data.MusicTrackEdit
@@ -44,7 +45,7 @@ internal object MusicEditConversion {
             )
         }
 
-        return MusicTrackEdit(
+        val edit = MusicTrackEdit(
             songSet = track.songSet,
             playIndex = track.playIndex,
             trackName = track.name,
@@ -63,7 +64,32 @@ internal object MusicEditConversion {
             }.toMutableList(),
             nativePayload = nativePayload
         )
+        return if (nativePayload != null && nativePayload.baseline == null) {
+            edit.copy(nativePayload = nativePayload.copy(baseline = baselineOf(edit)))
+        } else edit
     }
+
+    private fun baselineOf(edit: MusicTrackEdit) = MusicNativeBaselineEdit(
+        tempo = edit.tempo, channels = copyChannels(edit.channels), instruments = edit.instruments.toMutableList()
+    )
+
+    fun nativeBaselineSong(edit: MusicTrackEdit): NspcSequence.Song {
+        val baseline = edit.nativePayload?.baseline ?: return toSong(edit)
+        return toSong(edit.copy(tempo = baseline.tempo, channels = baseline.channels, instruments = baseline.instruments))
+    }
+
+    fun copyNativePayload(payload: MusicNativePayloadEdit?): MusicNativePayloadEdit? = payload?.copy(
+        blocks = payload.blocks.toMutableList(),
+        baseline = payload.baseline?.let { baseline ->
+            baseline.copy(channels = copyChannels(baseline.channels), instruments = baseline.instruments.toMutableList())
+        }
+    )
+
+    private fun copyChannels(channels: List<MusicChannelEdit>) = channels.map { channel ->
+        channel.copy(notes = channel.notes.toMutableList(), commands = channel.commands.map {
+            it.copy(params = it.params.toList())
+        }.toMutableList())
+    }.toMutableList()
 
     fun toSong(edit: MusicTrackEdit): NspcSequence.Song {
         val song = NspcSequence.Song(tempo = edit.tempo, title = edit.trackName, isModified = true)
@@ -121,9 +147,11 @@ internal object MusicEditConversion {
     fun toTransferBlocks(payload: MusicNativePayloadEdit): List<SpcData.TransferBlock> {
         val decoder = Base64.getDecoder()
         return payload.blocks.map {
+            val data = decoder.decode(it.dataBase64)
+            require(it.destAddr in 0 until 0x10000 && data.size <= 0x10000 - it.destAddr) { "Native music block exceeds SPC RAM" }
             SpcData.TransferBlock(
-                destAddr = it.destAddr and 0xFFFF,
-                data = decoder.decode(it.dataBase64)
+                destAddr = it.destAddr,
+                data = data
             )
         }
     }

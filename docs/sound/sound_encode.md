@@ -95,21 +95,36 @@ First chunk:
 - Emit explicit E0 instrument selection for melodic notes. CA..DF are percussion notes and cannot substitute for an instrument-select command.
 - Pad participating channels with rests to the arrangement end. A short note on a previously unused voice must not terminate the entire synchronized song block.
 
+Second chunk — imported sound persistence:
+
+- Retain raw N-SPC / supported IT source blocks after note and instrument edits, including project save/reopen. Store a separate editable import baseline so unchanged imports and instrument-only edits keep their original sequence bytes.
+- Resolve retained samples plus current edits through one path for piano-roll preview, waveform preview, raw N-SPC export, SPC snapshot export, and ROM export. Preserve source bytes; relocate only changed sequences and protect custom BRR samples even when they occupy lower sequence RAM.
+- Keep native quiet/muted output instead of substituting an audible approximate envelope. Preserve attacks on short imported arrangements.
+- Allocate isolated instrument previews around imported BRR samples, including samples in the usual preview area. SPC snapshots start before the song advances, preserving short-note attacks.
+- Undo/redo restores the matching source bank when undoing imports or moving between two imports. Reset returns to stock data. Sparse source payloads do not zero unrelated instrument entries.
+- Use the actual merged original/import transfer chain for ROM budget preflight, matching the exporter. Reject malformed payloads, allocation failures, and over-budget exports without discarding samples or shortening the song.
+- Read older native-payload projects without a baseline as pristine imports; initialize a baseline when opening them for editing. Compatible SPC snapshot import remains sequence-only and does not capture its sample bank.
+
 Continue in this order:
 
-1. Preserve imported BRR/sample assets independently of edited sequences. Today, changing imported notes/instruments can invalidate and drop the native payload on save. Audition can use the open import's source RAM, but this chunk does not fix persistence of subsequent edits.
-2. Move shared instrument overrides to song-bank ownership, reconcile existing per-track overrides, and show affected sibling tracks. Add safe duplication only after proving a slot is unused by music and effects.
-3. Add compact native envelope controls/graph, gain modes, and musical tuning offsets. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced.
-4. Repair general sequence fidelity: long notes/ties, percussion parsing/base state, overlapping MIDI voices, and GM-to-bank instrument mapping. Improve preview/export eligibility reporting and distinguish approximate whole-song fallback audio.
-5. Stage sample replacement and audition the encoded result; key replacements by bank/resource identity, support loops, and add safe relocation. Then build a separate named sound-effect browser and native effect audition.
+1. Move shared instrument overrides to song-bank ownership, reconcile existing per-track overrides, and show affected sibling tracks. Add safe duplication only after proving a slot is unused by music and effects. Imports still share bank resources; retaining them is not per-track sample isolation.
+2. Add compact native envelope controls/graph, gain modes, and musical tuning offsets. SNES key-off release is fixed; avoid presenting a conventional synth ADSR or inactive gain controls. Keep raw values under Advanced.
+3. Repair general sequence fidelity: long notes/ties, percussion parsing/base state, overlapping MIDI voices, and GM-to-bank instrument mapping. Improve preview/export eligibility reporting and distinguish approximate whole-song fallback audio.
+4. Stage sample replacement and audition the encoded result; key replacements by bank/resource identity, support loops, and add safe relocation. Then build a separate named sound-effect browser and native effect audition.
 
 Offline verification (dependencies/native library are already built in this checkout):
 
 ```sh
 SMEDIT_TEST_ROM="$PWD/test-resources/Super Metroid (JU) [!].smc" ./gradlew --offline \
   :desktopApp:jvmTest --tests '*InstrumentAuditionTest' --tests '*InstrumentSelectorTest' \
-  --tests '*PianoRollPreviewLogicTest' --tests '*MusicEditExportTest' \
-  :shared:jvmTest --tests '*NspcRendererTest' --tests '*SmEditProjectMusicTest' --tests '*NspcSequenceTest'
+  --tests '*ImportedMusicPersistenceTest' --tests '*MusicEditConversionTest' \
+  --tests '*MusicTransferChainBudgetTest' --tests '*MusicTrackInterchangeTest' \
+  --tests '*ImpulseTrackerImportTest' --tests '*PianoRollEditLogicTest' \
+  --tests '*PianoRollPlaybackTimingTest' --tests '*PianoRollPreviewLogicTest' --tests '*MusicEditExportTest' \
+  :shared:jvmTest --tests '*NspcRendererTest' --tests '*SmEditProjectMusicTest' --tests '*NspcSequenceTest' \
+  --tests '*SpcDataTest' --tests '*NativeSpcEmulatorTest' --console=plain
 ```
 
 Set `SMEDIT_CAPTURE_INSTRUMENT_UI=true` to capture browser layouts for all font sizes under `desktopApp/build/test-output/`. The `InstrumentAuditionTest` fixture uses the real SPC engine with a synthetic loop to compare native tuning, note attacks, gain changes, and arrangement/audition behavior. Missing ROM fixtures must be reported as skipped, not treated as audio verification.
+
+`ImportedMusicPersistenceTest` covers a custom loop in lower sequence RAM, real project save/reopen, matching preview/ROM RAM, raw N-SPC round trips, instrument-only sequence preservation, legacy projects, native mute/attack behavior, sparse instrument tables, undo/redo across imports, and safe allocation failure.

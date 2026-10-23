@@ -879,12 +879,22 @@ data class MusicTransferBlockEdit(
     val dataBase64: String,
 )
 
+/** Editable model at import time; retained native streams may contain additional control data. */
+@Serializable
+data class MusicNativeBaselineEdit(
+    val tempo: Int,
+    val channels: MutableList<MusicChannelEdit> = mutableListOf(),
+    val instruments: MutableList<MusicInstrumentEdit> = mutableListOf(),
+)
+
 @Serializable
 data class MusicNativePayloadEdit(
     val formatLabel: String = "",
     val sourceFileName: String = "",
     val sourcePlayIndex: Int = -1,
     val blocks: MutableList<MusicTransferBlockEdit> = mutableListOf(),
+    /** Editable import baseline. Source blocks and samples remain intact after later edits. */
+    val baseline: MusicNativeBaselineEdit? = null,
 )
 
 /**

@@ -380,7 +380,7 @@ internal object MusicTrackInterchange {
                 song.isModified = true
                 val warnings = listOf(
                     "Raw N-SPC transfer data was imported as a native payload; ROM export will preserve its transfer blocks.",
-                    "If you edit this song in the piano roll after applying it, SMEDIT will switch back to editable sequence export."
+                    "Samples and instrument data are retained when editing notes or instrument settings."
                 )
                 return NativeTrack(
                     song = song,

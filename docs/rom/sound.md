@@ -191,8 +191,8 @@ piano-roll editor toolbar `Import` and `Export` dropdowns:
 |--------|-----------|-----------|---------|---------|
 | MIDI | `.mid`, `.midi` | Import/export | Common editable interchange for DAWs and trackers | Loses SNES-specific command detail. Export maps SMEDIT instrument IDs to best-effort General MIDI programs for more plausible generic playback, and writes SMEDIT text metadata so reimport can restore the original Super Metroid instrument IDs. It still cannot carry BRR samples, ADSR, echo, pitch modulation, or DSP state. Import folds MIDI channels 9-16 into the 8 SNES voices, clamps pitch to Super Metroid's C1-B6 range, and reports ignored unsupported events before applying. |
 | Impulse Tracker | `.it` | Import | Tracker module import path used by mITroid-style workflows | The importer parses IT headers, instrument keyboard maps, sample metadata, orders, packed patterns, speed-adjusted note timing, tempo commands, note stops, and all 64 IT pattern channels, then deduplicates/voice-packs them into Super Metroid's 8 music voices. For modules with embedded mono uncompressed PCM samples that fit in SPC RAM, it converts samples to BRR and stores a native payload containing N-SPC sequence data, mITroid-style C5-derived instrument pitch bytes, instrument table bytes, sample directory entries, and BRR sample blocks. IT-compressed samples, stereo samples, invalid instrument headers, over-budget sample payloads, and most tracker effects are reported and fall back to editable sequence import without a custom BRR payload. |
-| SPC snapshot | `.spc` | Import/export | Native SNES SPC-700 snapshot for playback/testing | Export is a playable snapshot of the current editable song when native `libspc` is available, or a static ARAM image fallback. Import only becomes editable when compatible N-SPC sequence data can be found in SPC RAM; arbitrary SPC dumps may not map back to piano-roll data. |
-| SMEDIT N-SPC bundle / raw transfer payload | `.nspc` | Import/export | Lossless editable bundle for SMEDIT track round-trips, or raw transfer blocks when a preserved native payload exists | The normal `.nspc` export is SMEDIT's native editable track bundle, not a universal SNES music standard. When the current track still has a matching native payload from raw N-SPC or supported IT import, `.nspc` export writes raw transfer blocks so custom sample/instrument data is preserved. |
+| SPC snapshot | `.spc` | Import/export | Native SNES SPC-700 snapshot for playback/testing | Export is a playable snapshot of the current editable song and retained imported samples when native `libspc` is available, or a static ARAM image fallback. Import is sequence-only: compatible N-SPC data must be found in SPC RAM, and its custom sample bank is not retained. Arbitrary SPC dumps may not map back to piano-roll data. |
+| SMEDIT N-SPC bundle / raw transfer payload | `.nspc` | Import/export | Lossless editable bundle for SMEDIT track round-trips, or raw transfer blocks when a preserved native payload exists | The normal `.nspc` export is SMEDIT's native editable track bundle, not a universal SNES music standard. Raw N-SPC and supported IT imports retain their source sample/instrument blocks after note/instrument edits and project save/reopen. Their `.nspc` export combines retained blocks with the latest edits as raw transfer blocks. |
 | BRR sample | `.brr` inside ROM sample data | ROM patch path | Native compressed sample payload used by the SPC engine | Current WAV replacement still rewrites/trims the existing BRR footprint in place. Relocating BRR data and patching DIR entries remains future work. |
 
 Track imports are staged as a preview before replacing the current piano-roll song. The
@@ -200,6 +200,7 @@ preview reports note count, active channel count, total ticks, tempo, encoded N-
 estimate, budget overages, and format-specific warnings. **Apply** replaces the editable
 song and creates an undo point; **Cancel** leaves the open track unchanged. Reset always
 returns the open track to original ROM data and clears any pending import.
+Undo/redo restores both the editable song and its associated imported source bank.
 
 ## SMEDIT Implementation Map
 
@@ -209,6 +210,7 @@ returns the open track to original ROM data and clears any pending import.
 | Sound state | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundEditorState.kt` | Selected track/sample state, native SPC previews, WAV import/export, sample replacement patch creation, piano-roll playback state |
 | Piano roll UI | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/PianoRollEditor.kt` | Virtualized track visualization/editing, 1x-8x zoom, seek bar, note insertion/removal/move/resize, right-click note properties, playback cursor |
 | Track interchange | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/MusicTrackInterchange.kt` | MIDI read/write, SMEDIT `.nspc` editable bundle read/write, and compatible `.spc` snapshot import reports |
+| Retained native imports | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/ImportedMusicResolver.kt` | Shared resolution of source samples, changed instruments, and safely relocated edited sequences for preview and native exports |
 | Audio playback | `desktopApp/src/jvmMain/kotlin/com/supermetroid/editor/ui/SoundPlayer.kt` | JVM `Clip` playback for mono 16-bit PCM and WAV export helpers |
 | ROM/SPC transfer data | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/SpcData.kt` | Song set pointer table, transfer block parsing, ARAM snapshots, sample directory parsing, BRR decode/encode, in-place sample replacement writes |
 | N-SPC sequence model | `shared/src/commonMain/kotlin/com/supermetroid/editor/rom/NspcSequence.kt` | Editable song model, piano-roll parser, simplified encoder back to N-SPC writes |
@@ -257,7 +259,7 @@ Current piano-roll editing behavior:
 - Drag operations use transient preview state and commit note data once on release; SPC re-encode/render should stay on explicit playback/export paths.
 - Waveform preview and piano-roll preview use RMS-aware preview normalization before JVM playback. Raw rendered waveform storage is kept separate so exported WAV data is not silently mastered. Edit Track monitor playback additionally applies `EDIT_TRACK_PREVIEW_GAIN` to compensate for quiet piano-roll renders.
 - `NspcSequence.parse` applies `E0` instrument and `EA` transpose state to parsed notes. New notes inherit nearby note instrument, velocity, quantize, and duration so user-added notes render with valid Super Metroid instrument state.
-- Modified native SPC preview uses fail-fast sequence encoding. If an edited sequence cannot fit before `$6C00`, or if native render returns silence, playback avoids corrupting the instrument table / playing silence.
+- Modified native SPC preview uses protected-range allocation and fail-fast sequence encoding. If an edited sequence cannot fit, an approximate renderer can retain the imported sample bank without writing across protected assets. Quiet or muted native import output is valid and does not trigger an audible fallback.
 - Additive note edits use a hybrid fallback when native re-encode overflows: native original track playback plus software-rendered added notes. Edits that remove or change original notes still require full software fallback because the native original audio cannot subtract or move existing notes.
 
 ## Parser/Renderer Caveats
@@ -268,9 +270,9 @@ Current piano-roll editing behavior:
 - `NspcRenderer` and native SPC playback are still better cross-checks for command-side
   behavior such as channel volume, subroutines, sample decode, and envelope playback.
 - `NspcRenderer.readInstrumentTable` exposes instrument-table metadata for the UI.
-- Edit Track preview can patch changed instrument-table bytes into SPC RAM. When a track has a matching native import payload, preview/export load its preserved sample-directory and BRR blocks directly; after further piano-roll edits, SMEDIT intentionally falls back to editable sequence export instead of exporting stale native sample bytes.
-- `NspcSequence.encode` writes simplified one-block channel data into the original
-  sequence area and guards against overflow into the instrument table at `$6C00`.
+- Edit Track preview can patch changed instrument-table bytes into SPC RAM. Raw N-SPC and supported IT source blocks are retained independently of later edits. Preview/export use the same resolver; note edits relocate the sequence around protected assets, while instrument-only edits preserve original sequence bytes. Older projects without an import baseline are read as pristine imports. This does not isolate shared bank resources between sibling tracks.
+- `NspcSequence.encode` writes simplified one-block channel data. Native import and
+  ROM export paths supply a protected-free allocation and reject silent truncation.
 
 ## External Resources
 

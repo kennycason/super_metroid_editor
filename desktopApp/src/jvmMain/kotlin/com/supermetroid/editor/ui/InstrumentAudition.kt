@@ -10,8 +10,6 @@ internal object InstrumentAudition {
     const val PLAY_INDEX = 5
     const val TEMPO = 36
     private const val CONDUCTOR = 0x5830
-    private const val BLOCK_TABLE = 0x5834
-    private const val CHANNEL = 0x5844
 
     data class Preview(val ram: ByteArray, val seconds: Int)
 
@@ -23,11 +21,6 @@ internal object InstrumentAudition {
             result[addr] = value.toByte()
             result[addr + 1] = (value ushr 8).toByte()
         }
-        word(0x581E + PLAY_INDEX * 2, CONDUCTOR)
-        word(CONDUCTOR, BLOCK_TABLE)
-        word(CONDUCTOR + 2, 0)
-        for (channel in 0 until 8) word(BLOCK_TABLE + channel * 2, if (channel == 0) CHANNEL else 0)
-
         val previewTempo = tempo.coerceIn(1, 255)
         val duration = note.duration.coerceIn(1, (2.0 * previewTempo / 0.512).toInt().coerceAtLeast(1))
         val stream = mutableListOf(
@@ -45,7 +38,23 @@ internal object InstrumentAudition {
         }
         // Give the engine time to key off before the conductor finishes.
         stream += listOf(24, 0xC9, 0)
-        stream.map(Int::toByte).toByteArray().copyInto(result, CHANNEL)
+        val samples = MusicSequenceBudget.sampleRanges(ram)
+        val songEntry = MusicSequenceBudget.SONG_TABLE_BASE + PLAY_INDEX * 2
+        require(samples.none { it.start < songEntry + 2 && it.endExclusive > songEntry }) {
+            "An imported sample occupies the instrument preview song-table entry"
+        }
+        val allocation = MusicSequenceBudget.allocateRange(samples + listOf(
+            MusicSequenceBudget.SpcRange(MusicSequenceBudget.SEQUENCE_ALLOC_MIN, CONDUCTOR),
+            MusicSequenceBudget.SpcRange(0x6C00, 0x10000)
+        ), 0x14 + stream.size, "instrument preview")
+        val conductor = allocation.start
+        val blockTable = conductor + 4
+        val channelData = conductor + 0x14
+        word(songEntry, conductor)
+        word(conductor, blockTable)
+        word(conductor + 2, 0)
+        for (channel in 0 until 8) word(blockTable + channel * 2, if (channel == 0) channelData else 0)
+        stream.map(Int::toByte).toByteArray().copyInto(result, channelData)
         PianoRollPreviewLogic.instrumentBytes(instrument).copyInto(result, 0x6C00 + instrument.index * 6)
         val seconds = ceil(duration * 0.512 / previewTempo + 0.5).toInt()
         return Preview(result, seconds)

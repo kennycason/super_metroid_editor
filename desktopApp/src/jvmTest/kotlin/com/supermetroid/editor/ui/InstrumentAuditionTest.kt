@@ -43,6 +43,18 @@ class InstrumentAuditionTest {
         assertTrue(preview.seconds <= 3)
     }
 
+    @Test fun `audition allocates around imported samples inside its usual preview area`() {
+        val ram = ByteArray(65536)
+        val brr = ByteArray(9 * 32).also { it[it.size - 9] = 3 }
+        brr.copyInto(ram, 0x5830)
+        byteArrayOf(0x30, 0x58, 0x30, 0x58).copyInto(ram, 0x6D00)
+        val original = ram.copyOf()
+        val preview = InstrumentAudition.build(ram, instrument(), note())
+        assertContentEquals(original, ram)
+        assertContentEquals(brr, preview.ram.copyOfRange(0x5830, 0x5830 + brr.size))
+        assertEquals(note(), NspcSequence.parse(preview.ram, InstrumentAudition.PLAY_INDEX).channels[0].notes.single())
+    }
+
     @Test fun `bank names do not create music edits or trigger audio rendering`() {
         val state = EditorState()
         state.renameMusicInstrument(0x0F, 30, " Soft pulse ")

@@ -1,6 +1,5 @@
 package com.supermetroid.editor.ui
 
-import com.supermetroid.editor.data.MusicTrackEdit
 import com.supermetroid.editor.data.SmEditProject
 import com.supermetroid.editor.rom.NspcRenderer
 import com.supermetroid.editor.rom.NspcSequence
@@ -46,11 +45,14 @@ internal class MusicRomExporter(
             for ((key, edit) in edits) {
                 val nativePayload = edit.nativePayload
                 if (nativePayload != null) {
-                    val nativeWrites = nativeMusicPayloadWrites(edit)
+                    val resolved = ImportedMusicResolver.resolve(exportParser, edit, occupiedSequenceRanges, protectedPlayIndexes)
+                    val nativeWrites = resolved.writes
                     require(nativeWrites.isNotEmpty()) { "native music payload $key produced no SPC writes" }
                     val owner = "native music payload '$key' (${edit.trackName})"
                     mergeSpcWrites(accumulatedWrites, owner, nativeWrites, rejectAnyOverlap = true)
                     accumulatedWrites.hasNativePayload = true
+                    resolved.allocation?.let { occupiedSequenceRanges += it }
+                    occupiedSequenceRanges += nativeWrites.map { (at, data) -> MusicSequenceBudget.SpcRange(at, at + data.size) }
                     val totalBytes = nativeWrites.values.sumOf { it.size }
                     patched++
                     onLog(
@@ -181,56 +183,6 @@ internal class MusicRomExporter(
         }
     }
 
-    private fun nativeMusicPayloadWrites(edit: MusicTrackEdit): Map<Int, ByteArray> {
-        val payload = edit.nativePayload ?: return emptyMap()
-        val blocks = MusicEditConversion.toTransferBlocks(payload)
-        val sourcePlayIndex = payload.sourcePlayIndex.takeIf { it >= 0 } ?: edit.playIndex
-        val sourceEntry = MusicSequenceBudget.SONG_TABLE_BASE + sourcePlayIndex * 2
-        val targetEntry = MusicSequenceBudget.SONG_TABLE_BASE + edit.playIndex * 2
-        val bytesByAddr = java.util.TreeMap<Int, Int>()
-        var sawSourceEntry = false
-
-        fun putByte(addr: Int, value: Int) {
-            require(addr in 0 until RomConstants.SPC_RAM_SIZE) {
-                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} writes outside SPC RAM at " +
-                    "0x${addr.toString(16).padStart(4, '0')}"
-            }
-            bytesByAddr[addr] = value and 0xFF
-        }
-
-        for (block in blocks) {
-            val dest = block.destAddr and 0xFFFF
-            require(dest + block.data.size <= RomConstants.SPC_RAM_SIZE) {
-                "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} has out-of-bounds block " +
-                    "0x${dest.toString(16).padStart(4, '0')}.." +
-                    "0x${(dest + block.data.size - 1).toString(16).padStart(4, '0')}"
-            }
-            for (i in block.data.indices) {
-                val addr = dest + i
-                val value = block.data[i].toInt() and 0xFF
-                if (addr == sourceEntry || addr == sourceEntry + 1) {
-                    sawSourceEntry = true
-                    val offset = addr - sourceEntry
-                    putByte(targetEntry + offset, value)
-                    if (sourceEntry == targetEntry) {
-                        continue
-                    }
-                } else {
-                    putByte(addr, value)
-                }
-            }
-        }
-
-        require(sawSourceEntry) {
-            "native music payload ${MusicEditConversion.key(edit.songSet, edit.playIndex)} did not include its source " +
-                "song-table entry for play index $sourcePlayIndex"
-        }
-        return compactSpcWriteBytes(bytesByAddr)
-    }
-
-    private fun compactSpcWriteBytes(bytesByAddr: java.util.TreeMap<Int, Int>): Map<Int, ByteArray> =
-        SpcData.packSpcBytesToWrites(bytesByAddr)
-
     private fun mergeSpcWrites(
         accumulator: SpcWriteAccumulator,
         owner: String,
@@ -294,7 +246,7 @@ internal class MusicRomExporter(
 
         // Merge at the SPC RAM byte level so arrangements not being edited retain
         // their instruments, samples, and sequence data.
-        val mergedBlocks = mergeSpcRamBlocks(originalBlocks, spcWrites)
+        val mergedBlocks = MusicTransferChainBudget.mergeBlocks(originalBlocks, spcWrites)
         val mergedChain = serializeTransferChain(mergedBlocks)
         val maxBank = MusicTransferChainBudget.MAX_SINGLE_LOROM_BANK_BYTES
         require(mergedChain.size <= maxBank) {
@@ -330,41 +282,6 @@ internal class MusicRomExporter(
                 "(merged, ${relocatedChain.size} bytes)"
         )
         return relocatedChain.size
-    }
-
-    /**
-     * Merges [originalBlocks] and [spcWrites] at the SPC RAM byte level.
-     * Original bytes are applied first; [spcWrites] overwrite them where they overlap.
-     * The result contains exactly the union of all covered SPC RAM addresses.
-     */
-    private fun mergeSpcRamBlocks(
-        originalBlocks: List<SpcData.TransferBlock>,
-        spcWrites: Map<Int, ByteArray>
-    ): List<SpcData.TransferBlock> {
-        val ram = ByteArray(RomConstants.SPC_RAM_SIZE)
-        val covered = BooleanArray(RomConstants.SPC_RAM_SIZE)
-
-        for (block in originalBlocks) {
-            val dest = block.destAddr and 0xFFFF
-            for (i in block.data.indices) {
-                ram[dest + i] = block.data[i]
-                covered[dest + i] = true
-            }
-        }
-        for ((addr, data) in spcWrites) {
-            val dest = addr and 0xFFFF
-            for (i in data.indices) {
-                ram[dest + i] = data[i]
-                covered[dest + i] = true
-            }
-        }
-
-        val bytesByAddr = sortedMapOf<Int, Int>()
-        for (i in covered.indices) {
-            if (covered[i]) bytesByAddr[i] = ram[i].toInt() and 0xFF
-        }
-        return SpcData.packSpcBytesToWrites(bytesByAddr)
-            .map { (addr, data) -> SpcData.TransferBlock(addr, data) }
     }
 
     private fun serializeTransferChain(blocks: List<SpcData.TransferBlock>): ByteArray {

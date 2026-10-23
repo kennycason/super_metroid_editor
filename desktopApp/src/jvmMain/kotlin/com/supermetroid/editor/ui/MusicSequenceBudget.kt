@@ -117,6 +117,20 @@ internal object MusicSequenceBudget {
         return coalesceSpcRanges(ranges)
     }
 
+    /** Imported BRR data can occupy otherwise allocatable lower sequence RAM. */
+    fun sampleRanges(ram: ByteArray): List<SpcRange> = buildList {
+        fun protect(at: Int) {
+            if (at < 0x1500 || at >= ram.size) return
+            val size = SpcData.measureBrrSize(ram, at)
+            if (size > 0) add(SpcRange(at, at + size))
+        }
+        for (slot in 0 until 40) {
+            val dir = 0x6D00 + slot * 4
+            protect((ram[dir].toInt() and 255) or ((ram[dir + 1].toInt() and 255) shl 8))
+            protect((ram[dir + 2].toInt() and 255) or ((ram[dir + 3].toInt() and 255) shl 8))
+        }
+    }
+
     fun largestAvailableRange(occupiedRanges: List<SpcRange>): SpcRange? {
         var cursor = SEQUENCE_ALLOC_MIN
         var best: SpcRange? = null

@@ -21,6 +21,7 @@ import kotlinx.coroutines.yield
 import org.jetbrains.skia.Surface
 import org.junit.jupiter.api.Test
 import java.io.File
+import kotlin.coroutines.coroutineContext
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -54,7 +55,8 @@ class InstrumentSelectorTest {
         available: Boolean = true,
         check: suspend (ComposeScene, suspend () -> Unit, MutableList<Int>, MutableList<Pair<Int, Boolean>>) -> Unit,
     ) {
-        val scene = ComposeScene()
+        // Keep recomposition and semantics reads on this test's event loop.
+        val scene = ComposeScene(coroutineContext = coroutineContext)
         val surface = Surface.makeRasterN32Premul(width, 650)
         val applied = mutableListOf<Int>()
         val previews = mutableListOf<Pair<Int, Boolean>>()
@@ -124,7 +126,7 @@ class InstrumentSelectorTest {
 
     @Test fun `compact note inspector hides raw controls and browser fits at every font size`() = runBlocking {
         for (font in FontSize.entries) {
-            val scene = ComposeScene()
+            val scene = ComposeScene(coroutineContext = coroutineContext)
             val surface = Surface.makeRasterN32Premul(680, 740)
             var measuredHeight = 0
             try {
